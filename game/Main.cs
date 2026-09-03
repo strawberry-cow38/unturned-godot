@@ -564,7 +564,7 @@ namespace UnturnedGodot
                 BuildAnimRig(animrig);
                 return;
             }
-            if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); return; }   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
+            if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); if (shot != null) { _shotPath = shot; _shotRequested = shot; } return; }   // --shot=P arms a still too (UG_SHOTTIME picks the moment; no --shot -> movie as before)   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
 
             if (rottest != null)   // place ONE prop under a candidate placement-rotation convention -> find the upright one
             {
@@ -4493,6 +4493,8 @@ namespace UnturnedGodot
                 _paRig.SetGunOverlay("Eaglefire_Equip", 1f, loop: false);   // play the equip -> holds its end = the READY HOLD (shouldered), exactly like the local 3p body (PlayerController:6734)
                 _paGun = true;   // -> the hold -> ADS -> lean-right -> lean-left sequence in _Process
             }
+            string paMelee = System.Environment.GetEnvironmentVariable("UG_PAMELEE");   // UG_PAMELEE=katana -> the melee model in the 3P hand (RiggedCharacter.AttachMelee, what puppets/own body call)
+            if (!string.IsNullOrEmpty(paMelee)) _paRig.AttachMelee(paMelee);
             if (System.Environment.GetEnvironmentVariable("UG_PAHITBOX") == "1")
             {
                 _paHit = true;   // hold the chosen stance under the zone overlay

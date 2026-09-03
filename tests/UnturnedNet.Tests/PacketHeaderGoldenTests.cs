@@ -44,7 +44,8 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
+            // Re-goldened for Version=22 (held-item: MoveInput.HeldItemId -- ONLY the version byte moved 15->16); before that
+            // Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
             // EventDoorState(34)/EventBedClaimed(35) -- ONLY the version byte moved 0D->0E, which is the
             // whole point of this golden: a wire change that touches anything ELSE in the header is a
             // mistake, and this is where it gets caught); before that Version=13 (destructible-props:
@@ -84,7 +85,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751508000000000000002800"));   // byte[1]=0x15 = Version 21 (v21 mp-vehicle-cosmetics: the alarm flag bits)
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751608000000000000002800"));   // byte[1]=0x15 = Version 21 (v21 mp-vehicle-cosmetics: the alarm flag bits)
         }
 
         [Test]

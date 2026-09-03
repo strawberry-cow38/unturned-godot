@@ -451,7 +451,7 @@ namespace UnturnedGodot
             //    stance for the stamina drain -- stamina server-owned while the sprint decision stays client-auth.
             float yaw = Player.RotationDegrees.Y;
             ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
-                                              MoveInput.PackStance(Player.Stance));
+                                              MoveInput.PackStance(Player.Stance), Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets
 
             // 1b) A SERVER-SIDE TELEPORT has to be adopted BEFORE step 2 overwrites it.
             //

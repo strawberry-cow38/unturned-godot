@@ -9,8 +9,8 @@ namespace UnturnedGodot
     // from the player's held MoveInput (Players). Dirty-only + low cadence (appearance changes slowly), so it
     // costs no delta bytes between changes. Ticked on the world's SimRoot before net.server.replicate.
     //
-    // HELD-GUN id is DEFERRED: it needs PlayerStateCommand.HeldItemId (a separate v11 gap the protocol note
-    // reserves) -- until that lands, HeldId stays 0 (a joiner's avatar shows the clothing, not a held weapon).
+    // HELD item id: v22 MoveInput.HeldItemId (the client reports what is in its hands with every input) -> ce.HeldId,
+    // so a joiner's avatar shows the gun/melee too (RemotePlayers attaches it like the local 3P body does).
     public sealed class PlayerAppearanceNetSync
     {
         public const int PublishDivisorTicks = 10;   // 5 Hz -- clothing/stance change slowly; dirty-only anyway
@@ -41,7 +41,10 @@ namespace UnturnedGodot
                     changed |= SetU(ref ce.WornBackpack, Id(pi.wornBackpack));
                 }
                 if (_server.Players.TryGetHeldInput(pid, out var mi))
+                {
                     changed |= SetB(ref ce.Stance, (byte)mi.Stance);
+                    changed |= SetU(ref ce.HeldId, mi.HeldItemId);   // v22: what the player is holding -> other clients' puppets draw the gun/melee
+                }
 
                 if (changed) _server.CombatState.MarkDirty(ce, tick);
             }

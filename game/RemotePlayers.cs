@@ -237,6 +237,31 @@ namespace UnturnedGodot
         {
             ApplyWorn(av.Inv, ce);
             av.Clothing.Refresh();
+            ApplyHeld(av, ce.HeldId);
+        }
+
+        /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
+        /// Right_Hook attach + gun overlay layer the local 3P body uses (PlayerController.UpdateBodyGun). Asset gunName -> gun,
+        /// meleeName -> melee, anything else / 0 -> empty hands.</summary>
+        static void ApplyHeld(Av av, ushort heldId)
+        {
+            var a = heldId != 0 ? SDG.Unturned.Assets.find(heldId) : null;
+            string gun = a?.gunName, melee = a?.meleeName;
+            if (!string.IsNullOrEmpty(gun))
+            {
+                av.Body.DetachMelee();
+                av.Body.AttachGun(gun);
+                string cap = char.ToUpper(gun[0]) + gun.Substring(1);
+                string aim = av.Body.ClipLength(cap + "_Aim") > 0f ? cap + "_Aim" : "Gun_Aim";
+                string equip = av.Body.ClipLength(cap + "_Equip") > 0f ? cap + "_Equip" : "Gun_Equip";
+                if (!av.Body.GunLayerOn) av.Body.EnableGunLayer(aim); else av.Body.RebakeAim(aim);
+                av.Body.SnapGunOverlay(equip);   // straight to the ready hold (the pull-out already happened on their screen)
+            }
+            else
+            {
+                av.Body.DetachGun(); av.Body.DisableGunLayer();
+                if (!string.IsNullOrEmpty(melee)) av.Body.AttachMelee(melee); else av.Body.DetachMelee();
+            }
         }
 
         /// <summary>Reconstruct the worn slots from the replicated appearance ids -- the render's core, exposed
@@ -257,7 +282,7 @@ namespace UnturnedGodot
             ulong h = 1469598103934665603UL;
             void M(ushort v) { h = (h ^ v) * 1099511628211UL; }
             M(ce.WornShirt); M(ce.WornPants); M(ce.WornHat); M(ce.WornVest);
-            M(ce.WornMask); M(ce.WornGlasses); M(ce.WornBackpack);
+            M(ce.WornMask); M(ce.WornGlasses); M(ce.WornBackpack); M(ce.HeldId);   // v22: a weapon swap re-dresses the hand
             return h;
         }
     }

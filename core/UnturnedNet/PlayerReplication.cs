@@ -196,6 +196,7 @@ namespace UnturnedGodot.Net
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
         public byte Buttons;      // v2: held-button bits (ButtonJump | PackStance(...))
+        public ushort HeldItemId; // v22: the item id in the player's hands (0 = nothing/fists) -- the server republishes it in the appearance block so other clients draw the gun/melee on the puppet
         // v9 (mp-clientauth-foot): the C2 ClaimedPos/HasClaim claim fields are GONE from the wire --
         // the shell client no longer sends MoveInput at all (it streams PlayerStateCommand and the
         // server adopts it); MoveInput remains the demo-walker/loopback movement intent only.
@@ -238,6 +239,7 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
+            w.WriteUInt16(HeldItemId);   // v22 (NetProtocol.Version 22): held item id
         }
 
         public static bool TryRead(NetPakReader r, out MoveInput cmd)
@@ -248,7 +250,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float my)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
-            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
+            if (!r.ReadUInt16(out ushort held)) return false;
+            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons, HeldItemId = held };
             return true;
         }
 

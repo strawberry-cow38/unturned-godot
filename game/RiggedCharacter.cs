@@ -339,6 +339,25 @@ namespace UnturnedGodot
         // Remove the held gun (weapon holstered / swapped away). Safe if nothing's attached.
         public void DetachGun() { Skeleton?.GetNodeOrNull("GunAttach")?.QueueFree(); _muzzle = null; _flash = null; }
 
+        /// <summary>A melee weapon/tool in the right hand (content/{name}.txt + {name}_albedo.png, the viewmodel's own melee
+        /// files) on the same Right_Hook the gun uses. The 3P body -- yours and other players' puppets -- never showed one.</summary>
+        public void AttachMelee(string meleeName)
+        {
+            if (Skeleton == null || string.IsNullOrEmpty(meleeName)) return;
+            Skeleton.GetNodeOrNull("MeleeAttach")?.QueueFree();
+            int hb = Skeleton.FindBone("Right_Hook"); if (hb < 0) hb = Skeleton.FindBone("Right_Hand"); if (hb < 0) return;
+            var mesh = ContentProvider.ParseObj($"res://content/{meleeName}.txt");
+            if (mesh == null) return;
+            var att = new BoneAttachment3D { Name = "MeleeAttach" };
+            Skeleton.AddChild(att);
+            att.BoneName = Skeleton.GetBoneName(hb);
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+            string ap = ProjectSettings.GlobalizePath($"res://content/{meleeName}_albedo.png");
+            if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            att.AddChild(new MeshInstance3D { Name = "MeleeMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) });   // held-model localRotation = Euler(0,0,90), same as the viewmodel's melee
+        }
+        public void DetachMelee() => Skeleton?.GetNodeOrNull("MeleeAttach")?.QueueFree();
+
         // The attached gun mesh (for mounting 3P attachments + a muzzle marker on it). Null when unarmed.
         public MeshInstance3D HeldGunMesh => Skeleton?.GetNodeOrNull("GunAttach")?.GetNodeOrNull<MeshInstance3D>("GunMesh");
 

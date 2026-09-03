@@ -1856,6 +1856,8 @@ namespace UnturnedGodot
         // without this, eating the last of a stack would also yank an unrelated weapon out of your hands.
         int _heldSlotPage = -1;
 
+        /// <summary>The item id in the hands for the wire (v22 MoveInput.HeldItemId): the backing item of the held gun/melee/tool, 0 for fists or nothing.</summary>
+        public ushort HeldItemIdForNet => _heldItem?.id ?? 0;
         public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
                                      || (_heldMeleeName != null && _heldMeleeName != "fists");
@@ -6932,12 +6934,20 @@ namespace UnturnedGodot
         string _bodyGunName;                                   // gun currently attached to _body (null = unarmed)
         string _bodyAimClip, _bodyReloadClip, _bodyEquipClip, _bodyHammerClip;  // resolved per-gun clip names for the overlay
         bool _bodyReloading3p, _bodyHammer3p;                  // edge-detect the reload + the rack so each plays once
+        string _bodyMeleeName;   // melee model currently in the 3P body's hand (null = none)
         void UpdateBodyGun()
         {
             // A PASSENGER keeps their gun on the 3rd-person body (strawberry: "passengers can hold weapons").
             // The old test was `_driving == null`, which stripped the gun from everyone aboard -- so a passenger
             // who could draw, aim and fire showed empty hands to everybody else.
             bool wantGun = HasGunOut && !IsDriver && _riding == null && !_dead;
+            // MELEE in the 3P hand (master 2026-09-03: weapons shown to other players -- the local 3P body never held a melee model either)
+            string wantMelee = (!wantGun && _melee != null && !string.IsNullOrEmpty(_heldMeleeName) && _heldMeleeName != "fists" && !IsDriver && _riding == null && !_dead) ? _heldMeleeName : null;
+            if (wantMelee != _bodyMeleeName)
+            {
+                if (wantMelee == null) _body.DetachMelee(); else _body.AttachMelee(wantMelee);
+                _bodyMeleeName = wantMelee;
+            }
             if (!wantGun)
             {
                 if (_bodyGunName != null) { _body.DetachGun(); _body.DisableGunLayer(); _bodyGunName = null; _bodyReloading3p = false; }
