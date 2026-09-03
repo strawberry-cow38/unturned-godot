@@ -12,6 +12,7 @@ namespace UnturnedGodot
     {
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
+        int _bakeHullsFrames = -1;   // --bakehulls frame countdown (-1 = inactive)
         string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
         float _bootCmdElapsed; bool _bootCmdRun;   // UG_BOOTCMD: see TickBootCommand
         Camera3D _orbitCam; Vector3 _orbitCenter; float _orbitR, _orbitAngle;   // UG_PROPSPIN: 360 turntable camera orbit for the prop-showcase movie
@@ -117,6 +118,7 @@ namespace UnturnedGodot
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
             string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
+            bool bakeHulls = false;   // --bakehulls: build every vehicle spec once so the convex-hull bakes get written (user://vehicle_hulls -> commit into content/vehicle_hulls)
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -172,7 +174,8 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
                 else if (arg.StartsWith("--profileshot=")) { profileShot = arg["--profileshot=".Length..]; _shotRequested = profileShot; }   // two nameplates -- a valid 128px pfp and a refused one -> verify the render + the missing-texture fallback
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
-                else if (arg == "--puppetanim") puppetAnim = true;   // drive a player rig idle->walk->run -> prove RemotePlayers locomotion animates (movie)
+                else if (arg == "--puppetanim") puppetAnim = true;
+                else if (arg == "--bakehulls") bakeHulls = true;   // build EVERY spec (SpecNames), let _Ready decompose + bake, quit   // drive a player rig idle->walk->run -> prove RemotePlayers locomotion animates (movie)
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) { rig = arg["--rig=".Length..]; _shotRequested = rig; }
@@ -562,6 +565,18 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildAnimRig(animrig);
+                return;
+            }
+            if (bakeHulls)
+            {
+                foreach (var n in Vehicle.SpecNames)
+                {
+                    if (n == "jet") continue;   // alias of fighterjet
+                    try { var bv = Vehicle.BuildByName(n); if (bv != null) { AddChild(bv); bv.Position = new Vector3(0f, 200f, 0f); } }
+                    catch (System.Exception e) { GD.PrintErr($"[bakehulls] {n}: {e.Message}"); }
+                }
+                _bakeHullsFrames = 0;   // _Process counts a few frames (VHACD runs in _Ready on entry) then quits
+                GD.Print($"[bakehulls] built {Vehicle.SpecNames.Length - 1} specs; waiting for _Ready bakes");
                 return;
             }
             if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); if (shot != null) { _shotPath = shot; _shotRequested = shot; } return; }   // --shot=P arms a still too (UG_SHOTTIME picks the moment; no --shot -> movie as before)   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
@@ -7614,6 +7629,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { GD.Print("[bakehulls] done"); GetTree().Quit(); return; }
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame

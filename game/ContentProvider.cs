@@ -89,7 +89,64 @@ namespace UnturnedGodot
             return ParseObj(Resolve(rel));
         }
 
+        // ---- LOAD CACHE (strawberry 2026-09-03: "loading optimizations when going into a map. vehicles is 50% of the loading!") ----
+        // PEI spawns 88 vehicles from ~15 specs and every one re-tokenised its body/wheel/parts text meshes. Parsed
+        // meshes are immutable here (nothing calls SurfaceSetMaterial/ClearSurfaces on them -- materials ride the
+        // MeshInstance), so one ArrayMesh per path shared by every instance is exactly Godot's intended resource model.
+        static readonly System.Collections.Generic.Dictionary<string, ArrayMesh> _meshCache = new();
+        static readonly System.Collections.Generic.Dictionary<string, (ArrayMesh, ArrayMesh)> _splitCache = new();
+        static readonly System.Collections.Generic.Dictionary<string, (ArrayMesh, ArrayMesh, ArrayMesh)> _split2Cache = new();
+        static readonly System.Collections.Generic.Dictionary<string, ImageTexture> _texCache = new();
+        static readonly System.Collections.Generic.Dictionary<string, Shader> _shaderCache = new();
+        public static int MeshCacheCount => _meshCache.Count + _splitCache.Count + _split2Cache.Count;
+        static string ZoneKey((Vector3 min, Vector3 max)[] zs)
+        {
+            if (zs == null) return "-";
+            var sb = new System.Text.StringBuilder();
+            foreach (var z in zs) sb.Append(z.min.X).Append(',').Append(z.min.Y).Append(',').Append(z.min.Z).Append('/').Append(z.max.X).Append(',').Append(z.max.Y).Append(',').Append(z.max.Z).Append(';');
+            return sb.ToString();
+        }
         public static ArrayMesh ParseObj(string path)
+        {
+            if (_meshCache.TryGetValue(path, out var cached)) return cached;
+            var m = ParseObjUncached(path);
+            if (m != null) _meshCache[path] = m;
+            return m;
+        }
+        /// <summary>A decoded texture per absolute path (optionally mipmapped). Runtime Image.LoadFromFile has no mipmaps; callers that
+        /// used to GenerateMipmaps per instance pass mipmaps:true and get the one shared texture.</summary>
+        public static ImageTexture TextureCached(string absPath, bool mipmaps = false)
+        {
+            string key = mipmaps ? absPath + "|mip" : absPath;
+            if (_texCache.TryGetValue(key, out var t)) return t;
+            if (!System.IO.File.Exists(absPath)) return null;
+            var img = Image.LoadFromFile(absPath);
+            if (img == null) return null;
+            if (mipmaps) img.GenerateMipmaps();
+            t = ImageTexture.CreateFromImage(img);
+            _texCache[key] = t;
+            return t;
+        }
+        static readonly System.Collections.Generic.Dictionary<string, AudioStreamOggVorbis> _oggCache = new();
+        /// <summary>One decoded OGG per (path, loop). Every vehicle used to decode its horn + engine + ignition + explosion
+        /// streams itself -- 4 decodes x 88 vehicles on a PEI load. The Loop flag lives on the stream, hence part of the key.</summary>
+        public static AudioStreamOggVorbis OggCached(string absPath, bool loop)
+        {
+            string key = loop ? absPath + "|loop" : absPath;
+            if (_oggCache.TryGetValue(key, out var o)) return o;
+            o = AudioStreamOggVorbis.LoadFromFile(absPath);
+            if (o != null) { o.Loop = loop; _oggCache[key] = o; }
+            return o;
+        }
+        /// <summary>One compiled Shader per source path (vehicle_paint.gdshader was a NEW Shader per vehicle -> 88 compiles on a PEI load).</summary>
+        public static Shader ShaderCached(string absPath)
+        {
+            if (_shaderCache.TryGetValue(absPath, out var sh)) return sh;
+            sh = new Shader { Code = System.IO.File.ReadAllText(absPath) };
+            _shaderCache[absPath] = sh;
+            return sh;
+        }
+        static ArrayMesh ParseObjUncached(string path)
         {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return null; }
@@ -145,6 +202,14 @@ namespace UnturnedGodot
         // across the gap between them.
         public static (ArrayMesh outside, ArrayMesh inside) ParseObjSplitByZone(string path, (Vector3 min, Vector3 max)[] zones)
         {
+            string key = path + "|" + ZoneKey(zones);
+            if (_splitCache.TryGetValue(key, out var c)) return c;
+            var r = ParseObjSplitByZoneUncached(path, zones);
+            if (r.outside != null || r.inside != null) _splitCache[key] = r;
+            return r;
+        }
+        static (ArrayMesh outside, ArrayMesh inside) ParseObjSplitByZoneUncached(string path, (Vector3 min, Vector3 max)[] zones)
+        {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return (null, null); }
             var ci = CultureInfo.InvariantCulture;
@@ -197,6 +262,14 @@ namespace UnturnedGodot
         // groupA's zones, else B if in one of groupB's, else the body. Lets a mesh peel two differently-materialed sets at
         // once (e.g. the trailer's landing legs AND its baked-in taillights).
         public static (ArrayMesh body, ArrayMesh a, ArrayMesh b) ParseObjSplit2(string path, (Vector3 min, Vector3 max)[] groupA, (Vector3 min, Vector3 max)[] groupB)
+        {
+            string key = path + "|" + ZoneKey(groupA) + "|" + ZoneKey(groupB);
+            if (_split2Cache.TryGetValue(key, out var c)) return c;
+            var r = ParseObjSplit2Uncached(path, groupA, groupB);
+            if (r.body != null || r.a != null || r.b != null) _split2Cache[key] = r;
+            return r;
+        }
+        static (ArrayMesh body, ArrayMesh a, ArrayMesh b) ParseObjSplit2Uncached(string path, (Vector3 min, Vector3 max)[] groupA, (Vector3 min, Vector3 max)[] groupB)
         {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return (null, null, null); }

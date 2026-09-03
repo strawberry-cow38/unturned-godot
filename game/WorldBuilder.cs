@@ -70,6 +70,25 @@ namespace UnturnedGodot
     {
         // ABLATION knob for profiling (2026-09-02): UG_SKIP="Vehicles,Foliage,Shadows" skips a subsystem at build so its
         // frame cost can be measured as a delta on the same pinned scene. Off by default; never set by the game itself.
+        // UG_PERF=1: where the vehicle phase goes, per spec -- Build() (pure C#: meshes/materials/nodes) vs AddChild (scene entry:
+        // _Ready, RenderingServer instance + pipeline work, physics body registration). strawberry 2026-09-03 "vehicles is 50% of the loading!"
+        static readonly bool _vehProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
+        static readonly System.Collections.Generic.Dictionary<string, (int n, double build, double add)> _vehProfAcc = new();
+        static void VehProfAdd(string spec, long t0, long t1, long t2)
+        {
+            double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            var e = _vehProfAcc.TryGetValue(spec, out var x) ? x : (0, 0, 0);
+            _vehProfAcc[spec] = (e.n + 1, e.build + (t1 - t0) * f, e.add + (t2 - t1) * f);
+        }
+        static void VehProfDump()
+        {
+            double tb = 0, ta = 0; var sb = new System.Text.StringBuilder("[vehprof] spec: n  build_ms  addchild_ms  (per-vehicle avg)");
+            foreach (var kv in _vehProfAcc) { tb += kv.Value.build; ta += kv.Value.add; }
+            foreach (var kv in System.Linq.Enumerable.OrderByDescending(_vehProfAcc, k => k.Value.build + k.Value.add))
+                sb.Append($" | {kv.Key}: {kv.Value.n}  {kv.Value.build:0}  {kv.Value.add:0}  ({(kv.Value.build + kv.Value.add) / kv.Value.n:0.0})");
+            sb.Append($" | TOTAL build={tb:0} add={ta:0}");
+            GD.Print(sb.ToString());
+        }
         public static bool SkipPhase(string name) { var v = System.Environment.GetEnvironmentVariable("UG_SKIP"); return v != null && v.Contains(name); }
 
         /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
@@ -1466,14 +1485,18 @@ namespace UnturnedGodot
                                 5 => "tractor",                                                             // Farm -> drivable tractor
                                 _ => "quad",                                                                // fallback
                             };
+                            long _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                             var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
+                            long _t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                             root.AddChild(veh);
+                            if (_vehProf) VehProfAdd(vn, _t0, _t1, System.Diagnostics.Stopwatch.GetTimestamp());
                             veh.GlobalPosition = vpos;
                             veh.RotationDegrees = new Vector3(0f, -ang, 0f);
                             nv++;
                         }
                     }
                 }
+                if (_vehProf) VehProfDump();
                 GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
             }
 

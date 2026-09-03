@@ -4,6 +4,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <Nullable>disable</Nullable>
     <RootNamespace>UnturnedGodot</RootNamespace>
+    <!-- Load-time: the ETW profile of a PEI load showed ~0.6 s of JIT_CountProfile32 (tiered PGO instrumentation) on the
+         startup thread plus the instrumented tier-0 code running slower. Nothing here is hot enough for PGO to pay back
+         inside a play session; the frame loop is engine-bound. strawberry 2026-09-03 "loading optimizations". -->
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
   <!-- The ported engine-agnostic core lives in these libs; Godot is the presentation host. -->
   <ItemGroup>

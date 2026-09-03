@@ -1871,7 +1871,7 @@ namespace UnturnedGodot
             // GenerateMipmaps: a runtime Image.LoadFromFile texture has NO mipmaps, so the default Linear-mipmap filter
             // samples BLACK once the sprite MINIFIES (small/dense particles) -> the "stationary black smoke cluster" at
             // the engine (same root cause as the old guns-render-black bug). Mips make minified particles sample grey.
-            if (System.IO.File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var tex = ContentProvider.TextureCached(tp, mipmaps: true); if (tex != null) { mat.AlbedoTexture = tex; } }
             if (fire)   // veh_fire.png is a 4-frame flipbook (64x16 = 4x16^2) -> animate the frames, don't stretch all 4 onto one quad (master)
             {
                 mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
@@ -2177,10 +2177,9 @@ namespace UnturnedGodot
         // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
         static ShaderMaterial PaintMat(string palette, Color paint)
         {
-            var sh = new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/vehicle_paint.gdshader")) };
+            var sh = ContentProvider.ShaderCached(ProjectSettings.GlobalizePath("res://content/vehicle_paint.gdshader"));   // ONE compiled shader for the fleet (was a new Shader per vehicle)
             var m = new ShaderMaterial { Shader = sh };
-            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{palette}"));
-            m.SetShaderParameter("palette", ImageTexture.CreateFromImage(img));
+            m.SetShaderParameter("palette", ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{palette}")));   // decoded once per palette
             var lin = paint.SrgbToLinear();   // ALBEDO is linear; the palette texels already come through source_color (sRGB->linear), but the raw paint Vector3 did not -> #437c44 rendered as a washed-out light green. Convert so it shows true deep forest (master: "our render is diff")
             m.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
             return m;
@@ -3645,8 +3644,7 @@ namespace UnturnedGodot
             Material wheelMat;
             if (s.WheelTex != null)
             {
-                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
-                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}")), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -3667,7 +3665,7 @@ namespace UnturnedGodot
             // A car alarm you cannot hear is not an alarm. Same clip, same 3D falloff as the real vehicle's.
             if (s.Horn != null)
             {
-                var hogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"));
+                var hogg = ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"), loop: false);   // shared decoded stream (was a decode per vehicle)
                 if (hogg != null)
                 {
                     p.HornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
@@ -5108,7 +5106,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 {
                     var (dlo, dhi) = s.HullDecompose.Value;
                     v._decomposeMesh = MeshRegion(bodyMesh, dlo, dhi);
-                    v._decomposeKey = $"{s.Body}|{dlo}|{dhi}";
+                    v._decomposeKey = $"{s.Body}|{dlo}|{dhi}|{BodyStamp(s.Body)}";   // BodyStamp: a changed body mesh invalidates its baked hulls
                     if (v._decomposeMesh != null) made++;
                 }
                 if (s.HullBands != null && bodyMesh != null)
@@ -5152,7 +5150,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // is a handling change, not a visual one -- a 1:1 hull follows the real underside where a box
                 // was clamped clear of it -- so there needs to be one switch that puts it back.
                 v._decomposeMesh = bodyMesh;
-                v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}";
+                v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}|{BodyStamp(s.Body)}";
                 v._decomposeCars = true;
                 // Keep the box as well: it is the belly-pan. A decomposition of a chassis with a hollow
                 // underside gives hulls that hug the floorpan and leave the gap between the axles open, and a
@@ -5221,8 +5219,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             Material wheelMat;
             if (s.WheelTex != null)   // real wheel albedo (tyre + rim), nearest-sampled like the game
             {
-                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
-                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}")), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -5513,7 +5510,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
             if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
             {
-                var hogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"));
+                var hogg = ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"), loop: false);   // shared decoded stream (was a decode per vehicle)
                 v._hornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
                 v.AddChild(v._hornAudio);
             }
@@ -5522,8 +5519,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 AudioStream ogg = s.Sound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
                     ? PlayerController.LoadWavOneShot($"res://content/{s.Sound}", loop: true)   // retail rips (content/audio/vehicles) are wav
-                    : AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
-                if (ogg is AudioStreamOggVorbis _ov) _ov.Loop = true;
+                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"), loop: true);   // shared decoded stream, Loop baked into the cache key
                 // HELICOPTERS CARRY. A car at 80 m is a car you have driven past; a helicopter is the thing you
                 // hear long before you see it, and that is most of what makes one feel big. UnitSize is the
                 // distance at which the attenuation curve starts, so raising BOTH is what actually extends the
@@ -5546,10 +5542,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 AudioStream ig = s.IgnitionSound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
                     ? PlayerController.LoadWavOneShot($"res://content/{s.IgnitionSound}")
-                    : AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
+                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"), loop: false);
                 if (ig != null)
                 {
-                    if (ig is AudioStreamOggVorbis _iv) _iv.Loop = false;
+                    // (Loop=false is part of the cached stream)
                     // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
                     // sound has finished" are the same instant by construction rather than two numbers someone
                     // has to keep in step.
@@ -5588,7 +5584,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             v._fireLight.AddToGroup("dynlight");   // a burning wreck spills onto the FP gun (light-scan)
             v.AddChild(v._fireLight);
-            v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
+            v._explosionAudio = new AudioStreamPlayer3D { Stream = ContentProvider.OggCached(ProjectSettings.GlobalizePath("res://content/explosion.ogg"), loop: false), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
             v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master). Only real Vehicles roll; a client's PUPPET is told via FlagAlarmed, so the two sides cannot disagree about which cars have alarms.
@@ -7961,7 +7957,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             base._Ready();
             GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
             if (_decomposeMesh == null || ForceBoxHull) return;
-            if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes))
+            if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes) && (shapes = LoadBakedHulls(_decomposeKey)) != null)
+                _decomposeCache[_decomposeKey] = shapes;   // BAKED (shipped in content/vehicle_hulls or the machine's user:// cache): no VHACD on load
+            if (shapes == null)
             {
                 var mi = new MeshInstance3D { Mesh = _decomposeMesh };
                 AddChild(mi);
@@ -8001,6 +7999,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                             if (cs is CollisionShape3D csh && csh.Shape is ConvexPolygonShape3D) shapes.Add(csh.Shape);
                 GD.Print($"[DECOMP] region tris={_decomposeMesh.GetFaces().Length / 3} -> {shapes.Count} convex hulls");
                 _decomposeCache[_decomposeKey] = shapes;
+                SaveBakedHulls(_decomposeKey, shapes);   // next load on this machine reads the bake instead of decomposing
                 mi.QueueFree();   // takes the generated body with it; the shapes themselves are refcounted and survive
             }
             foreach (var sh in shapes) AddChild(new CollisionShape3D { Shape = sh });
@@ -8010,6 +8009,69 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         }
 
         /// <summary>The triangles of `mesh` inside an AABB, as their own mesh -- what gets decomposed.</summary>
+        // ---- BAKED CONVEX HULLS (strawberry 2026-09-03: "loading optimizations ... vehicles is 50% of the loading!") ----
+        // VHACD (CreateMultipleConvexCollisions) ran on the FIRST vehicle of every spec at scene entry: ~100-150 ms x ~13
+        // specs on a PEI load, most of the "AddChild" half of the vehicle phase. The result is a pure function of the
+        // body mesh + the settings baked into _decomposeKey, so it is stored: res://content/vehicle_hulls/<key-hash>.hulls
+        // ships the fleet's bakes (generated by a normal load on the 4080 and committed), user://vehicle_hulls/ caches
+        // anything new on first sight. Format: i32 hulls, per hull i32 points, f32 xyz. Disk over compute (master).
+        /// <summary>Size of the body mesh file, folded into the decomposition key so a re-ripped/edited mesh never reuses a stale bake.</summary>
+        static string BodyStamp(string body)
+        {
+            try { return new System.IO.FileInfo(ProjectSettings.GlobalizePath($"res://content/{body}")).Length.ToString(); } catch { return "0"; }
+        }
+        static string HullFileName(string key)
+        {
+            ulong h = 14695981039346656037UL;
+            foreach (char c in key) { h ^= c; h *= 1099511628211UL; }
+            return h.ToString("x16") + ".hulls";
+        }
+        static Godot.Collections.Array<Shape3D> LoadBakedHulls(string key)
+        {
+            string fn = HullFileName(key);
+            foreach (var dir in new[] { "res://content/vehicle_hulls/", "user://vehicle_hulls/" })
+            {
+                string path = ProjectSettings.GlobalizePath(dir + fn);
+                if (!System.IO.File.Exists(path)) continue;
+                try
+                {
+                    using var br = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+                    int hulls = br.ReadInt32();
+                    if (hulls <= 0 || hulls > 256) continue;
+                    var shapes = new Godot.Collections.Array<Shape3D>();
+                    for (int i = 0; i < hulls; i++)
+                    {
+                        int n = br.ReadInt32();
+                        if (n <= 0 || n > 4096) { shapes = null; break; }
+                        var pts = new Vector3[n];
+                        for (int k = 0; k < n; k++) pts[k] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+                        shapes.Add(new ConvexPolygonShape3D { Points = pts });
+                    }
+                    if (shapes != null && shapes.Count > 0) { GD.Print($"[DECOMP] baked hulls: {shapes.Count} from {dir}{fn}"); return shapes; }
+                }
+                catch (System.Exception e) { GD.PushWarning($"[DECOMP] bad hull bake {path}: {e.Message}"); }
+            }
+            return null;
+        }
+        static void SaveBakedHulls(string key, Godot.Collections.Array<Shape3D> shapes)
+        {
+            try
+            {
+                string dir = ProjectSettings.GlobalizePath("user://vehicle_hulls/");
+                System.IO.Directory.CreateDirectory(dir);
+                using var bw = new System.IO.BinaryWriter(System.IO.File.Create(dir + HullFileName(key)));
+                bw.Write(shapes.Count);
+                foreach (var sh in shapes)
+                {
+                    var pts = (sh as ConvexPolygonShape3D)?.Points ?? System.Array.Empty<Vector3>();
+                    bw.Write(pts.Length);
+                    foreach (var pt in pts) { bw.Write(pt.X); bw.Write(pt.Y); bw.Write(pt.Z); }
+                }
+                GD.Print($"[DECOMP] baked {shapes.Count} hulls -> user://vehicle_hulls/{HullFileName(key)}  (key: {key})");
+            }
+            catch (System.Exception e) { GD.PushWarning($"[DECOMP] could not bake hulls: {e.Message}"); }
+        }
+
         static bool In(Vector3 p, Vector3 lo, Vector3 hi) =>
             p.X >= lo.X && p.X <= hi.X && p.Y >= lo.Y && p.Y <= hi.Y && p.Z >= lo.Z && p.Z <= hi.Z;
 
