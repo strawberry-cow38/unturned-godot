@@ -987,6 +987,25 @@ namespace UnturnedGodot.Net
         void ServerEnter(ushort sender, uint netId)
         {
             long tick = _tick();
+            // THE SEAT IS TAKEN OR IT IS NOT. There was no occupancy check here at all: a second player
+            // pressing F on an occupied car overwrote DriverPlayerId, took the authority window with it, and
+            // left the first player's client still believing it was driving and still sending
+            // CommandVehicleState for a vehicle it no longer owned. Two clients then held contradictory
+            // truths about the same car, which is the in-game report "multiple people can't get in a car,
+            // and so when they tried it actually just like disappeared, somehow" (strawberry 2026-09-03).
+            //
+            // _drivenByPlayer[first] was never cleared either, so the evicted driver stayed indexed against
+            // a vehicle somebody else owned -- his next exit would free a seat that was not his.
+            //
+            // Refusing is the correct answer for a ONE-SEAT wire (DriverPlayerId is a single ushort), and it
+            // is the precondition for the real multi-seat work rather than a detour from it: passengers need
+            // a seat list on the entity, and every one of those seats needs this same "is it free" question
+            // answered before it is assigned.
+            if (_vehicles.TryGet(new NetId(netId), out var occ) && occ.DriverPlayerId != 0 && occ.DriverPlayerId != sender)
+            {
+                if (NetLog.Enabled) NetLog.Sink($"[NET] player {sender} asked for vehicle {netId}, already driven by {occ.DriverPlayerId} -- refused");
+                return;
+            }
             _vehicles.ServerSetDriver(new NetId(netId), sender, tick);
             _drivenByPlayer[sender] = netId;
             _players.ServerClearInput(sender);   // held walk input must not keep integrating under the seat
