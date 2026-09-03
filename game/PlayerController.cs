@@ -163,6 +163,27 @@ namespace UnturnedGodot
 
         // Chopping a tree: an eye-ray to the aimed tree trunk (the world-layer cylinder ResourceField gives each tree).
         // Called before the zombie/animal sweep so a swing fells the tree rather than an enemy standing behind it.
+        /// <summary>Melee on a destructible WORLD PROP: the same authority path bullets use (NetDamageObject -> the
+        /// destructible host, replicated break), with the weapon's .dat Resource/object damage. Forward ray from the eyes.</summary>
+        bool MeleeDestructible(float range, float mult)
+        {
+            if (_cam == null) return false;
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return false;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * (range + 0.5f), 1u << 0, new Godot.Collections.Array<Rid> { GetRid() });
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0 || hit["collider"].As<GodotObject>() is not Node dn || !dn.HasMeta(DestructibleField.MetaKey)) return false;
+            Vector3 point = hit["position"].AsVector3();
+            if (dn.HasMeta(Toaster.HitMeta) && dn.GetMeta(Toaster.HitMeta).As<Toaster>() is Toaster tst && IsInstanceValid(tst)) tst.OnShot();
+            float amount = (_melee?.ResourceDamage ?? 5f) * mult * 4f;   // .dat Resource damage is per-tick for trees; a prop swing lands the bullet-equivalent chunk
+            NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), amount);
+            HitmarkerHUD.Instance?.ShowCircle();
+            Surf sf = dn.HasMeta(SurfMeta) ? (Surf)(int)dn.GetMeta(SurfMeta) : Surf.Wood;
+            MeleeImpactFx(point, false, sf);
+            GD.Print($"[melee] hit destructible {dn.Name} for {amount:0}");
+            return true;
+        }
+
         bool MeleeTree(float amount, float range)
         {
             if (_cam == null) return false;
@@ -2935,7 +2956,11 @@ namespace UnturnedGodot
             // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
             // NOT instantly on click -- scheduled here and applied by the tick, re-evaluating targets when it connects (master).
             if (NetMelee != null) { NetMelee(strong, RotationDegrees.Y); return; }   // D1: swing fx played above; the SERVER owns the deferred hit (ServerCombat re-evaluates at land time)
-            _pendingMeleeStrong = strong; _pendingMeleeHit = _meleeCd * 0.7f;
+            // Source UseableMelee.cs:818 fires the hit 0.1 s after the swing STARTS (weak); the strong swing waits its .dat
+            // `Strong` fraction of the clip (the wind-up). It used to fire at 70% of the whole clip -- for a 1.63 s axe strong
+            // swing that is 1.14 s, well after the visual contact (master 2026-09-03: "melee hit is applied way too late").
+            _pendingMeleeStrong = strong;
+            _pendingMeleeHit = strong ? Mathf.Max(0.1f, _meleeCd * Mathf.Clamp(_melee?.Strong ?? 0.5f, 0.05f, 0.9f)) : 0.1f;
         }
 
         float _pendingMeleeHit = -1f; bool _pendingMeleeStrong;   // deferred melee hit: >0 = a swing is mid-flight, damage lands when it reaches 0
@@ -2987,6 +3012,7 @@ namespace UnturnedGodot
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
+            if (MeleeDestructible(range, mult)) return;   // a destructible world prop (crate, TV, fence...) -- melee had no branch for these, only bullets did (master 2026-09-03)
             foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies take melee (one target per swing)
                 if (n is ZombieBody z && !z.Dead)
                 {
