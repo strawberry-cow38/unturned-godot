@@ -225,6 +225,22 @@ namespace UnturnedGodot.Net
             public uint Experience { get; set; }
             public List<List<byte>> SkillLevels { get; set; } = new List<List<byte>>();
 
+            // The seven GARMENTS THEMSELVES, as Items -- distinct from the WornHat/WornShirt/... ids above,
+            // which are the replicated APPEARANCE and only say how you look to other people. PlayerInventory's
+            // own wornX fields are what carries the garment's quality, what its armour reads, what "take it
+            // off" removes, and what SIZES the clothing pages. Saving only the appearance ids brought a player
+            // back rendering as dressed with an empty inventory underneath: nothing to remove, no armour, and
+            // clothing pages that had to be re-sized from a garment that was no longer there.
+            // The wire writes these (WriteOwnerBlock's seven WriteWorn calls) and this file's own header says
+            // to mirror its field list. I missed them; this is that mirror completed.
+            public JarSave WornHatItem { get; set; }
+            public JarSave WornGlassesItem { get; set; }
+            public JarSave WornMaskItem { get; set; }
+            public JarSave WornShirtItem { get; set; }
+            public JarSave WornVestItem { get; set; }
+            public JarSave WornBackpackItem { get; set; }
+            public JarSave WornPantsItem { get; set; }
+
             // inventory: one entry per page, each carrying its size so a save made while wearing a big backpack
             // restores into pages of the right shape before anything is placed in them.
             public List<PageSave> Pages { get; set; } = new List<PageSave>();
@@ -418,10 +434,18 @@ namespace UnturnedGodot.Net
             };
         }
 
+        /// <summary>RestorePage, reachable from the out-of-assembly save harness. Not used by the game.</summary>
+        public static void RestorePageForTest(Items page, PageSave ps) => RestorePage(page, ps);
+
         static void RestorePage(Items page, PageSave ps)
         {
             if (ps == null) return;
-            page.loadSize(ps.Width, ps.Height);   // size FIRST, or anything past the default extent is dropped
+            // Size FIRST, or anything past the default extent is dropped -- but NEVER shrink a page to 0x0.
+            // A garment's page is sized by wearing it, from the item catalogue; a save written while that
+            // catalogue was missing its Width/Height (which was true of 193 of the 195 garments with pockets)
+            // carries 0x0, and forcing that back over a correctly-sized page would re-break every existing save
+            // the moment the catalogue is fixed. A zero here means "the save does not know", not "it is empty".
+            if (ps.Width > 0 && ps.Height > 0) page.loadSize(ps.Width, ps.Height);
             foreach (var j in ps.Items)
                 if (j != null && j.Id != 0) page.addItem(j.X, j.Y, j.Rot, ToItem(j));
         }
@@ -470,6 +494,12 @@ namespace UnturnedGodot.Net
             }
 
             if (host.Inventories.TryGet(pe.OwnerPlayerId, out var ie) && ie.Inventory != null)
+            {
+                var wi = ie.Inventory;
+                p.WornHatItem = ItemOf(wi.wornHat); p.WornGlassesItem = ItemOf(wi.wornGlasses);
+                p.WornMaskItem = ItemOf(wi.wornMask); p.WornShirtItem = ItemOf(wi.wornShirt);
+                p.WornVestItem = ItemOf(wi.wornVest); p.WornBackpackItem = ItemOf(wi.wornBackpack);
+                p.WornPantsItem = ItemOf(wi.wornPants);
                 for (byte pg = 0; pg < PlayerInventory.PAGES; pg++)
                 {
                     var page = ie.Inventory.items[pg];
@@ -493,8 +523,25 @@ namespace UnturnedGodot.Net
                     }
                     p.Pages.Add(ps);
                 }
+            }
 
             return p;
+        }
+
+        /// <summary>A worn garment as a JarSave. x/y/rot are unused -- a garment is not in a grid cell -- but the
+        /// ITEM half is the same field list, so reusing the type keeps one place to add an Item field to.</summary>
+        static JarSave ItemOf(Item it)
+        {
+            if (it == null) return null;
+            return new JarSave
+            {
+                Id = it.id, Amount = it.amount, Quality = it.quality,
+                GunAmmo = (short)it.gunAmmo, GunFiremode = (sbyte)it.gunFiremode,
+                GunMagId = it.gunMagId, GunAttach = it.gunAttach,
+                GunSightId = it.gunSightId, GunBarrelId = it.gunBarrelId,
+                GunGripId = it.gunGripId, GunTacticalId = it.gunTacticalId,
+                GunChambered = it.gunChambered, GunAttachSeeded = it.gunAttachSeeded,
+            };
         }
 
         // ---------------------------------------------------------------- restore
@@ -561,6 +608,17 @@ namespace UnturnedGodot.Net
             if (host.Inventories.TryGet(playerId, out var ie) && ie.Inventory != null && p.Pages.Count > 0)
             {
                 var inv = ie.Inventory;
+                // GARMENTS FIRST. wearBackpack/Vest/Shirt/Pants call Resize on their page, so wearing after
+                // filling would re-size a page that already had the saved contents in it. Hat/glasses/mask have
+                // no page and are order-independent, but they go here too so the seven read as one step.
+                if (p.WornHatItem != null) inv.wearHat(ToItem(p.WornHatItem));
+                if (p.WornGlassesItem != null) inv.wearGlasses(ToItem(p.WornGlassesItem));
+                if (p.WornMaskItem != null) inv.wearMask(ToItem(p.WornMaskItem));
+                if (p.WornShirtItem != null) inv.wearShirt(ToItem(p.WornShirtItem));
+                if (p.WornVestItem != null) inv.wearVest(ToItem(p.WornVestItem));
+                if (p.WornBackpackItem != null) inv.wearBackpack(ToItem(p.WornBackpackItem));
+                if (p.WornPantsItem != null) inv.wearPants(ToItem(p.WornPantsItem));
+
                 for (byte pg = 0; pg < PlayerInventory.PAGES && pg < p.Pages.Count; pg++)
                 {
                     var ps = p.Pages[pg];
