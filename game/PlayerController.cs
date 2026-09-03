@@ -4955,7 +4955,7 @@ namespace UnturnedGodot
                 NpcTurretFx(origin, dir, gunId);
             };
             CollisionLayer = 1 << 3;   // player bit
-            CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
+            CollisionMask = (1 << 0) | (1 << 6) | (int)RemotePlayers.RemotePlayerLayer;    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master) + OTHER PLAYERS on bit 14 (strawberry 2026-09-03 "player vs player collision"; RemotePlayers.RemotePlayerLayer explains why they are not simply on bit 0). The wall/floor queries below reuse this mask, so they pick it up for free.
 
             _capsule = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
             _hitbox = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, PlayerMovementDef.HEIGHT_STAND / 2f, 0) };
