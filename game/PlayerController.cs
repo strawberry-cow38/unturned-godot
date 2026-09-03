@@ -489,6 +489,7 @@ namespace UnturnedGodot
             return Look.Puppet;
         }
 
+        double _lookFocusT, _grassT;   // PERF: rate limiters (see ProcessTick)
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
@@ -613,7 +614,7 @@ namespace UnturnedGodot
                 if (won == Look.None)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix). Skipped entirely once something else already owns the frame -- correctness AND the O(vehicles) loop.
                 {
                     float maxD = (LookReach + 6f) * (LookReach + 6f);
-                    foreach (var node in GetTree().GetNodesInGroup("vehicles"))
+                    foreach (var node in Vehicle.Live)   // PERF: C# registry, not a marshalled group array every scan
                         if (node is Vehicle vv && IsInstanceValid(vv))
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
@@ -4466,7 +4467,7 @@ namespace UnturnedGodot
         {
             if (_cam == null || _viewmodel == null) return;
             if (--_lightScanCd > 0) return;
-            _lightScanCd = 3;
+            _lightScanCd = 5;   // PERF: 10 Hz (was ~17 Hz); each scan marshals the whole dynlight group
             _mirrorLights.Clear();
             Vector3 camPos = _cam.GlobalPosition;
             var found = new System.Collections.Generic.List<(float d2, Light3D l)>();
@@ -6541,7 +6542,7 @@ namespace UnturnedGodot
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
-            UpdateGrassDisplacement(delta);
+            if ((_grassT += delta) >= 1.0 / 60.0) { UpdateGrassDisplacement(_grassT); _grassT = 0; }   // PERF: 60 Hz -- the lerp takes the accumulated delta, the bend is identical
             if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
@@ -6571,7 +6572,7 @@ namespace UnturnedGodot
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
-            UpdateLookFocus();   // eye-ray -> focus the item you're aiming at
+            if ((_lookFocusT += delta) >= 1.0 / 30.0) { _lookFocusT = 0; UpdateLookFocus(); }   // PERF: 30 Hz is plenty for a highlight/prompt (was every frame: a ray + a sphere query + a marshalled vehicles group at 450 fps)   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview

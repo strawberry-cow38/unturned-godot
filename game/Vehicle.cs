@@ -7319,6 +7319,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // GodotSharp dispatch (StringName walk of Vehicle->VehicleBody3D->...->GodotObject per call). The physics tick is
         // now driven from ONE node (TickHub._PhysicsProcess -> PhysicsTickAll), same phase, one dispatch instead of 88.
         static readonly System.Collections.Generic.List<Vehicle> _live = new();
+        public static System.Collections.Generic.IReadOnlyList<Vehicle> Live => _live;   // every vehicle in the tree (PlayerController look scan reads it instead of GetNodesInGroup)
         public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
         public static long PhysicsTickAllCalls;   // wiring probe for tests: proves the hub reaches this every physics tick
         public static void PhysicsTickAll(double delta)
@@ -7332,7 +7333,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.PhysicsTick(delta);
             }
         }
-        bool _interpOff;   // PERF: physics interpolation opted out while parked (see PhysicsTick)
+        bool _interpOff, _interpNear = true; float _interpNearT, _creepT;   // PERF: physics interpolation opted out while parked / far-and-bobbing (see PhysicsTick); creep-sleep timer
         public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
         {
             // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
@@ -7344,6 +7345,15 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 bool wantInterp = EngineOn || NetHeld || Towing != null || TowedBy != null
                     || LinearVelocity.LengthSquared() > 0.0025f || AngularVelocity.LengthSquared() > 0.0025f;
+                // A floating boat bobs forever, so the velocity gate never releases it; past ~150 m nobody can see a
+                // 50 Hz bob step, so only keep interpolating while someone is close enough to look at it.
+                if (wantInterp && !EngineOn && !NetHeld && _water != WaterMode.Car && (_interpNearT -= (float)delta) <= 0f)
+                {
+                    _interpNearT = 0.5f;
+                    var np = PlayerRegistry.Nearest(GlobalPosition);
+                    _interpNear = np != null && np.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 150f * 150f;
+                }
+                if (!EngineOn && !NetHeld && _water != WaterMode.Car && !_interpNear) wantInterp = false;
                 if (wantInterp == _interpOff)
                 {
                     _interpOff = !wantInterp;
@@ -7521,6 +7531,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * hsp * hsp + _rollK));
             }
             if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
+            // CREEP-SLEEP (census 2026-09-03: both firetrucks, a sedan and a hatchback crept at 0.4-1.1 m/s "parked"
+            // forever -- the parking brake can't hold a heavy hull on a slope, so Jolt never sleeps them and they pay
+            // the full wheel sim + interpolation every frame). An unattended car that has been slow (< 1.5 m/s) for a
+            // second with nobody within 40 m is put to sleep where it stands; a touch (collision) or a driver wakes it
+            // exactly like the 84 that Jolt parked on its own.
+            if (unattended && !towed && !Freeze && !Sleeping && LinearVelocity.LengthSquared() < 2.25f)
+            {
+                if ((_creepT += (float)delta) >= 1f)
+                {
+                    _creepT = 0f;
+                    var np = PlayerRegistry.Nearest(GlobalPosition);
+                    if (np == null || np.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 40f * 40f) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; Sleeping = true; }
+                }
+            }
+            else _creepT = 0f;
             // NO manual wheel spin: Godot's VehicleWheel3D already bakes the ROLL (+ suspension + steering) into its own
             // node transform every physics tick, and the wheel MESH is a child that inherits it. An old manual
             // _wMeshes[i].Rotation added an equal+opposite roll that CANCELLED the node's auto-roll in world space -> the
