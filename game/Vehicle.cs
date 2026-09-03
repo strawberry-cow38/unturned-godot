@@ -1478,7 +1478,7 @@ namespace UnturnedGodot
         /// car -- retail's kinematic driven body does collide there; revisit with vehicle-vs-vehicle play.</summary>
         public void NetGhost(bool on)
         {
-            uint wantLayer = on ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            uint wantLayer = on ? (_baseCollisionLayer & ~SolidBit) | (1u << 6) : _baseCollisionLayer;
             if (CollisionLayer != wantLayer) CollisionLayer = wantLayer;
         }
 
@@ -4617,6 +4617,13 @@ namespace UnturnedGodot
             v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v.CollisionMask |= 1u << 8;    // bit 8 = "solid small prop" -> a car collides with fences/hydrants/barrels instead of phasing through (NOT bit6, so trailer ghosting is unaffected) (strawberry)
+            if (MeshHitbox)
+            {
+                // The convex hulls stop being what the player walks into and what bullets stop on; they keep
+                // driving the car and colliding with terrain, props and each other.
+                v.CollisionLayer = (v.CollisionLayer & ~((1u << 0) | (1u << 5))) | ChassisBit;
+                v.CollisionMask |= ChassisBit;   // ...so car-on-car still resolves, with real impulses
+            }
             v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
             v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (now incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
@@ -5149,21 +5156,45 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // UG_BOXHULL=1 reverts every vehicle to the old single box, matching the UG_SHIPBOX seam. This
                 // is a handling change, not a visual one -- a 1:1 hull follows the real underside where a box
                 // was clamped clear of it -- so there needs to be one switch that puts it back.
+                if (MeshHitbox)
+                {
+                    // The model itself, on its own static body so Jolt will accept a mesh shape at all, and
+                    // exempted from the car so the car is not permanently inside its own hitbox. It carries
+                    // the layers the player and bullets scan; the chassis has just given them up.
+                    var hit = new StaticBody3D { Name = "HitMesh", CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
+                    // BackfaceCollision, because these bodies are NOT watertight and their winding is not
+                    // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces. Measured
+                    // without it, a ray straight down on the player's own layers passed THROUGH the bonnet
+                    // and stopped on the floorpan at y -0.11 -- a hole you could shoot and walk through, over
+                    // the whole front of the car. With it the same ray stops on the bonnet.
+                    var tri = bodyMesh.CreateTrimeshShape();
+                    tri.BackfaceCollision = true;
+                    hit.AddChild(new CollisionShape3D { Shape = tri });
+                    v.AddChild(hit);
+                    v.AddCollisionExceptionWith(hit);
+                    v.DebugHitMeshTris = bodyMesh.GetFaces().Length / 3;
+                }
                 v._decomposeMesh = bodyMesh;
                 v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}|{BodyStamp(s.Body)}";
                 v._decomposeCars = true;
-                // Keep the box as well: it is the belly-pan. A decomposition of a chassis with a hollow
-                // underside gives hulls that hug the floorpan and leave the gap between the axles open, and a
-                // car that drops into its own wheel arch on a kerb is worse than one whose hitbox is slightly
-                // generous. The convex hulls ADD fidelity to the sides and roofline; they do not replace the
-                // floor.
-                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+                // The box is BUILT but taken out of physics once the hulls land (see DecomposeHulls). It was
+                // kept as a belly-pan on the reasoning that a hollow chassis decomposes to hulls that hug the
+                // floorpan and leave the gap between the axles open. Measured, that premise does not hold for
+                // these models: casting down over a 5x10 grid of the sedan's and the van's footprint finds a
+                // CLOSED floor at y -0.13 at every single point. There is no hollow for the box to fill, and
+                // the box's own underside sits at y 0.09 -- 22 cm ABOVE the floor the hulls already follow,
+                // so it was never the ground contact either.
+                // It stays in the tree, disabled, because two things read box children and neither is physics:
+                // LookHulls (look-focus, which deliberately tracks the VISUAL footprint and already ignores
+                // Disabled) and the _groundClearance measurement above. Deleting it would silently kill
+                // look-focus on every car.
+                v.AddChild(new CollisionShape3D { Name = "BellyBox", Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             }
             else v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue)
             {
-                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+                v.AddChild(new CollisionShape3D { Name = "RoofBox", Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
                 if (v.CanTow)   // a tow-cab excepts its WHOLE body from the coupled trailer (CoupleTo) so the low coupling area doesn't fight the pin joint -- which also lets the trailer phase through the sleeper. Put a COPY of the roof hull on a SEPARATE static body (layer bit6) so the sleeper still blocks the trailer deck/headboard (anti-clip). The coupled trailer scans bit6 (SetTowGhost), so it hits this; the cab (mask bit0) never scans bit6, so it can't fight its own child hull. (strawberry 2026-07-16)
                 {
                     var sleeper = new StaticBody3D { Name = "SleeperHull", CollisionLayer = 1u << 6, CollisionMask = 0 };
@@ -7948,6 +7979,34 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// fidelity test can measure both in one run and its pass means something.</summary>
         public static bool ForceBoxHull;
 
+        // THE MODEL AS THE HITBOX (strawberry 2026-09-02: "use the model as the collision mesh. not boxes
+        // of best fit"). Measured on a 6 cm voxel grid, vehicle-local, hulls against the body mesh:
+        //   sedan   car 13.4 m^3   convex hitbox 24.4 m^3   solid-where-there-is-no-car 11.3 m^3 (+84%)
+        //   van     car 10.9 m^3   convex hitbox 23.0 m^3                              12.3 m^3 (+113%)
+        // The outline matches -- that is why a silhouette pass reported only an antialiasing rim -- but the
+        // VOLUME is nearly double, because a convex hull cannot hold a concavity: the notch over the bonnet,
+        // the wheel arches, the step down to the boot are all filled in. Raising the decomposition does not
+        // help; it saturates at 10 hulls on a 366-triangle body and 48/0.01 measures very slightly WORSE
+        // than 12/0.08.
+        //
+        // Jolt will not collide a MOVING mesh shape with the terrain, so the driving body keeps its convex
+        // hulls and the real mesh rides along on a StaticBody3D child -- the same shape the ship's deckhouse
+        // already uses. For the player and bullets to actually meet the MESH and not the hull, the hulls have
+        // to leave the layers those scan: the chassis moves to a private bit that only other vehicles mask,
+        // and bit0|bit5 go to the mesh.
+        //
+        // OFF BY DEFAULT. It changes which layer every car sits on, and about fifteen call sites outside this
+        // file scan bit 5 (harbour crane, sling magnet, deck rays, bullet rays, look focus). That is not a
+        // change to flip on unattended and unmeasured, so it ships behind a switch and stays dark until it
+        // has been driven.
+        public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") == "1";
+        const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for
+        /// <summary>The layer bit that means "this vehicle's solid body" for ghosting purposes -- bit 0
+        /// normally, the private chassis bit once the mesh hitbox has taken bit 0 for itself.</summary>
+        static uint SolidBit => MeshHitbox ? ChassisBit : 1u << 0;
+
+        public int DebugBoxHullsDisabled;   // fitted boxes taken out of physics once the hulls landed
+        public int DebugHitMeshTris;        // triangles in the mesh hitbox, 0 when it is off
         Mesh _decomposeMesh;   // set at build; turned into collision shapes on _Ready (VHACD needs a scene tree)
         bool _decomposeCars;   // this is an ordinary vehicle body, not the ship's deckhouse -> cheaper VHACD settings
         static readonly System.Collections.Generic.Dictionary<string, Godot.Collections.Array<Shape3D>> _decomposeCache = new();
@@ -8011,6 +8070,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             foreach (var sh in shapes) AddChild(new CollisionShape3D { Shape = sh });
             DebugDecomposedHulls = shapes.Count;
+            // THE MODEL IS THE HITBOX (strawberry 2026-09-02: "use the model as the collision mesh. not boxes
+            // of best fit. no half measure."). With hulls attached, the two fitted boxes come out of physics.
+            // Measured on the silhouette from five angles, body-pass against hull-pass at a frozen camera:
+            //   sedan  boxes+hulls 15.1% of the car's outline OUTSIDE the model -> hulls alone 8.1%
+            //   van                11.8%                                        -> 6.7%
+            // and coverage barely moves (sedan 6.5% -> 6.8% uncovered, van 5.8% -> 6.4%), because the hulls
+            // already cover what the boxes covered. Only when hulls actually landed: shapes.Count of 0 would
+            // otherwise leave the car with no collision at all, which is a hole you drive the world through.
+            // Guarded by name so a spec's ExtraBoxes, landing gear and the bumper Area are untouched.
+            // UG_KEEPBOXHULLS=1 leaves them in, so the before/after is ONE FLAG on ONE BINARY rather than
+            // two builds -- the A/B this change is justified by has to compare like with like.
+            if (_decomposeCars && shapes.Count > 0
+                && System.Environment.GetEnvironmentVariable("UG_KEEPBOXHULLS") != "1")
+            {
+                int off = 0;
+                foreach (var ch in GetChildren())
+                    if (ch is CollisionShape3D cs && !cs.Disabled
+                        && (cs.Name == "BellyBox" || cs.Name == "RoofBox")) { cs.Disabled = true; off++; }
+                DebugBoxHullsDisabled = off;
+                GD.Print($"[DECOMP] fitted boxes taken out of physics: {off} (kept in the tree for look-focus)");
+            }
             GD.Print($"[DECOMP] hulls harvested: {shapes.Count}");
             _decomposeMesh = null;
         }
