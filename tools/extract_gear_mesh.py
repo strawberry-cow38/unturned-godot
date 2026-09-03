@@ -127,7 +127,7 @@ class Prefab:
         """DFS for (mesh_obj, meshrenderer_obj, local_transform_tt). Prefers a GO named Model_0 with a
         MeshFilter/SkinnedMeshRenderer; falls back to the first renderable found."""
         best = None
-        def rec(go, depth):
+        def rec(go, depth, chain):
             nonlocal best
             tt = go.read_typetree()
             name = tt.get("m_Name", "")
@@ -145,8 +145,11 @@ class Prefab:
                     renderer = c
                 elif c.type.name == "Transform":
                     tr_tt = c.read_typetree()
+            # the local TRS chain from this node up to (excluding) the prefab root: retail instantiates the ROOT at
+            # zero/identity/scale 1 under the bone (HumanClothes.cs), so everything below it IS the placement
+            my_chain = chain + ([tr_tt] if (tr_tt and depth > 0) else [])
             if mesh_obj is not None:
-                cand = (mesh_obj, renderer, tr_tt, name)
+                cand = (mesh_obj, renderer, tr_tt, name, my_chain)
                 if best is None or name.lower() == "model_0":
                     best = cand
             if tr_tt:
@@ -155,8 +158,8 @@ class Prefab:
                     if ct:
                         cgo = self.by_id.get(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
                         if cgo:
-                            rec(cgo, depth + 1)
-        rec(root_go, 0)
+                            rec(cgo, depth + 1, my_chain)
+        rec(root_go, 0, [])
         return best
 
     def material_texs(self, renderer):
@@ -183,20 +186,45 @@ class Prefab:
         return texs, color
 
 
-def mesh_to_obj(mesh_obj, out_path, name, flipx=False):
-    """UnityPy mesh -> Godot .obj. Body convention: negate Z (and X if flipx) on pos+normal, reverse
-    winding, raw UVs. Returns (nverts, ntris, bbox)."""
+def _qrot(q, v):
+    """Rotate vector v by unit quaternion q = (x, y, z, w) (Unity convention)."""
+    x, y, z, w = q; vx, vy, vz = v
+    # t = 2 * cross(q.xyz, v); v' = v + w*t + cross(q.xyz, t)
+    tx = 2 * (y * vz - z * vy); ty = 2 * (z * vx - x * vz); tz = 2 * (x * vy - y * vx)
+    return (vx + w * tx + (y * tz - z * ty), vy + w * ty + (z * tx - x * tz), vz + w * tz + (x * ty - y * tx))
+
+def bake_chain(chain, v, is_normal=False):
+    """Apply the local TRS chain (innermost node first) to a Unity-space point/normal: scale -> rotate -> translate per node."""
+    for tt in reversed(chain):   # chain is root-first; the mesh sits at the END, so apply the deepest node first
+        s = tt.get("m_LocalScale", {}); r = tt.get("m_LocalRotation", {}); p = tt.get("m_LocalPosition", {})
+        if not is_normal:
+            v = (v[0] * s.get("x", 1), v[1] * s.get("y", 1), v[2] * s.get("z", 1))
+        v = _qrot((r.get("x", 0), r.get("y", 0), r.get("z", 0), r.get("w", 1)), v)
+        if not is_normal:
+            v = (v[0] + p.get("x", 0), v[1] + p.get("y", 0), v[2] + p.get("z", 0))
+    return v
+
+def mesh_to_obj(mesh_obj, out_path, name, flipx=False, chain=None):
+    """UnityPy mesh -> Godot .obj. The prefab's local TRS chain (Model_0 up to the root) is BAKED into the
+    vertices first -- retail parents the prefab root at zero/identity under the bone, so that chain is the whole
+    on-body placement (position was emitted as attach_off before; rotation + scale were dropped -> oversized,
+    turned gear). Then the body convention: negate Z (and X if flipx) on pos+normal, reverse winding, raw UVs.
+    Returns (nverts, ntris, bbox)."""
     txt = mesh_obj.read().export()  # Wavefront OBJ text (Unity space)
     V, N, T, F = [], [], [], []
     sx = -1.0 if flipx else 1.0
+    chain = chain or []
     for line in txt.splitlines():
         p = line.split()
         if not p:
             continue
         if p[0] == "v":
-            V.append((sx * float(p[1]), float(p[2]), -float(p[3])))
+            u = bake_chain(chain, (float(p[1]), float(p[2]), float(p[3])))
+            V.append((sx * u[0], u[1], -u[2]))
         elif p[0] == "vn":
-            N.append((sx * float(p[1]), float(p[2]), -float(p[3])))
+            u = bake_chain(chain, (float(p[1]), float(p[2]), float(p[3])), is_normal=True)
+            m = (u[0] ** 2 + u[1] ** 2 + u[2] ** 2) ** 0.5 or 1.0
+            N.append((sx * u[0] / m, u[1] / m, -u[2] / m))
         elif p[0] == "vt":
             T.append((p[1], p[2]))
         elif p[0] == "f":
@@ -277,10 +305,10 @@ def main():
         if not found:
             print(f"SKIP id {iid} ({slot}) {folder}: no Model_0 mesh under prefab")
             continue
-        mesh_obj, renderer, tr_tt, model_name = found
+        mesh_obj, renderer, tr_tt, model_name, chain = found
 
         obj_fn = f"{name}_{slot}.obj"
-        nv, nt, bbox = mesh_to_obj(mesh_obj, os.path.join(args.out, obj_fn), f"{name}_{slot}", flipx=args.flipx)
+        nv, nt, bbox = mesh_to_obj(mesh_obj, os.path.join(args.out, obj_fn), f"{name}_{slot}", flipx=args.flipx, chain=chain)
 
         texs, color = pf.material_texs(renderer)
         got = {}
@@ -297,7 +325,7 @@ def main():
         # (negate Z, keep X/Y -- matches mesh_to_obj + rig_extract). P3b rides the gear mesh at this offset on its bone.
         lp = (tr_tt or {}).get("m_LocalPosition", {})
         pos = (round(lp.get("x", 0), 4), round(lp.get("y", 0), 4), round(lp.get("z", 0), 4))
-        off = "%g,%g,%g" % (pos[0], pos[1], -pos[2])
+        off = "0,0,0"   # the whole placement (pos + rot + scale, the full chain) is baked into the verts now
 
         rel = lambda fn: f"clothing/{fn}"
         rows[iid] = [
