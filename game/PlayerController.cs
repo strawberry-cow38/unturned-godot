@@ -4723,10 +4723,14 @@ namespace UnturnedGodot
             // instead of snapping to some other side of the body.
             _deathOrbit = Mathf.Atan2(2.2f, 2.8f);
 
-            // The death screen. NOT built for a NetAvatar shell (a remote player's body is not a viewer) and not
-            // in a headless harness, which never reaches here with a viewport; the respawn gate below keys off
-            // its absence to keep the old 3.5 s self-respawn for exactly those cases.
-            if (!NetAvatar)
+            // The death screen. NOT for a NetAvatar shell (a remote player's body is not a viewer), and NOT
+            // under the headless display server, which is what the L1 harness boots: there is nobody to press a
+            // button there, and building one silently stopped the 3.5 s self-respawn that a dozen in-engine
+            // tests wait on. The previous version of this comment claimed a headless harness "never reaches
+            // here with a viewport" and gated the respawn on the screen being ABSENT -- but a harness shell is
+            // not a NetAvatar, so it got a screen and the timer never fired. Asserting the invariant in a
+            // comment is not establishing it; ask the display server.
+            if (!NetAvatar && DisplayServer.GetName() != "headless")
             {
                 if (_deathScreen == null || !IsInstanceValid(_deathScreen))
                 {
@@ -7599,6 +7603,9 @@ namespace UnturnedGodot
                 // fire underneath them. It still does when there is no screen: a NetAvatar shell and every
                 // headless harness rely on that timer, and silently changing their behaviour to add UI would be
                 // the wrong trade.
+                // With a death screen up the player CHOOSES when to come back, so the self-respawn must not fire
+                // underneath them. Everything without one -- NetAvatar shells, and every headless L1 harness --
+                // keeps the old timer verbatim.
                 if (_deathTimer <= 0 && !_serverOwnedRespawn && (_deathScreen == null || !IsInstanceValid(_deathScreen))) Respawn();
                 return;
             }
