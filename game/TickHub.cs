@@ -24,7 +24,17 @@ namespace UnturnedGodot
             // step, so anything reading a vehicle transform in the player's tick (the ride cam, seated puppets) saw last
             // step's value for a frame -- net.ride_freelook caught it (tinyclaw, 2026-09-03). A negative priority runs the
             // hub ahead of every default-priority node, restoring "vehicles first".
-            _inst = new TickHub { Name = "TickHub", ProcessPhysicsPriority = -10, ProcessPriority = -10 };
+            // PHYSICS ORDER (2026-09-03, the ladder/deck tests caught it): a registered node's physics tick used to run at that node's
+            // own tree position -- AFTER the L1 TestHost that scripts it (and after any node that positions it) in the same physics
+            // frame. The PLAYER needs that "after the scripts" slot (AddPhysicsLate -> TickHubLate at +10: ladder.* + vehicle.ship_*
+            // went red without it); vehicles and the other physics registrants keep the -10 "vehicles first" order tinyclaw fixed
+            // for net.ride_freelook (moving them to +10 broke vehicle.ship_deck_probe: a boat alongside got counted as deck cargo).
+            // PAUSE: the hub lives under the root, so a paused tree would freeze every registrant even those whose own ProcessMode
+            // is Always (the TestHost world). ProcessMode.Always here + the per-node CanProcess() check below keeps the engine's
+            // exact per-node pause semantics.
+            _inst = new TickHub { Name = "TickHub", ProcessPhysicsPriority = -10, ProcessPriority = -10, ProcessMode = ProcessModeEnum.Always };
+            _late = new TickHubLate { Name = "TickHubLate", ProcessPhysicsPriority = 10, ProcessMode = ProcessModeEnum.Always };   // see AddPhysicsLate
+            tree.Root.CallDeferred(Node.MethodName.AddChild, _late);
             tree.Root.CallDeferred(Node.MethodName.AddChild, _inst);
         }
         // Generic registrations: any node hands the hub a tick delegate + a rate. Ticked from _Process at most `hz`
@@ -51,6 +61,12 @@ namespace UnturnedGodot
         static readonly System.Collections.Generic.List<Frame> _procs = new(), _phys = new();
         public static void AddProcess(Node node, System.Action<double> tick) { Ensure(node); _procs.Add(new Frame { Node = node, Tick = tick }); }
         public static void AddPhysics(Node node, System.Action<double> tick) { Ensure(node); _phys.Add(new Frame { Node = node, Tick = tick }); }
+        /// <summary>Physics tick that must run AFTER every default-priority _PhysicsProcess (the L1 TestHost that scripts a body,
+        /// anything that positions it) -- the PlayerController. Runs from TickHubLate at physics priority +10.</summary>
+        public static void AddPhysicsLate(Node node, System.Action<double> tick) { Ensure(node); _physLate.Add(new Frame { Node = node, Tick = tick }); }
+        static TickHubLate _late;
+        static readonly System.Collections.Generic.List<Frame> _physLate = new();
+        internal static void RunLate(double delta) => RunFrames(_physLate, delta);
         public static void RemoveProcess(Node node) { for (int i = _procs.Count - 1; i >= 0; i--) if (_procs[i].Node == node) _procs.RemoveAt(i); }
         public static void RemovePhysics(Node node) { for (int i = _phys.Count - 1; i >= 0; i--) if (_phys[i].Node == node) _phys.RemoveAt(i); }
         public static int ProcessCount => _procs.Count; public static int PhysicsCount => _phys.Count;
@@ -80,5 +96,10 @@ namespace UnturnedGodot
             }
         }
         public override void _PhysicsProcess(double delta) { Vehicle.PhysicsTickAll(delta); RunFrames(_phys, delta); }   // vehicles first (see ORDER above), then the registered physics ticks
+    }
+    /// <summary>The +10 physics slot of the hub (TickHub.AddPhysicsLate). Separate node so the two priorities coexist.</summary>
+    public partial class TickHubLate : Node
+    {
+        public override void _PhysicsProcess(double delta) => TickHub.RunLate(delta);
     }
 }

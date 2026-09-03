@@ -52,7 +52,14 @@ namespace UnturnedGodot
         bool _leanQHeld, _leanEHeld;           // edge detection: the shoulder swap fires on PRESS, the lean on hold
         bool _leanObstructed;
         float _leanAngle;                      // current rolled degrees, lerped toward _lean * LeanDegrees
-        Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
+        Vector3 _interpPrev, _interpCurr; bool _interpReady;
+        static float DistToSegmentSq(Vector3 p, Vector3 a, Vector3 b)
+        {
+            var ab = b - a; float len2 = ab.LengthSquared();
+            if (len2 < 1e-8f) return p.DistanceSquaredTo(a);
+            float t = Mathf.Clamp((p - a).Dot(ab) / len2, 0f, 1f);
+            return p.DistanceSquaredTo(a + ab * t);
+        }   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
@@ -5114,7 +5121,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             long _pp0 = System.Diagnostics.Stopwatch.GetTimestamp(), _ppA = 0, _ppB = 0, _ppC = 0, _ppD = 0, _ppE = 0, _ppF = 0;
-            TickHub.AddProcess(this, ProcessTick); TickHub.AddPhysics(this, PhysicsTick);   // PERF: hub-ticked (was a TickProxy child = still 2 engine callbacks/frame)
+            TickHub.AddProcess(this, ProcessTick); TickHub.AddPhysicsLate(this, PhysicsTick);   // PERF: hub-ticked (was a TickProxy child = still 2 engine callbacks/frame); LATE = after the nodes that script/position us
             SetProcess(false); SetPhysicsProcess(false);         // the proxy child owns the engine callbacks; the overrides below stay for DIRECT callers (tests drive the controller with p._Process(dt))
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
@@ -7721,7 +7728,18 @@ namespace UnturnedGodot
             if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
-            if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
+            if (_interpReady && !_dead)
+            {
+                // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual lerp)...
+                // ...unless something OUTSIDE this tick moved us -- a scripted teleport, an L1 test's `p.GlobalPosition = x`, a carry.
+                // The visual lerp only ever writes ON the prev->curr segment, so anything off it is an external move: adopt it.
+                // (Found 2026-09-03: through the TickHub the first physics tick lands one frame earlier than the old TickProxy
+                // child's did, so the interp snapshot existed before the ladder tests teleported the player and the restore
+                // silently undid the teleport -- ladder.climb_end_to_end/top_exit/top_onto_roof stood there in STAND.)
+                var gnow = GlobalPosition;
+                if (DistToSegmentSq(gnow, _interpPrev, _interpCurr) > 0.05f * 0.05f) { _interpPrev = _interpCurr = gnow; }
+                else GlobalPosition = _interpCurr;
+            }
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
