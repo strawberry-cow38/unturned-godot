@@ -2636,6 +2636,7 @@ namespace UnturnedGodot
         {
             Mass = 8000f,   // kerb mass, kg
             Body = "ural_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ural_palette.png",
+            GlassMesh = "ural_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived by tools/gen_vehicle_glass.py --band=1.20,1.85 -- the band is MEASURED: casting across the cab skin, the side opening runs y 1.20..1.85, where the silhouette rule derived 1.89..2.32 (a 43 cm band with nothing in it) and produced no panes at all
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src 4 faction paints (Coalition/Desert/Forest/Russia)
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
