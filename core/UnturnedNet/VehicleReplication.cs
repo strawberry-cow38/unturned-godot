@@ -33,9 +33,9 @@ namespace UnturnedGodot.Net
         public const byte FlagAlarming = 1 << 7;
 
         // scalar wire ranges (WriteClampedFloat int/frac bits) -- generous vs the .dat maxima
-        // (fuel <= 3000, health <= 1000, battery <= 10000; see Vehicle.cs specs)
+        // (fuel <= 3000, health <= 40000 since the 10x, battery <= 10000; see Vehicle.cs specs)
         const int FuelIntBits = 12, FuelFracBits = 1;
-        const int HealthIntBits = 10, HealthFracBits = 1;
+        const int HealthIntBits = 16, HealthFracBits = 1;   // v24: was 10 (max 1023) -- the tank/ship 4000 was ALREADY clipped on the wire; 10x hp (strawberry 2026-09-03) needs up to 40000
         const int BatteryIntBits = 14, BatteryFracBits = 0;
         public const int SteerBits = 9;   // steer wraps [0,360) like every degree field; real range is +-~35deg (public: VehicleStateCommand rides the same encoding)
 

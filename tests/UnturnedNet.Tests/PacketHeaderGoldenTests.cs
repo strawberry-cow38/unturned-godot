@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751708000000000000002800"));   // byte[1]=0x17 = Version 23 (v23 hurt-feedback: EventPlayerHurt(38)) -- ONLY that byte moved from 0x16/22, which is the whole point of this golden
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751808000000000000002800"));   // byte[1]=0x17 = Version 23 (v23 hurt-feedback: EventPlayerHurt(38)) -- ONLY that byte moved from 0x16/22, which is the whole point of this golden
         }
 
         [Test]

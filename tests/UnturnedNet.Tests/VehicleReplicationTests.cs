@@ -413,13 +413,15 @@ namespace UnturnedNet.Tests
             // serverTick:32 + baselineTick:32 (0 = full) + systemId:8 (9) + byteLen:16 + one entity:
             // id:32 + type:8 + variant:8 + driver:16 + pos (11.8/9.8/11.8) + yaw/pitch/roll (11 ea)
             // + linvel/angvel (6.6 x3 ea) + steer (9) + fuel (12.1) + health (10.1) + battery (14.0) + flags:8
+            // Re-goldened for Version = 24 (vehicle-hp): Health widened 10+1 -> 16+1 bits (+6 bits -> the block grew by one byte and
+            // everything after the health field shifted). Before that:
             // + A6: towedNetId (u32) + towRestLen (3int/4frac clamped) -- appended after flags. This golden
             // MOVED +5 bytes when A6 landed under v11 (byteLen 0x25->0x2A): not towing here, so the tail
             // gains towedNetId=0 (00000000) + restLen=0. Re-baselined to the actual (run 2026-07-20).
             // MOVED +1 byte again under v20 (byteLen 0x2A->0x2B): the passenger block's self-describing
             // count, 0 here because nobody is riding. That single byte is the whole cost of multi-seat on
             // an empty car, and it is what makes a client able to read a seat list it was not compiled for.
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092B00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB9DBFFFFFF02000000000200"));
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092C00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB91B96A0FFBF00000000800000"));
         }
 
         static ushort Driver(Harness h, uint veh)

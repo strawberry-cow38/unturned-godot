@@ -2101,6 +2101,10 @@ namespace UnturnedGodot
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
             SetHeadlights(false); SetTaillights(false);   // a corpse's lamps go dark -- kill the head + tail lights (master)
+            // ...and SHOT OUT, not just switched off (strawberry 2026-09-03: "destroy headlights, tail lights, through the
+            // shooting-them-out path when a car explodes") -- the same BreakLamp the bullet path uses, so the wreck's
+            // lenses carry the smashed look and nothing can re-light them.
+            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li);
             // ...but killing the lamps here is NOT enough on its own, and that was the bug: an alarmed car's
             // blip loop below re-lights them every 0.5s and honks, on a burning wreck. Worse, once the hulk
             // settles it becomes a _husk and the per-frame sim early-returns for good -- so whatever the blip
@@ -2206,6 +2210,10 @@ namespace UnturnedGodot
         // covers every build variant. A trailer is never driven -> 0 burn. TANK CAPACITY is now the per-vehicle Spec.Fuel
         // (metric mL, set on each spec), NOT here -- so a jerrycan (mL) and a vehicle tank share units. Burn stays PZ-scale
         // for now: consumption is masked by the infFuel default, so a metric consumption pass is deferred.
+        /// <summary>strawberry 2026-09-03: "10x vehicle hp". ONE multiplier on every Spec.Health at build time (the specs keep
+        /// their source-relative numbers; HeliBase-built specs pass health positionally, so a per-spec edit would miss them).
+        /// Damage dealt (bullets, explosion chain 500, collisions) is deliberately untouched -- cars just last 10x longer.</summary>
+        public const float VehicleHealthScale = 10f;
         static float FuelBurnClassOf(string name)
         {
             string n = name ?? "";
@@ -4911,7 +4919,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
-            v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
+            v.HealthMax = v.Health = s.Health * VehicleHealthScale; v.Battery = BatteryMax; v.DisplayName = s.Name;   // 10x hp (strawberry 2026-09-03); damage numbers untouched
             // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
             // hand-tuned driver spot. The fallback matters -- trailer has no bundle prefab to extract from, and a
             // null here would crash every seat lookup rather than degrading to one seat.

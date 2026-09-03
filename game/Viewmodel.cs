@@ -1496,7 +1496,7 @@ namespace UnturnedGodot
                 c.Life += (float)delta;
                 c.Vel += Vector3.Down * 9.8f * (float)delta;
                 c.Node.GlobalPosition += c.Vel * (float)delta;
-                if (!c.Bounced && c.Life > 0.35f)   // the brass lands about a third of a second after ejection: retail bulletcasingbounce/<surface> (2D -- the local player's own casing)
+                if (!c.Bounced && c.Life > 0.5f)   // the brass lands half a second after ejection (0.35 -> 0.5, strawberry 2026-09-03 "delay the bullet brass sound by a little more"); was a third of a second: retail bulletcasingbounce/<surface> (2D -- the local player's own casing)
                 {
                     c.Bounced = true;
                     GameAudio.Play2D(this, GameAudio.Pick("casings", CasingSurface), -12f, _rng.RandfRange(0.92f, 1.08f));

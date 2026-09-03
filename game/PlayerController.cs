@@ -247,7 +247,11 @@ namespace UnturnedGodot
         bool _jogWPrev, _jogSPrev;   // Ctrl+W/S edge-detect: jog the train exactly one carriage
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
-        float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
+        float _driveCamYaw, _driveCamPitch = 15f;
+        float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")
+        const float DriveCamZoomMin = 0.35f, DriveCamZoomMax = 1.8f, DriveCamZoomStep = 0.88f;
+        float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
+        float _casingSurfT;                       // throttle for the casing-bank refresh (the surface under the feet, sampled while a gun is out -- not only on footsteps)   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         /// <summary>Seated look limits, taken from retail PlayerLook (clampYaw / clampPitch) rather than
         /// invented: a DRIVING seat clamps yaw to +/-160, any other seat to +/-90, and a seated pitch to
         /// MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120 against a 0..180 scale where 90 is level -- +/-30 for us.</summary>
@@ -3464,6 +3468,8 @@ namespace UnturnedGodot
         float _strideAcc;    // metres of ground covered since the last footstep sound
         /// <summary>Material under the feet for footstep/landing audio: water when wading, else the terrain splatmap or a
         /// prop's SurfMeta via a short downward ray. Concrete when nothing says otherwise.</summary>
+        /// <summary>The retail casing-bounce bank for a foot surface (casings/&lt;bank&gt;_NN): metal/wood/sand/water, else general.</summary>
+        static string CasingBank(Surf s) => s switch { Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "sand", Surf.Water => "water", _ => "general" };
         Surf FootSurfaceUnderFeet()
         {
             // A miss means the short ray found no floor. The local shell only asks while IsOnFloor(), so that is
@@ -5285,6 +5291,13 @@ namespace UnturnedGodot
             }
             // clicks belong to an open UI (inventory / crate / dashboard) when the cursor's visible -- don't fire / honk / aim THROUGH them (master)
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            if (@event is InputEventMouseButton wb && wb.Pressed && (_driving != null || _riding != null) && !_fp
+                && (wb.ButtonIndex == MouseButton.WheelUp || wb.ButtonIndex == MouseButton.WheelDown))
+            {
+                // scroll = reel the chase cam in/out (strawberry 2026-09-03); multiplicative so a step feels the same on a quad and a bus
+                _driveCamZoom = Mathf.Clamp(wb.ButtonIndex == MouseButton.WheelUp ? _driveCamZoom * DriveCamZoomStep : _driveCamZoom / DriveCamZoomStep, DriveCamZoomMin, DriveCamZoomMax);
+                return;
+            }
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
@@ -5298,6 +5311,14 @@ namespace UnturnedGodot
                     // is negated. This shipped as nose-up-on-forward, which VoX reported as flying backwards
                     // and strawberry liked -- they were both describing the same behaviour and disagreeing
                     // about it, which is what a toggle is for.
+                    if (Input.IsKeyPressed(Key.Alt))
+                    {
+                        // ALT = look around WITHOUT touching the stick (strawberry 2026-09-03). The offsets ease back to
+                        // the default view once Alt is released (see the drive tick).
+                        _flyLookYaw = Mathf.Wrap(_flyLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
+                        _flyLookPitch = Mathf.Clamp(_flyLookPitch + mm.Relative.Y * MouseSensitivity, -70f, 70f);
+                        return;
+                    }
                     _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
                     bool invertFly = _driving.IsPlane ? ControlsOptions.InvertPlanePitch : ControlsOptions.InvertHeliPitch;   // the plane has its OWN invert-Y toggle, separate from the heli's (master)
                     float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
@@ -7500,6 +7521,13 @@ namespace UnturnedGodot
             var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
                                       : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
             eye += DriverPeekOffset();
+            if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
+            {
+                // Alt released: ease the free-look back to the default chase angle (strawberry 2026-09-03 "it should lerp back")
+                float k = Mathf.Min(1f, 7f * (float)GetProcessDeltaTime());
+                _flyLookYaw = Mathf.Lerp(_flyLookYaw, 0f, k); _flyLookPitch = Mathf.Lerp(_flyLookPitch, 0f, k);
+                if (Mathf.Abs(_flyLookYaw) < 0.05f) _flyLookYaw = 0f; if (Mathf.Abs(_flyLookPitch) < 0.05f) _flyLookPitch = 0f;
+            }
             PositionVehicleCam(vt, eye, size);
         }
 
@@ -7528,18 +7556,40 @@ namespace UnturnedGodot
             {
                 // _rideLookYaw > 0 is looking LEFT for us, which is retail's yaw < 0 branch: the wider /240.
                 float div = _rideLookYaw > 0f ? PeekDivisorOwnSide : PeekDivisorAcrossCab;
-                target = -_rideLookYaw / div;
+                // Only past a real over-the-shoulder angle (strawberry 2026-09-03: "looking over your shoulder left out the window
+                // will trigger that 'lean' beyond a certain angle") -- glancing at the passenger no longer slides the head.
+                float beyond = Mathf.Max(0f, Mathf.Abs(_rideLookYaw) - PeekStartDeg) * Mathf.Sign(_rideLookYaw);
+                target = -beyond / div;
             }
             // Lerp at 4/s, retail's own smoothing rate for this, so the head eases out rather than snapping.
             _peekX = Mathf.Lerp(_peekX, target, Mathf.Min(1f, 4f * (float)GetProcessDeltaTime()));
             return Mathf.Abs(_peekX) < 0.001f ? Vector3.Zero : new Vector3(_peekX, 0f, 0f);
         }
         float _peekX;                              // metres of lateral eye offset, vehicle-local (+X = right)
+        const float PeekStartDeg = 40f;            // the peek engages past this yaw (over the shoulder), not from straight ahead
         const float PeekDivisorOwnSide = 240f;     // looking out of the driver's OWN window: the bigger lean
         const float PeekDivisorAcrossCab = 360f;   // ...and across the cab: less
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
         void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
+
+        /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
+        /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
+        /// players are deliberately NOT in the mask -- the own car, a towed trailer or a passer-by must never yank the cam.</summary>
+        Vector3 CamCollide(Vector3 target, Vector3 eye)
+        {
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return eye;
+            _camCollideQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6), HitFromInside = false };
+            _camCollideQ.From = target; _camCollideQ.To = eye;
+            _camCollideQ.Exclude = _driving != null ? new Godot.Collections.Array<Rid> { GetRid(), _driving.GetRid() } : new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(_camCollideQ);
+            if (hit.Count == 0) return eye;
+            var pos = (Vector3)hit["position"];
+            var back = (target - eye); float len = back.Length(); if (len < 0.001f) return eye;
+            back /= len;
+            return pos + back * Mathf.Min(0.4f, len * 0.5f);   // sit just in front of the obstacle, never past the target
+        }
+        PhysicsRayQueryParameters3D _camCollideQ;
 
         void PositionVehicleCam(Transform3D vt, Vector3 eyeL, float size)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
         {                                                                    // (position + orientation): a LookAt updated pos but not rotation through turns -> car slid out of frame.
@@ -7549,7 +7599,7 @@ namespace UnturnedGodot
             if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
                 var eye = vt * eyeL;
-                if (_riding != null || DrivingPredicted || IsPassenger)   // MP ride, Part A predicted driving, or a PASSENGER seat: FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
+                if (_riding != null || DrivingPredicted || IsPassenger || (_driving != null && !_driving.IsHeli && !_driving.IsPlane))   // MP ride, predicted driving, a PASSENGER seat, or the SP car DRIVER (strawberry 2026-09-03 "add looking around in cars"): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
                 {
                     var look = vt.Basis.Orthonormalized() * new Basis(Vector3.Up, Mathf.DegToRad(_rideLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_rideLookPitch));
                     _cam.GlobalTransform = new Transform3D(look, eye);
@@ -7572,29 +7622,38 @@ namespace UnturnedGodot
                 // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
                 // helicopter the roll IS the control input, and a level camera hides the thing being steered.
                 // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
-                float dist = _driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
+                float dist = (_driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 0.95f, 5.5f, 34f)) * _driveCamZoom;   // reeled in a touch + scroll zoom (strawberry 2026-09-03)   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
                 if (_driving.IsPlane)
                 {
                     // WORLD-STABLE chase for the PLANE (level horizon). The airframe-locked cam below swung the
                     // whole view around during rolls/loops -> master 2026-08-18 "the 3p camera keeps getting messed up".
                     var pf = -vt.Basis.Z; pf.Y = 0f; pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;   // flattened heading
-                    var peye = vt.Origin - pf * (dist * 0.9f) + Vector3.Up * (dist * 0.34f + size * 0.05f);
-                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(vt.Origin + Vector3.Up * 0.4f, Vector3.Up);
+                    var plook = new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * pf;   // ALT free-look: orbit the chase point around the plane
+                    float pp = Mathf.DegToRad(_flyLookPitch);
+                    var ptarget = vt.Origin + Vector3.Up * 0.4f;
+                    var peye = vt.Origin - plook * (dist * 0.9f * Mathf.Cos(pp)) + Vector3.Up * (dist * 0.34f + size * 0.05f + dist * 0.9f * Mathf.Sin(pp));
+                    peye = CamCollide(ptarget, peye);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(ptarget, Vector3.Up);
                 }
                 else
                 {
                     Basis vb = vt.Basis.Orthonormalized();   // HELI: the camera BECOMES the airframe (roll IS the control input -- VoX)
-                    var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
-                    _cam.GlobalTransform = new Transform3D(vb, eye);
+                    // ALT free-look: an orbit offset in the AIRFRAME's frame, so with the offsets at 0 this is byte-identical to before
+                    Basis look = vb * new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_flyLookPitch));
+                    var eye = vt.Origin + look.Z * (dist * 0.86f) + look.Y * (dist * 0.16f + size * 0.06f);
+                    eye = CamCollide(vt.Origin + vb.Y * 0.5f, eye);
+                    _cam.GlobalTransform = new Transform3D(look, eye);
                 }
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
-                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // raised cap so the semi+trailer fits
+                float dist = Mathf.Clamp(size * 0.85f, 4.5f, 34f) * _driveCamZoom;   // REELED IN (was size*1.1 / min 6.5 -- strawberry 2026-09-03) + scroll-wheel zoom; the cap still fits the semi+trailer
                 float pitchR = Mathf.DegToRad(_driveCamPitch);
                 Vector3 dir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-fwd);   // behind the heading, orbited by the mouse yaw
+                var target = vt.Origin + Vector3.Up * (size * 0.15f);
                 var eye = vt.Origin + dir * (dist * Mathf.Cos(pitchR)) + Vector3.Up * (dist * Mathf.Sin(pitchR) + size * 0.22f);
-                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * (size * 0.15f), Vector3.Up);
+                eye = CamCollide(target, eye);   // terrain / props / buildings between the car and the cam pull it in (strawberry 2026-09-03)
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(target, Vector3.Up);
             }
         }
 
@@ -7751,6 +7810,20 @@ namespace UnturnedGodot
             // FOOTSTEP AUDIO (retail effects/physics/footstep/<surface>_<walk|run>): a step every stride-length of ground
             // covered, surface from the splatmap / prop SurfMeta under the feet, run bank above walking pace, water bank
             // when wading. Local player only here; puppets step in RemotePlayers. Crouch/prone are quieter and slower.
+            // CASING BANK by what is under the feet RIGHT NOW (strawberry 2026-09-03 "bullet brass should make sound depending
+            // on the material you are standing on") -- refreshed while a gun is out, not only on a footstep, so standing still
+            // on a metal roof after walking off sand clinks on metal. Seated: the brass lands on the vehicle floor -> metal.
+            if (!NetAvatar && !_dead && _viewmodel != null && HasGunOut)
+            {
+                _casingSurfT -= (float)delta;
+                if (_casingSurfT <= 0f)
+                {
+                    _casingSurfT = 0.2f;
+                    if (_driving != null || _riding != null) _viewmodel.CasingSurface = "metal";
+                    else if (IsSwimming) _viewmodel.CasingSurface = "water";
+                    else if (IsOnFloor()) _viewmodel.CasingSurface = CasingBank(FootSurfaceUnderFeet());
+                }
+            }
             if (!NetAvatar && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null && IsOnFloor() && !IsSwimming)
             {
                 float hsp = new Vector2(Velocity.X, Velocity.Z).Length();
@@ -7763,7 +7836,7 @@ namespace UnturnedGodot
                         _strideAcc = 0f;
                         var sf = FootSurfaceUnderFeet();
                         bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
-                        if (_viewmodel != null) _viewmodel.CasingSurface = sf switch { Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "sand", Surf.Water => "water", _ => "general" };
+                        if (_viewmodel != null) _viewmodel.CasingSurface = CasingBank(sf);
                         var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
                         float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
                         GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
