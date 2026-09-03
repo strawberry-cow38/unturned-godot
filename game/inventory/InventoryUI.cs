@@ -108,6 +108,9 @@ void fragment() {
         readonly List<(Control slot, Label label, System.Func<Item> worn, EItemType type)> _clothing = new();
         bool _open;
         float _storageW, _storageH;
+        readonly HashSet<byte> _collapsed = new();                           // clothing pages whose grid is folded away (items stay, header stays)
+        readonly List<(Control icon, EItemType type)> _headerIcons = new();  // the small worn-item icon on each page header: draggable = take it off
+        VScrollBar _vscroll; float _scrollY;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
 
         // quick-craft: a dashboard SECTION under the bags (icons of recipes you can afford); LMB queues 1, RMB queues 5.
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
@@ -345,6 +348,12 @@ void fragment() {
         public override void _Input(InputEvent e)
         {
             if (!_open || Inv == null) return;
+            if (e is InputEventMouseButton wh && wh.Pressed && (wh.ButtonIndex == MouseButton.WheelUp || wh.ButtonIndex == MouseButton.WheelDown)
+                && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
+            {
+                _vscroll.Value = Mathf.Clamp(_vscroll.Value + (wh.ButtonIndex == MouseButton.WheelUp ? -60 : 60), 0, _vscroll.MaxValue - _vscroll.Page);   // wheel over the box scrolls the clothing column
+                GetViewport().SetInputAsHandled(); return;
+            }
             if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
                 if (mb.Pressed)
@@ -431,8 +440,26 @@ void fragment() {
             }
         }
 
+        bool PointToHeaderIcon(Vector2 global, out EItemType type, out Control icon)
+        {
+            foreach (var (ic, t) in _headerIcons)
+                if (GodotObject.IsInstanceValid(ic) && ic.IsVisibleInTree() && new Rect2(ic.GlobalPosition, ic.Size).HasPoint(global)) { type = t; icon = ic; return true; }
+            type = default; icon = null; return false;
+        }
+
         void StartDrag(Vector2 global)
         {
+            if (PointToHeaderIcon(global, out var hType, out var hIcon))   // the small icon on a clothing tab: the same drag as pulling it off the paperdoll
+            {
+                var wornIt = WornFor(hType);
+                if (wornIt == null) return;
+                _dragFromCloth = true; _dragClothType = hType;
+                _dragJar = new ItemJar(wornIt); _dragRot = 0;
+                _grab = global - hIcon.GlobalPosition;
+                _dragging = true;
+                RebuildDragTile();
+                return;
+            }
             // grabbing a WORN garment off a clothing equip slot (the worn item lives in Inv.worn*, not a page) -> a drag-out
             // unequip if dropped on a grid, or a re-equip if dropped back on a slot. The tile is a transient jar over the item.
             if (PointToClothSlot(global, out int ci))
@@ -1052,8 +1079,18 @@ void fragment() {
                 Player.NetUnwearClothing((byte)slotType);
                 return true;
             }
+            // Everything INSIDE the garment first (master 2026-09-03): pull the page's items out, then unwear (the page
+            // goes 0x0), then each item tries every remaining page and anything that doesn't fit drops at your feet.
+            var spill = new List<Item>();
+            byte spillPage = slotType switch { EItemType.BACKPACK => PlayerInventory.BACKPACK, EItemType.VEST => PlayerInventory.VEST, EItemType.SHIRT => PlayerInventory.SHIRT, EItemType.PANTS => PlayerInventory.PANTS, _ => byte.MaxValue };
+            if (spillPage != byte.MaxValue && spillPage < Inv.items.Length)
+            {
+                var pg = Inv.items[spillPage];
+                for (int i = pg.getItemCount() - 1; i >= 0; i--) { var j = pg.getItem((byte)i); if (j?.item != null) spill.Add(j.item); pg.removeItem((byte)i); }
+            }
             UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
-            ReturnToGrid(old);
+            ReturnToGrid(old);        // the garment itself: a free slot, else the ground
+            foreach (var it in spill) ReturnToGrid(it);   // ReturnToGrid = tryAddItem across the pages, else DropWorldItem
             return true;
         }
 
@@ -1726,7 +1763,7 @@ void fragment() {
             foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
             foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
             foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
-            _drop.Clear();
+            _drop.Clear(); _headerIcons.Clear();
 
             // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character). They
             // register as page-0/1 drop targets inside AddSlotAt, so they MUST be built AFTER _drop.Clear() -- previously
@@ -1754,7 +1791,7 @@ void fragment() {
                 var pg = Inv.items[page];
                 if (pg.width == 0 || pg.height == 0) continue;   // source: header hidden when newHeight == 0
                 AddGridAt(WornName(page, fallback), pg, new Vector2(0, yC), _clothingCol, colW, WornItem(page));
-                yC += pg.height * CELL + GRIDPAD + PAGEADV;      // source: y += items.SizeOffset_Y + 80
+                yC += _collapsed.Contains(page) ? HDRH + 10 : pg.height * CELL + GRIDPAD + PAGEADV;   // source: y += items.SizeOffset_Y + 80; a folded tab is header-height only
             }
             // Worn clothing that grants NO storage still gets a bar (source headers[7]/[8]/[9] = hat/mask/glasses:
             // visible only when that item is worn, advance 70, and NO grid beneath).
@@ -1785,6 +1822,16 @@ void fragment() {
             }
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;
+            // SCROLL (master 2026-09-03): the clothing column can outgrow the screen; clip the box and hang a scrollbar on its right.
+            float visibleH = vpsz.Y - NAVH - 2 * MARGIN;
+            _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
+            float maxScroll = Mathf.Max(0f, yC - visibleH);
+            _scrollY = Mathf.Clamp(_scrollY, 0f, maxScroll);
+            _clothingCol.Position = new Vector2(0f, -_scrollY);
+            if (_vscroll == null) { _vscroll = new VScrollBar { Step = 10 }; _vscroll.ValueChanged += v => { _scrollY = (float)v; _clothingCol.Position = new Vector2(0f, -_scrollY); }; _storageCol.AddChild(_vscroll); }
+            _vscroll.Visible = maxScroll > 0f;
+            _vscroll.MaxValue = yC; _vscroll.Page = visibleH; _vscroll.SetValueNoSignal(_scrollY);
+            _vscroll.Position = new Vector2(colW + 6f, 0f); _vscroll.Size = new Vector2(14f, visibleH);
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
@@ -1856,7 +1903,8 @@ void fragment() {
         {
             col ??= _clothingCol;
             if (colW <= 0f) colW = page.width * CELL;
-            col.AddChild(HeaderBar(name, pos, colW, worn, worn == null ? page.getItemCount() : -1));
+            col.AddChild(HeaderBar(name, pos, colW, worn, worn == null ? page.getItemCount() : -1, page.page));
+            if (_collapsed.Contains(page.page)) return;   // folded: header only, the items stay in the page untouched
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
                                        Position = pos + new Vector2(0, HDRGAP), Size = new Vector2(page.width * CELL, page.height * CELL) };
             col.AddChild(grid);
@@ -2061,11 +2109,23 @@ void fragment() {
         // SizeOffset_Y = 60, SizeScale_X = 1) with the worn item's icon on the left, its name centred, and the
         // item's condition on the right. The old plain text label was the single biggest visual gap vs the
         // reference -- retail's inventory reads as a stack of BARS, not a list of captions.
-        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1)
+        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1, byte page = byte.MaxValue)
         {
             width = Mathf.Min(width, 8 * CELL);   // master 2026-08-26: clothing tabs never extend past 8 tiles' width (the widest grid, Alicepack, is 8)
             var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
             StyleBox(bar, UI_BAR);
+            if (page != byte.MaxValue && page > PlayerInventory.SLOTS)   // a clothing page: clicking the tab folds/unfolds its grid (master 2026-09-03)
+            {
+                var fold = new Button { Flat = true, Position = new Vector2(HDRH, 0), Size = new Vector2(Mathf.Max(0f, width - HDRH), HDRH), MouseFilter = Control.MouseFilterEnum.Stop };
+                fold.Pressed += () => { if (!_collapsed.Remove(page)) _collapsed.Add(page); Refresh(); };
+                bar.AddChild(fold);
+                if (_collapsed.Contains(page))
+                {
+                    var chev = new Label { Text = "▸", Position = new Vector2(width - 40, 0), Size = new Vector2(30, HDRH), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    chev.AddThemeColorOverride("font_color", UITheme.TextDim); chev.AddThemeFontSizeOverride("font_size", 26);
+                    bar.AddChild(chev);
+                }
+            }
 
             if (worn != null)
             {
@@ -2073,6 +2133,8 @@ void fragment() {
                 icon.Position = new Vector2(6, 6);
                 icon.MouseFilter = Control.MouseFilterEnum.Ignore;
                 bar.AddChild(icon);
+                var wt = worn.GetAsset()?.type ?? EItemType.HAT;
+                _headerIcons.Add((icon, wt));   // drag this icon onto a grid to take the garment off (StartDrag -> the cloth-drag path -> TakeOff)
             }
 
             var name = new Label { Text = text, Position = new Vector2(0, 0), Size = new Vector2(width, HDRH),
