@@ -344,6 +344,23 @@ namespace UnturnedGodot.Net
             StepGrenades(tick);
         }
 
+        /// <summary>Respawn a dead player NOW, on request, instead of when the death timer expires -- the death
+        /// screen's Respawn button. Arms the existing clock for the next tick rather than reviving inline: the
+        /// tick loop tests `RespawnAtTick == tick` exactly, so a past tick would never fire and an inline revive
+        /// would skip the dirty-marking and the broadcast that the normal path does. Returns false if they are
+        /// not dead, which makes a double-click a no-op.</summary>
+        public bool ServerRequestRespawn(ushort playerId, long tick)
+        {
+            foreach (var cs in _state.All)
+            {
+                if (cs.OwnerPlayerId != playerId) continue;
+                if (cs.Alive) return false;
+                cs.RespawnAtTick = tick + 1;
+                return true;
+            }
+            return false;
+        }
+
         void Respawn(PlayerCombatReplication.CombatEntity cs, long tick)
         {
             cs.Alive = true;

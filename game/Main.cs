@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
+        float _bootCmdElapsed; bool _bootCmdRun;   // UG_BOOTCMD: see TickBootCommand
         Camera3D _orbitCam; Vector3 _orbitCenter; float _orbitR, _orbitAngle;   // UG_PROPSPIN: 360 turntable camera orbit for the prop-showcase movie
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
@@ -1084,6 +1085,35 @@ namespace UnturnedGodot
         }
 
         // --elevatortest: the Elevator_0 prop wired as an interactive lift (look at it + F rides it up/down). It
+        /// <summary>UG_BOOTCMD: run one DevConsole line, once, UG_BOOTCMD_AT seconds after boot (default 3).
+        /// It exists so a STATE that only a player can reach is still renderable offline -- `UG_BOOTCMD=kill`
+        /// plus a later UG_SHOTTIME is how the death screen gets captured, since dying is not something a
+        /// headless harness can otherwise do. Same shape as the other UG_* debug hooks around it: no effect
+        /// unless the variable is set.</summary>
+        void TickBootCommand(double delta)
+        {
+            if (_bootCmdRun) return;
+            string cmd = System.Environment.GetEnvironmentVariable("UG_BOOTCMD");
+            if (string.IsNullOrEmpty(cmd)) { _bootCmdRun = true; return; }
+            float at = 3f;
+            var atEnv = System.Environment.GetEnvironmentVariable("UG_BOOTCMD_AT");
+            if (!string.IsNullOrEmpty(atEnv)) float.TryParse(atEnv, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out at);
+            _bootCmdElapsed += (float)delta;
+            if (_bootCmdElapsed < at) return;
+            _bootCmdRun = true;
+            var console = FindDevConsole(this);
+            if (console == null) { GD.PrintErr("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
+            GD.Print($"[BOOTCMD] {cmd}");
+            console.DebugRun(cmd);
+        }
+
+        static DevConsole FindDevConsole(Node n)
+        {
+            if (n is DevConsole dc) return dc;
+            foreach (var c in n.GetChildren()) { var f = FindDevConsole(c); if (f != null) return f; }
+            return null;
+        }
+
         // auto-Calls a beat after spawn so an offline UG_SHOTTIME capture catches it in transit. Master 2026-08-29:
         // "theres an elevator prop -- wire it to move up/down on an interaction."
         void BuildElevatorTest()
@@ -8248,6 +8278,7 @@ namespace UnturnedGodot
                 _lmIdx++; _lmFrame = 0;
                 return;
             }
+            TickBootCommand(delta);
             if (_shotPath == null) return;
             float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
             if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)

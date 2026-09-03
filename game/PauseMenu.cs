@@ -95,7 +95,10 @@ namespace UnturnedGodot
         {
             Visible = false;
             GetTree().Paused = false;
-            Input.MouseMode = Input.MouseModeEnum.Captured;
+            // Only take the cursor back if nothing else still needs it. Closing the pause menu while the DEATH
+            // screen is up used to recapture the mouse underneath it, leaving its respawn buttons unclickable
+            // and the player with no way out of being dead.
+            if (!DeathScreen.WantsCursor) Input.MouseMode = Input.MouseModeEnum.Captured;
         }
         public void Toggle() { if (Visible) Close(); else Open(); }
         public bool IsOpen => Visible;
