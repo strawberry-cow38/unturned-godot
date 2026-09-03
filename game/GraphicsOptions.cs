@@ -150,10 +150,11 @@ namespace UnturnedGodot
         // ---- MULTITHREADED RENDERER (restart required). Godot reads rendering/driver/threads/thread_model ONCE at boot,
         // but honours an override.cfg beside project.godot (source runs) / the executable (exports) at the next start.
         // The toggle writes exactly that one key and the row says "(restart)" until the running process matches.
-        // Measured 2026-09-03 on the 4080S: +26% on the CPU-bound idle scene; Godot 4.6 calls the separate render
-        // thread experimental, so it ships as an opt-in (master: "an option that requires restart").
+        // Measured 2026-09-03 on the 4080S: +26% on the CPU-bound idle scene. Shipped as opt-in first; DEFAULT-ON since the
+        // evening of 2026-09-03 (master: "flip multithreaded renderer on by default") -- project.godot carries thread_model=2,
+        // so "Multi" = no override line and "Single" writes an explicit =1.
         public const string ThreadModelKey = "rendering/driver/threads/thread_model";
-        public static bool RenderThreadActive => ProjectSettings.GetSetting(ThreadModelKey, 1).AsInt32() == 2;   // what THIS process booted with
+        public static bool RenderThreadActive => ProjectSettings.GetSetting(ThreadModelKey, 2).AsInt32() == 2;   // what THIS process booted with (project default: 2 = multi)
         static bool? _renderThreadWanted;
         public static bool RenderThreadWanted { get => _renderThreadWanted ?? RenderThreadActive; private set => _renderThreadWanted = value; }
         public static string RenderThreadLabel => (RenderThreadWanted ? "Multi" : "Single") + (RenderThreadWanted != RenderThreadActive ? " (restart)" : "");
@@ -168,11 +169,11 @@ namespace UnturnedGodot
                 string path = OverridePath;
                 var lines = System.IO.File.Exists(path) ? new System.Collections.Generic.List<string>(System.IO.File.ReadAllLines(path)) : new System.Collections.Generic.List<string>();
                 lines.RemoveAll(l => l.TrimStart().StartsWith("driver/threads/thread_model"));   // ours; anything else in the file is left alone
-                if (on)
+                if (!on)   // the project default is MULTI (2) now; only Single needs an explicit line
                 {
                     int sec = lines.FindIndex(l => l.Trim() == "[rendering]");
                     if (sec < 0) { if (lines.Count > 0 && lines[lines.Count - 1].Trim() != "") lines.Add(""); lines.Add("[rendering]"); sec = lines.Count - 1; }
-                    lines.Insert(sec + 1, "driver/threads/thread_model=2");
+                    lines.Insert(sec + 1, "driver/threads/thread_model=1");
                 }
                 for (int i = lines.Count - 1; i >= 0; i--)   // drop a [rendering] header we emptied
                     if (lines[i].Trim() == "[rendering]" && (i + 1 >= lines.Count || lines[i + 1].Trim() == "" || lines[i + 1].TrimStart().StartsWith("["))) lines.RemoveAt(i);
