@@ -63,20 +63,27 @@ namespace UnturnedGodot
             inv = null; return false;
         }
 
-        /// <summary>Is this player riding something? The client learns it from VehicleEntered/Exited, which
-        /// VehicleReplication folds into the vehicle's DriverPlayerId.</summary>
-        bool IsSeated(ushort playerId)
+        // Who is aboard something, rebuilt ONCE per frame. The obvious shape -- ask "is this player seated"
+        // per puppet -- is a scan of every vehicle per player per frame, which on a map with ~88 cars is
+        // thousands of comparisons a frame to answer a question that changes when somebody presses F.
+        readonly HashSet<ushort> _seated = new();
+        void RefreshSeated()
         {
-            if (Client == null || playerId == 0) return false;
+            _seated.Clear();
+            if (Client == null) return;
             foreach (var v in Client.Vehicles.All)
-                if (v.DriverPlayerId == playerId) return true;
-            return false;
+            {
+                if (v.DriverPlayerId != 0) _seated.Add(v.DriverPlayerId);
+                var pax = v.Passengers;   // v20: a PASSENGER is seated too, and his hull must drop as well
+                if (pax != null) foreach (ushort occ in pax) if (occ != 0) _seated.Add(occ);
+            }
         }
 
         public override void _Process(double delta)
         {
             if (Client == null) return;
             float a = 1f - Mathf.Exp(-GlideRate * (float)delta);
+            RefreshSeated();   // one pass over the vehicles, not one per puppet
 
             foreach (var e in Client.Players.All)
             {
@@ -134,7 +141,7 @@ namespace UnturnedGodot
                     // exactly the "getting into a vehicle on the server makes the physics freak out because
                     // player hit box overlaps" report. The local shell already disables its own shapes on
                     // seat confirm (PlayerController); this is the same move for everyone else.
-                    bool seated = IsSeated(e.OwnerPlayerId);
+                    bool seated = _seated.Contains(e.OwnerPlayerId);
                     if (seated != av.HullSeated) { av.HullShape.Disabled = seated; av.HullSeated = seated; }
                 }
                 av.Body.SetLocomotion(av.Speed, stance);

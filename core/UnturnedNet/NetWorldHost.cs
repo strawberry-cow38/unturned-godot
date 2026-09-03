@@ -1005,8 +1005,10 @@ namespace UnturnedGodot.Net
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 
-        public bool SendEnterVehicle(uint netId)
-            => SendCommand(ReplicationIds.CommandEnterVehicle, new EnterVehicleCommand { NetId = netId }.Write);
+        /// <summary>Ask for a seat. Default AnySeat = the first free one, driver first -- what walking up to
+        /// a car and pressing F has always meant. A door zone that names a seat passes it here.</summary>
+        public bool SendEnterVehicle(uint netId, byte seat = EnterVehicleCommand.AnySeat)
+            => SendCommand(ReplicationIds.CommandEnterVehicle, new EnterVehicleCommand { NetId = netId, Seat = seat }.Write);
 
         public bool SendExitVehicle()
             => SendCommand(ReplicationIds.CommandExitVehicle, new ExitVehicleCommand().Write);

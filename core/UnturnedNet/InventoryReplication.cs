@@ -417,6 +417,29 @@ namespace UnturnedGodot.Net
 
         public bool TryGetCrate(uint netId, out CrateEntry crate) => _crates.TryGetValue(netId, out crate);
 
+        /// <summary>Shut anyone standing in this crate, which COPIES THEIR OPEN PAGE BACK into it. Split out
+        /// from ServerRemoveCrate because the order matters and got it wrong once: closing is what makes
+        /// crate.Storage current, so a caller that wants to read the contents (to tip them on the floor) has
+        /// to close first, and a caller that removes the crate first makes the copy-back a no-op --
+        /// ServerCloseStorage looks the crate up by id and silently skips the copy when it is gone. That is
+        /// every item the player had just dragged into the fridge, lost without a trace.</summary>
+        public void ServerCloseCrateViewers(uint netId, long tick)
+        {
+            // _byOwner is not structurally modified by ServerCloseStorage (it clears a field on the entry),
+            // so iterating it directly is safe.
+            foreach (var kv in _byOwner)
+                if (kv.Value.OpenCrateId == netId) ServerCloseStorage(kv.Key, tick);
+        }
+
+        /// <summary>Drop a crate. Map containers live for the session, so nothing needed this until a PLACED
+        /// container could be salvaged or picked up -- leaving the grid behind would keep its contents
+        /// addressable by a NetId with no object left in the world to stand next to.</summary>
+        public void ServerRemoveCrate(uint netId, long tick)
+        {
+            ServerCloseCrateViewers(netId, tick);   // before the removal, or the copy-back is skipped
+            _crates.Remove(netId);
+        }
+
         // ---- server side ----
 
         public PlayerEntry ServerAdd(ushort ownerPlayerId, long tick)

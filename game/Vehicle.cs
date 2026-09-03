@@ -1540,6 +1540,11 @@ namespace UnturnedGodot
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        /// <summary>Is anyone close enough to set an alarm off? Set by the side that owns the cars and knows
+        /// where every player is (VehicleNetSync on a server); null falls back to the local camera, which is
+        /// what singleplayer has always used.</summary>
+        public static System.Func<Vector3, bool> AlarmProximityTest;
+        public const float AlarmRadiusSq = 49f;   // ~7 m
         bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player) or damage sets off a ~30s honk+lights blip loop (master)
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
@@ -3548,7 +3553,38 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            p.AddChild(new MeshInstance3D { Name = "Body", Mesh = ContentProvider.ParseObj($"res://content/{s.Body}"), MaterialOverride = bodyMat });
+            // SPLIT THE LENSES OUT, exactly as Build() does. The puppet used to load the body WHOLE, so its
+            // headlights and taillights were baked into the paintwork and could never emit -- which is why a
+            // remote car drove around dark no matter what its driver did. Same zones, same X-mirror, so the
+            // lens geometry a puppet lights is the same geometry the real car lights.
+            ArrayMesh pBody = null, pHl = null, pTl = null;
+            var pTlZones = s.TaillightZoneMin != s.TaillightZoneMax
+                ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
+                          (new Vector3(-s.TaillightZoneMax.X, s.TaillightZoneMin.Y, s.TaillightZoneMin.Z), new Vector3(-s.TaillightZoneMin.X, s.TaillightZoneMax.Y, s.TaillightZoneMax.Z)) }
+                : null;
+            if (s.HeadlightZoneMin != s.HeadlightZoneMax)
+            {
+                var lz = (s.HeadlightZoneMin, s.HeadlightZoneMax);
+                var rz = (new Vector3(-s.HeadlightZoneMax.X, s.HeadlightZoneMin.Y, s.HeadlightZoneMin.Z), new Vector3(-s.HeadlightZoneMin.X, s.HeadlightZoneMax.Y, s.HeadlightZoneMax.Z));
+                (pBody, pHl) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", new[] { lz, rz });
+            }
+            else if (pTlZones != null)
+                (pBody, pTl) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", pTlZones);
+            else
+                pBody = ContentProvider.ParseObj($"res://content/{s.Body}");
+            p.AddChild(new MeshInstance3D { Name = "Body", Mesh = pBody, MaterialOverride = bodyMat });
+            if (pHl != null)
+            {
+                var m = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                p.AddChild(new MeshInstance3D { Name = "PuppetHeadlights", Mesh = pHl, MaterialOverride = m });
+                p.HeadlightMat = m;   // tint matches the real vehicle default (Vehicle._lampTint)
+            }
+            if (pTl != null)
+            {
+                var m = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                p.AddChild(new MeshInstance3D { Name = "PuppetTaillights", Mesh = pTl, MaterialOverride = m });
+                p.TaillightMat = m;
+            }
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
                 {
@@ -3593,6 +3629,16 @@ namespace UnturnedGodot
                 pivot.AddChild(new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) });
                 p.AddChild(pivot);
                 p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
+            }
+            // A car alarm you cannot hear is not an alarm. Same clip, same 3D falloff as the real vehicle's.
+            if (s.Horn != null)
+            {
+                var hogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"));
+                if (hogg != null)
+                {
+                    p.HornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
+                    p.AddChild(p.HornAudio);
+                }
             }
             // A6 rope-tow attach nodes: the IDENTICAL formula the real Build uses (lines ~1143-1147) so the
             // client's cosmetic rope hangs off the same bumper-height spots the host's physics rope does.
@@ -5495,7 +5541,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
-            v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master)
+            v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master). Only real Vehicles roll; a client's PUPPET is told via FlagAlarmed, so the two sides cannot disagree about which cars have alarms.
             ApplyVehicleCull(v);   // driveable vehicles had NO distance cull -> rendered full-detail at every range (master); cap them like props
             return v;
         }
@@ -7662,8 +7708,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (_alarmCheckT <= 0f)
                     {
                         _alarmCheckT = 0.3f;
-                        var acam = GetViewport().GetCamera3D();
-                        bool near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 49f;   // player within ~7m
+                        // WHO COUNTS AS "somebody walked past". The local camera is the right answer in
+                        // singleplayer and on a listen-server host, and the WRONG one on a dedicated server,
+                        // which has no camera at all -- GetCamera3D returns null there, so an alarm could
+                        // never fire on the machine that owns the car. AlarmProximityTest lets whoever knows
+                        // where the players actually are answer it; nothing sets it in SP, which keeps the
+                        // camera behaviour byte-identical.
+                        bool near;
+                        if (AlarmProximityTest != null) near = AlarmProximityTest(GlobalPosition);
+                        else
+                        {
+                            var acam = GetViewport().GetCamera3D();
+                            near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < AlarmRadiusSq;   // player within ~7m
+                        }
                         // (enemy proximity check removed with the zombie system)
                         if (near) TriggerAlarm();
                     }

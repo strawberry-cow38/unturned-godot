@@ -553,6 +553,19 @@ namespace UnturnedGodot
         /// MeshInstance3D (its Mesh is split for the screen, its Transform is copied so the screen sub-mesh --
         /// carved in the body's own local space -- lines up exactly). Add the returned node to the SAME parent
         /// the body was added to.</summary>
+        /// <summary>A stable identity for one placed set: its prop name and where it stands, which every
+        /// client resolves identically from the same map. FNV-1a over both, so two sets of the same model in
+        /// different rooms still get different channels.</summary>
+        static ulong StableSeed(string propName, Vector3 pos)
+        {
+            ulong h = 14695981039346656037UL;
+            void Mix(byte b) { h ^= b; h *= 1099511628211UL; }
+            foreach (char c in propName ?? "") { Mix((byte)c); Mix((byte)(c >> 8)); }
+            foreach (int q in new[] { Mathf.RoundToInt(pos.X * 100f), Mathf.RoundToInt(pos.Y * 100f), Mathf.RoundToInt(pos.Z * 100f) })
+                for (int i = 0; i < 4; i++) Mix((byte)(q >> (i * 8)));
+            return h;
+        }
+
         public static TVDevice Make(MeshInstance3D bodyMi, string propName)
         {
             // ON AT START (master: "making all tvs/monitors on at start"). Set BEFORE Build, because Build ends with
@@ -563,13 +576,28 @@ namespace UnturnedGodot
             // Only the TUBE televisions -- a colour LCD is not a period-plausible black-and-white set, and a monitor's
             // programs are chosen for their colour. Rolled BEFORE the channel pick, because a mono set draws from a
             // different channel list rather than filtering the colour one.
-            bool monoTube = kind == DeviceKind.CrtTv && GD.Randf() < 0.35f;
+            // EVERY CLIENT MUST AGREE WHAT IS ON THIS SET (strawberry 2026-09-03: "tv channel is clientside").
+            // The mono roll, the programme and the noise seed were each GD.Randf/GD.Randi at construction --
+            // rolled INDEPENDENTLY on every machine -- so two players standing in front of the same
+            // television watched different channels on it, and one saw a black-and-white set where the other
+            // saw colour.
+            //
+            // Nothing needs to go on the wire for this. A TV is a map prop: every client builds the same
+            // props at the same places from the same map data, so its NAME and its PLACE are already a
+            // shared secret. Seeding off them gets agreement for free and keeps working for a player who
+            // joins an hour late, which a broadcast-once event would not.
+            //
+            // The position is quantised to a centimetre before hashing: it comes from parsed map data and is
+            // identical across machines, but rounding it means a float that ever differs in its last bit
+            // cannot flip a whole channel.
+            var rng = new RandomNumberGenerator { Seed = StableSeed(propName, bodyMi.Transform.Origin) };
+            bool monoTube = kind == DeviceKind.CrtTv && rng.Randf() < 0.35f;
             var pool = ProgramsFor(kind, monoTube);
             var tv = new TVDevice
             {
                 PropName = propName, _kind = kind, _on = true, Transform = bodyMi.Transform,
-                _program = pool[Mathf.Abs((int)GD.Randi()) % pool.Length],
-                _seed = GD.Randf() * 100f,
+                _program = pool[(int)(rng.Randi() % (uint)pool.Length)],
+                _seed = rng.Randf() * 100f,
                 _monoTube = monoTube,
             };
             tv.Build(bodyMi.Mesh as ArrayMesh);

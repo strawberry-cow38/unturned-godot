@@ -2598,9 +2598,14 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
-                    if (_deployable.IsStorage)   // STORAGE device (fridge): spawn a Refrigerator LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    if (_deployable.IsStorage)   // STORAGE device (fridge): singleplayer spawns a Refrigerator LOCALLY here
                     {
-                        FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        // ...but NOT in MP any more. The fridge is a replicated deployable now, so the server
+                        // places it and DeployableReplicaView materializes it for everybody INCLUDING the
+                        // placer. Spawning locally as well would leave the placer looking at two fridges in
+                        // the same spot -- one real and shared, one a ghost only he can see and only he can
+                        // open, since the server's crate is keyed to the replicated NetId.
+                        if (NetPlaceDeployable == null) FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         GD.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
@@ -2608,7 +2613,8 @@ namespace UnturnedGodot
                             ushort id = _deployItem.id;
                             if (NetPlaceDeployable != null)
                             {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
-                                // then ServerPlace no-ops the storage id (filtered from the schema) so NO phantom replica spawns.
+                                // and now ALSO places the storage device for real and registers its grid (it is in the
+                                // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
                                 NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
@@ -3539,7 +3545,7 @@ namespace UnturnedGodot
         /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
         public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
-        public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
+        public System.Action<uint, byte> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for a seat (255 = any free one)
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
 
         // D1 MP combat routing seams (PEI_COMBAT_PLAN §3 D1) -- the NetEnterVehicle pattern: wired ONLY by
@@ -3626,7 +3632,11 @@ namespace UnturnedGodot
         {
             var p = NearestPuppet();
             if (p == null) return false;
-            NetEnterVehicle(p.NetId);
+            // The door zone you are standing at names a seat, exactly as it does in singleplayer
+            // (EnterVehicle(_focusVehicle, _focusAccess.Seat)); no zone means any free one, driver first.
+            byte seat = (_focusAccessValid && _focusAccess.Seat >= 0 && _focusAccess.Seat < 255)
+                        ? (byte)_focusAccess.Seat : (byte)255;
+            NetEnterVehicle(p.NetId, seat);
             return true;
         }
 

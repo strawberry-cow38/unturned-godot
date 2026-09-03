@@ -111,7 +111,13 @@ namespace UnturnedGodot
         // preserves ONLY while its own port is wired + powered (was PowerNet.GlobalPower in the stub)
         public override bool Preserves => _consumerPort != null && GodotObject.IsInstanceValid(_consumerPort) && _consumerPort.Powered;
 
-        public static Refrigerator Spawn(Node parent, Vector3 pos, byte w = 5, byte h = 4, float yawDeg = 0f)
+        /// <summary>The fridge's grid. Named rather than repeated as a literal because the SERVER registers
+        /// the authoritative crate at these dimensions (DeployableNetSchema -> DeployableNetDef.Storage*)
+        /// while the client materializes the visible one here: if the two ever disagreed, items would sit in
+        /// cells the other side does not believe exist.</summary>
+        public const byte GridW = 5, GridH = 4;
+
+        public static Refrigerator Spawn(Node parent, Vector3 pos, byte w = GridW, byte h = GridH, float yawDeg = 0f)
         {
             var c = new Refrigerator { Width = w, Height = h };
             parent.AddChild(c);
