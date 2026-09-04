@@ -56,7 +56,7 @@ namespace UnturnedGodot
         HurtDirectionIndicator _hurtIndicator;
         public HurtDirectionIndicator HurtIndicator => _hurtIndicator;
         LowHealthOverlay _lowHp;
-        Control _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
+        Crosshair3PControl _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
         public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
@@ -419,7 +419,11 @@ namespace UnturnedGodot
         {
             foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
             RefreshHotbar();
-            if (_crosshair3p != null) _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
+            if (_crosshair3p != null)
+            {
+                _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
+                if (_crosshair3p.Visible && Mathf.Abs(_crosshair3p.Spread - Player.CrosshairSpread01) > 0.005f) { _crosshair3p.Spread = Player.CrosshairSpread01; _crosshair3p.QueueRedraw(); }   // DYNAMIC: tightens on ADS, blooms on move/recoil (master 2026-09-04)
+            }
 
             // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself
             if (_alert != null && _alertLeft > 0f)
@@ -512,7 +516,9 @@ namespace UnturnedGodot
         // on top, so the reticle keeps its contrast whether it sits over bright sky or dark ground.
         private sealed partial class Crosshair3PControl : Control
         {
-            const float Gap = 3f, Len = 9f, Thick = 2f, Dot = 3f;   // gap from centre, arm length, arm thickness, centre dot
+            const float Len = 9f, Thick = 2f, Dot = 3f;   // arm length, arm thickness, centre dot
+            public float Spread = 1f;                         // PlayerController.CrosshairSpread01: hip 1 (gap 12 px) -> ADS ~0.05 (gap 3 px); bloom past 1
+            float Gap => 2.5f + 9.5f * Spread;                // gap from centre follows the spread
             static readonly Color Ink = Colors.White;                      // the mark (thin white lines)
             static readonly Color Edge = new Color(0f, 0f, 0f, 0.85f);     // a solid dark halo so it reads on sky, grass or a wall alike
 

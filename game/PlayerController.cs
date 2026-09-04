@@ -258,6 +258,11 @@ namespace UnturnedGodot
         float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")
         const float DriveCamZoomMin = 0.35f, DriveCamZoomMax = 1.8f, DriveCamZoomStep = 0.88f;
         float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
+        float _fpLookYaw, _fpLookPitch;           // ALT-hold LOOK in 1st person on foot (strawberry 2026-09-04): the head turns over either shoulder / up / down while the body, the aim and the viewmodel stay put; eases back on release
+        /// <summary>ALT held on foot (either view): the camera is looking around, the body is not -- no shooting, no ADS, no interacting while it lasts (master).</summary>
+        public bool AltLooking => !_dead && _driving == null && _riding == null && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsKeyPressed(Key.Alt);
+        /// <summary>0..~1.5: how open the 3P crosshair is. Hip = 1, ADS tightens to the gun's Spread_Aim, moving and un-drained recoil bloom it (HUD.Crosshair3PControl).</summary>
+        public float CrosshairSpread01 { get; private set; } = 1f;
         float _tpOrbitYaw, _tpOrbitPitch;         // ALT-hold ORBIT in 3rd person on foot (strawberry 2026-09-04 "add alt hold orbit cam for 3p"): the mouse swings the camera around the body -- to see your own face -- without turning the player; eases back on release
         public (float yaw, float pitch) DebugTpOrbit => (_tpOrbitYaw, _tpOrbitPitch);
         float _casingSurfT;                       // throttle for the casing-bank refresh (the surface under the feet, sampled while a gun is out -- not only on footsteps)   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
@@ -1755,7 +1760,7 @@ namespace UnturnedGodot
         void UpdateSalvage(float delta)
         {
             var v = (_focusVehicle != null && IsInstanceValid(_focusVehicle)) ? _focusVehicle : null;
-            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
+            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false) && !AltLooking;
             bool sparks = HasBlowtorch && lmb;   // the torch is LIT whenever the trigger's held (source: Repeated Start_Swing continuous use); it repairs a hurt car / salvages a cold wreck when aimed at one
             if (v != null && HasBlowtorch && !v.IsWreck && v.Hurt)   // blowtorch REPAIR: full-auto healing of a hurt alive car while LMB is held (master), with torch sparks
             {
@@ -5409,10 +5414,19 @@ namespace UnturnedGodot
                     float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
                     _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
                 }
-                else if (ThirdPersonActive && Input.IsKeyPressed(Key.Alt))   // 3P on foot, ALT held: ORBIT the camera around the body (mouse up -> cam rises and tilts down, the drive-cam convention); the player keeps facing where he was
+                else if (AltLooking)   // on foot, ALT held: the mouse moves the CAMERA, not the player (strawberry 2026-09-04)
                 {
-                    _tpOrbitYaw = Mathf.Wrap(_tpOrbitYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
-                    _tpOrbitPitch = Mathf.Clamp(_tpOrbitPitch + mm.Relative.Y * MouseSensitivity, -75f, 60f);
+                    if (_fp)
+                    {   // 1P: turn the head over either shoulder and up/down; the viewmodel lives in its own viewport and stays put
+                        _fpLookYaw = Mathf.Clamp(_fpLookYaw - mm.Relative.X * MouseSensitivity, -150f, 150f);
+                        _fpLookPitch = Mathf.Clamp(_fpLookPitch + (ControlsOptions.InvertLookY ? mm.Relative.Y : -mm.Relative.Y) * MouseSensitivity, -80f, 80f);
+                    }
+                    else
+                    {   // 3P: ORBIT the camera around the body (mouse up -> cam rises and tilts down, the drive-cam convention)
+                        _tpOrbitYaw = Mathf.Wrap(_tpOrbitYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
+                        _tpOrbitPitch = Mathf.Clamp(_tpOrbitPitch + mm.Relative.Y * MouseSensitivity, -75f, 60f);
+                    }
+                    _viewmodel?.SetAiming(false);   // looking around drops the sights
                     return;
                 }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
@@ -5511,7 +5525,7 @@ namespace UnturnedGodot
                 else if (_heldFluidItem != null) { if (Keybinds.IsDown(@event)) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (Keybinds.IsDown(@event)) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
-                else _viewmodel?.SetAiming(Keybinds.IsDown(@event));   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
+                else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
             {
@@ -5565,6 +5579,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null && _seatIndex == 0) _driving.ToggleEngine();
             }
+            else if (Keybinds.JustPressed(GameAction.Interact, @event) && AltLooking) { }   // ALT-look: no interacting (master 2026-09-04) -- the eye is on the camera, not the hands
             else if (Keybinds.JustPressed(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
@@ -5869,6 +5884,7 @@ namespace UnturnedGodot
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
+            if (AltLooking) return;   // looking around with ALT: no shooting (master 2026-09-04)
             if (IsSwimming) return;   // no firing while swimming -- guns are canUseUnderwater=false (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
             if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
@@ -5930,6 +5946,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
+            if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
             // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
             // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
@@ -5995,6 +6012,7 @@ namespace UnturnedGodot
                 }
                 _recoilPending += kickP;
                 _recoilYawPending += kickY;
+                if (!_fp) _flinch = (_flinch * new Quaternion(Vector3.Right, Mathf.DegToRad(kickP * 0.35f))).Normalized();   // 3P: the camera takes the same visible kick the 1P viewmodel does (master 2026-09-04); the aim recoil above is shared already
                 _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ) * stanceMul,
                                  new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ) * stanceMul, 0f, 0f);
                 DebugLastRecoilKick = new Vector2(kickP, kickY);
@@ -7023,11 +7041,23 @@ namespace UnturnedGodot
             if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
+                {   // 3P crosshair openness: hip 1 -> ADS the gun's Spread_Aim; moving and un-drained recoil bloom it (HUD draws the gap off this)
+                    float target = (_viewmodel?.IsAiming ?? false) ? Mathf.Clamp(Gun?.SpreadAim ?? 0.35f, 0.05f, 1f) : 1f;
+                    if (Velocity.LengthSquared() > 0.25f) target += 0.3f;
+                    target += Mathf.Min(1f, Mathf.Abs(_recoilPending) * 0.4f);
+                    CrosshairSpread01 = Mathf.Lerp(CrosshairSpread01, target, Mathf.Min(1f, 12f * (float)delta));
+                }
                 if (_fp)
                 {
                     // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
                     _cam.Position = new Vector3(0f, _eyeHeight - _stepSmooth, 0f);   // sit where the eyes WERE, catching up over ~0.13 s
-                    var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
+                    if (!Input.IsKeyPressed(Key.Alt) && (_fpLookYaw != 0f || _fpLookPitch != 0f))   // Alt released: the head eases back to the aim
+                    {
+                        float k = Mathf.Min(1f, 7f * (float)delta);
+                        _fpLookYaw = Mathf.Lerp(_fpLookYaw, 0f, k); _fpLookPitch = Mathf.Lerp(_fpLookPitch, 0f, k);
+                        if (Mathf.Abs(_fpLookYaw) < 0.05f) _fpLookYaw = 0f; if (Mathf.Abs(_fpLookPitch) < 0.05f) _fpLookPitch = 0f;
+                    }
+                    var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg + _fpLookPitch, -89f, 89f)), Mathf.DegToRad(_fpLookYaw), 0f), EulerOrder.Yxz);   // flinch left-multiplies the look; the ALT head-look rides on top of the aim
                     _cam.Basis = new Basis(_flinch) * look;
                 }
                 else
@@ -8151,8 +8181,8 @@ namespace UnturnedGodot
         /// UpdateLookFocus -- exposed so a test can ask it rather than restate it, because a restated rule agrees with
         /// itself whichever one of them is wrong.</summary>
         public (Vector3 From, Vector3 Dir) LookTrace()
-            => _fp && _cam != null ? (_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z)
-                                   : (ShoulderWorld, LookAxis);
+            => _cam != null && (_fp || ThirdPersonActive) ? (_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z)   // 3P too: from the camera centre, so the look-sphere lines up with the centre crosshair (strawberry 2026-09-04); the body is excluded from the ray
+                                                            : (ShoulderWorld, LookAxis);
 
         // ---- THE SHOULDER the interaction trace comes off (strawberry: "base the interaction lookatradius sphere off a
         // straight line based off the relevant lean shoulder (right shoulder is default if none held)").

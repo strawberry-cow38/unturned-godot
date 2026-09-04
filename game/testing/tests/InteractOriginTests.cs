@@ -49,43 +49,31 @@ namespace UnturnedGodot.Testing
             T.Check($"...i.e. NOT at the shoulder ({fp.From.DistanceTo(p.ShoulderWorld):0.##} m from it)",
                 fp.From.DistanceTo(p.ShoulderWorld) > 0.15f);
 
-            // ---- THIRD PERSON STARTS AT THE SHOULDER.
+            // ---- THIRD PERSON STARTS AT THE CAMERA CENTRE (strawberry 2026-09-04: "make the lookatradius ball come from the
+            // camera center in 3p so it lines up w crosshair" -- this supersedes the earlier shoulder rule for 3P; the
+            // body is excluded from the ray so the camera-to-body gap cannot self-focus).
             p.DriveFP = false;
             yield return Ticks(60);
             var tp = p.LookTrace();
-            T.Check($"in THIRD person it starts at the shoulder ({tp.From.DistanceTo(p.ShoulderWorld):0.###} m off)",
-                tp.From.DistanceTo(p.ShoulderWorld) < 0.01f);
-            // The claim that actually matters: it is NOT the camera. Everything else is bookkeeping.
-            T.Check($"...metres away from the camera ({tp.From.DistanceTo(p.Camera.GlobalPosition):0.##} m)",
-                tp.From.DistanceTo(p.Camera.GlobalPosition) > 1.5f);
-            T.Check($"...and it is ON the player, not floating behind them ({p.GlobalPosition.DistanceTo(tp.From):0.##} m from the feet)",
-                p.GlobalPosition.DistanceTo(tp.From) < 2f);
+            T.Check($"in THIRD person it starts at the camera centre ({tp.From.DistanceTo(p.Camera.GlobalPosition):0.###} m off)",
+                tp.From.DistanceTo(p.Camera.GlobalPosition) < 0.01f);
+            T.Check($"...and points down the camera's forward (dot {tp.Dir.Dot(-p.Camera.GlobalTransform.Basis.Z):0.###})",
+                tp.Dir.Dot(-p.Camera.GlobalTransform.Basis.Z) > 0.999f);
+            T.Check($"...which is metres behind the shoulder ({tp.From.DistanceTo(p.ShoulderWorld):0.##} m) -- the crosshair, not the body, is the reference in 3P",
+                tp.From.DistanceTo(p.ShoulderWorld) > 1.5f);
 
-            var local = p.GlobalTransform.AffineInverse() * tp.From;
-            T.Check($"...on the RIGHT by default ({local.X:0.##} m across)", local.X > 0.1f);
-            T.Check($"...below the eyes, where a shoulder is ({p.EyesWorld.Y - tp.From.Y:0.##} m down)",
-                p.EyesWorld.Y - tp.From.Y > 0.1f);
-            T.Check($"...aimed straight down the look axis ({Mathf.RadToDeg(tp.Dir.AngleTo(p.LookAxis)):0.###} deg off)",
-                tp.Dir.AngleTo(p.LookAxis) < 0.01f);
-
-            // ---- AND IT FOLLOWS THE LEAN. This is what makes it worth doing at all: peek round the corner and the
-            // trace goes with you, the same way the shot does.
-            float rightX = local.X;
+            // ---- AND IT STAYS ON THE CAMERA THROUGH A LEAN. In 3P the crosshair is the reference, so peeking round a
+            // corner moves the camera (and with it the trace), never the trace off the camera.
             p.ScriptedLean = 1;   // hold Q -- past the shoulder-tap window, so it really leans
             yield return Ticks(40);
             var leaned = p.LookTrace();
-            var leanedLocal = p.GlobalTransform.AffineInverse() * leaned.From;
-            T.Check($"leaning left moves the trace to the LEFT shoulder ({leanedLocal.X:0.##} m, was {rightX:0.##})",
-                leanedLocal.X < -0.1f);
-            // ...and the lean itself carries it further out than the shoulder swap alone would, because the origin
-            // hangs off the lean pivot. Without that it would flip sides on the spot and never actually peek.
-            T.Check($"...and the lean swings it clear of the body ({Mathf.Abs(leanedLocal.X):0.##} m vs {Mathf.Abs(rightX):0.##} upright)",
-                Mathf.Abs(leanedLocal.X) > Mathf.Abs(rightX) + 0.1f);
-
+            T.Check($"leaning keeps the trace on the camera centre ({leaned.From.DistanceTo(p.Camera.GlobalPosition):0.###} m off)",
+                leaned.From.DistanceTo(p.Camera.GlobalPosition) < 0.01f);
             p.ScriptedLean = 0;
             yield return Ticks(40);
-            var back = p.GlobalTransform.AffineInverse() * p.LookTrace().From;
-            T.Check($"releasing puts it back on the right ({back.X:0.##} m)", back.X > 0.1f);
+            var back = p.LookTrace();
+            T.Check($"...and so does releasing ({back.From.DistanceTo(p.Camera.GlobalPosition):0.###} m off)",
+                back.From.DistanceTo(p.Camera.GlobalPosition) < 0.01f);
 
             yield break;
         }
