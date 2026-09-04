@@ -312,7 +312,7 @@ namespace UnturnedGodot
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
             // (--peidrive) is the mode master actually plays, so THIS is the one that has to carry the src-accurate lighting.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
-            root.AddChild(new WorldEnvironment { Environment = env });
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
             // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter
             // to this camera. Skipped on the dedicated server, which renders nothing.
@@ -1915,7 +1915,7 @@ namespace UnturnedGodot
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.58f, 0.62f), AmbientLightEnergy = 1.0f };
             env.BackgroundMode = Godot.Environment.BGMode.Sky;
             env.Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() };
-            root.AddChild(new WorldEnvironment { Environment = env });
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
             var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 120f };
             sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             sun.RotationDegrees = new Vector3(-52f, 38f, 0f);
@@ -1972,7 +1972,7 @@ namespace UnturnedGodot
             // hardcoded flat GREY env (0.6 grey @ 0.75) is what made everything dark + washed -- it never used the
             // lighting rework at all. The DayNightCycle drives Env (sky + warm ambient) + the sun each frame.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
-            root.AddChild(new WorldEnvironment { Environment = env });
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
             // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter to
             // this camera. No dedicated-server guard here -- this path only ever builds a rendering client.

@@ -6788,7 +6788,7 @@ namespace UnturnedGodot
                 }
                 if (GrassDisplacers.DispImg != null && !GrassDisplacers.DispImg.IsEmpty()) GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
             }
-            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, GraphicsOptions.GrassDisplacement ? cnt : 0);   // retail IsGrassDisplacementEnabled
         }
 
         // Kept as real overrides so direct calls keep working (NetTests: `p._Process(0.016)` steps the ride cam synchronously);

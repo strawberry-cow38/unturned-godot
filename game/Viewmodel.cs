@@ -530,7 +530,7 @@ namespace UnturnedGodot
                     _isScope = gv.Gun != null && gv.Gun.Contains("augewehr");
                     if (_isScope && ironMesh != null)
                     {
-                        _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
+                        _scopeVp = new SubViewport { Size = new Vector2I(GraphicsOptions.ScopeSize, GraphicsOptions.ScopeSize), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
                         AddChild(_scopeVp);
                         _scopeCam = new Camera3D { Current = true, Fov = 22.5f };   // retail scope fov = 90/Zoom; the aug scope is 4x (items_catalog: "Rail mounted 4x zoom scope") -> 90/4 = 22.5deg, not the 3.5x/25.7 I'd guessed
                         _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the look-focus outline SILHOUETTE meshes (layer 19) into the scope -- like the main cams cull them; else they draw as a SOLID tint over the whole object (master: "outlines turn the entire object that color in scope space")
@@ -1136,7 +1136,7 @@ namespace UnturnedGodot
         void EnsureScopeRig(MeshInstance3D host)
         {
             if (_scopeVp != null && Godot.GodotObject.IsInstanceValid(_scopeVp)) return;   // once per gun
-            _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
+            _scopeVp = new SubViewport { Size = new Vector2I(GraphicsOptions.ScopeSize, GraphicsOptions.ScopeSize), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
             AddChild(_scopeVp);
             _scopeCam = new Camera3D { Current = true, Fov = 20f };
             _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // exclude the outline silhouette layer (19) -- else focus outlines tint the whole object in the scope (master)

@@ -90,7 +90,7 @@ namespace UnturnedGodot
             if (cam == null) return;
             // While driving, disable the whole pass (no second cull, no dilate, no stale mask on screen) --
             // nothing is focusable from a vehicle, so it's pure cost (esp. the wide 3p view over a POI).
-            bool on = !DrivingSuppress;
+            bool on = !DrivingSuppress && GraphicsOptions.Outline;   // retail OutlineQuality Off
             var mode = on ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
             if (_vp.RenderTargetUpdateMode != mode) _vp.RenderTargetUpdateMode = mode;
             if (_tr != null && _tr.Visible != on) _tr.Visible = on;

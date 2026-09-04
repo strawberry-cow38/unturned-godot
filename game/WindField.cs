@@ -23,6 +23,7 @@ namespace UnturnedGodot
         static bool _envRead;
         public static float SampleWind(Vector3 worldPos)
         {
+            if (!GraphicsOptions.Wind) return 0f;   // retail IsWindEnabled: no foliage sway / flag ripple
             if (!_envRead) { _envRead = true; var e = System.Environment.GetEnvironmentVariable("UG_WIND"); if (float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w)) TestWind = w; }   // UG_WIND=0..1 forces a fixed strength (flag droop / turbine tests)
             if (TestWind.HasValue) return TestWind.Value;
             float t = (float)(Time.GetTicksMsec() / 1000.0);

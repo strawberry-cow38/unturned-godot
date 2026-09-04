@@ -18,6 +18,7 @@ namespace UnturnedGodot
         public const uint ReflLayer = 1u << 18;   // visual layer 19: reflection-worthy geometry ALSO renders here (NOT 1<<19 -- that's OutlineOverlay.OutlineLayer; sharing it would draw trees as solid outline silhouettes)
         public const uint WaterLayer = 1u << 17;   // visual layer 18: the water plane itself sits here so the mirror camera can SKIP it (else it looks up into the water's own underside + occludes the trees)
         SubViewport _vp; Camera3D _cam; ShaderMaterial _mat; float _y; int _f; int _every = 2;
+        public static bool Enabled = true; public static int EveryFrames = 1;   // GraphicsOptions.PlanarReflection (retail PlanarReflectionQuality)
 
         public void Setup(ShaderMaterial waterMat, float waterY, Vector2I res)
         {
@@ -46,6 +47,8 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_mat != null) { _mat.SetShaderParameter("reflection_on", Enabled); if (!Enabled) { if (_vp != null && _vp.RenderTargetUpdateMode != SubViewport.UpdateMode.Disabled) _vp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; return; } }   // GraphicsOptions.PlanarReflection Off
+            _every = System.Math.Max(1, EveryFrames);   // Low = every 4th frame, Medium = every 2nd, High/Ultra = every frame
             if (_vp == null) return;
             var main = GetViewport()?.GetCamera3D();
             if (main == null) return;

@@ -804,6 +804,7 @@ namespace UnturnedGodot
         public void RagdollStart(Vector3 impulse)
         {
             if (_ragdolling) return;
+            if (!GraphicsOptions.Ragdolls) { _ragdolling = true; _ap?.Stop(); return; }   // retail IsRagdollsEnabled off: the body just stops where it is
             BuildRagdoll();
             _ragdolling = true;
             _ap?.Stop();

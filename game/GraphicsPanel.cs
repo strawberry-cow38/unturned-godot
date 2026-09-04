@@ -20,7 +20,8 @@ namespace UnturnedGodot
 
             var vbox = new VBoxContainer { CustomMinimumSize = new Vector2(420, 0) };
             vbox.AddThemeConstantOverride("separation", 10);
-            margin.AddChild(vbox);
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(470, 640), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };   // the retail-ported rows no longer fit a screen: scroll
+            margin.AddChild(scroll); scroll.AddChild(vbox);
 
             var title = new Label { Text = "GRAPHICS", HorizontalAlignment = HorizontalAlignment.Center };
             title.AddThemeFontSizeOverride("font_size", 28);
@@ -50,6 +51,22 @@ namespace UnturnedGodot
                 () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
+
+            Row(vbox, "Fullscreen", () => GraphicsOptions.Fullscreen.ToString(), () => { GraphicsOptions.Fullscreen = GraphicsOptions.Next(GraphicsOptions.FullscreenOrder, GraphicsOptions.Fullscreen); GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "V-Sync", () => GraphicsOptions.OnOff(GraphicsOptions.VSync), () => { GraphicsOptions.VSync = !GraphicsOptions.VSync; GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "Target frame rate", () => GraphicsOptions.TargetFps == 0 ? "Uncapped" : GraphicsOptions.TargetFps.ToString(), () => { GraphicsOptions.TargetFps = GraphicsOptions.Next(GraphicsOptions.FpsOrder, GraphicsOptions.TargetFps); GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "UI scale", () => $"{GraphicsOptions.UiScale * 100f:0}%", () => { GraphicsOptions.UiScale = GraphicsOptions.Next(GraphicsOptions.UiScaleOrder, GraphicsOptions.UiScale); GraphicsOptions.ApplyUiScale(ctx); });
+            Row(vbox, "Effect quality (next map)", () => GraphicsOptions.EffectQuality.ToString(), () => { GraphicsOptions.EffectQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.EffectQuality); GraphicsOptions.ApplyEffects(); });
+            Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Screen-space reflections", () => GraphicsOptions.OnOff(GraphicsOptions.ScreenSpaceReflections), () => { GraphicsOptions.ScreenSpaceReflections = !GraphicsOptions.ScreenSpaceReflections; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Planar water reflection", () => GraphicsOptions.PlanarReflection.ToString(), () => { GraphicsOptions.PlanarReflection = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.PlanarReflection); GraphicsOptions.ApplyWater(); });
+            Row(vbox, "Scope quality", () => GraphicsOptions.ScopeQuality.ToString(), () => { GraphicsOptions.ScopeQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrderNoOff, GraphicsOptions.ScopeQuality); });
+            Row(vbox, "Outline", () => GraphicsOptions.OnOff(GraphicsOptions.Outline), () => { GraphicsOptions.Outline = !GraphicsOptions.Outline; });
+            Row(vbox, "Grass displacement", () => GraphicsOptions.OnOff(GraphicsOptions.GrassDisplacement), () => { GraphicsOptions.GrassDisplacement = !GraphicsOptions.GrassDisplacement; });
+            Row(vbox, "Wind", () => GraphicsOptions.OnOff(GraphicsOptions.Wind), () => { GraphicsOptions.Wind = !GraphicsOptions.Wind; });
+            Row(vbox, "Ragdolls", () => GraphicsOptions.OnOff(GraphicsOptions.Ragdolls), () => { GraphicsOptions.Ragdolls = !GraphicsOptions.Ragdolls; });
 
             Row(vbox, "Render thread (restart)",   // Single / Multi; "(restart)" on the value until the running process matches (see GraphicsOptions.SetRenderThreadWanted)
                 () => GraphicsOptions.RenderThreadLabel,
@@ -114,6 +131,22 @@ namespace UnturnedGodot
             Row(vbox, "Render distance", () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
+
+            Row(vbox, "Fullscreen", () => GraphicsOptions.Fullscreen.ToString(), () => { GraphicsOptions.Fullscreen = GraphicsOptions.Next(GraphicsOptions.FullscreenOrder, GraphicsOptions.Fullscreen); GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "V-Sync", () => GraphicsOptions.OnOff(GraphicsOptions.VSync), () => { GraphicsOptions.VSync = !GraphicsOptions.VSync; GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "Target frame rate", () => GraphicsOptions.TargetFps == 0 ? "Uncapped" : GraphicsOptions.TargetFps.ToString(), () => { GraphicsOptions.TargetFps = GraphicsOptions.Next(GraphicsOptions.FpsOrder, GraphicsOptions.TargetFps); GraphicsOptions.ApplyWindow(); });
+            Row(vbox, "UI scale", () => $"{GraphicsOptions.UiScale * 100f:0}%", () => { GraphicsOptions.UiScale = GraphicsOptions.Next(GraphicsOptions.UiScaleOrder, GraphicsOptions.UiScale); GraphicsOptions.ApplyUiScale(ctx); });
+            Row(vbox, "Effect quality (next map)", () => GraphicsOptions.EffectQuality.ToString(), () => { GraphicsOptions.EffectQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.EffectQuality); GraphicsOptions.ApplyEffects(); });
+            Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Screen-space reflections", () => GraphicsOptions.OnOff(GraphicsOptions.ScreenSpaceReflections), () => { GraphicsOptions.ScreenSpaceReflections = !GraphicsOptions.ScreenSpaceReflections; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Planar water reflection", () => GraphicsOptions.PlanarReflection.ToString(), () => { GraphicsOptions.PlanarReflection = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.PlanarReflection); GraphicsOptions.ApplyWater(); });
+            Row(vbox, "Scope quality", () => GraphicsOptions.ScopeQuality.ToString(), () => { GraphicsOptions.ScopeQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrderNoOff, GraphicsOptions.ScopeQuality); });
+            Row(vbox, "Outline", () => GraphicsOptions.OnOff(GraphicsOptions.Outline), () => { GraphicsOptions.Outline = !GraphicsOptions.Outline; });
+            Row(vbox, "Grass displacement", () => GraphicsOptions.OnOff(GraphicsOptions.GrassDisplacement), () => { GraphicsOptions.GrassDisplacement = !GraphicsOptions.GrassDisplacement; });
+            Row(vbox, "Wind", () => GraphicsOptions.OnOff(GraphicsOptions.Wind), () => { GraphicsOptions.Wind = !GraphicsOptions.Wind; });
+            Row(vbox, "Ragdolls", () => GraphicsOptions.OnOff(GraphicsOptions.Ragdolls), () => { GraphicsOptions.Ragdolls = !GraphicsOptions.Ragdolls; });
             var note = new Label { Text = "Anisotropic filtering has no effect yet — no material requests it.",
                 HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 Modulate = new Color(1f, 1f, 1f, 0.45f) };
@@ -144,7 +177,8 @@ namespace UnturnedGodot
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" }) margin.AddThemeConstantOverride(s, 24);
             var vbox = new VBoxContainer { CustomMinimumSize = new Vector2(420, 0) };
             vbox.AddThemeConstantOverride("separation", 10);
-            margin.AddChild(vbox);
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(470, 640), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };   // the retail-ported rows no longer fit a screen: scroll
+            margin.AddChild(scroll); scroll.AddChild(vbox);
             return (margin, vbox);
         }
 
