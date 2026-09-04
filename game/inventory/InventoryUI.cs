@@ -118,6 +118,7 @@ void fragment() {
 
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
+        int _pendingSlotEquip = -1; ushort _pendingSlotEquipId;   // paperdoll drop in MP: equip into the hands once the server echo lands the weapon in this slot
         bool _dragging;
         byte _dragPage, _dragX0, _dragY0, _dragRot;
         bool _dragFromCloth;          // the drag started on a clothing equip slot (the worn garment, not a page cell)
@@ -266,7 +267,7 @@ void fragment() {
         // while the demo path in Main.cs worked fine. Scanning on Open closes the whole class instead of the
         // one call site that got noticed.
         public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
-        public void Close() { _open = false; Visible = false; _pdDragging = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
+        public void Close() { _open = false; Visible = false; _pdDragging = false; _pendingSlotEquip = -1; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
@@ -647,10 +648,11 @@ void fragment() {
             if (jar?.item == null) return;
             bool serverOwned = Player != null && Player.InventoryIsServerOwned;
             bool swapFits = occ != null && Inv.items[sp].checkSpaceSwap(sx, sy, jar.size_x, jar.size_y, jar.rot, occ.size_x, occ.size_y, 0);
+            ushort weaponId = jar.item.id;
             if (occ == null || swapFits)
             {
-                if (serverOwned) Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0);
-                else Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0);
+                if (serverOwned) { if (Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0)) ArmSlotEquip(slot, weaponId); }
+                else if (Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0)) EquipFromSlotNow(slot);
                 return;
             }
             bool occHeld = Player != null && Player.IsHeld(occ.GetAsset(), occ.item);   // the displaced weapon was in the hands -> go unarmed (as DropSelected does)
@@ -661,16 +663,22 @@ void fragment() {
                     if (!Player.RequestMoveItem(slot, occ.x, occ.y, dp, dx, dy, drot)) return;
                 }
                 else if (!Player.RequestDropItem(slot, occ.x, occ.y)) return;
-                Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0);
                 if (occHeld) Player.EquipUnarmed();
+                if (Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0)) ArmSlotEquip(slot, weaponId);
                 return;
             }
             slotPage.removeItem(0);
             if (!Inv.tryAddItem(occ.item) && Player != null)   // no room anywhere -> the ground, just in front of the player
                 Player.DropWorldItem(occ.item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
             if (occHeld) Player?.EquipUnarmed();
-            Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0);
+            if (Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0)) EquipFromSlotNow(slot);
         }
+
+        // "after the item is assigned to the slot, force equip it into your hands" (master 2026-09-04). SP: the slot
+        // holds it now -> the menu's own Equip on that cell (in-hand + NoteHeldFrom + closes the dashboard). MP: the
+        // move is a request and the slot fills on the owner echo -> arm it, Refresh fires the same Equip when it lands.
+        void EquipFromSlotNow(byte slot) { _pendingSlotEquip = -1; _selPage = slot; _selX = 0; _selY = 0; EquipSelected(); }
+        void ArmSlotEquip(byte slot, ushort id) { _pendingSlotEquip = slot; _pendingSlotEquipId = id; }
 
         // map a screen point to (page, cellX, cellY) over a registered drop zone
         bool PointToCell(Vector2 global, out byte page, out byte cx, out byte cy, out Control ctl, out bool isSlot)
@@ -1833,6 +1841,11 @@ void fragment() {
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
+            if (_pendingSlotEquip >= 0)   // a paperdoll drop's weapon just landed in its slot (owner echo) -> into the hands
+            {
+                var sp = Inv.items[_pendingSlotEquip];
+                if (sp.getItemCount() > 0 && sp.getItem(0)?.item?.id == _pendingSlotEquipId) { EquipFromSlotNow((byte)_pendingSlotEquip); return; }   // EquipSelected repaints itself
+            }
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
             _quickTiles.Clear();   // quick-craft is rebuilt as a dashboard section in the layout below
 
