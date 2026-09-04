@@ -741,6 +741,13 @@ namespace UnturnedGodot.Testing
             T.Check("seat handoff: driving-local, server DriverPlayerId == the peer", sess.Shell.IsDriving &&
                     ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId);
             sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
+            // the throttle STARTS the engine, which then cranks for the retail CarIgnition clip (2.04 s,
+            // 2026-09-04) before the drivetrain answers -- wait it out so the 100 ticks below are 100 ticks
+            // of DRIVING (the rig wants the car at speed and well clear of its entry point when the
+            // blackout freezes the replica; a car that only starts rolling at blackout-start makes the
+            // relative assert below marginal: coast-after-exit ~10 m vs half of a ~20 m divergence)
+            yield return Until(() => sess.LocalVehicle != null && !sess.LocalVehicle.EngineStarting, 4);
+            T.Check("the local car's engine caught and finished cranking", sess.LocalVehicle != null && sess.LocalVehicle.EngineOn && !sess.LocalVehicle.EngineStarting);
             yield return Ticks(100);
 
             // INBOUND-ONLY blackout, the live WAN profile: the driver keeps ticking + sending (Part A:
@@ -748,14 +755,19 @@ namespace UnturnedGodot.Testing
             // -- its node follows the blind driver) but receives NOTHING for 200 ticks -- past the
             // 64-tick ack-gap latch, under the 250-tick session timeout. The recovery full + hold
             // latch mid-window; everything reliable queues behind the wall.
-            bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
-            var frozenAt = haveRep ? repAtBlackout.Pos : default;
             long fullsBefore = ded.Server.Composer.Diag.FullSnapshotsComposed;
             net.ServerToClient.HoldUntilTick = net.CurrentTick + 200;
+            // a datagram composed the tick before the hold is still in flight and lands after it; the
+            // freeze reference is what the client holds once that has drained (the crank wait above moved
+            // the hold off the snapshot cadence's parity, which is where the 0.4 m "drift" came from)
+            yield return Ticks(2);
+            bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
+            var frozenAt = haveRep ? repAtBlackout.Pos : default;
 
-            yield return Ticks(160);
+            yield return Ticks(158);
             bool stillFrozen = sess.Client.Vehicles.TryGet(netId, out var repMid) && (repMid.Pos - frozenAt).magnitude < 0.01f;
-            T.Check("mid-blackout: the driver's replica froze at the blackout-start state", haveRep && stillFrozen);
+            float driftMid = haveRep ? (repMid.Pos - frozenAt).magnitude : -1f;
+            T.Check($"mid-blackout: the driver's replica froze at the blackout-start state (moved {driftMid:0.00} m since the hold)", haveRep && stillFrozen);
             float diverged = jeep.GlobalPosition.DistanceTo(new Vector3(frozenAt.x, frozenAt.y, frozenAt.z));
             T.Check($"...while the SERVER car kept moving under the adopted state stream ({diverged:0.0} m past the frozen state)", diverged > 15f);
             T.Check($"the recovery full latched during the blackout (fulls +{ded.Server.Composer.Diag.FullSnapshotsComposed - fullsBefore})",
