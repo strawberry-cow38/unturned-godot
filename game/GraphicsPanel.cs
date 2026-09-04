@@ -175,7 +175,7 @@ namespace UnturnedGodot
                 CustomMinimumSize = new Vector2(150, 34),
                 SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             };
-            slider.ValueChanged += v => { set((float)v); readout.Text = label(); };
+            slider.ValueChanged += v => { set((float)v); readout.Text = label(); GraphicsOptions.Save(); };
             h.AddChild(slider);
             h.AddChild(readout);
             parent.AddChild(h);
@@ -192,7 +192,7 @@ namespace UnturnedGodot
             h.AddChild(lbl);
             var btn = new Button { Text = value(), CustomMinimumSize = new Vector2(150, 34) };
             UITheme.Button(btn);
-            btn.Pressed += () => { advance(); btn.Text = value(); };
+            btn.Pressed += () => { advance(); btn.Text = value(); GraphicsOptions.Save(); };   // every row change persists (strawberry 2026-09-04 "make all persist")
             h.AddChild(btn);
             parent.AddChild(h);
         }

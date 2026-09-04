@@ -112,6 +112,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            GraphicsOptions.Load(); GraphicsOptions.ApplyAll(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)

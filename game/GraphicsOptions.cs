@@ -194,6 +194,51 @@ namespace UnturnedGodot
             catch (System.Exception e) { GD.PrintErr($"[graphics] could not write override.cfg: {e.Message}"); }
         }
 
+        // ---- PERSISTENCE (strawberry 2026-09-04 "make all persist"): user://graphics.cfg holds every graphics + controls row.
+        // Loaded once at boot (Main._Ready) and applied; saved by the panel after every change. The render-thread toggle
+        // lives in override.cfg (Godot reads it at boot) and is not duplicated here.
+        const string ConfigPath = "user://graphics.cfg";
+        public static void Save()
+        {
+            try
+            {
+                var cfg = new ConfigFile();
+                cfg.SetValue("graphics", "aa", (int)AA);
+                cfg.SetValue("graphics", "shadows", (int)Shadows);
+                cfg.SetValue("graphics", "aniso", Aniso);
+                cfg.SetValue("graphics", "draw_distance", DrawDistance);
+                cfg.SetValue("graphics", "shadow_distance", ShadowDistance);
+                cfg.SetValue("graphics", "resolution_x", Resolution.X);
+                cfg.SetValue("graphics", "resolution_y", Resolution.Y);
+                cfg.SetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity);
+                cfg.SetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
+                cfg.SetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
+                cfg.SetValue("controls", "invert_plane_pitch", ControlsOptions.InvertPlanePitch);
+                cfg.SetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity);
+                cfg.Save(ConfigPath);
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not save {ConfigPath}: {e.Message}"); }
+        }
+        public static void Load()
+        {
+            try
+            {
+                var cfg = new ConfigFile();
+                if (cfg.Load(ConfigPath) != Error.Ok) return;   // first run: defaults
+                AA = (AAMode)Mathf.Clamp((int)cfg.GetValue("graphics", "aa", (int)AA), 0, AAOrder.Length - 1);
+                Shadows = (ShadowQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "shadows", (int)Shadows), 0, ShadowOrder.Length - 1);
+                Aniso = (int)cfg.GetValue("graphics", "aniso", Aniso);
+                DrawDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "draw_distance", DrawDistance), 0.25f, 1f);
+                ShadowDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "shadow_distance", ShadowDistance), 40f, 300f);
+                Resolution = new Vector2I((int)cfg.GetValue("graphics", "resolution_x", Resolution.X), (int)cfg.GetValue("graphics", "resolution_y", Resolution.Y));
+                ControlsOptions.MouseSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity), ControlsOptions.MouseSensMin, ControlsOptions.MouseSensMax);
+                ControlsOptions.InvertLookY = (bool)cfg.GetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
+                ControlsOptions.InvertHeliPitch = (bool)cfg.GetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
+                ControlsOptions.InvertPlanePitch = (bool)cfg.GetValue("controls", "invert_plane_pitch", ControlsOptions.InvertPlanePitch);
+                ControlsOptions.HeliSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity), ControlsOptions.HeliSensMin, ControlsOptions.HeliSensMax);
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not load {ConfigPath}: {e.Message}"); }
+        }
         public static void ApplyAll(Node ctx)
         {
             ApplyAA(ctx);
