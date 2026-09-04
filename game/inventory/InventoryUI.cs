@@ -481,8 +481,23 @@ void fragment() {
             _dragFromCloth = false;
             _dragJar = pg.getItem(idx);
             _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
-            Vector2 itemTopLeft = ctl.GlobalPosition + (isSlot ? Vector2.Zero : new Vector2(_dragJar.x * CELL, _dragJar.y * CELL));
-            _grab = global - itemTopLeft;
+            Vector2 itemTopLeft;
+            if (isSlot)
+            {
+                // A hand slot is one WIDE tile with the icon centred in it (KeepAspectCentered), but the drag tile is
+                // item-sized -- so the grab is measured from where that item-sized tile sits centred in the slot, and
+                // clamped onto it, or the tile hangs off to the side of the cursor by half the slot's width (master
+                // 2026-09-04 "when dragging an item from a 1/2 slot, the item is offset from the mouse").
+                var itemSize = new Vector2(_dragJar.size_x * CELL, _dragJar.size_y * CELL);   // slots force rot 0
+                itemTopLeft = ctl.GlobalPosition + (ctl.Size - itemSize) / 2f;
+                _grab = global - itemTopLeft;
+                _grab = new Vector2(Mathf.Clamp(_grab.X, CELL * 0.25f, itemSize.X - CELL * 0.25f), Mathf.Clamp(_grab.Y, CELL * 0.25f, itemSize.Y - CELL * 0.25f));
+            }
+            else
+            {
+                itemTopLeft = ctl.GlobalPosition + new Vector2(_dragJar.x * CELL, _dragJar.y * CELL);
+                _grab = global - itemTopLeft;
+            }
             _dragging = true;
             RebuildDragTile();
             PlayInventoryAudio();   // #4: source startDrag plays inventory audio on grab
