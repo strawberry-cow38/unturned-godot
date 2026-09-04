@@ -131,6 +131,7 @@ namespace UnturnedGodot
         {
             if (VM == null) return false;
             if (slot == "Sight" && VM.IntegralSight) return false;   // aug: integral scope can't be detached (master)
+            if (slot == "Sight" && AttachmentFit.IsDefaultIrons(Player?.HeldItemForTest)) return false;   // factory irons are not an item: nothing to take off (master 2026-09-04)
             int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
             if (installed < 0 && !(VM.SlotHasModel(slot) && VM.SlotAttached(slot))) return false;
             if (installed >= 0)
@@ -140,7 +141,8 @@ namespace UnturnedGodot
                     HUD.Alert("No room to remove that — free a slot first");
                     return false;
                 }
-                AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, -1);
+                // the scope came off -> the gun's own irons are back ON (their id, not "empty": they are what the slot draws now)
+                AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, slot == "Sight" ? AttachmentFit.DefaultIronsIdOf(Player?.HeldItemForTest) : -1);
             }
             // A scope/optic coming OFF puts the gun's own irons back (SetSlotMesh also deactivates the scope PiP + restores
             // the iron aim hook); only a gun without irons hides the slot. Detaching used to just hide the node, so the scope
@@ -180,7 +182,7 @@ namespace UnturnedGodot
                 // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
                 // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
                 // which has the same gap and is the next thing to wire.
-                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0)
+                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0 && !(slot == "Sight" && AttachmentFit.IsDefaultIrons(Player.HeldItemForTest)))   // factory irons displace to nothing -- a scope goes straight on
                 {
                     HUD.Alert("Take the old one off first");
                     return false;
@@ -205,6 +207,7 @@ namespace UnturnedGodot
         {
             refusal = null;
             int prev = AttachmentFit.InstalledId(held, slot);
+            if (slot == "Sight" && AttachmentFit.IsDefaultIrons(held)) prev = -1;   // factory irons are not an item: a scope over them gives nothing back
             if (!TakeFromBagInstanceIn(inv, clicked)) return false;   // consume THE ONE CLICKED, not any of its id
             if (prev >= 0 && inv != null && !inv.tryAddItem(new Item((ushort)prev)))
             {

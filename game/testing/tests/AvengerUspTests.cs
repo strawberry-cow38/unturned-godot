@@ -37,6 +37,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            ItemCatalog.RegisterAll();   // self-sufficient when run ALONE (t1.ps1 -t): the magazine checks below read the catalog, which only an earlier test used to register
             string dir = ProjectSettings.GlobalizePath("res://content/");
             var usp = Def(dir, "avenger");
             var colt = Def(dir, "colt");

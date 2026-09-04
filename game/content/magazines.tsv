@@ -1,0 +1,60 @@
+id	folder	capacity	calibers	pellets	count_min	count_max	tracer	explosive	delete_empty
+6	Military_30	30	1	0	5	25	48	0	0
+17	Military_100	100	1	0	10	90	48	0	0
+20	Timberwolf_6	6	2	0	2	5	51	0	0
+98	Colt_7	7	3	0	1	6	48	0	0
+100	Cobra_20	20	4	0	5	15	48	0	0
+103	Schofield_5	5	5	0	2	4	48	0	0
+108	Ace_6	6	6	0	2	5	48	0	0
+111	Hawkhound_8	8	7	0	2	7	48	0	0
+113	Shells_8	8	8	6	2	7	48	0	1
+123	Ranger_35	35	9	0	5	30	48	0	0
+125	Ranger_75	75	9	0	10	65	48	0	0
+127	Nykorev_200	200	10	3	10	150	48	0	0
+130	Snayperskya_7	7	11	0	2	6	48	0	0
+133	Dragonfang_150	150	12	3	10	110	48	0	0
+298	Grizzly_5	5	13	0	2	4	51	0	0
+301	Rail_1	1	14	0			50	1	0
+347	Arrow_1	1	15	0			48	0	0
+348	Arrow_Maple_1	1	15	0			48	0	0
+351	Arrow_Birch_1	1	15	0			48	0	0
+352	Arrow_Pine_1	1	15	0			48	0	0
+381	Shells_2	2	16	8	2	2	48	0	1
+478	Rifle_5	5	17	0	2	4	48	0	0
+485	Sportshot_10	10	18	0	2	9	48	0	0
+489	Desert_Falcon_7	7	19	0	1	6	48	0	0
+520	Rocket_1	1	20	0				0	0
+1003	Matamorez_17	17	21	0	6	15	48	0	0
+1005	Matamorez_36	36	21	0	14	27	48	0	0
+1006	Cobra_40	40	4	0	10	30	48	0	0
+1020	Sabertooth_10	10	22	0	2	8	48	0	0
+1022	Avenger_13	13	23	0	3	10	48	0	0
+1026	Peacemaker_50	50	24	0	10	40	48	0	0
+1029	Viper_25	25	25	0	5	20	48	0	0
+1040	Kryzkarek_12	12	26	0	4	10	48	0	0
+1042	Yuri_64	64	27	0	16	48	48	0	0
+1166	Nailgun_20	20	28	0	20	20	48	0	1
+1177	Military_Tracer_20	20	1	0	5	15	49	0	1
+1200	Military_Explosive_20	20	1	0	5	15	55	1	1
+1209	Arrow_Explosive_1	1	15	0			55	1	0
+1302	Missile_1	1	29	0				0	0
+1339	Paintballs_Blue_35	35	30	0	30	35	106	0	1
+1340	Paintballs_Green_35	35	30	0	30	35	108	0	1
+1341	Paintballs_Orange_35	35	30	0	30	35	110	0	1
+1342	Paintballs_Purple_35	35	30	0	30	35	112	0	1
+1343	Paintballs_Red_35	35	30	0	30	35	114	0	1
+1344	Paintballs_Yellow_35	35	30	0	30	35	116	0	1
+1361	Teklowvka_15	15	31	0	5	10	48	0	0
+1365	Fury_250	250	32	4	200	250	48	0	0
+1368	Vonya_7	7	33	6	2	6	48	0	0
+1371	Bulldog_45	45	34	0	20	40	48	0	0
+1381	Card_71	71	35	0	20	50	48	0	0
+1384	Ekho_7	7	36	0	2	6	51	0	0
+1395	HMG_50	50	37	0	40	50	55	1	0
+1443	ShadowstalkerMk2_20	20	38	0	20	20	49	1	1
+1449	Scalar_30	30	39	0	10	25	48	0	0
+1479	MP40_32	32	40	0	16	32	48	0	0
+1483	Empire_28	27	41	0	14	27	48	0	0
+1485	Bane_21	21	42	6	5	20	48	0	0
+1487	Luger_9	9	43	0	1	8	48	0	0
+1490	Swissgewehr_20	20	1	0	5	15	48	0	0

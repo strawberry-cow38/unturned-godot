@@ -97,6 +97,7 @@ namespace SDG.Unturned
             WireClothingDims();
             WireConsumableStats();
             WireShotgunShells();
+            WireMagazinesFromTsv();   // every retail magazine the hand lists above did not cover -- so no gun reloads for free (master 2026-09-04)
             WireMagazines();
             WireFuelCans();
             WireFluidContainers();
@@ -360,6 +361,35 @@ namespace SDG.Unturned
                                                                 //  that the Avenger and the 1911 share a round -- is
                                                                 //  made BETTER by the real name: both now read .45 ACP
             Text(1022, "Low caliber military grade <color=rare>Avenger</color> magazine. Designed to fit 12 rounds.");
+        }
+
+        /// <summary>content/magazines.tsv (tools: prof/gen_mags.sh over Bundles/Items/Magazines/*/*.dat): id, folder, Amount,
+        /// Caliber_0.., Pellets, Count_Min/Max, Tracer, Explosive, Delete_Empty. Fills in EVERY magazine-type item the hand
+        /// lists above left inert -- those arrived from the item TSV with magCapacity 0 / IsMagazine false, which made
+        /// PlayerController.UsesMagItem false for their guns, and a gun that is neither mag-fed nor shell-fed reloaded to
+        /// full out of thin air (strawberry 2026-09-04: "fix ammo items not being consumed by guns"). Hand-wired rows win:
+        /// anything with a capacity or the ammo flag already set is left alone. Pellets > 1 = a shotgun shell (Shell()
+        /// shape: stackable ammo, pellets per shot); else a magazine with the retail capacity and its first caliber
+        /// group (the port keys a magazine on ONE caliber; no retail magazine in the table lists more than one).</summary>
+        static void WireMagazinesFromTsv()
+        {
+            string path = ProjectSettings.GlobalizePath("res://content/magazines.tsv");
+            if (!System.IO.File.Exists(path)) return;
+            int wired = 0, shells = 0;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var c = line.Split('\t');
+                if (c.Length < 5 || !ushort.TryParse(c[0], out ushort id)) continue;
+                var a = Assets.find(id);
+                if (a == null || a.magCapacity > 0 || a.isAmmo) continue;   // hand-wired (or not an item we carry) -> keep
+                int.TryParse(c[2], out int cap);
+                int cal = 0; var cals = c[3].Split(','); if (cals.Length > 0) int.TryParse(cals[0], out cal);
+                int.TryParse(c[4], out int pellets);
+                if (cap <= 0 || cal <= 0) continue;
+                if (pellets > 1) { a.magCaliber = cal; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; shells++; }
+                else { a.magCapacity = cap; a.magCaliber = cal; a.ammoType ??= "FMJ"; wired++; }
+            }
+            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept)");
         }
 
         static void WireConsumableStats()

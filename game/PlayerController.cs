@@ -5841,6 +5841,7 @@ namespace UnturnedGodot
             if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
             if (UsesMagItem && (FindBestMag()?.item.amount ?? 0) <= 0) { _viewmodel?.PlayDryFire(); return; }   // no spare mag WITH ROUNDS -> can't reload; dry-fire instead of refilling from an empty/absent mag (master)
             if (UsesShells && CountShells() <= 0) { _viewmodel?.PlayDryFire(); return; }        // shotgun with no shells in the bag -> can't reload
+            if (!UsesMagItem && !UsesShells && (Gun?.Caliber ?? 0) > 0 && !InfiniteAmmo) { _viewmodel?.PlayDryFire(); return; }   // a gun with a caliber but no ammo model must NOT refill from thin air (master 2026-09-04) -- wire its magazine instead
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
             _hammerActive = false;
