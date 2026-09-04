@@ -8067,7 +8067,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     bool lLit, rLit;
                     switch (LightbarPattern)
                     {
-                        case 1: { float t = _sirenFlash % 0.8f; bool pop = t < 0.06f || (t >= 0.14f && t < 0.20f); lLit = pop; rLit = pop; break; }
+                        case 1:   // double strobe (strawberry 2026-09-04): LEFT pops twice, then RIGHT pops twice, and so on
+                        {
+                            float t = _sirenFlash % 0.8f; bool leftHalf = t < 0.4f; float u = leftHalf ? t : t - 0.4f;
+                            bool pop = u < 0.07f || (u >= 0.15f && u < 0.22f);
+                            lLit = leftHalf && pop; rLit = !leftHalf && pop; break;
+                        }
                         case 2: { bool a = (_sirenFlash % 0.24f) < 0.12f; lLit = a; rLit = !a; break; }
                         default: { bool a = (_sirenFlash % 0.66f) < 0.33f; lLit = a; rLit = !a; break; }
                     }
