@@ -459,6 +459,7 @@ void sky() {
                 // civil dark (-12 deg) it is the ORIGINAL night look, untouched: 0.010 and the engine's sky-affect 1.0.
                 if (Env.VolumetricFogEnabled)
                 {
+                    float elevation = -Mathf.Cos(Time * Mathf.Tau) * 90f;   // +90 overhead at noon, -90 at midnight (the sun block's own, out of scope here)
                     float vol = elevation <= -12f ? 0.010f                                                        // NIGHT: as it was
                               : elevation <= 0f ? Mathf.Lerp(0.010f, 0.005f, (elevation + 12f) / 12f)             // last twilight before the sun clears the horizon
                               : Mathf.Lerp(0.005f, 0.002f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.005 -> 0.002 from 60 deg
