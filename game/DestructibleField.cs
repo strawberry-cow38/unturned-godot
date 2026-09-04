@@ -153,7 +153,7 @@ namespace UnturnedGodot
                 var mesh = r.Meshes[0];
                 aabb = mesh.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One);
                 xf = mesh.GlobalTransform;
-                propMat = mesh.MaterialOverride as StandardMaterial3D;
+                propMat = WetSurface.BaseOf(mesh.MaterialOverride);   // a wet-wrapped prop still tints its debris from the plain material
                 anchor = mesh;
                 dropMesh = mesh.Mesh;   // the actual prop model, cloned as the falling physics body
             }

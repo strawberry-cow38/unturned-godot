@@ -4821,7 +4821,14 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) { string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", ""); MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop"); }   // retail per-map loop (pei/washington shipped; others fall back to PEI)
+            if (_peiPlayable)
+            {
+                string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
+                // Washington's shipped "loop" is the 2016 trailer track, never meant to play in-game (strawberry
+                // 2026-09-04 "kill the music on washington") -> no map music there at all, no PEI fallback either.
+                if (mk != "washington")
+                    MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
+            }
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
             // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness

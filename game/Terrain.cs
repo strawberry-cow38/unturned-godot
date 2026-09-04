@@ -113,9 +113,9 @@ void fragment() {
         }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
         ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
-        ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
+        ROUGHNESS = mix(1.0, 0.72, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
         // NO splash impacts on terrain (master: gate impacts to solid PROPS, not terrain) -- terrain just soaks dark + damps.
-        SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
+        SPECULAR = 0.5 + r_wet * 0.06;                               // subtle sheen only (no metallic -- terrain isn't metal)
     }
 }
 ";

@@ -421,6 +421,7 @@ namespace UnturnedGodot
 
             var shapeCache = new System.Collections.Generic.Dictionary<string, Shape3D>();   // one collider per unique prop mesh, shared across instances -- Shape3D not ConcavePolygonShape3D: ladders get a BoxShape3D instead of a trimesh (see below)
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
+            Material WetMatFor(string nm) => WetSurface.Wrap(MatFor(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
@@ -844,7 +845,7 @@ namespace UnturnedGodot
                 // test inert: Line_Parking_0 is 12.5 x 5.0 x 0.00, so Y is 5 m and nothing was ever a decal.
                 var vaabb = visMesh.GetAabb();
                 bool isDecal = vaabb.Size.Z < 0.06f && Mathf.Max(vaabb.Size.X, vaabb.Size.Y) > 0.5f;
-                var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                     CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 if (mainMi != null) { long _mi0 = System.Diagnostics.Stopwatch.GetTimestamp(); root.AddChild(mainMi); _objMiT += System.Diagnostics.Stopwatch.GetTimestamp() - _mi0; }
@@ -901,7 +902,7 @@ namespace UnturnedGodot
                         }
                         if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
                         float fm = LodFadeMargin(e2 - b);
-                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                             VisibilityRangeBegin = b, VisibilityRangeEnd = e2,
                             VisibilityRangeBeginMargin = fm, VisibilityRangeEndMargin = fm,
                             VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self };
@@ -929,7 +930,7 @@ namespace UnturnedGodot
                 if (batched)
                 {
                     var bxf = new Transform3D(basis, gpos);
-                    var bmat = MatFor(matName);
+                    var bstd = MatFor(matName); var bmat = WetMatFor(matName);   // bstd: the plain material the destructible break effect tints from
                     var sl = new System.Collections.Generic.List<PropBatcher.Slot>(4);
                     var plan = LodPlanFor(p[0], name, visMesh, cull);
                     for (int lv = 0; lv < plan.Count; lv++)
