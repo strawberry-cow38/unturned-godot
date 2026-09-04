@@ -342,6 +342,7 @@ namespace UnturnedGodot
             _bySlot[piece.Key] = piece;
             node.SetMeta(SlotMeta, piece.Key);   // lets a physics hit resolve straight back to its Piece (see PieceForCollider)
             _all.Add(piece);
+            RainRoofMap.Invalidate(piece.Pos, 5f);   // a new roof/wall: the rain's cached tops under it are stale
             return piece;
         }
 
@@ -603,6 +604,7 @@ namespace UnturnedGodot
             // resolve, i.e. permanently unhittable and unsalvageable.
             if (_bySlot.TryGetValue(p.Key, out var cur) && cur == p) _bySlot.Remove(p.Key);
             _all.Remove(p);
+            RainRoofMap.Invalidate(p.Pos, 5f);   // the piece is gone: re-cast the cells it covered
             if (p.Node != null && GodotObject.IsInstanceValid(p.Node))
             {
                 // Retire the corpse THIS frame. QueueFree only deletes at end of frame, so the node kept

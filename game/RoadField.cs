@@ -60,19 +60,24 @@ namespace UnturnedGodot
         // impact rings; dry weather looks exactly like the old StandardMaterial (both globals sit at 0 and the block skips).
         Material RoadMaterial3D(int index, bool concrete)
         {
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/road_{index}.png");
+            Image img = null;
+            if (System.IO.File.Exists(p)) { img = new Image(); if (!ContentProvider.LoadOk(img, p)) img = null; }
+            if (!concrete)   // dirt / gravel TRAILS stay plain: no wet sheen, no raindrop rings (strawberry: "just the solid concrete roads")
+            {
+                if (img != null)
+                    return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                return new StandardMaterial3D { AlbedoColor = new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            }
+            // CONCRETE (asphalt) roads: the wet-surface shader -- rain rings + sheen, roofed spans stay dry via the roof map.
             RainSystem3D.EnsureGlobals();   // the shader links the rain globals -- they must exist first (the GrassDisplacers lesson)
             _wetShader ??= GD.Load<Shader>("res://content/wet_surface.gdshader");
             var m = new ShaderMaterial { Shader = _wetShader };
             m.SetShaderParameter("dry_roughness", 1.0f);
             m.SetShaderParameter("impact_amount", 1.0f);
             m.SetShaderParameter("splash_scale", 1.0f);
-            string p = ProjectSettings.GlobalizePath($"res://content/roads/road_{index}.png");
-            if (System.IO.File.Exists(p))
-            {
-                var img = new Image();
-                if (ContentProvider.LoadOk(img, p)) { m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); return m; }
-            }
-            m.SetShaderParameter("dry_albedo", concrete ? new Vector3(0.34f, 0.34f, 0.35f) : new Vector3(0.45f, 0.37f, 0.28f));
+            if (img != null) { m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); return m; }
+            m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
             return m;
         }
 

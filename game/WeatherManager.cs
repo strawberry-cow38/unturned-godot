@@ -39,8 +39,10 @@ namespace UnturnedGodot
         // can be tuned without touching the ripped table.
         public static float FrequencyMultiplier =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_FREQ"), out var f) ? f : 1f;
+        // Duration default 4x the ripped table (strawberry 2026-09-04: "rain storms should last much longer"): PEI's
+        // 0.05-0.15 cycles on the 24 min day was a 1-3.5 min shower; x4 = roughly 5-14 min. UG_WEATHER_DUR still overrides.
         public static float DurationMultiplier =
-            float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_DUR"), out var d) ? d : 1f;
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_DUR"), out var d) ? d : 4f;
 
         // lightning (Heavy Rain only: Has_Lightning, Min/Max_Lightning_Interval 15/60)
         float _nextLightning = -1f;
