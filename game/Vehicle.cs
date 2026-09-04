@@ -5634,7 +5634,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                                     var ab = half.GetAabb(); var c = ab.GetCenter();
                                     float z = isHead ? ab.Position.Z - 0.06f : ab.End.Z + 0.06f;
                                     (isHead ? v._autoSpot : v._autoTail).Add(new Vector3(c.X, c.Y, z));
-                                    GD.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
+                                    if (System.Environment.GetEnvironmentVariable("UG_LAMPDBG") == "1") GD.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
                                 }
                             }
                             foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
