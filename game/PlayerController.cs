@@ -7333,6 +7333,12 @@ namespace UnturnedGodot
             // when it is free, else the first that is. The fallback matters -- aiming at an occupied door
             // should still put you in the car rather than bouncing you off it.
             _seatIndex = (seat >= 0 && seat < v.SeatCount && v.SeatFree(seat)) ? seat : 0;
+            // LOOK STRAIGHT AHEAD on entry (strawberry 2026-09-04): the 1P free-look, the window peek, the 3P chase orbit and the
+            // aircraft ALT look all start from the vehicle's forward -- whatever way you were looking while walking up to the door
+            // no longer carries into the seat.
+            _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; _peekX = 0f;
+            _driveCamYaw = 0f; _driveCamPitch = 15f;
+            _flyLookYaw = 0f; _flyLookPitch = 0f;
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
