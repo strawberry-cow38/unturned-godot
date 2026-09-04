@@ -58,6 +58,17 @@ namespace UnturnedGodot.Testing
             return false;
         }
 
+        static Item FindItem(PlayerInventory inv, ushort id)
+        {
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = inv.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++) if (pg.getItem(i)?.item?.id == id) return pg.getItem(i).item;
+            }
+            return null;
+        }
+
         static int CountOf(PlayerInventory inv, ushort id)
         {
             int n = 0;
@@ -136,34 +147,50 @@ namespace UnturnedGodot.Testing
             // bound, so Drop() takes the `Player != null && Player.RequestMoveItem(...)` branch before the local
             // TryDrag. Bind it, or this tests a path she never uses.
             ui.Player = p2;
-            int beforeDetach = CountOf(inv, 5);
+            // FACTORY IRONS ARE NOT AN ITEM any more (strawberry 2026-09-04: "irons should be non-removable, only removed
+            // visually when a new scope is attached. they shouldnt be their own item"), so the menu refuses to detach
+            // them. What a player actually takes off a gun is an OPTIC: fit a Dot Sight over the irons, take it back
+            // off through the menu's own Detach, and drag THAT.
+            T.Check("factory irons refuse to detach", !menu.DebugDetach("Sight"));
+            T.Check($"...and stay in the slot ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
+                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == 5);
+            T.Check("a Dot Sight goes in the bag", inv.tryAddItem(new Item(146)));   // Dot Sight (rail optic, fits the Eaglefire)
+            yield return Ticks(2);
+            var dot = FindItem(inv, 146);
+            bool fitted = dot != null && menu.FitAttachment("Sight", 146, dot);
+            yield return Ticks(2);
+            T.Check($"the Dot Sight fits over the irons ({fitted})", fitted);
+            T.Check($"...and sits in the slot ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
+                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == 146);
+            T.Check($"...and the irons gave nothing back ({CountOf(inv, 5)} irons items in this bag)", CountOf(inv, 5) == 0);   // this is the PLAYER's bag (the Item(5) at the top went into the first, unbound one): no phantom irons item
+            int beforeDetach = CountOf(inv, 146);
             bool detached = menu.DebugDetach("Sight");
             yield return Ticks(2);
-            int afterDetach = CountOf(inv, 5);
+            int afterDetach = CountOf(inv, 146);
             T.Check($"the menu's Detach ran ({detached})", detached);
-            T.Check($"...and put a sight in the bag ({beforeDetach} -> {afterDetach})", afterDetach == beforeDetach + 1);
-            T.Check($"...and cleared the gun's slot ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
-                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == -1);
+            T.Check($"...and put the optic back in the bag ({beforeDetach} -> {afterDetach})", afterDetach == beforeDetach + 1);
+            T.Check($"...and the gun is back on its factory irons ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
+                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == 5);
 
             ui.Refresh();
             yield return Ticks(2);
-            bool? afterOff = DragOneCell(ui, inv, 5, out string ad);
+            bool? afterOff = DragOneCell(ui, inv, 146, out string ad);
             T.Check($"a sight taken OFF A GUN drags like any other item ({ad})", afterOff == true);
 
             // ---- THE ACTUAL BUG (strawberry: "if i re-equip the gun the sight is back on the gun").
-            // SeedDefaults keyed on gunSightId == -1, but -1 means BOTH "never fitted" and "the player took it off".
-            // So every re-equip re-installed the sight that was just removed -- and the player is left holding a
-            // second copy in the bag, which is why dragging another item onto it made one vanish.
-            int sightsInBag = CountOf(inv, 5);
+            // SeedDefaults keyed on gunSightId == -1, but -1 meant BOTH "never fitted" and "the player took it off",
+            // so every re-equip re-installed what was just removed and left a second copy in the bag. Now the slot
+            // holds the irons' own id after a detach, and re-equipping must neither re-fit the optic nor duplicate it.
+            int sightsInBag = CountOf(inv, 146);
             p2.EquipUnarmed();
             yield return Ticks(2);
             p2.EquipHotbar(1);            // re-equip the same gun
             yield return Ticks(3);
 
-            T.Check($"re-equipping does NOT put the removed sight back on ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
-                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == -1);
-            T.Check($"...and does not conjure a duplicate ({sightsInBag} in bag before, {CountOf(inv, 5)} after)",
-                CountOf(inv, 5) == sightsInBag);
+            T.Check($"re-equipping does NOT put the removed optic back on ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
+                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == 5);
+            T.Check($"...and does not conjure a duplicate ({sightsInBag} in bag before, {CountOf(inv, 146)} after)",
+                CountOf(inv, 146) == sightsInBag);
 
             // A gun with no separate irons item must still count as seeded, or the lookup re-runs every equip.
             var noIrons = new Item(120);   // a pistol-class item: no "<name> Iron Sights" exists
