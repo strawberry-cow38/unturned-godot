@@ -250,8 +250,12 @@ namespace UnturnedGodot
                 // Light emits from the SAME point as the emissive panel (the head underside) so the glow and the beam are
                 // one source -- raising the spot above the lamp is what made the "emissive spot look wrong". Weight/reach
                 // comes from the wide angle + soft falloff instead. Pool spreads WIDER than the cone (42 > cone half 38).
+                // FILL THE WHOLE CONE (strawberry 2026-09-04 "convert to big spots that fill the whole cone"): the angle
+                // attenuation used to be 1.9 -- a pool that was dim well inside the 38-deg visual cone and gone at its
+                // rim, so the beam shaft lit far more ground than the light did. Now the spot reaches the cone's rim at
+                // near-full strength (0.6 = a short soft edge) and its range clears the ground with margin.
                 Position = under, RotationDegrees = new Vector3(-90f, 0f, 0f),
-                SpotRange = len + 24f, SpotAngle = 42f, SpotAngleAttenuation = 1.9f, SpotAttenuation = 1.0f,
+                SpotRange = len + 24f, SpotAngle = half + 4f, SpotAngleAttenuation = 0.6f, SpotAttenuation = 1.0f,
                 LightColor = col, LightEnergy = Energy * _worn, ShadowEnabled = false,
             };
             _spot.AddToGroup(LightShadowBudget.Group);
