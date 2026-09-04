@@ -1811,6 +1811,7 @@ namespace UnturnedGodot
                 GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
             // (zombie navmesh bake removed 2026-08-25 -- master: rip out everything zombie)
+            if (mode != WorldMode.Dedicated) ShaderWarm.Begin(root);   // every content shader compiled behind the load, not on its first sight (GPU-timeout class, 2026-09-04)
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
         }
@@ -2082,6 +2083,7 @@ namespace UnturnedGodot
             // real Animals.dat spawns. Only the ~64 near you fully simulate; sight-chase + sound-lure.
             if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
             else { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
+            ShaderWarm.Begin(root);   // every content shader compiled behind the load (see ShaderWarm)
             result.Ready = true;
             return result;
         }
