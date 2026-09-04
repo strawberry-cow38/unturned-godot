@@ -2973,6 +2973,62 @@ namespace UnturnedGodot
             PlaySelectorSwitchSound();   // source fires the firemode effect on this toggle, not a bespoke click
         }
 
+        // ---- WORN HEADLAMP (strawberry 2026-09-04: "make the headlamp functional. when equipped, n toggles a
+        // flashlight emitted from the head. more powerful than the handheld one") -----------------------------------
+        //
+        // A different item on a different path to the handheld torch. The Headlamp is a GLASSES item (id 1199,
+        // "Head mounted flashlight") -- clothing, not a melee weapon -- so none of the MeleeDef machinery above
+        // applies: there is no `_melee` to read a Light flag off, and it works with your hands full.
+        //
+        // ITS NUMBERS ARE AUTHORED HERE, not read from a .dat, and that is a real gap rather than a shortcut: no
+        // headlamp .dat is extracted on this box. The handheld's are not authored either -- flashlight.dat carries
+        // a bare `Light` key and nothing else, so it runs on MeleeDef's defaults (range 64, 90 deg cone, energy
+        // 1.3). "More powerful" is measured against those: longer throw, tighter beam, brighter. If the retail
+        // .dat ever gets ripped, these three constants are what it should replace.
+        const ushort HeadlampItemId = 1199;
+        const float HeadlampRange = 90f;        // vs the handheld's 64 -- it throws further
+        const float HeadlampConeFull = 74f;     // vs 90 -- tighter, so the same energy lands concentrated
+        const float HeadlampEnergy = 2.1f;      // vs 1.3 -- and it is simply brighter
+        bool _headlampOn;
+        bool _headlampLit;      // what the BEAM is currently doing, vs _headlampOn which is what the switch says
+        SpotLight3D _headlamp;
+
+        /// <summary>Is the Headlamp actually WORN? Reads the glasses slot rather than anything in hand, which is
+        /// the whole point of it -- it lights the way with a rifle in your hands.</summary>
+        public bool WearingHeadlamp => Inventory?.wornGlasses?.id == HeadlampItemId;
+        public bool HeadlampOn => _headlampOn && WearingHeadlamp;
+
+        public void ToggleHeadlamp()
+        {
+            if (!WearingHeadlamp) return;
+            _headlampOn = !_headlampOn;
+            _headlampLit = _headlampOn && WearingHeadlamp;
+            ApplyHeadlamp();
+            PlaySelectorSwitchSound();   // same click the handheld toggle makes
+        }
+
+        /// <summary>Bring the beam in line with the state. Idempotent, and safe to call when the lamp was taken
+        /// off: TAKING IT OFF MUST KILL THE BEAM, or a player who unequips it while lit keeps a light source
+        /// welded to their face with no item and no way to turn it off.</summary>
+        public void ApplyHeadlamp()
+        {
+            bool want = _headlampOn && WearingHeadlamp;
+            if (!want) { if (IsInstanceValid(_headlamp)) _headlamp.Visible = false; return; }
+            if (!IsInstanceValid(_headlamp))
+            {
+                _headlamp = new SpotLight3D
+                {
+                    SpotRange = HeadlampRange,
+                    SpotAngle = HeadlampConeFull * 0.5f,   // Godot takes the HALF-angle; the constant above is the full cone, matching how the .dat states it
+                    LightEnergy = HeadlampEnergy,
+                    SpotAngleAttenuation = 1.0f,
+                    ShadowEnabled = false,   // same reason as the handheld: a moving shadow-caster re-renders the world every step
+                };
+                _cam?.AddChild(_headlamp);   // the camera IS the head, so the beam tracks where you look with no extra bone plumbing
+            }
+            _headlamp.Visible = true;
+        }
+
         void ApplyHeldLight()
         {
             bool want = _heldLightOn && HoldingLight && _melee.SpotEnabled;
@@ -5574,6 +5630,7 @@ namespace UnturnedGodot
                 else if (HoldingDeployable) { if (Keybinds.IsDown(@event)) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFluidItem != null) { if (Keybinds.IsDown(@event)) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (Keybinds.IsDown(@event)) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
+                else if (HoldingLight) { if (Keybinds.IsDown(@event)) ToggleHeldLight(); }   // RMB with the torch in hand toggles it (strawberry 2026-09-04 "change the flashlight to be toggled on/off with rmb instead of b"). Ahead of the strong-swing branch on purpose: the flashlight IS a melee item, so without this it would keep swinging instead.
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)
             }
@@ -5703,7 +5760,7 @@ namespace UnturnedGodot
                 _fHeldDoor = null; _doorLockTimer = 0f;
             }
             else if (Keybinds.JustPressed(GameAction.Flashlight, @event))
-                ToggleHeldLight();    // Flashlight (default B, source TACTICAL key): the held flashlight. Self-guards on actually holding one.
+                ToggleHeadlamp();     // Flashlight key (now N): the WORN headlamp. The handheld torch moved to RMB. Self-guards on actually wearing one.
             // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
             // B used to toggle it and now belongs to the torch, which is the source binding. BuildTool itself is
             // untouched and intact -- Toggle/CycleType/Place/Spawn all still work -- but nothing calls Toggle(),
@@ -7010,6 +7067,13 @@ namespace UnturnedGodot
             UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             UpdateSalvage((float)delta);   // wreck salvage prompt + blowtorch teardown
+            // HEADLAMP RECONCILE. Deliberately a per-frame comparison rather than a hook on the wear/unwear call:
+            // THREE independent paths can take the lamp off your face -- PlayerClothingController (SP unequip),
+            // RemotePlayers.ApplyWorn and InventoryReplication (both MP) -- and hooking one of them leaves the
+            // other two able to strand a lit beam on a player wearing nothing, with no item to toggle it back off.
+            // Comparing the wanted state to the applied one is two field reads and cannot be bypassed.
+            bool wantLamp = _headlampOn && WearingHeadlamp;
+            if (wantLamp != _headlampLit) { _headlampLit = wantLamp; ApplyHeadlamp(); }
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)

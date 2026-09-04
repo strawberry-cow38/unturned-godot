@@ -151,7 +151,7 @@ namespace UnturnedGodot
                                                                 // It had been moved to K precisely because H was double-booked with
                                                                 // Grenade; unbinding Grenade above is what frees H to come back, so
                                                                 // these two changes are one change and neither works alone.
-            [GameAction.Flashlight] = new Bind(Key.B),          // held tactical light (source TACTICAL key) -- a GameAction so ConflictWith can SEE B, not a hidden literal in the chain
+            [GameAction.Flashlight] = new Bind(Key.N),          // the HEADLAMP toggle (strawberry 2026-09-04 "n toggles a flashlight emitted from the head"). Was B for the HANDHELD torch, which moved to RMB in the same pass -- so B is free again and the build-mode collision the handheld used to cause is gone. The enum member keeps its name deliberately: this file's own header warns that renaming a GameAction orphans that user's line in keybinds.cfg, and "Flashlight" still describes what the key does.
             [GameAction.Inventory] = new Bind(Key.G),   // master 2026-09-03: G opens the inventory; Tab is kept as a fixed alternate (PlayerController)
             [GameAction.Map] = new Bind(Key.M),
             [GameAction.Craft] = new Bind(Key.Y),
