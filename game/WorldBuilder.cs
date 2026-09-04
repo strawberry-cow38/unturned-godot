@@ -157,6 +157,21 @@ namespace UnturnedGodot
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
+            // MATERIAL / STYLE VARIANTS (strawberry 2026-09-04 "some 'material variants' of wardrobes, shelves, fridges ...
+            // dont act as 'smart' containers"): every other member of a family already in this table, same family
+            // table + label. guid_mesh.txt is the source of the ids. Counter_1/Counter_3 stay out: they are SINKS.
+            ["56e56fe3b9f24351aa37af59b4869584"] = ("Fridge_1", 6, false, "Fridge"),
+            ["8242af6ef10e42ce9a2a31df1e0c2767"] = ("Wardrobe_1", 19, false, "Wardrobe"),
+            ["dc1f98c3805c474193cb9b380d0c083c"] = ("Shelf_3", 21, false, "Shelf"),          // solid: no tier profile ripped for it, so loot sits inside
+            ["437ea643805e43e399126f631aaf2a03"] = ("Cooler_1", 6, false, "Cooler"),
+            ["0467a617f1194026bff310538f34dd05"] = ("Cooler_2", 6, false, "Cooler"),
+            ["6d881d394b3746039805adbdbf2b33a4"] = ("Cooler_Beach_0", 6, false, "Cooler"),
+            ["eec9aa3ae5a44c75b764a72327f0df85"] = ("Cooler_Beach_1", 6, false, "Cooler"),
+            ["39ec99b8e13d4a259fafc7ba2d3abb2c"] = ("Cooler_Beach_2", 6, false, "Cooler"),
+            ["a9d221fe63834bfcaa2c9130b5edd288"] = ("Crate_1", 8, false, "Crate"),
+            ["21e4827e94b94512af16b78d6e31df18"] = ("Crate_2", 8, false, "Crate"),
+            ["07132524c8554ac4b24fd7618b32c297"] = ("Crate_4", 8, false, "Crate"),
+            ["247828ef63574258b6e1be743309c028"] = ("Crate_5", 8, false, "Crate"),
         };
 
         // MP (A1): the DISTINCT container kinds (mesh/display/label), sorted deterministically, so ContainerSchema can
@@ -420,7 +435,7 @@ namespace UnturnedGodot
                     matCache[nm] = mm;
                     return mm;
                 }
-                if (nm.StartsWith("Ice"))   // ice sheets (Ice_0/Ice_1): the src texture is a TRANSLUCENT ice material (alpha 0-94, EVERY pixel <127). MatFor's auto AlphaScissor(0.5) -- meant for foliage cutouts -- therefore discarded the WHOLE sheet = the "missing ice prop" (master, Yukon 2026-08-12). Render it as ice instead: keep the pattern RGB, drop the near-zero src alpha, faint translucency so it reads as ice not stone.
+                if (nm == "Ice_0" || nm == "Ice_1")   // (NOT Ice_Box_0 -- an icebox is a box, master 2026-09-04) ice sheets (Ice_0/Ice_1): the src texture is a TRANSLUCENT ice material (alpha 0-94, EVERY pixel <127). MatFor's auto AlphaScissor(0.5) -- meant for foliage cutouts -- therefore discarded the WHOLE sheet = the "missing ice prop" (master, Yukon 2026-08-12). Render it as ice instead: keep the pattern RGB, drop the near-zero src alpha, faint translucency so it reads as ice not stone.
                 {
                     mm = new StandardMaterial3D
                     {
