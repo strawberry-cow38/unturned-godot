@@ -2834,6 +2834,11 @@ namespace UnturnedGodot.Testing
 
             // ---- THE FEEL BAR: input -> local control surface within 1 tick, at WAN RTT ----
             T.Check("pre-input: engine idle", Mathf.Abs(veh.EngineForce) < 0.001f);
+            // Since 2026-09-04 a ground vehicle CRANKS for its ignition clip (2.04 s retail CarIgnition) before the drivetrain answers
+            // the throttle (strawberry: "add a delay between starting the engine and the ability to start moving"). The 1-TICK claim
+            // below is about network latency, not the crank -- so wait the crank out first.
+            yield return Until(() => !veh.EngineStarting, 4);
+            T.Check("the crank finished (engine started on entry, drivetrain live)", !veh.EngineStarting);
             sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step
             yield return Ticks(1);
             T.Check($"1 TICK after input the local ENGINE answered (EngineForce {veh.EngineForce:0.0}) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)",
