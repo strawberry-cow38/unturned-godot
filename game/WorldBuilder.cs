@@ -1086,7 +1086,10 @@ namespace UnturnedGodot
                     else { var cd = ClockDevice.Make(mainMi, MatFor(matName), 0f); if (cd != null) root.AddChild(cd); }   // local time for now; the Alberton bank's per-clock world zones + upright pass are a follow-up
                 }
                 if (name == "Well_0" && mainMi != null && mode != WorldMode.Dedicated)   // the bottomless shaft disc (master 2026-09-04) -- rides the ring's own node in object space
+                {
                     WellShaft.Make(mainMi, WellShaft.WallColor((MatFor(matName) as StandardMaterial3D)?.AlbedoTexture));
+                    WellShaft.WarmOnce(root);   // compile the shaft shader's pipeline behind the load, not on the first well in view
+                }
                 // Patient monitors (strawberry: "for now give it to random units across the map. it'll be a map making
                 // feature"). Random per unit rather than per map, so a ward has a mix -- and seeded off nothing but
                 // GD.Randf, because until it IS a map-making feature there is no authored flag to read.

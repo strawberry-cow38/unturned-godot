@@ -19,6 +19,15 @@ namespace UnturnedGodot
         public static MeshInstance3D Make(MeshInstance3D ring, Color wall)
         {
             if (!Enabled) return null;
+            var mi = BuildDisc(wall, InnerRadius);
+            if (mi == null) return null;
+            ring.AddChild(mi);   // child of the ring's own mesh node -> rides its placement transform in object space
+            return mi;
+        }
+
+        /// <summary>The disc + its ShaderMaterial, unattached. Shared by the world attach and the load-time warm draw.</summary>
+        public static MeshInstance3D BuildDisc(Color wall, float radius)
+        {
             _shader ??= GD.Load<Shader>("res://content/well_depth.gdshader");
             if (_shader == null) return null;
             var st = new SurfaceTool();
@@ -33,13 +42,15 @@ namespace UnturnedGodot
             }
             var mat = new ShaderMaterial { Shader = _shader };
             mat.SetShaderParameter("wall_color", wall);
-            mat.SetShaderParameter("radius", InnerRadius + 0.02f);
+            mat.SetShaderParameter("radius", radius + 0.02f);
             mat.SetShaderParameter("max_view_dist", MaxViewDist);
-            var mi = new MeshInstance3D { Name = "WellShaft", Mesh = st.Commit(), MaterialOverride = mat, VisibilityRangeEnd = MaxViewDist, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-            ring.AddChild(mi);   // child of the ring's own mesh node -> rides its placement transform in object space
-            return mi;
+            return new MeshInstance3D { Name = "WellShaft", Mesh = st.Commit(), MaterialOverride = mat, VisibilityRangeEnd = MaxViewDist, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         }
 
+        /// <summary>WARM DRAW (tinyclaw 2026-09-04: a brand-new shader's first draw is a synchronous pipeline compile; on a
+        /// teleport, on top of streaming uploads, with the separate render thread mid-frame, that is a plausible GPU
+        /// timeout). Draw the disc once, right in front of the camera, for a few frames after the world builds --
+        /// the PowerNet wire-arrow prewarm pattern -- so the pipeline exists before the first well comes into view.</summary>
         /// <summary>The ring's stone colour, read off the prop atlas at the inner wall's UV swatch (Well_0 is flat-shaded:
         /// its stone faces map to a 7x7-texel patch around (0.754, 0.769)). Falls back to a mid grey.</summary>
         public static Color WallColor(Texture2D atlas)
@@ -54,6 +65,33 @@ namespace UnturnedGodot
                 return img.GetPixel(x, y);
             }
             catch { return new Color(0.42f, 0.40f, 0.37f); }
+        }
+
+        static bool _warmed;
+        public static void WarmOnce(Node root)
+        {
+            if (_warmed || !Enabled || root == null) return;
+            _warmed = true;
+            root.AddChild(new WellShaftWarm());
+        }
+    }
+
+    public sealed partial class WellShaftWarm : Node3D
+    {
+        int _frames = 4;
+        MeshInstance3D _disc;
+        public override void _Ready()
+        {
+            _disc = WellShaft.BuildDisc(new Color(0.42f, 0.40f, 0.37f), 0.25f);
+            if (_disc == null) { QueueFree(); return; }
+            _disc.VisibilityRangeEnd = 0f;   // the warm draw must not be range-culled
+            AddChild(_disc);
+        }
+        public override void _Process(double delta)
+        {
+            var cam = GetViewport()?.GetCamera3D();
+            if (cam != null) GlobalTransform = new Transform3D(cam.GlobalTransform.Basis, cam.GlobalPosition - cam.GlobalTransform.Basis.Z * 1.5f);   // 1.5 m ahead, facing the camera (the disc's +Z normal toward it)
+            if (--_frames <= 0) QueueFree();
         }
     }
 }
