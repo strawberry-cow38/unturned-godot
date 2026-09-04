@@ -481,6 +481,7 @@ namespace UnturnedGodot
         float _fluidPickupTimer;      // seconds F has been held on _fHeldFluid
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
+        float _lookEndDist;     // its distance along the trace at the last scan (per-frame sphere reposition)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
         MeshInstance3D _lookHullViz; ImmediateMesh _lookHullMesh; bool _showLookHulls;   // I-toggle wireframe of every vehicle's look-focus hulls (culled behind-cam / past LookHullVizRange for fps)
         const float LookHullVizRange = 70f;        // don't draw hull wireframes for vehicles farther than this from the camera (fps)
@@ -570,6 +571,7 @@ namespace UnturnedGodot
                 _lookRayQ.From = from; _lookRayQ.To = from + fwd * LookReach;
                 var rhit = space.IntersectRay(_lookRayQ);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
+                _lookEndDist = (_lookEnd - from).Length();   // so the per-frame sphere reposition can ride the current camera forward between scans
                 // a placed deployable (generator) stops the ray on the world layer -> focus it directly from the ray hit
                 // (LOS-correct: a wall in the way stops the ray first). The LookReach IS the look-at radius.
                 if (rhit.Count > 0)
@@ -6952,9 +6954,6 @@ namespace UnturnedGodot
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
-            if ((_lookFocusT += delta) >= 1.0 / 30.0) { _lookFocusT = 0; UpdateLookFocus(); }   // PERF: 30 Hz is plenty for a highlight/prompt (was every frame: a ray + a sphere query + a marshalled vehicles group at 450 fps)   // eye-ray -> focus the item you're aiming at
-            UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
-            UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
             UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
@@ -7065,6 +7064,14 @@ namespace UnturnedGodot
                     StepThirdPersonCam((float)delta);
                 }
             }
+            // LOOK SCAN AFTER THE CAMERA, not before (strawberry 2026-09-04 "when moving the mouse the 3p lookatradius ball is
+            // offset to the left of the crosshair"): the 3P trace runs down the camera's forward, and the camera basis is set
+            // in the block above -- scanning first meant every scan used LAST frame's yaw, so a turning view carried the
+            // look-sphere off the crosshair (30 Hz throttle on top). Same order for the wire/hose tool looks.
+            if ((_lookFocusT += delta) >= 1.0 / 30.0) { _lookFocusT = 0; UpdateLookFocus(); }   // PERF: 30 Hz is plenty for a highlight/prompt (was every frame: a ray + a sphere query + a marshalled vehicles group at 450 fps)   // eye-ray -> focus the item you're aiming at
+            UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
+            UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
+            if (_lookViz != null && _lookViz.Visible && _lookEndDist > 0f) { var (lf, ld) = LookTrace(); _lookViz.GlobalPosition = lf + ld * _lookEndDist; }   // the debug sphere rides the CURRENT trace every frame, not the 30 Hz sample
             UpdateBody(delta);
         }
 
