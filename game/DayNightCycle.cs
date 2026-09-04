@@ -454,11 +454,16 @@ void sky() {
                 // haze into a white-out by day (master 2026-09-04: "at night its great, but the day and dusk and dawn are super
                 // foggy"). Night KEEPS 0.010 (the lamp-glow haze that reads great), sunrise/sunset 0.004, noon 0.002 --
                 // piecewise so dawn/dusk are their own key, not the midpoint of night and noon.
+                // Keyed on SUN ELEVATION, not the clock: the first cut ramped linearly from midnight to sunrise, which made
+                // 21:00 already a quarter weaker than midnight (master: "the night volum fog seems way weaker now?"). Below
+                // civil dark (-12 deg) it is the ORIGINAL night look, untouched: 0.010 and the engine's sky-affect 1.0.
                 if (Env.VolumetricFogEnabled)
                 {
-                    float vol = noon < 0.5f ? Mathf.Lerp(0.010f, 0.004f, noon / 0.5f) : Mathf.Lerp(0.004f, 0.002f, (noon - 0.5f) / 0.5f);
+                    float vol = elevation <= -12f ? 0.010f                                                        // NIGHT: as it was
+                              : elevation <= 0f ? Mathf.Lerp(0.010f, 0.005f, (elevation + 12f) / 12f)             // last twilight before the sun clears the horizon
+                              : Mathf.Lerp(0.005f, 0.002f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.005 -> 0.002 from 60 deg
                     Env.VolumetricFogDensity = vol * (Overcast ? 1.5f : 1f);
-                    Env.VolumetricFogSkyAffect = Mathf.Lerp(0.7f, 0.25f, noon);   // like the depth fog: the noon sky stays blue, dawn/dusk/night haze into it
+                    Env.VolumetricFogSkyAffect = elevation <= -12f ? 1f : Mathf.Lerp(1f, 0.25f, Mathf.Clamp((elevation + 12f) / 72f, 0f, 1f));   // noon sky stays blue; night = default 1.0
                 }
 
                 // STORM: master wants heavy weather to match the moody --raintest demo (grey overcast sky, thick fog,
