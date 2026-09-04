@@ -6956,6 +6956,17 @@ namespace UnturnedGodot
             {
                 bool drivingArms = _fp && _driving != null && _seatIndex == 0 && !_driving.IsHeli && !_driving.IsPlane && !_dead;   // behind a WHEEL in 1P: hands on it
                 _viewmodel.SetDriving(drivingArms);
+                if (drivingArms && _driving.HasSteerWheel && _cam != null)
+                {
+                    // the real wheel's pivot -> main-camera screen px + depth (+ its axis in camera space, + steer) so the viewmodel pins the hands to it
+                    var vt = _driving.GetGlobalTransformInterpolated();
+                    var wheelW = vt * _driving.SteerPivotLocal;
+                    var camInv = _cam.GlobalTransform.AffineInverse();
+                    var wl = camInv * wheelW;
+                    if (wl.Z < -0.05f) _viewmodel.SetDrivingWheel(_cam.UnprojectPosition(wheelW), -wl.Z, (camInv.Basis * (vt.Basis * _driving.SteerAxisLocal)).Normalized(), _driving.SteerAngleDegrees);
+                    else _viewmodel.ClearDrivingWheel();
+                }
+                else _viewmodel.ClearDrivingWheel();
                 _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead) || drivingArms);   // FP gun arms on foot, driving arms at the wheel
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }

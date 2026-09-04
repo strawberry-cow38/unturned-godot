@@ -1570,7 +1570,10 @@ namespace UnturnedGodot
         public bool AlarmedForTest { get => _alarmed; set => _alarmed = value; }
         public bool AlarmActiveForTest => _alarmTimer > 0f;
         public bool BrakingNow => _braking;
-        public float SteerAngleDegrees => _steerAngle;      // MP §3.6: the wheel-steer summary the snapshot carries
+        public float SteerAngleDegrees => _steerAngle;
+        public bool HasSteerWheel => _steerPivot != null;                           // a real steering-wheel model exists (its pivot = where 1P driving hands go)
+        public Vector3 SteerPivotLocal => _steerPivot != null ? _steerPivot.Position : Vector3.Zero;
+        public Vector3 SteerAxisLocal => _steerAxis;                                 // wheel disc normal, vehicle-local      // MP §3.6: the wheel-steer summary the snapshot carries
         public float SpeedMaxMps => _speedMax;              // MP Part A: the spec Speed_Max -- the server envelope's horizontal cap derives from it (spec-derived, never hardcoded)
 
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
@@ -3841,6 +3844,15 @@ namespace UnturnedGodot
         /// <summary>Re-apply every lamp's visual from its broken flag AND the current on/off state. Called on
         /// break, on repair, and from SetHeadlights/SetTaillights -- so a lamp shot out while the lights are
         /// OFF still stays dark when they are switched on, which is the whole point of the feature.</summary>
+        /// <summary>Brake flare / running glow on EVERY tail lamp: the single _taillightMat (the first/left half of a split
+        /// lens, or the shared box material) plus every _lampMats entry labelled taillight_*. A shot-out lamp stays dark.</summary>
+        void SetTailFlare(bool braking)
+        {
+            float e = braking ? 6f : 2f;
+            if (_taillightMat != null) _taillightMat.EmissionEnergyMultiplier = e;
+            for (int i = 0; i < _lampMats.Count; i++)
+                if (_lampMats[i] != null && _lampLabels[i].StartsWith("taillight") && !_lampBroken[i]) _lampMats[i].EmissionEnergyMultiplier = e;
+        }
         void ApplyLampState()
         {
             for (int i = 0; i < _lampNodes.Count; i++)
@@ -6610,7 +6622,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 bool tCoast = Mathf.Abs(throttle) < 0.05f && Mathf.Abs(steer) < 0.05f && !footBrake;     // no throttle AND no steer input -> engine-brake it down (a steer-only pivot must NOT coast-brake, or it can't spin)
                 Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * EngineBrakeScale * EngineRpmNorm : 0f));   // engine braking scales with revs, same as the car
                 _braking = handbrake || footBrake;
-                if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;
+                if (_taillightsOn) SetTailFlare(_braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
                 return;
             }
             float eng = (footBrake || neutral) ? 0f : ThrottleForcePerWheel(throttle);
@@ -6742,7 +6754,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 Brake = footB;
             }
             _braking = handbrake || footBrake;   // remembered for the trailer brake-light pass-through (UpdateCoupled)
-            if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
+            if (_taillightsOn) SetTailFlare(_braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
         }
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
@@ -7420,7 +7432,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public void DriveTrailerLights(bool running, bool braking)
         {
             if (_taillightsOn != running) SetTaillights(running);
-            if (_taillightMat != null && running) _taillightMat.EmissionEnergyMultiplier = braking ? 6f : 2f;
+            if (running) SetTailFlare(braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
         }
 
         // A real colored light cast from a lightbar lens (source Siren_0/Siren_1 are GameObjects with Unity Lights).

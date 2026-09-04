@@ -68,12 +68,37 @@ namespace UnturnedGodot
             }
         }
         void SetDrivingDeferred() => SetDriving(true);
+        // WHEEL PIN (strawberry 2026-09-04: "the 1p vehicle driving hands should attach to the steering wheel no matter what").
+        // PlayerController hands us the real steering-wheel pivot each frame as MAIN-camera screen px + depth (+ the wheel's axis in
+        // camera space and the steer angle). We re-project that through the viewmodel camera at the same depth -- exact regardless
+        // of the two cameras' FOV difference -- and slide the arms so the MIDPOINT of the two hand bones sits on it, then turn the
+        // whole arm pair about that point with the wheel. No pose can miss the wheel this way; a vehicle without a wheel model
+        // falls back to the skull-on-camera slide.
+        Vector2 _wheelScreen; float _wheelDepth, _wheelSteerDeg; Vector3 _wheelAxisCam; bool _wheelKnown;
+        int _vmLHand = -1, _vmRHand = -1;
+        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg) { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelKnown = depth > 0.05f; }
+        public void ClearDrivingWheel() => _wheelKnown = false;
+        Vector3 _wheelTargetCam;   // the wheel pivot in viewmodel-camera space, this frame
+        bool WheelHandsCentre(out Vector3 handsLocal)
+        {
+            handsLocal = Vector3.Zero;
+            var skel = _arms?.Skeleton; if (skel == null) return false;
+            if (_vmLHand < 0) { _vmLHand = skel.FindBone("Left_Hand"); _vmRHand = skel.FindBone("Right_Hand"); }
+            if (_vmLHand < 0 || _vmRHand < 0) return false;
+            handsLocal = (skel.GetBoneGlobalPose(_vmLHand).Origin + skel.GetBoneGlobalPose(_vmRHand).Origin) * 0.5f;
+            return handsLocal.LengthSquared() > 1e-4f;
+        }
         Vector3 DrivingArmsPos()
         {
             var skel = _arms?.Skeleton; if (skel == null) return _armsPos;
             if (_vmSkull < 0) { _vmSkull = skel.FindBone("Skull"); if (_vmSkull < 0) return _armsPos; }
             var head = skel.GetBoneGlobalPose(_vmSkull).Origin;
             if (head.LengthSquared() < 0.01f) return _armsPos;
+            if (_wheelKnown && _cam != null && WheelHandsCentre(out var hands))
+            {
+                _wheelTargetCam = _cam.ProjectPosition(_wheelScreen + _vpMargin, _wheelDepth);   // same screen spot + depth as the real wheel
+                return _wheelTargetCam - hands;   // hands' midpoint ON the wheel pivot (rotation about it is applied after the sway pass)
+            }
             return -(head + new Vector3(0f, 0.16f, -0.10f));   // same head-base -> eyes offset as PlayerController.SeatedEyeFromSkull
         }
         // NOTE: guns are oriented by riding the animated hand-bone HOLD pose (see the gun branch in _Process), which is
@@ -1415,7 +1440,13 @@ namespace UnturnedGodot
             // face while walking forward and rolled the ADS picture against the strafe (master 2026-09-03).
             armRot.X -= _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
             armRot.Z -= _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
-            _arms.RotationDegrees = armRot;
+            if (Driving && _wheelKnown && _wheelAxisCam.LengthSquared() > 0.5f)
+            {
+                // hands turn WITH the wheel: rotate the arm pair about the wheel pivot, around the wheel's own axis, by the steer angle
+                var pivot = new Transform3D(Basis.Identity, _wheelTargetCam);
+                _arms.Transform = pivot * new Transform3D(new Basis(_wheelAxisCam.Normalized(), Mathf.DegToRad(_wheelSteerDeg)), Vector3.Zero) * pivot.AffineInverse() * new Transform3D(Basis.Identity, _arms.Position);
+            }
+            else _arms.RotationDegrees = armRot;
             // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.
             // Stylistic only (the bullet origin already leans via the eye pivot, tinyclaw). Doing it in 2D keeps the ADS
             // sight pinned dead-centre (it sits at the roll pivot) while the gun tilts around it, and -- crucially -- it
