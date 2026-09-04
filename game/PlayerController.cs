@@ -5273,7 +5273,7 @@ namespace UnturnedGodot
             }
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
-            if (_invUI != null && _invUI.IsOpen && !(Keybinds.Matches(GameAction.Inventory, @event) || Keybinds.Matches(GameAction.Interact, @event) || @event is InputEventKey { Keycode: Key.Escape })) return;   // Inventory/Interact/Esc allowed through -> Interact also closes an open container inventory (handled at the top of the F branch), master
+            if (_invUI != null && _invUI.IsOpen && !(Keybinds.Matches(GameAction.Inventory, @event) || Keybinds.Matches(GameAction.Interact, @event) || @event is InputEventKey { PhysicalKeycode: Key.Tab } || @event is InputEventKey { Keycode: Key.Escape })) return;   // Inventory/Interact/Esc allowed through -> Interact also closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
             if (_ridingCrane != null)   // RIDING A CRANE: mouse orbits the 3P chase; F-exit + W/S/A/D/Q/E drive keys go through the normal chain
