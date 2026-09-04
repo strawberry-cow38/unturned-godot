@@ -801,6 +801,17 @@ namespace UnturnedGodot
         // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
         // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
         public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
+
+        /// <summary>Positional shake with NONE of Kick()'s gun furniture -- no muzzle flash, no casing, no shot
+        /// sound. A running chainsaw shakes the view continuously; routing that through Kick would eject a brass
+        /// case out of it every frame.</summary>
+        public void ShakeOnly(Vector3 shakeMin, Vector3 shakeMax)
+        {
+            _shakeSpring.CurrentPosition += new Vector3(
+                _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
+        }
         AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav, NATIVELY looped -> gapless) -- plays while the torch runs
         public void StartTorch()
         {

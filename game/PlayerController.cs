@@ -1814,6 +1814,46 @@ namespace UnturnedGodot
             if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(); _torchAnimOn = true; }
             else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
+            UpdateChainsaw(delta, lmb);
+        }
+
+        // ---- CHAINSAW -------------------------------------------------------------------------------------------
+        // A Repeated tool that damages instead of repairing. Two behaviours, and strawberry asked for both:
+        // it SHAKES whenever it is in your hands (a chainsaw is running, not idle), harder while you are cutting,
+        // and it lands normal melee damage on a repeat instead of a swing.
+        //
+        // "at the same speed as the blowtorch" (strawberry) is why the interval is a shared constant rather than
+        // this weapon's own clip length: the blowtorch's continuous action has no discrete cadence to copy -- it
+        // repairs per frame -- so the only way for the two to be the SAME speed is for every Repeated tool to act
+        // on one rate. 0.45 s is the weak-swing fallback the normal melee path uses, so a chainsaw cuts at about
+        // the tempo a light weapon swings at.
+        const float RepeatedHitInterval = 0.45f;
+        static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
+        static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
+        float _sawHitCd;
+        Vector3 _lastSawShake;
+        /// <summary>Test seams: drive the saw tick directly and read the shake it asked for. UpdateChainsaw runs
+        /// inside UpdateSalvage off real input, which a headless suite has no way to press.</summary>
+        public void DebugTickChainsaw(float dt, bool lmb) => UpdateChainsaw(dt, lmb);
+        public Vector3 DebugSawShake => _lastSawShake;
+
+        void UpdateChainsaw(float delta, bool lmb)
+        {
+            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; return; }
+            // SHAKE. Deliberately outside the lmb branch: strawberry's "shakes while on (while held)" means the saw
+            // is running whenever it is out, so the idle tremor is a property of holding it, not of attacking.
+            var amp = lmb ? SawCutShake : SawIdleShake;
+            _lastSawShake = amp;   // recorded so the suite can see the idle-vs-cutting difference without a viewmodel
+            _viewmodel?.ShakeOnly(-amp, amp);
+            if (!lmb) { _sawHitCd = 0f; return; }   // released -> the next pull cuts immediately, no stored cooldown
+            _sawHitCd -= delta;
+            if (_sawHitCd > 0f) return;
+            _sawHitCd = RepeatedHitInterval;
+            // Same two paths a swing takes, so the saw is not a second combat system: in MP the SERVER owns the hit
+            // and re-evaluates the target at land time; in SP it lands locally. `false` = a weak hit -- a Repeated
+            // tool has no strong attack (source ItemMeleeAsset), so its damage must never take the Strength multiplier.
+            if (NetMelee != null) NetMelee(false, RotationDegrees.Y);
+            else ApplyMeleeHit(false);
         }
 
         // F (interact): pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
@@ -1875,6 +1915,14 @@ namespace UnturnedGodot
         MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
         string _heldMeleeName;   // content name of the held melee (for tool checks, e.g. the blowtorch)
         public bool HasBlowtorch => _melee != null && _melee.Repair;   // a REPAIR tool in hand (source: blowtorch carries the "Repair" flag) -> repairs hurt cars + salvages wrecks
+
+        /// <summary>A running CHAINSAW: a Repeated tool WITHOUT the Repair flag (strawberry 2026-09-04 "wire up the
+        /// chainsaw melee weapon"). The data already drew this line and nothing read it -- MeleeDef.Repair is
+        /// documented as "the continuous action REPAIRS the target (blowtorch) rather than damaging it", so the
+        /// other side of that sentence is a Repeated tool that DAMAGES, and the chainsaw was the only one of those.
+        /// Its .dat has carried full melee damage all along (Player 25, Resource 50 -- it is a tree chewer); the
+        /// Repeated branch simply never used it, so holding LMB did nothing at all.</summary>
+        public bool IsRepeatedDamage => _melee != null && _melee.Repeated && !_melee.Repair;
         public bool IsRepeatedMelee => _melee != null && _melee.Repeated;   // a "Repeated" tool (blowtorch/chainsaw): continuous HOLD, NO weak/strong swing, NO strong (RMB) attack (source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks")
         float _salvageTimer;   // seconds of LMB-hold accumulated against the focused wreck (blowtorch salvage)
         const float SalvageTime = 3f;   // hold this long to break a wreck down
