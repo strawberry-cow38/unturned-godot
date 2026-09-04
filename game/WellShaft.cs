@@ -12,9 +12,13 @@ namespace UnturnedGodot
         public const float DiscZ = 0.30f;         // well up inside the ring (it is 1.25 tall): placed on a slope the terrain cuts through the ring's base, and 0.04 z-fought it (master 2026-09-04)
         public const float MaxViewDist = 10f;
         static Shader _shader;
+        /// <summary>KILL SWITCH (2026-09-04): master saw GPU-driver timeouts (LiveKernelEvent 141) start the evening the shaft
+        /// landed. Off by default until cleared; UG_WELLSHAFT=1 forces it on (renders / the A-B on master's machine).</summary>
+        public static bool Enabled => System.Environment.GetEnvironmentVariable("UG_WELLSHAFT") == "1";
 
         public static MeshInstance3D Make(MeshInstance3D ring, Color wall)
         {
+            if (!Enabled) return null;
             _shader ??= GD.Load<Shader>("res://content/well_depth.gdshader");
             if (_shader == null) return null;
             var st = new SurfaceTool();
