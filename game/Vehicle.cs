@@ -828,6 +828,8 @@ namespace UnturnedGodot
         public bool Declutched => _clutchT > 0f;   // test/HUD seam
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
+        float _engineWind = -1f, _windPitch0, _windVol0;   // engine-off WIND-DOWN (master 2026-09-04): -1 = not winding; else 0..1 progress
+        const float EngineWindDownSec = 1.4f;              // the loop sags in pitch and dies over this, then STOPS (it used to cut to -80 dB)
         const float EngineVolumeBoost = 2.8f;   // 1.5 -> 2.8 (strawberry 2026-09-04 "make all vehicle engines much louder and travel much further"); distances raised with it below   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         // ---- DRIVETRAIN. A real one: an engine that makes TORQUE as a function of its own RPM, a gearbox
@@ -7951,12 +7953,25 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
                     _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n) * EngineVolumeBoost);
                     if (!_engineAudio.Playing) _engineAudio.Play();   // resume the loop STOPPED below
+                    _engineWind = -1f;
                 }
                 // STOP it, don't just silence it. Autoplay=true starts this loop the moment the vehicle enters
                 // the tree, and -80 dB is still a playing stream: the mixer keeps decoding the ogg every frame
                 // for something nobody can hear. PEI places ~89 vehicles, so the map booted with ~89 permanently
                 // inaudible loops running. Volume alone was never going to stop that; Playing is the switch.
-                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
+                // ...but not INSTANTLY: the engine WINDS DOWN first (master 2026-09-04 "the sound should sorta wind
+                // down as the engine turns off, not just a fadeout") -- the pitch sags toward a stalled idle, fast at
+                // first then trailing, while the volume falls; the loop stops when it is gone. A wreck's husk path
+                // has already slammed the volume to -80 dB, so an explosion still cuts dead.
+                else if (_engineAudio.Playing)
+                {
+                    if (_engineWind < 0f) { _engineWind = 0f; _windPitch0 = _engineAudio.PitchScale; _windVol0 = Mathf.DbToLinear(_engineAudio.VolumeDb); }
+                    _engineWind += (float)GetPhysicsProcessDeltaTime() / EngineWindDownSec;
+                    float k = Mathf.Clamp(_engineWind, 0f, 1f), ease = 1f - (1f - k) * (1f - k);
+                    _engineAudio.PitchScale = Mathf.Lerp(_windPitch0, _idlePitch * 0.45f, ease);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Max(0.0001f, _windVol0 * (1f - ease)));
+                    if (k >= 1f) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); _engineWind = -1f; }
+                }
             }
             // Phase 3 hearing: a running, MOVING car makes engine/tire noise a listener would hear -- source DRIVING
             // stealth radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like

@@ -565,13 +565,85 @@ void fragment() {
                 return;
             }
 
-            if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
+            // WEAPON onto the PAPERDOLL (master 2026-09-04): it goes into ITS OWN hand slot -- primary-able -> PRIMARY, else
+            // SECONDARY (an "any" item takes the empty hand first). Whatever was in that slot goes back to the grid, and
+            // if nothing has room for it, onto the ground. The dragged weapon always wins the slot.
+            if (!fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE
+                && WeaponSlotFor(_dragJar) is byte wslot)
+            {
+                EquipToHandSlot(sp, sx, sy, wslot);
+                CloseSelection(); Refresh();
+                return;
+            }
+
+            if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
+            {
+                // RIGHT-HALF release = DROP IT (master 2026-09-04): let go anywhere on the right half of the screen that is
+                // not a real grid/slot (those matched above) and the item goes on the ground. Only from your OWN pages --
+                // a crate's or the ground's items just snap home.
+                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE)
+                {
+                    _selPage = sp; _selX = sx; _selY = sy;
+                    DropSelected();   // MP request / SP world drop + the held-hand reset, then CloseSelection+Refresh
+                }
+                return;
+            }
             if (TryStartLoad(sp, sx, sy, page, x1, y1)) { CloseSelection(); Refresh(); return; }   // a loose round dropped onto a mag -> LOAD it (timed wheel), never a move/swap; both keep their slots (strawberry)
             if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
             // MP: the move is a REQUEST -- the server's TryDrag validates+applies and the owner echo
             // repaints (the item snaps home until it lands). SP: the direct local drag, unchanged.
             if (Player != null && Player.RequestMoveItem(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
             else if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
+        }
+
+        /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the gun's own .dat): 0 primary /
+        /// 1 secondary, null for anything that is not a weapon. An ANY-slot item takes the empty hand first.</summary>
+        byte? WeaponSlotFor(ItemJar jar)
+        {
+            var a = jar?.GetAsset();
+            if (a == null || Inv == null) return null;
+            bool pri = a.slot.CanEquipAsPrimary(), sec = a.slot.CanEquipAsSecondary();
+            if (!pri && !sec) return null;
+            if (pri && sec) return Inv.items[0].getItemCount() == 0 ? (byte)0 : Inv.items[1].getItemCount() == 0 ? (byte)1 : (byte)0;
+            return pri ? (byte)0 : (byte)1;
+        }
+
+        /// <summary>Put the weapon at (sp,sx,sy) into hand slot `slot`. Occupied: first try the plain drag-SWAP (the occupant
+        /// takes the weapon's old cell, retail's own behaviour); if it does not fit there, the occupant goes to the first
+        /// page with room; if none, it is dropped on the ground. Then the weapon takes the emptied slot.</summary>
+        void EquipToHandSlot(byte sp, byte sx, byte sy, byte slot)
+        {
+            var slotPage = Inv.items[slot];
+            var occ = slotPage.getItemCount() > 0 ? slotPage.getItem(0) : null;
+            byte idx = Inv.items[sp].getIndex(sx, sy);
+            if (idx == byte.MaxValue) return;
+            var jar = Inv.items[sp].getItem(idx);
+            if (jar?.item == null) return;
+            bool serverOwned = Player != null && Player.InventoryIsServerOwned;
+            bool swapFits = occ != null && Inv.items[sp].checkSpaceSwap(sx, sy, jar.size_x, jar.size_y, jar.rot, occ.size_x, occ.size_y, 0);
+            if (occ == null || swapFits)
+            {
+                if (serverOwned) Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0);
+                else Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0);
+                return;
+            }
+            bool occHeld = Player != null && Player.IsHeld(occ.GetAsset(), occ.item);   // the displaced weapon was in the hands -> go unarmed (as DropSelected does)
+            if (serverOwned)
+            {
+                if (ResolveMoveDest(occ, 255, out byte dp, out byte dx, out byte dy, out byte drot))
+                {
+                    if (!Player.RequestMoveItem(slot, occ.x, occ.y, dp, dx, dy, drot)) return;
+                }
+                else if (!Player.RequestDropItem(slot, occ.x, occ.y)) return;
+                Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0);
+                if (occHeld) Player.EquipUnarmed();
+                return;
+            }
+            slotPage.removeItem(0);
+            if (!Inv.tryAddItem(occ.item) && Player != null)   // no room anywhere -> the ground, just in front of the player
+                Player.DropWorldItem(occ.item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+            if (occHeld) Player?.EquipUnarmed();
+            Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0);
         }
 
         // map a screen point to (page, cellX, cellY) over a registered drop zone
