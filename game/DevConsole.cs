@@ -71,7 +71,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "wellshaft", "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -822,6 +822,14 @@ namespace UnturnedGodot
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+            }
+            else if (verb == "wellshaft")
+            {
+                // wellshaft [on|off]  -- the bottomless-well disc; persisted in graphics.cfg, applies on the next map load
+                string a = (arg ?? "").Trim().ToLowerInvariant();
+                if (a == "on" || a == "off") { GraphicsOptions.WellShaft = a == "on"; GraphicsOptions.Save(); }
+                Log($"well shaft: {(GraphicsOptions.WellShaft ? "ON" : "OFF")}{(a == "on" || a == "off" ? " (applies on the next map load)" : "")}");
+                return;
             }
             else if (verb == "weather")
             {

@@ -424,6 +424,7 @@ void sky() {
                 // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
                 float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
                 float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
+                WellShaft.SetDaylight(Mathf.Lerp(0.06f, 1f, dayF) * (Overcast ? 0.75f : 1f));   // the well shaft's unshaded mouth-light follows the day (see WellShaft)
                 _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));

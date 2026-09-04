@@ -4,13 +4,13 @@
 // infinite cylinder of the ring's inner radius and shades the wall where the ray would strike it: the ring's own
 // flat-coloured 14 facets continuing down, daylight from the mouth dying with depth, black past the fade. No geometry below the disc exists.
 shader_type spatial;
-render_mode cull_disabled, depth_draw_opaque;   // LIT (master: "its always fullbright"): the disc takes the sun/ambient/roof shadow like the ground at the mouth would, the shaft fade darkens from there
+render_mode unshaded, cull_disabled, depth_draw_opaque;   // UNSHADED on purpose (2026-09-04): the lit version cost master GPU-driver timeouts (LiveKernelEvent 141) -- daylight comes in as the `well_daylight` global instead, so there is one pipeline, no light/shadow variants, nothing to compile on the first well in view
 
 uniform vec3 wall_color : source_color = vec3(0.42, 0.40, 0.37);   // the ring's own stone swatch (sampled off the prop atlas at build)
 uniform float radius = 0.78;        // inner radius of the shaft (object units = metres)
 uniform float fade_depth = 9.0;     // metres of shaft before the light is gone
 uniform float facets = 14.0;        // the ring is a 14-gon; the shaft keeps its flat faces
-uniform float max_view_dist = 10.0; // "dont bother rendering the disc past like 10m since its impossible to see"
+global uniform float well_daylight;   // 0..1 from DayNightCycle (sun up = 1, night ~0.06): the mouth's daylight, since this material is unshaded
 
 varying vec3 v_obj_pos;
 varying vec3 v_obj_cam;
@@ -21,9 +21,6 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 world_pos = (MODEL_MATRIX * vec4(v_obj_pos, 1.0)).xyz;
-	if (distance(CAMERA_POSITION_WORLD, world_pos) > max_view_dist) discard;   // a dark dot at 10 m: not worth the ray
-
 	vec3 ro = v_obj_pos;
 	vec3 rd = normalize(v_obj_pos - v_obj_cam);
 	vec3 col = vec3(0.0);
@@ -46,12 +43,9 @@ void fragment() {
 				vec3 n = -vec3(cos(fa), sin(fa), 0.0);                                 // the facet's inward normal
 				float shade = 0.70 + 0.30 * max(0.0, dot(n, normalize(vec3(0.55, 0.35, 0.75))));
 				float light = exp(-depth / fade_depth * 2.2);
-				col = wall_color * shade * light;
+				col = wall_color * shade * light * max(well_daylight, 0.05);
 			}
 		}
 	}
 	ALBEDO = col;
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
-	METALLIC = 0.0;
 }

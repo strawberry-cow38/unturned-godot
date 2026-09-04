@@ -14,7 +14,19 @@ namespace UnturnedGodot
         static Shader _shader;
         /// <summary>KILL SWITCH (2026-09-04): master saw GPU-driver timeouts (LiveKernelEvent 141) start the evening the shaft
         /// landed. Off by default until cleared; UG_WELLSHAFT=1 forces it on (renders / the A-B on master's machine).</summary>
-        public static bool Enabled => System.Environment.GetEnvironmentVariable("UG_WELLSHAFT") == "1";
+        public static bool Enabled => GraphicsOptions.WellShaft || System.Environment.GetEnvironmentVariable("UG_WELLSHAFT") == "1";
+
+        // The shader is UNSHADED and reads daylight from this global (DayNightCycle writes it every tick). Registered
+        // before any shaft material exists -- see GrassDisplacers.EnsureGlobals for why the order matters.
+        public const string DaylightParam = "well_daylight";
+        static bool _globalsReady;
+        public static void EnsureGlobals()
+        {
+            if (_globalsReady) return;
+            _globalsReady = true;
+            RenderingServer.GlobalShaderParameterAdd(DaylightParam, RenderingServer.GlobalShaderParameterType.Float, Variant.From(1.0f));
+        }
+        public static void SetDaylight(float v) { EnsureGlobals(); RenderingServer.GlobalShaderParameterSet(DaylightParam, Variant.From(Mathf.Clamp(v, 0f, 1f))); }
 
         public static MeshInstance3D Make(MeshInstance3D ring, Color wall)
         {
@@ -28,22 +40,22 @@ namespace UnturnedGodot
         /// <summary>The disc + its ShaderMaterial, unattached. Shared by the world attach and the load-time warm draw.</summary>
         public static MeshInstance3D BuildDisc(Color wall, float radius)
         {
+            EnsureGlobals();
             _shader ??= GD.Load<Shader>("res://content/well_depth.gdshader");
             if (_shader == null) return null;
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
             const int segs = 40;
-            for (int i = 0; i < segs; i++)   // a fan in the XY plane facing +Z (object "up" for this Z-up prop); cull is off in the shader anyway
+            for (int i = 0; i < segs; i++)   // a fan in the XY plane whose FRONT faces +Z (object "up" for this Z-up prop): counter-clockwise seen from +Z, since the shader culls back faces now
             {
                 float a0 = Mathf.Tau * i / segs, a1 = Mathf.Tau * (i + 1) / segs;
                 st.SetNormal(Vector3.Back); st.AddVertex(new Vector3(0f, 0f, DiscZ));
-                st.SetNormal(Vector3.Back); st.AddVertex(new Vector3(Mathf.Cos(a1) * InnerRadius, Mathf.Sin(a1) * InnerRadius, DiscZ));
-                st.SetNormal(Vector3.Back); st.AddVertex(new Vector3(Mathf.Cos(a0) * InnerRadius, Mathf.Sin(a0) * InnerRadius, DiscZ));
+                st.SetNormal(Vector3.Back); st.AddVertex(new Vector3(Mathf.Cos(a0) * radius, Mathf.Sin(a0) * radius, DiscZ));
+                st.SetNormal(Vector3.Back); st.AddVertex(new Vector3(Mathf.Cos(a1) * radius, Mathf.Sin(a1) * radius, DiscZ));
             }
             var mat = new ShaderMaterial { Shader = _shader };
             mat.SetShaderParameter("wall_color", wall);
             mat.SetShaderParameter("radius", radius + 0.02f);
-            mat.SetShaderParameter("max_view_dist", MaxViewDist);
             return new MeshInstance3D { Name = "WellShaft", Mesh = st.Commit(), MaterialOverride = mat, VisibilityRangeEnd = MaxViewDist, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         }
 

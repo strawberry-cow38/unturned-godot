@@ -81,6 +81,7 @@ namespace UnturnedGodot
         public static bool GrassDisplacement = true;
         public static bool Wind = true;                 // foliage sway + flag cloth
         public static bool Ragdolls = true;
+        public static bool WellShaft = false;   // the bottomless-well disc (console `wellshaft on|off`, applies on the next map load); OFF until master clears it -- it cost GPU-driver timeouts on 2026-09-04
         public static float EffectMul => EffectQuality switch { GfxQuality.Off => 0.05f, GfxQuality.Low => 0.5f, GfxQuality.Medium => 0.75f, GfxQuality.High => 1f, _ => 1.5f };
         public static int ScopeSize => ScopeQuality switch { GfxQuality.Off or GfxQuality.Low => 360, GfxQuality.Medium => 540, GfxQuality.High => 720, _ => 1080 };
         public static int PlanarEvery => PlanarReflection switch { GfxQuality.Low => 4, GfxQuality.Medium => 2, _ => 1 };
@@ -310,7 +311,7 @@ namespace UnturnedGodot
                 cfg.SetValue("graphics", "fullscreen", (int)Fullscreen); cfg.SetValue("graphics", "ui_scale", UiScale); cfg.SetValue("graphics", "target_fps", TargetFps); cfg.SetValue("graphics", "vsync", VSync);
                 cfg.SetValue("graphics", "ambient_occlusion", AmbientOcclusion); cfg.SetValue("graphics", "bloom", Bloom); cfg.SetValue("graphics", "sun_shafts", SunShafts); cfg.SetValue("graphics", "ssr", ScreenSpaceReflections);
                 cfg.SetValue("graphics", "effect_quality", (int)EffectQuality); cfg.SetValue("graphics", "planar_reflection", (int)PlanarReflection); cfg.SetValue("graphics", "scope_quality", (int)ScopeQuality);
-                cfg.SetValue("graphics", "outline", Outline); cfg.SetValue("graphics", "grass_displacement", GrassDisplacement); cfg.SetValue("graphics", "wind", Wind); cfg.SetValue("graphics", "ragdolls", Ragdolls);
+                cfg.SetValue("graphics", "outline", Outline); cfg.SetValue("graphics", "grass_displacement", GrassDisplacement); cfg.SetValue("graphics", "wind", Wind); cfg.SetValue("graphics", "ragdolls", Ragdolls); cfg.SetValue("graphics", "well_shaft", WellShaft);
                 cfg.SetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity);
                 cfg.SetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
                 cfg.SetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
@@ -343,7 +344,7 @@ namespace UnturnedGodot
                 PlanarReflection = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "planar_reflection", (int)PlanarReflection), 0, 4);
                 ScopeQuality = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "scope_quality", (int)ScopeQuality), 0, 4);
                 Outline = (bool)cfg.GetValue("graphics", "outline", Outline); GrassDisplacement = (bool)cfg.GetValue("graphics", "grass_displacement", GrassDisplacement);
-                Wind = (bool)cfg.GetValue("graphics", "wind", Wind); Ragdolls = (bool)cfg.GetValue("graphics", "ragdolls", Ragdolls);
+                Wind = (bool)cfg.GetValue("graphics", "wind", Wind); Ragdolls = (bool)cfg.GetValue("graphics", "ragdolls", Ragdolls); WellShaft = (bool)cfg.GetValue("graphics", "well_shaft", WellShaft);
                 ControlsOptions.MouseSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity), ControlsOptions.MouseSensMin, ControlsOptions.MouseSensMax);
                 ControlsOptions.InvertLookY = (bool)cfg.GetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
                 ControlsOptions.InvertHeliPitch = (bool)cfg.GetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
