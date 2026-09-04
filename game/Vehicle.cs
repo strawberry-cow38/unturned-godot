@@ -1723,7 +1723,8 @@ namespace UnturnedGodot
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public bool NoTrunk, RearEngine;
             public Vector3 DoorZoneMin, DoorZoneMax;   // BI-FOLD DOOR (bus): the body triangles inside this box become the door; split at DoorSplitZ into two leaves
-            public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // (0 = 90 degrees)   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
+            public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // hinge A on the panel's INNER face at the front jamb; (fold 0 = 90 degrees)
+            public float DoorHingeBX;   // hinge B (mullion) X: the panel's OUTER face (+ a hair), so leaf B folds back beside leaf A instead of through it   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
             public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
@@ -2526,7 +2527,7 @@ namespace UnturnedGodot
             // inside the front-right doorway (X 1.293..1.418, Z -3.35..-2.15, Y -0.23..1.97, measured off bus_body.txt), two windows
             // split by the mullion at Z -2.75. Leaf A hinges at the front jamb, leaf B at the mullion; both windows ride their leaf.
             DoorZoneMin = new Vector3(1.28f, -0.25f, -3.36f), DoorZoneMax = new Vector3(1.43f, 1.99f, -2.14f),
-            DoorHingeX = 1.356f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",   // 200 L tank (metric 1u=1mL; realistic bus)
+            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -4125,8 +4126,11 @@ namespace UnturnedGodot
             v._doorPivotA.AddChild(new MeshInstance3D { Name = "DoorLeafA", Mesh = leafA, MaterialOverride = bodyMat, Position = -v._doorPivotA.Position });
             if (leafB != null)
             {
-                v._doorPivotB = new Node3D { Name = "DoorHingeB", Position = new Vector3(0f, 0f, s.DoorSplitZ - s.DoorHingeZ) };
-                v._doorPivotB.AddChild(new MeshInstance3D { Name = "DoorLeafB", Mesh = leafB, MaterialOverride = bodyMat, Position = new Vector3(-s.DoorHingeX, 0f, -s.DoorSplitZ) });
+                // hinge B sits on the OUTER face at the mullion: after A swings in, B folds 180 back along A's outer face
+                // and the two leaves stack side by side (25 cm) at the front jamb -- the doorway itself is clear.
+                float hbx = s.DoorHingeBX != 0f ? s.DoorHingeBX : s.DoorHingeX;
+                v._doorPivotB = new Node3D { Name = "DoorHingeB", Position = new Vector3(hbx - s.DoorHingeX, 0f, s.DoorSplitZ - s.DoorHingeZ) };
+                v._doorPivotB.AddChild(new MeshInstance3D { Name = "DoorLeafB", Mesh = leafB, MaterialOverride = bodyMat, Position = new Vector3(-hbx, 0f, -s.DoorSplitZ) });
                 v._doorPivotA.AddChild(v._doorPivotB);
             }
             v.AddChild(v._doorPivotA);
@@ -4136,7 +4140,7 @@ namespace UnturnedGodot
                 var g = v._glassNodes[i]; string label = v._glassLabels[i];
                 Node3D pivot = label == s.DoorGlassA ? v._doorPivotA : (label == s.DoorGlassB ? v._doorPivotB : null);
                 if (pivot == null || !IsInstanceValid(g)) continue;
-                var bodyOffset = pivot == v._doorPivotA ? -v._doorPivotA.Position : new Vector3(-s.DoorHingeX, 0f, -s.DoorSplitZ);
+                var bodyOffset = pivot == v._doorPivotA ? -v._doorPivotA.Position : new Vector3(-(s.DoorHingeBX != 0f ? s.DoorHingeBX : s.DoorHingeX), 0f, -s.DoorSplitZ);
                 g.GetParent()?.RemoveChild(g);
                 pivot.AddChild(g);
                 g.Position = bodyOffset;
@@ -4160,7 +4164,7 @@ namespace UnturnedGodot
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
             float e = _doorT < 0.5f ? 2f * _doorT * _doorT : 1f - Mathf.Pow(-2f * _doorT + 2f, 2f) / 2f;   // ease in-out
             _doorPivotA.RotationDegrees = new Vector3(0f, -_doorFoldDeg * e, 0f);            // leaf A swings INTO the bus (its free edge goes -X)
-            if (_doorPivotB != null) _doorPivotB.RotationDegrees = new Vector3(0f, 2f * _doorFoldDeg * 0.97f * e, 0f);   // leaf B folds back onto A (just short of flat: no z-fight)
+            if (_doorPivotB != null) _doorPivotB.RotationDegrees = new Vector3(0f, 2f * _doorFoldDeg * e, 0f);   // leaf B folds fully back beside A (hinge B is a hair outside A's face: no z-fight)
         }
 
         /// <summary>Cut a mesh along the plane z = zc into the part below (z <= zc) and above, CLIPPING the triangles
