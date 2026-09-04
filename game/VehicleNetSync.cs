@@ -265,6 +265,7 @@ namespace UnturnedGodot
                 {
                     t.AppliedRemoteDriver = 0;
                     v.NetDriverId = 0;
+                    v.ReleaseControls();   // same as the SP exit: the held axes go with the driver, the rpm falls to idle
                     // Engine deliberately UNTOUCHED on exit: it stays as the driver left it, same as SP. Park()
                     // below still holds the car so it cannot roll away -- that was always the brake's job, not
                     // the engine's.

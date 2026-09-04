@@ -7520,6 +7520,7 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
+            if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)

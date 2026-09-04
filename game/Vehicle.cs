@@ -1349,14 +1349,16 @@ namespace UnturnedGodot
                 foreach (var st in seats) { frontSeat = Mathf.Min(frontSeat, st.Z); rearSeat = Mathf.Max(rearSeat, st.Z); }
 
                 float hoodRun = frontSeat - front;
-                if (hoodRun > MinCompartmentRun)
+                if (hoodRun > MinCompartmentRun && !s.RearEngine)   // a rear-engined bus has no bonnet to open at the front
                     zones.Add(new AccessZone(AccessKind.Hood, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, front + hoodRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, hoodRun * 0.8f)));
 
+                // The rear compartment is the BOOT -- or, rear-engined, the engine bay (the bus: master
+                // "move the bus' engine to the back"). NoTrunk drops the boot outright (bus, tractor).
                 float trunkRun = rear - rearSeat;
-                if (trunkRun > MinCompartmentRun)
-                    zones.Add(new AccessZone(AccessKind.Trunk, -1,
+                if (trunkRun > MinCompartmentRun && (s.RearEngine || !s.NoTrunk))
+                    zones.Add(new AccessZone(s.RearEngine ? AccessKind.Hood : AccessKind.Trunk, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
             }
@@ -1529,6 +1531,7 @@ namespace UnturnedGodot
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat; Node3D _headlightFill;
+        readonly System.Collections.Generic.List<Vector3> _autoSpot = new(), _autoTail = new();   // lamp emitter spots DERIVED from the lens meshes when the spec authors none (quad, bus)
         MeshInstance3D _headlightBeam;
         // Lamp tint, decided by the lens SHAPE. Round lamps read as older/halogen and go considerably warmer than
         // rectangular ones (strawberry). Derived from the hull the beam already computes -- a hexagonal outline IS
@@ -1717,6 +1720,7 @@ namespace UnturnedGodot
             public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
+            public bool NoTrunk, RearEngine;   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
@@ -2102,7 +2106,9 @@ namespace UnturnedGodot
         }
 
         /// <summary>Bullets hitting the front third of the hull (the engine bay) go to the ENGINE hp instead of the body.</summary>
-        public bool IsEngineBay(Vector3 world) => _hullSizeLocal.Z > 0f && ToLocal(world).Z < AccessBoxCenter.Z - 0.15f * _hullSizeLocal.Z;   // forward = -Z
+        bool _rearEngine;   // Spec.RearEngine: the engine bay is the back third (bus), not the front
+        public bool IsEngineBay(Vector3 world) => _hullSizeLocal.Z > 0f && (_rearEngine ? ToLocal(world).Z > AccessBoxCenter.Z + 0.15f * _hullSizeLocal.Z
+                                                                                  : ToLocal(world).Z < AccessBoxCenter.Z - 0.15f * _hullSizeLocal.Z);   // forward = -Z
         Vector3 _hullSizeLocal;
         public void TakeEngineDamage(float amount)
         {
@@ -2510,7 +2516,8 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
-            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",   // 200 L tank (metric 1u=1mL; realistic bus)
+            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
+            NoTrunk = true, RearEngine = true,   // no boot; the engine bay is the back (master 2026-09-04)   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -2698,7 +2705,8 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 40_000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",   // 40 L (metric 1u=1mL)
+            Fuel = 40_000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",
+            NoTrunk = true,   // no boot on a tractor (master 2026-09-04)   // 40 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.40f, 1.26f, -2.65f), new Vector3(0.40f, 1.26f, -2.65f) }, OmniPos = new Vector3(0f, 1.40f, -2.62f),
             TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
             SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
@@ -5122,6 +5130,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // plus a small generic rise, not the Jeep's absolute coordinate wearing this vehicle's name.
             v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : v.SeatLocals[0] + GenericSeatRise;
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
+            v._rearEngine = s.RearEngine;
             v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
             // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
@@ -5614,6 +5623,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         var (lhalf, rhalf) = SplitMeshByX(full);
                         if (lhalf != null && rhalf != null)   // BOTH halves, or it is not a per-side pair
                         {
+                            // NO AUTHORED EMITTERS (quad, bus: master "no actual light sources") -> derive one per
+                            // lens half from the lens geometry itself: its centre, pushed just outside the lens
+                            // face (front for a headlight, rear for a taillight) so the beam is not born inside
+                            // the mesh. Same vehicle-local frame as the lens (both hang straight off the body).
+                            if (isHead ? s.SpotPos == null : s.TailPos == null)
+                            {
+                                foreach (var half in new[] { lhalf, rhalf })
+                                {
+                                    var ab = half.GetAabb(); var c = ab.GetCenter();
+                                    float z = isHead ? ab.Position.Z - 0.06f : ab.End.Z + 0.06f;
+                                    (isHead ? v._autoSpot : v._autoTail).Add(new Vector3(c.X, c.Y, z));
+                                    GD.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
+                                }
+                            }
                             foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
                             {
                                 string label = (isHead ? "headlight_" : "taillight_") + side;
@@ -5689,11 +5712,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.AddChild(v._sirenAudio);
             }
 
-            if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
+            var spotPos = s.SpotPos ?? (v._autoSpot.Count > 0 ? v._autoSpot.ToArray() : null);   // authored, else derived from the lens meshes
+            var tailPos = s.TailPos ?? (v._autoTail.Count > 0 ? v._autoTail.ToArray() : null);
+            if (spotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
             {
                 var warm = v._lampTint;   // the EMITTER matches the lens it sits behind, per lamp shape
                 v._headlights = new Node3D { Visible = false };
-                foreach (var p in s.SpotPos)
+                foreach (var p in spotPos)
                 {
                     var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
@@ -5715,11 +5740,11 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.AddChild(v._headlights);
             }
 
-            if (s.TailPos != null)   // running taillights: dim red spots at the rear (aim +Z, backward), on while driving
+            if (tailPos != null)   // running taillights: dim red spots at the rear (aim +Z, backward), on while driving
             {
                 var red = new Color(0.996f, 0f, 0f);
                 v._taillights = new Node3D { Visible = false };
-                foreach (var p in s.TailPos)
+                foreach (var p in tailPos)
                 {
                     var ts = new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f };
                     v._taillights.AddChild(ts);
@@ -6647,6 +6672,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             else if (!idle && Freeze) Freeze = false;
             if (_spawnGrace > 0f) _spawnGrace -= dt;
+        }
+
+        /// <summary>The driver got out: drop every held axis so the car stops pulling the last throttle/steer it
+        /// was given and the rpm falls back to idle (master: "vehicles hold the last player input when you exit
+        /// them, and also the last rpm"). The brake is left as the driver left it and nothing parks here --
+        /// momentum is still theirs to leave behind (see PlayerController.ExitVehicle).</summary>
+        public void ReleaseControls()
+        {
+            _inThrottle = 0f; _inSteer = 0f; _rawThrottle = 0f;
+            _inCollective = 0f; _inYaw = 0f; _inPitch = 0f; _inRoll = 0f;
+            if (!_heli) { EngineForce = 0f; Steering = 0f; _steerTarget = 0f; }   // _steerTarget too, or the smoothing re-applies the last steer next tick
         }
 
         public void Drive(float throttle, float steer, bool handbrake)
