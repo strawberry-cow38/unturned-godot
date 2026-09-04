@@ -2837,12 +2837,12 @@ namespace UnturnedGodot.Testing
             // Since 2026-09-04 a ground vehicle CRANKS for its ignition clip (2.04 s retail CarIgnition) before the drivetrain answers
             // the throttle (strawberry: "add a delay between starting the engine and the ability to start moving"). The 1-TICK claim
             // below is about network latency, not the crank -- so wait the crank out first.
-            yield return Until(() => !veh.EngineStarting, 4);
-            T.Check("the crank finished (engine started on entry, drivetrain live)", !veh.EngineStarting);
-            sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step
+            sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step -- reaching for the throttle is what STARTS the engine (PlayerController.DriveVehicle)
             yield return Ticks(1);
-            T.Check($"1 TICK after input the local ENGINE answered (EngineForce {veh.EngineForce:0.0}) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)",
-                    Mathf.Abs(veh.EngineForce) > 1f);
+            T.Check("1 TICK after input the local engine CAUGHT (EngineOn) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)", veh.EngineOn);
+            yield return Until(() => !veh.EngineStarting, 4);   // ...then it cranks for the retail CarIgnition clip (2.04 s) before the drivetrain answers
+            yield return Ticks(1);
+            T.Check($"after the crank the local ENGINE answered the throttle (EngineForce {veh.EngineForce:0.0})", !veh.EngineStarting && Mathf.Abs(veh.EngineForce) > 1f);
             yield return Ticks(2);
             T.Check($"the local STEERING is ramping within 3 ticks (steer {veh.SteerAngleDegrees:0.00} deg)",
                     Mathf.Abs(veh.SteerAngleDegrees) > 0.05f);
