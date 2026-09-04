@@ -1788,7 +1788,7 @@ void fragment() {
                 },
             });
 
-            _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // same rig + skin as the live 3P body
+            _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // same rig + skin as the live 3P body, wearing your face (master 2026-09-04)
             if (_pdBody != null)
             {
                 _pdVp.AddChild(_pdBody);

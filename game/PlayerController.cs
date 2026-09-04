@@ -258,6 +258,8 @@ namespace UnturnedGodot
         float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")
         const float DriveCamZoomMin = 0.35f, DriveCamZoomMax = 1.8f, DriveCamZoomStep = 0.88f;
         float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
+        float _tpOrbitYaw, _tpOrbitPitch;         // ALT-hold ORBIT in 3rd person on foot (strawberry 2026-09-04 "add alt hold orbit cam for 3p"): the mouse swings the camera around the body -- to see your own face -- without turning the player; eases back on release
+        public (float yaw, float pitch) DebugTpOrbit => (_tpOrbitYaw, _tpOrbitPitch);
         float _casingSurfT;                       // throttle for the casing-bank refresh (the surface under the feet, sampled while a gun is out -- not only on footsteps)   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         /// <summary>Seated look limits, taken from retail PlayerLook (clampYaw / clampPitch) rather than
         /// invented: a DRIVING seat clamps yaw to +/-160, any other seat to +/-90, and a seated pitch to
@@ -5407,6 +5409,12 @@ namespace UnturnedGodot
                     float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
                     _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
                 }
+                else if (ThirdPersonActive && Input.IsKeyPressed(Key.Alt))   // 3P on foot, ALT held: ORBIT the camera around the body (mouse up -> cam rises and tilts down, the drive-cam convention); the player keeps facing where he was
+                {
+                    _tpOrbitYaw = Mathf.Wrap(_tpOrbitYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
+                    _tpOrbitPitch = Mathf.Clamp(_tpOrbitPitch + mm.Relative.Y * MouseSensitivity, -75f, 60f);
+                    return;
+                }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
@@ -8292,7 +8300,13 @@ namespace UnturnedGodot
 
             // Rotation FIRST: the offset below is expressed in this frame, so the order is load-bearing rather than
             // stylistic -- computing the direction off last frame's basis lags the camera behind every mouse movement.
-            var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), Mathf.DegToRad(_shoulder * -TpToeInDeg), 0f), EulerOrder.Yxz);
+            if (!Input.IsKeyPressed(Key.Alt) && (_tpOrbitYaw != 0f || _tpOrbitPitch != 0f))   // Alt released: ease the orbit back behind the shoulder (like the flying free-look)
+            {
+                float k = Mathf.Min(1f, 7f * delta);
+                _tpOrbitYaw = Mathf.Lerp(_tpOrbitYaw, 0f, k); _tpOrbitPitch = Mathf.Lerp(_tpOrbitPitch, 0f, k);
+                if (Mathf.Abs(_tpOrbitYaw) < 0.05f) _tpOrbitYaw = 0f; if (Mathf.Abs(_tpOrbitPitch) < 0.05f) _tpOrbitPitch = 0f;
+            }
+            var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg + _tpOrbitPitch, -89f, 89f)), Mathf.DegToRad(_shoulder * -TpToeInDeg + _tpOrbitYaw), 0f), EulerOrder.Yxz);
             _cam.Basis = new Basis(_flinch) * look;
 
             var dirLocal = ThirdPersonOffsetLocal(_shoulder);
