@@ -707,7 +707,9 @@ namespace UnturnedGodot.Net
         {
             _worldItems.TryGet(cmd.NetId, out var e);
             var inv = SenderInventory(sender);
-            if (inv.tryAddItem(e.ServerItem))
+            // retail tryAddItemAuto (strawberry 2026-09-04): an empty clothing slot wears the pickup, an empty hand slot
+            // holsters it -- the owner echo carries worn + slots, and the client forces a slotted weapon into the hands
+            if (inv.tryAddItemAuto(e.ServerItem, out _) != PlayerInventory.AutoPlace.None)
             {
                 RemoveWorldItem(cmd.NetId);
             }

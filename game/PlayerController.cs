@@ -1817,25 +1817,50 @@ namespace UnturnedGodot
                 var grabbed = shelf.GrabItem(_focusShelfItem.CellKey);   // removes it from the grid -> the display syncs the model away
                 _focusShelfItem = null;
                 if (grabbed == null) return;
-                if (Inventory.tryAddItem(grabbed))
+                bool freeHands = Unarmed;
+                var wentShelf = Inventory.tryAddItemAuto(grabbed, out byte shelfSlot);
+                if (wentShelf != PlayerInventory.AutoPlace.None)
                 {
                     GD.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
-                    _invUI?.Refresh();
-                    if (Unarmed) EquipItemAsset(grabbed.GetAsset(), grabbed);   // hands free -> hold it (strawberry: restore force-into-hands on pickup, for all items)
+                    AfterAutoPickup(wentShelf, shelfSlot, grabbed, freeHands);
                 }
                 else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
                 return;
             }
             var wi = _focusItem;
-            if (wi == null || !IsInstanceValid(wi) || !Inventory.tryAddItem(wi.Item)) return;
-            var item = wi.Item; var asset = item.GetAsset();
+            if (wi == null || !IsInstanceValid(wi)) return;
             bool wasUnarmed = Unarmed;
-            GD.Print($"[pickup] {asset?.itemName}");
+            var went = Inventory.tryAddItemAuto(wi.Item, out byte slot);
+            if (went == PlayerInventory.AutoPlace.None) return;
+            var item = wi.Item; var asset = item.GetAsset();
+            GD.Print($"[pickup] {asset?.itemName} -> {went}");
             wi.QueueFree();
             _focusItem = null;
-            _invUI?.Refresh();
-            if (wasUnarmed) EquipItemAsset(asset, item);   // picked up with an empty hand -> equip it in the hand (strawberry)
+            AfterAutoPickup(went, slot, item, wasUnarmed);
         }
+
+        // Retail tryAddItemAuto's aftermath (strawberry 2026-09-04): "picking up clothing for a slot that you dont
+        // have filled ... should equip it straight onto your player. likewise, picking up an item that fits in a 1 or
+        // 2 slot and you dont have anything in there yet should put it into the relevant slot, and also force it into
+        // your hands." Worn -> the clothing controller repaints off the worn state; Slot -> into the hands, whatever
+        // was there; Grid -> the older rule (empty hands take the pickup).
+        void AfterAutoPickup(PlayerInventory.AutoPlace went, byte slot, SDG.Unturned.Item item, bool wasUnarmed)
+        {
+            _invUI?.Refresh();
+            var asset = item?.GetAsset();
+            switch (went)
+            {
+                case PlayerInventory.AutoPlace.Worn: _clothing?.Refresh(); break;
+                case PlayerInventory.AutoPlace.Slot: if (EquipItemAsset(asset, item)) NoteHeldFrom(slot, 0, 0); break;
+                default: if (wasUnarmed) EquipItemAsset(asset, item); break;
+            }
+        }
+
+        // MP: the pickup is a REQUEST and the server places it (tryAddItemAuto); the owner echo then shows where it
+        // went. Remember what was asked for, so the echo that holsters it into a hand slot forces it into the hands
+        // exactly like the SP path -- and a pickup that landed in the grid is left alone (older empty-hands rule).
+        ushort _pendingPickupId; double _pendingPickupUntil;
+        public bool IsHeldAt(int page, byte x, byte y) => HasSomethingHeld && _heldPage == page && _heldX == x && _heldY == y;
 
         float _meleeCd;
         MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
@@ -3341,6 +3366,9 @@ namespace UnturnedGodot
         public void AdoptReplicatedInventory(PlayerInventory replica)
         {
             if (replica == null || Inventory == null || ReferenceEquals(replica, Inventory)) return;
+            static ushort WId(Item i) => i?.id ?? (ushort)0;
+            bool wornChanged = WId(Inventory.wornHat) != WId(replica.wornHat) || WId(Inventory.wornGlasses) != WId(replica.wornGlasses) || WId(Inventory.wornMask) != WId(replica.wornMask)
+                || WId(Inventory.wornShirt) != WId(replica.wornShirt) || WId(Inventory.wornVest) != WId(replica.wornVest) || WId(Inventory.wornBackpack) != WId(replica.wornBackpack) || WId(Inventory.wornPants) != WId(replica.wornPants);
             Inventory.wornHat = replica.wornHat; Inventory.wornGlasses = replica.wornGlasses; Inventory.wornMask = replica.wornMask;
             Inventory.wornShirt = replica.wornShirt; Inventory.wornVest = replica.wornVest;
             Inventory.wornBackpack = replica.wornBackpack; Inventory.wornPants = replica.wornPants;
@@ -3350,6 +3378,22 @@ namespace UnturnedGodot
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
             RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
+            if (wornChanged) _clothing?.Refresh();   // a server-side wear (auto-worn pickup) repaints the body like a local one does
+            if (_pendingPickupId != 0)
+            {
+                if (Time.GetTicksMsec() / 1000.0 > _pendingPickupUntil) _pendingPickupId = 0;
+                else
+                    for (byte s = 0; s < PlayerInventory.SLOTS; s++)
+                    {
+                        var pg = Inventory.items[s];
+                        if (pg.getItemCount() == 0) continue;
+                        var j = pg.getItem(0);
+                        if (j?.item == null || j.item.id != _pendingPickupId) continue;
+                        if (!IsHeld(j.GetAsset(), j.item) && EquipItemAsset(j.GetAsset(), j.item)) NoteHeldFrom(s, 0, 0);   // the requested pickup was holstered -> hands
+                        _pendingPickupId = 0;
+                        break;
+                    }
+            }
         }
         /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
         /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
@@ -3728,6 +3772,7 @@ namespace UnturnedGodot
         public bool RequestPickupPuppet(WorldItemPuppet wp)
         {
             if (NetPickupItem == null || wp == null || !IsInstanceValid(wp)) return false;
+            _pendingPickupId = wp.ItemId; _pendingPickupUntil = Time.GetTicksMsec() / 1000.0 + 3.0;   // the echo lands within a few ticks; 3 s is a generous ceiling
             NetPickupItem(wp.NetId);
             return true;
         }

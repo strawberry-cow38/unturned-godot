@@ -182,7 +182,7 @@ namespace UnturnedGodot
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
         public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name)
         {
-            var p = new WorldItemPuppet();
+            var p = new WorldItemPuppet { ItemId = itemId };
             var visual = BuildReplicaVisual(itemId, rarity);
             p.AddChild(visual);
 
@@ -458,6 +458,7 @@ namespace UnturnedGodot
     public partial class WorldItemPuppet : Node3D, IPuppetFocusable
     {
         public uint NetId;   // the server world-item entity this puppet mirrors (VehiclePuppet.NetId pattern) -- the F-chain pickup request addresses the server by this id
+        public ushort ItemId;   // what it is -- the pickup request remembers it so the echo that holsters it can force it into the hands
 
         MeshInstance3D _glow;
         Label3D _label;

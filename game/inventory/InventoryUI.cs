@@ -670,7 +670,7 @@ void fragment() {
                 else if (Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0)) EquipFromSlotNow(slot);
                 return;
             }
-            bool occHeld = Player != null && Player.IsHeld(occ.GetAsset(), occ.item);   // the displaced weapon was in the hands -> go unarmed (as DropSelected does)
+            bool occHeld = Player != null && (Player.IsHeld(occ.GetAsset(), occ.item) || Player.IsHeldAt(slot, occ.x, occ.y));   // the displaced weapon was in the hands -> go unarmed (as DropSelected does)
             if (serverOwned)
             {
                 if (ResolveMoveDest(occ, 255, out byte dp, out byte dx, out byte dy, out byte drot))
@@ -1601,7 +1601,7 @@ void fragment() {
             if (idx != byte.MaxValue)
             {
                 var jar = pg.getItem(idx); var item = jar.item;
-                bool wasHeld = Player != null && Player.IsHeld(jar.GetAsset(), item);   // dropping the HELD item -> go unarmed (strawberry)
+                bool wasHeld = Player != null && (Player.IsHeld(jar.GetAsset(), item) || Player.IsHeldAt(_selPage, _selX, _selY));   // dropping the HELD item -> go unarmed (strawberry; by reference OR by grid address, so an echo-rebuilt jar still counts)
                 if (Player != null && Player.RequestDropItem(_selPage, _selX, _selY))
                 {   // MP: the server removes the jar + tosses the world item (the echo empties the cell,
                     // the item puppet renders the drop); the hand state below is client-local either way
