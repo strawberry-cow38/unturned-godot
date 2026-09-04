@@ -1,21 +1,19 @@
 // WELL SHAFT (strawberry 2026-09-04): "a shader for the bottom of the well prop, that looks like the walls extend
 // infinitely into the ground, but its actually a flat disc at the bottom of the well." The disc sits in the prop's
 // object space (XY plane, shaft axis = Z, DOWN = -Z). Each fragment casts the eye ray from the disc into an
-// infinite cylinder of the ring's inner radius and shades the wall where the ray would strike it: stone courses
-// by depth, daylight from the mouth dying with depth, black past the fade. No geometry below the disc exists.
+// infinite cylinder of the ring's inner radius and shades the wall where the ray would strike it: the ring's own
+// flat-coloured 14 facets continuing down, daylight from the mouth dying with depth, black past the fade. No geometry below the disc exists.
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_opaque;
 
 uniform vec3 wall_color : source_color = vec3(0.42, 0.40, 0.37);   // the ring's own stone swatch (sampled off the prop atlas at build)
 uniform float radius = 0.78;        // inner radius of the shaft (object units = metres)
 uniform float fade_depth = 9.0;     // metres of shaft before the light is gone
-uniform float course_height = 0.33; // one course of stones per this many metres
+uniform float facets = 14.0;        // the ring is a 14-gon; the shaft keeps its flat faces
 uniform float max_view_dist = 10.0; // "dont bother rendering the disc past like 10m since its impossible to see"
 
 varying vec3 v_obj_pos;
 varying vec3 v_obj_cam;
-
-float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 
 void vertex() {
 	v_obj_pos = VERTEX;
@@ -41,16 +39,14 @@ void fragment() {
 				vec3 hit = ro + rd * t;
 				float depth = max(0.0, ro.z - hit.z);            // metres below the disc
 				float ang = atan(hit.y, hit.x) / (2.0 * PI) + 0.5;   // 0..1 around the shaft
-				// stone courses: rows of blocks, every other row offset by half a block, mortar lines between
-				float row = floor(depth / course_height);
-				float blocks = 10.0;
-				float u = ang * blocks + (mod(row, 2.0) > 0.5 ? 0.5 : 0.0);
-				float fu = fract(u), fv = fract(depth / course_height);
-				float mortar = (fu < 0.06 || fu > 0.94 || fv < 0.10) ? 0.55 : 1.0;
-				float shade = 0.85 + 0.30 * hash21(vec2(floor(u), row));     // per-block tone variation
-				// the wall facing the light (the mouth is above) picks up more; the ray's grazing angle darkens the far side a little
+				// FLAT-SHADED FACETS, no texture (master: "the walls of the well are flat colored"): the ring is a
+				// 14-gon of flat faces, so the shaft continues as the same 14 flat faces, each a constant tone from
+				// a fixed light like the prop's own polygons, then the daylight from the mouth dies with depth.
+				float fa = (floor(ang * facets) + 0.5) / facets * 2.0 * PI - PI;
+				vec3 n = -vec3(cos(fa), sin(fa), 0.0);                                 // the facet's inward normal
+				float shade = 0.70 + 0.30 * max(0.0, dot(n, normalize(vec3(0.55, 0.35, 0.75))));
 				float light = exp(-depth / fade_depth * 2.2);
-				col = wall_color * shade * mortar * light;
+				col = wall_color * shade * light;
 			}
 		}
 	}
