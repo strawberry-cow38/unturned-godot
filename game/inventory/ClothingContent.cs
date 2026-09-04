@@ -76,6 +76,16 @@ namespace UnturnedGodot
         public static Texture2D LoadTex(string rel)
         {
             if (string.IsNullOrEmpty(rel)) return null;
+            // FLAT-COLOUR gear (strawberry 2026-09-04 "hat/balaclava clothing items that are meant to be flat colored on
+            // their model are completely white when worn"): the retail material has no _MainTex, only a _Color, which the
+            // ripper writes as "#rrggbb" in the albedo cell. A 1x1 texture of that colour is the cheapest way to feed the
+            // same material path every textured garment uses.
+            if (rel[0] == '#')
+            {
+                var flat = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
+                flat.Fill(Color.FromHtml(rel));
+                return ImageTexture.CreateFromImage(flat);
+            }
             string p = ProjectSettings.GlobalizePath("res://content/" + rel);
             if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;

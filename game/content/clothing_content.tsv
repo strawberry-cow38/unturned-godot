@@ -7,7 +7,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 23	pants	f60c57dc2ca24d119dbc033fb653a9ff	clothing/tuxedo_bottom_gold_pants.png		clothing/tuxedo_bottom_gold_metallic.png		
 24	shirt	6c986e904d9d4514b5d59dc9e156e02b	clothing/tuxedo_top_gold_shirt.png		clothing/tuxedo_top_gold_metallic.png		
 25	mask	2c123126d8fa45fc8cf1958af4d97167	clothing/bowtie_gold_mask_albedo.png			clothing/bowtie_gold_mask.obj	0,0,0
-26	glasses	53ccea77bc244fef8ff1473ea7136e12				clothing/monocle_gold_glasses.obj	0,0,0
+26	glasses	53ccea77bc244fef8ff1473ea7136e12	#d2bf22			clothing/monocle_gold_glasses.obj	0,0,0
 27	hat	ada195ec008f43ae90ebd34086412e8f	clothing/tophat_hat_albedo.png			clothing/tophat_hat.obj	0,0,0
 154	shirt	0ffc118ca71c4e978d18cff3d974da2a	clothing/shirt_orange_shirt.png				
 155	shirt	54956fec9eb84b9ea17fa18ec40db022	clothing/tee_orange_shirt.png				
@@ -94,7 +94,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 237	hat	ff7b84b0570b402ea159fdbc90634a03	clothing/ghillie_hood_hat_albedo.png			clothing/ghillie_hood_hat.obj	0,0,0
 238	vest	8fddc66b47854364a6acce3fac068eb3	clothing/ghillie_vest_vest_albedo.png			clothing/ghillie_vest_vest.obj	0,0,0
 239	hat	a6099002318e4d58b8e59d431bcf1b8a	clothing/chef_hat_hat_albedo.png			clothing/chef_hat_hat.obj	0,0,0
-240	hat	cc6f0eb76f8247cbbc0b72ed98d9ff6b				clothing/construction_helmet_hat.obj	0,0,0
+240	hat	cc6f0eb76f8247cbbc0b72ed98d9ff6b	#cdaa1e			clothing/construction_helmet_hat.obj	0,0,0
 241	hat	037d63c31acc4934a375d4d16e3b8768	clothing/firefighter_helmet_hat_albedo.png			clothing/firefighter_helmet_hat.obj	0,0,0
 242	shirt	f0c2a8b8ebb64badbcde126ea6bd5ada	clothing/farmer_top_shirt.png				
 243	pants	1d04f4a7fb674c7a911d33daf2df5b0a	clothing/farmer_bottom_pants.png				
@@ -117,7 +117,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 306	shirt	c54821329d3c4ff4bcc59b226338e759	clothing/rcmp_top_shirt.png				
 307	shirt	ea75cf6b68d24463bf9142fd130eb922	clothing/military_top_forest_shirt.png				
 308	pants	7150d5ec4ac5498c8f91cbdfa56285ef	clothing/military_bottom_forest_pants.png				
-309	hat	09c22f9a82d349a99b96e41cd3b49788				clothing/military_helmet_forest_hat.obj	0,0,0
+309	hat	09c22f9a82d349a99b96e41cd3b49788	#39723a			clothing/military_helmet_forest_hat.obj	0,0,0
 310	vest	2890a8891ce3431c845b1b98e8807f97	clothing/military_vest_forest_vest_albedo.png			clothing/military_vest_forest_vest.obj	0,0,0
 311	shirt	41986aedeac2405cbd540823499e9a7b	clothing/medic_top_shirt.png				
 312	pants	4c5b22f84cd645d2bed3a525357c1be7	clothing/medic_bottom_pants.png				
@@ -145,34 +145,34 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 422	pants	cb2551132b504a92a9ab392c483695eb	clothing/suit_bottom_pants.png				
 423	hat	019c28cb327d45daa90d5cce6a28e1ca	clothing/engineer_hat_hat_albedo.png			clothing/engineer_hat_hat.obj	0,0,0
 424	hat	0ddab83ed6bf45ba949a5e93cce818d2	clothing/fedora_hat_albedo.png			clothing/fedora_hat.obj	0,0,0
-425	hat	b8ddce78ff3643c49fd4f63155dcee70				clothing/cap_black_hat.obj	0,0,0
-426	hat	31c27a7b6d6f4455bc1f29b939052c63				clothing/cap_blue_hat.obj	0,0,0
-427	hat	4fa10a95f582495f9680ff4484ace350				clothing/cap_green_hat.obj	0,0,0
-428	hat	7eab133d22114c0aa3a1563a39f5aac9				clothing/cap_orange_hat.obj	0,0,0
-429	hat	c00b936dc7454fd6bb276b9542dbda5c				clothing/cap_purple_hat.obj	0,0,0
-430	hat	4a2f6611eb1f404ca864d5de87abe434				clothing/cap_red_hat.obj	0,0,0
-431	hat	758d924a72f24e198ff0dfcbadae0b66				clothing/cap_white_hat.obj	0,0,0
-432	hat	83a848a208fb4c4aa89cb70e73108d40				clothing/cap_yellow_hat.obj	0,0,0
+425	hat	b8ddce78ff3643c49fd4f63155dcee70	#353535			clothing/cap_black_hat.obj	0,0,0
+426	hat	31c27a7b6d6f4455bc1f29b939052c63	#37658c			clothing/cap_blue_hat.obj	0,0,0
+427	hat	4fa10a95f582495f9680ff4484ace350	#2e642e			clothing/cap_green_hat.obj	0,0,0
+428	hat	7eab133d22114c0aa3a1563a39f5aac9	#bd6e27			clothing/cap_orange_hat.obj	0,0,0
+429	hat	c00b936dc7454fd6bb276b9542dbda5c	#6a466d			clothing/cap_purple_hat.obj	0,0,0
+430	hat	4a2f6611eb1f404ca864d5de87abe434	#9a2525			clothing/cap_red_hat.obj	0,0,0
+431	hat	758d924a72f24e198ff0dfcbadae0b66	#d4d4d4			clothing/cap_white_hat.obj	0,0,0
+432	hat	83a848a208fb4c4aa89cb70e73108d40	#cdaa1e			clothing/cap_yellow_hat.obj	0,0,0
 433	hat	1726c4daebf447d2875ac6de5567f4b5	clothing/beret_forest_hat_albedo.png			clothing/beret_forest_hat.obj	0,0,0
-434	mask	9d849c3f75ac405ca471fd65af4010b6				clothing/balaclava_black_mask.obj	0,0,0
-435	mask	c40d576a691d44caab1343e2a3ddccd5				clothing/balaclava_blue_mask.obj	0,0,0
-436	mask	7ff210e4653844bbaf08765c11274822				clothing/balaclava_green_mask.obj	0,0,0
-437	mask	ef773fedeb684aafb8cf25b9d6adf5f4				clothing/balaclava_orange_mask.obj	0,0,0
-438	mask	597eb9204d794a5ca5fc6d9073d5fb61				clothing/balaclava_purple_mask.obj	0,0,0
-439	mask	4517f3df9cd04c28917f8837cb370620				clothing/balaclava_red_mask.obj	0,0,0
-440	mask	1190ef72e1924e87988a60034d86ec33				clothing/balaclava_white_mask.obj	0,0,0
-441	mask	07db4122cdd7458294230aaccbb1fe92				clothing/balaclava_yellow_mask.obj	0,0,0
+434	mask	9d849c3f75ac405ca471fd65af4010b6	#353535			clothing/balaclava_black_mask.obj	0,0,0
+435	mask	c40d576a691d44caab1343e2a3ddccd5	#37658c			clothing/balaclava_blue_mask.obj	0,0,0
+436	mask	7ff210e4653844bbaf08765c11274822	#2e642e			clothing/balaclava_green_mask.obj	0,0,0
+437	mask	ef773fedeb684aafb8cf25b9d6adf5f4	#bd6e27			clothing/balaclava_orange_mask.obj	0,0,0
+438	mask	597eb9204d794a5ca5fc6d9073d5fb61	#6a466d			clothing/balaclava_purple_mask.obj	0,0,0
+439	mask	4517f3df9cd04c28917f8837cb370620	#9a2525			clothing/balaclava_red_mask.obj	0,0,0
+440	mask	1190ef72e1924e87988a60034d86ec33	#d4d4d4			clothing/balaclava_white_mask.obj	0,0,0
+441	mask	07db4122cdd7458294230aaccbb1fe92	#cdaa1e			clothing/balaclava_yellow_mask.obj	0,0,0
 491	glasses	8de22582a81345e8b01eaa6000a50a85	clothing/aviators_gold_glasses_albedo.png			clothing/aviators_gold_glasses.obj	0,0,0
-492	glasses	cb08b9467b8c45b499c4d0dcec9188f6				clothing/3d_glasses.obj	0,0,0
+492	glasses	cb08b9467b8c45b499c4d0dcec9188f6	#d4d4d4			clothing/3d_glasses.obj	0,0,0
 495	hat	de53d1ef069e44bc81b020cedca4373f	clothing/fez_hat_albedo.png			clothing/fez_hat.obj	0,0,0
-496	hat	b8667af5fd3f418991bfe24f22ff3f84				clothing/crown_hat.obj	0,0,0
-497	hat	92431c8d6a4a4f7c8d059d4d92bda1ac				clothing/obi_hat.obj	0,0,0
-498	mask	8e2a7dceece249448d6a05c9717f4ec7				clothing/antlers_mask.obj	0,0,0
-499	hat	12783268a41f4012b54c0a3ce1ac9ec1				clothing/paper_hat.obj	0,0,0
+496	hat	b8667af5fd3f418991bfe24f22ff3f84	#d2bf22			clothing/crown_hat.obj	0,0,0
+497	hat	92431c8d6a4a4f7c8d059d4d92bda1ac	#1e1e1e			clothing/obi_hat.obj	0,0,0
+498	mask	8e2a7dceece249448d6a05c9717f4ec7	#a59270			clothing/antlers_mask.obj	0,0,0
+499	hat	12783268a41f4012b54c0a3ce1ac9ec1	#bababa			clothing/paper_hat.obj	0,0,0
 500	hat	3b90d191412845518bc32f172cd6b7b8	clothing/headress_hat_albedo.png			clothing/headress_hat.obj	0,0,0
 501	hat	c33807f5171044e5bd55690d4cb43b92	clothing/viking_hat_albedo.png			clothing/viking_hat.obj	0,0,0
-502	glasses	59a3f545ea2d4d6ab5f709b5580ca8aa				clothing/eyepatch_glasses.obj	0,0,0
-509	hat	0422f8d2666b4667be5a1f4ebaaeef08				clothing/fishing_hat_hat.obj	0,0,0
+502	glasses	59a3f545ea2d4d6ab5f709b5580ca8aa	#333333			clothing/eyepatch_glasses.obj	0,0,0
+509	hat	0422f8d2666b4667be5a1f4ebaaeef08	#a9ac8c			clothing/fishing_hat_hat.obj	0,0,0
 510	shirt	95b7f776a2e841c49ba9bfb13d9d3b65	clothing/fishing_top_shirt.png				
 511	pants	336f4bacef3043ccb88e01acd666742f	clothing/fishing_bottom_pants.png				
 517	shirt	381013b43ecd4ab58f34c312b70209fa	clothing/leather_top_shirt.png				
@@ -187,9 +187,9 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 530	hat	ae8e646480a940398a16f963fd7241c5	clothing/fedora_white_hat_albedo.png			clothing/fedora_white_hat.obj	0,0,0
 531	vest	64eb7aa4072042f382c06ba68ce1647e	clothing/rose_vest_albedo.png			clothing/rose_vest.obj	0,0,0
 532	vest	b3f55ba5a4654893a7ed6f5afe5bc69f	clothing/tie_rainbow_vest_albedo.png			clothing/tie_rainbow_vest.obj	0,0,0
-533	vest	2cce5c5163554b27acd2f9bcee9e2f45				clothing/tie_rainbow_emission_vest.obj	0,0,0
+533	vest	2cce5c5163554b27acd2f9bcee9e2f45	#ffffff			clothing/tie_rainbow_emission_vest.obj	0,0,0
 534	mask	a0bee05379b54f9f870aa85110d26d71	clothing/bowtie_rainbow_mask_albedo.png			clothing/bowtie_rainbow_mask.obj	0,0,0
-535	mask	fdb343066bff4a23ac5b69325ee966a4				clothing/bowtie_rainbow_emission_mask.obj	0,0,0
+535	mask	fdb343066bff4a23ac5b69325ee966a4	#ffffff			clothing/bowtie_rainbow_emission_mask.obj	0,0,0
 536	shirt	74c38c373871403dbe872af214c33bdd	clothing/shirt_turtle_shirt.png				
 537	shirt	51bc2d4c36494261bc379774ef117445	clothing/shirt_banana_shirt.png				
 538	pants	531bccebb80e4f9cb16c400cabe2ce82	clothing/jeans_designer_pro_pants.png				
@@ -214,7 +214,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 557	pants	5cd4050b504d4d7789bd52cd799e6eb3	clothing/khaki_pants_pro_pants.png				
 558	shirt	bcfdd91d0f754bc69be9c5066de13ccb	clothing/astronaut_top_shirt.png				
 559	pants	c38a02912447493bb599418474c7b2f8	clothing/astronaut_bottom_pants.png				
-560	hat	1c0cbd5aafa94b3da96a59c6a7328d28				clothing/astronaut_hat.obj	0,0,0
+560	hat	1c0cbd5aafa94b3da96a59c6a7328d28	#e1e1e1			clothing/astronaut_hat.obj	0,0,0
 561	hat	6e1ccdd59f8f4315bbaeb0d74367eb16	clothing/magic_hat_hat_albedo.png			clothing/magic_hat_hat.obj	0,0,0
 562	backpack	85e599a2646d479b97aec947ee288077	clothing/magic_cape_backpack_albedo.png			clothing/magic_cape_backpack.obj	0,0,0
 563	shirt	6809dc9897744b009f202308df45f925	clothing/magic_top_shirt.png				
@@ -222,9 +222,9 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 565	pants	bf3662259e264dc2abbe42b246b9ff72	clothing/corduroy_shorts_pro_pants.png				
 566	pants	fcb01f2dff87466aae1aa1c39dd5e876	clothing/khaki_shorts_pro_pants.png				
 567	pants	a002cfc2ae8c4fd0b12015956acff33c	clothing/trouser_shorts_pro_pants.png				
-568	glasses	ecbaae9549bb42a1ae7fe5665ec7a558				clothing/shades_glasses.obj	0,0,0
+568	glasses	ecbaae9549bb42a1ae7fe5665ec7a558	#282828			clothing/shades_glasses.obj	0,0,0
 569	hat	96bd438e3a5d45f5bd67421b76794a36	clothing/ushanka_hat_albedo.png		clothing/ushanka_hat_metallic.png	clothing/ushanka_hat.obj	0,0,0
-570	mask	81c47d28d1b24012a07d4d5be9b35ea5				clothing/earbuds_mask.obj	0,0,0
+570	mask	81c47d28d1b24012a07d4d5be9b35ea5	#dbdbdb			clothing/earbuds_mask.obj	0,0,0
 579	hat	d8a26fb4e27e42b89934aeb5eba761e3	clothing/pumpkin_hat_albedo.png			clothing/pumpkin_hat.obj	0,0,0
 580	backpack	64aaff67eb56499aba9dceed62d9f217	clothing/halloween_cape_backpack_albedo.png			clothing/halloween_cape_backpack.obj	0,0,0
 581	shirt	1a7950970e824ffdba66114026cefc89	clothing/halloween_top_shirt.png				
@@ -239,14 +239,14 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 592	shirt	588ebff1a09b4136b216ee00c8df5ad7	clothing/snowman_top_shirt.png				
 593	pants	8ab2cbf9287f459089ccdec287a58355	clothing/snowman_bottom_pants.png				
 594	glasses	15720c9a1e7641be9568aafa3760ed89	clothing/carrot_glasses_albedo.png			clothing/carrot_glasses.obj	0,0,0
-595	glasses	a7de145b72ca4ece8686abe15966ed09				clothing/reindeer_glasses.obj	0,0,0
+595	glasses	a7de145b72ca4ece8686abe15966ed09	#ff0000			clothing/reindeer_glasses.obj	0,0,0
 596	shirt	2144666a7f4f4686b8e197c97d8cee24	clothing/holiday_sweater_shirt.png				
 597	vest	1c48ba4636024635baa9a3dbc84f7812	clothing/holiday_scarf_vest_albedo.png			clothing/holiday_scarf_vest.obj	0,0,0
 599	hat	54c4ffae01d14bab8dd8bfdfe00953ce	clothing/sombrero_hat_albedo.png			clothing/sombrero_hat.obj	0,0,0
 600	hat	f10bda46f6644166a4653fab72e07bbe	clothing/conical_hat_albedo.png			clothing/conical_hat.obj	0,0,0
 601	hat	1dbc30a35ea846c7a4aa7bb2fa9ed5aa	clothing/jester_hat_albedo.png			clothing/jester_hat.obj	0,0,0
 602	hat	a0cdbd0db5044fa488ea5c4ed420f0e3	clothing/news_hat_albedo.png			clothing/news_hat.obj	0,0,0
-603	backpack	1f58a7f26dac42abb429420492e3ff1a				clothing/windup_backpack.obj	0,0,0
+603	backpack	1f58a7f26dac42abb429420492e3ff1a	#e1e1e1			clothing/windup_backpack.obj	0,0,0
 604	mask	f05ffb12d7c04087adc7183c0fbad772	clothing/bucket_mask_albedo.png			clothing/bucket_mask.obj	0,0,0
 605	hat	b7e9316b2a94421b88033820476b29a9	clothing/detective_hat_albedo.png			clothing/detective_hat.obj	0,0,0
 606	vest	c54939f50faa426384f0f83f1caa8305	clothing/parrot_vest_albedo.png			clothing/parrot_vest.obj	0,0,0
@@ -254,7 +254,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 608	pants	c28c39a408f3429e8e3561c1ad32fe2a	clothing/detective_bottom_pants.png				
 609	hat	0b9e6a8172a8401487a1830e04ff1d02	clothing/educated_hat_albedo.png			clothing/educated_hat.obj	0,0,0
 610	shirt	e17cb58b5f4d4229896fa75db3f803a8	clothing/tee_admin_shirt.png	clothing/tee_admin_emission.png			
-611	hat	5091dc82951f427faf73b7e756f09e83				clothing/swashbuckler_hat_hat.obj	0,0,0
+611	hat	5091dc82951f427faf73b7e756f09e83	#614a25			clothing/swashbuckler_hat_hat.obj	0,0,0
 612	pants	9f5253bb1e24418d97ce8ac194cb9c4a	clothing/swashbuckler_bottom_pants.png				
 613	shirt	7a4fe481e70240e3bdd03fa892a2dcb3	clothing/swashbuckler_top_shirt.png				
 615	glasses	072c75bbad174de4a3fb52c56a07f746	clothing/cyborg_glasses_albedo.png	clothing/cyborg_glasses_emission.png		clothing/cyborg_glasses.obj	0,0,0
@@ -262,7 +262,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 617	mask	1adc30f0dbf246eba1c0c6a183206aad	clothing/plague_mask_mask_albedo.png			clothing/plague_mask_mask.obj	0,0,0
 619	shirt	9fd6032f9a24404eaf28961fc7f2d289	clothing/plague_top_shirt.png				
 620	pants	d4ec52a157f746edbc3a4df8ae79ddef	clothing/plague_bottom_pants.png				
-621	hat	f706c3e8d25845968d9c3899c7492bef				clothing/queen_guard_hat_hat.obj	0,0,0
+621	hat	f706c3e8d25845968d9c3899c7492bef	#1e1e1e			clothing/queen_guard_hat_hat.obj	0,0,0
 622	shirt	3abb821bba574481b3bebe211a6e19ff	clothing/queen_guard_top_shirt.png				
 623	pants	2764f0bf69724331a394b9519f70e70f	clothing/queen_guard_bottom_pants.png				
 624	shirt	39386a7b13c245b98e2d0d956da33f3e	clothing/jersey_america_shirt.png				
@@ -299,7 +299,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 655	shirt	146b0053ff1e46b184869afd9f9372bf	clothing/jersey_finland_shirt.png				
 656	shirt	5b2abf699b634f8298f72946efbb5e8d	clothing/jersey_pirate_shirt.png				
 657	hat	c528736025a249c88c1368531778c6be	clothing/spartan_hat_hat_albedo.png			clothing/spartan_hat_hat.obj	0,0,0
-658	vest	490791f8d0dc45068cd67a1de1c6346c				clothing/spartan_vest_vest.obj	0,0,0
+658	vest	490791f8d0dc45068cd67a1de1c6346c	#b2722d			clothing/spartan_vest_vest.obj	0,0,0
 659	shirt	6a9f87dd06a94c6f9165bc53bca49e92	clothing/spartan_top_shirt.png		clothing/spartan_top_metallic.png		
 660	pants	ae29b48101c646cf9a28b291ce9bec64	clothing/spartan_bottom_pants.png		clothing/spartan_bottom_metallic.png		
 662	vest	c29f58c3982c4199b4bf6aa346b610eb	clothing/epaulettes_vest_albedo.png			clothing/epaulettes_vest.obj	0,0,0
@@ -320,7 +320,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 677	shirt	adde7bdeb0814586b0d3de02b05a810a	clothing/hoodie_squid_shirt.png				
 678	shirt	153260835aec4778bf749b138ad314f9	clothing/hoodie_yield_shirt.png				
 679	pants	a198dd3d27c1416da86a65a53f6ac5ef	clothing/rocket_pants_pants.png	clothing/rocket_pants_emission.png	clothing/rocket_pants_metallic.png		
-680	glasses	541026a71d7d4cbc95a728252ab4da70				clothing/bandito_glasses.obj	0,0,0
+680	glasses	541026a71d7d4cbc95a728252ab4da70	#333333			clothing/bandito_glasses.obj	0,0,0
 681	vest	28ad1797938146c78faeb8d1dcde7add	clothing/snake_vest_albedo.png			clothing/snake_vest.obj	0,0,0
 682	hat	872654cd0b0c48a780db5925bac2843c	clothing/navy_hat_albedo.png		clothing/navy_hat_metallic.png	clothing/navy_hat.obj	0,0,0
 683	shirt	31f58a6b3e0744ae89b929514122a82a	clothing/navy_top_shirt.png		clothing/navy_top_metallic.png		
@@ -329,7 +329,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 686	hat	b910a4ca4cc5432795889c1061ba73aa	clothing/explorer_hat_hat_albedo.png			clothing/explorer_hat_hat.obj	0,0,0
 687	shirt	ce4f9b8fb48d41b78c0b7527d9224102	clothing/explorer_top_shirt.png				
 688	pants	11ecafa84cd8485db6a714ce40e631be	clothing/explorer_bottom_pants.png				
-689	vest	c9d11191fc6b4446b3fe751d60b0d926				clothing/sheriff_vest.obj	0,0,0
+689	vest	c9d11191fc6b4446b3fe751d60b0d926	#d9a723			clothing/sheriff_vest.obj	0,0,0
 690	hat	8bcb23a2b3634fffbbfebc3cbf09c006	clothing/sneak_hat_albedo.png		clothing/sneak_hat_metallic.png	clothing/sneak_hat.obj	0,0,0
 691	shirt	b9ac48d537604d8eb110c73d82a993f9	clothing/sneak_top_shirt.png		clothing/sneak_top_metallic.png		
 692	pants	4d8336fff2b64197ac67fa706eac2698	clothing/sneak_bottom_pants.png		clothing/sneak_bottom_metallic.png		
@@ -337,8 +337,8 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 695	shirt	a48083b4fe3f415a971c375095e0dcf1	clothing/robot_top_shirt.png				
 696	pants	cc3c7bc56f644ad0abddf9f72d460f49	clothing/robot_bottom_pants.png				
 697	shirt	6619242d5a16447499556feb4d6b583d	clothing/shirt_blueberry_shirt.png				
-699	hat	5a05782dcd124de5aca220cbc692c0bb				clothing/anniversary_0_rainbow_hat.obj	0,0,0
-700	hat	ffd715209978472fac9d85f2df4a0ee0				clothing/anniversary_1_rainbow_hat.obj	0,0,0
+699	hat	5a05782dcd124de5aca220cbc692c0bb	#ffffff			clothing/anniversary_0_rainbow_hat.obj	0,0,0
+700	hat	ffd715209978472fac9d85f2df4a0ee0	#ffffff			clothing/anniversary_1_rainbow_hat.obj	0,0,0
 701	hat	5b807d816c364001821763157b642983	clothing/anniversary_0_blue_hat_albedo.png			clothing/anniversary_0_blue_hat.obj	0,0,0
 702	hat	9853386df80342c395d4ebb4e4637473	clothing/anniversary_0_green_hat_albedo.png			clothing/anniversary_0_green_hat.obj	0,0,0
 703	hat	3ad1dd0574124d3baa882d48273a80fd	clothing/anniversary_0_orange_hat_albedo.png			clothing/anniversary_0_orange_hat.obj	0,0,0
@@ -351,21 +351,21 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 710	hat	6e1e64617d03430e82bf300437714459	clothing/anniversary_1_purple_hat_albedo.png			clothing/anniversary_1_purple_hat.obj	0,0,0
 711	hat	466721e2506246e89e2692ad3e588365	clothing/anniversary_1_red_hat_albedo.png			clothing/anniversary_1_red_hat.obj	0,0,0
 712	hat	515b4e9f83734084b50c9b3ca8aae0b0	clothing/anniversary_1_yellow_hat_albedo.png			clothing/anniversary_1_yellow_hat.obj	0,0,0
-713	hat	c53fc9205cee4054b8f6d6968b14d0dd				clothing/anniversary_0_silver_hat.obj	0,0,0
-714	hat	e5f0ab5710314d4a95d7b865b7562d90				clothing/anniversary_1_silver_hat.obj	0,0,0
-715	hat	4273d6d7c14244cd91dfb883718017ef				clothing/anniversary_0_gold_hat.obj	0,0,0
-716	hat	8abcb3ca625d4eed9912fec112a7dd37				clothing/anniversary_1_gold_hat.obj	0,0,0
+713	hat	c53fc9205cee4054b8f6d6968b14d0dd	#ffffff			clothing/anniversary_0_silver_hat.obj	0,0,0
+714	hat	e5f0ab5710314d4a95d7b865b7562d90	#ffffff			clothing/anniversary_1_silver_hat.obj	0,0,0
+715	hat	4273d6d7c14244cd91dfb883718017ef	#ffffff			clothing/anniversary_0_gold_hat.obj	0,0,0
+716	hat	8abcb3ca625d4eed9912fec112a7dd37	#ffffff			clothing/anniversary_1_gold_hat.obj	0,0,0
 717	shirt	696e26e9e1f44c468b345d18dce338dd	clothing/samurai_top_shirt.png		clothing/samurai_top_metallic.png		
 718	pants	fe4b691c4bdc44b9a59db51eb124da1f	clothing/samurai_bottom_pants.png		clothing/samurai_bottom_metallic.png		
 719	hat	3905c73403d24d5f8ed28380dd21e82d	clothing/samurai_hat_hat_albedo.png		clothing/samurai_hat_hat_metallic.png	clothing/samurai_hat_hat.obj	0,0,0
 720	vest	d5c26885b44f47c69c13b1e261b4e6c0	clothing/samurai_vest_vest_albedo.png		clothing/samurai_vest_vest_metallic.png	clothing/samurai_vest_vest.obj	0,0,0
 721	mask	9ee06fe943c64a7c9c06483b93386e18	clothing/samurai_mask_mask_albedo.png		clothing/samurai_mask_mask_metallic.png	clothing/samurai_mask_mask.obj	0,0,0
-722	vest	af15d0f44eba45ed92b2757d91dab1de				clothing/chain_vest.obj	0,0,0
+722	vest	af15d0f44eba45ed92b2757d91dab1de	#d2bf22			clothing/chain_vest.obj	0,0,0
 723	hat	cfba21294bad40d0a1d11d61b4319ad4	clothing/ushanka_vintage_hat_albedo.png			clothing/ushanka_vintage_hat.obj	0,0,0
 724	shirt	a8ee7f9803904d72b53bbc89cb4928a2	clothing/trenchcoat_vintage_top_shirt.png				
-727	glasses	c0d43d67fbd44725a4993a47dcd6c212				clothing/medic_glasses_glasses.obj	0,0,0
+727	glasses	c0d43d67fbd44725a4993a47dcd6c212	#282828			clothing/medic_glasses_glasses.obj	0,0,0
 728	hat	56926aef445a4370b24597fe5869fe04	clothing/beret_bug_report_hat_albedo.png			clothing/beret_bug_report_hat.obj	0,0,0
-729	mask	2f05cebe94144f3c80fde2dfc10203aa				clothing/bolt_mask.obj	0,0,0
+729	mask	2f05cebe94144f3c80fde2dfc10203aa	#545454			clothing/bolt_mask.obj	0,0,0
 730	glasses	3dfe0056bf394713925de6bfbb01dcd8	clothing/scientist_mad_glasses_glasses_albedo.png			clothing/scientist_mad_glasses_glasses.obj	0,0,0
 731	shirt	1b75391978094ee4bab76d13d1128659	clothing/scientist_mad_top_shirt.png				
 732	backpack	21ed7359d28243b69247874084fea8ac	clothing/vampire_cape_backpack_albedo.png			clothing/vampire_cape_backpack.obj	0,0,0
@@ -390,12 +390,12 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 751	hat	b921948eb437429bb27efb5098e04199	clothing/nutcracker_hat_hat_albedo.png			clothing/nutcracker_hat_hat.obj	0,0,0
 754	shirt	f5c9e639d9f644429cd3bee2d07161cf	clothing/ma_wc_top_shirt.png				
 755	pants	098a94261ee844abb16844934c7951f2	clothing/ma_wc_bottom_pants.png				
-756	vest	e368dc6c27cd48f9947d7eabed37815a				clothing/kukui_nuts_vest.obj	0,0,0
+756	vest	e368dc6c27cd48f9947d7eabed37815a	#7a6b5e			clothing/kukui_nuts_vest.obj	0,0,0
 757	pants	7ab4cabac88e4b06817dfdcb190dba6d	clothing/grass_skirt_pants.png				
-758	glasses	01b3d1734b3c4333bed5f3fe4a1c43ac				clothing/shuttershades_glasses.obj	0,0,0
+758	glasses	01b3d1734b3c4333bed5f3fe4a1c43ac	#c9c9c9			clothing/shuttershades_glasses.obj	0,0,0
 759	mask	5bf841b4e27e4959b5ebedb43865beb3	clothing/tiki_angry_mask_albedo.png			clothing/tiki_angry_mask.obj	0,0,0
 760	mask	7027a77d879e47de9b0b1473f5b7d998	clothing/tiki_happy_mask_albedo.png			clothing/tiki_happy_mask.obj	0,0,0
-761	glasses	1ee00c0182bf45a68f97d19bcd7f9b3d				clothing/rose_tinted_glasses.obj	0,0,0
+761	glasses	1ee00c0182bf45a68f97d19bcd7f9b3d	#282828			clothing/rose_tinted_glasses.obj	0,0,0
 762	hat	15a59afe564c4325aaef1e0035a450d7	clothing/lei_hat_albedo.png			clothing/lei_hat.obj	0,0,0
 763	hat	69d95c7a4d4745b89701c91b6f4b83e7	clothing/tourist_hat_camo_hat_albedo.png			clothing/tourist_hat_camo_hat.obj	0,0,0
 764	hat	95b3b2db63194030bc090a3216cb2e76	clothing/pineapple_hat_albedo.png			clothing/pineapple_hat.obj	0,0,0
@@ -428,7 +428,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 799	pants	ce72cd93de84436e844ec53b896af8cd	clothing/headlesspants_pants.png				
 800	shirt	b1e52125a20e468fbc1dd772ef5cb4c5	clothing/headlessshirt_shirt.png				
 801	vest	68deeea528f545b6a52cb202a0582431	clothing/headlessshoulders_vest_albedo.png	clothing/headlessshoulders_vest_emission.png		clothing/headlessshoulders_vest.obj	0,0,0
-802	hat	a308be3bbaae4c2e8ddee0569cb3bddc				clothing/potionhead_hat.obj	0,0,0
+802	hat	a308be3bbaae4c2e8ddee0569cb3bddc	#ffffff			clothing/potionhead_hat.obj	0,0,0
 803	vest	5c923ce0f58843f790c07192f476734d	clothing/spiderfriend_vest_albedo.png			clothing/spiderfriend_vest.obj	0,0,0
 804	shirt	de11b1859c934ed3a40f17ba3b05b78d	clothing/tee_rocketmod_shirt.png				
 805	backpack	388b21119dce4e4db20f874d84ea9d3a	clothing/backpack_aprix_1_backpack_albedo.png			clothing/backpack_aprix_1_backpack.obj	0,0,0
@@ -450,9 +450,9 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 821	pants	95372ee9c92145af94b20f9f18532134	clothing/yeti_bottom_pants.png				
 822	shirt	70f97b4a2888425aa7ad1925311bad60	clothing/yeti_top_shirt.png				
 823	mask	933e031cb0294c2ea7048b0ce4fb0686	clothing/yeti_mask_albedo.png			clothing/yeti_mask.obj	0,0,0
-824	hat	83f80f01e0784fcbb3f44c1aadd6cc7a				clothing/christmassnowglobehat_hat.obj	0,0,0
+824	hat	83f80f01e0784fcbb3f44c1aadd6cc7a	#581900			clothing/christmassnowglobehat_hat.obj	0,0,0
 825	hat	f6839eea36454f90a09e0cabb19532d9	clothing/christmasgingerbreadhousehat_hat_albedo.png			clothing/christmasgingerbreadhousehat_hat.obj	0,0,0
-826	hat	ccd328e551fd482db6853f64e775414e				clothing/christmasicecubehat_hat.obj	0,0,0
+826	hat	ccd328e551fd482db6853f64e775414e	#4987ff			clothing/christmasicecubehat_hat.obj	0,0,0
 827	backpack	72888a1150cf419fbe7ded41f8860a12	clothing/snow_sled_backpack_albedo.png			clothing/snow_sled_backpack.obj	0,0,0
 828	vest	e665f2f41d6b442dafbe96251e2f5ab6	clothing/seal_pup_vest_albedo.png			clothing/seal_pup_vest.obj	0,0,0
 829	vest	c06b87c1577e4bdc8087671c38fe3a82	clothing/mistletoe_vest_albedo.png			clothing/mistletoe_vest.obj	0,0,0
@@ -464,11 +464,11 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 836	hat	13e4f0df54ff4d71921c57f4b3d2b1e7	clothing/hermes_helmet_hat_albedo.png			clothing/hermes_helmet_hat.obj	0,0,0
 837	backpack	0e9d714967f84955a628816480689f1c	clothing/wings_backpack_albedo.png			clothing/wings_backpack.obj	0,0,0
 838	glasses	17ef22cb97814e2f8da117e8126b0147	clothing/pegasus_horn_glasses_albedo.png			clothing/pegasus_horn_glasses.obj	0,0,0
-839	backpack	7b4b412cb05c40dbac07e934a54d3207			clothing/fleece_cape_backpack_metallic.png	clothing/fleece_cape_backpack.obj	0,0,0
+839	backpack	7b4b412cb05c40dbac07e934a54d3207	#e8d463		clothing/fleece_cape_backpack_metallic.png	clothing/fleece_cape_backpack.obj	0,0,0
 840	vest	c12128affb5e4992bdc89d4ce20db881	clothing/kratos_shoulder_vest_albedo.png			clothing/kratos_shoulder_vest.obj	0,0,0
 841	backpack	ae45b2e9c2334960be882a5c06373020	clothing/artemis_shield_backpack_albedo.png			clothing/artemis_shield_backpack.obj	0,0,0
 842	backpack	f5c00c1d02884a00b8a083b1877de064	clothing/harp_backpack_albedo.png			clothing/harp_backpack.obj	0,0,0
-843	hat	d316b86ff4414d13bd081039d39e1955				clothing/zeus_hair_hat.obj	0,0,0
+843	hat	d316b86ff4414d13bd081039d39e1955	#ffffff			clothing/zeus_hair_hat.obj	0,0,0
 847	hat	f397949438ce4bbb91f7ac9495428ba5	clothing/ireland_revolution_hat_hat_albedo.png			clothing/ireland_revolution_hat_hat.obj	0,0,0
 848	shirt	3a431b8609ee41b4977688608bca97f2	clothing/ireland_revolution_top_shirt.png				
 849	pants	dd1ddda95d3b4344a8a52ca437130c8b	clothing/ireland_revolution_bottom_pants.png				
@@ -537,14 +537,14 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 954	hat	bf2d422c46784d8c82879c7651c825cd	clothing/ei_edible_arrangement_hat_albedo.png			clothing/ei_edible_arrangement_hat.obj	0,0,0
 955	hat	e636ee48abb94111a88ac334f98943cb	clothing/ei_feather_crown_hat_albedo.png			clothing/ei_feather_crown_hat.obj	0,0,0
 956	backpack	4383dec00b1f4afd8ba7e6a9e0d31bf8	clothing/ei_acoustic_sash_backpack_albedo.png			clothing/ei_acoustic_sash_backpack.obj	0,0,0
-957	mask	477cda70d59d4bef8cda466ca8c8feba				clothing/ei_fishbowl_mask.obj	0,0,0
+957	mask	477cda70d59d4bef8cda466ca8c8feba	#b4f1fd			clothing/ei_fishbowl_mask.obj	0,0,0
 958	mask	f5daaf491d4e4a82a8607bf09c1bcea0	clothing/ei_diving_helmet_mask_albedo.png		clothing/ei_diving_helmet_mask_metallic.png	clothing/ei_diving_helmet_mask.obj	0,0,0
-960	mask	35d5e37d7fe0490eafc4cf7e75217edf				clothing/dl_volatile_jaw_mask.obj	0,0,0
-961	vest	c7635e6cc74f47fa8aa69261caa7afc5				clothing/dl_volatile_chest_vest.obj	0,0,0
+960	mask	35d5e37d7fe0490eafc4cf7e75217edf	#9b9779			clothing/dl_volatile_jaw_mask.obj	0,0,0
+961	vest	c7635e6cc74f47fa8aa69261caa7afc5	#9b9779			clothing/dl_volatile_chest_vest.obj	0,0,0
 962	shirt	b2ba510fc03e4297a4a4c59122d92259	clothing/paintpalette_contest_top_shirt.png				
-963	mask	bdb8e1e027844043bed3ba511ca6aa50				clothing/battleye_halo_mask.obj	0,0,0
+963	mask	bdb8e1e027844043bed3ba511ca6aa50	#ffed00			clothing/battleye_halo_mask.obj	0,0,0
 1009	hat	430dc9e872f04b49ade2602ed5b8d2f9	clothing/beret_desert_hat_albedo.png			clothing/beret_desert_hat.obj	0,0,0
-1010	hat	2d090bab240e4ca88fd577581187c4bc				clothing/military_helmet_desert_hat.obj	0,0,0
+1010	hat	2d090bab240e4ca88fd577581187c4bc	#a69884			clothing/military_helmet_desert_hat.obj	0,0,0
 1011	shirt	338553d30a464746beef023e048eaca4	clothing/military_top_desert_shirt.png				
 1012	pants	1fa1f3ade8b04fd08715b27003b8c584	clothing/military_bottom_desert_pants.png				
 1013	vest	83688311fef04b1aa599f02d946b64f5	clothing/military_vest_desert_vest_albedo.png			clothing/military_vest_desert_vest.obj	0,0,0
@@ -588,7 +588,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1270	mask	d3c14d539f0246a7a203dbd992c4036b	clothing/gasmask_mask_albedo.png			clothing/gasmask_mask.obj	0,0,0
 1333	shirt	e248594387164c739a969f9f2b9da2da	clothing/military_top_russia_shirt.png				
 1334	pants	e58b42b450ac40609838cd7304671477	clothing/military_bottom_russia_pants.png				
-1335	hat	a796d974eef04f18823823ce4d94645b				clothing/military_helmet_russia_hat.obj	0,0,0
+1335	hat	a796d974eef04f18823823ce4d94645b	#627342			clothing/military_helmet_russia_hat.obj	0,0,0
 1336	vest	e97565ee9bf74fd494f29058ef3dfa79	clothing/military_vest_russia_vest_albedo.png			clothing/military_vest_russia_vest.obj	0,0,0
 1354	shirt	0dd24f9481344c32bffbaf6e2e5cb44f	clothing/ghillie_top_russia_shirt.png				
 1355	pants	4b501244f334429fbd5ea2aefbfb07de	clothing/ghillie_bottom_russia_pants.png				
@@ -610,11 +610,11 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1423	shirt	c53ebf05a7dc446aba4d9ea301856dc0	clothing/coalition_top_commander_shirt.png				
 1424	shirt	f71ab61dd213490c81aa4e006130b9b4	clothing/coalition_top_captain_shirt.png				
 1425	vest	a54ef1d16268467696bdfc2b28fcf6c1	clothing/coalition_vest_vest_albedo.png			clothing/coalition_vest_vest.obj	0,0,0
-1426	hat	f539aa0ca3ae49f29ab0708cd1e67f8e				clothing/cap_coalition_hat.obj	0,0,0
-1427	hat	df6e49cc69404d4886edd83265eee13b				clothing/coalition_helmet_hat.obj	0,0,0
+1426	hat	f539aa0ca3ae49f29ab0708cd1e67f8e	#475e83			clothing/cap_coalition_hat.obj	0,0,0
+1427	hat	df6e49cc69404d4886edd83265eee13b	#475e83			clothing/coalition_helmet_hat.obj	0,0,0
 1428	hat	8f82d4cb44444c30b031be90597261dc	clothing/coalition_beret_hat_albedo.png			clothing/coalition_beret_hat.obj	0,0,0
 1429	hat	def7794c2e4d426992083c6c538a2a2b	clothing/coalition_captain_hat_hat_albedo.png			clothing/coalition_captain_hat_hat.obj	0,0,0
-1446	mask	2ecf1b15a59f4125a2d55c88479529c2				clothing/earpiece_mask.obj	0,0,0
+1446	mask	2ecf1b15a59f4125a2d55c88479529c2	#606060			clothing/earpiece_mask.obj	0,0,0
 1454	pants	dea4d433b0d7486db7cb700ac60821aa	clothing/trunks_black_pants.png				
 1455	pants	315b6f4eb4384f3cb694e610eec0b058	clothing/trunks_blue_pants.png				
 1456	pants	f4b213d9e1574908aa91156b4aa5d56f	clothing/trunks_green_pants.png				
@@ -625,7 +625,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1461	pants	bcd8c96c11b04a7dae46d107625a2831	clothing/trunks_yellow_pants.png				
 1462	shirt	94fd2aa0d44e4b40a67eac6c41e1f6f1	clothing/coastguard_top_shirt.png		clothing/coastguard_top_metallic.png		
 1463	pants	3dd2ed7d6e2840ada9553cefb9db9ed4	clothing/coastguard_bottom_pants.png		clothing/coastguard_bottom_metallic.png		
-1464	glasses	6740b586ceef4d419c15633698503443				clothing/blindfold_glasses.obj	0,0,0
+1464	glasses	6740b586ceef4d419c15633698503443	#333333			clothing/blindfold_glasses.obj	0,0,0
 1472	hat	28e4684966a846ef9c1ed937e96ebf87	clothing/fighter_jet_hat_hat_albedo.png			clothing/fighter_jet_hat_hat.obj	0,0,0
 1473	shirt	75b1c9bb21974adc8ec08abf410d9789	clothing/fighter_jet_top_shirt.png				
 1474	pants	85e2d759677847e9b3bd28ec9371a361	clothing/fighter_jet_bottom_pants.png				
@@ -634,7 +634,7 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1493	pants	8ba43c7bf9d84a4db560a1717667ac58	clothing/ghillie_bottom_peaks_pants.png				
 1494	hat	029e932392304d7ea6ddc69618c3e39a	clothing/ghillie_hood_peaks_hat_albedo.png			clothing/ghillie_hood_peaks_hat.obj	0,0,0
 1495	vest	cfa2f7468ff94751a2c1b3d1585bd375	clothing/ghillie_vest_peaks_vest_albedo.png			clothing/ghillie_vest_peaks_vest.obj	0,0,0
-1496	backpack	fb5c3827df39498086c80ed213e0d8e8				clothing/shark_fin_backpack.obj	0,0,0
+1496	backpack	fb5c3827df39498086c80ed213e0d8e8	#858585			clothing/shark_fin_backpack.obj	0,0,0
 1497	vest	a91bcb60d5fa449d9105a5cfac6c06e7	clothing/ducky_vest_albedo.png			clothing/ducky_vest.obj	0,0,0
 1498	shirt	babd00dbeb9a4558aeac9eea75f1019c	clothing/lederhosen_top_shirt.png				
 1499	pants	88e7161c28914befa671a05fdb45ead1	clothing/lederhosen_bottom_pants.png				
@@ -651,9 +651,9 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1516	shirt	eda9e184b9974cd59673bdb877edc2ac	clothing/military_top_arctic_shirt.png				
 1517	pants	4f1b2f0458ca4442b45cf4439a9e05f7	clothing/military_bottom_arctic_pants.png				
 1518	vest	cc43632c0e784963adfc94fd652e0cac	clothing/military_vest_arctic_vest_albedo.png			clothing/military_vest_arctic_vest.obj	0,0,0
-1519	hat	5ac26ed0cc584f79ac87d60a1a845b4e				clothing/military_helmet_arctic_hat.obj	0,0,0
+1519	hat	5ac26ed0cc584f79ac87d60a1a845b4e	#d0d0d0			clothing/military_helmet_arctic_hat.obj	0,0,0
 1523	shirt	6de064a753004f3ba82ebfed680ac217	clothing/hoodie_offbrand_shirt.png				
-1525	hat	5b71f852a1634970b300cd5b3493d8af				clothing/military_helmet_spec_ops_hat.obj	0,0,0
+1525	hat	5b71f852a1634970b300cd5b3493d8af	#464646			clothing/military_helmet_spec_ops_hat.obj	0,0,0
 1526	shirt	8f4a23d7035b4b4abc2e3e5b33e2f870	clothing/belgiumlilebr_shirt_shirt.png				
 1527	pants	3428242254904258bc13efc196420ee7	clothing/belgiumlilebr_pants_pants.png				
 1528	backpack	d58f51716bc34486a878b5e4cc15fa7c	clothing/belgiuminfantry_backpack_backpack_albedo.png			clothing/belgiuminfantry_backpack_backpack.obj	0,0,0
@@ -707,11 +707,11 @@ id	slot	guid	albedo	emission	metallic	mesh	attach_off
 1734	vest	cdae042a67bb460c88615e50b32e09ee	clothing/xmas_bandolier_vest_albedo.png	clothing/xmas_bandolier_vest_emission.png		clothing/xmas_bandolier_vest.obj	0,0,0
 1735	vest	e0a2c4d0034642a9be8470d79fa1f125	clothing/xmas_belt_vest_albedo.png			clothing/xmas_belt_vest.obj	0,0,0
 1736	vest	748d0713ad4b4f83ace39c052d95eb38	clothing/biohazardzombieplush_vest_albedo.png			clothing/biohazardzombieplush_vest.obj	0,0,0
-1763	glasses	113f8b84f86f4ee597064150807fb68a				clothing/monocle_platinum_glasses.obj	0,0,0
+1763	glasses	113f8b84f86f4ee597064150807fb68a	#ffffff			clothing/monocle_platinum_glasses.obj	0,0,0
 1771	backpack	b2c7252ca3a84367997618a5be0409b9	clothing/turtle_backpack_backpack_albedo.png			clothing/turtle_backpack_backpack.obj	0,0,0
 1772	vest	c69d5d1b2ffc4af3b9388061844aff47	clothing/penguin_companion_vest_albedo.png			clothing/penguin_companion_vest.obj	0,0,0
 1773	vest	2e5aebd9f9e64994bc8fbfef65405564	clothing/crab_companion_vest_albedo.png			clothing/crab_companion_vest.obj	0,0,0
 1839	pants	3405172ac4b94d819d7e4e4e4695a2ac	clothing/springloadedboots_pants.png				
 1994	shirt	30ee68c9398541da897ad8055c1cba7c	clothing/rain_jacket_shirt.png				
 1995	pants	bdb2c27b56f040d29a292f9463bff41e	clothing/rain_pants_pants.png				
-1996	hat	c88cc2394c46482dadbb7d1a36a0e50c				clothing/rain_hat_hat.obj	0,0,0
+1996	hat	c88cc2394c46482dadbb7d1a36a0e50c	#cdaa1e			clothing/rain_hat_hat.obj	0,0,0

@@ -1570,8 +1570,12 @@ namespace UnturnedGodot
             var clothing = new PlayerClothingController(rc, inv);
             clothing.Wear(new SDG.Unturned.Item(3));     // Orange Hoodie (shirt) -> body paint
             clothing.Wear(new SDG.Unturned.Item(209));   // Cargo Pants (pants)   -> body paint
-            clothing.Wear(new SDG.Unturned.Item(27));    // Tophat (hat)          -> Skull-bone mesh
-            clothing.Wear(new SDG.Unturned.Item(10));    // Police Vest (vest)    -> Spine-bone mesh
+            // UG_WEAR_HAT / UG_WEAR_VEST / UG_WEAR_MASK / UG_WEAR_GLASSES = item ids to wear instead of the defaults (flat-colour gear checks)
+            static int WearId(string env, int dflt) => int.TryParse(System.Environment.GetEnvironmentVariable(env), out var v) ? v : dflt;
+            clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_HAT", 27)));    // Tophat (hat)          -> Skull-bone mesh
+            clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_VEST", 10)));   // Police Vest (vest)    -> Spine-bone mesh
+            if (WearId("UG_WEAR_MASK", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_MASK", 0)));
+            if (WearId("UG_WEAR_GLASSES", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_GLASSES", 0)));
             GD.Print($"[wearcloth] worn: shirt={inv.wornShirt?.id} pants={inv.wornPants?.id} hat={inv.wornHat?.id} vest={inv.wornVest?.id} | fall x{inv.FallingDamageMultiplier:0.###} explo x{inv.ExplosionArmor:0.###}");
             rc.Play("Idle_Stand");
 

@@ -18,7 +18,8 @@ Model_0's baked LOCAL transform (pos/rot/scale) is printed -- P3 needs it for bo
 
 FLAT-COLOR GEAR: many gear materials carry NO _MainTex, just a flat `_Color` (e.g. Construction Helmet
 = yellow). For those, no albedo .png is written; the _Color is printed as an sRGB hex tint for P3 to
-flat-shade the mesh, and the TSV albedo column is left empty.
+flat-shade the mesh, and the TSV albedo column carries that "#rrggbb" (since 2026-09-04; it used to be left
+empty, and the runtime wore those garments WHITE).
 
 Usage:
   extract_gear_mesh.py --ids 27,10          # Tophat (hat) + Police Vest (vest), slot auto from catalog
@@ -330,7 +331,7 @@ def main():
         rel = lambda fn: f"clothing/{fn}"
         rows[iid] = [
             str(iid), slot, guid,
-            rel(got["albedo"][0]) if "albedo" in got else "",
+            rel(got["albedo"][0]) if "albedo" in got else (to_hex(color) if color else ""),   # FLAT-COLOR gear: the material's _Color as "#rrggbb" (ClothingContent.LoadTex makes a 1x1 texture of it; it wore WHITE before -- strawberry 2026-09-04)
             rel(got["emission"][0]) if "emission" in got else "",
             rel(got["metallic"][0]) if "metallic" in got else "",
             rel(obj_fn),
