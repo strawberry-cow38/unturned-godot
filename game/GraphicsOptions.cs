@@ -75,7 +75,7 @@ namespace UnturnedGodot
         public static bool SunShafts = false;          // -> Godot volumetric fog (the nearest thing to retail's sun shafts)
         public static bool ScreenSpaceReflections = false;
         public static GfxQuality EffectQuality = GfxQuality.High;      // particle count + size (ParticleFx) -- takes effect on the next map load
-        public static GfxQuality PlanarReflection = GfxQuality.High;   // water mirror: Off / every 4th frame / every 2nd / every frame
+        public static GfxQuality PlanarReflection = GfxQuality.Medium;   // water mirror: Off / every 4th frame / every 2nd (the pre-option default) / every frame
         public static GfxQuality ScopeQuality = GfxQuality.High;       // scope PiP viewport: 360 / 540 / 720 / 1080 (applied when a scope is next mounted)
         public static bool Outline = true;              // look-at outline overlay
         public static bool GrassDisplacement = true;
