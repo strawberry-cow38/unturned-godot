@@ -300,6 +300,10 @@ namespace UnturnedGodot
                     openCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
                     closeCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "close"),
                     soundName: e.Sound);
+                // The drink cooler's door is a glass door: the rip kept the FRAME (Cooler_0_Hinge_0_door.obj: outer x +-0.75,
+                // z 0..2.5, 0.125-wide bars, 0.2 thick about y=0.6) and dropped the glass material -- put the pane back in
+                // the opening with the vehicle window glass, swinging with the leaf (strawberry 2026-09-04).
+                if (MeshName.StartsWith("Cooler")) d.AddGlassPane(new Vector3(0f, 0.6f, 1.25f), new Vector2(1.25f, 2.25f), Vector3.Up);
                 // The leaf KEEPS its default solid look-focus layer (bit 6, set in ObjectDoor._Ready): the player
                 // can't walk through the doorway anymore AND a look-ray on the door front actually lands (before, the
                 // leaf was CollisionLayer=0 -> a walk-through hole + a dead look-zone, since the body mesh has a
