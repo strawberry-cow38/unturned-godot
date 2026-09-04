@@ -48,6 +48,12 @@ namespace UnturnedGodot
         public static int CastCount;           // rays cast so far (perf probe)
 
         Image _img; ImageTexture _tex; byte[] _bytes; float[] _win;
+        readonly float[] _raw = new float[(Res + 2) * (Res + 2)]; readonly float[] _nine = new float[9];
+        static float Median9(float[] a)
+        {
+            for (int i = 1; i < 9; i++) { float v = a[i]; int j = i - 1; while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j--; } a[j + 1] = v; }
+            return a[4];
+        }
         int _ox = int.MinValue, _oz = int.MinValue;   // window origin, in cells
         bool _dirty, _wired; int _scan;
         PhysicsRayQueryParameters3D _q;
@@ -122,6 +128,49 @@ namespace UnturnedGodot
             }
         }
 
+        // SMALL PROPS DO NOT OCCLUDE (strawberry: "very small props (up to like.. fence size) shouldnt cast rain occlusion"):
+        // anything whose collision footprint is fence-height or lower, or post-thin, is cast through like a car. Judged
+        // once per collider off its CollisionShape3D children and remembered by instance id.
+        public const float SmallHeight = 1.7f, SmallArea = 1.5f;   // m, m^2 (X*Z footprint)
+        static readonly Dictionary<ulong, bool> _small = new();
+        static bool IsSmallProp(GodotObject o)
+        {
+            if (o is not CollisionObject3D body || body is Vehicle) return false;
+            ulong id = body.GetInstanceId();
+            if (_small.TryGetValue(id, out var known)) return known;
+            bool small = false;
+            Aabb acc = default; bool any = false;
+            foreach (var ch in body.GetChildren())
+            {
+                if (ch is not CollisionShape3D cs || cs.Shape == null) continue;
+                Aabb local;
+                switch (cs.Shape)
+                {
+                    case HeightMapShape3D: any = false; goto done;   // the ground itself
+                    case BoxShape3D b: local = new Aabb(-b.Size * 0.5f, b.Size); break;
+                    case SphereShape3D sp: local = new Aabb(-Vector3.One * sp.Radius, Vector3.One * 2f * sp.Radius); break;
+                    case CapsuleShape3D cp: local = new Aabb(new Vector3(-cp.Radius, -cp.Height * 0.5f, -cp.Radius), new Vector3(cp.Radius * 2f, cp.Height, cp.Radius * 2f)); break;
+                    case CylinderShape3D cy: local = new Aabb(new Vector3(-cy.Radius, -cy.Height * 0.5f, -cy.Radius), new Vector3(cy.Radius * 2f, cy.Height, cy.Radius * 2f)); break;
+                    case ConvexPolygonShape3D cv: local = PointsAabb(cv.Points); break;
+                    case ConcavePolygonShape3D cc: local = PointsAabb(cc.Data); break;
+                    default: any = false; goto done;
+                }
+                var world = cs.GlobalTransform * local;
+                acc = any ? acc.Merge(world) : world; any = true;
+            }
+            if (any) { var sz = acc.Size; small = sz.Y <= SmallHeight || sz.X * sz.Z <= SmallArea; }
+        done:
+            _small[id] = small;
+            return small;
+        }
+        static Aabb PointsAabb(Vector3[] pts)
+        {
+            if (pts == null || pts.Length == 0) return new Aabb(Vector3.Zero, Vector3.Zero);
+            Vector3 lo = pts[0], hi = pts[0];
+            foreach (var p in pts) { lo = lo.Min(p); hi = hi.Max(p); }
+            return new Aabb(lo, hi - lo);
+        }
+
         static bool IsVehicle(GodotObject o)
         {
             var n = o as Node;
@@ -135,13 +184,13 @@ namespace UnturnedGodot
             _q.To = _q.From + Vector3.Down * RayLen;
             _q.Exclude = null;
             var excl = new Godot.Collections.Array<Rid>();
-            for (int tries = 0; tries < 4; tries++)   // cars are not roofs: re-cast past any vehicle collider
+            for (int tries = 0; tries < 8; tries++)   // cars and fence-size props are not roofs: re-cast past them
             {
                 var hit = space.IntersectRay(_q);
                 CastCount++;
                 if (hit.Count == 0) return NoHit;
                 var col = hit["collider"].AsGodotObject();
-                if (!IsVehicle(col)) return ((Vector3)hit["position"]).Y;
+                if (!IsVehicle(col) && !IsSmallProp(col)) return ((Vector3)hit["position"]).Y;
                 excl.Add((Rid)hit["rid"]);
                 _q.Exclude = excl;
             }
@@ -173,11 +222,23 @@ namespace UnturnedGodot
             if (_dirty)
             {
                 _dirty = false;
+                // SMOOTHING PASS (strawberry: "the rain mask should get a smoothing pass after its made, smoothing jagged
+                // edges"): a 3x3 MEDIAN over the cached heights. It chamfers the stair-steps of a diagonal roof edge and
+                // drops single-cell spikes, and because a median only ever picks a height that is actually there it never
+                // invents a mid-air level for drops to die at (a blur would). The cache itself stays raw.
+                const int R1 = Res + 2;
+                for (int iz = 0; iz < R1; iz++)
+                    for (int ix = 0; ix < R1; ix++)
+                    {
+                        float h = Get(_ox + ix - 1, _oz + iz - 1);
+                        _raw[iz * R1 + ix] = float.IsNaN(h) ? NoHit : h;   // not cast yet = no roof (rain), never a phantom dry patch
+                    }
                 for (int iz = 0; iz < Res; iz++)
                     for (int ix = 0; ix < Res; ix++)
                     {
-                        float h = Get(_ox + ix, _oz + iz);
-                        _win[iz * Res + ix] = float.IsNaN(h) ? NoHit : h;   // not cast yet = no roof (rain), never a phantom dry patch
+                        int k = 0;
+                        for (int dz = 0; dz < 3; dz++) for (int dx = 0; dx < 3; dx++) _nine[k++] = _raw[(iz + dz) * R1 + ix + dx];
+                        _win[iz * Res + ix] = Median9(_nine);
                     }
                 System.Buffer.BlockCopy(_win, 0, _bytes, 0, _bytes.Length);
                 _img.SetData(Res, Res, false, Image.Format.Rf, _bytes);

@@ -101,11 +101,14 @@ void fragment() {
     if (rain_intensity > 0.0 || rain_wetness > 0.0) {
         vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
         float r_up = smoothstep(0.35, 0.75, wn.y);
+        if (best == 2 || best == 0 || best == 7) r_up = 0.0;   // GRASS (+ forest floor) never takes the wet look or the rings (strawberry 2026-09-04) -- only sand/road/rock/dirt soak
         // ROOF MAP: ground under a roof / canopy / car stays dry (RainRoofMap; rect.z = 0 -> no map)
         if (rain_roof_rect.z > 0.0) {
             vec2 ruv = (wpos.xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
             if (ruv.x >= 0.0 && ruv.x <= 1.0 && ruv.y >= 0.0 && ruv.y <= 1.0) {
-                if (wpos.y < texture(rain_roof, ruv).r - 0.3) r_up = 0.0;
+                ivec2 rsz = textureSize(rain_roof, 0);
+                ivec2 rt = clamp(ivec2(ruv * vec2(rsz)), ivec2(0), rsz - ivec2(1));
+                if (wpos.y < texelFetch(rain_roof, rt, 0).r - 0.3) r_up = 0.0;   // nearest texel: no invented mid-air heights at roof edges
             }
         }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;

@@ -15,7 +15,9 @@ float roof_y(vec2 xz) {
     if (rain_roof_rect.z <= 0.0) return -1e9;
     vec2 uv = (xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return -1e9;
-    return texture(rain_roof, uv).r;   // world Y of the topmost solid at this XZ (-1e6 = nothing)
+    ivec2 sz = textureSize(rain_roof, 0);   // NEAREST texel on purpose: a bilinear read would invent mid-air heights at every roof edge
+    ivec2 t = clamp(ivec2(uv * vec2(sz)), ivec2(0), sz - ivec2(1));
+    return texelFetch(rain_roof, t, 0).r;   // world Y of the topmost solid at this XZ (-1e6 = nothing)
 }
 
 uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
