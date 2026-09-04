@@ -27,6 +27,10 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
+            // ROOF MAP (RainRoofMap): the topmost-surface heightmap around the player; rect.z = 0 means "no map" (every shader skips)
+            var blank = Image.CreateEmpty(1, 1, false, Image.Format.Rf); blank.Fill(new Color(RainRoofMap.NoHit, 0f, 0f, 1f));   // nothing above anything
+            RenderingServer.GlobalShaderParameterAdd("rain_roof", RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(ImageTexture.CreateFromImage(blank)));
+            RenderingServer.GlobalShaderParameterAdd("rain_roof_rect", RenderingServer.GlobalShaderParameterType.Vec4, Vector4.Zero);
         }
 
         /// <summary>Zero the rain globals. They're process-wide and OUTLIVE a scene change (the Add is Nil-guarded

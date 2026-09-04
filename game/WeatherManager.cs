@@ -17,7 +17,9 @@ namespace UnturnedGodot
         public WeatherSim Sim { get; private set; }
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
-        RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
+        RainSystem3D _rain3d;
+        RainRoofMap _roofMap;
+        int _roofCheckTicks;   // the top-down roof heightmap around the player (per-drop roof occlusion)   // worldspace 3D rain -- supersedes the 2D overlay streaks
         RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass)
         RainMaterialAudio _rainMatAudio;   // positional rain-on-material: nearest car/tree/... emits its own rain sound within a radius
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
@@ -101,6 +103,7 @@ namespace UnturnedGodot
             // WORLDSPACE 3D rain + the wetness/splash globals (registered before ANY wettable material -- see EnsureGlobals)
             RainSystem3D.EnsureGlobals();
             _rain3d = new RainSystem3D { Intensity = 0f };
+            _roofMap = null;
             AddChild(_rain3d);
             _rainAudio = new RainAudio();
             AddChild(_rainAudio);
@@ -183,8 +186,14 @@ namespace UnturnedGodot
             // without this they fall straight through a roof and render around you INDOORS (tinyclaw's catch -- my
             // earlier "geometry occludes the drops" was wrong, it only covers line of sight). ShelterFactor polls the
             // up-raycast at a few Hz + eases. The wetness globals stay global for now (per-surface shelter = TODO).
-            float shelter = ShelterFactor((float)delta);
-            if (_rain3d != null) { _rain3d.Cam = GetViewport()?.GetCamera3D(); _rain3d.Intensity = rint * shelter; }
+            float shelter = ShelterFactor((float)delta);   // still drives the audio muffle; the FALLING rain no longer switches off under cover --
+            // the roof map kills each drop under whatever is above it (strawberry 2026-09-04: "each building's roof should kill rain that reaches it")
+            var wcam = GetViewport()?.GetCamera3D();
+            if (_rain3d != null) { _rain3d.Cam = wcam; _rain3d.Intensity = rint; }
+            if (_roofMap == null && wcam != null) { _roofMap = new RainRoofMap { Follow = wcam }; AddChild(_roofMap); }
+            else if (_roofMap != null) _roofMap.Follow = wcam;
+            if (_roofMap != null && System.Environment.GetEnvironmentVariable("UG_ROOFCHECK") == "1" && ++_roofCheckTicks % 90 == 80)   // self-check against fresh rays (harness only)
+                _roofMap.DebugCheck(GetViewport().World3D.DirectSpaceState);
             if (rint != _lastRint)   // push only on change -- else a fresh StringName per literal every frame forever, even in clear weather (tinyclaw)
             {
                 _lastRint = rint;

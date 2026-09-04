@@ -51,6 +51,8 @@ uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
 uniform float caustic_strength = 0.15;   // toned down 70% (master)
 global uniform float rain_wetness;                              // 0..1 wet soak (WeatherManager drives it) -> darken + gloss up-facing terrain
 global uniform float rain_intensity;                           // 0..1 raindrop-impact splash density/brightness
+global uniform sampler2D rain_roof;                             // RainRoofMap (rain_streak.gdshader): roofed ground stays dry
+global uniform vec4 rain_roof_rect;
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -99,6 +101,13 @@ void fragment() {
     if (rain_intensity > 0.0 || rain_wetness > 0.0) {
         vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
         float r_up = smoothstep(0.35, 0.75, wn.y);
+        // ROOF MAP: ground under a roof / canopy / car stays dry (RainRoofMap; rect.z = 0 -> no map)
+        if (rain_roof_rect.z > 0.0) {
+            vec2 ruv = (wpos.xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
+            if (ruv.x >= 0.0 && ruv.x <= 1.0 && ruv.y >= 0.0 && ruv.y <= 1.0) {
+                if (wpos.y < texture(rain_roof, ruv).r - 0.3) r_up = 0.0;
+            }
+        }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
         ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
         ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt

@@ -54,16 +54,26 @@ namespace UnturnedGodot
         // road_N.png heights (Roads.unity3d container order: Highway_0/1, Racetrack, Road, Tracks, Trail, White/Yellow) for UV repeat.
         static readonly float[] TexHeight = { 128, 128, 256, 2, 256, 64, 256, 256, 256, 256 };
 
+        static Shader _wetShader;
+        // Roads wear the wet-surface shader (strawberry 2026-09-04 "im not seeing the ripple impacts on the road"): the same
+        // material the storm demo's ground uses, fed the road's own texture -- soaks dark + glossy and shows the raindrop
+        // impact rings; dry weather looks exactly like the old StandardMaterial (both globals sit at 0 and the block skips).
         Material RoadMaterial3D(int index, bool concrete)
         {
+            RainSystem3D.EnsureGlobals();   // the shader links the rain globals -- they must exist first (the GrassDisplacers lesson)
+            _wetShader ??= GD.Load<Shader>("res://content/wet_surface.gdshader");
+            var m = new ShaderMaterial { Shader = _wetShader };
+            m.SetShaderParameter("dry_roughness", 1.0f);
+            m.SetShaderParameter("impact_amount", 1.0f);
+            m.SetShaderParameter("splash_scale", 1.0f);
             string p = ProjectSettings.GlobalizePath($"res://content/roads/road_{index}.png");
             if (System.IO.File.Exists(p))
             {
                 var img = new Image();
-                if (ContentProvider.LoadOk(img, p))
-                    return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                if (ContentProvider.LoadOk(img, p)) { m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); return m; }
             }
-            return new StandardMaterial3D { AlbedoColor = concrete ? new Color(0.34f, 0.34f, 0.35f) : new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            m.SetShaderParameter("dry_albedo", concrete ? new Vector3(0.34f, 0.34f, 0.35f) : new Vector3(0.45f, 0.37f, 0.28f));
+            return m;
         }
 
         // Terrain normal from the height gradient (smoothed over e units) so the road banks WITH the slope

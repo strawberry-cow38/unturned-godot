@@ -490,13 +490,9 @@ void sky() {
                     _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(ca, ca, ca));
                     Color fairRim = new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF);
                     _skyMat.SetShaderParameter(Sn.cloud_rim_color, fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
-                    if (Sun != null)
-                    {
-                        Sun.LightEnergy *= Mathf.Lerp(1f, 0.35f, storm);                                     // storm dims the sun
-                        Sun.LightColor = Sun.LightColor.Lerp(new Color(0.72f, 0.76f, 0.84f), storm);         // and cools it
-                        _skyMat.SetShaderParameter(Sn.sun_color, Sun.LightColor);
-                    }
-                    Env.AmbientLightColor = Env.AmbientLightColor.Lerp(new Color(0.50f, 0.53f, 0.57f), storm);
+                    // NO LIGHTING CHANGE with the weather (strawberry 2026-09-04 "remove the effect that rain has on world lighting"):
+                    // the sun's energy/colour and the ambient stay whatever the time of day says. The storm still greys the
+                    // sky + clouds and thickens the fog below -- that is the weather's look, not the world's light.
                     Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog
                     Env.FogDensity = Mathf.Lerp(Env.FogDensity, 0.008f, storm);                             // thick moody haze
                     Env.FogSkyAffect = Mathf.Lerp(Env.FogSkyAffect, 0.6f, storm);                           // fog greys into the sky/horizon too
