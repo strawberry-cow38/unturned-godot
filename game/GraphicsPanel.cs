@@ -42,6 +42,10 @@ namespace UnturnedGodot
                 () => GraphicsOptions.Shadows.ToString(),
                 () => { GraphicsOptions.Shadows = GraphicsOptions.Next(GraphicsOptions.ShadowOrder, GraphicsOptions.Shadows); GraphicsOptions.ApplyShadows(); });
 
+            Row(vbox, "Shadow distance",
+                () => GraphicsOptions.ShadowDistLabel(GraphicsOptions.ShadowDistance),
+                () => { GraphicsOptions.ShadowDistance = GraphicsOptions.Next(GraphicsOptions.ShadowDistOrder, GraphicsOptions.ShadowDistance); GraphicsOptions.ApplyShadowDistance(ctx); });
+
             Row(vbox, "Render distance",
                 () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
@@ -105,6 +109,8 @@ namespace UnturnedGodot
                 () => { GraphicsOptions.Resolution = GraphicsOptions.Next(GraphicsOptions.ResOrder, GraphicsOptions.Resolution); GraphicsOptions.ApplyResolution(); });
             Row(vbox, "Shadow quality", () => GraphicsOptions.Shadows.ToString(),
                 () => { GraphicsOptions.Shadows = GraphicsOptions.Next(GraphicsOptions.ShadowOrder, GraphicsOptions.Shadows); GraphicsOptions.ApplyShadows(); });
+            Row(vbox, "Shadow distance", () => GraphicsOptions.ShadowDistLabel(GraphicsOptions.ShadowDistance),
+                () => { GraphicsOptions.ShadowDistance = GraphicsOptions.Next(GraphicsOptions.ShadowDistOrder, GraphicsOptions.ShadowDistance); GraphicsOptions.ApplyShadowDistance(ctx); });
             Row(vbox, "Render distance", () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });

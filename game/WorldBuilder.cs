@@ -324,6 +324,7 @@ namespace UnturnedGodot
             // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated && !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength, VisualsEnabled = mode != WorldMode.Dedicated };
             { var _tod = System.Environment.GetEnvironmentVariable("UG_TIME"); if (_tod != null && float.TryParse(_tod, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _todv)) { dayNight.Time = _todv; dayNight.Speed = 0f; } }   // UG_TIME=0..1 freezes time-of-day for a render (0 midnight / 0.75 dusk) -- streetlight night demo
@@ -727,7 +728,12 @@ namespace UnturnedGodot
                     if (poleMesh != null && clothMesh != null)
                     {
                         visMesh = poleMesh;   // the pole stays as the prop's main (rendered + destructible) mesh
-                        flagCloth = FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, cull);
+                        // The WAVING cloth only exists inside the prop's first LOD band: past LOD0's end the chain's own (static) flag mesh
+                        // takes over, so the sim mesh is capped just under that switch instead of the prop's full cull distance
+                        // (strawberry 2026-09-04 "waving flags render infinitely, render distance should be capped below the first LOD version").
+                        var flagRanges = LodTable.LevelRanges(p[0], name, LodTable.SourceFov);
+                        float clothCull = flagRanges != null && flagRanges.Length > 1 ? Mathf.Min(cull, flagRanges[0].End * 0.97f) : Mathf.Min(cull, 90f);
+                        flagCloth = FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, clothCull);
                     }
                 }
                 // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
@@ -1911,6 +1917,7 @@ namespace UnturnedGodot
             env.Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() };
             root.AddChild(new WorldEnvironment { Environment = env });
             var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 120f };
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             sun.RotationDegrees = new Vector3(-52f, 38f, 0f);
             root.AddChild(sun);
 
@@ -1972,6 +1979,7 @@ namespace UnturnedGodot
             root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             root.AddChild(new ColliderBudget { Name = "ColliderBudget" });   // stream prop collision in around the view; see the other call site
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };
             root.AddChild(dayNight);

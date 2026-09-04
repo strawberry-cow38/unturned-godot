@@ -50,6 +50,16 @@ namespace UnturnedGodot
         public static ShadowQuality Shadows = ShadowQuality.High;
         public static int Aniso = 4;
         public static float DrawDistance = 1.0f;
+        /// <summary>Directional shadow distance in metres (strawberry 2026-09-04 "add options for shadow distance"). The world's sun
+        /// (group "sun") gets DirectionalShadowMaxDistance = this at build and whenever the row is cycled. 120 was the fixed value.</summary>
+        public static float ShadowDistance = 120f;
+        public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
+        public static string ShadowDistLabel(float d) => $"{d:0} m";
+        public static void ApplyShadowDistance(Node ctx)
+        {
+            var tree = ctx?.GetTree(); if (tree == null) return;
+            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = ShadowDistance;
+        }
         public static Vector2I Resolution = Vector2I.Zero;   // (0,0) = leave the window alone / native
 
         // VERTEX LIGHTING A/B (strawberry 2026-08-16). Flips every StandardMaterial3D in the tree between
@@ -188,6 +198,7 @@ namespace UnturnedGodot
         {
             ApplyAA(ctx);
             ApplyShadows();
+            ApplyShadowDistance(ctx);
             ApplyAniso();
             ApplyResolution();
             ApplyRenderDistance(ctx?.GetTree()?.Root);
