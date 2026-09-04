@@ -484,6 +484,7 @@ namespace SDG.Unturned
                 Assets.add(new ItemAsset
                 {
                     id = id, itemName = c[1], type = ParseType(c[2]), rarity = ParseRarity(c[3]),
+                    slot = ParseType(c[2]) == EItemType.MELEE ? ESlotType.SECONDARY : ESlotType.NONE,   // ALL melee = secondary-slot items (master 2026-09-04); guns get theirs from their own .dat below
                     size_x = ParseByte(c[4]), size_y = ParseByte(c[5]), description = c.Length > 6 ? c[6] : "",
                     guid = c.Length > 7 ? c[7] : "",
                 });

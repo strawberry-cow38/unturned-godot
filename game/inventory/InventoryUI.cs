@@ -568,11 +568,21 @@ void fragment() {
             // WEAPON onto the PAPERDOLL (master 2026-09-04): it goes into ITS OWN hand slot -- primary-able -> PRIMARY, else
             // SECONDARY (an "any" item takes the empty hand first). Whatever was in that slot goes back to the grid, and
             // if nothing has room for it, onto the ground. The dragged weapon always wins the slot.
-            if (!fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE
-                && WeaponSlotFor(_dragJar) is byte wslot)
+            bool ownPageToDoll = !fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE;
+            if (ownPageToDoll && WeaponSlotFor(_dragJar) is byte wslot)
             {
                 EquipToHandSlot(sp, sx, sy, wslot);
                 CloseSelection(); Refresh();
+                return;
+            }
+            // ...and ANYTHING ELSE you can hold, dropped on the paperdoll, goes into your hands (master 2026-09-04
+            // "dragging ANYTHING you can hold onto the paperdoll should equip it, too"): the exact chain the item
+            // menu's one hand button runs (Hold a consumable / bottle / gas can, Equip a deployable / tool / rod /
+            // anything else with a hand action), seeded off the dragged cell like the Debug* seams do.
+            if (ownPageToDoll && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
+            {
+                _selPage = sp; _selX = sx; _selY = sy;
+                HandActionSelected(handAsset);
                 return;
             }
 
@@ -596,16 +606,32 @@ void fragment() {
             else if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
         }
 
-        /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the gun's own .dat): 0 primary /
-        /// 1 secondary, null for anything that is not a weapon. An ANY-slot item takes the empty hand first.</summary>
+        /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the item's own .dat): the slot it
+        /// PREFERS -- secondary-able (sidearms, ALL melee) -> SECONDARY, primary-only -> PRIMARY; null for anything
+        /// that is not a holster item.</summary>
         byte? WeaponSlotFor(ItemJar jar)
         {
             var a = jar?.GetAsset();
             if (a == null || Inv == null) return null;
-            bool pri = a.slot.CanEquipAsPrimary(), sec = a.slot.CanEquipAsSecondary();
-            if (!pri && !sec) return null;
-            if (pri && sec) return Inv.items[0].getItemCount() == 0 ? (byte)0 : Inv.items[1].getItemCount() == 0 ? (byte)1 : (byte)0;
-            return pri ? (byte)0 : (byte)1;
+            int pref = a.slot.PreferredSlot();
+            return pref < 0 ? null : (byte)pref;
+        }
+
+        /// <summary>The item menu's one hand button, as a call: the same Hold/Equip dispatch on the selected cell.</summary>
+        void HandActionSelected(ItemAsset asset)
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            var jar = idx == byte.MaxValue ? null : pg.getItem(idx);
+            if (jar?.item == null) { CloseSelection(); Refresh(); return; }
+            if (Player != null && Player.IsHeld(asset, jar.item)) { Player.Dequip(); CloseSelection(); Refresh(); return; }
+            if (asset.IsFluidContainer) HoldFluidSelected();
+            else if (asset.IsConsumable) HoldSelected();
+            else if (asset.IsFuelContainer) HoldFuelSelected();
+            else if (DeployableDef.ById(asset.id) != null) PlaceSelected();
+            else if (ToolDef.ById(asset.id) != null) ToolSelected();
+            else if (asset.type == EItemType.FISHER) FisherSelected();
+            else EquipSelected();
         }
 
         /// <summary>Put the weapon at (sp,sx,sy) into hand slot `slot`. Occupied: first try the plain drag-SWAP (the occupant
