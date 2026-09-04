@@ -9,7 +9,7 @@ namespace UnturnedGodot
     public static class WellShaft
     {
         public const float InnerRadius = 0.76f;   // Well_0.obj: the ring's inner surface sits at r 0.763..0.80 (measured off the verts)
-        public const float DiscZ = 0.04f;         // just above the ground plane the ring stands on, so it never z-fights the terrain
+        public const float DiscZ = 0.30f;         // well up inside the ring (it is 1.25 tall): placed on a slope the terrain cuts through the ring's base, and 0.04 z-fought it (master 2026-09-04)
         public const float MaxViewDist = 10f;
         static Shader _shader;
 

@@ -4,7 +4,7 @@
 // infinite cylinder of the ring's inner radius and shades the wall where the ray would strike it: the ring's own
 // flat-coloured 14 facets continuing down, daylight from the mouth dying with depth, black past the fade. No geometry below the disc exists.
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_opaque;
+render_mode cull_disabled, depth_draw_opaque;   // LIT (master: "its always fullbright"): the disc takes the sun/ambient/roof shadow like the ground at the mouth would, the shaft fade darkens from there
 
 uniform vec3 wall_color : source_color = vec3(0.42, 0.40, 0.37);   // the ring's own stone swatch (sampled off the prop atlas at build)
 uniform float radius = 0.78;        // inner radius of the shaft (object units = metres)
@@ -51,4 +51,7 @@ void fragment() {
 		}
 	}
 	ALBEDO = col;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
+	METALLIC = 0.0;
 }
