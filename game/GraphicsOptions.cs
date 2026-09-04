@@ -110,7 +110,7 @@ namespace UnturnedGodot
             env.GlowEnabled = Bloom;
             env.SsrEnabled = ScreenSpaceReflections;
             env.VolumetricFogEnabled = SunShafts;
-            if (SunShafts && env.VolumetricFogDensity <= 0f) env.VolumetricFogDensity = 0.01f;
+            if (SunShafts && env.VolumetricFogDensity <= 0f) env.VolumetricFogDensity = 0.004f;   // seed only; DayNightCycle drives the density by time of day (night thick, noon thin)
         }
         public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
         public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }
@@ -235,22 +235,58 @@ namespace UnturnedGodot
         public static void SetRenderThreadWanted(bool on)
         {
             RenderThreadWanted = on;
+            // the project default is MULTI (2) now; only Single needs an explicit line
+            WriteOverride("driver/threads/thread_model", on ? null : new[] { "driver/threads/thread_model=1" }, $"render thread -> {(on ? "multi" : "single")}");
+        }
+
+        // ---- VOLUMETRIC FOG QUALITY (restart required). The froxel grid (rendering/environment/volumetric_fog/volume_size x
+        // volume_depth) and its filter are boot-time project settings like the thread model, so they ride override.cfg too.
+        // strawberry 2026-09-04: "the volumetric fog looks amazing ... any way to make it perform better? -20fps". The cost is
+        // the froxel count x lights in range: project.godot carries 48x48 (42% of Godot's 64x64 default) as Medium; Low is
+        // 32x32 unfiltered (12.5% of default, temporal reprojection hides most of the blockiness); High is the engine default.
+        public const string FogSizeKey = "rendering/environment/volumetric_fog/volume_size";
+        public static readonly string[] FogQualityNames = { "Low", "Medium", "High" };
+        static readonly int[] FogQualitySize = { 32, 48, 64 };
+        public static int VolumetricFogActive
+        {
+            get { int sz = ProjectSettings.GetSetting(FogSizeKey, 48).AsInt32(); return sz <= 32 ? 0 : sz >= 64 ? 2 : 1; }   // what THIS process booted with
+        }
+        static int? _fogWanted;
+        public static int VolumetricFogWanted { get => _fogWanted ?? VolumetricFogActive; private set => _fogWanted = value; }
+        public static string VolumetricFogLabel => FogQualityNames[VolumetricFogWanted] + (VolumetricFogWanted != VolumetricFogActive ? " (restart)" : "");
+        public static void SetVolumetricFogQuality(int q)
+        {
+            q = Mathf.Clamp(q, 0, 2);
+            VolumetricFogWanted = q;
+            string[] lines = q == 1 ? null : new[]   // Medium = the project default: no override lines
+            {
+                $"environment/volumetric_fog/volume_size={FogQualitySize[q]}",
+                $"environment/volumetric_fog/volume_depth={FogQualitySize[q]}",
+                $"environment/volumetric_fog/use_filter={(q == 0 ? 0 : 1)}",
+            };
+            WriteOverride("environment/volumetric_fog/", lines, $"volumetric fog -> {FogQualityNames[q]}");
+        }
+
+        /// <summary>Rewrite override.cfg's [rendering] section: drop every line starting with <paramref name="keyPrefix"/> (ours),
+        /// add <paramref name="lines"/> (null = the project default, no line), leave anything else in the file alone.</summary>
+        static void WriteOverride(string keyPrefix, string[] lines, string what)
+        {
             try
             {
                 string path = OverridePath;
-                var lines = System.IO.File.Exists(path) ? new System.Collections.Generic.List<string>(System.IO.File.ReadAllLines(path)) : new System.Collections.Generic.List<string>();
-                lines.RemoveAll(l => l.TrimStart().StartsWith("driver/threads/thread_model"));   // ours; anything else in the file is left alone
-                if (!on)   // the project default is MULTI (2) now; only Single needs an explicit line
+                var all = System.IO.File.Exists(path) ? new System.Collections.Generic.List<string>(System.IO.File.ReadAllLines(path)) : new System.Collections.Generic.List<string>();
+                all.RemoveAll(l => l.TrimStart().StartsWith(keyPrefix));
+                if (lines != null && lines.Length > 0)
                 {
-                    int sec = lines.FindIndex(l => l.Trim() == "[rendering]");
-                    if (sec < 0) { if (lines.Count > 0 && lines[lines.Count - 1].Trim() != "") lines.Add(""); lines.Add("[rendering]"); sec = lines.Count - 1; }
-                    lines.Insert(sec + 1, "driver/threads/thread_model=1");
+                    int sec = all.FindIndex(l => l.Trim() == "[rendering]");
+                    if (sec < 0) { if (all.Count > 0 && all[all.Count - 1].Trim() != "") all.Add(""); all.Add("[rendering]"); sec = all.Count - 1; }
+                    all.InsertRange(sec + 1, lines);
                 }
-                for (int i = lines.Count - 1; i >= 0; i--)   // drop a [rendering] header we emptied
-                    if (lines[i].Trim() == "[rendering]" && (i + 1 >= lines.Count || lines[i + 1].Trim() == "" || lines[i + 1].TrimStart().StartsWith("["))) lines.RemoveAt(i);
-                if (lines.TrueForAll(l => l.Trim() == "")) { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
-                else System.IO.File.WriteAllLines(path, lines);
-                GD.Print($"[graphics] render thread -> {(on ? "multi" : "single")} on next start ({path})");
+                for (int i = all.Count - 1; i >= 0; i--)   // drop a [rendering] header we emptied
+                    if (all[i].Trim() == "[rendering]" && (i + 1 >= all.Count || all[i + 1].Trim() == "" || all[i + 1].TrimStart().StartsWith("["))) all.RemoveAt(i);
+                if (all.TrueForAll(l => l.Trim() == "")) { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
+                else System.IO.File.WriteAllLines(path, all);
+                GD.Print($"[graphics] {what} on next start ({path})");
             }
             catch (System.Exception e) { GD.PrintErr($"[graphics] could not write override.cfg: {e.Message}"); }
         }
@@ -288,6 +324,7 @@ namespace UnturnedGodot
         {
             try
             {
+                if (System.Environment.GetEnvironmentVariable("UG_SUNSHAFTS") == "1") SunShafts = true;   // offline render hook: volumetric fog on for headless shots
                 var cfg = new ConfigFile();
                 if (cfg.Load(ConfigPath) != Error.Ok) return;   // first run: defaults
                 AA = (AAMode)Mathf.Clamp((int)cfg.GetValue("graphics", "aa", (int)AA), 0, AAOrder.Length - 1);

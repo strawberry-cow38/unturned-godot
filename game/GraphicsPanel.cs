@@ -60,6 +60,9 @@ namespace UnturnedGodot
             Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Fog quality (restart)",   // volumetric froxel grid: Low 32 / Medium 48 (default) / High 64 -- boot-time, rides override.cfg like the render thread
+                () => GraphicsOptions.VolumetricFogLabel,
+                () => GraphicsOptions.SetVolumetricFogQuality((GraphicsOptions.VolumetricFogWanted + 1) % 3));
             Row(vbox, "Screen-space reflections", () => GraphicsOptions.OnOff(GraphicsOptions.ScreenSpaceReflections), () => { GraphicsOptions.ScreenSpaceReflections = !GraphicsOptions.ScreenSpaceReflections; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Planar water reflection", () => GraphicsOptions.PlanarReflection.ToString(), () => { GraphicsOptions.PlanarReflection = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.PlanarReflection); GraphicsOptions.ApplyWater(); });
             Row(vbox, "Scope quality", () => GraphicsOptions.ScopeQuality.ToString(), () => { GraphicsOptions.ScopeQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrderNoOff, GraphicsOptions.ScopeQuality); });
@@ -140,6 +143,9 @@ namespace UnturnedGodot
             Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
+            Row(vbox, "Fog quality (restart)",   // volumetric froxel grid: Low 32 / Medium 48 (default) / High 64 -- boot-time, rides override.cfg like the render thread
+                () => GraphicsOptions.VolumetricFogLabel,
+                () => GraphicsOptions.SetVolumetricFogQuality((GraphicsOptions.VolumetricFogWanted + 1) % 3));
             Row(vbox, "Screen-space reflections", () => GraphicsOptions.OnOff(GraphicsOptions.ScreenSpaceReflections), () => { GraphicsOptions.ScreenSpaceReflections = !GraphicsOptions.ScreenSpaceReflections; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Planar water reflection", () => GraphicsOptions.PlanarReflection.ToString(), () => { GraphicsOptions.PlanarReflection = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.PlanarReflection); GraphicsOptions.ApplyWater(); });
             Row(vbox, "Scope quality", () => GraphicsOptions.ScopeQuality.ToString(), () => { GraphicsOptions.ScopeQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrderNoOff, GraphicsOptions.ScopeQuality); });

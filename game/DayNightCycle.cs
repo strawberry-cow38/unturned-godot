@@ -450,6 +450,16 @@ void sky() {
                 // bigger ABSOLUTE shift far out), which is exactly the ask -- no FogMode.Depth begin/end switch needed.
                 Env.FogDensity = Mathf.Lerp(0.003f, 0.0004f, noon) * (Overcast ? 2.4f : 1f);   // noon already "sunny isle" thin; night/overcast stay atmospheric but pushed back
                 Env.FogSkyAffect = Mathf.Lerp(0.4f, 0.15f, noon);   // sky stays clear/blue at noon, fogged at dawn/dusk/night
+                // VOLUMETRIC fog (the "Sun shafts" row) by time of day. It was a flat 0.01 whatever the hour: the sun lit that
+                // haze into a white-out by day (master 2026-09-04: "at night its great, but the day and dusk and dawn are super
+                // foggy"). Night KEEPS 0.010 (the lamp-glow haze that reads great), sunrise/sunset 0.004, noon 0.002 --
+                // piecewise so dawn/dusk are their own key, not the midpoint of night and noon.
+                if (Env.VolumetricFogEnabled)
+                {
+                    float vol = noon < 0.5f ? Mathf.Lerp(0.010f, 0.004f, noon / 0.5f) : Mathf.Lerp(0.004f, 0.002f, (noon - 0.5f) / 0.5f);
+                    Env.VolumetricFogDensity = vol * (Overcast ? 1.5f : 1f);
+                    Env.VolumetricFogSkyAffect = Mathf.Lerp(0.7f, 0.25f, noon);   // like the depth fog: the noon sky stays blue, dawn/dusk/night haze into it
+                }
 
                 // STORM: master wants heavy weather to match the moody --raintest demo (grey overcast sky, thick fog,
                 // dim cool light). Blend the whole scene toward that by StormAmount (0..1, from the rain intensity) so
@@ -474,6 +484,7 @@ void sky() {
                     Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog
                     Env.FogDensity = Mathf.Lerp(Env.FogDensity, 0.008f, storm);                             // thick moody haze
                     Env.FogSkyAffect = Mathf.Lerp(Env.FogSkyAffect, 0.6f, storm);                           // fog greys into the sky/horizon too
+                    if (Env.VolumetricFogEnabled) Env.VolumetricFogDensity = Mathf.Lerp(Env.VolumetricFogDensity, 0.012f, storm);   // storm haze in the volume too
                 }
             }
         }
