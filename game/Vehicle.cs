@@ -3068,7 +3068,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(5.4f, 1.8f, 8.5f), BoxCenter = new Vector3(0f, 1.45f, 0f),   // hull collision box, tightened to the model + BELLY CUT: bottom sits at local 0.55 (above the wheel AXLES 0.556, well clear of the ground on bumps/slopes) so the box can't drag (master: "cut the belly... otherwise we backtrack on the hitbox dragging"). The 8 wheels carry the ride; this box is the UPPER hull only
             ForwardGears = new[] { 16f, 9f }, ReverseGear = 8f, ShiftUpRpm = 3500f,
             Sound = "engine_large.ogg", IdlePitch = 0.65f, MaxPitch = 1.25f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // heavy diesel rumble
-            Fuel = 2000f, Health = 1600f, Name = "Tank",
+            Fuel = 2000f, Health = 1600f, Name = "Tank", IgnitionSound = "audio/vehicles/tank_ignition.wav",   // retail Tank.dat: its own ignition clip (ripped)
             Wheels = new (float, float, float, bool)[]   // 8 road wheels (rig, Z-negated); none STEERED (tracked)
             {
                 (-2.0f, 0.556f, -3.0f, false), (2.0f, 0.556f, -3.0f, false),
@@ -5764,11 +5764,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
-            if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
+            // RETAIL IGNITION (strawberry 2026-09-04 "source the ignition sound from the official game files"): every ground vehicle .dat in the
+            // retail Bundles points at Sounds/CarIgnition.mp3 (49 of them; the tank has its own) -> ripped from core.masterbundle as car_ignition.wav (2.04 s).
+            string ignSound = s.IgnitionSound ?? ((!s.Heli && !s.Plane) ? "car_ignition.wav" : null);
+            if (ignSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
             {
-                AudioStream ig = s.IgnitionSound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
-                    ? PlayerController.LoadWavOneShot($"res://content/{s.IgnitionSound}")
-                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"), loop: false);
+                AudioStream ig = ignSound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
+                    ? PlayerController.LoadWavOneShot($"res://content/{ignSound}")
+                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{ignSound}"), loop: false);
                 if (ig != null)
                 {
                     // (Loop=false is part of the cached stream)
