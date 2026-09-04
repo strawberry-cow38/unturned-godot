@@ -3376,6 +3376,11 @@ namespace UnturnedGodot
             AddChild(propMi);
             // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing
             // rather than the static mesh. Added for the patient monitor, whose whole point is that its screen moves.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && name == "Well_0")
+            {
+                var ws = WellShaft.Make(propMi, WellShaft.WallColor(mat.AlbedoTexture));
+                GD.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
+            }
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
             {
                 var hm = HeartMonitor.Make(propMi, System.Environment.GetEnvironmentVariable("UG_FLATLINE") == "1" ? false : true);
@@ -3408,6 +3413,18 @@ namespace UnturnedGodot
                               : _camMode == "top"   ? new Vector3(0f, r * 2.4f, r * 0.001f)
                               : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
             cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
+            // UG_CAMPOS=x,y,z [+ UG_CAMLOOK=x,y,z]: an explicit camera, for props whose interesting side the three presets
+            // cannot see (the well shaft is looked DOWN INTO from under its roof).
+            {
+                var _cp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+                if (!string.IsNullOrEmpty(_cp))
+                {
+                    static Vector3 P3(string v) { var q = v.Trim('"').Split(','); return new Vector3(float.Parse(q[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture), float.Parse(q[2], System.Globalization.CultureInfo.InvariantCulture)); }
+                    var _cl = System.Environment.GetEnvironmentVariable("UG_CAMLOOK");
+                    cam.Position = P3(_cp);
+                    cam.LookAt(string.IsNullOrEmpty(_cl) ? c : P3(_cl), Vector3.Up);
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_PROPSPIN") == "1") { _orbitCam = cam; _orbitCenter = propMi.Transform.Basis * c; _orbitR = r * 1.7f; }   // 360 turntable movie
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }

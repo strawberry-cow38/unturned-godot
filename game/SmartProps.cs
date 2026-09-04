@@ -206,6 +206,7 @@ namespace UnturnedGodot
             if (name == "Clock_0") { a.Clock = ClockDevice.Make(mainMi, mat, 0f); if (a.Clock != null) root.AddChild(a.Clock); }
             if (HeartMonitor.IsMonitorProp(name)) { a.Monitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance); root.AddChild(a.Monitor); }
             if (TVDevice.IsDeviceProp(name)) { a.Screen = TVDevice.Make(mainMi, name); root.AddChild(a.Screen); }
+            if (name == "Well_0") WellShaft.Make(mainMi, WellShaft.WallColor((mat as StandardMaterial3D)?.AlbedoTexture));   // the bottomless shaft disc, a child of the ring's node
 
             // TRAFFIC SIGNALS: one mast, two heads, each on its own dumb timer hashed off world position + head
             // index. The hash reads the placement position, so two signals dropped in different places differ --
