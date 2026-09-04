@@ -47,6 +47,19 @@ namespace UnturnedGodot
         public readonly HashSet<uint> Suppressed = new();
 
         public int PuppetCount => _puppets.Count;
+        /// Stop rendering this NetId's puppet NOW: the driver's own predicted vehicle is being built this very
+        /// tick, and an existing puppet must not linger until the next process-frame sweep (a frame of the
+        /// puppet + the local car double-rendered, and a seat-latched observer seeing a puppet that is "gone").
+        public void Suppress(uint netId)
+        {
+            Suppressed.Add(netId);
+            if (_puppets.TryGetValue(netId, out var t))
+            {
+                if (IsInstanceValid(t.Node)) t.Node.QueueFree();
+                _puppets.Remove(netId);
+            }
+        }
+
         public bool TryGetPuppet(uint netId, out VehiclePuppet node)
         {
             node = _puppets.TryGetValue(netId, out var t) ? t.Node : null;

@@ -1761,7 +1761,7 @@ namespace UnturnedGodot.Testing
             T.Check($"the VehicleEntered fact reached the driver ({enterFacts})", enterFacts > 0);
             // Part A: the seat fact now builds a CLIENT-LOCAL real Vehicle and seats the shell through the
             // SP direct-drive path (retail client authority) -- ride-the-puppet mode is gone for drivers
-            T.Check("driving-local latched: shell hidden, a real local Vehicle exists, its puppet suppressed",
+            T.Check($"driving-local latched: shell hidden, a real local Vehicle exists, its puppet suppressed (driving {sess.Shell.IsDriving} visible {sess.Shell.Visible} local {(sess.LocalVehicle != null)} puppet {sess.VehicleView.TryGetPuppet(netId, out _)})",
                     sess.Shell.IsDriving && !sess.Shell.Visible && sess.LocalVehicle != null
                     && !sess.VehicleView.TryGetPuppet(netId, out _));
             yield return Until(() => observer.Vehicles.TryGet(netId, out var oe) && oe.DriverPlayerId == sess.Client.PlayerId, 5);

@@ -408,7 +408,7 @@ namespace UnturnedGodot
         {
             // VIEW-only suppression: the replica STORE keeps mirroring snapshots verbatim (hash parity),
             // only the puppet render for this NetId stops -- retail tellState's isDriver early-return
-            VehicleView.Suppressed.Add(_ridingNetId);
+            VehicleView.Suppress(_ridingNetId);   // ...and its puppet retires THIS tick, not at the next process-frame sweep
             string key = e.TypeId < Vehicle.SpecNames.Length ? Vehicle.SpecNames[e.TypeId] : "jeep";
             var v = Vehicle.BuildByName(key, e.Variant);
             v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
