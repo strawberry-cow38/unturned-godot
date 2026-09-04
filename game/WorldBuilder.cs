@@ -1252,13 +1252,14 @@ namespace UnturnedGodot
                     // smashing the set hid the cabinet and left a lit screen glowing over the rubble -- the same
                     // shape as the street lamp above (master: "when tvs get destroyed make sure to kill the screen").
                     var tv = placedTV;
+                    var mon = placedMonitor;   // heart monitor screen dies with its prop (strawberry 2026-09-04)
                     // the map's MAINS (hydrant / water tower / sink) rides this prop but is a SEPARATE node -- so a smash
                     // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
                     var mns = mains;
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
                             if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
@@ -1267,6 +1268,7 @@ namespace UnturnedGodot
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
                             if (indoorLamp != null && GodotObject.IsInstanceValid(indoorLamp)) indoorLamp.SetBroken(!alive);   // indoor light off when smashed, back on when it respawns
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
+                            if (mon != null && GodotObject.IsInstanceValid(mon)) mon.SetBroken(!alive);
                             if (mns != null && GodotObject.IsInstanceValid(mns)) mns.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);

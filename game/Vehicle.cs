@@ -828,7 +828,7 @@ namespace UnturnedGodot
         public bool Declutched => _clutchT > 0f;   // test/HUD seam
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
-        const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
+        const float EngineVolumeBoost = 2.8f;   // 1.5 -> 2.8 (strawberry 2026-09-04 "make all vehicle engines much louder and travel much further"); distances raised with it below   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         // ---- DRIVETRAIN. A real one: an engine that makes TORQUE as a function of its own RPM, a gearbox
         // that MULTIPLIES that torque, and a top speed that falls out of DRAG instead of out of an
@@ -1538,6 +1538,7 @@ namespace UnturnedGodot
         CpuParticles3D _headlightMotes; Color _hlMoteBase; float _hlMoteFade = 0f;   // dust in the beam -- night only, on the STREETLIGHT clock   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
+        CpuParticles3D _exhaust; float _exhaustPuff;   // tailpipe smoke while running; a fat puff for a moment after the engine catches
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;
         MeshInstance3D _sirenMi0, _sirenMi1, _sirenCentre;   // the two lenses + a hidden CENTRE hit-box between them (all three are shoot-out lamps: lightbar_l / lightbar_r / lightbar_c)
         public int LightbarPattern { get; private set; }   // 0 alternate L/R (retail wee-oo), 1 double-strobe both, 2 fast wig-wag -- ctrl-hold radial (strawberry 2026-09-04)
@@ -1968,6 +1969,7 @@ namespace UnturnedGodot
             // from here as well would play it twice and desync that gate from the sound it is derived from.
             if (!_heli && _ignitionAudio != null && !_ignitionAudio.Playing) _ignitionAudio.Play();
             if (!_heli) _carIgnitionLeft = _ignitionAudio?.Stream != null && _ignitionAudio.Stream.GetLength() > 0.3 ? Mathf.Min(2.5f, (float)_ignitionAudio.Stream.GetLength()) : 1.2f;   // the drivetrain answers only after the crank (strawberry 2026-09-04)
+            _exhaustPuff = 1.0f;   // cold start: a thick puff (the exhaust block reads it)
             return true;
         }
 
@@ -5758,7 +5760,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // four HeliBase airframes shared one IdlePitch, so the tiny Hummingbird sounded exactly like the
                 // 21-tonne Skycrane. (strawberry: "heavier helis should alter the sound too")
                 float sizePitch = HeliSizePitch(s);
-                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 52f : 26f, MaxDistance = s.Heli ? 800f : 300f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
                 if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
@@ -5790,6 +5792,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true,  1.0f, 2.0f);   // explosion fire; src startSize 1-2m
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
+            if (!s.Heli && !s.Plane && s.BoxSize != Vector3.Zero)   // EXHAUST: a small grey puff-stream off the tailpipe while the engine runs (strawberry 2026-09-04 "so you can see visually when its running")
+            {
+                v._exhaust = MakeSmoke("veh_smoke_1.png", new Color(0.66f, 0.66f, 0.64f, 0.8f), 1.3f, 1.3f, 14, false, 0.14f, 0.34f);
+                v._exhaust.Direction = new Vector3(0f, 0.35f, 1f); v._exhaust.Spread = 16f; v._exhaust.Gravity = new Vector3(0f, 0.7f, 0f);   // out the back, drifting up
+                v._exhaust.Position = new Vector3(-(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies
+                v.AddChild(v._exhaust);
+            }
             // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's
             // ground CONTACT point, aimed UP at low speed -> tilting ~45deg backward at speed, only while grounded + moving.
             // NOTE: vanilla assigns NO TireMotionEffect to any physics material (the whole system is WIP "WipDoNotUse"), so
@@ -8016,6 +8025,18 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     else if (!on && _alarmLit) { SetHeadlights(false); SetTaillights(false); }     // falling edge -> all lights off, NO honk
                     _alarmLit = on;
                     if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)
+                }
+            }
+            if (_exhaust != null)   // tailpipe: runs with the engine, thickens with revs, a fat puff for the first moment after it catches
+            {
+                bool run = EngineOn && !_exploded;
+                if (_exhaust.Emitting != run) _exhaust.Emitting = run;
+                if (run)
+                {
+                    if (_exhaustPuff > 0f) _exhaustPuff -= (float)delta;
+                    float revs = Mathf.Clamp(EngineRpm / 6000f, 0f, 1f);
+                    int want = _exhaustPuff > 0f ? 24 : (revs > 0.6f ? 16 : revs > 0.25f ? 10 : 6);   // CpuParticles3D has no AmountRatio: step the pool size instead (idle wisp -> revving stream -> cold-start puff)
+                    if (_exhaust.Amount != want) _exhaust.Amount = want;
                 }
             }
             if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.

@@ -5263,6 +5263,14 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent @event)
         {
             if (NetAvatar) return;   // a server avatar is driven ONLY through the Scripted* seams, never local input
+            if (_lightbarRadial != null && _lightbarRadial.IsOpen)   // LIGHTBAR RADIAL owns input while open: ctrl-release / LMB = pick, RMB / Esc = cancel. Handled here,
+            {                                                         // BEFORE the "clicks belong to an open UI" guard and the UI key gate that would swallow them (strawberry 2026-09-04 "won't close").
+                bool pick = (@event is InputEventKey { Keycode: Key.Ctrl, Pressed: false }) || (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true });
+                bool cancel = (@event is InputEventKey { Keycode: Key.Escape, Pressed: true }) || (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right, Pressed: true });
+                if (pick) _lightbarRadial.ConfirmAndClose(); else if (cancel) _lightbarRadial.Close();
+                if (pick || cancel) { _ctrlHolding = false; Input.MouseMode = Input.MouseModeEnum.Captured; }
+                if (@event is InputEventMouseButton || @event is InputEventKey { Keycode: Key.Ctrl } || cancel) { GetViewport().SetInputAsHandled(); return; }   // nothing leaks to the horn / drive keys
+            }
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
             if (_invUI != null && _invUI.IsOpen && !(Keybinds.Matches(GameAction.Inventory, @event) || Keybinds.Matches(GameAction.Interact, @event) || @event is InputEventKey { Keycode: Key.Escape })) return;   // Inventory/Interact/Esc allowed through -> Interact also closes an open container inventory (handled at the top of the F branch), master

@@ -147,7 +147,7 @@ namespace UnturnedGodot
             };
             AddChild(_screen);
 
-            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -3f, Bus = "Master" };
+            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -15f, Bus = "Master" };   // -3 -> -15 dB = a quarter of the amplitude (strawberry 2026-09-04 "75% quieter")
             AddChild(_audio);
 
             // A REAL POWER INPUT. HasFeed has always read `mains OR the wire`, and AttachPort existed to supply the
@@ -214,9 +214,19 @@ namespace UnturnedGodot
             return true;
         }
 
+        bool _broken;   // the prop it sits on was smashed (DestructibleField) -> screen dead + silent until the rubble resets
+        /// <summary>Smashed prop -> screen dead, beep silent; the rubble reset (alive again) brings it back. Same contract as TVDevice.SetBroken
+        /// (strawberry 2026-09-04 "when a heart rate monitor prop gets destroyed, its not killing its screen").</summary>
+        public void SetBroken(bool broken)
+        {
+            if (_broken == broken) return;
+            _broken = broken;
+            if (broken) _brownoutLeft = 0f;
+            Refresh();
+        }
         public void Refresh()
         {
-            bool want = _on && HasFeed && !_screenShot;
+            bool want = _on && HasFeed && !_screenShot && !_broken;
             if (want == _lit && _screen != null && _screen.MaterialOverride == (want ? (Material)_mat : _offMat)) return;
             _lit = want;
             // The quad stays DRAWN either way -- see Build(). Hiding it would put the prop's own green trace back on
