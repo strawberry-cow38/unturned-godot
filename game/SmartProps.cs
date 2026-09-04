@@ -36,6 +36,7 @@ namespace UnturnedGodot
         Signal      = 1 << 7,   // TrafficLight: two independently-timed heads per mast
         Doors       = 1 << 8,   // ObjectDoor: one openable leaf per doors.txt row
         Water       = 1 << 9,   // FluidContainer: tower / hydrant / well / kitchen sink
+        Radio       = 1 << 10,  // RadioDevice: the two radio sets -- F toggles, static while fed
     }
 
     public static class SmartProps
@@ -55,6 +56,7 @@ namespace UnturnedGodot
             if (LampLight.KindFor(name) != LampLight.Kind.Generic) k |= SmartKind.IndoorLamp;
             if (TVDevice.IsDeviceProp(name)) k |= SmartKind.Screen;
             if (HeartMonitor.IsMonitorProp(name)) k |= SmartKind.Monitor;
+            if (RadioDevice.IsRadioProp(name)) k |= SmartKind.Radio;
             if (WaterSourceFor(name) != WaterSource.None) k |= SmartKind.Water;
             if (hasDoors != null && hasDoors(name)) k |= SmartKind.Doors;
             return k;
@@ -88,6 +90,7 @@ namespace UnturnedGodot
             if (k.HasFlag(SmartKind.Clock)) parts.Add("clock");
             if (k.HasFlag(SmartKind.Monitor)) parts.Add("patient monitor");
             if (k.HasFlag(SmartKind.Screen)) parts.Add($"{TVDevice.KindFor(name)} (F toggles)");
+            if (k.HasFlag(SmartKind.Radio)) parts.Add("radio (F toggles)");
             if (k.HasFlag(SmartKind.Signal)) parts.Add("traffic signal");
             if (k.HasFlag(SmartKind.Doors)) parts.Add("openable (F)");
             if (k.HasFlag(SmartKind.Water)) parts.Add("water source");
@@ -105,6 +108,7 @@ namespace UnturnedGodot
             public ClockDevice Clock;
             public HeartMonitor Monitor;
             public TVDevice Screen;
+            public RadioDevice Radio;
             public FluidContainer Water;
             public LightTap Tap;      // rides Street/Signal; not its own SmartKind, so it is not in Kinds below
             public MeshInstance3D Lens;
@@ -125,6 +129,7 @@ namespace UnturnedGodot
                     if (Clock != null) k |= SmartKind.Clock;
                     if (Monitor != null) k |= SmartKind.Monitor;
                     if (Screen != null) k |= SmartKind.Screen;
+                    if (Radio != null) k |= SmartKind.Radio;
                     if (Signals.Count > 0) k |= SmartKind.Signal;
                     if (Doors.Count > 0) k |= SmartKind.Doors;
                     if (Water != null) k |= SmartKind.Water;
@@ -207,6 +212,7 @@ namespace UnturnedGodot
             if (HeartMonitor.IsMonitorProp(name)) { a.Monitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance); root.AddChild(a.Monitor); }
             if (TVDevice.IsDeviceProp(name)) { a.Screen = TVDevice.Make(mainMi, name); root.AddChild(a.Screen); }
             if (name == "Well_0") WellShaft.Make(mainMi, WellShaft.WallColor((mat as StandardMaterial3D)?.AlbedoTexture));   // the bottomless shaft disc, a child of the ring's node
+            if (RadioDevice.IsRadioProp(name)) { a.Radio = RadioDevice.Make(mainMi, name); root.AddChild(a.Radio); }
 
             // TRAFFIC SIGNALS: one mast, two heads, each on its own dumb timer hashed off world position + head
             // index. The hash reads the placement position, so two signals dropped in different places differ --

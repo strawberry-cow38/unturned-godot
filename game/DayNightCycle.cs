@@ -277,6 +277,11 @@ void sky() {
             // and warms back up when it returns -- Refresh reads PowerNet.GlobalPower live, mirroring the glow above.
             foreach (Node n in tree.GetNodesInGroup("tvdevices"))
                 if (n is TVDevice tv) tv.Refresh();
+            // Radios ride the same edge for the same reason. RadioDevice also polls its own feed off the hub, but
+            // that runs on _Process -- so a set is only pushed here, and a test harness that steps _PhysicsProcess
+            // sees nothing at all. The group existed with nothing sweeping it until radio.switch_and_feed said so.
+            foreach (Node n in tree.GetNodesInGroup("radiodevices"))
+                if (n is RadioDevice rd) rd.Refresh();
         }
 
 

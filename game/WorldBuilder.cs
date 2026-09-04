@@ -496,7 +496,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
+            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0, radios = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
                                                 //  silently stopped being picked up and only the televisions remained.
@@ -1002,6 +1002,7 @@ namespace UnturnedGodot
                 HeartMonitor placedMonitor = null;   // captured so its body collider can carry the hit meta
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
+                RadioDevice placedRadio = null;  // same route: look-ray -> F toggle, and the break hook below
                 Toaster placedToaster = null;    // same, for the bread pop on a surviving first shot
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
@@ -1079,6 +1080,12 @@ namespace UnturnedGodot
                     placedMonitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance);
                     root.AddChild(placedMonitor);
                     monitorsPlaced++;
+                }
+                if (RadioDevice.IsRadioProp(name) && mode != WorldMode.Dedicated)
+                {
+                    placedRadio = RadioDevice.Make(mainMi, name);
+                    root.AddChild(placedRadio);
+                    radios++;
                 }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
@@ -1225,6 +1232,7 @@ namespace UnturnedGodot
                         if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
                         if (placedIndoorLamp != null && LampLight.IsToggle(placedIndoorLamp.LampKind)) body.SetMeta(LampLight.LookMeta, placedIndoorLamp);   // look-at the standing/desk lamp body -> its LampLight (F on/off + outline)
                         if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
+                        if (placedRadio != null) body.SetMeta(RadioDevice.HitMeta, placedRadio);   // look-at the radio body -> its device (F on/off)
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the
@@ -1261,13 +1269,14 @@ namespace UnturnedGodot
                     // shape as the street lamp above (master: "when tvs get destroyed make sure to kill the screen").
                     var tv = placedTV;
                     var mon = placedMonitor;   // heart monitor screen dies with its prop (strawberry 2026-09-04)
+                    var rad = placedRadio;     // a smashed radio stops hissing, and stays dead through a grid sweep
                     // the map's MAINS (hydrant / water tower / sink) rides this prop but is a SEPARATE node -- so a smash
                     // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
                     var mns = mains;
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
                             if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
@@ -1277,6 +1286,7 @@ namespace UnturnedGodot
                             if (indoorLamp != null && GodotObject.IsInstanceValid(indoorLamp)) indoorLamp.SetBroken(!alive);   // indoor light off when smashed, back on when it respawns
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
                             if (mon != null && GodotObject.IsInstanceValid(mon)) mon.SetBroken(!alive);
+                            if (rad != null && GodotObject.IsInstanceValid(rad)) rad.SetBroken(!alive);
                             if (mns != null && GodotObject.IsInstanceValid(mns)) mns.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
@@ -1377,7 +1387,8 @@ namespace UnturnedGodot
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
-            GD.Print($"[medical] {monitorsPlaced} patient monitors");   // printed unconditionally: a zero here is the tell that the prop stopped being placed
+            GD.Print($"[medical] {monitorsPlaced} patient monitors");
+            GD.Print($"[radio] {radios} radio sets");   // unconditional, same reason: a zero is the tell that the prop stopped being placed   // printed unconditionally: a zero here is the tell that the prop stopped being placed
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] generated-band lookups: {LodTable.GeneratedHits} hit, {LodTable.GeneratedMisses} missed (table has {LodTable.GeneratedCount})");

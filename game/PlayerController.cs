@@ -436,6 +436,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusGasPump)) n++;
                 if (IsInstanceValid(_focusGrid)) n++;
                 if (IsInstanceValid(_focusTV)) n++;
+                if (IsInstanceValid(_focusRadio)) n++;
                 if (IsInstanceValid(_focusShelfItem)) n++;
                 if (IsInstanceValid(_focusShelf)) n++;
                 if (_focusPuppet is Node3D fp && IsInstanceValid(fp)) n++;
@@ -448,6 +449,7 @@ namespace UnturnedGodot
         double _interactClock;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
+        RadioDevice _focusRadio;      // the radio being LOOKED AT -> F toggles it on/off
         HeartMonitor _focusMonitor;   // ...and the patient monitor, same deal
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
@@ -529,6 +531,7 @@ namespace UnturnedGodot
             // which door/hood/trunk of the focused vehicle the ray found
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
+            RadioDevice hitRadio = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
@@ -580,6 +583,7 @@ namespace UnturnedGodot
                     else if (rcol is Node grn2 && grn2.HasMeta(Sn.gridpower) && grn2.GetMeta(Sn.gridpower).As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is Node hmn && hmn.HasMeta(HeartMonitor.HitMeta) && hmn.GetMeta(HeartMonitor.HitMeta).As<HeartMonitor>() is HeartMonitor hmd && IsInstanceValid(hmd)) hitMonitor = hmd;   // patient monitor body -> its device (F toggles; the bullet path shoots the screen out)
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
+                    else if (rcol is Node rdn && rdn.HasMeta(RadioDevice.HitMeta) && rdn.GetMeta(RadioDevice.HitMeta).As<RadioDevice>() is RadioDevice rdd && IsInstanceValid(rdd)) hitRadio = rdd;   // radio body collider tagged in WorldBuilder -> its device (F toggles)
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
@@ -766,6 +770,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
+            }
+            if (hitRadio != _focusRadio)   // radio look-focus: same whole-prop white outline as the TV
+            {
+                if (IsInstanceValid(_focusRadio)) _focusRadio.SetLookFocused(false);
+                _focusRadio = hitRadio;
+                _focusRadio?.SetLookFocused(true);
             }
             if (hitLamp != _focusLamp)   // standing/desk lamp look-focus: whole-lamp white outline, same pattern as the TV
             {
@@ -5538,6 +5548,7 @@ namespace UnturnedGodot
                     else RequestToggleObjectDoor(_focusObjectDoor);
                 }
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
+                else if (_focusRadio != null && IsInstanceValid(_focusRadio)) _focusRadio.Toggle();   // ...same for a radio set
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
