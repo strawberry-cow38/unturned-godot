@@ -5257,6 +5257,7 @@ namespace UnturnedGodot
         public AttachmentMenu AttachMenu;   // T weapon-attachment menu (set by BuildPlayable); null in demos
         public AmmoRadial AmmoRadial;       // R-hold ammo-type radial for loose-shell shotguns (wired beside AttachMenu); null in demos
         bool _rHolding; ulong _rHeldSince;  // R-hold tracking on a shotgun: a quick tap reloads, holding past AmmoRadialHoldMs opens the ammo radial
+        bool _ctrlHolding; ulong _ctrlHeldSince; const ulong LightbarHoldMs = 220; LightbarRadial _lightbarRadial;   // Ctrl-hold -> lightbar pattern radial (emergency vehicles)
         const ulong AmmoRadialHoldMs = 220;
 
         public override void _UnhandledInput(InputEvent @event)
@@ -5476,9 +5477,16 @@ namespace UnturnedGodot
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl } && _driving != null)
+            else if (@event is InputEventKey { Keycode: Key.Ctrl } ck && !ck.Echo && _driving != null && _driving.HasSiren && _seatIndex == 0)
             {
-                if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
+                // Ctrl on an emergency vehicle: quick TAP = siren on/off (as before), HOLD past LightbarHoldMs = the pattern radial (strawberry 2026-09-04)
+                if (ck.Pressed) { if (!_ctrlHolding) { _ctrlHolding = true; _ctrlHeldSince = Time.GetTicksMsec(); } }
+                else if (_ctrlHolding)
+                {
+                    _ctrlHolding = false;
+                    if (_lightbarRadial != null && _lightbarRadial.IsOpen) { _lightbarRadial.ConfirmAndClose(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                    else if (Time.GetTicksMsec() - _ctrlHeldSince < LightbarHoldMs) _driving.ToggleSiren();
+                }
             }
             // N = IGNITION (strawberry_cow 2026-08-24). DRIVER ONLY: a passenger reaching over and killing the
             // engine is not a feature. Echo:false so holding N cannot flap the engine on and off at key-repeat.
@@ -6336,7 +6344,8 @@ namespace UnturnedGodot
                                 var part = veh.ResolveHitPart(point);
                                 if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
                                 else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
-                                else veh.TakeDamage(b.VehicleDamage);
+                                else if (veh.IsEngineBay(point)) veh.TakeEngineDamage(b.VehicleDamage);   // front third = the engine bay: engine hp (strawberry 2026-09-04)
+                                else veh.TakeDamage(b.VehicleDamage, 0f);   // a body panel: body hp only
                             }
                         }
                         // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
@@ -6809,6 +6818,13 @@ namespace UnturnedGodot
             {
                 if (AmmoRadial != null) { AmmoRadial.Open(this); if (AmmoRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _rHolding = false; }
                 else _rHolding = false;
+            }
+            if (_ctrlHolding && _driving != null && _driving.HasSiren && (_lightbarRadial == null || !_lightbarRadial.IsOpen)
+                && Time.GetTicksMsec() - _ctrlHeldSince >= LightbarHoldMs)
+            {
+                if (_lightbarRadial == null) { _lightbarRadial = new LightbarRadial(); AddChild(_lightbarRadial); }
+                _lightbarRadial.Open(_driving);
+                if (_lightbarRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _ctrlHolding = false;
             }
             // Source kills the held light on unequip (UseableMelee -> player.disableItemSpotLight()). There are
             // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand

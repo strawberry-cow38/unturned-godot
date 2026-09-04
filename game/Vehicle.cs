@@ -1538,7 +1538,18 @@ namespace UnturnedGodot
         CpuParticles3D _headlightMotes; Color _hlMoteBase; float _hlMoteFade = 0f;   // dust in the beam -- night only, on the STREETLIGHT clock   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
-        StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
+        StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;
+        MeshInstance3D _sirenMi0, _sirenMi1, _sirenCentre;   // the two lenses + a hidden CENTRE hit-box between them (all three are shoot-out lamps: lightbar_l / lightbar_r / lightbar_c)
+        public int LightbarPattern { get; private set; }   // 0 alternate L/R (retail wee-oo), 1 double-strobe both, 2 fast wig-wag -- ctrl-hold radial (strawberry 2026-09-04)
+        public static readonly string[] LightbarPatternNames = { "wail", "double strobe", "wig-wag" };
+        static readonly float[] LightbarSirenPitch = { 1.0f, 1.12f, 0.88f };   // the same siren.wav per pattern until master sources the three real ones
+        /// <summary>ENGINE hp, separate from body hp (strawberry 2026-09-04 "split vehicle HP into body hp, and engine hp"). The engine only
+        /// starts while this is above zero; a DROWNED engine (swamped in water) is zero for good -- no repair brings it back.</summary>
+        public float EngineHealth, EngineHealthMax;
+        public bool EngineDrowned { get; private set; }
+        public bool EngineDead => EngineHealth <= 0f;
+        float _carIgnitionLeft;   // seconds of ignition left before the drivetrain answers the throttle (strawberry 2026-09-04 "delay between starting the engine and the ability to start moving")
+        public bool EngineStarting => _carIgnitionLeft > 0f;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         /// <summary>Is anyone close enough to set an alarm off? Set by the side that owns the cars and knows
         /// where every player is (VehicleNetSync on a server); null falls back to the local camera, which is
@@ -1925,13 +1936,23 @@ namespace UnturnedGodot
             }
         }
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
-        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
+        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }
+        /// <summary>Ctrl-hold radial: pick a flash pattern (turns the lightbar on), or -1 = lightbar off.</summary>
+        public void SetLightbar(int pattern)
+        {
+            if (!HasSiren) return;
+            if (pattern < 0) { _sirenOn = false; return; }
+            LightbarPattern = Mathf.Clamp(pattern, 0, LightbarPatternNames.Length - 1);
+            if (Battery > 0f) _sirenOn = true;
+        }
+        public bool IsLightbarLensBroken(int side) { int i = _lampLabels.IndexOf(side == 0 ? "lightbar_l" : "lightbar_r"); return i >= 0 && _lampBroken[i]; }
+        public bool IsLightbarCentreBroken { get { int i = _lampLabels.IndexOf("lightbar_c"); return i >= 0 && _lampBroken[i]; } }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
 
         /// <summary>Can the starter turn it over? A flat battery clicks and nothing happens.
         ///
         /// The threshold is above zero deliberately: at exactly 0 the player can keep cranking on the last drop
         /// forever, which reads as the starter being broken rather than the battery being flat.</summary>
-        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin;
+        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin && EngineHealth > 0f;   // + a live engine (drowned/shot-out engines never start)
 
         /// <summary>Start it if the battery can. Returns whether it caught.
         ///
@@ -1946,6 +1967,7 @@ namespace UnturnedGodot
             // _ignitionAudio off the rotor spin-up, where the clip's LENGTH is the spin-up gate, and firing it
             // from here as well would play it twice and desync that gate from the sound it is derived from.
             if (!_heli && _ignitionAudio != null && !_ignitionAudio.Playing) _ignitionAudio.Play();
+            if (!_heli) _carIgnitionLeft = _ignitionAudio?.Stream != null && _ignitionAudio.Stream.GetLength() > 0.3 ? Mathf.Min(2.5f, (float)_ignitionAudio.Stream.GetLength()) : 1.2f;   // the drivetrain answers only after the crank (strawberry 2026-09-04)
             return true;
         }
 
@@ -2075,11 +2097,26 @@ namespace UnturnedGodot
             LastAttackedAtMsec = Godot.Time.GetTicksMsec();
         }
 
-        public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
+        /// <summary>Bullets hitting the front third of the hull (the engine bay) go to the ENGINE hp instead of the body.</summary>
+        public bool IsEngineBay(Vector3 world) => _hullSizeLocal.Z > 0f && ToLocal(world).Z < AccessBoxCenter.Z - 0.15f * _hullSizeLocal.Z;   // forward = -Z
+        Vector3 _hullSizeLocal;
+        public void TakeEngineDamage(float amount)
+        {
+            if (NetClientPredicted || _exploded || amount <= 0f || EngineHealth <= 0f) return;
+            EngineHealth = Mathf.Max(0f, EngineHealth - amount);
+            TriggerAlarm();
+            if (EngineHealth <= 0f)
+            {
+                EngineOn = false;   // dies where it stands; no restart until repaired (never, if drowned)
+                if (_smoke0 != null) _smoke0.Emitting = true;
+            }
+        }
+        public void TakeDamage(float amount, float engineShare = 0.5f)   // source askDamage; engineShare = the fraction ALSO taken off the engine (explosions/crashes 0.5; a body-panel bullet 0): reduce health; at 0 the EXPLODE timer starts
         {
             if (NetClientPredicted) return;   // MP Part A: the driver's client-local vehicle -- health/explosion are SERVER truth (replica Exploded flag); a local crash must not eject the driver on damage the server never applied
             if (_exploded || amount <= 0f) return;
             Health = Mathf.Max(0f, Health - amount);
+            if (engineShare > 0f) TakeEngineDamage(amount * engineShare);
             TriggerAlarm();   // damaging an alarmed car sets off its alarm (master)
             if (Health <= 0f && _deadTimer < 0f)
             {
@@ -3807,11 +3844,12 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<string> _lampLabels = new();
         bool[] _lampBroken = System.Array.Empty<bool>();
 
-        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r" };
+        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r", "lightbar_l", "lightbar_r", "lightbar_c" };
         public static string LampDisplay(string label) => label switch
         {
             "headlight_l" => "left headlight",  "headlight_r" => "right headlight",
-            "taillight_l" => "left taillight",  "taillight_r" => "right taillight", _ => label,
+            "taillight_l" => "left taillight",  "taillight_r" => "right taillight",
+            "lightbar_l" => "lightbar red lens", "lightbar_r" => "lightbar blue lens", "lightbar_c" => "lightbar centre", _ => label,
         };
         public int LampCount => _lampNodes.Count;
         public string LampLabel(int i) => (uint)i < (uint)_lampLabels.Count ? _lampLabels[i] : "";
@@ -3858,6 +3896,12 @@ namespace UnturnedGodot
             for (int i = 0; i < _lampNodes.Count; i++)
             {
                 bool dead = _lampBroken[i];
+                if (_lampLabels[i].StartsWith("lightbar"))   // the flash block drives these; here only the shot-out look
+                {
+                    if (dead && _lampMats[i] != null) { _lampMats[i].EmissionEnabled = false; _lampMats[i].AlbedoColor = new Color(0.12f, 0.12f, 0.12f); }
+                    if (dead && GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = false;
+                    continue;
+                }
                 bool head = _lampLabels[i].StartsWith("headlight");
                 bool lit = !dead && (head ? _headlightsOn : _taillightsOn);
                 if (GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = lit;
@@ -5063,7 +5107,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
-            v.HealthMax = v.Health = s.Health * VehicleHealthScale; v.Battery = BatteryMax; v.DisplayName = s.Name;   // 10x hp (strawberry 2026-09-03); damage numbers untouched
+            v.HealthMax = v.Health = s.Health * VehicleHealthScale; v.Battery = BatteryMax; v.DisplayName = s.Name;
+            v.EngineHealthMax = v.EngineHealth = s.Health * VehicleHealthScale * 0.4f; v._hullSizeLocal = s.BoxSize;   // engine hp = 40% of body hp (a separate pool, not a slice of it)   // 10x hp (strawberry 2026-09-03); damage numbers untouched
             // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
             // hand-tuned driver spot. The fallback matters -- trailer has no bundle prefab to extract from, and a
             // null here would crash every seat lookup rather than degrading to one seat.
@@ -5596,9 +5641,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
                     if (txt.Contains("headlight") && mi.Mesh != null) v.BuildHeadlightBeam(mi.Mesh);   // the visible shaft, shaped from these very lenses
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
-                    if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
-                    if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
+                    if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); v._sirenMi0 = mi; v._lampNodes.Add(mi); v._lampMats.Add(pm); v._lampLights.Add(v._sirenLight0); v._lampLabels.Add("lightbar_l"); }   // + a shoot-out lamp   // red lens: glow the material + cast a real red light from that side (master)
+                    if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); v._sirenMi1 = mi; v._lampNodes.Add(mi); v._lampMats.Add(pm); v._lampLights.Add(v._sirenLight1); v._lampLabels.Add("lightbar_r"); }      // blue lens: material glow + real blue light from the other side
                 }
+            if (v._sirenMi0 != null && v._sirenMi1 != null)   // LIGHTBAR CENTRE: a hidden hit-box between the lenses; shot out -> the siren mangles/mutes (strawberry 2026-09-04)
+            {
+                var c0 = v._sirenMi0.Position + v._sirenMi0.Mesh.GetAabb().GetCenter(); var c1 = v._sirenMi1.Position + v._sirenMi1.Mesh.GetAabb().GetCenter();
+                v._sirenCentre = new MeshInstance3D { Name = "Lamp_lightbar_c", Mesh = new BoxMesh { Size = new Vector3(0.36f, 0.16f, 0.24f) }, Position = (c0 + c1) * 0.5f, Visible = false };
+                v.AddChild(v._sirenCentre);
+                v._lampNodes.Add(v._sirenCentre); v._lampMats.Add(null); v._lampLights.Add(null); v._lampLabels.Add("lightbar_c");
+            }
+            System.Array.Resize(ref v._lampBroken, v._lampNodes.Count);   // the lamp arrays were sized before the lightbar joined them
             if (s.TaillightMesh != null)   // red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
             {
                 var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -6584,6 +6637,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            if (_carIgnitionLeft > 0f) { _carIgnitionLeft -= (float)GetPhysicsProcessDeltaTime(); throttle = 0f; }   // still cranking: no drive yet (steering + brakes work)
             // A helicopter has no wheels to turn or brake. The MP fallback and any generic caller still reach it
             // through this one seam, mapped onto the flight axes it does have -- throttle is the collective,
             // steer is the pedals. Pitch/roll are absent here on purpose: they arrive as the reported TRANSFORM
@@ -7568,6 +7622,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             if (_exploded) return;
             Health = Mathf.Min(HealthMax, Health + amount);
+            if (!EngineDrowned && HealthMax > 0f) EngineHealth = Mathf.Min(EngineHealthMax, EngineHealth + EngineHealthMax * (amount / HealthMax));   // same fraction to the engine; a drowned one is past repair
             if (!_heli || HealthMax <= 0f) return;
             float frac = amount / HealthMax;
             _mainRotorHp = Mathf.Min(_mainRotorHpMax, _mainRotorHp + _mainRotorHpMax * frac);
@@ -7967,13 +8022,39 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 if (_sirenOn && !_exploded)
                 {
-                    if (_sirenAudio != null && !_sirenAudio.Playing) _sirenAudio.Play();
+                    bool lBroken = IsLightbarLensBroken(0), rBroken = IsLightbarLensBroken(1), cBroken = IsLightbarCentreBroken;
+                    if (_sirenAudio != null)
+                    {
+                        if (lBroken && rBroken && cBroken) { if (_sirenAudio.Playing) _sirenAudio.Stop(); }   // the whole bar is gone: silence
+                        else
+                        {
+                            if (!_sirenAudio.Playing) _sirenAudio.Play();
+                            float basePitch = LightbarSirenPitch[LightbarPattern];
+                            if (cBroken)   // a shot centre = the amp: warbles, drops out, muffled (strawberry: "mess up / mute the siren sound when damaged/broken")
+                            {
+                                float wob = Mathf.Sin(_sirenFlash * 23f) * 0.18f + Mathf.Sin(_sirenFlash * 5.3f) * 0.12f;
+                                bool dropout = (_sirenFlash % 1.7f) > 1.35f;
+                                _sirenAudio.PitchScale = Mathf.Max(0.3f, basePitch + wob);
+                                _sirenAudio.VolumeDb = dropout ? -40f : -12f;
+                            }
+                            else { _sirenAudio.PitchScale = basePitch; _sirenAudio.VolumeDb = 2f; }
+                        }
+                    }
                     _sirenFlash += (float)delta;
-                    bool red = (_sirenFlash % 0.66f) < 0.33f;   // source UpdateSirenVisuals: sirenState flips only every 0.33s (lastWeeoo gate) -> each lens lit 0.33s; mine was toggling every 0.1s (~3x too fast, master caught it)
-                    _sirenMat0.EmissionEnabled = true; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = red ? 4f : 0f;
-                    _sirenMat1.EmissionEnabled = true; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = red ? 0f : 4f;
-                    if (_sirenLight0 != null) _sirenLight0.LightEnergy = red ? 5f : 0f;   // real red light from the left lens
-                    if (_sirenLight1 != null) _sirenLight1.LightEnergy = red ? 0f : 5f;   // real blue light from the right lens (master)
+                    // PATTERNS (ctrl-hold radial): 0 wail = alternate 0.33s each (retail sirenState/lastWeeoo); 1 double strobe = both lenses
+                    // pop twice then rest; 2 wig-wag = fast 0.12s alternation.
+                    bool lLit, rLit;
+                    switch (LightbarPattern)
+                    {
+                        case 1: { float t = _sirenFlash % 0.8f; bool pop = t < 0.06f || (t >= 0.14f && t < 0.20f); lLit = pop; rLit = pop; break; }
+                        case 2: { bool a = (_sirenFlash % 0.24f) < 0.12f; lLit = a; rLit = !a; break; }
+                        default: { bool a = (_sirenFlash % 0.66f) < 0.33f; lLit = a; rLit = !a; break; }
+                    }
+                    if (lBroken) lLit = false; if (rBroken) rLit = false;
+                    _sirenMat0.EmissionEnabled = !lBroken; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = lLit ? 4f : 0f;
+                    _sirenMat1.EmissionEnabled = !rBroken; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = rLit ? 4f : 0f;
+                    if (_sirenLight0 != null) _sirenLight0.LightEnergy = lLit ? 5f : 0f;
+                    if (_sirenLight1 != null) _sirenLight1.LightEnergy = rLit ? 5f : 0f;
                 }
                 else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenLight0 != null) _sirenLight0.LightEnergy = 0f; if (_sirenLight1 != null) _sirenLight1.LightEnergy = 0f; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
@@ -8667,7 +8748,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 _swamped = false; _swampTime = 0f;   // drove back out -> the timer resets, but the engine stays off until restarted
                 return;
             }
-            if (!_swamped) _swamped = true;
+            if (!_swamped) { _swamped = true; EngineHealth = 0f; EngineDrowned = true; }   // DROWNED: engine hp gone and stays gone (strawberry 2026-09-04 "shouldnt be able to restart their engine ever")
             _swampTime += delta;
 
             // The engine is cut EVERY tick it is under, not once on entry: otherwise the driver simply restarts it

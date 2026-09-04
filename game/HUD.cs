@@ -483,11 +483,11 @@ namespace UnturnedGodot
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
-                _vehRpmGear.Text = Vehicle.EngineOn
+                _vehRpmGear.Text = Vehicle.EngineOn && Vehicle.EngineStarting ? "starting…" : Vehicle.EngineOn
                     ? $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}"   // MPH speedometer + rpm + gear (master)
                     // Engine off is now a state you can sit in, so the cluster has to SAY so -- otherwise a
                     // stopped car reads as "0 mph, 0 rpm" and looks broken rather than switched off.
-                    : (Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
+                    : (Vehicle.EngineDrowned ? "engine DROWNED · dead for good" : Vehicle.EngineDead ? "engine DEAD · repair it" : Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
             }
             else if (inRail)
             {
