@@ -622,7 +622,7 @@ namespace UnturnedGodot
                 if (ContentProvider.LoadOk(img, ip)) b.Icon = ImageTexture.CreateFromImage(img);
             }
             b.AddThemeFontSizeOverride("font_size", 20);
-            b.Pressed += () => { GameAudio.UiPopup(this); onClick(); };   // retail ui_menu_popup click; camera follows which submenu is OPEN (see _Process), NOT hover
+            b.Pressed += () => { onClick(); };   // no click sound: retail's Popup_UI_Menu_Popup "blorp" read as a random gloopy pop (strawberry 2026-09-04)   // retail ui_menu_popup click; camera follows which submenu is OPEN (see _Process), NOT hover
             layer.AddChild(b);
             _dashButtons.Add(b);            // tracked so SetDashboardVisible() can hide the whole dashboard when a submenu opens
         }
@@ -641,7 +641,7 @@ namespace UnturnedGodot
         {
             var b = new Button { Text = text, CustomMinimumSize = new Vector2(320f, 46f), Alignment = HorizontalAlignment.Left };
             b.AddThemeFontSizeOverride("font_size", 18);
-            b.Pressed += () => { GameAudio.UiPopup(this); onClick(); };
+            b.Pressed += () => { onClick(); };   // no click sound: retail's Popup_UI_Menu_Popup "blorp" read as a random gloopy pop (strawberry 2026-09-04)
             return b;
         }
 
