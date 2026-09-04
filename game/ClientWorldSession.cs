@@ -302,7 +302,7 @@ namespace UnturnedGodot
                 // the picture costs nothing the second time because the SERVER dedupes by content hash and
                 // only pushes bytes a peer has not already been sent.
                 _profileSent = true;
-                Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng);
+                Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng, PlayerProfile.Face);
             }
             if (!_holidayApplied)
             {

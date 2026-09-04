@@ -1512,7 +1512,7 @@ namespace UnturnedGodot
             }
 
             // player skin tint + the Skull face-quad decal (kept exactly as-is) -> the clothes-shader body path (albedoTexPath null)
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
             if (rc == null) { GD.PrintErr("[clothtest] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
@@ -1559,7 +1559,7 @@ namespace UnturnedGodot
             ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
             AddChild(ground);
 
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
             if (rc == null) { GD.PrintErr("[wearcloth] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;

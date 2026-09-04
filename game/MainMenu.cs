@@ -61,6 +61,9 @@ namespace UnturnedGodot
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
         Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
         Control _survivorsPanel;     // Survivors submenu: Character/Appearance/Group/Clothing (MenuSurvivorsUI)
+        Control _appearancePanel;    // Survivors -> Appearance: the 32 retail faces (MenuSurvivorsAppearanceUI faceButtons)
+        RiggedCharacter _hero;       // the diorama survivor -- re-faced live from the Appearance panel
+        readonly System.Collections.Generic.List<Control> _faceButtons = new();
         Control _configPanel;        // Configuration submenu: Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
         readonly System.Collections.Generic.List<Button> _dashButtons = new();  // the 5 dashboard rows -- hidden while a submenu is open (retail CENTERS the submenu + replaces the dashboard)
 
@@ -474,7 +477,8 @@ namespace UnturnedGodot
             {
                 // WITH the face_19 decal -- retail's menu survivor has a face, AND a faceless build is front/back
                 // symmetric, which is what made every "is it backward?" render un-callable.
-                var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+                var hero = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));
+                _hero = hero;
                 hero.Position = new Vector3(-2.951f, 0.087f, 2.129f);
                 AddChild(hero);
                 // Face the Survivors customization camera. RiggedCharacter's visual forward is -Z (skeleton import, same
@@ -536,6 +540,7 @@ namespace UnturnedGodot
             BuildMapSelector(layer);   // Play > Singleplayer -> map selector + gameplay options (MainMenuPlay.cs)
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
             BuildSurvivorsPanel(layer);// Survivors -> Character/Appearance/Group/Clothing (MenuSurvivorsUI)
+            BuildAppearancePanel(layer);   // Survivors -> Appearance: the 32 faces
             BuildConfigPanel(layer);   // Configuration -> Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
@@ -595,6 +600,7 @@ namespace UnturnedGodot
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_serversPanel != null) _serversPanel.Visible = false;
             if (_survivorsPanel != null) _survivorsPanel.Visible = false;
+            if (_appearancePanel != null) _appearancePanel.Visible = false;
             if (_configPanel != null) _configPanel.Visible = false;
         }
 
@@ -714,7 +720,7 @@ namespace UnturnedGodot
         {
             var box = SubPanel(layer, "SURVIVORS", out var panel);
             SubRow(box, "character",  "Character",  "Name + primary/secondary skin colours. (coming to Cow.0)", () => ShowStub("Character"));
-            SubRow(box, "appearance", "Appearance", "Face, hair, beard. (coming to Cow.0)",                     () => ShowStub("Appearance"));
+            SubRow(box, "appearance", "Appearance", "Face. (hair + beard coming to Cow.0)",                    ToggleAppearancePanel);
             SubRow(box, "group",      "Group",      "Your group ID + colour. (coming to Cow.0)",                () => ShowStub("Group"));
             SubRow(box, "clothing",   "Clothing",   "Shirt, pants, hat, backpack, mask, glasses. (coming to Cow.0)", () => ShowStub("Clothing"));
             AddBackRow(box);
@@ -726,6 +732,50 @@ namespace UnturnedGodot
             HideAllPanels();
             _survivorsPanel.Visible = true;
             SetDashboardVisible(false);
+        }
+
+        // Survivors -> Appearance (retail MenuSurvivorsAppearanceUI): a box of face buttons, the icon = the face texture
+        // over the skin colour (retail tints the button image with character.skin), click = Characters.growFace.
+        // All 32 faces are open here -- retail gates the 22 "pro" ones behind Gold, the port has no DLC.
+        void BuildAppearancePanel(CanvasLayer layer)
+        {
+            var box = SubPanel(layer, "APPEARANCE", out var panel);
+            box.AddChild(Header("Face", 18));
+            var grid = new GridContainer { Columns = 8 };
+            grid.AddThemeConstantOverride("h_separation", 6); grid.AddThemeConstantOverride("v_separation", 6);
+            _faceButtons.Clear();
+            var skin = new Color(0.82f, 0.66f, 0.52f);
+            for (int i = 0; i < UnturnedGodot.Net.PlayerProfileReplication.FaceCount; i++)
+            {
+                int face = i;
+                var btn = new Button { CustomMinimumSize = new Vector2(64, 64), TooltipText = $"Face {face}" };
+                var bg = new ColorRect { Color = skin, MouseFilter = Control.MouseFilterEnum.Ignore };
+                bg.SetAnchorsPreset(Control.LayoutPreset.FullRect); bg.OffsetLeft = 6; bg.OffsetTop = 6; bg.OffsetRight = -6; bg.OffsetBottom = -6;
+                btn.AddChild(bg);
+                Texture2D tex = null;
+                { var img = ContentProvider.LoadImage(ProjectSettings.GlobalizePath(RiggedCharacter.FacePath(face))); if (img != null) tex = ImageTexture.CreateFromImage(img); }
+                var tr = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, TextureFilter = CanvasItem.TextureFilterEnum.Nearest, MouseFilter = Control.MouseFilterEnum.Ignore };
+                tr.SetAnchorsPreset(Control.LayoutPreset.FullRect); tr.OffsetLeft = 6; tr.OffsetTop = 6; tr.OffsetRight = -6; tr.OffsetBottom = -6;
+                btn.AddChild(tr);
+                btn.Pressed += () => { PlayerProfile.SetFace((byte)face); _hero?.SetFace(face); RefreshFaceButtons(); };
+                grid.AddChild(btn);
+                _faceButtons.Add(btn);
+            }
+            box.AddChild(grid);
+            AddBackRow(box);
+            _appearancePanel = panel;
+            RefreshFaceButtons();
+        }
+        void RefreshFaceButtons()
+        {
+            for (int i = 0; i < _faceButtons.Count; i++) _faceButtons[i].Modulate = i == PlayerProfile.Face ? Colors.White : new Color(0.55f, 0.55f, 0.55f);
+        }
+        void ToggleAppearancePanel()
+        {
+            HideAllPanels();
+            _appearancePanel.Visible = true;
+            SetDashboardVisible(false);
+            RefreshFaceButtons();
         }
 
         /// <summary>Retail's Configuration (MenuConfigurationUI) is a fullscreen box of tabs: Graphics / Display / Audio

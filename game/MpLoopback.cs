@@ -408,7 +408,7 @@ namespace UnturnedGodot
             // Singleplayer is a join too. The loopback server runs the same profile validation as a dedicated
             // one, so the local player's name and picture take the SAME path here as over a real wire -- which
             // is also what makes them verifiable without two machines.
-            if (!_profileSent) { _profileSent = true; Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng); }
+            if (!_profileSent) { _profileSent = true; Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng, PlayerProfile.Face); }
 
             // P1b: the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457). The
             // ReplicaUpdated subscription re-adopts every echo AFTER this; this catches the join snapshot's

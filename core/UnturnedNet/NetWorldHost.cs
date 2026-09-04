@@ -222,7 +222,7 @@ namespace UnturnedGodot.Net
                     // faster is either a bug or a client turning its one 64 KB upload into 64 KB x every peer,
                     // repeatedly. Drop the whole command rather than applying the name and refusing the picture.
                     if (!Profiles.ServerProfileAccepted(sender, Session.CurrentTick)) return;
-                    if (!Profiles.ServerApplyProfile(sender, cmd.Name, cmd.AvatarPng, Session.CurrentTick, out var verdict))
+                    if (!Profiles.ServerApplyProfile(sender, cmd.Name, cmd.AvatarPng, Session.CurrentTick, out var verdict, cmd.Face))
                     {
                         if (verdict != ProfileRules.AvatarVerdict.Ok && verdict != ProfileRules.AvatarVerdict.Empty)
                             NetLog.Info($"player {sender}: profile picture refused ({ProfileRules.Explain(verdict)})");
@@ -708,9 +708,9 @@ namespace UnturnedGodot.Net
         /// <summary>Tell the server who we are. Sent once the session is Connected, on every join -- the
         /// server holds no profile database, so a rejoin re-states it. The name is sanitised HERE too, so the
         /// player sees the name they will actually get; the server does not rely on that and re-runs it.</summary>
-        public bool SendSetProfile(string name, byte[] avatarPng)
+        public bool SendSetProfile(string name, byte[] avatarPng, byte face = 0)
             => SendCommand(ReplicationIds.CommandSetProfile,
-                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng }.Write,
+                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng, Face = PlayerProfileReplication.ClampFace(face) }.Write,
                            bufferSize: ProfileBufferSize(avatarPng));
 
         /// <summary>Send a profile WITHOUT the client-side sanitise -- what a modified client, or one written

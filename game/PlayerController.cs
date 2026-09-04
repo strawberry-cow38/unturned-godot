@@ -4752,7 +4752,7 @@ namespace UnturnedGodot
             EjectFromVehicleOnDeath();   // review #3: detach before the corpse/respawn setup, else the dead driver wedges
             Velocity = Vector3.Zero;
 
-            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));
             if (_corpse != null)
             {
                 GetParent().AddChild(_corpse);
@@ -5201,7 +5201,7 @@ namespace UnturnedGodot
             AddChild(_lookHullViz);
 
             _ppA = System.Diagnostics.Stopwatch.GetTimestamp();
-            _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
+            _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // live 3rd-person body, wearing the profile's face
             if (_body != null)
             {
                 _body.Visible = false;

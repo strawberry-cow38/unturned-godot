@@ -21,7 +21,7 @@ namespace UnturnedGodot
 
         sealed class Av
         {
-            public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig;
+            public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig; public int Face = -1;   // v26: the face the puppet wears (profile block)
             public float Speed;          // smoothed horizontal glide speed -> idle/walk/run locomotion (the puppet used to be a frozen Idle pose)
             public Nameplate Plate;      // name + profile picture over the head
             public string PlateName;     // what the plate currently reads -- rebuild only on a change
@@ -208,6 +208,7 @@ namespace UnturnedGodot
                 // changes -- including the moment the bytes finally land for a hash it already knew about.
                 if (Client.Profiles.TryGet(e.OwnerPlayerId, out var prof))
                 {
+                    if (av.Face != prof.Face) { av.Body.SetFace(prof.Face); av.Face = prof.Face; }   // v26: the face rides the profile block
                     Client.Profiles.TryGetAvatar(e.OwnerPlayerId, out var png);
                     // Key on 0 while the bytes are still in flight, so their arrival counts as a change and
                     // the placeholder gets replaced rather than sticking until the player re-dresses.
@@ -234,7 +235,7 @@ namespace UnturnedGodot
 
         static Av Build()
         {
-            var body = RiggedCharacter.Build("res://content/rig.json", Skin);
+            var body = RiggedCharacter.Build("res://content/rig.json", Skin, false, null, RiggedCharacter.FacePath(0));   // face 0 until the profile block names one
             if (body == null) return null;
             body.PlayLoop("Idle");   // a standing idle pose (the puppet body isn't ticked -> the clip's rest frame)
             var inv = new PlayerInventory();

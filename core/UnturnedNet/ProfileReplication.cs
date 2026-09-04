@@ -16,6 +16,7 @@ namespace UnturnedGodot.Net
     {
         public string Name;
         public byte[] AvatarPng;   // may be null/empty: a player without a picture is normal
+        public byte Face;          // v26: retail Items/Faces index 0..31 (the server clamps; a stray value reads as face 0)
 
         public void Write(NetPakWriter w)
         {
@@ -24,6 +25,7 @@ namespace UnturnedGodot.Net
             if (len > ProfileRules.MaxAvatarBytes) len = 0;   // never emit a payload the peer must refuse
             w.WriteUInt32((uint)len);
             if (len > 0) w.WriteBytes(AvatarPng, len);
+            w.WriteUInt8(Face);
         }
 
         public static bool TryRead(NetPakReader r, out SetProfileCommand cmd)
@@ -38,7 +40,8 @@ namespace UnturnedGodot.Net
                 png = new byte[len];
                 if (!r.ReadBytes(png, (int)len)) return false;
             }
-            cmd = new SetProfileCommand { Name = name, AvatarPng = png };
+            if (!r.ReadUInt8(out byte face)) return false;
+            cmd = new SetProfileCommand { Name = name, AvatarPng = png, Face = face };
             return true;
         }
     }
@@ -97,6 +100,7 @@ namespace UnturnedGodot.Net
             public ushort OwnerPlayerId;
             public string Name = ProfileRules.FallbackName;
             public ulong AvatarHash;      // 0 = no picture
+            public byte Face;             // v26: retail face index 0..31
             public long LastChangedTick;
 
             // ---- server-only (never on the snapshot; replicas hold the bytes they were sent instead) ----
@@ -104,6 +108,8 @@ namespace UnturnedGodot.Net
         }
 
         public byte SystemId => ReplicationIds.SystemProfiles;
+        public const int FaceCount = 32;   // retail Customization: FACES_FREE 10 + FACES_PRO 22; the port unlocks all of them
+        public static byte ClampFace(byte face) => face < FaceCount ? face : (byte)0;
 
         readonly Dictionary<ushort, ProfileEntry> _byOwner = new Dictionary<ushort, ProfileEntry>();
 
@@ -165,7 +171,7 @@ namespace UnturnedGodot.Net
         /// player's EXISTING avatar alone rather than clearing it: a rejected upload should not also destroy
         /// what was already working.</summary>
         public bool ServerApplyProfile(ushort ownerPlayerId, string rawName, byte[] png, long tick,
-                                       out ProfileRules.AvatarVerdict verdict)
+                                       out ProfileRules.AvatarVerdict verdict, byte face = 0)
         {
             verdict = ProfileRules.AvatarVerdict.Empty;
             if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return false;
@@ -173,6 +179,8 @@ namespace UnturnedGodot.Net
             string name = ProfileRules.SanitizeName(rawName);
             bool changed = !string.Equals(e.Name, name, System.StringComparison.Ordinal);
             e.Name = name;
+            face = ClampFace(face);
+            if (e.Face != face) { e.Face = face; changed = true; }
 
             if (png != null && png.Length > 0)
             {
@@ -266,6 +274,7 @@ namespace UnturnedGodot.Net
                 w.WriteUInt16(e.OwnerPlayerId);
                 w.WriteString(e.Name ?? ProfileRules.FallbackName);
                 w.WriteUInt64(e.AvatarHash);
+                w.WriteUInt8(e.Face);
             }
         }
 
@@ -277,6 +286,7 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt16(out ushort owner)) return;
                 if (!r.ReadString(out string name)) return;
                 if (!r.ReadUInt64(out ulong hash)) return;
+                if (!r.ReadUInt8(out byte face)) return;
                 if (!_byOwner.TryGetValue(owner, out var e))
                 {
                     e = new ProfileEntry { OwnerPlayerId = owner };
@@ -287,6 +297,7 @@ namespace UnturnedGodot.Net
                 // server sends is a client that a hostile server owns. Costs a string compare per change.
                 e.Name = ProfileRules.SanitizeName(name);
                 e.AvatarHash = hash;
+                e.Face = ClampFace(face);
             }
         }
 
@@ -300,6 +311,7 @@ namespace UnturnedGodot.Net
                 var e = _byOwner[id];
                 h = NetHash.MixUInt32(h, e.OwnerPlayerId);
                 h = NetHash.MixUInt64(h, e.AvatarHash);
+                h = NetHash.MixByte(h, e.Face);
                 foreach (char c in e.Name ?? "") h = NetHash.MixUInt32(h, c);
             }
             return h;

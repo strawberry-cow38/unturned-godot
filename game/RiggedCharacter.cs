@@ -103,6 +103,28 @@ namespace UnturnedGodot
         //      scale.y mirror is skipped (SP -- source only mirrors for the 1P left-handed viewmodel).
         BoneAttachment3D _hatAtt, _maskAtt, _glassesAtt, _vestAtt, _backpackAtt;
 
+        // ---- FACES (strawberry 2026-09-04): the 32 retail faces (core.masterbundle Items/Faces/<n>/Texture.png, 16x16,
+        //      transparent bg; face 14 also has an Emission.png) ripped to content/faces/face_<n>.png. The face is the
+        //      Skull-attached decal quad built in BuildFrom; SetFace swaps its texture (+ emission when that face has one).
+        MeshInstance3D _faceQuad;
+        public int Face { get; private set; } = -1;
+        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, 31)}.png";
+        public void SetFace(int face)
+        {
+            face = Mathf.Clamp(face, 0, 31);
+            if (_faceQuad == null || !GodotObject.IsInstanceValid(_faceQuad)) return;
+            if (_faceQuad.MaterialOverride is not StandardMaterial3D m) return;
+            var tex = LoadTexCached(FacePath(face));
+            if (tex == null) return;
+            m.AlbedoTexture = tex;
+            string em = $"res://content/faces/face_{face}_emission.png";
+            var etex = System.IO.File.Exists(ProjectSettings.GlobalizePath(em)) ? LoadTexCached(em) : null;
+            m.EmissionEnabled = etex != null;
+            m.EmissionTexture = etex;
+            if (etex != null) { m.Emission = Colors.White; m.EmissionEnergyMultiplier = 1.5f; }
+            Face = face;
+        }
+
         void AttachGear(ref BoneAttachment3D slot, string boneName, Mesh mesh, Texture2D albedo, Vector3 offset, string name)
         {
             DetachGear(ref slot);                        // source Destroy(model.gameObject) before re-instantiate
@@ -1187,6 +1209,8 @@ namespace UnturnedGodot
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
                     att.AddChild(fq);
+                    root._faceQuad = fq;
+                    { var fm = System.Text.RegularExpressions.Regex.Match(faceTexPath, @"face_(\d+)"); if (fm.Success && int.TryParse(fm.Groups[1].Value, out int fi)) root.SetFace(fi); }   // picks up the emission map for faces that have one
                     fq.Position = new Vector3(-0.43f, 0f, -0.25f);
                     fq.Basis = new Basis(new Vector3(0f, -1f, 0f), new Vector3(-1f, 0f, 0f), new Vector3(0f, 0f, -1f));
                 }
