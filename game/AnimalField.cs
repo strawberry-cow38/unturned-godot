@@ -10,6 +10,7 @@ namespace UnturnedGodot
     // (deer/pig/cow_rig.json). Static rest pose for now (reads as grazing wildlife); idle/walk clips + wander are next.
     public partial class AnimalField : Node3D
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public PlayerController Player;
         public Terrain Terr;
 
@@ -87,7 +88,8 @@ namespace UnturnedGodot
             return best;
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             _acc += delta;
             if (_acc < 0.5 || Terr == null) return;

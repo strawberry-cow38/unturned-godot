@@ -104,6 +104,8 @@ namespace UnturnedGodot
         // Bolt away from a threat (an impact point or a spotted player) for a few seconds at FleeSpeed, at a run.
         void FleeFrom(Vector3 threat)
         {
+            if (_fleeTimer <= 0.0)   // retail animals/<species>/panic_N on the startle (cow, pig; the deer has no voice clip)
+                GameAudio.PlayAt(this, GameAudio.Pick("animals", (Species == 1 ? "pig" : Species == 2 ? "cow" : "deer") + "_panic"), GlobalPosition, -2f, 8f, 90f);
             _fleeTimer = 3.5;
             Vector3 away = GlobalPosition - threat; away.Y = 0f;
             away = away.LengthSquared() > 0.01f ? away.Normalized() : (_faceDir.LengthSquared() > 0.01f ? -_faceDir : Vector3.Forward);

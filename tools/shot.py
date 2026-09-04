@@ -80,6 +80,29 @@ SCENES = {
                  "ONE prop at identity + RGB axes (set PROP=Name)"),
     # building tool. `walls` is the room; `wallclose` is the frame/reveal detail straight on, because
     # frame width is invisible at room distance; `wallswatch` is one panel per retail palette.
+    # The death screen. Dying is not something a headless run can do on its own, so UG_BOOTCMD fires the
+    # console `kill` a few seconds in and UG_SHOTTIME captures once the ragdoll has flopped and the camera
+    # has swung round a little. Without the boot command this state is simply unrenderable.
+    "death":     (["--peiplay", "--shot={OUT}"],
+                  # These are MOVIE seconds (fixed 30 fps), not wall clock: at ~1.5 s/frame on a software
+                  # rasteriser, "10 s" is 300 frames and half an hour. 1.4 s = frame 42, just after peiplay's
+                  # scripted drop lands and before it climbs into a vehicle, so the corpse is on foot; the
+                  # shot at 3.2 s gives the ragdoll ~54 frames to settle and the camera a little orbit.
+                  {"UG_BOOTCMD": "kill", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "3.2"}, True, 700,
+                  "the death screen: ragdoll + orbit cam + respawn options"),
+    # The directional hurt indicator. `hurttest e` fires the wire event's cosmetics at a fixed compass
+    # direction (east of the player) without touching HP -- see DevConsole's hurttest verb for why a real
+    # hit is otherwise unrenderable here. Timed short: the wedge fades over 3s and the shot wants it near
+    # full opacity, not caught mid-fade.
+    "hurt":      (["--peiplay", "--shot={OUT}"],
+                  {"UG_BOOTCMD": "hurttest e", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "1.7"}, True, 700,
+                  "the directional hurt indicator, hit fired from the east"),
+    # Low-HP vignette + desaturation. `sethp 5` sets health directly (bypassing TakeDamage's server-sink
+    # routing entirely) -- see DevConsole. The overlay's strength is SMOOTHED (~0.17s time constant), so the
+    # shot fires a full second after sethp rather than right after it, to catch it settled rather than mid-ramp.
+    "lowhp":     (["--peiplay", "--shot={OUT}"],
+                  {"UG_BOOTCMD": "sethp 5", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "2.4"}, True, 700,
+                  "the low-HP vignette + desaturation at 5/100 health"),
     "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),

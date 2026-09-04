@@ -15,6 +15,7 @@ namespace UnturnedGodot
     // graph or the port, and the Deployable path stays byte-identical.
     public partial class GridPowerSource : Node3D, IPowerDevice
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public const float DefaultWatts = 10000f;   // 10kW mains feed (strawberry)
         public float Watts = DefaultWatts;           // per-instance now -- set in the map editor (custom value OR a preset)
         public string GridName = "";                 // editor label; the mouseover reads "Grid Power - <name>: <watts>"
@@ -159,7 +160,8 @@ namespace UnturnedGodot
             _info?.SetActive(on);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (!_focused || _info == null) return;   // only the looked-at box keeps its tooltip live
             _info.GlobalPosition = GlobalPosition + Vector3.Up * 2.4f;   // float above the box (Circuit_0 ~1.87m tall)

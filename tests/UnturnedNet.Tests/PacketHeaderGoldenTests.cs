@@ -44,7 +44,9 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
+            // Re-goldened for Version=23 (hurt-feedback: EventPlayerHurt(38) -- ONLY the version byte moved 16->17); before
+            // that Version=22 (held-item: MoveInput.HeldItemId -- ONLY the version byte moved 15->16); before that
+            // Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
             // EventDoorState(34)/EventBedClaimed(35) -- ONLY the version byte moved 0D->0E, which is the
             // whole point of this golden: a wire change that touches anything ELSE in the header is a
             // mistake, and this is where it gets caught); before that Version=13 (destructible-props:
@@ -71,6 +73,9 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
+            // v19: mp-gunfire-fx (EventPlayerFired(37)) -- only the version byte (12->13) moves, which is the
+            // whole point of this golden: a new EVENT id is invisible in a keepalive, and the version byte is
+            // the only thing here that proves the bump happened at all.
             // v17: player-profiles (CommandSetProfile(42) + SystemProfiles(18) + EventAvatarData(36)) -- only
             // the version byte (10->11) moves. Before that v16: gun-state-authority -- only the version byte
             // (0F->10) moves, per the re-golden-with-bump discipline. Before that v15: wire-catchup (0E->0F).
@@ -81,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751208000000000000002800"));   // byte[1]=0x12 = Version 18 (v18 mp-puppet-pose stance byte)
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751A08000000000000002800"));   // byte[1]=0x17 = Version 23 (v23 hurt-feedback: EventPlayerHurt(38)) -- ONLY that byte moved from 0x16/22, which is the whole point of this golden
         }
 
         [Test]

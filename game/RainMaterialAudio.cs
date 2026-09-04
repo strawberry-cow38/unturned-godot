@@ -27,6 +27,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _car = MakeEmitter("res://content/rain_car.wav");
             _foliage = MakeEmitter("res://content/rain_foliage.wav");
         }
@@ -46,7 +47,8 @@ namespace UnturnedGodot
             return pl;
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             float rint = Mathf.Clamp(Intensity, 0f, 1f);
             if (rint < 0.02f || Cam == null) { Silence(_car); Silence(_foliage); RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f)); CanopyShelter = 1f; return; }

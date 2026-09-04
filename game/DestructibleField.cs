@@ -111,6 +111,15 @@ namespace UnturnedGodot
             var r = _recs[index];
             if (r == null || r.Alive == alive) return;
             r.Alive = alive;
+            // The rain's roof map caches the world's tops; a prop breaking or coming back changes them HERE only
+            // (strawberry: "only rebuild when a prop gets broken and then only rebuild that area").
+            {
+                Aabb ab = default; Transform3D xf = default; bool ok = false;
+                if (r.Meshes != null && r.Meshes.Length > 0 && r.Meshes[0] != null && GodotObject.IsInstanceValid(r.Meshes[0]))
+                { ab = r.Meshes[0].Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One); xf = r.Meshes[0].GlobalTransform; ok = true; }
+                else if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) { ab = r.BatchAabb; xf = r.BatchXf; ok = true; }
+                if (ok) RainRoofMap.Invalidate(xf * ab.GetCenter(), (ab.Size * xf.Basis.Scale).Length() * 0.5f + 1f);
+            }
             if (r.Meshes != null)
                 foreach (var m in r.Meshes)
                     if (m != null && GodotObject.IsInstanceValid(m)) m.Visible = alive;
@@ -144,7 +153,7 @@ namespace UnturnedGodot
                 var mesh = r.Meshes[0];
                 aabb = mesh.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One);
                 xf = mesh.GlobalTransform;
-                propMat = mesh.MaterialOverride as StandardMaterial3D;
+                propMat = WetSurface.BaseOf(mesh.MaterialOverride);   // a wet-wrapped prop still tints its debris from the plain material
                 anchor = mesh;
                 dropMesh = mesh.Mesh;   // the actual prop model, cloned as the falling physics body
             }

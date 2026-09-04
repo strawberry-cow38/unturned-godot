@@ -8,14 +8,15 @@ namespace UnturnedGodot
     // Add stepped systems (movement, AI, combat, replication) via Sim.Add(...).
     public partial class SimDriver : Node
     {
+        public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public readonly SDG.Unturned.SimRoot Sim = new SDG.Unturned.SimRoot();
 
         public long Tick => Sim.Clock.Tick;
         public double SimTime => Sim.Clock.SimTime;
 
-        public override void _PhysicsProcess(double delta)
+        public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
+        public void HubPhysics(double delta)
         {
-            using var _prof = Prof.Scope("SimDriver.phys");
             Sim.Frame(delta);
         }
     }

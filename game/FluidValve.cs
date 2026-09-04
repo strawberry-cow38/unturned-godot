@@ -26,9 +26,9 @@ namespace UnturnedGodot
             AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice) for the trigger ports
         }
 
-        public override void _Process(double delta)
+        public override void HubTick(double delta)   // PERF: via FluidContainer's hub registration
         {
-            base._Process(delta);
+            base.HubTick(delta);
             // a wired >=1w sense on a trigger opens/closes the valve (SetValveOpen no-ops if already in that state)
             if (_onTrigger != null && GodotObject.IsInstanceValid(_onTrigger) && _onTrigger.Live >= 1f) SetValveOpen(true);
             else if (_offTrigger != null && GodotObject.IsInstanceValid(_offTrigger) && _offTrigger.Live >= 1f) SetValveOpen(false);

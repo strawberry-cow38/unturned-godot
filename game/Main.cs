@@ -12,7 +12,9 @@ namespace UnturnedGodot
     {
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
+        int _bakeHullsFrames = -1;   // --bakehulls frame countdown (-1 = inactive)
         string _shotPath; float _shotElapsed;   // UG_SHOTTIME: capture at an elapsed-time target (real-time frame counts drift off fixed-fps -- tinyclaw)
+        float _bootCmdElapsed; bool _bootCmdRun;   // UG_BOOTCMD: see TickBootCommand
         Camera3D _orbitCam; Vector3 _orbitCenter; float _orbitR, _orbitAngle;   // UG_PROPSPIN: 360 turntable camera orbit for the prop-showcase movie
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
@@ -110,6 +112,9 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            GraphicsOptions.Load(); GraphicsOptions.ApplyAll(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
+            GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             // VSYNC OFF GLOBALLY (strawberry 2026-08-10). With a pacer on, frame time is pinned to the display's
             // refresh interval, so the number you profile against is one the monitor chose and headroom reads as
@@ -122,6 +127,7 @@ namespace UnturnedGodot
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
             string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
+            bool bakeHulls = false;   // --bakehulls: build every vehicle spec once so the convex-hull bakes get written (user://vehicle_hulls -> commit into content/vehicle_hulls)
             bool zperf = false;
             bool zbody = false;
             bool deployTest = false, barricadeTest = false, barricadePlay = false;
@@ -177,7 +183,8 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--ammoradial=")) { ammoRadial = arg["--ammoradial=".Length..]; _shotRequested = ammoRadial; }   // open the R-hold shotgun ammo radial (mock 12ga choices) -> screenshot the picker UI
                 else if (arg.StartsWith("--profileshot=")) { profileShot = arg["--profileshot=".Length..]; _shotRequested = profileShot; }   // two nameplates -- a valid 128px pfp and a refused one -> verify the render + the missing-texture fallback
                 else if (arg.StartsWith("--animrig=")) { animrig = arg["--animrig=".Length..]; _shotRequested = animrig; }   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
-                else if (arg == "--puppetanim") puppetAnim = true;   // drive a player rig idle->walk->run -> prove RemotePlayers locomotion animates (movie)
+                else if (arg == "--puppetanim") puppetAnim = true;
+                else if (arg == "--bakehulls") bakeHulls = true;   // build EVERY spec (SpecNames), let _Ready decompose + bake, quit   // drive a player rig idle->walk->run -> prove RemotePlayers locomotion animates (movie)
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) { rig = arg["--rig=".Length..]; _shotRequested = rig; }
@@ -569,7 +576,19 @@ namespace UnturnedGodot
                 BuildAnimRig(animrig);
                 return;
             }
-            if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); return; }   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
+            if (bakeHulls)
+            {
+                foreach (var n in Vehicle.SpecNames)
+                {
+                    if (n == "jet") continue;   // alias of fighterjet
+                    try { var bv = Vehicle.BuildByName(n); if (bv != null) { AddChild(bv); bv.Position = new Vector3(0f, 200f, 0f); } }
+                    catch (System.Exception e) { GD.PrintErr($"[bakehulls] {n}: {e.Message}"); }
+                }
+                _bakeHullsFrames = 0;   // _Process counts a few frames (VHACD runs in _Ready on entry) then quits
+                GD.Print($"[bakehulls] built {Vehicle.SpecNames.Length - 1} specs; waiting for _Ready bakes");
+                return;
+            }
+            if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); if (shot != null) { _shotPath = shot; _shotRequested = shot; } return; }   // --shot=P arms a still too (UG_SHOTTIME picks the moment; no --shot -> movie as before)   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
 
             if (rottest != null)   // place ONE prop under a candidate placement-rotation convention -> find the upright one
             {
@@ -857,6 +876,7 @@ namespace UnturnedGodot
                 Warmup.Begin(this, warmLs, () =>
                 {
                     warmLs.QueueFree();
+                    MusicPlayer.Get(this)?.PlayLoop("pei_loop");   // retail menu music = the PEI loop; the world swaps to the picked map's loop once built
                     var menu = new MainMenu();
                     menu.OnPlay = () => { menu.QueueFree(); BuildPlayable(null, false, null); };
                     menu.OnDrivePEI = () => { menu.QueueFree(); ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
@@ -1089,6 +1109,35 @@ namespace UnturnedGodot
         }
 
         // --elevatortest: the Elevator_0 prop wired as an interactive lift (look at it + F rides it up/down). It
+        /// <summary>UG_BOOTCMD: run one DevConsole line, once, UG_BOOTCMD_AT seconds after boot (default 3).
+        /// It exists so a STATE that only a player can reach is still renderable offline -- `UG_BOOTCMD=kill`
+        /// plus a later UG_SHOTTIME is how the death screen gets captured, since dying is not something a
+        /// headless harness can otherwise do. Same shape as the other UG_* debug hooks around it: no effect
+        /// unless the variable is set.</summary>
+        void TickBootCommand(double delta)
+        {
+            if (_bootCmdRun) return;
+            string cmd = System.Environment.GetEnvironmentVariable("UG_BOOTCMD");
+            if (string.IsNullOrEmpty(cmd)) { _bootCmdRun = true; return; }
+            float at = 3f;
+            var atEnv = System.Environment.GetEnvironmentVariable("UG_BOOTCMD_AT");
+            if (!string.IsNullOrEmpty(atEnv)) float.TryParse(atEnv, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out at);
+            _bootCmdElapsed += (float)delta;
+            if (_bootCmdElapsed < at) return;
+            _bootCmdRun = true;
+            var console = FindDevConsole(this);
+            if (console == null) { GD.PrintErr("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
+            GD.Print($"[BOOTCMD] {cmd}");
+            console.DebugRun(cmd);
+        }
+
+        static DevConsole FindDevConsole(Node n)
+        {
+            if (n is DevConsole dc) return dc;
+            foreach (var c in n.GetChildren()) { var f = FindDevConsole(c); if (f != null) return f; }
+            return null;
+        }
+
         // auto-Calls a beat after spawn so an offline UG_SHOTTIME capture catches it in transit. Master 2026-08-29:
         // "theres an elevator prop -- wire it to move up/down on an interaction."
         void BuildElevatorTest()
@@ -1412,7 +1461,7 @@ namespace UnturnedGodot
                 if (m == null) continue;
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
-                if (img.Load(dir + name + "_" + i + "_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                if (ContentProvider.LoadOk(img, dir + name + "_" + i + "_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
                 root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
             return root;
@@ -1463,7 +1512,7 @@ namespace UnturnedGodot
             }
 
             // player skin tint + the Skull face-quad decal (kept exactly as-is) -> the clothes-shader body path (albedoTexPath null)
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
             if (rc == null) { GD.PrintErr("[clothtest] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
@@ -1510,7 +1559,7 @@ namespace UnturnedGodot
             ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
             AddChild(ground);
 
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
             if (rc == null) { GD.PrintErr("[wearcloth] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
@@ -1521,8 +1570,12 @@ namespace UnturnedGodot
             var clothing = new PlayerClothingController(rc, inv);
             clothing.Wear(new SDG.Unturned.Item(3));     // Orange Hoodie (shirt) -> body paint
             clothing.Wear(new SDG.Unturned.Item(209));   // Cargo Pants (pants)   -> body paint
-            clothing.Wear(new SDG.Unturned.Item(27));    // Tophat (hat)          -> Skull-bone mesh
-            clothing.Wear(new SDG.Unturned.Item(10));    // Police Vest (vest)    -> Spine-bone mesh
+            // UG_WEAR_HAT / UG_WEAR_VEST / UG_WEAR_MASK / UG_WEAR_GLASSES = item ids to wear instead of the defaults (flat-colour gear checks)
+            static int WearId(string env, int dflt) => int.TryParse(System.Environment.GetEnvironmentVariable(env), out var v) ? v : dflt;
+            clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_HAT", 27)));    // Tophat (hat)          -> Skull-bone mesh
+            clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_VEST", 10)));   // Police Vest (vest)    -> Spine-bone mesh
+            if (WearId("UG_WEAR_MASK", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_MASK", 0)));
+            if (WearId("UG_WEAR_GLASSES", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_GLASSES", 0)));
             GD.Print($"[wearcloth] worn: shirt={inv.wornShirt?.id} pants={inv.wornPants?.id} hat={inv.wornHat?.id} vest={inv.wornVest?.id} | fall x{inv.FallingDamageMultiplier:0.###} explo x{inv.ExplosionArmor:0.###}");
             rc.Play("Idle_Stand");
 
@@ -1673,7 +1726,7 @@ namespace UnturnedGodot
                     var refMi = new MeshInstance3D { Mesh = ContentProvider.ParseObj("res://content/ship_body.txt"), Position = new Vector3(34f, Terrain.SeaLevelY - 4.8f, 0f) };
                     var refMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var refImg = new Image();
-                    if (refImg.Load(ProjectSettings.GlobalizePath("res://content/ship_body_tex.png")) == Error.Ok) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
+                    if (ContentProvider.LoadOk(refImg, ProjectSettings.GlobalizePath("res://content/ship_body_tex.png"))) refMat.AlbedoTexture = ImageTexture.CreateFromImage(refImg);
                     refMi.MaterialOverride = refMat; AddChild(refMi);
                     shipCam = new Vector3(17f, 22f, 62f); lookAt = new Vector3(17f, 4f, 0f);   // frame BOTH: floating @X0, static ref @X34
                 }
@@ -1888,6 +1941,22 @@ namespace UnturnedGodot
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
 
+            // UG_VEHOCCUPANT=1 (+ UG_SEATIDX=N, default 0): drop a rigged body into a seat so a --vehicle= showcase
+            // actually shows where a body sits, not just the empty shell -- SeatBodyLocal is the exact placement
+            // PlayerController uses to seat a real driver/passenger (strawberry 2026-09-03: "theres still a lot of
+            // vehicle seating positions that arent accurate. fix them all").
+            if (System.Environment.GetEnvironmentVariable("UG_VEHOCCUPANT") == "1")
+            {
+                int seatIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_SEATIDX"), out var si) ? si : 0;
+                var occ = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+                if (occ != null)
+                {
+                    AddChild(occ);
+                    occ.GlobalTransform = _veh.GlobalTransform * new Transform3D(Basis.Identity, _veh.SeatBodyLocal(seatIdx));
+                    occ.PlayLoop(occ.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
+                }
+            }
+
             if (_hitch && _veh.CanTow)   // --hitch: place a trailer with its kingpin under the cab's fifth-wheel, then couple (test the rig)
             {
                 var trailer = Vehicle.BuildByName("trailer");
@@ -2002,7 +2071,7 @@ namespace UnturnedGodot
                     GrassDisplacers.EnsureGlobals();   // globals before the grass material (same rule as FoliageField -- else it links them invalid + no displacement)
                     var gsMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
                     var gimg = new Image();
-                    if (gimg.Load(fdir + "grass_00_tex.png") == Error.Ok) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
+                    if (ContentProvider.LoadOk(gimg, fdir + "grass_00_tex.png")) { gimg.GenerateMipmaps(); gsMat.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(gimg)); }
                     const int side = 110; const float spacing = 0.6f;   // 110x110 blades ~0.6m apart -> a dense ~66m lawn over the whole drive path
                     var gmm = new MultiMesh { Mesh = gblade, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = side * side };
                     int gi = 0;
@@ -2104,7 +2173,7 @@ namespace UnturnedGodot
                     var texPath = cp.GetTexturePath(guid);
                     if (texPath != null)
                     {
-                        var img = Image.LoadFromFile(texPath);
+                        var img = ContentProvider.LoadImage(texPath);
                         if (img != null) { mat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img) }; textured++; }
                     }
 
@@ -2185,7 +2254,6 @@ namespace UnturnedGodot
             pause.WorldRoot = this;
             AddChild(pause);
             player.PauseMenu = pause;
-            AddChild(new Profiler());   // console `profiler` -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
             var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
             AddChild(attach);
             player.AttachMenu = attach;
@@ -2728,7 +2796,7 @@ namespace UnturnedGodot
             var cmesh = ObjMesh.Load(dir + "Container_0.obj");
             var cmat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var cimg = new Image();
-            if (cimg.Load(dir + "Container_0_tex.png") == Error.Ok) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
+            if (ContentProvider.LoadOk(cimg, dir + "Container_0_tex.png")) { cimg.GenerateMipmaps(); cmat.AlbedoTexture = ImageTexture.CreateFromImage(cimg); }
             var cab = cmesh.GetAabb();
             float cW = cab.Size.X, cH = cab.Size.Z, cL = cab.Size.Y;   // Z-up prop: mesh Z is height, mesh Y is length
 
@@ -3306,12 +3374,17 @@ namespace UnturnedGodot
             if (mesh == null) { GD.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
             { var _pr = System.Environment.GetEnvironmentVariable("UG_PROPROT"); if (!string.IsNullOrEmpty(_pr)) { var a = _pr.Split(','); propMi.RotationDegrees = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); } }   // UG_PROPROT: reorient the prop (e.g. the elevator's stand-up) for the showcase
             AddChild(propMi);
             // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing
             // rather than the static mesh. Added for the patient monitor, whose whole point is that its screen moves.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && name == "Well_0")
+            {
+                var ws = WellShaft.Make(propMi, WellShaft.WallColor(mat.AlbedoTexture));
+                GD.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
+            }
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
             {
                 var hm = HeartMonitor.Make(propMi, System.Environment.GetEnvironmentVariable("UG_FLATLINE") == "1" ? false : true);
@@ -3344,6 +3417,18 @@ namespace UnturnedGodot
                               : _camMode == "top"   ? new Vector3(0f, r * 2.4f, r * 0.001f)
                               : new Vector3(r * 1.15f, r * 0.85f, r * 1.15f));
             cam.LookAt(c, _camMode == "top" ? Vector3.Back : Vector3.Up);
+            // UG_CAMPOS=x,y,z [+ UG_CAMLOOK=x,y,z]: an explicit camera, for props whose interesting side the three presets
+            // cannot see (the well shaft is looked DOWN INTO from under its roof).
+            {
+                var _cp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+                if (!string.IsNullOrEmpty(_cp))
+                {
+                    static Vector3 P3(string v) { var q = v.Trim('"').Split(','); return new Vector3(float.Parse(q[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture), float.Parse(q[2], System.Globalization.CultureInfo.InvariantCulture)); }
+                    var _cl = System.Environment.GetEnvironmentVariable("UG_CAMLOOK");
+                    cam.Position = P3(_cp);
+                    cam.LookAt(string.IsNullOrEmpty(_cl) ? c : P3(_cl), Vector3.Up);
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_PROPSPIN") == "1") { _orbitCam = cam; _orbitCenter = propMi.Transform.Basis * c; _orbitR = r * 1.7f; }   // 360 turntable movie
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
@@ -3356,14 +3441,14 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{t}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material Tex(string t) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{t}.png"))) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
             Material carMat = Tex("train_car_tex"), bogieMat = Tex("train_bogie_tex");
             // PAINTABLE LIVERY: recolour the body palette slot (blue) to a random livery, and the stripe slot
             // (orange) STAYS fixed orange (master). Demo body colour here; per-spawn xorshift in the real vehicle.
             Color livery = new Color(0.16f, 0.42f, 0.22f);
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var _bimg = new Image();
-            if (_bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
+            if (ContentProvider.LoadOk(_bimg, ProjectSettings.GlobalizePath("res://content/train_body_tex.png"))) { _bimg.Convert(Image.Format.Rgba8); _bimg.SetPixel(0, 1, livery); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(_bimg); }
             void Am(Mesh m, Vector3 pp, Material mat) { if (m != null) AddChild(new MeshInstance3D { Mesh = m, Position = pp, MaterialOverride = mat }); }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car"), head = Lm("train_headlights"), steer = Lm("train_steer"), seat = Lm("train_seat");
             Am(body, Vector3.Zero, bodyMat); Am(head, Vector3.Zero, bodyMat); Am(steer, Vector3.Zero, bodyMat); Am(seat, Vector3.Zero, bodyMat);
@@ -3391,10 +3476,10 @@ namespace UnturnedGodot
             for (int i = 0; i < P.Count - 1; i++) { Vector3 t = (P[i + 1] - P[i]).Normalized(); Vector3 side = new Vector3(t.Z, 0f, -t.X) * 1.7f; Vector3 a = P[i] - side, b = P[i] + side, c = P[i + 1] - side, e = P[i + 1] + side; foreach (var v in new[] { a, b, c, b, e, c }) im.SurfaceAddVertex(v + Vector3.Up * 0.02f); }
             im.SurfaceEnd(); AddChild(new MeshInstance3D { Mesh = im });
             Mesh Lm(string n) => ContentProvider.ParseObj($"res://content/{n}.txt");
-            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (img.Load(ProjectSettings.GlobalizePath($"res://content/{tn}.png")) == Error.Ok) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
+            Material Tex(string tn) { var m = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }; var img = new Image(); if (ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{tn}.png"))) m.AlbedoTexture = ImageTexture.CreateFromImage(img); return m; }
             var carMat = Tex("train_car_tex"); var bogieMat = Tex("train_bogie_tex");
             var bodyMat = new StandardMaterial3D { TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.75f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            { var bimg = new Image(); if (bimg.Load(ProjectSettings.GlobalizePath("res://content/train_body_tex.png")) == Error.Ok) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
+            { var bimg = new Image(); if (ContentProvider.LoadOk(bimg, ProjectSettings.GlobalizePath("res://content/train_body_tex.png"))) { bimg.Convert(Image.Format.Rgba8); bimg.SetPixel(0, 1, new Color(0.16f, 0.42f, 0.22f)); bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(bimg); } }
             Mesh body = Lm("train_body"), bogie = Lm("train_bogie"), car = Lm("train_car");
             _trRailY = 0.9f;
             void MakeUnit(Mesh m, Material mat, float off) {
@@ -3477,7 +3562,7 @@ namespace UnturnedGodot
                 Basis su = form == "Gate" ? new Basis(new Vector3(0f, 0f, 1f), Mathf.DegToRad(180f)) * standUp : standUp;
                 var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                 string tp = odir + nm + "_tex.png";
-                if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
+                if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f); }
                 else mat.AlbedoColor = new Color(0.5f, 0.36f, 0.22f);
                 // stood-up AABB: transform the 8 local corners by standUp -> sit the base on the ground, centre in X/Z.
                 Vector3 mn = new Vector3(1e9f, 1e9f, 1e9f), mx = new Vector3(-1e9f, -1e9f, -1e9f);
@@ -3590,7 +3675,7 @@ namespace UnturnedGodot
 
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
 
             // Upright placement basis: ex=270/ez=0 is the map own convention for standing a flat-authored
             // interior prop up (see WorldBuilder.TryContainer -- Fridge_0/Wardrobe_0 are themselves
@@ -3733,7 +3818,7 @@ namespace UnturnedGodot
         void RenderWindMap()
         {
             string mp = ProjectSettings.GlobalizePath("res://content/pei_map.png");
-            var img = System.IO.File.Exists(mp) ? Image.LoadFromFile(mp) : null;
+            var img = System.IO.File.Exists(mp) ? ContentProvider.LoadImage(mp) : null;
             if (img == null) { GD.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
             if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
             int W = img.GetWidth(), H = img.GetHeight();
@@ -4076,7 +4161,7 @@ namespace UnturnedGodot
                     GD.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
                     var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                     string tp = odir + nm + "_tex.png";
-                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
+                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
                     else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f);
                     AddChild(new MeshInstance3D { Mesh = m, Basis = standUp, Position = pos, MaterialOverride = mat });
                 }
@@ -4517,6 +4602,8 @@ namespace UnturnedGodot
                 _paRig.SetGunOverlay("Eaglefire_Equip", 1f, loop: false);   // play the equip -> holds its end = the READY HOLD (shouldered), exactly like the local 3p body (PlayerController:6734)
                 _paGun = true;   // -> the hold -> ADS -> lean-right -> lean-left sequence in _Process
             }
+            string paMelee = System.Environment.GetEnvironmentVariable("UG_PAMELEE");   // UG_PAMELEE=katana -> the melee model in the 3P hand (RiggedCharacter.AttachMelee, what puppets/own body call)
+            if (!string.IsNullOrEmpty(paMelee)) { _paRig.AttachMelee(paMelee); _paRig.ShowMeleeHold(paMelee); }   // + the ready hold; UG_PASWING=1 fires a strong swing at 0.8s
             if (System.Environment.GetEnvironmentVariable("UG_PAHITBOX") == "1")
             {
                 _paHit = true;   // hold the chosen stance under the zone overlay
@@ -4608,7 +4695,7 @@ namespace UnturnedGodot
             if (mesh == null) { GD.PrintErr($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
-            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var es = (System.Environment.GetEnvironmentVariable("UG_EULER") ?? "270,194,0").Split(',');
             float ex = F(es[0]), ey = F(es[1]), ez = F(es[2]);
             int conv = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ROTCONV"), out var rc) ? rc : 0;
@@ -4734,6 +4821,14 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            if (_peiPlayable)
+            {
+                string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
+                // Washington's shipped "loop" is the 2016 trailer track, never meant to play in-game (strawberry
+                // 2026-09-04 "kill the music on washington") -> no map music there at all, no PEI fallback either.
+                if (mk != "washington")
+                    MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
+            }
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
             // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
@@ -5840,6 +5935,7 @@ namespace UnturnedGodot
             }
             _loopbackConsuming = consume;   // A1: under consume the StorageReplicaView materializes containers -> gate the SP-local SpawnMapContainers off (no double)
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
+                                      MapId = System.IO.Path.GetFileName(_mapRoot?.TrimEnd('/')),   // save identity: the map folder name, so a PEI save never loads onto Washington
                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // Phase 8 world-state syncs (§3.7) + rubble
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
@@ -5985,7 +6081,7 @@ namespace UnturnedGodot
                 string p = ProjectSettings.GlobalizePath($"res://content/{albedo}");
                 if (System.IO.File.Exists(p))
                 {
-                    var img = Image.LoadFromFile(p);
+                    var img = ContentProvider.LoadImage(p);
                     if (img != null) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); GD.Print($"[BAKE] tex OK {img.GetWidth()}x{img.GetHeight()}"); }
                     else GD.Print("[BAKE] tex img NULL");
                 }
@@ -6306,7 +6402,7 @@ namespace UnturnedGodot
             string texPath = objDir + "Traffic_Light_0_tex.png";
             if (System.IO.File.Exists(texPath))
             {
-                var img = Image.LoadFromFile(texPath);
+                var img = ContentProvider.LoadImage(texPath);
                 if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
             }
 
@@ -6375,7 +6471,7 @@ namespace UnturnedGodot
             if (m == null) { GD.PrintErr("[beamtest] Lighthouse_0.obj missing"); return; }
             var mat = new StandardMaterial3D { Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + "Lighthouse_0_tex.png";
-            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, RotationDegrees = new Vector3(270f, 194f, 0f) };   // the tower's real placement euler
             AddChild(mi);
 
@@ -6750,7 +6846,7 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                                                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + which + "_tex.png";
-            if (System.IO.File.Exists(tex)) { var img = Image.LoadFromFile(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
 
             bool ceiling = which == "Light_0" || which == "Light_1";
             float mountY = ceiling ? 3.0f : 0.0f;   // ceiling lights hang; floor/desk lamps stand on the ground
@@ -6843,7 +6939,7 @@ namespace UnturnedGodot
                 string texPath = ProjectSettings.GlobalizePath("res://content/objects/") + "Street_Light_0_tex.png";
                 if (System.IO.File.Exists(texPath))
                 {
-                    var img = Image.LoadFromFile(texPath);
+                    var img = ContentProvider.LoadImage(texPath);
                     if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                 }
                 else bodyMat.AlbedoColor = new Color(0.17f, 0.17f, 0.18f);
@@ -7616,8 +7712,10 @@ namespace UnturnedGodot
         // software-rasterised) but the LOOK does not -- lavapipe draws the right image, just slowly.
         int _vertexLightQuiet = -1;   // -1 = not started; counts consecutive passes that changed nothing
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
+            if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { GD.Print("[bakehulls] done"); GetTree().Quit(); return; }
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
@@ -8399,6 +8497,7 @@ namespace UnturnedGodot
                 _lmIdx++; _lmFrame = 0;
                 return;
             }
+            TickBootCommand(delta);
             if (_shotPath == null) return;
             float _shotTimeTarget = 0f; { var _ste = System.Environment.GetEnvironmentVariable("UG_SHOTTIME"); if (!string.IsNullOrEmpty(_ste)) float.TryParse(_ste, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _shotTimeTarget); }
             if (_shotTimeTarget > 0f) { _shotElapsed += (float)delta; if (_shotElapsed < _shotTimeTarget) return; }   // UG_SHOTTIME: capture at an ELAPSED-TIME target (real-time frame counts drift off fixed-fps)
@@ -8416,7 +8515,6 @@ namespace UnturnedGodot
             // nothing about a real GPU, but what the culler admitted into the frame is hardware-independent --
             // so this is the number to compare when changing draw distances, not fps.
             NodeCensus();
-            ProfDump();
             GD.Print($"[lodperf] drawcalls {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)}" +
                      $" | primitives {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame)}" +
                      $" | objects {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
@@ -8425,54 +8523,6 @@ namespace UnturnedGodot
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
-        }
-
-        /// <summary>Dump the Prof breakdown at capture, so per-system cost is measurable from a HEADLESS-ish
-        /// render instead of only off a screenshot of the F3 overlay.
-        ///
-        /// Prof accumulates whenever instrumented code runs, but only the overlay ever reads or resets it, and
-        /// the overlay needs a keypress -- which the shot harness cannot give. That left every per-system
-        /// number in this project unmeasurable except by asking a human to press F3 and photograph it, which
-        /// is not a before/after. Same camera, same seed, two runs: now it is.
-        ///
-        /// Absolute microseconds here are a software rasteriser's and do not transfer to real hardware; the
-        /// CALL COUNTS and the RATIO between runs do.</summary>
-        /// Which timing key a count belongs to, so counts can print as a per-call ratio.
-        static readonly System.Collections.Generic.Dictionary<string, string> CountOwner = new() { ["los_rays"] = "item_LOS" };
-
-        void ProfDump()
-        {
-            if (System.Environment.GetEnvironmentVariable("UG_PROFDUMP") != "1") return;
-            var list = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, long>>(Prof.Us);
-            list.Sort((a, b) => b.Value.CompareTo(a.Value));
-            var sb = new System.Text.StringBuilder();
-            foreach (var kv in list)
-            {
-                Prof.Calls.TryGetValue(kv.Key, out int n);
-                sb.Append($"{kv.Key} {kv.Value / 1000.0:0.0}ms(x{n})   ");
-            }
-            var (tot, phys) = Prof.Totals();
-            GD.Print($"[prof] since boot: total {tot / 1000.0:0.0}ms (physics {phys / 1000.0:0.0}ms) over {Engine.GetProcessFrames()} process / {Engine.GetPhysicsFrames()} physics frames");
-            GD.Print($"[prof] {sb}");
-            // Counts are printed SEPARATELY and as whole numbers -- Prof.Counts exists precisely because a
-            // tally parked in the millisecond dictionary renders as "0.0" and reads as "this never ran".
-            if (Prof.Counts.Count > 0)
-            {
-                var cs = new System.Text.StringBuilder();
-                foreach (var kv in Prof.Counts)
-                {
-                    cs.Append($"{kv.Key} {kv.Value}");
-                    // Per-call is the useful form for anything that also has a timing key: 9 rays a call and
-                    // 1 ray a call are the same total from very different problems.
-                    // Map a count key to its timing key so the ratio can be shown. "los_rays" belongs to
-                    // "item_LOS", which no string substitution derives -- the first attempt built "los_LOS",
-                    // matched nothing, and silently printed the raw total as if no pairing existed.
-                    if (CountOwner.TryGetValue(kv.Key, out string owner) && Prof.Calls.TryGetValue(owner, out int calls) && calls > 0)
-                        cs.Append($" ({(double)kv.Value / calls:0.00}/call)");
-                    cs.Append("   ");
-                }
-                GD.Print($"[prof] counts: {cs}");
-            }
         }
 
         /// <summary>Tally the scene tree by node CLASS, biggest first.

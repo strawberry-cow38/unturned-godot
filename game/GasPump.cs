@@ -10,6 +10,7 @@ namespace UnturnedGodot
     // It's a world FIXTURE (no HP/pickup); the world builder still draws the pump mesh + collider.
     public partial class GasPump : Node3D, IPowerDevice
     {
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public const float Watts = 750f;
         // where the input cube sits in the pump's LOCAL (flat-authored) frame: raw Z is the pump's height (small Z = low,
         // below the band), authored X = the horizontal side (+X = right). Master: right side, bottom, below the band.
@@ -117,9 +118,9 @@ namespace UnturnedGodot
             _info?.SetActive(on);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
-            using var _prof = Prof.Scope("GasPump");
             if (!_focused || _info == null) return;   // only the looked-at pump keeps its tooltip live
             _info.GlobalPosition = GlobalPosition + Vector3.Up * 2.6f;   // float above the ~2.4m pump
             _info.SetName("Gas Pump", PumpColor);

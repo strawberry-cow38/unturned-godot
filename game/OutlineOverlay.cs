@@ -59,6 +59,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             _vp = new SubViewport
             {
                 World3D = GetViewport().World3D,           // share the main scene so the mask cam sees the real items
@@ -68,12 +69,12 @@ namespace UnturnedGodot
                 Size = (Vector2I)GetViewport().GetVisibleRect().Size,
             };
             AddChild(_vp);
-            _vpCam = new Camera3D { CullMask = OutlineLayer, Current = true };
+            _vpCam = new Camera3D { CullMask = OutlineLayer, Current = true, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };   // mirrors the main camera every frame
             _vp.AddChild(_vpCam);
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/item_outline.gdshader") };
-            _mat.SetShaderParameter("thickness", 3.5f);   // master: a teeny bit thicker
-            _mat.SetShaderParameter("outline_color", new Vector3(1f, 1f, 1f));
+            _mat.SetShaderParameter(Sn.thickness, 3.5f);   // master: a teeny bit thicker
+            _mat.SetShaderParameter(Sn.outline_color, new Vector3(1f, 1f, 1f));
 
             var canvas = new CanvasLayer { Layer = 50 };   // over the 3D view, under the HUD? 50 keeps it above the game, below any 100+ overlays
             AddChild(canvas);
@@ -82,14 +83,14 @@ namespace UnturnedGodot
             canvas.AddChild(_tr);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
-            using var _prof = Prof.Scope("OutlineOverlay");
             var cam = GetViewport().GetCamera3D();
             if (cam == null) return;
             // While driving, disable the whole pass (no second cull, no dilate, no stale mask on screen) --
             // nothing is focusable from a vehicle, so it's pure cost (esp. the wide 3p view over a POI).
-            bool on = !DrivingSuppress;
+            bool on = !DrivingSuppress && GraphicsOptions.Outline;   // retail OutlineQuality Off
             var mode = on ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
             if (_vp.RenderTargetUpdateMode != mode) _vp.RenderTargetUpdateMode = mode;
             if (_tr != null && _tr.Visible != on) _tr.Visible = on;
@@ -102,7 +103,7 @@ namespace UnturnedGodot
             _vpCam.Near = cam.Near;
             _vpCam.Far = cam.Far;
             _vpCam.KeepAspect = cam.KeepAspect;
-            _mat.SetShaderParameter("outline_color", new Vector3(WorldItem.FocusColor.R, WorldItem.FocusColor.G, WorldItem.FocusColor.B));
+            _mat.SetShaderParameter(Sn.outline_color, new Vector3(WorldItem.FocusColor.R, WorldItem.FocusColor.G, WorldItem.FocusColor.B));
         }
     }
 }

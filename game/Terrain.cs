@@ -51,6 +51,8 @@ uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
 uniform float caustic_strength = 0.15;   // toned down 70% (master)
 global uniform float rain_wetness;                              // 0..1 wet soak (WeatherManager drives it) -> darken + gloss up-facing terrain
 global uniform float rain_intensity;                           // 0..1 raindrop-impact splash density/brightness
+global uniform sampler2D rain_roof;                             // RainRoofMap (rain_streak.gdshader): roofed ground stays dry
+global uniform vec4 rain_roof_rect;
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -99,11 +101,21 @@ void fragment() {
     if (rain_intensity > 0.0 || rain_wetness > 0.0) {
         vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
         float r_up = smoothstep(0.35, 0.75, wn.y);
+        if (best == 2 || best == 0 || best == 7) r_up = 0.0;   // GRASS (+ forest floor) never takes the wet look or the rings (strawberry 2026-09-04) -- only sand/road/rock/dirt soak
+        // ROOF MAP: ground under a roof / canopy / car stays dry (RainRoofMap; rect.z = 0 -> no map)
+        if (rain_roof_rect.z > 0.0) {
+            vec2 ruv = (wpos.xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
+            if (ruv.x >= 0.0 && ruv.x <= 1.0 && ruv.y >= 0.0 && ruv.y <= 1.0) {
+                ivec2 rsz = textureSize(rain_roof, 0);
+                ivec2 rt = clamp(ivec2(ruv * vec2(rsz)), ivec2(0), rsz - ivec2(1));
+                if (wpos.y < texelFetch(rain_roof, rt, 0).r - 0.3) r_up = 0.0;   // nearest texel: no invented mid-air heights at roof edges
+            }
+        }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
         ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
-        ROUGHNESS = mix(1.0, 0.55, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
+        ROUGHNESS = mix(1.0, 0.72, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
         // NO splash impacts on terrain (master: gate impacts to solid PROPS, not terrain) -- terrain just soaks dark + damps.
-        SPECULAR = 0.5 + r_wet * 0.12;                               // subtle sheen only (no metallic -- terrain isn't metal)
+        SPECULAR = 0.5 + r_wet * 0.06;                               // subtle sheen only (no metallic -- terrain isn't metal)
     }
 }
 ";
@@ -114,7 +126,7 @@ void fragment() {
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (img.Load(ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png")) != Error.Ok) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
+                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
@@ -211,7 +223,7 @@ void fragment() {
                     _dom[gx, gy] = (byte)layer;
                     _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
                 }
-            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
         // --- live heightmap sculpt (map editor Terrain tab) ---
@@ -1396,7 +1408,7 @@ void fragment() {
                         }
                 }
             }
-            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
         void PaintTexel(int gx, int gy, int layer)
@@ -1774,6 +1786,13 @@ void fragment() {
         // water-splash arrived carrying its own `WaterLevelY` with a -inf sentinel for "no water" -- the same
         // idea under a second name. Folded into this pair rather than kept alongside it: two notions of where
         // the water is will drift, and the one that drifts is whichever nobody happens to be looking at.
+        /// <summary>ImageTexture.Update with an empty/null image is a RenderingServer error (texture_storage.cpp _texture_2d_update
+        /// "p_image.is_null() || p_image->is_empty()") -- 4 of them on every PEI load (strawberry 2026-09-03 "fix those errors").</summary>
+        static void UpdateSplat(ImageTexture tex, Image img)
+        {
+            if (tex == null || img == null || img.IsEmpty() || img.GetWidth() == 0 || img.GetHeight() == 0) return;
+            tex.Update(img);
+        }
         public static float SeaLevelY = 25.6f;   // = 0.1(PEI seaLevel) * 256; overwritten per-build
         public static bool HasWater;
         /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>

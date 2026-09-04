@@ -21,7 +21,7 @@ namespace UnturnedGodot
         {
             var mat = new StandardMaterial3D { Metallic = 0.4f, Roughness = 0.6f };
             string ap = ProjectSettings.GlobalizePath("res://content/grenade_albedo.png");   // real Grenade material _MainTex
-            if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             else mat.AlbedoColor = new Color(0.16f, 0.2f, 0.13f);
             var mesh = ContentProvider.ParseObj("res://content/grenade.txt");   // real Grenade item.prefab Model_0 (was a placeholder SphereMesh)
             return new MeshInstance3D
@@ -37,7 +37,12 @@ namespace UnturnedGodot
             Fuse -= dt;
             Vel.Y -= Gravity * dt;
             Vector3 next = GlobalPosition + Vel * dt;
-            if (next.Y < 0.11f) { next.Y = 0.11f; Vel = new Vector3(Vel.X * 0.4f, Mathf.Abs(Vel.Y) * 0.3f, Vel.Z * 0.4f); }   // bounce + damp
+            if (next.Y < 0.11f)
+            {
+                next.Y = 0.11f;
+                if (Vel.Y < -1.5f) GameAudio.PlayAt(this, GameAudio.Pick("casings", "general"), next, -6f, 4f, 30f, 0.7f);   // a grenade clunking on the ground (retail has no dedicated bounce clip: the brass bounce, pitched down)
+                Vel = new Vector3(Vel.X * 0.4f, Mathf.Abs(Vel.Y) * 0.3f, Vel.Z * 0.4f);   // bounce + damp
+            }
             GlobalPosition = next;
             if (Fuse <= 0f)
             {

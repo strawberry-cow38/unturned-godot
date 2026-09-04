@@ -93,6 +93,8 @@ namespace UnturnedGodot
         // A valve — an inline switch for a hose. Starts OPEN; ToggleValve() closes it (Blocked -> stops flow + pump lift).
         public static FluidContainer MakeValve() => new FluidContainer { Role = FluidRole.Valve, Tank = null };
 
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
             AddToGroup("fluid_devices");
@@ -294,9 +296,8 @@ namespace UnturnedGodot
                 _ => $"Fluid {Role}",
             };
 
-        public override void _Process(double delta)
+        public virtual void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("FluidContainer");
             // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
             // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))

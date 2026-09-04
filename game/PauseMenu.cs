@@ -86,6 +86,7 @@ namespace UnturnedGodot
 
         public void Open()
         {
+            // (no sound: retail's Popup_UI_Menu_Popup "blorp" on ESC read as a random gloopy pop -- strawberry 2026-09-04)
             Visible = true;
             GetTree().Paused = true;                       // freeze the sim in the background (master)
             Input.MouseMode = Input.MouseModeEnum.Visible; // free the cursor for the menu
@@ -94,7 +95,10 @@ namespace UnturnedGodot
         {
             Visible = false;
             GetTree().Paused = false;
-            Input.MouseMode = Input.MouseModeEnum.Captured;
+            // Only take the cursor back if nothing else still needs it. Closing the pause menu while the DEATH
+            // screen is up used to recapture the mouse underneath it, leaving its respawn buttons unclickable
+            // and the player with no way out of being dead.
+            if (!DeathScreen.WantsCursor) Input.MouseMode = Input.MouseModeEnum.Captured;
         }
         public void Toggle() { if (Visible) Close(); else Open(); }
         public bool IsOpen => Visible;

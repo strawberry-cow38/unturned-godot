@@ -341,13 +341,14 @@ namespace UnturnedGodot
     public partial class FluidManager : Node
     {
         public override void _Ready() => AddToGroup("fluid_managers");
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 60f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 60 Hz (was a per-frame engine callback; see TickHub)
         {
             // Instrumented late: an expression-bodied callback slipped past the pass that wrapped the other 23,
             // so the whole-network re-solve was sitting in the UNATTRIBUTED pile by accident rather than by
             // nature. FluidNet deliberately has no dirty flag (see the note at the top of this file) -- it
             // rebuilds from scratch every frame -- which is exactly the shape that needs to be visible.
-            using var _prof = Prof.Scope("FluidNet");
             FluidNet.Tick(GetTree(), (float)delta);
         }
     }

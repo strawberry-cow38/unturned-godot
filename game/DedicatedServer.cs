@@ -54,6 +54,7 @@ namespace UnturnedGodot
         public ResourceNetSync ResourceSync { get; private set; }
         public DestructibleNetSync DestructibleSync { get; private set; }
         public InteractableNetSync InteractableSync { get; private set; }   // SP/MP unify: doors + beds registered as server-authoritative, deadzones seeded
+        public WorldSaveDriver Save { get; private set; }   // whole-world persistence; `wipe` in the server console deletes the file
 
         long _lastStatusTick;
         UdpServerTransport _statusTransport;   // browser status-query responder; fed the live player count each tick
@@ -260,6 +261,17 @@ namespace UnturnedGodot
             Server.Combat.DamageBarricadeAlong = (from, to, amount, tick) =>
                 InteractableSync.DamageAlong(from, to, amount, GetViewport()?.World3D?.DirectSpaceState);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => InteractableSync.Tick(), "net.interactables.sync"));
+
+            // PERSISTENCE, last thing before replication starts. Everything the save OVERLAYS has now been
+            // registered -- containers, the two alive-bitmaps, and (unlike the loopback) the doors, since a
+            // dedicated server has no PlayerControllers to run the direct SP door path and registers them for
+            // real. Loading here means the first snapshot any client ever receives is of the restored world.
+            // `UG_SAVE_DIR` puts the file beside the service rather than in the launching user's profile.
+            Save = new WorldSaveDriver(Server, System.IO.Path.GetFileName((MapRoot ?? "world").TrimEnd('/')), DayNight);
+            GD.Print("[SAVE] " + Save.LoadIntoWorld());
+            Server.Transactions.WipeSaveHandler = () => Save.Wipe();
+            Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 

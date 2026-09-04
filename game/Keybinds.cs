@@ -140,7 +140,7 @@ namespace UnturnedGodot
             [GameAction.Aim] = new Bind(MouseButton.Right),
             [GameAction.Reload] = new Bind(Key.R),
             [GameAction.Firemode] = new Bind(Key.V),
-            [GameAction.Melee] = new Bind(Key.G),
+            [GameAction.Melee] = default,   // was G -- master 2026-09-03: "remove whatever was on G, its broken"; melee swings on Fire
             [GameAction.Grenade] = new Bind(Key.None),   // UNBOUND (strawberry 2026-08-24). Not deleted: the action still
                                                         // exists, so it appears in the rebind menu as "—" and anyone who
                                                         // wants it can put it back. Deleting the action would remove the
@@ -152,7 +152,7 @@ namespace UnturnedGodot
                                                                 // Grenade; unbinding Grenade above is what frees H to come back, so
                                                                 // these two changes are one change and neither works alone.
             [GameAction.Flashlight] = new Bind(Key.B),          // held tactical light (source TACTICAL key) -- a GameAction so ConflictWith can SEE B, not a hidden literal in the chain
-            [GameAction.Inventory] = new Bind(Key.Tab),
+            [GameAction.Inventory] = new Bind(Key.G),   // master 2026-09-03: G opens the inventory; Tab is kept as a fixed alternate (PlayerController)
             [GameAction.Map] = new Bind(Key.M),
             [GameAction.Craft] = new Bind(Key.Y),
             [GameAction.Skills] = new Bind(Key.J),              // code opens the skills menu on J, not U

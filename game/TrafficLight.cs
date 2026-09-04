@@ -162,6 +162,8 @@ namespace UnturnedGodot
             _ => null,
         };
 
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }   // 30 Hz: the breathing fade steps visibly at 10; still no per-frame engine callback
+        public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
             AddToGroup("traffic_lights");
@@ -251,9 +253,8 @@ namespace UnturnedGodot
         float _dyingT, _stutterT;
         bool _stutterShow = true;
 
-        public override void _Process(double delta)
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub); also called with 0 on power events
         {
-            using var _prof = Prof.Scope("TrafficLight");
             if (_broken || Frozen) return;
             float t = ClockSeconds();
             Phase p;
@@ -341,6 +342,7 @@ namespace UnturnedGodot
                                 : ClockSeconds() + BatteryDays * DayLen;
             if (!on && !BatteryBackup) _dyingT = Mathf.Max(_dyingT, 0.8f);   // nothing to ride it out: flicker and die
             Apply();
+            HubTick(0.0);   // a power flip is an EVENT: re-evaluate the aspect now rather than up to a hub period later (the 10 Hz hub move left "power restored -> still dark" for ~100ms; props.traffic_light_cycle caught it)
         }
 
         /// <summary>Seconds per in-game day, from the cycle when there is one. The fallback matches DayNightCycle's

@@ -203,9 +203,10 @@ void sky() {
                     _brownouts.Add((d, 0.77f + GD.Randf() * 0.20f));       // a random EVENING-night time (streetlights lit)
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 60f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 60 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("DayNightCycle");
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
             DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
@@ -276,6 +277,11 @@ void sky() {
             // and warms back up when it returns -- Refresh reads PowerNet.GlobalPower live, mirroring the glow above.
             foreach (Node n in tree.GetNodesInGroup("tvdevices"))
                 if (n is TVDevice tv) tv.Refresh();
+            // Radios ride the same edge for the same reason. RadioDevice also polls its own feed off the hub, but
+            // that runs on _Process -- so a set is only pushed here, and a test harness that steps _PhysicsProcess
+            // sees nothing at all. The group existed with nothing sweeping it until radio.switch_and_feed said so.
+            foreach (Node n in tree.GetNodesInGroup("radiodevices"))
+                if (n is RadioDevice rd) rd.Refresh();
         }
 
 
@@ -341,20 +347,20 @@ void sky() {
         {
             if (_skyMat != null || Env == null) return;
             _skyMat = new ShaderMaterial { Shader = new Shader { Code = SkyShaderCode } };
-            _skyMat.SetShaderParameter("clouds_tex", LoadTex("res://content/sky_clouds.png"));
-            _skyMat.SetShaderParameter("stars_tex", LoadTex("res://content/sky_stars.png"));
+            _skyMat.SetShaderParameter(Sn.clouds_tex, LoadTex("res://content/sky_clouds.png"));
+            _skyMat.SetShaderParameter(Sn.stars_tex, LoadTex("res://content/sky_stars.png"));
             // constants straight from Skybox.mat
-            _skyMat.SetShaderParameter("ambient_ground", new Color(0.8f, 0.8f, 0.8f));
-            _skyMat.SetShaderParameter("ambient_equator", new Color(0.8f, 0.8f, 0.8f));
-            _skyMat.SetShaderParameter("sun_inner", 0.995f);        // _SunInnerThreshold
-            _skyMat.SetShaderParameter("sun_outer", 0.993f);        // _SunOuterThreshold
-            _skyMat.SetShaderParameter("stars_cutoff", 0.0f);       // _StarsCutoff
-            _skyMat.SetShaderParameter("moon_light_direction", new Vector3(0f, -1f, 0f));
-            _skyMat.SetShaderParameter("moon_color", new Color(0.749f, 0.804f, 0.808f));
-            _skyMat.SetShaderParameter("sqr_moon_radius", 0.01f);   // _SqrMoonRadius
-            _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f));
-            _skyMat.SetShaderParameter("cloud_intensity", 1.0f);    // _CloudIntensity
-            _skyMat.SetShaderParameter("cloud_params", new Vector4(0.6f, 10f, 0f, 0f));  // _CloudParams
+            _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(0.8f, 0.8f, 0.8f));
+            _skyMat.SetShaderParameter(Sn.sun_inner, 0.995f);        // _SunInnerThreshold
+            _skyMat.SetShaderParameter(Sn.sun_outer, 0.993f);        // _SunOuterThreshold
+            _skyMat.SetShaderParameter(Sn.stars_cutoff, 0.0f);       // _StarsCutoff
+            _skyMat.SetShaderParameter(Sn.moon_light_direction, new Vector3(0f, -1f, 0f));
+            _skyMat.SetShaderParameter(Sn.moon_color, new Color(0.749f, 0.804f, 0.808f));
+            _skyMat.SetShaderParameter(Sn.sqr_moon_radius, 0.01f);   // _SqrMoonRadius
+            _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f));
+            _skyMat.SetShaderParameter(Sn.cloud_intensity, 1.0f);    // _CloudIntensity
+            _skyMat.SetShaderParameter(Sn.cloud_params, new Vector4(0.6f, 10f, 0f, 0f));  // _CloudParams
             _sky = new Sky { SkyMaterial = _skyMat };
             Env.BackgroundMode = Godot.Environment.BGMode.Sky;
             Env.Sky = _sky;
@@ -407,28 +413,29 @@ void sky() {
             {
                 EnsureSky();
                 // day/night colours + sun/moon directions drive the ported sky shader
-                _skyMat.SetShaderParameter("sky_color", Grad(SkyTop));
-                _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon));
-                _skyMat.SetShaderParameter("ground_color", Grad(Ground));
-                _skyMat.SetShaderParameter("sun_direction", sunDir);
-                _skyMat.SetShaderParameter("moon_direction", -sunDir);    // moon rides opposite the sun
-                _skyMat.SetShaderParameter("sun_color", Sun != null ? Sun.LightColor : Colors.White);
+                _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop));
+                _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon));
+                _skyMat.SetShaderParameter(Sn.ground_color, Grad(Ground));
+                _skyMat.SetShaderParameter(Sn.sun_direction, sunDir);
+                _skyMat.SetShaderParameter(Sn.moon_direction, -sunDir);    // moon rides opposite the sun
+                _skyMat.SetShaderParameter(Sn.sun_color, Sun != null ? Sun.LightColor : Colors.White);
                 // Day->night factor from the sun's height (1 = day, 0 = night). ambient_ground/equator + cloud_rim_color were
                 // CONSTANTS (bright 0.8), so the clouds (cloudBodyColor = ambient_ground + cloud_rim_color) GLOWED at night.
                 // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
                 float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
                 float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
-                _skyMat.SetShaderParameter("ambient_ground", new Color(amb, amb, amb));
-                _skyMat.SetShaderParameter("ambient_equator", new Color(amb, amb, amb));
-                _skyMat.SetShaderParameter("cloud_rim_color", new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
+                WellShaft.SetDaylight(Mathf.Lerp(0.06f, 1f, dayF) * (Overcast ? 0.75f : 1f));   // the well shaft's unshaded mouth-light follows the day (see WellShaft)
+                _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(amb, amb, amb));
+                _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
                 // lightning cloud-flash uniforms -- WeatherManager drives these; pushed only while flashing (+ one frame
                 // to switch off), not every idle frame. 0 flash = the sky-shader block skips (no-WM/golden stays 0).
                 if (LightningFlash > 0.001f || _lightningActive)
                 {
                     _lightningActive = LightningFlash > 0.001f;
-                    _skyMat.SetShaderParameter("lightning_flash", LightningFlash);
-                    _skyMat.SetShaderParameter("lightning_tint", LightningTint);
-                    _skyMat.SetShaderParameter("lightning_dir", LightningDir);
+                    _skyMat.SetShaderParameter(Sn.lightning_flash, LightningFlash);
+                    _skyMat.SetShaderParameter(Sn.lightning_tint, LightningTint);
+                    _skyMat.SetShaderParameter(Sn.lightning_dir, LightningDir);
                 }
 
                 Env.AmbientLightColor = Grad(Amb);
@@ -449,6 +456,26 @@ void sky() {
                 // bigger ABSOLUTE shift far out), which is exactly the ask -- no FogMode.Depth begin/end switch needed.
                 Env.FogDensity = Mathf.Lerp(0.003f, 0.0004f, noon) * (Overcast ? 2.4f : 1f);   // noon already "sunny isle" thin; night/overcast stay atmospheric but pushed back
                 Env.FogSkyAffect = Mathf.Lerp(0.4f, 0.15f, noon);   // sky stays clear/blue at noon, fogged at dawn/dusk/night
+                // VOLUMETRIC fog (the "Sun shafts" row) by time of day. It was a flat 0.01 whatever the hour: the sun lit that
+                // haze into a white-out by day (master 2026-09-04: "at night its great, but the day and dusk and dawn are super
+                // foggy"). Night KEEPS 0.010 (the lamp-glow haze that reads great), sunrise/sunset 0.004, noon 0.002 --
+                // piecewise so dawn/dusk are their own key, not the midpoint of night and noon.
+                // Keyed on SUN ELEVATION, not the clock: the first cut ramped linearly from midnight to sunrise, which made
+                // 21:00 already a quarter weaker than midnight (master: "the night volum fog seems way weaker now?"). Below
+                // civil dark (-12 deg) it is the ORIGINAL night look, untouched: 0.010 and the engine's sky-affect 1.0.
+                if (Env.VolumetricFogEnabled)
+                {
+                    float elevation = -Mathf.Cos(Time * Mathf.Tau) * 90f;   // +90 overhead at noon, -90 at midnight (the sun block's own, out of scope here)
+                    // The night key is 0.05 = Godot's Environment DEFAULT: the "Sun shafts" row only seeded 0.01 when the density
+                    // was <= 0, which it never was, so the SUPER-foggy night master loved was the untouched engine default,
+                    // not 0.01 ("im on high. the vm fog is there but its nowhere near as intense as it was").
+                    const float NightVol = 0.035f;   // was 0.05 (the engine default master liked); "reduce the nighttime VM fog by like 30%" (strawberry 2026-09-04)
+                    float vol = elevation <= -12f ? NightVol                                                      // NIGHT
+                              : elevation <= 0f ? Mathf.Lerp(NightVol, 0.010f, (elevation + 12f) / 12f)           // last twilight before the sun clears the horizon
+                              : Mathf.Lerp(0.010f, 0.003f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.010 -> 0.003 from 60 deg
+                    Env.VolumetricFogDensity = vol * (Overcast ? 1.5f : 1f);
+                    Env.VolumetricFogSkyAffect = elevation <= -12f ? 1f : Mathf.Lerp(1f, 0.25f, Mathf.Clamp((elevation + 12f) / 72f, 0f, 1f));   // noon sky stays blue; night = default 1.0
+                }
 
                 // STORM: master wants heavy weather to match the moody --raintest demo (grey overcast sky, thick fog,
                 // dim cool light). Blend the whole scene toward that by StormAmount (0..1, from the rain intensity) so
@@ -456,23 +483,20 @@ void sky() {
                 float storm = Mathf.Clamp(StormAmount, 0f, 1f);
                 if (storm > 0.001f)
                 {
-                    _skyMat.SetShaderParameter("sky_color", Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
-                    _skyMat.SetShaderParameter("equator_color", Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
+                    _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
+                    _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
                     float ca = amb * Mathf.Lerp(1f, 0.32f, storm);   // grey the cloud BODY down (bright white -> dark storm grey)
-                    _skyMat.SetShaderParameter("ambient_ground", new Color(ca, ca, ca));
-                    _skyMat.SetShaderParameter("ambient_equator", new Color(ca, ca, ca));
+                    _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(ca, ca, ca));
+                    _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(ca, ca, ca));
                     Color fairRim = new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF);
-                    _skyMat.SetShaderParameter("cloud_rim_color", fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
-                    if (Sun != null)
-                    {
-                        Sun.LightEnergy *= Mathf.Lerp(1f, 0.35f, storm);                                     // storm dims the sun
-                        Sun.LightColor = Sun.LightColor.Lerp(new Color(0.72f, 0.76f, 0.84f), storm);         // and cools it
-                        _skyMat.SetShaderParameter("sun_color", Sun.LightColor);
-                    }
-                    Env.AmbientLightColor = Env.AmbientLightColor.Lerp(new Color(0.50f, 0.53f, 0.57f), storm);
+                    _skyMat.SetShaderParameter(Sn.cloud_rim_color, fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
+                    // NO LIGHTING CHANGE with the weather (strawberry 2026-09-04 "remove the effect that rain has on world lighting"):
+                    // the sun's energy/colour and the ambient stay whatever the time of day says. The storm still greys the
+                    // sky + clouds and thickens the fog below -- that is the weather's look, not the world's light.
                     Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog
                     Env.FogDensity = Mathf.Lerp(Env.FogDensity, 0.008f, storm);                             // thick moody haze
                     Env.FogSkyAffect = Mathf.Lerp(Env.FogSkyAffect, 0.6f, storm);                           // fog greys into the sky/horizon too
+                    if (Env.VolumetricFogEnabled) Env.VolumetricFogDensity = Mathf.Lerp(Env.VolumetricFogDensity, 0.012f, storm);   // storm haze in the volume too
                 }
             }
         }
@@ -489,7 +513,7 @@ void sky() {
         internal static ImageTexture LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 

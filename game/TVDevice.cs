@@ -553,6 +553,19 @@ namespace UnturnedGodot
         /// MeshInstance3D (its Mesh is split for the screen, its Transform is copied so the screen sub-mesh --
         /// carved in the body's own local space -- lines up exactly). Add the returned node to the SAME parent
         /// the body was added to.</summary>
+        /// <summary>A stable identity for one placed set: its prop name and where it stands, which every
+        /// client resolves identically from the same map. FNV-1a over both, so two sets of the same model in
+        /// different rooms still get different channels.</summary>
+        static ulong StableSeed(string propName, Vector3 pos)
+        {
+            ulong h = 14695981039346656037UL;
+            void Mix(byte b) { h ^= b; h *= 1099511628211UL; }
+            foreach (char c in propName ?? "") { Mix((byte)c); Mix((byte)(c >> 8)); }
+            foreach (int q in new[] { Mathf.RoundToInt(pos.X * 100f), Mathf.RoundToInt(pos.Y * 100f), Mathf.RoundToInt(pos.Z * 100f) })
+                for (int i = 0; i < 4; i++) Mix((byte)(q >> (i * 8)));
+            return h;
+        }
+
         public static TVDevice Make(MeshInstance3D bodyMi, string propName)
         {
             // ON AT START (master: "making all tvs/monitors on at start"). Set BEFORE Build, because Build ends with
@@ -563,13 +576,28 @@ namespace UnturnedGodot
             // Only the TUBE televisions -- a colour LCD is not a period-plausible black-and-white set, and a monitor's
             // programs are chosen for their colour. Rolled BEFORE the channel pick, because a mono set draws from a
             // different channel list rather than filtering the colour one.
-            bool monoTube = kind == DeviceKind.CrtTv && GD.Randf() < 0.35f;
+            // EVERY CLIENT MUST AGREE WHAT IS ON THIS SET (strawberry 2026-09-03: "tv channel is clientside").
+            // The mono roll, the programme and the noise seed were each GD.Randf/GD.Randi at construction --
+            // rolled INDEPENDENTLY on every machine -- so two players standing in front of the same
+            // television watched different channels on it, and one saw a black-and-white set where the other
+            // saw colour.
+            //
+            // Nothing needs to go on the wire for this. A TV is a map prop: every client builds the same
+            // props at the same places from the same map data, so its NAME and its PLACE are already a
+            // shared secret. Seeding off them gets agreement for free and keeps working for a player who
+            // joins an hour late, which a broadcast-once event would not.
+            //
+            // The position is quantised to a centimetre before hashing: it comes from parsed map data and is
+            // identical across machines, but rounding it means a float that ever differs in its last bit
+            // cannot flip a whole channel.
+            var rng = new RandomNumberGenerator { Seed = StableSeed(propName, bodyMi.Transform.Origin) };
+            bool monoTube = kind == DeviceKind.CrtTv && rng.Randf() < 0.35f;
             var pool = ProgramsFor(kind, monoTube);
             var tv = new TVDevice
             {
                 PropName = propName, _kind = kind, _on = true, Transform = bodyMi.Transform,
-                _program = pool[Mathf.Abs((int)GD.Randi()) % pool.Length],
-                _seed = GD.Randf() * 100f,
+                _program = pool[(int)(rng.Randi() % (uint)pool.Length)],
+                _seed = rng.Randf() * 100f,
                 _monoTube = monoTube,
             };
             tv.Build(bodyMi.Mesh as ArrayMesh);
@@ -578,8 +606,11 @@ namespace UnturnedGodot
 
         /// <summary>Join the power graph. Deferred out of <see cref="Make"/> because Make runs BEFORE the device is in
         /// the tree (the world builder parents it afterwards), and the lazy PowerManager spawn needs a SceneTree.</summary>
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
         public override void _Ready()
         {
+            if (_lit && _tone != null && !_tone.Playing) _tone.Play();   // see Refresh: the tone could not start before the set entered the tree
             AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice, not by the concrete Deployable
             if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
             {
@@ -1057,7 +1088,7 @@ namespace UnturnedGodot
                 string p = ProjectSettings.GlobalizePath($"res://content/objects/{propName}_tex.png");
                 if (!System.IO.File.Exists(p)) return fallback;
                 var img = new Image();
-                if (img.Load(p) != Error.Ok) return fallback;
+                if (!ContentProvider.LoadOk(img, p)) return fallback;
                 int w = img.GetWidth(), h = img.GetHeight();
                 if (w <= 0 || h <= 0) return fallback;
                 int x = Mathf.Clamp(Mathf.FloorToInt(c.X * w), 0, w - 1);
@@ -1076,7 +1107,7 @@ namespace UnturnedGodot
             if (_pngCache.TryGetValue(resPath, out var hit)) return hit;
             var img = new Image();
             string p = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(p) || img.Load(p) != Error.Ok) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
             var t = ImageTexture.CreateFromImage(img);
             _pngCache[resPath] = t;
             return t;
@@ -1118,7 +1149,7 @@ namespace UnturnedGodot
             if (_pattern != null) return _pattern;
             var img = new Image();   // raw png at runtime: Image.Load, not GD.Load (game feedback)
             string p = ProjectSettings.GlobalizePath("res://content/objects/smpte_pattern.png");
-            if (!System.IO.File.Exists(p) || img.Load(p) != Error.Ok) { GD.PrintErr("[tv] smpte_pattern.png missing/failed"); return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr("[tv] smpte_pattern.png missing/failed"); return null; }
             _pattern = ImageTexture.CreateFromImage(img);
             return _pattern;
         }
@@ -1291,7 +1322,7 @@ namespace UnturnedGodot
                 if (_screen != null) _screen.Visible = true;
                 if (_light != null) _light.Visible = true;
                 if (_cone != null) _cone.Visible = true;
-                _tone?.Play();
+                if (_tone != null && _tone.IsInsideTree()) _tone.Play();   // Build() refreshes before the set is in the tree: Play() there only logs "Playback can only happen when a node is inside the scene tree" (7x per PEI load); _Ready starts a lit set's tone instead
                 ApplyTint();
             }
             else
@@ -1583,9 +1614,8 @@ namespace UnturnedGodot
             if (_coneMat != null) _coneMat.AlbedoColor = new Color(Spill, ConeAlpha * k * f * lum);
         }
 
-        public override void _Process(double delta)
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("TVDevice");
             // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains
             // arriving as a push -- DayNightCycle sweeps the "tvdevices" group on a grid change. That works for the
             // scheduled blackout and for nothing else: `toggleGlobalPower` from the console, or any other caller of

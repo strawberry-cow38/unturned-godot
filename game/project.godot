@@ -35,3 +35,14 @@ project/assembly_name="UnturnedGodot"
 3d/physics_engine="JoltPhysics3D"
 common/physics_ticks_per_second=50
 common/physics_interpolation=true
+
+[rendering]
+
+; Multithreaded renderer ON by default (strawberry 2026-09-03 "flip multithreaded renderer on by default"): +26% on the
+; CPU-bound PEI idle scene on the 4080S. The in-game Graphics row still toggles it (override.cfg writes =1 for Single).
+driver/threads/thread_model=2
+
+; Volumetric fog froxel grid: 48x48 = Medium (42% of Godot's 64x64 default; strawberry 2026-09-04 "-20fps drop").
+; The Graphics row "Fog quality" writes Low (32, unfiltered) / High (64) into override.cfg; Medium = these lines.
+environment/volumetric_fog/volume_size=48
+environment/volumetric_fog/volume_depth=48

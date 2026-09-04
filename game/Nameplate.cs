@@ -65,15 +65,29 @@ namespace UnturnedGodot
             AddChild(_label);
         }
 
-        /// <summary>Set what the plate shows. `png` null means no usable picture -- the checkerboard stands in.
+        /// <summary>Set what the plate shows.
+        ///
+        /// NO PICTURE AND A BROKEN PICTURE ARE DIFFERENT THINGS, and conflating them is what put a magenta
+        /// checkerboard over the head of every player in the game. Nobody has set UG_PROFILE_PNG, so `png`
+        /// arrived null for everyone, and null took the "missing texture" path -- the debug chequer that
+        /// means "an asset failed to load". Tonight's reports are two people looking at it and saying so:
+        /// "the thing above this guy's head is like a pattern... I think it's like a missing texture
+        /// pattern", with three more screenshots showing it on other players.
+        ///
+        ///   png == null            -> no avatar SET. The common case, not a fault: show the name alone.
+        ///   png != null, undecoded -> they sent something and it was bad. That IS a fault, and the
+        ///                             checkerboard is the right way to say so.
+        ///
         /// The name is sanitised ONE more time here: this is the last line before it reaches a renderer, and
         /// the cost of being wrong at this point is paid by everyone who can see this player.</summary>
         public void Set(string name, byte[] png)
         {
             if (_label == null || _picture == null) return;
             _label.Text = ProfileRules.SanitizeName(name);
+            if (png == null) { _picture.Texture = null; _picture.Visible = false; return; }
             var tex = PlayerProfile.DecodeAvatar(png);   // null on anything Godot refuses, or wrong dimensions
-            _picture.Texture = tex ?? MissingTexture();
+            _picture.Texture = tex ?? MissingTexture();  // they sent a picture and it did not survive -> say so
+            _picture.Visible = true;
         }
 
         /// <summary>The classic magenta/black checkerboard, generated rather than shipped as an asset so it
@@ -82,7 +96,7 @@ namespace UnturnedGodot
         {
             if (_missing != null && GodotObject.IsInstanceValid(_missing)) return _missing;
             const int size = ProfileRules.AvatarPixels, cell = size / 8;
-            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgb8);
+            var img = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
             var magenta = new Color(1f, 0f, 1f);
             var black = new Color(0.05f, 0.05f, 0.05f);
             for (int y = 0; y < size; y++)

@@ -92,7 +92,7 @@ namespace UnturnedGodot
             {
                 // Precompute the lit material once: keep the albedo/texture, add warm emission on top.
                 _fixtureOffMat = _fixture.MaterialOverride;
-                var lit = (_fixtureOffMat as StandardMaterial3D)?.Duplicate() as StandardMaterial3D
+                var lit = WetSurface.BaseOf(_fixtureOffMat)?.Duplicate() as StandardMaterial3D
                           ?? new StandardMaterial3D { AlbedoColor = BulbColor };
                 lit.EmissionEnabled = true; lit.Emission = BulbColor; lit.EmissionEnergyMultiplier = FixtureEmission * _worn;
                 _fixtureLitMat = lit;

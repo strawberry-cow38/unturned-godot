@@ -43,7 +43,7 @@ namespace UnturnedGodot
             string p = ProjectSettings.GlobalizePath($"res://content/menu/{file}");
             if (!System.IO.File.Exists(p)) return null;
             var img = new Image();
-            if (img.Load(p) != Error.Ok) return null;
+            if (!ContentProvider.LoadOk(img, p)) return null;
             return ImageTexture.CreateFromImage(img);
         }
 

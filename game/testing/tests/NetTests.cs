@@ -741,6 +741,13 @@ namespace UnturnedGodot.Testing
             T.Check("seat handoff: driving-local, server DriverPlayerId == the peer", sess.Shell.IsDriving &&
                     ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId);
             sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
+            // the throttle STARTS the engine, which then cranks for the retail CarIgnition clip (2.04 s,
+            // 2026-09-04) before the drivetrain answers -- wait it out so the 100 ticks below are 100 ticks
+            // of DRIVING (the rig wants the car at speed and well clear of its entry point when the
+            // blackout freezes the replica; a car that only starts rolling at blackout-start makes the
+            // relative assert below marginal: coast-after-exit ~10 m vs half of a ~20 m divergence)
+            yield return Until(() => sess.LocalVehicle != null && !sess.LocalVehicle.EngineStarting, 4);
+            T.Check("the local car's engine caught and finished cranking", sess.LocalVehicle != null && sess.LocalVehicle.EngineOn && !sess.LocalVehicle.EngineStarting);
             yield return Ticks(100);
 
             // INBOUND-ONLY blackout, the live WAN profile: the driver keeps ticking + sending (Part A:
@@ -748,14 +755,19 @@ namespace UnturnedGodot.Testing
             // -- its node follows the blind driver) but receives NOTHING for 200 ticks -- past the
             // 64-tick ack-gap latch, under the 250-tick session timeout. The recovery full + hold
             // latch mid-window; everything reliable queues behind the wall.
-            bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
-            var frozenAt = haveRep ? repAtBlackout.Pos : default;
             long fullsBefore = ded.Server.Composer.Diag.FullSnapshotsComposed;
             net.ServerToClient.HoldUntilTick = net.CurrentTick + 200;
+            // a datagram composed the tick before the hold is still in flight and lands after it; the
+            // freeze reference is what the client holds once that has drained (the crank wait above moved
+            // the hold off the snapshot cadence's parity, which is where the 0.4 m "drift" came from)
+            yield return Ticks(2);
+            bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
+            var frozenAt = haveRep ? repAtBlackout.Pos : default;
 
-            yield return Ticks(160);
+            yield return Ticks(158);
             bool stillFrozen = sess.Client.Vehicles.TryGet(netId, out var repMid) && (repMid.Pos - frozenAt).magnitude < 0.01f;
-            T.Check("mid-blackout: the driver's replica froze at the blackout-start state", haveRep && stillFrozen);
+            float driftMid = haveRep ? (repMid.Pos - frozenAt).magnitude : -1f;
+            T.Check($"mid-blackout: the driver's replica froze at the blackout-start state (moved {driftMid:0.00} m since the hold)", haveRep && stillFrozen);
             float diverged = jeep.GlobalPosition.DistanceTo(new Vector3(frozenAt.x, frozenAt.y, frozenAt.z));
             T.Check($"...while the SERVER car kept moving under the adopted state stream ({diverged:0.0} m past the frozen state)", diverged > 15f);
             T.Check($"the recovery full latched during the blackout (fulls +{ded.Server.Composer.Diag.FullSnapshotsComposed - fullsBefore})",
@@ -1761,7 +1773,7 @@ namespace UnturnedGodot.Testing
             T.Check($"the VehicleEntered fact reached the driver ({enterFacts})", enterFacts > 0);
             // Part A: the seat fact now builds a CLIENT-LOCAL real Vehicle and seats the shell through the
             // SP direct-drive path (retail client authority) -- ride-the-puppet mode is gone for drivers
-            T.Check("driving-local latched: shell hidden, a real local Vehicle exists, its puppet suppressed",
+            T.Check($"driving-local latched: shell hidden, a real local Vehicle exists, its puppet suppressed (driving {sess.Shell.IsDriving} visible {sess.Shell.Visible} local {(sess.LocalVehicle != null)} puppet {sess.VehicleView.TryGetPuppet(netId, out _)})",
                     sess.Shell.IsDriving && !sess.Shell.Visible && sess.LocalVehicle != null
                     && !sess.VehicleView.TryGetPuppet(netId, out _));
             yield return Until(() => observer.Vehicles.TryGet(netId, out var oe) && oe.DriverPlayerId == sess.Client.PlayerId, 5);
@@ -2531,9 +2543,13 @@ namespace UnturnedGodot.Testing
             // The headless L1 host doesn't interleave frame callbacks with the stepped physics ticks, so the
             // camera positioner (a _Process hook) is driven DIRECTLY -- deterministic, same code path as live.
             var cam = p.Camera;
-            p._Process(0.016);
-            T.Check("ride cam sits at the puppet's driver eye",
-                cam.GlobalPosition.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) < 0.05f);
+            p._Process(0.016); p._Process(0.016); p._Process(0.016);   // the seated clip needs a couple of manual advances before the skull is at the seated height
+            // The 1P eye is the SEATED BODY's skull + eye offset since 2026-09-03 (strawberry: "exactly where the model's eyes would
+            // be"), not the per-vehicle DriverEyeLocal -- so the check is "in the driver's seat, at head height": within 1.3 m of
+            // the seat spot and above it. A cam left at the shell, at the chase distance, or at the origin still fails.
+            var seatW = pup.GlobalTransform * pup.SeatOffset;
+            T.Check($"ride cam sits at the puppet's driver seat, head height ({cam.GlobalPosition.DistanceTo(seatW):F2} m from the seat, dy={cam.GlobalPosition.Y - seatW.Y:F2})",
+                cam.GlobalPosition.DistanceTo(seatW) < 1.7f && cam.GlobalPosition.Y > seatW.Y + 0.3f);
             // entry gaze = the classic fixed gaze: vehicle-forward, pitched atan(0.6/3.9) ~ 8.75 deg down
             Vector3 fwd0 = pup.GlobalBasis * new Vector3(0f, -Mathf.Sin(Mathf.DegToRad(8.75f)), -Mathf.Cos(Mathf.DegToRad(8.75f)));
             T.Check("FP entry gaze looks over the hood (vehicle forward, slight down-tilt)",
@@ -2830,10 +2846,15 @@ namespace UnturnedGodot.Testing
 
             // ---- THE FEEL BAR: input -> local control surface within 1 tick, at WAN RTT ----
             T.Check("pre-input: engine idle", Mathf.Abs(veh.EngineForce) < 0.001f);
-            sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step
+            // Since 2026-09-04 a ground vehicle CRANKS for its ignition clip (2.04 s retail CarIgnition) before the drivetrain answers
+            // the throttle (strawberry: "add a delay between starting the engine and the ability to start moving"). The 1-TICK claim
+            // below is about network latency, not the crank -- so wait the crank out first.
+            sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step -- reaching for the throttle is what STARTS the engine (PlayerController.DriveVehicle)
             yield return Ticks(1);
-            T.Check($"1 TICK after input the local ENGINE answered (EngineForce {veh.EngineForce:0.0}) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)",
-                    Mathf.Abs(veh.EngineForce) > 1f);
+            T.Check("1 TICK after input the local engine CAUGHT (EngineOn) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)", veh.EngineOn);
+            yield return Until(() => !veh.EngineStarting, 4);   // ...then it cranks for the retail CarIgnition clip (2.04 s) before the drivetrain answers
+            yield return Ticks(1);
+            T.Check($"after the crank the local ENGINE answered the throttle (EngineForce {veh.EngineForce:0.0})", !veh.EngineStarting && Mathf.Abs(veh.EngineForce) > 1f);
             yield return Ticks(2);
             T.Check($"the local STEERING is ramping within 3 ticks (steer {veh.SteerAngleDegrees:0.00} deg)",
                     Mathf.Abs(veh.SteerAngleDegrees) > 0.05f);

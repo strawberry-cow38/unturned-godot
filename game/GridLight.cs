@@ -118,7 +118,6 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            using var _prof = Prof.Scope("GridLight");
             if (!_transitioning) return;
             _transT += (float)delta;
             _flickT -= (float)delta;

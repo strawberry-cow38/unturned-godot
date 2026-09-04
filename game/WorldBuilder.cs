@@ -68,6 +68,29 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        // ABLATION knob for profiling (2026-09-02): UG_SKIP="Vehicles,Foliage,Shadows" skips a subsystem at build so its
+        // frame cost can be measured as a delta on the same pinned scene. Off by default; never set by the game itself.
+        // UG_PERF=1: where the vehicle phase goes, per spec -- Build() (pure C#: meshes/materials/nodes) vs AddChild (scene entry:
+        // _Ready, RenderingServer instance + pipeline work, physics body registration). strawberry 2026-09-03 "vehicles is 50% of the loading!"
+        static readonly bool _vehProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
+        static readonly System.Collections.Generic.Dictionary<string, (int n, double build, double add)> _vehProfAcc = new();
+        static void VehProfAdd(string spec, long t0, long t1, long t2)
+        {
+            double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            var e = _vehProfAcc.TryGetValue(spec, out var x) ? x : (0, 0, 0);
+            _vehProfAcc[spec] = (e.n + 1, e.build + (t1 - t0) * f, e.add + (t2 - t1) * f);
+        }
+        static void VehProfDump()
+        {
+            double tb = 0, ta = 0; var sb = new System.Text.StringBuilder("[vehprof] spec: n  build_ms  addchild_ms  (per-vehicle avg)");
+            foreach (var kv in _vehProfAcc) { tb += kv.Value.build; ta += kv.Value.add; }
+            foreach (var kv in System.Linq.Enumerable.OrderByDescending(_vehProfAcc, k => k.Value.build + k.Value.add))
+                sb.Append($" | {kv.Key}: {kv.Value.n}  {kv.Value.build:0}  {kv.Value.add:0}  ({(kv.Value.build + kv.Value.add) / kv.Value.n:0.0})");
+            sb.Append($" | TOTAL build={tb:0} add={ta:0}");
+            GD.Print(sb.ToString());
+        }
+        public static bool SkipPhase(string name) { var v = System.Environment.GetEnvironmentVariable("UG_SKIP"); return v != null && v.Contains(name); }
+
         /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
         /// The model is Z-up here (raw Unity coords, ObjMesh CONV=1): the plinth is a closed box spanning Z -1.0
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
@@ -134,6 +157,21 @@ namespace UnturnedGodot
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
+            // MATERIAL / STYLE VARIANTS (strawberry 2026-09-04 "some 'material variants' of wardrobes, shelves, fridges ...
+            // dont act as 'smart' containers"): every other member of a family already in this table, same family
+            // table + label. guid_mesh.txt is the source of the ids. Counter_1/Counter_3 stay out: they are SINKS.
+            ["56e56fe3b9f24351aa37af59b4869584"] = ("Fridge_1", 6, false, "Fridge"),
+            ["8242af6ef10e42ce9a2a31df1e0c2767"] = ("Wardrobe_1", 19, false, "Wardrobe"),
+            ["dc1f98c3805c474193cb9b380d0c083c"] = ("Shelf_3", 21, false, "Shelf"),          // solid: no tier profile ripped for it, so loot sits inside
+            ["437ea643805e43e399126f631aaf2a03"] = ("Cooler_1", 6, false, "Cooler"),
+            ["0467a617f1194026bff310538f34dd05"] = ("Cooler_2", 6, false, "Cooler"),
+            ["6d881d394b3746039805adbdbf2b33a4"] = ("Cooler_Beach_0", 6, false, "Cooler"),
+            ["eec9aa3ae5a44c75b764a72327f0df85"] = ("Cooler_Beach_1", 6, false, "Cooler"),
+            ["39ec99b8e13d4a259fafc7ba2d3abb2c"] = ("Cooler_Beach_2", 6, false, "Cooler"),
+            ["a9d221fe63834bfcaa2c9130b5edd288"] = ("Crate_1", 8, false, "Crate"),
+            ["21e4827e94b94512af16b78d6e31df18"] = ("Crate_2", 8, false, "Crate"),
+            ["07132524c8554ac4b24fd7618b32c297"] = ("Crate_4", 8, false, "Crate"),
+            ["247828ef63574258b6e1be743309c028"] = ("Crate_5", 8, false, "Crate"),
         };
 
         // MP (A1): the DISTINCT container kinds (mesh/display/label), sorted deterministically, so ContainerSchema can
@@ -289,7 +327,7 @@ namespace UnturnedGodot
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
             // (--peidrive) is the mode master actually plays, so THIS is the one that has to carry the src-accurate lighting.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
-            root.AddChild(new WorldEnvironment { Environment = env });
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
             // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter
             // to this camera. Skipped on the dedicated server, which renders nothing.
@@ -300,7 +338,8 @@ namespace UnturnedGodot
             if (mode != WorldMode.Dedicated) root.AddChild(new ColliderBudget { Name = "ColliderBudget" });
             // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
             // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
-            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated && !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength, VisualsEnabled = mode != WorldMode.Dedicated };
             { var _tod = System.Environment.GetEnvironmentVariable("UG_TIME"); if (_tod != null && float.TryParse(_tod, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _todv)) { dayNight.Time = _todv; dayNight.Speed = 0f; } }   // UG_TIME=0..1 freezes time-of-day for a render (0 midnight / 0.75 dusk) -- streetlight night demo
@@ -382,6 +421,7 @@ namespace UnturnedGodot
 
             var shapeCache = new System.Collections.Generic.Dictionary<string, Shape3D>();   // one collider per unique prop mesh, shared across instances -- Shape3D not ConcavePolygonShape3D: ladders get a BoxShape3D instead of a trimesh (see below)
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
+            Material WetMatFor(string nm) => WetSurface.Wrap(MatFor(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
@@ -396,7 +436,7 @@ namespace UnturnedGodot
                     matCache[nm] = mm;
                     return mm;
                 }
-                if (nm.StartsWith("Ice"))   // ice sheets (Ice_0/Ice_1): the src texture is a TRANSLUCENT ice material (alpha 0-94, EVERY pixel <127). MatFor's auto AlphaScissor(0.5) -- meant for foliage cutouts -- therefore discarded the WHOLE sheet = the "missing ice prop" (master, Yukon 2026-08-12). Render it as ice instead: keep the pattern RGB, drop the near-zero src alpha, faint translucency so it reads as ice not stone.
+                if (nm == "Ice_0" || nm == "Ice_1")   // (NOT Ice_Box_0 -- an icebox is a box, master 2026-09-04) ice sheets (Ice_0/Ice_1): the src texture is a TRANSLUCENT ice material (alpha 0-94, EVERY pixel <127). MatFor's auto AlphaScissor(0.5) -- meant for foliage cutouts -- therefore discarded the WHOLE sheet = the "missing ice prop" (master, Yukon 2026-08-12). Render it as ice instead: keep the pattern RGB, drop the near-zero src alpha, faint translucency so it reads as ice not stone.
                 {
                     mm = new StandardMaterial3D
                     {
@@ -410,9 +450,9 @@ namespace UnturnedGodot
                     if (System.IO.File.Exists(itp))
                     {
                         var iimg = new Image();
-                        if (iimg.Load(itp) == Error.Ok)
+                        if (ContentProvider.LoadOk(iimg, itp))
                         {
-                            iimg.Convert(Image.Format.Rgb8);   // drop the near-zero src alpha; alpha now comes from AlbedoColor so the sheet actually renders
+                            iimg.Convert(Image.Format.Rgb8); iimg.Convert(Image.Format.Rgba8);   // Rgb8 drops the near-zero src alpha, the second convert makes it a warning-free RGBA8 with alpha 1   // drop the near-zero src alpha; alpha now comes from AlbedoColor so the sheet actually renders
                             iimg.GenerateMipmaps();
                             mm.AlbedoTexture = ImageTexture.CreateFromImage(iimg);
                             mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
@@ -442,7 +482,7 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(tp))
                 {
                     var img = new Image();
-                    if (img.Load(tp) == Error.Ok)
+                    if (ContentProvider.LoadOk(img, tp))
                     {
                         // leaf/foliage cutout: if the albedo carries real transparency (>1% of texels), alpha-scissor it
                         if (img.GetFormat() == Image.Format.Rgba8)
@@ -472,7 +512,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
+            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0, radios = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
                                                 //  silently stopped being picked up and only the televisions remained.
@@ -619,9 +659,16 @@ namespace UnturnedGodot
                 ragdollCache[n] = rm;
                 return rm;
             }
+            long _objT = 0, _objMeshT = 0, _objShapeT = 0, _objMiT = 0, _objBodyT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0, _objBodies = 0;   // UG_PERF buckets ([objprof])
             void PlaceObject(string[] p, string name, int destIndex)
             {
-                if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
+                long _o0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                PlaceObjectInner(p, name, destIndex);
+                _objT += System.Diagnostics.Stopwatch.GetTimestamp() - _o0; _objN++;
+            }
+            void PlaceObjectInner(string[] p, string name, int destIndex)
+            {
+                if (!cache.TryGetValue(name, out var mesh)) { long _m0 = System.Diagnostics.Stopwatch.GetTimestamp(); mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; _objMeshT += System.Diagnostics.Stopwatch.GetTimestamp() - _m0; _objMeshMiss++; }
                 if (mesh == null) return;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 // MATERIAL-PALETTE variant: gen_placements rolls the per-instance material (LevelObject.GetMaterialOverride:
@@ -697,7 +744,12 @@ namespace UnturnedGodot
                     if (poleMesh != null && clothMesh != null)
                     {
                         visMesh = poleMesh;   // the pole stays as the prop's main (rendered + destructible) mesh
-                        flagCloth = FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, cull);
+                        // The WAVING cloth only exists inside the prop's first LOD band: past LOD0's end the chain's own (static) flag mesh
+                        // takes over, so the sim mesh is capped just under that switch instead of the prop's full cull distance
+                        // (strawberry 2026-09-04 "waving flags render infinitely, render distance should be capped below the first LOD version").
+                        var flagRanges = LodTable.LevelRanges(p[0], name, LodTable.SourceFov);
+                        float clothCull = flagRanges != null && flagRanges.Length > 1 ? Mathf.Min(cull, flagRanges[0].End * 0.97f) : Mathf.Min(cull, 90f);
+                        flagCloth = FlagCloth.Attach(root, clothMesh, (MatFor(matName) as StandardMaterial3D)?.AlbedoTexture, basis, gpos, clothCull);
                     }
                 }
                 // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
@@ -793,10 +845,10 @@ namespace UnturnedGodot
                 // test inert: Line_Parking_0 is 12.5 x 5.0 x 0.00, so Y is 5 m and nothing was ever a decal.
                 var vaabb = visMesh.GetAabb();
                 bool isDecal = vaabb.Size.Z < 0.06f && Mathf.Max(vaabb.Size.X, vaabb.Size.Y) > 0.5f;
-                var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                     CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
-                if (mainMi != null) root.AddChild(mainMi);
+                if (mainMi != null) { long _mi0 = System.Diagnostics.Stopwatch.GetTimestamp(); root.AddChild(mainMi); _objMiT += System.Diagnostics.Stopwatch.GetTimestamp() - _mi0; }
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
                 // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
                 // with distance instead of only vanishing at the end of one.
@@ -850,7 +902,7 @@ namespace UnturnedGodot
                         }
                         if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
                         float fm = LodFadeMargin(e2 - b);
-                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                             VisibilityRangeBegin = b, VisibilityRangeEnd = e2,
                             VisibilityRangeBeginMargin = fm, VisibilityRangeEndMargin = fm,
                             VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self };
@@ -878,7 +930,7 @@ namespace UnturnedGodot
                 if (batched)
                 {
                     var bxf = new Transform3D(basis, gpos);
-                    var bmat = MatFor(matName);
+                    var bstd = MatFor(matName); var bmat = WetMatFor(matName);   // bstd: the plain material the destructible break effect tints from
                     var sl = new System.Collections.Generic.List<PropBatcher.Slot>(4);
                     var plan = LodPlanFor(p[0], name, visMesh, cull);
                     for (int lv = 0; lv < plan.Count; lv++)
@@ -966,6 +1018,7 @@ namespace UnturnedGodot
                 HeartMonitor placedMonitor = null;   // captured so its body collider can carry the hit meta
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
+                RadioDevice placedRadio = null;  // same route: look-ray -> F toggle, and the break hook below
                 Toaster placedToaster = null;    // same, for the bread pop on a surviving first shot
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
@@ -1033,6 +1086,11 @@ namespace UnturnedGodot
                     if (mainMi == null) GD.PushError($"[batch] BUG: {name} is Batchable() but needs its own mesh node -- add it to the deny list");
                     else { var cd = ClockDevice.Make(mainMi, MatFor(matName), 0f); if (cd != null) root.AddChild(cd); }   // local time for now; the Alberton bank's per-clock world zones + upright pass are a follow-up
                 }
+                if (name == "Well_0" && mainMi != null && mode != WorldMode.Dedicated)   // the bottomless shaft disc (master 2026-09-04) -- rides the ring's own node in object space
+                {
+                    WellShaft.Make(mainMi, WellShaft.WallColor((MatFor(matName) as StandardMaterial3D)?.AlbedoTexture));
+                    WellShaft.WarmOnce(root);   // compile the shaft shader's pipeline behind the load, not on the first well in view
+                }
                 // Patient monitors (strawberry: "for now give it to random units across the map. it'll be a map making
                 // feature"). Random per unit rather than per map, so a ward has a mix -- and seeded off nothing but
                 // GD.Randf, because until it IS a map-making feature there is no authored flag to read.
@@ -1041,6 +1099,12 @@ namespace UnturnedGodot
                     placedMonitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance);
                     root.AddChild(placedMonitor);
                     monitorsPlaced++;
+                }
+                if (RadioDevice.IsRadioProp(name) && mode != WorldMode.Dedicated)
+                {
+                    placedRadio = RadioDevice.Make(mainMi, name);
+                    root.AddChild(placedRadio);
+                    radios++;
                 }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
@@ -1140,8 +1204,10 @@ namespace UnturnedGodot
                         // Fix: a solid box matching the mesh's own AABB (1.15 x 0.15 x 6.75, both catalogue
                         // ladders share it) instead of the open-rung trimesh -- climbable end to end, not rung
                         // to rung.
-                        shp = Ladder.IsLadderProp(name) ? new BoxShape3D { Size = mesh.GetAabb().Size } : mesh.CreateTrimeshShape();
+                        long _s0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        shp = Ladder.IsLadderProp(name) ? new BoxShape3D { Size = mesh.GetAabb().Size } : ObjMesh.TrimeshShape(mesh);   // from the loader's triangle list, no GetFaces() read-back
                         shapeCache[name] = shp;
+                        _objShapeT += System.Diagnostics.Stopwatch.GetTimestamp() - _s0; _objShapeMiss++;
                     }
                     if (shp != null)
                     {
@@ -1153,6 +1219,7 @@ namespace UnturnedGodot
                         // Small props go on the see-through layer 6 (bullets/LOS pass through) PLUS bit8 = "solid to vehicles"
                         // so a car can't phase through a fence/hydrant/barrel (bit8 is NOT the trailer-ghost bit6, so towing
                         // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
+                        long _b0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
@@ -1163,6 +1230,7 @@ namespace UnturnedGodot
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
+                        _objBodyT += System.Diagnostics.Stopwatch.GetTimestamp() - _b0; _objBodies++;
                         body.AddToGroup(ColliderBudget.Group);   // distance-streamed: 13.9k collision nodes is a third of the scene tree
                         body.SetMeta(ColliderBudget.RadiusMeta, cull);   // collision outlives the MESH, never less: a prop you can still see must still be shootable
                         destBody = body;   // the collider a server bullet/melee ray tags for destructible damage
@@ -1183,6 +1251,7 @@ namespace UnturnedGodot
                         if (placedTV != null) body.SetMeta(TVDevice.HitMeta, placedTV);   // look-at OR shoot the TV body resolves to its device (F toggle; screen shoot-out)
                         if (placedIndoorLamp != null && LampLight.IsToggle(placedIndoorLamp.LampKind)) body.SetMeta(LampLight.LookMeta, placedIndoorLamp);   // look-at the standing/desk lamp body -> its LampLight (F on/off + outline)
                         if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
+                        if (placedRadio != null) body.SetMeta(RadioDevice.HitMeta, placedRadio);   // look-at the radio body -> its device (F on/off)
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the
@@ -1218,13 +1287,15 @@ namespace UnturnedGodot
                     // smashing the set hid the cabinet and left a lit screen glowing over the rubble -- the same
                     // shape as the street lamp above (master: "when tvs get destroyed make sure to kill the screen").
                     var tv = placedTV;
+                    var mon = placedMonitor;   // heart monitor screen dies with its prop (strawberry 2026-09-04)
+                    var rad = placedRadio;     // a smashed radio stops hissing, and stays dead through a grid sweep
                     // the map's MAINS (hydrant / water tower / sink) rides this prop but is a SEPARATE node -- so a smash
                     // left its hose ports floating over the rubble (master: "hose points arent destroyed when the hydrant is").
                     var mns = mains;
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
+                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
                             if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
@@ -1233,6 +1304,8 @@ namespace UnturnedGodot
                             if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
                             if (indoorLamp != null && GodotObject.IsInstanceValid(indoorLamp)) indoorLamp.SetBroken(!alive);   // indoor light off when smashed, back on when it respawns
                             if (tv != null && GodotObject.IsInstanceValid(tv)) tv.SetBroken(!alive);
+                            if (mon != null && GodotObject.IsInstanceValid(mon)) mon.SetBroken(!alive);
+                            if (rad != null && GodotObject.IsInstanceValid(rad)) rad.SetBroken(!alive);
                             if (mns != null && GodotObject.IsInstanceValid(mns)) mns.SetBroken(!alive);
                             if (sigs != null)
                                 foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
@@ -1333,7 +1406,8 @@ namespace UnturnedGodot
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
-            GD.Print($"[medical] {monitorsPlaced} patient monitors");   // printed unconditionally: a zero here is the tell that the prop stopped being placed
+            GD.Print($"[medical] {monitorsPlaced} patient monitors");
+            GD.Print($"[radio] {radios} radio sets");   // unconditional, same reason: a zero is the tell that the prop stopped being placed   // printed unconditionally: a zero here is the tell that the prop stopped being placed
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] generated-band lookups: {LodTable.GeneratedHits} hit, {LodTable.GeneratedMisses} missed (table has {LodTable.GeneratedCount})");
@@ -1347,6 +1421,7 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT) * _f:0} ms"); }
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");
@@ -1355,10 +1430,14 @@ namespace UnturnedGodot
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
                 {
                     await Phase("Foliage");
-                    var ff = new FoliageField();
-                    root.AddChild(ff);
-                    ff.LoadGrass();
-                    result.Foliage = ff;   // the editor's foliage brush paints into this instance
+                    if (!SkipPhase("Foliage"))
+                    {
+                        var ff = new FoliageField();
+                        root.AddChild(ff);
+                        ff.LoadGrass();
+                        result.Foliage = ff;   // the editor's foliage brush paints into this instance
+                    }
+                    else GD.Print("[world] foliage SKIPPED (UG_SKIP)");
                 }
                 // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
                 {
@@ -1392,6 +1471,7 @@ namespace UnturnedGodot
             async System.Threading.Tasks.Task SpawnPeiVehicles()
             {
                 await Phase("Vehicles");
+                if (SkipPhase("Vehicles")) { GD.Print("[world] vehicles SKIPPED (UG_SKIP)"); return; }
                 string vpath = mapRoot + "/Spawns/Vehicles.dat";
                 int nv = 0;
                 if (System.IO.File.Exists(vpath))
@@ -1457,14 +1537,18 @@ namespace UnturnedGodot
                                 5 => "tractor",                                                             // Farm -> drivable tractor
                                 _ => "quad",                                                                // fallback
                             };
+                            long _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                             var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
+                            long _t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                             root.AddChild(veh);
+                            if (_vehProf) VehProfAdd(vn, _t0, _t1, System.Diagnostics.Stopwatch.GetTimestamp());
                             veh.GlobalPosition = vpos;
                             veh.RotationDegrees = new Vector3(0f, -ang, 0f);
                             nv++;
                         }
                     }
                 }
+                if (_vehProf) VehProfDump();
                 GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
             }
 
@@ -1544,9 +1628,13 @@ namespace UnturnedGodot
                 { var _ox = System.Environment.GetEnvironmentVariable("UG_SPAWNX"); var _oz = System.Environment.GetEnvironmentVariable("UG_SPAWNZ");   // spawn at arbitrary godot XZ (e.g. a named location node) for town orbits
                   if (_ox != null && float.TryParse(_ox, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _px)) sx = _px;
                   if (_oz != null && float.TryParse(_oz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _pz)) sz = _pz; }
+                long _pl0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 CharacterModel.LoadBundled();
+                long _pl1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var player = new PlayerController { CaptureMouse = true };
+                long _pl2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 root.AddChild(player);
+                if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[playerphase] LoadBundled={(_pl1 - _pl0) * _f:0} ctor={(_pl2 - _pl1) * _f:0} AddChild(_Ready)={(System.Diagnostics.Stopwatch.GetTimestamp() - _pl2) * _f:0} ms"); }
                 player.EquipUnarmed();   // spawn UNARMED (bare fists) -- pick items up to equip them (strawberry)
                 result.Player = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
@@ -1724,6 +1812,7 @@ namespace UnturnedGodot
                 GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
             // (zombie navmesh bake removed 2026-08-25 -- master: rip out everything zombie)
+            if (mode != WorldMode.Dedicated) ShaderWarm.Begin(root);   // every content shader compiled behind the load, not on its first sight (GPU-timeout class, 2026-09-04)
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
         }
@@ -1807,7 +1896,6 @@ namespace UnturnedGodot
             root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
-            root.AddChild(new Profiler());   // perf overlay, console `profiler` (parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
             { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }                 // R-hold -> shotgun ammo-type picker (buckshot / slug)
         }
@@ -1860,8 +1948,9 @@ namespace UnturnedGodot
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.58f, 0.62f), AmbientLightEnergy = 1.0f };
             env.BackgroundMode = Godot.Environment.BGMode.Sky;
             env.Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() };
-            root.AddChild(new WorldEnvironment { Environment = env });
-            var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = true, DirectionalShadowMaxDistance = 120f };
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
+            var sun = new DirectionalLight3D { LightEnergy = 1.15f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 120f };
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             sun.RotationDegrees = new Vector3(-52f, 38f, 0f);
             root.AddChild(sun);
 
@@ -1916,13 +2005,14 @@ namespace UnturnedGodot
             // hardcoded flat GREY env (0.6 grey @ 0.75) is what made everything dark + washed -- it never used the
             // lighting rework at all. The DayNightCycle drives Env (sky + warm ambient) + the sun each frame.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
-            root.AddChild(new WorldEnvironment { Environment = env });
+            { var we = new WorldEnvironment { Environment = env }; we.AddToGroup("world_env"); GraphicsOptions.ApplyEnvironment(env); root.AddChild(we); }   // graphics rows (AO/bloom/SSR/sun shafts) own these flags
             // Point-light shadows are rationed, not free: 324 of them are placed across the map and a
             // shadowed omni is a six-face cube per frame. The budget hands shadows to the few that matter to
             // this camera. No dedicated-server guard here -- this path only ever builds a rendering client.
             root.AddChild(new LightShadowBudget { Name = "LightShadowBudget" });
             root.AddChild(new ColliderBudget { Name = "ColliderBudget" });   // stream prop collision in around the view; see the other call site
-            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = !SkipPhase("Shadows"), DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was default 100m) -- see the 3p-vehicle-POI shadow-tank note on the other sun (strawberry)
+            sun.AddToGroup("sun"); sun.DirectionalShadowMaxDistance = GraphicsOptions.ShadowDistance;   // the Shadow distance option owns this (GraphicsOptions.ApplyShadowDistance)
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = DayNightCycle.DefaultDayLength };
             root.AddChild(dayNight);
@@ -1994,6 +2084,7 @@ namespace UnturnedGodot
             // real Animals.dat spawns. Only the ~64 near you fully simulate; sight-chase + sound-lure.
             if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
             else { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
+            ShaderWarm.Begin(root);   // every content shader compiled behind the load (see ShaderWarm)
             result.Ready = true;
             return result;
         }

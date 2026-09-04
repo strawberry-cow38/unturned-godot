@@ -91,6 +91,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             // Positional (omni/spot) shadows land in their OWN atlas, which nothing in this project had ever
             // configured -- GraphicsOptions only sizes the DIRECTIONAL one. Without this the budget would hand
             // out shadows that quietly fight for default atlas space and look broken at the edges.
@@ -103,9 +104,9 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
-            using var _prof = Prof.Scope("LightShadowBudget");
             _clock += (float)delta;
             if (_clock < Interval) return;
             _clock = 0f;

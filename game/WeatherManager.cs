@@ -17,7 +17,9 @@ namespace UnturnedGodot
         public WeatherSim Sim { get; private set; }
         public RainOverlay Overlay;
         public DayNightCycle Cycle;
-        RainSystem3D _rain3d;   // worldspace 3D rain -- supersedes the 2D overlay streaks
+        RainSystem3D _rain3d;
+        RainRoofMap _roofMap;
+        int _roofCheckTicks;   // the top-down roof heightmap around the player (per-drop roof occlusion)   // worldspace 3D rain -- supersedes the 2D overlay streaks
         RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass)
         RainMaterialAudio _rainMatAudio;   // positional rain-on-material: nearest car/tree/... emits its own rain sound within a radius
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
@@ -37,8 +39,10 @@ namespace UnturnedGodot
         // can be tuned without touching the ripped table.
         public static float FrequencyMultiplier =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_FREQ"), out var f) ? f : 1f;
+        // Duration default 4x the ripped table (strawberry 2026-09-04: "rain storms should last much longer"): PEI's
+        // 0.05-0.15 cycles on the 24 min day was a 1-3.5 min shower; x4 = roughly 5-14 min. UG_WEATHER_DUR still overrides.
         public static float DurationMultiplier =
-            float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_DUR"), out var d) ? d : 1f;
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEATHER_DUR"), out var d) ? d : 4f;
 
         // lightning (Heavy Rain only: Has_Lightning, Min/Max_Lightning_Interval 15/60)
         float _nextLightning = -1f;
@@ -83,6 +87,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Current = this;
             AddToGroup("weather");   // the dev console finds it here
             _rng.Randomize();
@@ -100,6 +105,7 @@ namespace UnturnedGodot
             // WORLDSPACE 3D rain + the wetness/splash globals (registered before ANY wettable material -- see EnsureGlobals)
             RainSystem3D.EnsureGlobals();
             _rain3d = new RainSystem3D { Intensity = 0f };
+            _roofMap = null;
             AddChild(_rain3d);
             _rainAudio = new RainAudio();
             AddChild(_rainAudio);
@@ -117,6 +123,13 @@ namespace UnturnedGodot
             {
                 var tp = ProjectSettings.GlobalizePath("res://content/" + tf[i]);
                 if (System.IO.File.Exists(tp)) { _thunderStreams[i] = AudioStreamWav.LoadFromFile(tp); anyThunder |= _thunderStreams[i] != null; }
+            }
+            // + retail's own three lightning rumbles (effects/weather/lightning), ripped 2026-09-03 -- they join the pick pool
+            var rumbles = GameAudio.Bank("ambience", "thunder_lightning_strike_rumble");
+            if (rumbles.Length > 0)
+            {
+                var merged = new System.Collections.Generic.List<AudioStream>(); foreach (var t in _thunderStreams) if (t != null) merged.Add(t); merged.AddRange(rumbles);
+                _thunderStreams = merged.ToArray(); anyThunder = true;
             }
             if (anyThunder)
             {
@@ -159,7 +172,8 @@ namespace UnturnedGodot
         }
         float _shelterTarget = 1f;
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (Sim == null) return;
             // weather rides the same clock as the day/night cycle, so `timeSpeed` speeds the sky AND the weather
@@ -174,8 +188,14 @@ namespace UnturnedGodot
             // without this they fall straight through a roof and render around you INDOORS (tinyclaw's catch -- my
             // earlier "geometry occludes the drops" was wrong, it only covers line of sight). ShelterFactor polls the
             // up-raycast at a few Hz + eases. The wetness globals stay global for now (per-surface shelter = TODO).
-            float shelter = ShelterFactor((float)delta);
-            if (_rain3d != null) { _rain3d.Cam = GetViewport()?.GetCamera3D(); _rain3d.Intensity = rint * shelter; }
+            float shelter = ShelterFactor((float)delta);   // still drives the audio muffle; the FALLING rain no longer switches off under cover --
+            // the roof map kills each drop under whatever is above it (strawberry 2026-09-04: "each building's roof should kill rain that reaches it")
+            var wcam = GetViewport()?.GetCamera3D();
+            if (_rain3d != null) { _rain3d.Cam = wcam; _rain3d.Intensity = rint; }
+            if (_roofMap == null && wcam != null) { _roofMap = new RainRoofMap { Follow = wcam }; AddChild(_roofMap); }
+            else if (_roofMap != null) _roofMap.Follow = wcam;
+            if (_roofMap != null && System.Environment.GetEnvironmentVariable("UG_ROOFCHECK") == "1" && ++_roofCheckTicks % 90 == 80)   // self-check against fresh rays (harness only)
+                _roofMap.DebugCheck(GetViewport().World3D.DirectSpaceState);
             if (rint != _lastRint)   // push only on change -- else a fresh StringName per literal every frame forever, even in clear weather (tinyclaw)
             {
                 _lastRint = rint;

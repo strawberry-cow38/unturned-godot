@@ -121,10 +121,10 @@ namespace UnturnedGodot
             var mesh = st.Commit();
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/ecg.gdshader") };
-            _mat.SetShaderParameter("time_s", 0f);
-            _mat.SetShaderParameter("alive", _alive ? 1f : 0f);
-            _mat.SetShaderParameter("lit", 0f);
-            _mat.SetShaderParameter("period", DebugPeriod);
+            _mat.SetShaderParameter(Sn.time_s, 0f);
+            _mat.SetShaderParameter(Sn.alive, _alive ? 1f : 0f);
+            _mat.SetShaderParameter(Sn.lit, 0f);
+            _mat.SetShaderParameter(Sn.period, DebugPeriod);
 
             // THE OFF STATE IS A MATERIAL SWAP, NOT A HIDE (strawberry: "remove the base ecg prop's graph when the
             // screen is off, should be the green line").
@@ -147,7 +147,7 @@ namespace UnturnedGodot
             };
             AddChild(_screen);
 
-            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -3f, Bus = "Master" };
+            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -15f, Bus = "Master" };   // -3 -> -15 dB = a quarter of the amplitude (strawberry 2026-09-04 "75% quieter")
             AddChild(_audio);
 
             // A REAL POWER INPUT. HasFeed has always read `mains OR the wire`, and AttachPort existed to supply the
@@ -186,8 +186,8 @@ namespace UnturnedGodot
         {
             if (_alive == alive) return;
             _alive = alive;
-            _mat?.SetShaderParameter("alive", alive ? 1f : 0f);
-            _mat?.SetShaderParameter("period", DebugPeriod);
+            _mat?.SetShaderParameter(Sn.alive, alive ? 1f : 0f);
+            _mat?.SetShaderParameter(Sn.period, DebugPeriod);
             _lastBeat = -1f;   // don't carry a half-finished beat across the change
         }
 
@@ -214,23 +214,34 @@ namespace UnturnedGodot
             return true;
         }
 
+        bool _broken;   // the prop it sits on was smashed (DestructibleField) -> screen dead + silent until the rubble resets
+        /// <summary>Smashed prop -> screen dead, beep silent; the rubble reset (alive again) brings it back. Same contract as TVDevice.SetBroken
+        /// (strawberry 2026-09-04 "when a heart rate monitor prop gets destroyed, its not killing its screen").</summary>
+        public void SetBroken(bool broken)
+        {
+            if (_broken == broken) return;
+            _broken = broken;
+            if (broken) _brownoutLeft = 0f;
+            Refresh();
+        }
         public void Refresh()
         {
-            bool want = _on && HasFeed && !_screenShot;
+            bool want = _on && HasFeed && !_screenShot && !_broken;
             if (want == _lit && _screen != null && _screen.MaterialOverride == (want ? (Material)_mat : _offMat)) return;
             _lit = want;
             // The quad stays DRAWN either way -- see Build(). Hiding it would put the prop's own green trace back on
             // screen, which is the bug this replaced.
             if (_screen != null) _screen.MaterialOverride = want ? (Material)_mat : _offMat;
-            _mat?.SetShaderParameter("lit", want ? 1f : 0f);
+            _mat?.SetShaderParameter(Sn.lit, want ? 1f : 0f);
             if (!want) _audio?.Stop();
         }
 
         bool _feedWas;
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            using var _prof = Prof.Scope("HeartMonitor");
             // Poll the WHOLE feed, mains and wire together -- the same lesson TVDevice learned today: relying on a
             // push means the one caller that pushes works and every other route leaves the unit lit through a
             // blackout.
@@ -245,7 +256,7 @@ namespace UnturnedGodot
             // not merely the sound. Handed over already wrapped into [0, period), which is all the shader's
             // fract(time_s / period) needs and keeps it away from the float-resolution cliff a long uptime creates.
             float per = DebugPeriod;
-            _mat?.SetShaderParameter("time_s", (float)Mathf.PosMod(GlobalSeconds, per));
+            _mat?.SetShaderParameter(Sn.time_s, (float)Mathf.PosMod(GlobalSeconds, per));
 
             // The sag is a square stutter on the picture level, not a fade: mains droop stutters.
             if (_brownoutLeft > 0f)
@@ -253,8 +264,8 @@ namespace UnturnedGodot
                 _brownoutLeft -= (float)delta;
                 _brownoutPhase += (float)delta * BrownoutHz;
                 float f = Mathf.PosMod(_brownoutPhase, 1f) < 0.5f ? 1f - BrownoutDepth : 1f;
-                _mat?.SetShaderParameter("sag", f);
-                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; _mat?.SetShaderParameter("sag", 1f); }
+                _mat?.SetShaderParameter(Sn.sag, f);
+                if (_brownoutLeft <= 0f) { _brownoutLeft = 0f; _brownoutPhase = 0f; _mat?.SetShaderParameter(Sn.sag, 1f); }
             }
 
             // The beep fires when the sweep passes the R spike, so the sound is ON the visible beat rather than merely

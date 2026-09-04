@@ -270,7 +270,7 @@ namespace UnturnedGodot
             var mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
             string tp = dir + prop + "_tex.png";
-            if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
             {
                 mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
                 mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // tiny palette texel

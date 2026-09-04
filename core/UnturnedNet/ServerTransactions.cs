@@ -119,6 +119,14 @@ namespace UnturnedGodot.Net
         /// <summary>The server's yield-roll RNG seam (Phase 8, §3.7: the AGRICULTURE second-yield roll moves
         /// server-side -- SP keeps GD.Randf on the direct path). Injectable so L0 tests are deterministic.</summary>
         public Func<float> Rand;
+        /// <summary>Installed by the game side (which owns the file path): deletes the save, clears the host's
+        /// PendingSave, and returns the line to show the admin. Null on a server with no persistence, and the
+        /// `wipe` verb says so rather than reporting a success it did not have.</summary>
+        public Func<string> WipeSaveHandler;
+        /// <summary>Installed alongside WipeSaveHandler: write the world out NOW. A normal admin action before a
+        /// restart -- the autosave is on a timer, so without this the only way to be sure a save is current is to
+        /// wait for it. It is also what makes the save path testable in a real world at all.</summary>
+        public Func<string> SaveNowHandler;
 
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
@@ -392,6 +400,14 @@ namespace UnturnedGodot.Net
             inv.removeItemAmount(cmd.DefId, 1);   // the deployable item is spent (SP: planting consumes it)
             var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick());
             if (e == null) return;
+            // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
+            // what the client stamps onto the materialized crate and what its F-open addresses. So the whole
+            // open/move/close path a map container already uses works on a placed fridge with no new command
+            // and no new event: ServerOpenStorage is keyed by crate id and does not care whether that id came
+            // from a world fixture or a deployable. Empty, unlike a map crate -- nobody loots a fridge you
+            // have just put down.
+            if (_deployables.Schema.TryGet(cmd.DefId, out var pdef) && pdef.StorageWidth > 0 && pdef.StorageHeight > 0)
+                _inventories.ServerRegisterCrate(new NetId(e.NetIdValue), pdef.StorageWidth, pdef.StorageHeight, e.Pos);
             var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
         }
@@ -400,6 +416,7 @@ namespace UnturnedGodot.Net
         {
             _deployables.TryGet(cmd.NetId, out var e);
             _deployables.Schema.TryGet(e.DefId, out var def);
+            SpillStorage(cmd.NetId, def, e.Pos);   // a container's contents are never silently deleted
             var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
             var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
@@ -414,6 +431,31 @@ namespace UnturnedGodot.Net
                     SpawnWorldItem(new Item(def.SalvageItemId), e.Pos + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f), Vector3.zero);
         }
 
+        /// <summary>Tear down a placed container's grid, dropping whatever was in it on the floor. Salvaging
+        /// or pocketing a full fridge must not swallow its contents: the grid is addressed by the deployable's
+        /// NetId, so once the deployable is gone there is nothing left to stand next to and the items would be
+        /// unreachable forever rather than merely lost.</summary>
+        void SpillStorage(uint netId, DeployableNetDef def, Vector3 at)
+        {
+            if (def == null || def.StorageWidth == 0) return;
+            // CLOSE FIRST. A player with this container open holds the live grid in his own STORAGE page;
+            // crate.Storage is only brought up to date when he is closed out of it. Reading before closing
+            // spills a stale snapshot and drops whatever he had just moved in.
+            _inventories.ServerCloseCrateViewers(netId, _tick());
+            if (_inventories.TryGetCrate(netId, out var crate))
+            {
+                int n = 0;
+                for (byte i = 0; i < crate.Storage.getItemCount(); i++)
+                {
+                    var j = crate.Storage.getItem(i);
+                    if (j?.item == null) continue;
+                    SpawnWorldItem(j.item, at + new Vector3(((n % 4) - 1.5f) * 0.4f, 0.5f, ((n / 4) - 0.5f) * 0.4f), Vector3.zero);
+                    n++;
+                }
+            }
+            _inventories.ServerRemoveCrate(netId, _tick());
+        }
+
         void OnPickupDeployable(ushort sender, PickupDeployableCommand cmd)
         {
             // authority: read the LIVE entity's state before we tear it down, then reuse the salvage teardown
@@ -421,6 +463,7 @@ namespace UnturnedGodot.Net
             // client node off EventDeployableRemoved; the returned item lands via the owner-inventory echo.
             _deployables.TryGet(cmd.NetId, out var e);
             _deployables.Schema.TryGet(e.DefId, out var def);
+            SpillStorage(cmd.NetId, def, e.Pos);   // a container's contents are never silently deleted
             var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
             var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
@@ -664,7 +707,9 @@ namespace UnturnedGodot.Net
         {
             _worldItems.TryGet(cmd.NetId, out var e);
             var inv = SenderInventory(sender);
-            if (inv.tryAddItem(e.ServerItem))
+            // retail tryAddItemAuto (strawberry 2026-09-04): an empty clothing slot wears the pickup, an empty hand slot
+            // holsters it -- the owner echo carries worn + slots, and the client forces a slotted weapon into the hands
+            if (inv.tryAddItemAuto(e.ServerItem, out _) != PlayerInventory.AutoPlace.None)
             {
                 RemoveWorldItem(cmd.NetId);
             }
@@ -1083,6 +1128,29 @@ namespace UnturnedGodot.Net
             }
 
             if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
+
+            // WIPE (master 2026-09-03: "can be reset with a wipe command through the server control"). Deletes
+            // the save and forgets it, so the world comes back fresh on the next restart. It deliberately does
+            // NOT tear down the LIVE world out from under connected players: removing every deployable, wire,
+            // dropped item and crop at runtime means a removal event per object to every peer, and a half-sent
+            // teardown is a desync rather than a wipe. So the verb says exactly what it did and what is still
+            // standing -- a wipe that silently left the current world in place would be the worse failure.
+            // Sits BELOW the AllowCheats gate on purpose: it is the most destructive verb here.
+            if (verb == "save")
+            {
+                if (SaveNowHandler == null) { Diag.ConsoleRejected++; return "no save is configured on this server"; }
+                string r = SaveNowHandler();
+                Diag.ConsoleApplied++;
+                return r;
+            }
+
+            if (verb == "wipe")
+            {
+                if (WipeSaveHandler == null) { Diag.ConsoleRejected++; return "no save is configured on this server"; }
+                string result = WipeSaveHandler();
+                Diag.ConsoleApplied++;
+                return result;
+            }
 
             if (verb == "give" && arg.Length > 0)
             {

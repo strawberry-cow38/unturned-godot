@@ -2,10 +2,28 @@
 // ripple rings play on them (raindrop impacts). Driven by the global uniform `rain_wetness` (WeatherManager sets it;
 // the --raintest harness sets it directly). Master 2026-08-29: raindrop impact splashes + hard-surface wetness.
 shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx;
+render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
 
 global uniform float rain_wetness;                       // 0 dry .. 1 soaked (surface darken/gloss)
 global uniform float rain_intensity;                     // 0 .. 1 -- drives the splash-impact density + brightness to MATCH the falling rain
+global uniform sampler2D rain_roof;                      // RainRoofMap (see rain_streak.gdshader): roofed ground stays dry
+global uniform vec4 rain_roof_rect;
+uniform sampler2D albedo_tex : source_color, filter_nearest_mipmap, repeat_enable;   // ROADS (master 2026-09-04 "not seeing the ripple impacts on the road"): the textured surface variant
+uniform bool use_tex = false;
+uniform sampler2D albedo_tex_nomip : source_color, filter_nearest, repeat_enable;   // PALETTE props (WetSurface): nearest, no mipmaps, like their StandardMaterial3D
+uniform bool use_nomip = false;
+uniform bool use_vcol = false;                           // VertexColorUseAsAlbedo (billboards bake their ad colours into vertex colour)
+uniform vec4 tint : source_color = vec4(1.0);            // StandardMaterial3D.AlbedoColor modulating the texture
+varying vec4 vcol;
+
+float roof_y(vec2 xz) {
+    if (rain_roof_rect.z <= 0.0) return -1e9;
+    vec2 uv = (xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return -1e9;
+    ivec2 sz = textureSize(rain_roof, 0);   // NEAREST texel on purpose: a bilinear read would invent mid-air heights at every roof edge
+    ivec2 t = clamp(ivec2(uv * vec2(sz)), ivec2(0), sz - ivec2(1));
+    return texelFetch(rain_roof, t, 0).r;   // world Y of the topmost solid at this XZ (-1e6 = nothing)
+}
 
 uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
 uniform float dry_roughness = 0.85;
@@ -46,20 +64,23 @@ float splashes(vec2 wxz, float t, float amt){
     return acc;
 }
 
-void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; vcol = COLOR; }
 
 void fragment(){
     // world normal -> upness is camera-independent (view-space NORMAL.y dried the surface on a steep look-down shot;
     // the terrain shader already transforms to world space -- match it here so harness/demo surfaces don't dry on tilt).
     float upness = smoothstep(0.45, 0.80, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y);
-    float wet = clamp(rain_wetness, 0.0, 1.0) * upness;
-    float rint = clamp(rain_intensity, 0.0, 1.0);
-    vec3 alb = dry_albedo * mix(1.0, 0.58, wet);            // wet darkens the surface
-    float rough = mix(dry_roughness, 0.10, wet);           // wet = smooth/glossy -> catches highlights + reflections
+    float sheltered = (world_pos.y < roof_y(world_pos.xz) - 0.3) ? 0.0 : 1.0;   // something is above this bit of surface -> it stays dry
+    float wet = clamp(rain_wetness, 0.0, 1.0) * upness * sheltered;
+    float rint = clamp(rain_intensity, 0.0, 1.0) * sheltered;
+    vec3 base = use_tex ? texture(albedo_tex, UV).rgb * tint.rgb : (use_nomip ? texture(albedo_tex_nomip, UV).rgb * tint.rgb : dry_albedo);
+    if (use_vcol) base *= vcol.rgb;
+    vec3 alb = base * mix(1.0, 0.58, wet);                  // wet darkens the surface
+    float rough = mix(dry_roughness, 0.42, wet);           // wet = smoother, but DAMP not mirror (strawberry 2026-09-04: "turn down the reflections on wet surfaces by a lot"; was 0.10)
     float sp = 0.0;
     if (rint > 0.0 && impact_amount > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount;   // gate the ~800-ALU voronoi -- zero in clear weather OR on impact-disabled surfaces (terrain)
     ALBEDO = alb + sp * impact_opacity;
     ROUGHNESS = rough;
-    METALLIC = wet * 0.1;
-    SPECULAR = 0.5 + wet * 0.45;
+    METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
+    SPECULAR = 0.5 + wet * 0.12;                           // a hint of sheen (was +0.45)
 }

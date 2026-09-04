@@ -18,12 +18,13 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             if (System.Environment.GetEnvironmentVariable("UG_UNITS") is string u && u.Length > 0) Units.TrySet(u);   // render-harness: pick the measurement system for the shot
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
-            using var _prof = Prof.Scope("ScopeLadder2D");   // the other expression-bodied callback the pass missed
             QueueRedraw();
         }
 

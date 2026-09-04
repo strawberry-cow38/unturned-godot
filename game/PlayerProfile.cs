@@ -24,18 +24,45 @@ namespace UnturnedGodot
         static bool _loaded;
         static string _name;
         static byte[] _avatar;
+        // FACE (strawberry 2026-09-04 "port player faces from the source and original game files"): retail
+        // Customization -- a new character rolls a random FREE face (0..9) and keeps it; the Appearance menu changes
+        // it. Persisted in user://profile.cfg [character] face; UG_FACE=<n> overrides for renders/tests.
+        public const string FaceEnv = "UG_FACE";
+        const string FaceCfg = "user://profile.cfg";
+        static byte _face;
+        public static byte Face { get { Load(); return _face; } }
+        public static void SetFace(byte face)
+        {
+            Load();
+            _face = UnturnedGodot.Net.PlayerProfileReplication.ClampFace(face);
+            try { var cfg = new ConfigFile(); cfg.Load(FaceCfg); cfg.SetValue("character", "face", (int)_face); cfg.Save(FaceCfg); }
+            catch (System.Exception e) { GD.PrintErr($"[profile] could not save {FaceCfg}: {e.Message}"); }
+        }
+        static void LoadFace()
+        {
+            if (int.TryParse(System.Environment.GetEnvironmentVariable(FaceEnv), out int envFace)) { _face = UnturnedGodot.Net.PlayerProfileReplication.ClampFace((byte)Mathf.Clamp(envFace, 0, 255)); return; }
+            try
+            {
+                var cfg = new ConfigFile();
+                if (cfg.Load(FaceCfg) == Error.Ok && cfg.HasSectionKey("character", "face")) { _face = UnturnedGodot.Net.PlayerProfileReplication.ClampFace((byte)Mathf.Clamp((int)cfg.GetValue("character", "face", 0), 0, 255)); return; }
+                _face = (byte)(GD.Randi() % 10);   // retail: Random.Range(0, FACES_FREE) for a fresh character
+                cfg.SetValue("character", "face", (int)_face); cfg.Save(FaceCfg);
+            }
+            catch { _face = 0; }
+        }
 
         public static string Name { get { Load(); return _name; } }
         public static byte[] AvatarPng { get { Load(); return _avatar; } }
         public static bool HasAvatar { get { Load(); return _avatar != null; } }
 
         /// <summary>Test seam: drop the cache so a test can set the environment and re-read it.</summary>
-        public static void ResetForTest() { _loaded = false; _name = null; _avatar = null; }
+        public static void ResetForTest() { _loaded = false; _name = null; _avatar = null; _face = 0; }
 
         static void Load()
         {
             if (_loaded) return;
             _loaded = true;
+            LoadFace();
 
             // Sanitised on the way IN, not just on the way out, so what the player is told they are called is
             // the same string the server will end up publishing. The server re-runs this on arrival anyway --
@@ -84,6 +111,7 @@ namespace UnturnedGodot
             if (png == null || png.Length == 0) return null;
             var img = new Image();
             if (img.LoadPngFromBuffer(png) != Error.Ok) return null;
+            if (img.GetFormat() == Image.Format.Rgb8) img.Convert(Image.Format.Rgba8);   // alpha-less avatar PNG: convert here, not with a warning at upload
             if (img.GetWidth() != ProfileRules.AvatarPixels || img.GetHeight() != ProfileRules.AvatarPixels) return null;
             return ImageTexture.CreateFromImage(img);
         }

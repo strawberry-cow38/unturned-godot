@@ -47,6 +47,19 @@ namespace UnturnedGodot
         public readonly HashSet<uint> Suppressed = new();
 
         public int PuppetCount => _puppets.Count;
+        /// Stop rendering this NetId's puppet NOW: the driver's own predicted vehicle is being built this very
+        /// tick, and an existing puppet must not linger until the next process-frame sweep (a frame of the
+        /// puppet + the local car double-rendered, and a seat-latched observer seeing a puppet that is "gone").
+        public void Suppress(uint netId)
+        {
+            Suppressed.Add(netId);
+            if (_puppets.TryGetValue(netId, out var t))
+            {
+                if (IsInstanceValid(t.Node)) t.Node.QueueFree();
+                _puppets.Remove(netId);
+            }
+        }
+
         public bool TryGetPuppet(uint netId, out VehiclePuppet node)
         {
             node = _puppets.TryGetValue(netId, out var t) ? t.Node : null;
@@ -82,6 +95,11 @@ namespace UnturnedGodot
                 else t.SinceSnap += dt;
 
                 t.Node.Exploded = e.Exploded;   // review #10: mirror the wreck state so TowScannable excludes wrecks (SP parity)
+                // ...and everything else the flags byte has been carrying to nobody. Both publishers wrote
+                // these bits and no consumer existed, so a remote car drove around with its lights off and
+                // its alarm silent whatever its driver was doing.
+                t.Node.ApplyReplicatedFlags(e.Headlights, e.Taillights, e.Braking, e.Alarmed && e.Alarming);
+                t.Node.TickAlarm(dt);
 
                 var vel = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);
                 var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z) + vel * Mathf.Min(t.SinceSnap, MaxExtrapolationSeconds);   // dead-reckoned between snapshots, bounded horizon

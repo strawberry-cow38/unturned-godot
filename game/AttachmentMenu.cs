@@ -28,6 +28,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Layer = 58;
             Visible = false;
 
@@ -130,6 +131,7 @@ namespace UnturnedGodot
         {
             if (VM == null) return false;
             if (slot == "Sight" && VM.IntegralSight) return false;   // aug: integral scope can't be detached (master)
+            if (slot == "Sight" && AttachmentFit.IsDefaultIrons(Player?.HeldItemForTest)) return false;   // factory irons are not an item: nothing to take off (master 2026-09-04)
             int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
             if (installed < 0 && !(VM.SlotHasModel(slot) && VM.SlotAttached(slot))) return false;
             if (installed >= 0)
@@ -139,9 +141,14 @@ namespace UnturnedGodot
                     HUD.Alert("No room to remove that — free a slot first");
                     return false;
                 }
-                AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, -1);
+                // the scope came off -> the gun's own irons are back ON (their id, not "empty": they are what the slot draws now)
+                AttachmentFit.SetInstalledId(Player?.HeldItemForTest, slot, slot == "Sight" ? AttachmentFit.DefaultIronsIdOf(Player?.HeldItemForTest) : -1);
             }
-            VM.SetSlotAttached(slot, false);
+            // A scope/optic coming OFF puts the gun's own irons back (SetSlotMesh also deactivates the scope PiP + restores
+            // the iron aim hook); only a gun without irons hides the slot. Detaching used to just hide the node, so the scope
+            // picture stayed live and the next mount landed on a hidden node -> "the scope slot is never freed" (master).
+            if (installed >= 0 && slot == "Sight" && !string.IsNullOrEmpty(VM.DefaultSightTxt)) VM.SetSlotMesh("Sight", VM.DefaultSightTxt);
+            else VM.SetSlotAttached(slot, false);
             Player?.PlaySelectorSwitchSound();   // detach click (source: shared firemode/selector sound)
             Refresh();
             return true;
@@ -175,7 +182,7 @@ namespace UnturnedGodot
                 // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
                 // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
                 // which has the same gap and is the next thing to wire.
-                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0)
+                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0 && !(slot == "Sight" && AttachmentFit.IsDefaultIrons(Player.HeldItemForTest)))   // factory irons displace to nothing -- a scope goes straight on
                 {
                     HUD.Alert("Take the old one off first");
                     return false;
@@ -200,6 +207,7 @@ namespace UnturnedGodot
         {
             refusal = null;
             int prev = AttachmentFit.InstalledId(held, slot);
+            if (slot == "Sight" && AttachmentFit.IsDefaultIrons(held)) prev = -1;   // factory irons are not an item: a scope over them gives nothing back
             if (!TakeFromBagInstanceIn(inv, clicked)) return false;   // consume THE ONE CLICKED, not any of its id
             if (prev >= 0 && inv != null && !inv.tryAddItem(new Item((ushort)prev)))
             {
@@ -386,7 +394,7 @@ namespace UnturnedGodot
         static Texture2D LoadIcon(string file)
         {
             string p = ProjectSettings.GlobalizePath($"res://content/{file}");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 
@@ -399,7 +407,7 @@ namespace UnturnedGodot
             Texture2D tex = null;
             if (System.IO.File.Exists(p))
             {
-                var img = Image.LoadFromFile(p);
+                var img = ContentProvider.LoadImage(p);
                 if (img != null)
                 {
                     if (standUp && DrawnWiderThanTall(img)) { img.Rotate90(ClockDirection.Counterclockwise); img.FlipX(); }   // stand mags UP + un-mirror horizontally (master)
@@ -466,7 +474,8 @@ namespace UnturnedGodot
             RebuildRings();   // the bag changed under the rings whenever anything is attached or detached
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (!Visible || VM == null) return;
             foreach (var slot in Slots)   // follow the gun: reposition each icon on its projected hook every frame

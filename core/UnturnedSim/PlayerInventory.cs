@@ -103,6 +103,52 @@ namespace SDG.Unturned
             items[page].resize(a?.width ?? 0, a?.height ?? 0);
         }
 
+        public enum AutoPlace : byte { None, Grid, Slot, Worn }
+
+        public static bool IsClothingType(EItemType t) => t == EItemType.HAT || t == EItemType.GLASSES || t == EItemType.MASK
+            || t == EItemType.SHIRT || t == EItemType.VEST || t == EItemType.BACKPACK || t == EItemType.PANTS;
+        public Item wornByType(EItemType t) => t switch
+        {
+            EItemType.HAT => wornHat, EItemType.GLASSES => wornGlasses, EItemType.MASK => wornMask, EItemType.SHIRT => wornShirt,
+            EItemType.VEST => wornVest, EItemType.BACKPACK => wornBackpack, EItemType.PANTS => wornPants, _ => null,
+        };
+        public void wearByType(EItemType t, Item item)
+        {
+            switch (t)
+            {
+                case EItemType.HAT: wearHat(item); break;
+                case EItemType.GLASSES: wearGlasses(item); break;
+                case EItemType.MASK: wearMask(item); break;
+                case EItemType.SHIRT: wearShirt(item); break;
+                case EItemType.VEST: wearVest(item); break;
+                case EItemType.BACKPACK: wearBackpack(item); break;
+                case EItemType.PANTS: wearPants(item); break;
+            }
+        }
+
+        /// <summary>Retail PlayerInventory.tryAddItemAuto (autoEquipClothing + autoEquipWeapon), the PICKUP placement
+        /// (strawberry 2026-09-04): clothing whose slot is EMPTY is worn straight away (the WORN STATE -- the caller
+        /// drives the visual); a holster item (gun / melee) whose preferred hand slot is empty -- or whose other hand
+        /// slot fits and is empty -- goes into that slot; anything else lands in the first page with room. The caller
+        /// learns where it went so it can force the weapon into the hands.</summary>
+        public AutoPlace tryAddItemAuto(Item item, out byte slot)
+        {
+            slot = byte.MaxValue;
+            var a = item?.GetAsset();
+            if (a != null)
+            {
+                if (IsClothingType(a.type) && wornByType(a.type) == null) { wearByType(a.type, item); return AutoPlace.Worn; }
+                int pref = a.slot.PreferredSlot();
+                if (pref >= 0)
+                {
+                    if (items[pref].getItemCount() == 0) { equipToSlot((byte)pref, item); slot = (byte)pref; return AutoPlace.Slot; }
+                    for (byte alt = 0; alt < SLOTS; alt++)
+                        if (a.slot.CanEquipInPage(alt) && items[alt].getItemCount() == 0) { equipToSlot(alt, item); slot = alt; return AutoPlace.Slot; }
+                }
+            }
+            return tryAddItem(item) ? AutoPlace.Grid : AutoPlace.None;
+        }
+
         // auto-place an item in the first page that has room (pockets, then clothing), skipping the hand slots
         public bool tryAddItem(Item item)
         {

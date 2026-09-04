@@ -28,11 +28,79 @@ namespace UnturnedGodot
         Node3D _gun;
         CanvasLayer _layer;
         TextureRect _vpRect;   // the composited viewmodel image; rolled 2D about screen-centre for the 1P lean tilt
+        public const float VpOverX = 1.15f, VpOverY = 1.45f;   // render-target oversize factors (see _Ready) -- enough for the 20 deg lean roll on 16:9
+        Vector2 _scr, _vpMargin;   // screen size at build; (viewport - screen)/2
+        /// <summary>The camera fov that keeps the on-screen framing identical to a screen-sized viewport at vertical `vfov`:
+        /// convert to horizontal at the screen aspect, then widen by the horizontal oversize (width-locked camera; the
+        /// vertical follows the viewport's aspect, which lands on vfov * the vertical oversize exactly).</summary>
+        float OversizeFov(float vfov)
+        {
+            float aspect = _scr.Y > 0f ? _scr.X / _scr.Y : 16f / 9f;
+            float hHalf = Mathf.Atan(Mathf.Tan(Mathf.DegToRad(vfov) * 0.5f) * aspect);
+            return Mathf.RadToDeg(2f * Mathf.Atan(Mathf.Tan(hHalf) * VpOverX));
+        }
+        Vector2 VpToScreen(Vector2 px) => px - _vpMargin;   // UnprojectPosition gives viewport px; 2D overlays live in screen px
         // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
         // PreferenceData Offset_Horizontal defaults 0). The gun reads right-handed because the RIG holds
         // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
         // Y is the eye-alignment + the source -0.45 vertical drop (PlayerAnimator:1431, gun sits low).
         Vector3 _armsPos = new Vector3(0f, -1.75f, 0.12f);
+        // DRIVING ARMS (strawberry 2026-09-03 "get the 1p viewmodel for steering wheels"): behind the wheel in 1P the arms play the
+        // body's Idle_Drive and the rig is slid so its SKULL sits on the viewmodel camera -- the world camera sits on the seated
+        // body's skull (PlayerController.SeatedEyeLocal), so the hands land where the seated body's hands are: on the real wheel.
+        public bool Driving { get; private set; }
+        bool _poseDrive;   // UG_POSE=drive (render harness): enter driving arms once the rig exists
+        int _vmSkull = -1;
+        public void SetDriving(bool on)
+        {
+            if (on == Driving || _arms == null) return;
+            Driving = on;
+            if (on)
+            {
+                if (_arms.ClipLength("Idle_Drive") > 0f) { _arms.SetClipLoop("Idle_Drive", true); _arms.PlayLoop("Idle_Drive"); }
+                if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = false;   // no rifle floating over the dashboard
+            }
+            else
+            {
+                if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
+                _arms.Position = _armsPos;
+                _arms.Play(_holdClip);   // back to the item's ready hold
+            }
+        }
+        void SetDrivingDeferred() => SetDriving(true);
+        // WHEEL PIN (strawberry 2026-09-04: "the 1p vehicle driving hands should attach to the steering wheel no matter what").
+        // PlayerController hands us the real steering-wheel pivot each frame as MAIN-camera screen px + depth (+ the wheel's axis in
+        // camera space and the steer angle). We re-project that through the viewmodel camera at the same depth -- exact regardless
+        // of the two cameras' FOV difference -- and slide the arms so the MIDPOINT of the two hand bones sits on it, then turn the
+        // whole arm pair about that point with the wheel. No pose can miss the wheel this way; a vehicle without a wheel model
+        // falls back to the skull-on-camera slide.
+        Vector2 _wheelScreen; float _wheelDepth, _wheelSteerDeg; Vector3 _wheelAxisCam; bool _wheelKnown;
+        int _vmLHand = -1, _vmRHand = -1;
+        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg) { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelKnown = depth > 0.05f; }
+        public void ClearDrivingWheel() => _wheelKnown = false;
+        Vector3 _wheelTargetCam;   // the wheel pivot in viewmodel-camera space, this frame
+        bool WheelHandsCentre(out Vector3 handsLocal)
+        {
+            handsLocal = Vector3.Zero;
+            var skel = _arms?.Skeleton; if (skel == null) return false;
+            if (_vmLHand < 0) { _vmLHand = skel.FindBone("Left_Hand"); _vmRHand = skel.FindBone("Right_Hand"); }
+            if (_vmLHand < 0 || _vmRHand < 0) return false;
+            handsLocal = (skel.GetBoneGlobalPose(_vmLHand).Origin + skel.GetBoneGlobalPose(_vmRHand).Origin) * 0.5f;
+            return handsLocal.LengthSquared() > 1e-4f;
+        }
+        Vector3 DrivingArmsPos()
+        {
+            var skel = _arms?.Skeleton; if (skel == null) return _armsPos;
+            if (_vmSkull < 0) { _vmSkull = skel.FindBone("Skull"); if (_vmSkull < 0) return _armsPos; }
+            var head = skel.GetBoneGlobalPose(_vmSkull).Origin;
+            if (head.LengthSquared() < 0.01f) return _armsPos;
+            if (_wheelKnown && _cam != null && WheelHandsCentre(out var hands))
+            {
+                _wheelTargetCam = _cam.ProjectPosition(_wheelScreen + _vpMargin, _wheelDepth);   // same screen spot + depth as the real wheel
+                return _wheelTargetCam - hands;   // hands' midpoint ON the wheel pivot (rotation about it is applied after the sway pass)
+            }
+            return -(head + new Vector3(0f, 0.16f, -0.10f));   // same head-base -> eyes offset as PlayerController.SeatedEyeFromSkull
+        }
         // NOTE: guns are oriented by riding the animated hand-bone HOLD pose (see the gun branch in _Process), which is
         // source-accurate -- each gun's own <Gun>_Equip anim poses a pistol vs a rifle. An earlier per-gun "hold pitch"
         // hack (magic +12deg on pistols) was removed once the bone-hold path handled it for real.
@@ -84,7 +152,7 @@ namespace UnturnedGodot
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
         readonly System.Collections.Generic.List<Casing> _casings = new();
         readonly RandomNumberGenerator _rng = new();
-        sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; }
+        sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; public bool Bounced; }
 
         // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
         // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
@@ -104,6 +172,7 @@ namespace UnturnedGodot
         // (_Ready builds the gun). Aim hooks: Eaglefire SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+
         // Aim(0,-0.6,0.0918) -> port (0,-0.4688,-0.2098); Maplestrike Aim(0,-0.57,0.1111) -> port (0,-0.4388,-0.2291).
         public string GunName = "eaglefire";
+        public bool LeftHook;   // GunDef.LeftHook: the model hangs off Left_Hook (bows) instead of Right_Hook -- retail EquipableModelParent
         public string MeleeMesh, MeleeAlbedo;   // set (instead of GunName) to show a MELEE weapon in-hand: mesh + albedo only, no sight/mag/muzzle/fire
         public bool EmptyHands;   // holding-something-with-no-arm-model (e.g. a deployable) -> arms in a static rest hold, no weapon mesh
         public bool Fists;        // UNARMED combat state -> bare arms in the melee ready hold + weak/strong punch swings, no mesh (src: empty hands = hardcoded fists)
@@ -260,6 +329,8 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
+            PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // the whole viewmodel subtree (SubViewport cam, arms, scope cams) is placed per FRAME from the main camera -- interpolating it again only earns the engine's "Interpolated Camera3D triggered from outside physics process" warning
             _vp = new SubViewport
             {
                 OwnWorld3D = true,
@@ -267,10 +338,18 @@ namespace UnturnedGodot
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
                 HandleInputLocally = false,
             };
-            _vp.Size = (Vector2I)GetViewport().GetVisibleRect().Size;   // REVERTED (master): the oversize-and-crop read as a zoom-in. Back to screen-sized render at SourceFov; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
+            // OVERSIZED render target (master 2026-09-03: "render MORE longer vertically, when we lean we can see the bottom
+            // of the viewport"). The 1P lean is a 2D roll of the composited image about screen centre, so a screen-sized
+            // image shows its own edge in the corners at 20 deg. Render a taller+wider image and composite it CENTRED at
+            // 1:1 -- the framing is pixel-identical (the camera's FOV is widened by exactly the same factors, see
+            // OversizeFov), only the margin that used to be transparent is now painted. (The earlier attempt that read as
+            // a zoom-in oversized the image but still stretched it into the screen rect.)
+            _scr = GetViewport().GetVisibleRect().Size;
+            _vp.Size = new Vector2I(Mathf.RoundToInt(_scr.X * VpOverX), Mathf.RoundToInt(_scr.Y * VpOverY));
+            _vpMargin = ((Vector2)_vp.Size - _scr) * 0.5f;   // viewport px -> screen px = subtract this; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
             AddChild(_vp);
 
-            _cam = new Camera3D { Fov = SourceFov, Current = true };
+            _cam = new Camera3D { KeepAspect = Camera3D.KeepAspectEnum.Width, Fov = OversizeFov(SourceFov), Current = true };   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
             _vp.AddChild(_cam);
             _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
             _vp.AddChild(_vpLight);
@@ -312,6 +391,7 @@ namespace UnturnedGodot
             {
                 if (_pz == "sprint") { _stance = EPlayerStance.SPRINT; _moving = true; }
                 else if (_pz == "safe") _safe = true;
+                else if (_pz == "drive") _poseDrive = true;   // driving arms (Idle_Drive, skull on the camera) for the --vm render
             }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
@@ -319,6 +399,7 @@ namespace UnturnedGodot
             {
                 _cam.AddChild(_arms);
                 _arms.Position = _armsPos;
+                if (_poseDrive) CallDeferred(nameof(SetDrivingDeferred));
                 _arms.SetClipLoop("Gun_Equip", false);   // equip plays ONCE and holds the ready pose
                 _arms.SetClipLoop("Gun_Reload", false);  // reload plays ONCE (the clip returns the hands to ready)
                 // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
@@ -365,6 +446,7 @@ namespace UnturnedGodot
                                  : DeployableMesh != null ? (NaturalHold ? (_arms.ClipLength("Fuel_Equip") > 0f ? "Fuel_Equip" : "Deploy_Equip") : (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip"))   // deployable: the src barricade "Equip" raise-to-hold; NaturalHold (gas can) = its OWN TWO-HANDED Fuel_Equip carry (both hands on the can, source animations.prefab)
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
+                GD.Print($"[vm] hold clip {equipClip} (capGun {capGun}, len {_arms.ClipLength(equipClip):0.###}s)");   // which per-item hold posed the hands (bow frame audit)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
                 _holdClip = equipClip;   // remember THIS item's hold so sprint-exit (etc.) restores it, not the gun pose
                 if (Fists) _arms.SnapToEnd(equipClip);   // fists: snap straight to the guard pose -- don't play a jab-on-equip when you put an item away
@@ -373,8 +455,8 @@ namespace UnturnedGodot
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
                 var skel = _arms.Skeleton;
-                int hb = skel.FindBone("Right_Hook");
-                if (hb < 0) hb = skel.FindBone("Right_Hand");
+                int hb = skel.FindBone(LeftHook ? "Left_Hook" : "Right_Hook");   // retail EquipableModelParent: bows parent to the LEFT hook
+                if (hb < 0) hb = skel.FindBone(LeftHook ? "Left_Hand" : "Right_Hand");
                 if (hb >= 0 && !EmptyHands && !Fists)   // EmptyHands/Fists -> no weapon mesh; just the bare arms in the ready hold
                 {
                     var att = new BoneAttachment3D { Name = "GunAttach" };
@@ -397,11 +479,12 @@ namespace UnturnedGodot
                     // albedoImg is loaded once here + reused for the body texture.
                     bool isGunBody = MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
                     Image albedoImg = null;
-                    if (gv.Albedo != null) { string _ap = ProjectSettings.GlobalizePath($"res://content/{gv.Albedo}"); if (System.IO.File.Exists(_ap)) albedoImg = Image.LoadFromFile(_ap); }
+                    if (gv.Albedo != null) { string _ap = ProjectSettings.GlobalizePath($"res://content/{gv.Albedo}"); if (System.IO.File.Exists(_ap)) albedoImg = ContentProvider.LoadImage(_ap); }
                     System.Collections.Generic.List<(Color color, ArrayMesh mesh)> sightDots = null;
                     ArrayMesh bodyMesh;
                     if (isGunBody) { var _sp = ContentProvider.ParseObjSplitByAlbedoMarker($"res://content/{gv.Gun}", albedoImg); bodyMesh = _sp.body; sightDots = _sp.markers; }
                     else bodyMesh = ContentProvider.ParseObj($"res://content/{gv.Gun}");
+                    if (bodyMesh != null) GD.Print($"[vm] gun mesh {gv.Gun} aabb pos={bodyMesh.GetAabb().Position} size={bodyMesh.GetAabb().Size}");   // which axis is the long one -- the bow frame audit (2026-09-04)
                     var mi = new MeshInstance3D { Mesh = bodyMesh };
                     // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
                     // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"
@@ -450,7 +533,7 @@ namespace UnturnedGodot
                     _isScope = gv.Gun != null && gv.Gun.Contains("augewehr");
                     if (_isScope && ironMesh != null)
                     {
-                        _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
+                        _scopeVp = new SubViewport { Size = new Vector2I(GraphicsOptions.ScopeSize, GraphicsOptions.ScopeSize), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
                         AddChild(_scopeVp);
                         _scopeCam = new Camera3D { Current = true, Fov = 22.5f };   // retail scope fov = 90/Zoom; the aug scope is 4x (items_catalog: "Rail mounted 4x zoom scope") -> 90/4 = 22.5deg, not the 3.5x/25.7 I'd guessed
                         _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the look-focus outline SILHOUETTE meshes (layer 19) into the scope -- like the main cams cull them; else they draw as a SOLID tint over the whole object (master: "outlines turn the entire object that color in scope space")
@@ -578,7 +661,9 @@ namespace UnturnedGodot
             // Composite the viewmodel viewport on top of the main view.
             _layer = new CanvasLayer { Layer = 5 };
             _vpRect = new TextureRect { Texture = _vp.GetTexture(), StretchMode = TextureRect.StretchModeEnum.Scale };
-            _vpRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // REVERTED (master): screen-sized composite. The lean-roll self-sets its centre pivot at :1285, so the roll still turns about screen-centre.
+            _vpRect.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+            _vpRect.Position = -_vpMargin;              // the oversized image, centred on the screen at 1:1 (see _Ready)
+            _vpRect.Size = (Vector2)_vp.Size;   // REVERTED (master): screen-sized composite. The lean-roll self-sets its centre pivot at :1285, so the roll still turns about screen-centre.
             _layer.AddChild(_vpRect);
             AddChild(_layer);
         }
@@ -613,7 +698,7 @@ namespace UnturnedGodot
         {
             px = default;
             if (_cam == null || _muzzleFlash == null || _cam.IsPositionBehind(_muzzleFlash.GlobalPosition)) return false;
-            px = _cam.UnprojectPosition(_muzzleFlash.GlobalPosition);
+            px = VpToScreen(_cam.UnprojectPosition(_muzzleFlash.GlobalPosition));
             return true;
         }
 
@@ -716,6 +801,17 @@ namespace UnturnedGodot
         // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
         // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
         public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
+
+        /// <summary>Positional shake with NONE of Kick()'s gun furniture -- no muzzle flash, no casing, no shot
+        /// sound. A running chainsaw shakes the view continuously; routing that through Kick would eject a brass
+        /// case out of it every frame.</summary>
+        public void ShakeOnly(Vector3 shakeMin, Vector3 shakeMax)
+        {
+            _shakeSpring.CurrentPosition += new Vector3(
+                _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
+        }
         AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav, NATIVELY looped -> gapless) -- plays while the torch runs
         public void StartTorch()
         {
@@ -912,8 +1008,10 @@ namespace UnturnedGodot
         public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
         public void SetSlotAttached(string slot, bool on)
         {
+            if (slot == "Sight" && !on) HideScopePiP();   // a hidden Sight slot must not leave a live scope picture / scope aim hook behind
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
         }
+        public string DefaultSightTxt => _defaultSightTxt;   // the gun's own iron-sight mesh (null/empty = the gun has no irons of its own)
         // Attachment state as a bitmask over AttachSlots (bit set = that slot's model is attached) -- persisted on the gun's Item so
         // a detached suppressor/sight etc. survives hands<->inventory<->drop (master). Only slots the gun HAS a model for count.
         static readonly string[] AttachSlots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
@@ -939,6 +1037,7 @@ namespace UnturnedGodot
             if (slot == "Sight") { HideScopePiP(); var _oldRet = m.GetNodeOrNull("Reticle"); if (_oldRet != null) { m.RemoveChild(_oldRet); _oldRet.QueueFree(); } }   // deactivate any prior scope's PiP + drop any prior red-dot reticle before the swap
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
+            m.Visible = true;   // the node may have been hidden by a detach -- a freshly mounted mesh must show (was: new scope stayed invisible after detaching the old one)
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
@@ -959,7 +1058,7 @@ namespace UnturnedGodot
                     string _retName = txtName.Replace("_sight.txt", "_reticle.png");
                     Texture2D _retTex = null;
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
-                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
+                    if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) _retTex = ImageTexture.CreateFromImage(_ri); }
                     bool _dot = txtName.Contains("cross") || txtName.Contains("chevron");
                     ConfigureScopePiP(_sc.Lens, _sc.Obj, _sc.Aim, _sc.Fov, _sc.Size, _sc.Sides, _retTex, _dot ? 0.056f : 1.0f, _dot ? new Color(1f, 0f, 0f) : new Color(1f, 1f, 1f));   // real PiP zoom + ADS aim + ripped reticle
                     _scopeHasLadder = txtName.StartsWith("scope_");   // the tube zoom scopes (8x/7x/16x) carry the numbered 100/200/300m range ladder
@@ -987,7 +1086,7 @@ namespace UnturnedGodot
                         // eye and the reticle and occludes it (renders as a BLACK disc). red_dot/kobra are open rings (no-op there).
                     };
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
-                    if (System.IO.File.Exists(_rp)) { var _ri = Image.LoadFromFile(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
+                    if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
                     m.AddChild(new MeshInstance3D { Name = "Reticle", Mesh = new QuadMesh { Size = new Vector2(_rd.Size, _rd.Size) }, MaterialOverride = _retMat, Position = _rd.Pos, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                     // ADS through the optic's OWN aim (gun-local composed aim), so the eye tucks behind the sight instead of
                     // aligning to the gun's iron eye-point -- which parked the gun at the wrong height/angle in the sight
@@ -1051,7 +1150,7 @@ namespace UnturnedGodot
         void EnsureScopeRig(MeshInstance3D host)
         {
             if (_scopeVp != null && Godot.GodotObject.IsInstanceValid(_scopeVp)) return;   // once per gun
-            _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
+            _scopeVp = new SubViewport { Size = new Vector2I(GraphicsOptions.ScopeSize, GraphicsOptions.ScopeSize), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = false };   // OwnWorld3D=false -> renders the parent (main) world; built at _Ready so the render target initialises
             AddChild(_scopeVp);
             _scopeCam = new Camera3D { Current = true, Fov = 20f };
             _scopeCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // exclude the outline silhouette layer (19) -- else focus outlines tint the whole object in the scope (master)
@@ -1150,7 +1249,7 @@ namespace UnturnedGodot
             if (_gun == null || _cam == null || !_hookLocal.TryGetValue(slot, out var local)) return false;
             Vector3 world = _gun.GlobalTransform * local;
             if (_cam.IsPositionBehind(world)) return false;
-            screen = _cam.UnprojectPosition(world);
+            screen = VpToScreen(_cam.UnprojectPosition(world));
             return true;
         }
 
@@ -1165,11 +1264,13 @@ namespace UnturnedGodot
         // retail's rate -- DON'T re-lerp/re-snap, that double-lerps and feels mushy, tinyclaw); we roll the arms root
         // by it. Source: PlayerAnimator.cs:1537 rolls player.first by lean*HumanAnimator.LEAN (=20deg). Stylistic tilt.
         public float LeanRoll;   // degrees of Z-roll to apply to the viewmodel this frame (0 upright)
+        public string CasingSurface = "general";   // PlayerController feeds the surface under the feet (metal/wood/sand/water/general) for the casing bounce bank
         public float ScopeZoom => _isScope && _scopeCam != null && Godot.GodotObject.IsInstanceValid(_scopeCam) ? 90f / _scopeCam.Fov : 0f;   // mounted scope's zoom (90/fov): aug=4, 8x=8, 16x=16... -> drives ADS-sens reduction
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             if (_arms == null || _cam == null) return;
             // take in the world's lighting: sync the FP viewport's sun + ambient to the day/night cycle each frame
@@ -1233,7 +1334,7 @@ namespace UnturnedGodot
                 {
                     _ladder.Active = false;   // range ladder REMOVED from all scopes (master). was: _scopeHasLadder && _aimAlpha > 0.6f
                     if (_ladder.Active && _cam != null && Godot.GodotObject.IsInstanceValid(_scopeLens))
-                        _ladder.Center = _cam.UnprojectPosition(_scopeLens.GlobalPosition);   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
+                        _ladder.Center = VpToScreen(_cam.UnprojectPosition(_scopeLens.GlobalPosition));   // follow the lens's screen position so the ladder sways WITH the glass + crosshair
                         // ...and its ROLL, or the ladder slides with the glass while staying upright. Measured as
                         // the scope's up-vector projected into the view plane, against the camera's own up -- not
                         // the raw node rotation, which includes pitch/yaw the 2D overlay must ignore.
@@ -1314,7 +1415,7 @@ namespace UnturnedGodot
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
                 hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
-            _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
+            _arms.Position = Driving ? DrivingArmsPos() : hipPos + vmOffset + TuneOffset;   // driving: skull on the camera; else + the live uniform tune offset (ESC sliders)
             // ARMS ROTATION = input inertia + scope sway. Applied to the arms ROOT rather than to the gun model,
             // because the source rotates the viewmodel CAMERA and our arms hang rigidly off that camera -- rotating
             // the gun alone would swing the barrel out of the hands. Recoil rotation stays on the gun (it is a
@@ -1348,9 +1449,18 @@ namespace UnturnedGodot
             // both POSITIVE, yaw HARD-ZEROED. So fwd/back PITCHES the gun and strafe ROLLS it (NOT yaws -- that was the
             // "inverted" feel master caught). The negative signs I nearly copied belong to rotationInputViewmodelRoll,
             // a SEPARATE +='d system -- don't inherit them.
-            armRot.X += _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
-            armRot.Z += _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
-            _arms.RotationDegrees = armRot;
+            // SIGN: the source values are Unity Euler degrees (+X = nose DOWN, +Z = clockwise on screen); Godot's are the
+            // opposite on both axes (+X = nose UP, +Z = counter-clockwise). Applied raw they pitched the muzzle UP toward the
+            // face while walking forward and rolled the ADS picture against the strafe (master 2026-09-03).
+            armRot.X -= _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
+            armRot.Z -= _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
+            if (Driving && _wheelKnown && _wheelAxisCam.LengthSquared() > 0.5f)
+            {
+                // hands turn WITH the wheel: rotate the arm pair about the wheel pivot, around the wheel's own axis, by the steer angle
+                var pivot = new Transform3D(Basis.Identity, _wheelTargetCam);
+                _arms.Transform = pivot * new Transform3D(new Basis(_wheelAxisCam.Normalized(), Mathf.DegToRad(_wheelSteerDeg)), Vector3.Zero) * pivot.AffineInverse() * new Transform3D(Basis.Identity, _arms.Position);
+            }
+            else _arms.RotationDegrees = armRot;
             // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.
             // Stylistic only (the bullet origin already leans via the eye pivot, tinyclaw). Doing it in 2D keeps the ADS
             // sight pinned dead-centre (it sits at the roll pivot) while the gun tilts around it, and -- crucially -- it
@@ -1389,7 +1499,7 @@ namespace UnturnedGodot
                     else _arms.Play(_sprintStopClip);
                 }
             }
-            if (_cam != null) _cam.Fov = TuneFov;              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
+            if (_cam != null) _cam.Fov = OversizeFov(TuneFov);              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
 
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
@@ -1467,6 +1577,11 @@ namespace UnturnedGodot
                 c.Life += (float)delta;
                 c.Vel += Vector3.Down * 9.8f * (float)delta;
                 c.Node.GlobalPosition += c.Vel * (float)delta;
+                if (!c.Bounced && c.Life > 0.5f)   // the brass lands half a second after ejection (0.35 -> 0.5, strawberry 2026-09-03 "delay the bullet brass sound by a little more"); was a third of a second: retail bulletcasingbounce/<surface> (2D -- the local player's own casing)
+                {
+                    c.Bounced = true;
+                    GameAudio.Play2D(this, GameAudio.Pick("casings", CasingSurface), -12f, _rng.RandfRange(0.92f, 1.08f));
+                }
                 c.Node.RotateX(c.Spin.X * (float)delta);
                 c.Node.RotateY(c.Spin.Y * (float)delta);
                 c.Node.RotateZ(c.Spin.Z * (float)delta);
@@ -1486,7 +1601,7 @@ namespace UnturnedGodot
         static Texture2D LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 

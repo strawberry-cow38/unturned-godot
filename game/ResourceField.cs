@@ -458,7 +458,7 @@ namespace UnturnedGodot
             if (File.Exists(texPath))
             {
                 var img = new Image();
-                if (img.Load(texPath) == Error.Ok)
+                if (ContentProvider.LoadOk(img, texPath))
                 {
                     img.GenerateMipmaps();
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
@@ -484,7 +484,7 @@ namespace UnturnedGodot
             if (File.Exists(texPath))
             {
                 var img = new Image();
-                if (img.Load(texPath) == Error.Ok) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); }
+                if (ContentProvider.LoadOk(img, texPath)) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); }
             }
             return m;
         }
@@ -509,7 +509,7 @@ namespace UnturnedGodot
         public bool Felled { get; private set; }
         float _maxHealth;
 
-        public override void _Ready() => _maxHealth = Health;
+        public override void _Ready() { _maxHealth = Health; SetProcess(false); }   // PERF (ETW 2026-09-02): an idle tree paid a full engine->C# dispatch every frame to run `if (!_toppling) return;` -- ~25% of the main thread across PEI. Process only while toppling.
 
         // Gun/melee damage; fells the tree once Health hits 0.
         public void Chop(float amount, Vector3 point, Vector3 dir)
@@ -575,19 +575,19 @@ namespace UnturnedGodot
             Vector3 fall = new Vector3(dir.X, 0f, dir.Z);
             fall = fall.LengthSquared() > 0.01f ? fall.Normalized() : Vector3.Forward;
             _toppleAxis = Vector3.Up.Cross(fall).Normalized();   // top topples toward `fall`
-            _topple = 0f; _toppling = true;
+            _topple = 0f; _toppling = true; SetProcess(true);
             GetTree().CreateTimer(7.0).Timeout += () => { if (GodotObject.IsInstanceValid(_debris)) _debris.QueueFree(); };   // clean up the fallen tree
         }
 
         public override void _Process(double delta)
         {
-            if (!_toppling || !GodotObject.IsInstanceValid(_debris)) return;
+            if (!_toppling || !GodotObject.IsInstanceValid(_debris)) { SetProcess(false); return; }
             _topple = Mathf.Min(1f, _topple + (float)delta / ToppleTime);
             float ang = Mathf.DegToRad(84f) * (_topple * _topple);   // ease-in: gravity accelerates the fall
             var rot = new Basis(_toppleAxis, ang);
             Vector3 p = _toppleBase.Origin;                          // pivot about the stump/base, in WORLD space
             _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
-            if (_topple >= 1f) _toppling = false;
+            if (_topple >= 1f) { _toppling = false; SetProcess(false); }
         }
 
         // Load <ResDir>/<TreeName>_<suffix>_<i>.obj + _tex.png as MeshInstance3D children of `parent`, until a part is missing.
@@ -601,7 +601,7 @@ namespace UnturnedGodot
                 if (m == null) break;
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
-                if (img.Load(ResDir + $"{TreeName}_{suffix}_{i}_tex.png") == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                if (ContentProvider.LoadOk(img, ResDir + $"{TreeName}_{suffix}_{i}_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
                 parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
         }

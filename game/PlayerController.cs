@@ -52,7 +52,14 @@ namespace UnturnedGodot
         bool _leanQHeld, _leanEHeld;           // edge detection: the shoulder swap fires on PRESS, the lean on hold
         bool _leanObstructed;
         float _leanAngle;                      // current rolled degrees, lerped toward _lean * LeanDegrees
-        Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
+        Vector3 _interpPrev, _interpCurr; bool _interpReady;
+        static float DistToSegmentSq(Vector3 p, Vector3 a, Vector3 b)
+        {
+            var ab = b - a; float len2 = ab.LengthSquared();
+            if (len2 < 1e-8f) return p.DistanceSquaredTo(a);
+            float t = Mathf.Clamp((p - a).Dot(ab) / len2, 0f, 1f);
+            return p.DistanceSquaredTo(a + ab * t);
+        }   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
@@ -163,6 +170,27 @@ namespace UnturnedGodot
 
         // Chopping a tree: an eye-ray to the aimed tree trunk (the world-layer cylinder ResourceField gives each tree).
         // Called before the zombie/animal sweep so a swing fells the tree rather than an enemy standing behind it.
+        /// <summary>Melee on a destructible WORLD PROP: the same authority path bullets use (NetDamageObject -> the
+        /// destructible host, replicated break), with the weapon's .dat Resource/object damage. Forward ray from the eyes.</summary>
+        bool MeleeDestructible(float range, float mult)
+        {
+            if (_cam == null) return false;
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return false;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * (range + 0.5f), 1u << 0, new Godot.Collections.Array<Rid> { GetRid() });
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0 || hit["collider"].As<GodotObject>() is not Node dn || !dn.HasMeta(DestructibleField.MetaKey)) return false;
+            Vector3 point = hit["position"].AsVector3();
+            if (dn.HasMeta(Toaster.HitMeta) && dn.GetMeta(Toaster.HitMeta).As<Toaster>() is Toaster tst && IsInstanceValid(tst)) tst.OnShot();
+            float amount = (_melee?.ResourceDamage ?? 5f) * mult * 4f;   // .dat Resource damage is per-tick for trees; a prop swing lands the bullet-equivalent chunk
+            NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), amount);
+            HitmarkerHUD.Instance?.ShowCircle();
+            Surf sf = dn.HasMeta(SurfMeta) ? (Surf)(int)dn.GetMeta(SurfMeta) : Surf.Wood;
+            MeleeImpactFx(point, false, sf);
+            GD.Print($"[melee] hit destructible {dn.Name} for {amount:0}");
+            return true;
+        }
+
         bool MeleeTree(float amount, float range)
         {
             if (_cam == null) return false;
@@ -226,7 +254,18 @@ namespace UnturnedGodot
         bool _jogWPrev, _jogSPrev;   // Ctrl+W/S edge-detect: jog the train exactly one carriage
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
-        float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
+        float _driveCamYaw, _driveCamPitch = 15f;
+        float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")
+        const float DriveCamZoomMin = 0.35f, DriveCamZoomMax = 1.8f, DriveCamZoomStep = 0.88f;
+        float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
+        float _fpLookYaw, _fpLookPitch;           // ALT-hold LOOK in 1st person on foot (strawberry 2026-09-04): the head turns over either shoulder / up / down while the body, the aim and the viewmodel stay put; eases back on release
+        /// <summary>ALT held on foot (either view): the camera is looking around, the body is not -- no shooting, no ADS, no interacting while it lasts (master).</summary>
+        public bool AltLooking => !_dead && _driving == null && _riding == null && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsKeyPressed(Key.Alt);
+        /// <summary>0..~1.5: how open the 3P crosshair is. Hip = 1, ADS tightens to the gun's Spread_Aim, moving and un-drained recoil bloom it (HUD.Crosshair3PControl).</summary>
+        public float CrosshairSpread01 { get; private set; } = 1f;
+        float _tpOrbitYaw, _tpOrbitPitch;         // ALT-hold ORBIT in 3rd person on foot (strawberry 2026-09-04 "add alt hold orbit cam for 3p"): the mouse swings the camera around the body -- to see your own face -- without turning the player; eases back on release
+        public (float yaw, float pitch) DebugTpOrbit => (_tpOrbitYaw, _tpOrbitPitch);
+        float _casingSurfT;                       // throttle for the casing-bank refresh (the surface under the feet, sampled while a gun is out -- not only on footsteps)   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         /// <summary>Seated look limits, taken from retail PlayerLook (clampYaw / clampPitch) rather than
         /// invented: a DRIVING seat clamps yaw to +/-160, any other seat to +/-90, and a seated pitch to
         /// MIN_ANGLE_SIT 60 / MAX_ANGLE_SIT 120 against a 0..180 scale where 90 is level -- +/-30 for us.</summary>
@@ -404,6 +443,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusGasPump)) n++;
                 if (IsInstanceValid(_focusGrid)) n++;
                 if (IsInstanceValid(_focusTV)) n++;
+                if (IsInstanceValid(_focusRadio)) n++;
                 if (IsInstanceValid(_focusShelfItem)) n++;
                 if (IsInstanceValid(_focusShelf)) n++;
                 if (_focusPuppet is Node3D fp && IsInstanceValid(fp)) n++;
@@ -416,6 +456,7 @@ namespace UnturnedGodot
         double _interactClock;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
+        RadioDevice _focusRadio;      // the radio being LOOKED AT -> F toggles it on/off
         HeartMonitor _focusMonitor;   // ...and the patient monitor, same deal
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
@@ -440,6 +481,7 @@ namespace UnturnedGodot
         float _fluidPickupTimer;      // seconds F has been held on _fHeldFluid
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
+        float _lookEndDist;     // its distance along the trace at the last scan (per-frame sphere reposition)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
         MeshInstance3D _lookHullViz; ImmediateMesh _lookHullMesh; bool _showLookHulls;   // I-toggle wireframe of every vehicle's look-focus hulls (culled behind-cam / past LookHullVizRange for fps)
         const float LookHullVizRange = 70f;        // don't draw hull wireframes for vehicles farther than this from the camera (fps)
@@ -489,12 +531,15 @@ namespace UnturnedGodot
             return Look.Puppet;
         }
 
+        double _lookFocusT, _grassT;   // PERF: rate limiters (see ProcessTick)
+        System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispPrev;   // last uploaded displacer texels (see UpdateGrassDisplacement)
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             // which door/hood/trunk of the focused vehicle the ray found
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
+            RadioDevice hitRadio = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
@@ -526,6 +571,7 @@ namespace UnturnedGodot
                 _lookRayQ.From = from; _lookRayQ.To = from + fwd * LookReach;
                 var rhit = space.IntersectRay(_lookRayQ);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
+                _lookEndDist = (_lookEnd - from).Length();   // so the per-frame sphere reposition can ride the current camera forward between scans
                 // a placed deployable (generator) stops the ray on the world layer -> focus it directly from the ray hit
                 // (LOS-correct: a wall in the way stops the ray first). The LookReach IS the look-at radius.
                 if (rhit.Count > 0)
@@ -537,15 +583,16 @@ namespace UnturnedGodot
                         if (ShelfOf(rod) is StoreShelf rodShelf) hitShelf = rodShelf;   // a CONTAINER's now-solid door leaf -> focus the whole shelf (F opens the inventory + whole-prop highlight), not the leaf alone
                         else hitObjectDoor = rod;                                        // a standalone doored prop -> the door itself (F toggles it)
                     }
-                else if (rcol is Node bdn && bdn.HasMeta("objectdoor") && bdn.GetMeta("objectdoor").As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
+                else if (rcol is Node bdn && bdn.HasMeta(Sn.objectdoor) && bdn.GetMeta(Sn.objectdoor).As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is NoteBody rnote && IsInstanceValid(rnote)) hitNote = rnote;   // readable lore note (see-through layer) -> focus + F reads it
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
-                    else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
-                    else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
+                    else if (rcol is Node grn && grn.HasMeta(Sn.gaspump) && grn.GetMeta(Sn.gaspump).As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
+                    else if (rcol is Node grn2 && grn2.HasMeta(Sn.gridpower) && grn2.GetMeta(Sn.gridpower).As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is Node hmn && hmn.HasMeta(HeartMonitor.HitMeta) && hmn.GetMeta(HeartMonitor.HitMeta).As<HeartMonitor>() is HeartMonitor hmd && IsInstanceValid(hmd)) hitMonitor = hmd;   // patient monitor body -> its device (F toggles; the bullet path shoots the screen out)
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
+                    else if (rcol is Node rdn && rdn.HasMeta(RadioDevice.HitMeta) && rdn.GetMeta(RadioDevice.HitMeta).As<RadioDevice>() is RadioDevice rdd && IsInstanceValid(rdd)) hitRadio = rdd;   // radio body collider tagged in WorldBuilder -> its device (F toggles)
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
@@ -572,7 +619,7 @@ namespace UnturnedGodot
                         float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestI) { bestI = d; hitItem = wi; }
                     }
-                    else if (c is Vehicle v && IsInstanceValid(v))   // alive car (F to enter) OR a wreck (blowtorch salvage) -- both focusable (master)
+                    else if (Vehicle.Owning(c) is Vehicle v)   // alive car (F to enter) OR a wreck (blowtorch salvage) -- both focusable (master). Owning, not a cast: the mesh hitbox puts a child body between the ray and the Vehicle
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
@@ -613,7 +660,7 @@ namespace UnturnedGodot
                 if (won == Look.None)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix). Skipped entirely once something else already owns the frame -- correctness AND the O(vehicles) loop.
                 {
                     float maxD = (LookReach + 6f) * (LookReach + 6f);
-                    foreach (var node in GetTree().GetNodesInGroup("vehicles"))
+                    foreach (var node in Vehicle.Live)   // PERF: C# registry, not a marshalled group array every scan
                         if (node is Vehicle vv && IsInstanceValid(vv))
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
@@ -732,6 +779,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
+            }
+            if (hitRadio != _focusRadio)   // radio look-focus: same whole-prop white outline as the TV
+            {
+                if (IsInstanceValid(_focusRadio)) _focusRadio.SetLookFocused(false);
+                _focusRadio = hitRadio;
+                _focusRadio?.SetLookFocused(true);
             }
             if (hitLamp != _focusLamp)   // standing/desk lamp look-focus: whole-lamp white outline, same pattern as the TV
             {
@@ -1709,7 +1762,7 @@ namespace UnturnedGodot
         void UpdateSalvage(float delta)
         {
             var v = (_focusVehicle != null && IsInstanceValid(_focusVehicle)) ? _focusVehicle : null;
-            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
+            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false) && !AltLooking;
             bool sparks = HasBlowtorch && lmb;   // the torch is LIT whenever the trigger's held (source: Repeated Start_Swing continuous use); it repairs a hurt car / salvages a cold wreck when aimed at one
             if (v != null && HasBlowtorch && !v.IsWreck && v.Hurt)   // blowtorch REPAIR: full-auto healing of a hurt alive car while LMB is held (master), with torch sparks
             {
@@ -1761,6 +1814,46 @@ namespace UnturnedGodot
             if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(); _torchAnimOn = true; }
             else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
+            UpdateChainsaw(delta, lmb);
+        }
+
+        // ---- CHAINSAW -------------------------------------------------------------------------------------------
+        // A Repeated tool that damages instead of repairing. Two behaviours, and strawberry asked for both:
+        // it SHAKES whenever it is in your hands (a chainsaw is running, not idle), harder while you are cutting,
+        // and it lands normal melee damage on a repeat instead of a swing.
+        //
+        // "at the same speed as the blowtorch" (strawberry) is why the interval is a shared constant rather than
+        // this weapon's own clip length: the blowtorch's continuous action has no discrete cadence to copy -- it
+        // repairs per frame -- so the only way for the two to be the SAME speed is for every Repeated tool to act
+        // on one rate. 0.45 s is the weak-swing fallback the normal melee path uses, so a chainsaw cuts at about
+        // the tempo a light weapon swings at.
+        const float RepeatedHitInterval = 0.45f;
+        static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
+        static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
+        float _sawHitCd;
+        Vector3 _lastSawShake;
+        /// <summary>Test seams: drive the saw tick directly and read the shake it asked for. UpdateChainsaw runs
+        /// inside UpdateSalvage off real input, which a headless suite has no way to press.</summary>
+        public void DebugTickChainsaw(float dt, bool lmb) => UpdateChainsaw(dt, lmb);
+        public Vector3 DebugSawShake => _lastSawShake;
+
+        void UpdateChainsaw(float delta, bool lmb)
+        {
+            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; return; }
+            // SHAKE. Deliberately outside the lmb branch: strawberry's "shakes while on (while held)" means the saw
+            // is running whenever it is out, so the idle tremor is a property of holding it, not of attacking.
+            var amp = lmb ? SawCutShake : SawIdleShake;
+            _lastSawShake = amp;   // recorded so the suite can see the idle-vs-cutting difference without a viewmodel
+            _viewmodel?.ShakeOnly(-amp, amp);
+            if (!lmb) { _sawHitCd = 0f; return; }   // released -> the next pull cuts immediately, no stored cooldown
+            _sawHitCd -= delta;
+            if (_sawHitCd > 0f) return;
+            _sawHitCd = RepeatedHitInterval;
+            // Same two paths a swing takes, so the saw is not a second combat system: in MP the SERVER owns the hit
+            // and re-evaluates the target at land time; in SP it lands locally. `false` = a weak hit -- a Repeated
+            // tool has no strong attack (source ItemMeleeAsset), so its damage must never take the Strength multiplier.
+            if (NetMelee != null) NetMelee(false, RotationDegrees.Y);
+            else ApplyMeleeHit(false);
         }
 
         // F (interact): pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
@@ -1773,30 +1866,63 @@ namespace UnturnedGodot
                 var grabbed = shelf.GrabItem(_focusShelfItem.CellKey);   // removes it from the grid -> the display syncs the model away
                 _focusShelfItem = null;
                 if (grabbed == null) return;
-                if (Inventory.tryAddItem(grabbed))
+                bool freeHands = Unarmed;
+                var wentShelf = Inventory.tryAddItemAuto(grabbed, out byte shelfSlot);
+                if (wentShelf != PlayerInventory.AutoPlace.None)
                 {
                     GD.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
-                    _invUI?.Refresh();
-                    if (Unarmed) EquipItemAsset(grabbed.GetAsset(), grabbed);   // hands free -> hold it (strawberry: restore force-into-hands on pickup, for all items)
+                    AfterAutoPickup(wentShelf, shelfSlot, grabbed, freeHands);
                 }
                 else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
                 return;
             }
             var wi = _focusItem;
-            if (wi == null || !IsInstanceValid(wi) || !Inventory.tryAddItem(wi.Item)) return;
-            var item = wi.Item; var asset = item.GetAsset();
+            if (wi == null || !IsInstanceValid(wi)) return;
             bool wasUnarmed = Unarmed;
-            GD.Print($"[pickup] {asset?.itemName}");
+            var went = Inventory.tryAddItemAuto(wi.Item, out byte slot);
+            if (went == PlayerInventory.AutoPlace.None) return;
+            var item = wi.Item; var asset = item.GetAsset();
+            GD.Print($"[pickup] {asset?.itemName} -> {went}");
             wi.QueueFree();
             _focusItem = null;
-            _invUI?.Refresh();
-            if (wasUnarmed) EquipItemAsset(asset, item);   // picked up with an empty hand -> equip it in the hand (strawberry)
+            AfterAutoPickup(went, slot, item, wasUnarmed);
         }
+
+        // Retail tryAddItemAuto's aftermath (strawberry 2026-09-04): "picking up clothing for a slot that you dont
+        // have filled ... should equip it straight onto your player. likewise, picking up an item that fits in a 1 or
+        // 2 slot and you dont have anything in there yet should put it into the relevant slot, and also force it into
+        // your hands." Worn -> the clothing controller repaints off the worn state; Slot -> into the hands, whatever
+        // was there; Grid -> the older rule (empty hands take the pickup).
+        void AfterAutoPickup(PlayerInventory.AutoPlace went, byte slot, SDG.Unturned.Item item, bool wasUnarmed)
+        {
+            _invUI?.Refresh();
+            var asset = item?.GetAsset();
+            switch (went)
+            {
+                case PlayerInventory.AutoPlace.Worn: _clothing?.Refresh(); break;
+                case PlayerInventory.AutoPlace.Slot: if (EquipItemAsset(asset, item)) NoteHeldFrom(slot, 0, 0); break;
+                default: if (wasUnarmed) EquipItemAsset(asset, item); break;
+            }
+        }
+
+        // MP: the pickup is a REQUEST and the server places it (tryAddItemAuto); the owner echo then shows where it
+        // went. Remember what was asked for, so the echo that holsters it into a hand slot forces it into the hands
+        // exactly like the SP path -- and a pickup that landed in the grid is left alone (older empty-hands rule).
+        ushort _pendingPickupId; double _pendingPickupUntil;
+        public bool IsHeldAt(int page, byte x, byte y) => HasSomethingHeld && _heldPage == page && _heldX == x && _heldY == y;
 
         float _meleeCd;
         MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
         string _heldMeleeName;   // content name of the held melee (for tool checks, e.g. the blowtorch)
         public bool HasBlowtorch => _melee != null && _melee.Repair;   // a REPAIR tool in hand (source: blowtorch carries the "Repair" flag) -> repairs hurt cars + salvages wrecks
+
+        /// <summary>A running CHAINSAW: a Repeated tool WITHOUT the Repair flag (strawberry 2026-09-04 "wire up the
+        /// chainsaw melee weapon"). The data already drew this line and nothing read it -- MeleeDef.Repair is
+        /// documented as "the continuous action REPAIRS the target (blowtorch) rather than damaging it", so the
+        /// other side of that sentence is a Repeated tool that DAMAGES, and the chainsaw was the only one of those.
+        /// Its .dat has carried full melee damage all along (Player 25, Resource 50 -- it is a tree chewer); the
+        /// Repeated branch simply never used it, so holding LMB did nothing at all.</summary>
+        public bool IsRepeatedDamage => _melee != null && _melee.Repeated && !_melee.Repair;
         public bool IsRepeatedMelee => _melee != null && _melee.Repeated;   // a "Repeated" tool (blowtorch/chainsaw): continuous HOLD, NO weak/strong swing, NO strong (RMB) attack (source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks")
         float _salvageTimer;   // seconds of LMB-hold accumulated against the focused wreck (blowtorch salvage)
         const float SalvageTime = 3f;   // hold this long to break a wreck down
@@ -1833,6 +1959,8 @@ namespace UnturnedGodot
         // without this, eating the last of a stack would also yank an unrelated weapon out of your hands.
         int _heldSlotPage = -1;
 
+        /// <summary>The item id in the hands for the wire (v22 MoveInput.HeldItemId): the backing item of the held gun/melee/tool, 0 for fists or nothing.</summary>
+        public ushort HeldItemIdForNet => _heldItem?.id ?? 0;
         public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
                                      || (_heldMeleeName != null && _heldMeleeName != "fists");
@@ -2596,9 +2724,14 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
-                    if (_deployable.IsStorage)   // STORAGE device (fridge): spawn a Refrigerator LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    if (_deployable.IsStorage)   // STORAGE device (fridge): singleplayer spawns a Refrigerator LOCALLY here
                     {
-                        FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        // ...but NOT in MP any more. The fridge is a replicated deployable now, so the server
+                        // places it and DeployableReplicaView materializes it for everybody INCLUDING the
+                        // placer. Spawning locally as well would leave the placer looking at two fridges in
+                        // the same spot -- one real and shared, one a ghost only he can see and only he can
+                        // open, since the server's crate is keyed to the replicated NetId.
+                        if (NetPlaceDeployable == null) FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         GD.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
@@ -2606,7 +2739,8 @@ namespace UnturnedGodot
                             ushort id = _deployItem.id;
                             if (NetPlaceDeployable != null)
                             {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
-                                // then ServerPlace no-ops the storage id (filtered from the schema) so NO phantom replica spawns.
+                                // and now ALSO places the storage device for real and registers its grid (it is in the
+                                // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
                                 NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
@@ -2922,12 +3056,20 @@ namespace UnturnedGodot
             _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
             if (_meleeCd <= 0.05f) _meleeCd = strong ? 0.75f : 0.45f;
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
+            if (_body != null && !_fpOnlyBody3pSkip) { float sl = _body.PlayMeleeSwing(_heldMeleeName ?? "fists", strong); if (sl > 0f) _bodySwinging3p = true; }   // the SAME swing on the 3P body (strawberry 2026-09-03)
             float alert = _melee?.Alert ?? 0f;
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing NOISE fires with the swing (source AlertTool.alert); 0 = stealthy
             // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
             // NOT instantly on click -- scheduled here and applied by the tick, re-evaluating targets when it connects (master).
             if (NetMelee != null) { NetMelee(strong, RotationDegrees.Y); return; }   // D1: swing fx played above; the SERVER owns the deferred hit (ServerCombat re-evaluates at land time)
-            _pendingMeleeStrong = strong; _pendingMeleeHit = _meleeCd * 0.7f;
+            // Source: the hit gate (UseableMelee isDamageable) is the swing's frame count x the asset's Weak|Strong fraction --
+            // ItemMeleeAsset.cs:91-92 defaults Weak 0.5, Strong 0.33, and the .dats author 0.37-0.45 (tinyclaw's read of
+            // the source; my first fix used the repeated-tool 0.1 s throttle by mistake). It used to fire at 70% of the whole
+            // clip: 1.14 s on a 1.63 s axe strong swing, well after the visual contact (master: "applied way too late").
+            // Authored numbers, not feel: axe strong = 0.33 x 1.63 = 0.54 s.
+            _pendingMeleeStrong = strong;
+            float frac = strong ? (_melee?.Strong ?? 0.33f) : (_melee?.Weak ?? 0.5f);
+            _pendingMeleeHit = _meleeCd * Mathf.Clamp(frac, 0.05f, 0.95f);
         }
 
         float _pendingMeleeHit = -1f; bool _pendingMeleeStrong;   // deferred melee hit: >0 = a swing is mid-flight, damage lands when it reaches 0
@@ -2979,6 +3121,7 @@ namespace UnturnedGodot
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
+            if (MeleeDestructible(range, mult)) return;   // a destructible world prop (crate, TV, fence...) -- melee had no branch for these, only bullets did (master 2026-09-03)
             foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies take melee (one target per swing)
                 if (n is ZombieBody z && !z.Dead)
                 {
@@ -3013,7 +3156,12 @@ namespace UnturnedGodot
         void MeleeImpactFx(Vector3 point, bool flesh, Surf surf = Surf.Concrete)
         {
             if (flesh) { SpawnFleshImpact(point, -(_cam?.GlobalTransform.Basis.Z ?? Vector3.Back)); HitmarkerHUD.Instance?.Show(false); }
-            else PlayImpactSound(ImpactSnd(surf), point);
+            else
+            {
+                string mb = GameAudio.MeleeSurface(surf);   // retail effects/physics/meleeimpact/<material> where the bank exists (metal, grass); the rest keep the material thunk
+                var retail = mb != null ? GameAudio.Pick("meleeimpacts", mb) : null;
+                PlayImpactSound(retail ?? ImpactSnd(surf), point);
+            }
         }
 
         // PlayerLife.onLanded: landing faster than the fall-damage threshold (map default 22 m/s, and the port has
@@ -3038,6 +3186,7 @@ namespace UnturnedGodot
         // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
+            GameAudio.Explosion(this, point, radius);   // retail Bomb effect audio (effects/explosions/bomb_N/fire), ripped 2026-09-03
             foreach (var n in GetTree().GetNodesInGroup("zombies"))   // zombies caught in the blast: linear falloff + wall rule
                 if (n is ZombieBody z && !z.Dead)
                 {
@@ -3274,6 +3423,9 @@ namespace UnturnedGodot
         public void AdoptReplicatedInventory(PlayerInventory replica)
         {
             if (replica == null || Inventory == null || ReferenceEquals(replica, Inventory)) return;
+            static ushort WId(Item i) => i?.id ?? (ushort)0;
+            bool wornChanged = WId(Inventory.wornHat) != WId(replica.wornHat) || WId(Inventory.wornGlasses) != WId(replica.wornGlasses) || WId(Inventory.wornMask) != WId(replica.wornMask)
+                || WId(Inventory.wornShirt) != WId(replica.wornShirt) || WId(Inventory.wornVest) != WId(replica.wornVest) || WId(Inventory.wornBackpack) != WId(replica.wornBackpack) || WId(Inventory.wornPants) != WId(replica.wornPants);
             Inventory.wornHat = replica.wornHat; Inventory.wornGlasses = replica.wornGlasses; Inventory.wornMask = replica.wornMask;
             Inventory.wornShirt = replica.wornShirt; Inventory.wornVest = replica.wornVest;
             Inventory.wornBackpack = replica.wornBackpack; Inventory.wornPants = replica.wornPants;
@@ -3283,6 +3435,22 @@ namespace UnturnedGodot
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
             RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
+            if (wornChanged) _clothing?.Refresh();   // a server-side wear (auto-worn pickup) repaints the body like a local one does
+            if (_pendingPickupId != 0)
+            {
+                if (Time.GetTicksMsec() / 1000.0 > _pendingPickupUntil) _pendingPickupId = 0;
+                else
+                    for (byte s = 0; s < PlayerInventory.SLOTS; s++)
+                    {
+                        var pg = Inventory.items[s];
+                        if (pg.getItemCount() == 0) continue;
+                        var j = pg.getItem(0);
+                        if (j?.item == null || j.item.id != _pendingPickupId) continue;
+                        if (!IsHeld(j.GetAsset(), j.item) && EquipItemAsset(j.GetAsset(), j.item)) NoteHeldFrom(s, 0, 0);   // the requested pickup was holstered -> hands
+                        _pendingPickupId = 0;
+                        break;
+                    }
+            }
         }
         /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
         /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
@@ -3416,6 +3584,39 @@ namespace UnturnedGodot
         public bool Moving { get; private set; }
         public EPlayerStance Stance => _move.Stance;
         float _footNoiseT;   // Phase 3 hearing: throttle the continuous footstep-noise emit (~2.5x/s while moving)
+        float _strideAcc;    // metres of ground covered since the last footstep sound
+        /// <summary>Material under the feet for footstep/landing audio: water when wading, else the terrain splatmap or a
+        /// prop's SurfMeta via a short downward ray. Concrete when nothing says otherwise.</summary>
+        /// <summary>The retail casing-bounce bank for a foot surface (casings/&lt;bank&gt;_NN): metal/wood/sand/water, else general.</summary>
+        static string CasingBank(Surf s) => s switch { Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "sand", Surf.Water => "water", _ => "general" };
+        Surf FootSurfaceUnderFeet()
+        {
+            // A miss means the short ray found no floor. The local shell only asks while IsOnFloor(), so that is
+            // a floor the ray failed to catch rather than thin air -- Concrete, as it always was. A PUPPET has no
+            // IsOnFloor to lean on and reads the same miss as airborne, which is the whole reason the probe below
+            // reports "nothing underfoot" separately instead of flattening it into a default surface.
+            return TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var s) ? s : Surf.Concrete;
+        }
+
+        /// <summary>The shared footstep/landing surface probe: water when wading, else the terrain splatmap or a
+        /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
+        /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
+        /// -- one rule, so a floor that sounds like metal underfoot cannot sound like concrete to everyone else.</summary>
+        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf)
+        {
+            surf = Surf.Concrete;
+            if (Terrain.HasWater && pos.Y < Terrain.SeaLevelY + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it
+            var space = ctx?.GetWorld3D()?.DirectSpaceState; if (space == null) return false;
+            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * 0.3f, pos + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return false;
+            if (hit["collider"].As<GodotObject>() is Node n)
+            {
+                if (Terrain.Active != null && n.IsInGroup("terrain")) { surf = Terrain.Active.SurfAt(pos.X, pos.Z); return true; }
+                if (n.HasMeta(SurfMeta)) { surf = (Surf)(int)n.GetMeta(SurfMeta); return true; }
+            }
+            return true;   // something solid, just unlabelled -- concrete
+        }
 
         // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
         // player, by stance -- standing 12, crouched 6, sprinting 20, prone 3, x1.1 while moving. AlertTool
@@ -3520,7 +3721,7 @@ namespace UnturnedGodot
         /// <summary>Test seam: the current virtual stick (pitch, roll) the pilot is holding.</summary>
         public UnityEngine.Vector2 DebugHeliStick => new UnityEngine.Vector2(_heliStickP, _heliStickR);
         public bool LastHandbrakeInput;
-        public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
+        public System.Action<uint, byte> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for a seat (255 = any free one)
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
 
         // D1 MP combat routing seams (PEI_COMBAT_PLAN §3 D1) -- the NetEnterVehicle pattern: wired ONLY by
@@ -3607,7 +3808,11 @@ namespace UnturnedGodot
         {
             var p = NearestPuppet();
             if (p == null) return false;
-            NetEnterVehicle(p.NetId);
+            // The door zone you are standing at names a seat, exactly as it does in singleplayer
+            // (EnterVehicle(_focusVehicle, _focusAccess.Seat)); no zone means any free one, driver first.
+            byte seat = (_focusAccessValid && _focusAccess.Seat >= 0 && _focusAccess.Seat < 255)
+                        ? (byte)_focusAccess.Seat : (byte)255;
+            NetEnterVehicle(p.NetId, seat);
             return true;
         }
 
@@ -3624,6 +3829,7 @@ namespace UnturnedGodot
         public bool RequestPickupPuppet(WorldItemPuppet wp)
         {
             if (NetPickupItem == null || wp == null || !IsInstanceValid(wp)) return false;
+            _pendingPickupId = wp.ItemId; _pendingPickupUntil = Time.GetTicksMsec() / 1000.0 + 3.0;   // the echo lands within a few ticks; 3 s is a generous ceiling
             NetPickupItem(wp.NetId);
             return true;
         }
@@ -4466,7 +4672,7 @@ namespace UnturnedGodot
         {
             if (_cam == null || _viewmodel == null) return;
             if (--_lightScanCd > 0) return;
-            _lightScanCd = 3;
+            _lightScanCd = 5;   // PERF: 10 Hz (was ~17 Hz); each scan marshals the whole dynlight group
             _mirrorLights.Clear();
             Vector3 camPos = _cam.GlobalPosition;
             var found = new System.Collections.Generic.List<(float d2, Light3D l)>();
@@ -4495,6 +4701,14 @@ namespace UnturnedGodot
 
         bool _dead;
         double _deathTimer;
+        DeathScreen _deathScreen;   // null on a NetAvatar shell and in headless harnesses -- see the respawn gate
+        /// <summary>Set by the session that owns the respawn clock (MpLoopback) so the death screen's buttons
+        /// can ASK for a respawn instead of being disabled. Singleplayer runs on the loopback listen-server, so
+        /// without this the buttons are dead in exactly the mode the game is normally played in -- which is what
+        /// the first render of this screen showed: "waiting for the server to respawn you", in SP.</summary>
+        public System.Action NetRequestRespawn;
+        bool _respawnForceRandom;   // the button's bed-or-map choice, held across the server round trip
+        float _deathOrbit;          // radians travelled around the corpse since Die()
         RiggedCharacter _corpse;
 
         // Zombie melee lands here; on death, drop a ragdoll corpse + third-person death-cam, then respawn.
@@ -4518,6 +4732,26 @@ namespace UnturnedGodot
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
 
+            ShowHurtCosmetics(amount, fromPos);
+            if (Health <= 0f) { Deaths++; Die(); }
+        }
+
+        /// <summary>The PlayerHurt wire handler for a REAL MP client (ClientWorldSession) -- this player's own
+        /// Health is server-owned there, so the only local work on a hit is the cosmetics: TakeDamage's HP path
+        /// is deliberately unreachable on a NetAvatar, but ShowHurtCosmetics never was HP work in the first
+        /// place. `sourcePos` is null when the server had no source to give (fall damage, starvation, an
+        /// unattributed blast) -- ShowHurtCosmetics already treats a null fromPos as "flash and flinch, no
+        /// direction shown", the same graceful degradation TakeDamage's local callers get.</summary>
+        public void NetHurt(float damage, Vector3? sourcePos) => ShowHurtCosmetics(damage, sourcePos);
+
+        /// <summary>Flash + flinch + the directional hurt indicator, split out of TakeDamage so a REAL MP client
+        /// can play them without going through TakeDamage's HP path -- that path is deliberately gated
+        /// invulnerable on a server-owned NetAvatar (C2: an unreplicated local death would desync everyone
+        /// else), so before this a hurt MP player got no feedback at all, only their Health ticking down on the
+        /// next snapshot. See PlayerHurtEvent for the wire side. Called from TakeDamage for SP/loopback and
+        /// from the PlayerHurt wire handler for a joined client -- one method, so the two paths cannot drift.</summary>
+        void ShowHurtCosmetics(float amount, Vector3? fromPos)
+        {
             // Hurt flash — PlayerLifeUI.onDamaged -> PlayerUI.pain: a red full-screen overlay whose alpha is
             // Clamp(damage/40, 0, 1) * 0.75, but only for a real hit (source gates it on damage > 5).
             if (amount > 5f) PainAlpha = Mathf.Clamp(amount / 40f, 0f, 1f) * 0.75f;
@@ -4535,10 +4769,17 @@ namespace UnturnedGodot
                     float deg = Mathf.Min(amount, 25f) * 0.5f;
                     if (localAxis.IsFinite())   // a degenerate cam basis could NaN the axis -> skip rather than poison _flinch
                         _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();
+
+                    // strawberry 2026-09-03: "add directional visual hit feedback when you get hurt by something".
+                    // Inside the SAME length check the flinch used, so both effects are gated identically and
+                    // directly overhead/underfoot shows neither rather than pointing at an arbitrary direction.
+                    // -dir, NOT dir: `dir` is attacker->me (what the flinch kicks AWAY from), but a "which way
+                    // do I turn to face the threat" indicator wants the opposite vector, me->attacker. Caught by
+                    // comparing a render against a logged bearing (DevConsole's hurttest) rather than by eye --
+                    // passing `dir` unmodified put every mark 180 degrees from where it belonged.
+                    _hurtHud?.Show(-dir.Normalized(), amount);
                 }
             }
-
-            if (Health <= 0f) { Deaths++; Die(); }
         }
 
         // (a door has no ToggleFocusedDoor helper any more: F on a door starts a hold, so the TAP fires from
@@ -4606,13 +4847,14 @@ namespace UnturnedGodot
         {
             _dead = true;
             _deathTimer = 3.5;
+            if (!NetAvatar) MusicPlayer.Get(this)?.Sting(GameAudio.Clip("music", Terrain.MapDir?.ToLowerInvariant() + "_outro") != null ? Terrain.MapDir.ToLowerInvariant() + "_outro" : "death");   // retail: the map's outro on death, death.ogg where a map has none
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
             ClearFisher();               // death reels in any deployed line (no stale bobber/line surviving into respawn)
             EjectFromVehicleOnDeath();   // review #3: detach before the corpse/respawn setup, else the dead driver wedges
             Velocity = Vector3.Zero;
 
-            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));
             if (_corpse != null)
             {
                 GetParent().AddChild(_corpse);
@@ -4627,8 +4869,31 @@ namespace UnturnedGodot
             _viewmodel?.SetShown(false);   // no gun in the death-cam
             if (_cam != null)
             {
-                _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
+                _cam.TopLevel = true;   // hold the death-cam in WORLD space while the body flops -- the orbit below drives it
                 _cam.LookAtFromPosition(GlobalPosition + new Vector3(2.2f, 2.2f, 2.8f), GlobalPosition - new Vector3(0f, 0.6f, 0f), Vector3.Up);
+            }
+            // Start the orbit where that fixed shot already was, so the camera drifts on from the first frame
+            // instead of snapping to some other side of the body.
+            _deathOrbit = Mathf.Atan2(2.2f, 2.8f);
+
+            // The death screen. NOT for a NetAvatar shell (a remote player's body is not a viewer), and NOT
+            // under the headless display server, which is what the L1 harness boots: there is nobody to press a
+            // button there, and building one silently stopped the 3.5 s self-respawn that a dozen in-engine
+            // tests wait on. The previous version of this comment claimed a headless harness "never reaches
+            // here with a viewport" and gated the respawn on the screen being ABSENT -- but a harness shell is
+            // not a NetAvatar, so it got a screen and the timer never fired. Asserting the invariant in a
+            // comment is not establishing it; ask the display server.
+            if (!NetAvatar && DisplayServer.GetName() != "headless")
+            {
+                if (_deathScreen == null || !IsInstanceValid(_deathScreen))
+                {
+                    _deathScreen = new DeathScreen();
+                    _deathScreen.OnRespawnRandom = () => RequestRespawn(forceRandom: true);
+                    _deathScreen.OnRespawnBed = () => RequestRespawn(forceRandom: false);   // Respawn already prefers a claimed bed
+                    AddChild(_deathScreen);
+                }
+                // Only a REMOTE server leaves the buttons dead: on the loopback we can ask it to respawn us.
+                _deathScreen.ShowDeath(Bed.TryGetSpawn(PlayerId, out _, out _), _serverOwnedRespawn && NetRequestRespawn == null);
             }
         }
 
@@ -4684,9 +4949,36 @@ namespace UnturnedGodot
             Visible = true;
         }
 
-        void Respawn(bool reposition = true)
+        /// <summary>A death-screen button. On a server-clocked session the revive has to come FROM the server
+        /// (its PlayerRespawnedEvent drives NetRespawn), so the bed-or-map choice is parked here and consumed by
+        /// Respawn when that event lands; locally it just respawns. The screen hides either way, so a player who
+        /// pressed a button never sits looking at one that appears to have done nothing.</summary>
+        void RequestRespawn(bool forceRandom)
+        {
+            _respawnForceRandom = forceRandom;
+            if (_deathScreen != null && IsInstanceValid(_deathScreen)) _deathScreen.HideDeath();
+            if (_serverOwnedRespawn && NetRequestRespawn != null) { NetRequestRespawn(); return; }
+            Respawn(forceRandomSpawn: forceRandom);
+        }
+
+        /// <summary>Swing the death-cam slowly around the corpse. Tracks the RAGDOLL, not the death position:
+        /// retail's throw sends the body several metres, and a camera orbiting the spot where you were shot ends
+        /// up circling empty ground with the corpse off-screen. Falls back to the shell while the ragdoll is
+        /// still being built.</summary>
+        void OrbitDeathCam(float delta)
+        {
+            if (_cam == null || !IsInstanceValid(_cam)) return;
+            Vector3 focus = (_corpse != null && IsInstanceValid(_corpse) ? _corpse.GlobalPosition : GlobalPosition) + new Vector3(0f, 0.6f, 0f);
+            _deathOrbit += delta * 0.22f;   // ~12.6 deg/s: a full circuit in ~29 s, slow enough to read as a hold
+            const float radius = 3.6f, height = 2.0f;
+            var eye = focus + new Vector3(Mathf.Sin(_deathOrbit) * radius, height, Mathf.Cos(_deathOrbit) * radius);
+            _cam.LookAtFromPosition(eye, focus, Vector3.Up);
+        }
+
+        void Respawn(bool reposition = true, bool forceRandomSpawn = false)
         {
             _dead = false;
+            if (_deathScreen != null && IsInstanceValid(_deathScreen)) _deathScreen.HideDeath();   // also recaptures the mouse
             Health = MaxHealth;
             _netAdoptedHealth = MaxHealth;   // P3a: keep the adopted pin in sync with the fresh HP (the server's coarse Health is 100 on respawn too) so the next UpdateVitals doesn't yank it back down
             Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // fresh vitals on respawn
@@ -4696,7 +4988,12 @@ namespace UnturnedGodot
             {
                 // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to
                 // SpawnPos (a GlobalPosition write would be overwritten by the next state claim).
-                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
+                // forceRandomSpawn is the death screen's "Respawn" button choosing the map over your bed; without
+                // it that button and "Respawn at Bed" would do the same thing for anyone who owns a bed.
+                bool wantRandom = forceRandomSpawn || _respawnForceRandom;
+                Vector3 target = !wantRandom && Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _)
+                    ? bedSpawn + Vector3.Up * 0.5f
+                    : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
                 // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,
@@ -4705,6 +5002,7 @@ namespace UnturnedGodot
                 _interpPrev = _interpCurr = target;
             }
             Velocity = Vector3.Zero;
+            _respawnForceRandom = false;
             _corpse?.QueueFree(); _corpse = null;
             _clothing?.Refresh();   // re-sync the worn clothing onto the (persistent) body after death (source re-applies thirdClothes on spawn)
             _viewmodel?.SetShown(true);
@@ -4916,7 +5214,7 @@ namespace UnturnedGodot
             if (backingItem != null) AttachmentFit.SeedDefaults(backingItem, SDG.Unturned.Assets.find(backingItem.id)?.itemName);
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { GunName = _gunName };
+            _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };
             AddChild(_viewmodel);
             ApplyGunToViewmodel();   // the replacement viewmodel starts on defaults -- re-push the gun's tuning
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
@@ -4929,8 +5227,14 @@ namespace UnturnedGodot
         public override void _EnterTree() => PlayerRegistry.Register(this);
         public override void _ExitTree() => PlayerRegistry.Unregister(this);
 
+        // UG_PERF=1: where the Player load phase goes ([playerprof]) -- strawberry 2026-09-03 loading optimizations
+        static readonly bool _loadProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
+        static double PpMs(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         public override void _Ready()
         {
+            long _pp0 = System.Diagnostics.Stopwatch.GetTimestamp(), _ppA = 0, _ppB = 0, _ppC = 0, _ppD = 0, _ppE = 0, _ppF = 0;
+            TickHub.AddProcess(this, ProcessTick); TickHub.AddPhysicsLate(this, PhysicsTick);   // PERF: hub-ticked (was a TickProxy child = still 2 engine callbacks/frame); LATE = after the nodes that script/position us
+            SetProcess(false); SetPhysicsProcess(false);         // the proxy child owns the engine callbacks; the overrides below stay for DIRECT callers (tests drive the controller with p._Process(dt))
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             // AN NPC HIND'S ROUNDS GO THROUGH THE REAL BULLET SYSTEM. NpcHeli raises a delegate rather than
             // calling in directly, so the AI does not have to know how a shot is drawn or resolved -- it gets
@@ -4952,7 +5256,7 @@ namespace UnturnedGodot
                 NpcTurretFx(origin, dir, gunId);
             };
             CollisionLayer = 1 << 3;   // player bit
-            CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
+            CollisionMask = (1 << 0) | (1 << 6) | (int)RemotePlayers.RemotePlayerLayer | (int)Vehicle.HitMeshBit;    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master) + OTHER PLAYERS on bit 14 (strawberry 2026-09-03 "player vs player collision"; RemotePlayers.RemotePlayerLayer explains why they are not simply on bit 0) + VEHICLE HITBOXES on bit 15 (Vehicle.HitMeshBit -- the model-as-hitbox needs a layer no vehicle masks, or every car collides with its own; saying "the player collides with vehicles" here is clearer than the hitbox borrowing bit 0 to get the same effect). The wall/floor queries below reuse this mask, so they pick it up for free.
 
             _capsule = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
             _hitbox = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, PlayerMovementDef.HEIGHT_STAND / 2f, 0) };
@@ -4998,7 +5302,8 @@ namespace UnturnedGodot
             };
             AddChild(_lookHullViz);
 
-            _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
+            _ppA = System.Diagnostics.Stopwatch.GetTimestamp();
+            _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // live 3rd-person body, wearing the profile's face
             if (_body != null)
             {
                 _body.Visible = false;
@@ -5016,7 +5321,8 @@ namespace UnturnedGodot
                 if (!NetAvatar) _body.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
                 CallDeferred(Node.MethodName.AddSibling, _body);
             }
-            _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
+            _ppB = System.Diagnostics.Stopwatch.GetTimestamp();
+            _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };   // per-gun visuals
             AddChild(_viewmodel);
             ApplyGunToViewmodel();
             _rng.Randomize();
@@ -5036,17 +5342,22 @@ namespace UnturnedGodot
             PopulateDemoInventory();
             // P4: dress the 3P body off the worn slots. The demo kit already wears Cargo Pants (209) + Alicepack (253);
             // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.
+            _ppC = System.Diagnostics.Stopwatch.GetTimestamp();
             _clothing = new PlayerClothingController(_body, Inventory);
             ApplyDefaultOutfit();
+            _ppD = System.Diagnostics.Stopwatch.GetTimestamp();
             _invUI = new InventoryUI { Inv = Inventory, Player = this, Clothing = _clothing };   // P5: drop-to-slot equip drives the on-body visual through the same controller
             AddChild(_invUI);
             _noteReader = new NoteReader();   // F reads a looked-at lore note into this panel
             AddChild(_noteReader);
+            _ppE = System.Diagnostics.Stopwatch.GetTimestamp();
             _craftMenu = new CraftingMenu { Inv = Inventory, Player = this };
             AddChild(_craftMenu);
+            _ppF = System.Diagnostics.Stopwatch.GetTimestamp();
             _skillsUI = new SkillsUI { Player = this };
             AddChild(_skillsUI);
             _build = new BuildTool { Cam = _cam };
+            if (_loadProf) { long _ppZ = System.Diagnostics.Stopwatch.GetTimestamp(); GD.Print($"[playerprof] pre={PpMs(_pp0, _ppA):0} body(rig)={PpMs(_ppA, _ppB):0} viewmodel..clothing={PpMs(_ppB, _ppC):0} clothing={PpMs(_ppC, _ppD):0} invUI+notes={PpMs(_ppD, _ppE):0} craft={PpMs(_ppE, _ppF):0} skills+build={PpMs(_ppF, _ppZ):0}  total={PpMs(_pp0, _ppZ):0} ms"); }
             GetParent().AddChild(_build);   // structures live in the scene, not under the player
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
@@ -5058,14 +5369,23 @@ namespace UnturnedGodot
         public AttachmentMenu AttachMenu;   // T weapon-attachment menu (set by BuildPlayable); null in demos
         public AmmoRadial AmmoRadial;       // R-hold ammo-type radial for loose-shell shotguns (wired beside AttachMenu); null in demos
         bool _rHolding; ulong _rHeldSince;  // R-hold tracking on a shotgun: a quick tap reloads, holding past AmmoRadialHoldMs opens the ammo radial
+        bool _ctrlHolding; ulong _ctrlHeldSince; const ulong LightbarHoldMs = 220; LightbarRadial _lightbarRadial;   // Ctrl-hold -> lightbar pattern radial (emergency vehicles)
         const ulong AmmoRadialHoldMs = 220;
 
         public override void _UnhandledInput(InputEvent @event)
         {
             if (NetAvatar) return;   // a server avatar is driven ONLY through the Scripted* seams, never local input
+            if (_lightbarRadial != null && _lightbarRadial.IsOpen)   // LIGHTBAR RADIAL owns input while open: ctrl-release / LMB = pick, RMB / Esc = cancel. Handled here,
+            {                                                         // BEFORE the "clicks belong to an open UI" guard and the UI key gate that would swallow them (strawberry 2026-09-04 "won't close").
+                bool pick = (@event is InputEventKey { Keycode: Key.Ctrl, Pressed: false }) || (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true });
+                bool cancel = (@event is InputEventKey { Keycode: Key.Escape, Pressed: true }) || (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right, Pressed: true });
+                if (pick) _lightbarRadial.ConfirmAndClose(); else if (cancel) _lightbarRadial.Close();
+                if (pick || cancel) { _ctrlHolding = false; Input.MouseMode = Input.MouseModeEnum.Captured; }
+                if (@event is InputEventMouseButton || @event is InputEventKey { Keycode: Key.Ctrl } || cancel) { GetViewport().SetInputAsHandled(); return; }   // nothing leaks to the horn / drive keys
+            }
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
-            if (_invUI != null && _invUI.IsOpen && !(Keybinds.Matches(GameAction.Inventory, @event) || Keybinds.Matches(GameAction.Interact, @event) || @event is InputEventKey { Keycode: Key.Escape })) return;   // Inventory/Interact/Esc allowed through -> Interact also closes an open container inventory (handled at the top of the F branch), master
+            if (_invUI != null && _invUI.IsOpen && !(Keybinds.Matches(GameAction.Inventory, @event) || Keybinds.Matches(GameAction.Interact, @event) || @event is InputEventKey { PhysicalKeycode: Key.Tab } || @event is InputEventKey { Keycode: Key.Escape })) return;   // Inventory/Interact/Esc allowed through -> Interact also closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
             if (_ridingCrane != null)   // RIDING A CRANE: mouse orbits the 3P chase; F-exit + W/S/A/D/Q/E drive keys go through the normal chain
@@ -5111,6 +5431,13 @@ namespace UnturnedGodot
             }
             // clicks belong to an open UI (inventory / crate / dashboard) when the cursor's visible -- don't fire / honk / aim THROUGH them (master)
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            if (@event is InputEventMouseButton wb && wb.Pressed && (_driving != null || _riding != null) && !_fp
+                && (wb.ButtonIndex == MouseButton.WheelUp || wb.ButtonIndex == MouseButton.WheelDown))
+            {
+                // scroll = reel the chase cam in/out (strawberry 2026-09-03); multiplicative so a step feels the same on a quad and a bus
+                _driveCamZoom = Mathf.Clamp(wb.ButtonIndex == MouseButton.WheelUp ? _driveCamZoom * DriveCamZoomStep : _driveCamZoom / DriveCamZoomStep, DriveCamZoomMin, DriveCamZoomMax);
+                return;
+            }
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 if (_driving != null && (_driving.IsHeli || _driving.IsPlane))
@@ -5124,10 +5451,33 @@ namespace UnturnedGodot
                     // is negated. This shipped as nose-up-on-forward, which VoX reported as flying backwards
                     // and strawberry liked -- they were both describing the same behaviour and disagreeing
                     // about it, which is what a toggle is for.
+                    if (Input.IsKeyPressed(Key.Alt))
+                    {
+                        // ALT = look around WITHOUT touching the stick (strawberry 2026-09-03). The offsets ease back to
+                        // the default view once Alt is released (see the drive tick).
+                        _flyLookYaw = Mathf.Wrap(_flyLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
+                        _flyLookPitch = Mathf.Clamp(_flyLookPitch + mm.Relative.Y * MouseSensitivity, -70f, 70f);
+                        return;
+                    }
                     _heliStickR = Mathf.Clamp(_heliStickR + mm.Relative.X * HeliStickGain, -1f, 1f);
                     bool invertFly = _driving.IsPlane ? ControlsOptions.InvertPlanePitch : ControlsOptions.InvertHeliPitch;   // the plane has its OWN invert-Y toggle, separate from the heli's (master)
                     float pitchDelta = invertFly ? -mm.Relative.Y : mm.Relative.Y;
                     _heliStickP = Mathf.Clamp(_heliStickP + pitchDelta * HeliStickGain, -1f, 1f);
+                }
+                else if (AltLooking)   // on foot, ALT held: the mouse moves the CAMERA, not the player (strawberry 2026-09-04)
+                {
+                    if (_fp)
+                    {   // 1P: turn the head over either shoulder and up/down; the viewmodel lives in its own viewport and stays put
+                        _fpLookYaw = Mathf.Clamp(_fpLookYaw - mm.Relative.X * MouseSensitivity, -150f, 150f);
+                        _fpLookPitch = Mathf.Clamp(_fpLookPitch + (ControlsOptions.InvertLookY ? mm.Relative.Y : -mm.Relative.Y) * MouseSensitivity, -80f, 80f);
+                    }
+                    else
+                    {   // 3P: ORBIT the camera around the body (mouse up -> cam rises and tilts down, the drive-cam convention)
+                        _tpOrbitYaw = Mathf.Wrap(_tpOrbitYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
+                        _tpOrbitPitch = Mathf.Clamp(_tpOrbitPitch + mm.Relative.Y * MouseSensitivity, -75f, 60f);
+                    }
+                    _viewmodel?.SetAiming(false);   // looking around drops the sights
+                    return;
                 }
                 else if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
@@ -5225,7 +5575,7 @@ namespace UnturnedGodot
                 else if (_heldFluidItem != null) { if (Keybinds.IsDown(@event)) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (Keybinds.IsDown(@event)) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
-                else _viewmodel?.SetAiming(Keybinds.IsDown(@event));   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
+                else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
             {
@@ -5262,9 +5612,16 @@ namespace UnturnedGodot
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl } && _driving != null)
+            else if (@event is InputEventKey { Keycode: Key.Ctrl } ck && !ck.Echo && _driving != null && _driving.HasSiren && _seatIndex == 0)
             {
-                if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
+                // Ctrl on an emergency vehicle: quick TAP = siren on/off (as before), HOLD past LightbarHoldMs = the pattern radial (strawberry 2026-09-04)
+                if (ck.Pressed) { if (!_ctrlHolding) { _ctrlHolding = true; _ctrlHeldSince = Time.GetTicksMsec(); } }
+                else if (_ctrlHolding)
+                {
+                    _ctrlHolding = false;
+                    if (_lightbarRadial != null && _lightbarRadial.IsOpen) { _lightbarRadial.ConfirmAndClose(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                    else if (Time.GetTicksMsec() - _ctrlHeldSince < LightbarHoldMs) _driving.ToggleSiren();
+                }
             }
             // N = IGNITION (strawberry_cow 2026-08-24). DRIVER ONLY: a passenger reaching over and killing the
             // engine is not a feature. Echo:false so holding N cannot flap the engine on and off at key-repeat.
@@ -5272,6 +5629,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null && _seatIndex == 0) _driving.ToggleEngine();
             }
+            else if (Keybinds.JustPressed(GameAction.Interact, @event) && AltLooking) { }   // ALT-look: no interacting (master 2026-09-04) -- the eye is on the camera, not the hands
             else if (Keybinds.JustPressed(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
@@ -5308,6 +5666,7 @@ namespace UnturnedGodot
                     else RequestToggleObjectDoor(_focusObjectDoor);
                 }
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
+                else if (_focusRadio != null && IsInstanceValid(_focusRadio)) _focusRadio.Toggle();   // ...same for a radio set
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
@@ -5392,25 +5751,29 @@ namespace UnturnedGodot
                     }
                 }
             }
-            else if (Keybinds.JustPressed(GameAction.Inventory, @event))
+            // UNIFIED MENU (master 2026-09-03): G (bind) or Tab (fixed alternate) = Inventory, Y = Craft, J = Skills, M = Information
+            // (the map). Every key routes through ShowMenu so exactly one screen is open; the same key closes its own screen.
+            else if (Keybinds.JustPressed(GameAction.Inventory, @event) || (@event is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Tab } && !(_build?.Active ?? false)))
             {
                 if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
                 SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
-                if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
-                _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
-                Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // closing the dashboard saves an open crate
+                else ShowMenu(MenuNavbar.Tab.Inventory);
             }
-            // Y opens the crafting index -- the inventory navbar has advertised "Craft [Y]" all along while
-            // nothing listened for it outside build mode. The build-mode Y handler above still wins when active.
-            else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))   // the build-mode Y handler above still wins when active
             {
-                _craftMenu?.Toggle();
-                Input.MouseMode = (_craftMenu != null && _craftMenu.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_craftMenu != null && _craftMenu.IsOpen) { _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                else ShowMenu(MenuNavbar.Tab.Craft);
             }
             else if (Keybinds.JustPressed(GameAction.Skills, @event))
             {
-                _skillsUI?.Toggle();   // Skills (default J): open/close the skills menu (spend XP to level skills)
-                Input.MouseMode = (_skillsUI != null && _skillsUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                if (_skillsUI != null && _skillsUI.IsOpen) { _skillsUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+                else ShowMenu(MenuNavbar.Tab.Skills);
+            }
+            else if (Keybinds.JustPressed(GameAction.Map, @event) && GetViewport().GuiGetFocusOwner() is not LineEdit)
+            {
+                if (MapUI.Current != null && MapUI.Current.IsOpen) MapUI.Current.Close();
+                else ShowMenu(MenuNavbar.Tab.Information);   // the map is the Information tab
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
             {
@@ -5439,7 +5802,26 @@ namespace UnturnedGodot
             }
         }
 
-        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }   // Open() scans Nearby itself now
+        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenSkills() { _skillsUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenMap() { MapUI.Current?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        /// <summary>The unified menu: exactly one of Inventory / Craft / Skills / Information(map) is open at a time, and
+        /// every screen's shared MenuNavbar routes here so a tab click is one call (master 2026-09-03: "unify the whole ui").</summary>
+        public void ShowMenu(MenuNavbar.Tab tab)
+        {
+            if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); }
+            if (_craftMenu != null && _craftMenu.IsOpen) _craftMenu.Close();
+            if (_skillsUI != null && _skillsUI.IsOpen) _skillsUI.Close();
+            MapUI.Current?.Close(false);
+            switch (tab)
+            {
+                case MenuNavbar.Tab.Inventory: OpenInventory(); break;
+                case MenuNavbar.Tab.Craft: OpenCrafting(); break;
+                case MenuNavbar.Tab.Skills: OpenSkills(); break;
+                case MenuNavbar.Tab.Information: OpenMap(); break;
+            }
+        }
+        public bool AnyMenuOpen => (_invUI?.IsOpen ?? false) || (_craftMenu?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (MapUI.Current?.IsOpen ?? false);   // Open() scans Nearby itself now
         /// <summary>L1 seam: the G-keybind path exactly as _Input runs it (`_invUI?.Toggle()`), so a test can
         /// exercise the entry point players actually use rather than the convenient OpenInventory one.</summary>
         public void DebugToggleInventory() => _invUI?.Toggle();
@@ -5462,7 +5844,7 @@ namespace UnturnedGodot
         void ApplyDefaultOutfit()
         {
             if (_clothing == null) return;
-            _clothing.Wear(new Item(3));    // Orange Hoodie -> shirt texture on torso/arms
+            // BARE SPAWN (master 2026-09-03: "spawn with no clothing at all") -- the Orange Hoodie default is gone; clothing comes from loot.
             // NOTE: gear (hat/vest) attach works structurally but its per-slot placement/scale is not yet
             // tuned (renders oversized/offset -- see docs/CLOTHING_PLAN.md P3b-tune), so the default outfit
             // ships shirt+pants only. Re-add gear here once AttachGear offsets are hand-tuned per slot.
@@ -5482,8 +5864,7 @@ namespace UnturnedGodot
         /// deliberately small rather than accidentally zero.</summary>
         public static void PopulateSpawnKit(PlayerInventory inv)
         {
-            inv.wearShirt(new Item(3));     // Orange Hoodie -> shirt slot + its grid
-            inv.wearPants(new Item(209));   // Cargo Pants   -> pants slot + 6x3 grid
+            // Bare spawn (master 2026-09-03): no Orange Hoodie / Cargo Pants starter outfit. Clothing is loot.
         }
 
         /// <summary>The FULL demo loadout. No longer what anyone spawns with -- it is now a FIXTURE: the MP join
@@ -5533,6 +5914,7 @@ namespace UnturnedGodot
             if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
             if (UsesMagItem && (FindBestMag()?.item.amount ?? 0) <= 0) { _viewmodel?.PlayDryFire(); return; }   // no spare mag WITH ROUNDS -> can't reload; dry-fire instead of refilling from an empty/absent mag (master)
             if (UsesShells && CountShells() <= 0) { _viewmodel?.PlayDryFire(); return; }        // shotgun with no shells in the bag -> can't reload
+            if (!UsesMagItem && !UsesShells && (Gun?.Caliber ?? 0) > 0 && !InfiniteAmmo) { _viewmodel?.PlayDryFire(); return; }   // a gun with a caliber but no ammo model must NOT refill from thin air (master 2026-09-04) -- wire its magazine instead
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
             _hammerActive = false;
@@ -5552,6 +5934,7 @@ namespace UnturnedGodot
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
+            if (AltLooking) return;   // looking around with ALT: no shooting (master 2026-09-04)
             if (IsSwimming) return;   // no firing while swimming -- guns are canUseUnderwater=false (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
             if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
@@ -5613,6 +5996,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
+            if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
             // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
             // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
@@ -5678,6 +6062,7 @@ namespace UnturnedGodot
                 }
                 _recoilPending += kickP;
                 _recoilYawPending += kickY;
+                if (!_fp) _flinch = (_flinch * new Quaternion(Vector3.Right, Mathf.DegToRad(kickP * 0.35f))).Normalized();   // 3P: the camera takes the same visible kick the 1P viewmodel does (master 2026-09-04); the aim recoil above is shared already
                 _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ) * stanceMul,
                                  new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ) * stanceMul, 0f, 0f);
                 DebugLastRecoilKick = new Vector2(kickP, kickY);
@@ -5868,7 +6253,7 @@ namespace UnturnedGodot
             {
                 _npcFlashTexTried = true;
                 string fp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
-                if (System.IO.File.Exists(fp)) { var im = Image.LoadFromFile(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
+                if (System.IO.File.Exists(fp)) { var im = ContentProvider.LoadImage(fp); if (im != null) _npcFlashTex = ImageTexture.CreateFromImage(im); }
             }
             if (host == null) return;
             var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
@@ -5900,6 +6285,24 @@ namespace UnturnedGodot
             g = !string.IsNullOrEmpty(txt) ? GunDef.FromDatText(txt) : null;
             _turretGuns[id] = g;
             return g;
+        }
+
+        /// <summary>Somebody else's trigger pull, arriving over the wire (EventPlayerFired). Draws the streak
+        /// and plays the report exactly the way an NPC turret's shot already does -- that path was built for
+        /// "a gun that is not the local viewmodel" and is the same problem.
+        ///
+        /// ZERO DAMAGE, deliberately. The server has already resolved this shot analytically against its own
+        /// positions and unicast the hit confirm; a client re-simulating it would be a second, disagreeing
+        /// opinion about who got hit. This is a picture and a noise, nothing more.</summary>
+        public void RemoteShotFx(Vector3 origin, Vector3 dir, string gunId)
+        {
+            if (dir.LengthSquared() < 1e-6f) return;
+            dir = dir.Normalized();
+            var g = TurretGunDef(gunId);
+            float vel = g?.MuzzleVelocity ?? 500f;
+            int steps = g != null ? Mathf.Max(1, (int)(g.Range / 2f)) : 125;
+            SpawnBullet(origin, dir * vel, steps, 0f, 0f, 0f, 0f, 0f, srcGun: g, npc: true);
+            NpcTurretFx(origin, dir, gunId);
         }
 
         /// <summary>`srcGun` is the gun that actually FIRED this round. It defaults to the player's held weapon,
@@ -6031,7 +6434,12 @@ namespace UnturnedGodot
                         Hitmark(b, dummy.LastZone == TargetDummy.HitZone.Head);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh)
+                    // RESOLVED, not cast. With the mesh hitbox on, the collider a bullet ray returns is the
+                    // vehicle's HitMesh CHILD body, and a plain `collider is Vehicle` stops matching -- measured,
+                    // a sedan went 6000 -> 6000 hp on a round straight through the door, with no glass broken, no
+                    // lamp shot out and nothing logged anywhere. Silent, total, and invisible to any test that
+                    // only asked whether the ray hit something.
+                    else if (Vehicle.Owning(collider) is Vehicle veh)
                     {
                         // A helicopter routes the hit by WHERE it landed: the hub boxes at each mast are the
                         // rotors' bullet colliders, everything else is airframe. Rotor damage does NOT also
@@ -6077,7 +6485,8 @@ namespace UnturnedGodot
                                 var part = veh.ResolveHitPart(point);
                                 if (part == Vehicle.HeliPart.MainRotor) veh.DamageMainRotor(b.VehicleDamage);
                                 else if (part == Vehicle.HeliPart.TailRotor) veh.DamageTailRotor(b.VehicleDamage);
-                                else veh.TakeDamage(b.VehicleDamage);
+                                else if (veh.IsEngineBay(point)) veh.TakeEngineDamage(b.VehicleDamage);   // front third = the engine bay: engine hp (strawberry 2026-09-04)
+                                else veh.TakeDamage(b.VehicleDamage, 0f);   // a body panel: body hp only
                             }
                         }
                         // WHERE THE SHOT CAME FROM, not where it landed (strawberry: "it will track the position
@@ -6320,7 +6729,7 @@ namespace UnturnedGodot
                 _tracerTexTried = true;
                 string p = ProjectSettings.GlobalizePath("res://content/tracer.png");
                 if (!System.IO.File.Exists(p)) p = ProjectSettings.GlobalizePath("res://content/bullet.png");
-                if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
+                if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
             }
             var mat = new StandardMaterial3D
             {
@@ -6478,32 +6887,50 @@ namespace UnturnedGodot
             _dispScratch.Clear();
             const float range = 5f * 32f;                 // = FoliageField CullRange (retail's ULTRA foliage draw distance)
             float range2 = range * range;
-            foreach (var node in GetTree().GetNodesInGroup(GrassDisplacers.Group))
+            var live = GrassDisplacers.Live;   // PERF: C#-side registry (see GrassDisplacers) -- one GlobalPosition read per displacer, no group marshalling
+            for (int li = live.Count - 1; li >= 0; li--)
             {
-                if (node is not Node3D n3 || !n3.IsInsideTree()) continue;
-                var gp = n3.GlobalPosition;
+                var e = live[li];
+                if (!GodotObject.IsInstanceValid(e.Node)) { live.RemoveAt(li); continue; }   // freed (picked-up item, despawned car, left player)
+                if (!e.Node.IsInsideTree()) continue;
+                var gp = e.Node.GlobalPosition;
                 float dx = gp.X - p.X, dz = gp.Z - p.Z;
                 float d2 = dx * dx + dz * dz;
                 if (d2 > range2) continue;                // out of grass render range -> displaces nothing visible
-                float r = GrassDisplacers.RadiusOf(n3);
+                float r = e.Radius;
                 _dispScratch.Add((d2, gp, r));
-                if (r > 1.0f) GrassDisplacers.DropWake(n3.GetInstanceId(), gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
+                if (r > 1.0f) GrassDisplacers.DropWake(e.Id, gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
             }
             GrassDisplacers.GatherWake(_dispScratch, p, range2, nowMs);   // add the fading wake breadcrumbs as extra (weaker, shrinking) texels behind the movers
             _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see
             int cnt = System.Math.Min(_dispScratch.Count, GrassDisplacers.Max);
-            for (int i = 0; i < cnt; i++)
+            // Upload ONLY when the packed texel set changed (idle = nothing moves = no upload). Uploading every frame was
+            // both a per-frame GPU update for nothing and, under the separate render thread, a texture update racing the
+            // renderer (4 "empty image" errors per load).
+            bool dispChanged = _dispPrev == null || _dispPrev.Count != cnt;
+            if (!dispChanged) for (int i = 0; i < cnt; i++) if (_dispPrev[i] != _dispScratch[i]) { dispChanged = true; break; }
+            if (dispChanged)
             {
-                var e = _dispScratch[i];
-                GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+                _dispPrev ??= new System.Collections.Generic.List<(float d2, Vector3 pos, float r)>();
+                _dispPrev.Clear();
+                for (int i = 0; i < cnt; i++)
+                {
+                    var e = _dispScratch[i];
+                    _dispPrev.Add(e);
+                    GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
+                }
+                if (GrassDisplacers.DispImg != null && !GrassDisplacers.DispImg.IsEmpty()) GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
             }
-            GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
-            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, cnt);
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, GraphicsOptions.GrassDisplacement ? cnt : 0);   // retail IsGrassDisplacementEnabled
         }
 
-        public override void _Process(double delta)
+        // Kept as real overrides so direct calls keep working (NetTests: `p._Process(0.016)` steps the ride cam synchronously);
+        // the engine never invokes them because _Ready turns processing off on this node (the TickProxy child ticks it).
+        // Dropping the overrides silently turned those calls into Node's empty base method -> net.ride_freelook regressed.
+        public override void _Process(double delta) => ProcessTick(delta);
+        public override void _PhysicsProcess(double delta) => PhysicsTick(delta);
+        public void ProcessTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
-            using var _prof = Prof.Scope("PlayerController");
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
             // R-HOLD ammo radial (shotguns): open the picker once R is held past the threshold (frees the mouse so its
             // cursor angle selects a wedge). PlayerController owns the close + mouse recapture, so a gun swap while it's
@@ -6533,12 +6960,19 @@ namespace UnturnedGodot
                 if (AmmoRadial != null) { AmmoRadial.Open(this); if (AmmoRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _rHolding = false; }
                 else _rHolding = false;
             }
+            if (_ctrlHolding && _driving != null && _driving.HasSiren && (_lightbarRadial == null || !_lightbarRadial.IsOpen)
+                && Time.GetTicksMsec() - _ctrlHeldSince >= LightbarHoldMs)
+            {
+                if (_lightbarRadial == null) { _lightbarRadial = new LightbarRadial(); AddChild(_lightbarRadial); }
+                _lightbarRadial.Open(_driving);
+                if (_lightbarRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _ctrlHolding = false;
+            }
             // Source kills the held light on unequip (UseableMelee -> player.disableItemSpotLight()). There are
             // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
-            UpdateGrassDisplacement(delta);
+            if ((_grassT += delta) >= 1.0 / 60.0) { UpdateGrassDisplacement(_grassT); _grassT = 0; }   // PERF: 60 Hz -- the lerp takes the accumulated delta, the bend is identical
             if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
@@ -6568,9 +7002,6 @@ namespace UnturnedGodot
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
-            { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
-            UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
-            UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
             UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
@@ -6578,7 +7009,7 @@ namespace UnturnedGodot
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
-            { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
+            UpdateSalvage((float)delta);   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
@@ -6657,11 +7088,23 @@ namespace UnturnedGodot
             if (_cam != null && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
+                {   // 3P crosshair openness: hip 1 -> ADS the gun's Spread_Aim; moving and un-drained recoil bloom it (HUD draws the gap off this)
+                    float target = (_viewmodel?.IsAiming ?? false) ? Mathf.Clamp(Gun?.SpreadAim ?? 0.35f, 0.05f, 1f) : 1f;
+                    if (Velocity.LengthSquared() > 0.25f) target += 0.3f;
+                    target += Mathf.Min(1f, Mathf.Abs(_recoilPending) * 0.4f);
+                    CrosshairSpread01 = Mathf.Lerp(CrosshairSpread01, target, Mathf.Min(1f, 12f * (float)delta));
+                }
                 if (_fp)
                 {
                     // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
                     _cam.Position = new Vector3(0f, _eyeHeight - _stepSmooth, 0f);   // sit where the eyes WERE, catching up over ~0.13 s
-                    var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
+                    if (!Input.IsKeyPressed(Key.Alt) && (_fpLookYaw != 0f || _fpLookPitch != 0f))   // Alt released: the head eases back to the aim
+                    {
+                        float k = Mathf.Min(1f, 7f * (float)delta);
+                        _fpLookYaw = Mathf.Lerp(_fpLookYaw, 0f, k); _fpLookPitch = Mathf.Lerp(_fpLookPitch, 0f, k);
+                        if (Mathf.Abs(_fpLookYaw) < 0.05f) _fpLookYaw = 0f; if (Mathf.Abs(_fpLookPitch) < 0.05f) _fpLookPitch = 0f;
+                    }
+                    var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg + _fpLookPitch, -89f, 89f)), Mathf.DegToRad(_fpLookYaw), 0f), EulerOrder.Yxz);   // flinch left-multiplies the look; the ALT head-look rides on top of the aim
                     _cam.Basis = new Basis(_flinch) * look;
                 }
                 else
@@ -6669,6 +7112,14 @@ namespace UnturnedGodot
                     StepThirdPersonCam((float)delta);
                 }
             }
+            // LOOK SCAN AFTER THE CAMERA, not before (strawberry 2026-09-04 "when moving the mouse the 3p lookatradius ball is
+            // offset to the left of the crosshair"): the 3P trace runs down the camera's forward, and the camera basis is set
+            // in the block above -- scanning first meant every scan used LAST frame's yaw, so a turning view carried the
+            // look-sphere off the crosshair (30 Hz throttle on top). Same order for the wire/hose tool looks.
+            if ((_lookFocusT += delta) >= 1.0 / 30.0) { _lookFocusT = 0; UpdateLookFocus(); }   // PERF: 30 Hz is plenty for a highlight/prompt (was every frame: a ray + a sphere query + a marshalled vehicles group at 450 fps)   // eye-ray -> focus the item you're aiming at
+            UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
+            UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
+            if (_lookViz != null && _lookViz.Visible && _lookEndDist > 0f) { var (lf, ld) = LookTrace(); _lookViz.GlobalPosition = lf + ld * _lookEndDist; }   // the debug sphere rides the CURRENT trace every frame, not the 30 Hz sample
             UpdateBody(delta);
         }
 
@@ -6677,12 +7128,29 @@ namespace UnturnedGodot
         {
             if (_viewmodel != null)
             {
-                _viewmodel.SetShown(_fp && _driving == null && _riding == null && !_dead);   // FP gun arms: first-person on foot only
+                bool drivingArms = _fp && _driving != null && _seatIndex == 0 && !_driving.IsHeli && !_driving.IsPlane && !_dead;   // behind a WHEEL in 1P: hands on it
+                _viewmodel.SetDriving(drivingArms);
+                if (drivingArms && _driving.HasSteerWheel && _cam != null)
+                {
+                    // the real wheel's pivot -> main-camera screen px + depth (+ its axis in camera space, + steer) so the viewmodel pins the hands to it
+                    var vt = _driving.GetGlobalTransformInterpolated();
+                    var wheelW = vt * _driving.SteerPivotLocal;
+                    var camInv = _cam.GlobalTransform.AffineInverse();
+                    var wl = camInv * wheelW;
+                    if (wl.Z < -0.05f) _viewmodel.SetDrivingWheel(_cam.UnprojectPosition(wheelW), -wl.Z, (camInv.Basis * (vt.Basis * _driving.SteerAxisLocal)).Normalized(), _driving.SteerAngleDegrees);
+                    else _viewmodel.ClearDrivingWheel();
+                }
+                else _viewmodel.ClearDrivingWheel();
+                _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead) || drivingArms);   // FP gun arms on foot, driving arms at the wheel
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }
             if (_body == null) return;
             _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
-            if (_fp || _dead) { return; }
+            if (_dead) return;
+            // SEATED in first person the body still gets posed + animated (invisible): the 1P vehicle camera sits on ITS eyes now
+            // (strawberry 2026-09-03: "if it was exactly where the model's eyes would be, and the pm invisible, would be perfect"),
+            // so the skull bone has to be where the seated clip puts it. On foot in 1P nothing reads the body -> skip as before.
+            if (_fp && _driving == null && (_riding == null || !IsInstanceValid(_riding))) return;
             if (_driving != null)   // in the driver seat (best-effort idle pose)
             {
                 // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the
@@ -6733,12 +7201,29 @@ namespace UnturnedGodot
         string _bodyGunName;                                   // gun currently attached to _body (null = unarmed)
         string _bodyAimClip, _bodyReloadClip, _bodyEquipClip, _bodyHammerClip;  // resolved per-gun clip names for the overlay
         bool _bodyReloading3p, _bodyHammer3p;                  // edge-detect the reload + the rack so each plays once
+        string _bodyMeleeName;   // melee model currently in the 3P body's hand (null = none)
+        bool _bodySwinging3p;    // a melee swing is playing on the 3P upper body; cleared when _meleeCd runs out
+        const bool _fpOnlyBody3pSkip = false;   // seam: never skip -- the 3P body must swing even while you watch it in 1P (puppets of you are driven by the wire, not this)
         void UpdateBodyGun()
         {
             // A PASSENGER keeps their gun on the 3rd-person body (strawberry: "passengers can hold weapons").
             // The old test was `_driving == null`, which stripped the gun from everyone aboard -- so a passenger
             // who could draw, aim and fire showed empty hands to everybody else.
             bool wantGun = HasGunOut && !IsDriver && _riding == null && !_dead;
+            // MELEE in the 3P hand (master 2026-09-03: weapons shown to other players -- the local 3P body never held a melee model either)
+            string wantMelee = (!wantGun && _melee != null && !string.IsNullOrEmpty(_heldMeleeName) && _heldMeleeName != "fists" && !IsDriver && _riding == null && !_dead) ? _heldMeleeName : null;
+            if (wantMelee != _bodyMeleeName)
+            {
+                if (wantMelee == null) { _body.DetachMelee(); if (!wantGun && !_bodySwinging3p) _body.DisableGunLayer(); }
+                else { _body.AttachMelee(wantMelee); _body.ShowMeleeHold(wantMelee); }   // ready-to-swing pose, not a weapon glued to a hanging arm
+                _bodyMeleeName = wantMelee;
+            }
+            if (_bodySwinging3p && _meleeCd <= 0f)   // the swing clip ran out -> back to the hold (or drop the layer for fists / empty hands)
+            {
+                _bodySwinging3p = false;
+                if (_bodyMeleeName != null) _body.ShowMeleeHold(_bodyMeleeName);
+                else if (!wantGun) _body.DisableGunLayer();
+            }
             if (!wantGun)
             {
                 if (_bodyGunName != null) { _body.DetachGun(); _body.DisableGunLayer(); _bodyGunName = null; _bodyReloading3p = false; }
@@ -6747,7 +7232,7 @@ namespace UnturnedGodot
             if (_gunName != _bodyGunName)                       // just drew or swapped a gun
             {
                 string capGun = char.ToUpper(_gunName[0]) + _gunName.Substring(1);
-                _body.AttachGun(_gunName);
+                _body.AttachGun(_gunName, Gun?.LeftHook ?? false);
                 MountBody3PAttachments();   // sights/scope/mag/barrel on the 3P gun, from the held item's installed ids
                 _bodyAimClip    = _body.ClipLength(capGun + "_Aim")    > 0f ? capGun + "_Aim"    : "Gun_Aim";
                 _bodyReloadClip = _body.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
@@ -6850,6 +7335,7 @@ namespace UnturnedGodot
         }
 
         public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
+        HurtDirectionIndicator _hurtHud => Hud?.HurtIndicator;   // resolved through Hud rather than cached: Hud can be assigned after Die()/ShowHurtCosmetics have already run once in some construction orders
         public SDG.Unturned.PlayerSkills Skills { get; } = new();   // the player's skills/XP (source PlayerSkills); gates crafting, boosts farming, etc.
 
         // MP Part A: driving a client-local predicted vehicle (ClientWorldSession built it) -- gates the
@@ -7021,6 +7507,12 @@ namespace UnturnedGodot
             // when it is free, else the first that is. The fallback matters -- aiming at an occupied door
             // should still put you in the car rather than bouncing you off it.
             _seatIndex = (seat >= 0 && seat < v.SeatCount && v.SeatFree(seat)) ? seat : 0;
+            // LOOK STRAIGHT AHEAD on entry (strawberry 2026-09-04): the 1P free-look, the window peek, the 3P chase orbit and the
+            // aircraft ALT look all start from the vehicle's forward -- whatever way you were looking while walking up to the door
+            // no longer carries into the seat.
+            _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; _peekX = 0f;
+            _driveCamYaw = 0f; _driveCamPitch = 15f;
+            _flyLookYaw = 0f; _flyLookPitch = 0f;
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
@@ -7076,6 +7568,7 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
+            if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
@@ -7256,9 +7749,17 @@ namespace UnturnedGodot
             }
             // Driver keeps the tuned DriverEyeLocal (tall cabs sit higher to clear the hood); a passenger's eye
             // is their OWN seat plus the same rise, or everyone in the bus looks out of the driver's window.
-            var eye = _seatIndex == 0 ? _driving.DriverEyeLocal
-                                      : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            var eyeFallback = _seatIndex == 0 ? _driving.DriverEyeLocal
+                                              : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
+            var eye = SeatedEyeLocal(_driving.SeatBodyLocal(_seatIndex), eyeFallback);   // the seated model's own eyes (per seat), not a per-vehicle hand number
             eye += DriverPeekOffset();
+            if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
+            {
+                // Alt released: ease the free-look back to the default chase angle (strawberry 2026-09-03 "it should lerp back")
+                float k = Mathf.Min(1f, 7f * (float)GetProcessDeltaTime());
+                _flyLookYaw = Mathf.Lerp(_flyLookYaw, 0f, k); _flyLookPitch = Mathf.Lerp(_flyLookPitch, 0f, k);
+                if (Mathf.Abs(_flyLookYaw) < 0.05f) _flyLookYaw = 0f; if (Mathf.Abs(_flyLookPitch) < 0.05f) _flyLookPitch = 0f;
+            }
             PositionVehicleCam(vt, eye, size);
         }
 
@@ -7287,18 +7788,56 @@ namespace UnturnedGodot
             {
                 // _rideLookYaw > 0 is looking LEFT for us, which is retail's yaw < 0 branch: the wider /240.
                 float div = _rideLookYaw > 0f ? PeekDivisorOwnSide : PeekDivisorAcrossCab;
-                target = -_rideLookYaw / div;
+                // Only past a real over-the-shoulder angle (strawberry 2026-09-03: "looking over your shoulder left out the window
+                // will trigger that 'lean' beyond a certain angle") -- glancing at the passenger no longer slides the head.
+                float beyond = Mathf.Max(0f, Mathf.Abs(_rideLookYaw) - PeekStartDeg) * Mathf.Sign(_rideLookYaw);
+                target = -beyond / div;
             }
             // Lerp at 4/s, retail's own smoothing rate for this, so the head eases out rather than snapping.
             _peekX = Mathf.Lerp(_peekX, target, Mathf.Min(1f, 4f * (float)GetProcessDeltaTime()));
             return Mathf.Abs(_peekX) < 0.001f ? Vector3.Zero : new Vector3(_peekX, 0f, 0f);
         }
         float _peekX;                              // metres of lateral eye offset, vehicle-local (+X = right)
+        const float PeekStartDeg = 40f;            // the peek engages past this yaw (over the shoulder), not from straight ahead
         const float PeekDivisorOwnSide = 240f;     // looking out of the driver's OWN window: the bigger lean
         const float PeekDivisorAcrossCab = 360f;   // ...and across the cab: less
 
         // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
-        void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
+        void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, SeatedEyeLocal(_riding.SeatOffset, _riding.DriverEyeLocal), _fp ? 0f : _riding.MeshSize);
+
+        /// <summary>1P eye for a seat: where the seated 3P body's SKULL bone is (skeleton space == vehicle space here, the body is
+        /// placed with an identity basis at SeatBodyLocal), plus the eyes' offset from the head base. The body is invisible in 1P
+        /// but still posed by the seated clip (UpdateBody), so this tracks Idle_Drive/Idle_Sit exactly. Falls back to the old
+        /// per-vehicle DriverEyeLocal until the skeleton has a pose.</summary>
+        Vector3 SeatedEyeLocal(Vector3 seatBodyLocal, Vector3 fallback)
+        {
+            var skel = _body?.Skeleton;
+            if (skel == null) return fallback;
+            if (_skullBone < 0) { _skullBone = skel.FindBone("Skull"); if (_skullBone < 0) return fallback; }
+            var head = skel.GetBoneGlobalPose(_skullBone).Origin;
+            if (head.LengthSquared() < 0.01f) return fallback;   // rest not applied yet
+            return seatBodyLocal + head + SeatedEyeFromSkull;
+        }
+        int _skullBone = -1;
+        static readonly Vector3 SeatedEyeFromSkull = new Vector3(0f, 0.16f, -0.10f);   // head base -> eyes: up + forward (rig faces -Z like the vehicle)
+
+        /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
+        /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
+        /// players are deliberately NOT in the mask -- the own car, a towed trailer or a passer-by must never yank the cam.</summary>
+        Vector3 CamCollide(Vector3 target, Vector3 eye)
+        {
+            var space = GetWorld3D()?.DirectSpaceState; if (space == null) return eye;
+            _camCollideQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6), HitFromInside = false };
+            _camCollideQ.From = target; _camCollideQ.To = eye;
+            _camCollideQ.Exclude = _driving != null ? new Godot.Collections.Array<Rid> { GetRid(), _driving.GetRid() } : new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(_camCollideQ);
+            if (hit.Count == 0) return eye;
+            var pos = (Vector3)hit["position"];
+            var back = (target - eye); float len = back.Length(); if (len < 0.001f) return eye;
+            back /= len;
+            return pos + back * Mathf.Min(0.4f, len * 0.5f);   // sit just in front of the obstacle, never past the target
+        }
+        PhysicsRayQueryParameters3D _camCollideQ;
 
         void PositionVehicleCam(Transform3D vt, Vector3 eyeL, float size)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
         {                                                                    // (position + orientation): a LookAt updated pos but not rotation through turns -> car slid out of frame.
@@ -7308,7 +7847,7 @@ namespace UnturnedGodot
             if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
                 var eye = vt * eyeL;
-                if (_riding != null || DrivingPredicted || IsPassenger)   // MP ride, Part A predicted driving, or a PASSENGER seat: FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
+                if (_riding != null || DrivingPredicted || IsPassenger || (_driving != null && !_driving.IsHeli && !_driving.IsPlane))   // MP ride, predicted driving, a PASSENGER seat, or the SP car DRIVER (strawberry 2026-09-03 "add looking around in cars"): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
                 {
                     var look = vt.Basis.Orthonormalized() * new Basis(Vector3.Up, Mathf.DegToRad(_rideLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_rideLookPitch));
                     _cam.GlobalTransform = new Transform3D(look, eye);
@@ -7331,35 +7870,43 @@ namespace UnturnedGodot
                 // Every other vehicle keeps a world-level chase cam because a car's roll is noise; on a
                 // helicopter the roll IS the control input, and a level camera hides the thing being steered.
                 // No mouse orbit either: while flying, the mouse is the cyclic, not a camera.
-                float dist = _driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
+                float dist = (_driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 0.95f, 5.5f, 34f)) * _driveCamZoom;   // reeled in a touch + scroll zoom (strawberry 2026-09-03)   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
                 if (_driving.IsPlane)
                 {
                     // WORLD-STABLE chase for the PLANE (level horizon). The airframe-locked cam below swung the
                     // whole view around during rolls/loops -> master 2026-08-18 "the 3p camera keeps getting messed up".
                     var pf = -vt.Basis.Z; pf.Y = 0f; pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;   // flattened heading
-                    var peye = vt.Origin - pf * (dist * 0.9f) + Vector3.Up * (dist * 0.34f + size * 0.05f);
-                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(vt.Origin + Vector3.Up * 0.4f, Vector3.Up);
+                    var plook = new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * pf;   // ALT free-look: orbit the chase point around the plane
+                    float pp = Mathf.DegToRad(_flyLookPitch);
+                    var ptarget = vt.Origin + Vector3.Up * 0.4f;
+                    var peye = vt.Origin - plook * (dist * 0.9f * Mathf.Cos(pp)) + Vector3.Up * (dist * 0.34f + size * 0.05f + dist * 0.9f * Mathf.Sin(pp));
+                    peye = CamCollide(ptarget, peye);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(ptarget, Vector3.Up);
                 }
                 else
                 {
                     Basis vb = vt.Basis.Orthonormalized();   // HELI: the camera BECOMES the airframe (roll IS the control input -- VoX)
-                    var eye = vt.Origin + vb.Z * (dist * 0.86f) + vb.Y * (dist * 0.16f + size * 0.06f);
-                    _cam.GlobalTransform = new Transform3D(vb, eye);
+                    // ALT free-look: an orbit offset in the AIRFRAME's frame, so with the offsets at 0 this is byte-identical to before
+                    Basis look = vb * new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_flyLookPitch));
+                    var eye = vt.Origin + look.Z * (dist * 0.86f) + look.Y * (dist * 0.16f + size * 0.06f);
+                    eye = CamCollide(vt.Origin + vb.Y * 0.5f, eye);
+                    _cam.GlobalTransform = new Transform3D(look, eye);
                 }
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
-                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // raised cap so the semi+trailer fits
+                float dist = Mathf.Clamp(size * 0.85f, 4.5f, 34f) * _driveCamZoom;   // REELED IN (was size*1.1 / min 6.5 -- strawberry 2026-09-03) + scroll-wheel zoom; the cap still fits the semi+trailer
                 float pitchR = Mathf.DegToRad(_driveCamPitch);
                 Vector3 dir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-fwd);   // behind the heading, orbited by the mouse yaw
+                var target = vt.Origin + Vector3.Up * (size * 0.15f);
                 var eye = vt.Origin + dir * (dist * Mathf.Cos(pitchR)) + Vector3.Up * (dist * Mathf.Sin(pitchR) + size * 0.22f);
-                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * (size * 0.15f), Vector3.Up);
+                eye = CamCollide(target, eye);   // terrain / props / buildings between the car and the cam pull it in (strawberry 2026-09-03)
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(target, Vector3.Up);
             }
         }
 
-        public override void _PhysicsProcess(double delta)
+        public void PhysicsTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
-            using var _prof = Prof.Scope("PlayerController.phys");
             // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a
             // pending gun state that only flushes while on foot is a pending gun state that is sometimes lost.
             if (!NetAvatar) TickGunStateFlush(delta);
@@ -7373,7 +7920,18 @@ namespace UnturnedGodot
             if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
-            if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
+            if (_interpReady && !_dead)
+            {
+                // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual lerp)...
+                // ...unless something OUTSIDE this tick moved us -- a scripted teleport, an L1 test's `p.GlobalPosition = x`, a carry.
+                // The visual lerp only ever writes ON the prev->curr segment, so anything off it is an external move: adopt it.
+                // (Found 2026-09-03: through the TickHub the first physics tick lands one frame earlier than the old TickProxy
+                // child's did, so the interp snapshot existed before the ladder tests teleported the player and the restore
+                // silently undid the teleport -- ladder.climb_end_to_end/top_exit/top_onto_roof stood there in STAND.)
+                var gnow = GlobalPosition;
+                if (DistToSegmentSq(gnow, _interpPrev, _interpCurr) > 0.05f * 0.05f) { _interpPrev = _interpCurr = gnow; }
+                else GlobalPosition = _interpCurr;
+            }
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
@@ -7386,7 +7944,15 @@ namespace UnturnedGodot
                 // P3a: while server-owned, the SERVER owns the 3.5 s respawn clock -- NetRespawn() drives the
                 // revive off PlayerRespawnedEvent; the local timer must not self-respawn (it would fight the
                 // server, respawning early / at the wrong place). Default SP keeps its local timer verbatim.
-                if (_deathTimer <= 0 && !_serverOwnedRespawn) Respawn();
+                OrbitDeathCam((float)delta);
+                // With a death screen up the player CHOOSES when to come back, so the 3.5 s self-respawn must not
+                // fire underneath them. It still does when there is no screen: a NetAvatar shell and every
+                // headless harness rely on that timer, and silently changing their behaviour to add UI would be
+                // the wrong trade.
+                // With a death screen up the player CHOOSES when to come back, so the self-respawn must not fire
+                // underneath them. Everything without one -- NetAvatar shells, and every headless L1 harness --
+                // keeps the old timer verbatim.
+                if (_deathTimer <= 0 && !_serverOwnedRespawn && (_deathScreen == null || !IsInstanceValid(_deathScreen))) Respawn();
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
@@ -7500,6 +8066,43 @@ namespace UnturnedGodot
             // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player
             // makes no sound (must be SEEN instead). Zombies within earshot path to it via SoundBus.Hear.
             _footNoiseT -= (float)delta;
+            // FOOTSTEP AUDIO (retail effects/physics/footstep/<surface>_<walk|run>): a step every stride-length of ground
+            // covered, surface from the splatmap / prop SurfMeta under the feet, run bank above walking pace, water bank
+            // when wading. Local player only here; puppets step in RemotePlayers. Crouch/prone are quieter and slower.
+            // CASING BANK by what is under the feet RIGHT NOW (strawberry 2026-09-03 "bullet brass should make sound depending
+            // on the material you are standing on") -- refreshed while a gun is out, not only on a footstep, so standing still
+            // on a metal roof after walking off sand clinks on metal. Seated: the brass lands on the vehicle floor -> metal.
+            if (!NetAvatar && !_dead && _viewmodel != null && HasGunOut)
+            {
+                _casingSurfT -= (float)delta;
+                if (_casingSurfT <= 0f)
+                {
+                    _casingSurfT = 0.2f;
+                    if (_driving != null || _riding != null) _viewmodel.CasingSurface = "metal";
+                    else if (IsSwimming) _viewmodel.CasingSurface = "water";
+                    else if (IsOnFloor()) _viewmodel.CasingSurface = CasingBank(FootSurfaceUnderFeet());
+                }
+            }
+            if (!NetAvatar && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null && IsOnFloor() && !IsSwimming)
+            {
+                float hsp = new Vector2(Velocity.X, Velocity.Z).Length();
+                if (moving && hsp > 0.3f)
+                {
+                    float stride = _move.Stance switch { EPlayerStance.SPRINT => 2.0f, EPlayerStance.CROUCH => 1.0f, EPlayerStance.PRONE => 0.9f, _ => 1.5f };
+                    _strideAcc += hsp * (float)delta;
+                    if (_strideAcc >= stride)
+                    {
+                        _strideAcc = 0f;
+                        var sf = FootSurfaceUnderFeet();
+                        bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
+                        if (_viewmodel != null) _viewmodel.CasingSurface = CasingBank(sf);
+                        var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
+                        float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
+                        GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
+                    }
+                }
+                else _strideAcc = Mathf.Min(_strideAcc, 0.6f * 1.5f);   // a stop mid-stride keeps most of the stride so the next step isn't instant
+            }
             if (moving && _footNoiseT <= 0f)
             {
                 _footNoiseT = 0.4f;
@@ -7510,7 +8113,12 @@ namespace UnturnedGodot
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
-            if (wasAirborne && IsOnFloor()) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
+            if (wasAirborne && IsOnFloor())
+            {
+                CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
+                if (!NetAvatar && vy < -2.5f)   // retail bipedland/<surface>: a real drop, not a curb -- louder the harder
+                    GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(FootSurfaceUnderFeet())), GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
+            }
         }
 
         // ---- the movement kernel: the ONE deterministic movement step, split in two halves because
@@ -7629,8 +8237,8 @@ namespace UnturnedGodot
         /// UpdateLookFocus -- exposed so a test can ask it rather than restate it, because a restated rule agrees with
         /// itself whichever one of them is wrong.</summary>
         public (Vector3 From, Vector3 Dir) LookTrace()
-            => _fp && _cam != null ? (_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z)
-                                   : (ShoulderWorld, LookAxis);
+            => _cam != null && (_fp || ThirdPersonActive) ? (_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z)   // 3P too: from the camera centre, so the look-sphere lines up with the centre crosshair (strawberry 2026-09-04); the body is excluded from the ray
+                                                            : (ShoulderWorld, LookAxis);
 
         // ---- THE SHOULDER the interaction trace comes off (strawberry: "base the interaction lookatradius sphere off a
         // straight line based off the relevant lean shoulder (right shoulder is default if none held)").
@@ -7778,7 +8386,13 @@ namespace UnturnedGodot
 
             // Rotation FIRST: the offset below is expressed in this frame, so the order is load-bearing rather than
             // stylistic -- computing the direction off last frame's basis lags the camera behind every mouse movement.
-            var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), Mathf.DegToRad(_shoulder * -TpToeInDeg), 0f), EulerOrder.Yxz);
+            if (!Input.IsKeyPressed(Key.Alt) && (_tpOrbitYaw != 0f || _tpOrbitPitch != 0f))   // Alt released: ease the orbit back behind the shoulder (like the flying free-look)
+            {
+                float k = Mathf.Min(1f, 7f * delta);
+                _tpOrbitYaw = Mathf.Lerp(_tpOrbitYaw, 0f, k); _tpOrbitPitch = Mathf.Lerp(_tpOrbitPitch, 0f, k);
+                if (Mathf.Abs(_tpOrbitYaw) < 0.05f) _tpOrbitYaw = 0f; if (Mathf.Abs(_tpOrbitPitch) < 0.05f) _tpOrbitPitch = 0f;
+            }
+            var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg + _tpOrbitPitch, -89f, 89f)), Mathf.DegToRad(_shoulder * -TpToeInDeg + _tpOrbitYaw), 0f), EulerOrder.Yxz);
             _cam.Basis = new Basis(_flinch) * look;
 
             var dirLocal = ThirdPersonOffsetLocal(_shoulder);
@@ -7966,6 +8580,16 @@ namespace UnturnedGodot
             if (_move.Stance == EPlayerStance.SWIM)
             {
                 SwimStep(strafe, forward, jump);   // no gravity, buoyancy/free-swim; own velocity path
+                if (!NetAvatar)   // retail effects/physics/swim/<light|medium|heavy>wading: a stroke every ~1.4 m, heavier with speed
+                {
+                    float ssp = new Vector2(Velocity.X, Velocity.Z).Length();
+                    if (ssp > 0.4f && (_strideAcc += ssp * delta) >= 1.4f)
+                    {
+                        _strideAcc = 0f;
+                        string gait = ssp > 3.6f ? "heavywading" : ssp > 2.0f ? "mediumwading" : "lightwading";
+                        GameAudio.PlayAt(this, GameAudio.Pick("swim", gait), GlobalPosition, -4f, 5f, 40f, _rng.RandfRange(0.95f, 1.05f));
+                    }
+                }
                 wasAirborne = false;               // swimming is never airborne -> the caller skips fall damage (retail: SWIM branch never onLanded)
                 verticalVel = Velocity.Y;
                 groundedEntering = false;
@@ -7983,7 +8607,7 @@ namespace UnturnedGodot
                 // from under them, and the probe would miss within a tick or two and drop them in the sea.
                 var climbCarry = Vector3.Zero;
                 if (DeckCarryEnabled && _ladderBody != null && IsInstanceValid(_ladderBody)
-                    && _ladderBody.GetParent() is Vehicle lv && lv.CarriesRiders)
+                    && Vehicle.Owning(_ladderBody) is Vehicle lv && lv.CarriesRiders)
                 {
                     climbCarry = lv.DeckPointVelocity(GlobalPosition);
                     if (Mathf.Abs(lv.DeckYawRate) > 1e-5f) RotateY(lv.DeckYawRate * delta);
@@ -8040,7 +8664,9 @@ namespace UnturnedGodot
             _deckRayQ.Exclude = _deckRayExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(_deckRayQ);
             if (hit.Count == 0) return;
-            if (hit["collider"].As<GodotObject>() is not Vehicle deck || !deck.CarriesRiders) return;
+            // Owning, not a cast: with the mesh hitbox on, the bit-5 body under the player's feet is the
+            // vehicle's HitMesh CHILD, so a direct cast finds nothing and a rider silently stops being carried.
+            if (Vehicle.Owning(hit["collider"].As<GodotObject>()) is not Vehicle deck || !deck.CarriesRiders) return;
             float yawRate = deck.DeckYawRate;
             if (Mathf.Abs(yawRate) > 1e-5f) RotateY(yawRate * delta);
             DebugOnDeck = deck;

@@ -46,6 +46,10 @@ namespace UnturnedGodot.Net
         public int MagCapacity = 30;
         public int ReloadTicks = 82;            // 1.633 s Gun_Reload
         public float MaxAimOriginOffset = 3f;   // Fire.Origin must sit within this of the avatar (eye 1.75 + muzzle 0.4 + grain)
+        /// <summary>The asset this profile IS, e.g. "eaglefire" -- rides PlayerFiredEvent so other clients can
+        /// pick the right report and tracer. Lowercase [a-z0-9_] only; the receiving client refuses anything
+        /// else rather than opening it, because it lands in a res:// path.</summary>
+        public string AssetName = "eaglefire";
     }
 
     public sealed class ServerMeleeProfile
@@ -278,6 +282,11 @@ namespace UnturnedGodot.Net
                     Seq = cmd.Seq,
                     Gun = gun,
                 });
+            // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
+            // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
+            // map. Once per trigger pull, not once per pellet -- a shotgun is one report and one muzzle flash.
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerFired,
+                new PlayerFiredEvent { PlayerId = sender, Origin = cmd.Origin, Dir = dir, Gun = gun.AssetName }.Write));
             Diag.ShotsAccepted++;
         }
 
@@ -295,6 +304,7 @@ namespace UnturnedGodot.Net
             if (tick < cs.MeleeReadyTick) { Diag.MeleeRejected++; return; }
             cs.MeleeReadyTick = tick + DefaultMelee.CooldownTicks;
             _pendingMelee.Add(new PendingMelee { Attacker = sender, Seq = cmd.Seq, LandTick = tick + DefaultMelee.HitDelayTicks, YawDegrees = cmd.YawDegrees, Strong = cmd.Strong });
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerMelee, new PlayerMeleeEvent { PlayerId = sender, Strong = cmd.Strong }.Write));   // v25: puppets swing
             Diag.MeleeAccepted++;
         }
 
@@ -333,6 +343,23 @@ namespace UnturnedGodot.Net
             StepBullets(tick);
             StepMelee(tick);
             StepGrenades(tick);
+        }
+
+        /// <summary>Respawn a dead player NOW, on request, instead of when the death timer expires -- the death
+        /// screen's Respawn button. Arms the existing clock for the next tick rather than reviving inline: the
+        /// tick loop tests `RespawnAtTick == tick` exactly, so a past tick would never fire and an inline revive
+        /// would skip the dirty-marking and the broadcast that the normal path does. Returns false if they are
+        /// not dead, which makes a double-click a no-op.</summary>
+        public bool ServerRequestRespawn(ushort playerId, long tick)
+        {
+            foreach (var cs in _state.All)
+            {
+                if (cs.OwnerPlayerId != playerId) continue;
+                if (cs.Alive) return false;
+                cs.RespawnAtTick = tick + 1;
+                return true;
+            }
+            return false;
         }
 
         void Respawn(PlayerCombatReplication.CombatEntity cs, long tick)
@@ -404,7 +431,9 @@ namespace UnturnedGodot.Net
                         {
                             float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
                             float dmg = b.Gun.PlayerDamage * mult;
-                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed);
+                            // b.Pos, not the impact point: the indicator has to say which way to turn and face
+                            // the shooter, not mark where the bullet happened to end its flight.
+                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos);
                             SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
                             Diag.BulletHitsPlayer++;
@@ -511,7 +540,7 @@ namespace UnturnedGodot.Net
                 else if (bestPlayer != 0)
                 {
                     float dmg = DefaultMelee.PlayerDamage * mult;
-                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed);
+                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed, sourcePos: ape.Pos);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
                 else if (WorldRay != null)
@@ -580,7 +609,7 @@ namespace UnturnedGodot.Net
                     float pr = (pe.Pos - g.Pos).magnitude;
                     if (pr > prof.Radius || Blocked(g.Pos, pe.Pos)) continue;
                     float dmg = ExplosionMath.Squared(prof.PlayerDamage, pr, prof.Radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
-                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _);
+                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
                 }
             var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = prof.Radius };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
@@ -594,12 +623,23 @@ namespace UnturnedGodot.Net
         }
 
         void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)
+            => ApplyPlayerDamage(victim, damage, attacker, tick, out killed, sourcePos: null);
+
+        /// <summary>The single player-damage path (bullets, melee, grenades, and everything queued through
+        /// DamagePlayerExternal). <paramref name="sourcePos"/> is optional and purely cosmetic -- it feeds only
+        /// the victim's directional hurt indicator (PlayerHurtEvent) and touches no HP math, so a caller with
+        /// nothing to point at (fall, OOB, starvation, a deadzone) can safely omit it rather than guess one.</summary>
+        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos)
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
             cs.HealthExact -= damage;
             cs.Health = (byte)Math.Clamp((int)Math.Ceiling(cs.HealthExact), 0, 100);
             _state.MarkDirty(cs, tick);
+            // Sent even on a killing blow (the death screen still shows where the last hit came from), so this
+            // runs BEFORE the early-return below rather than being folded into the survive-only path.
+            var hurt = new PlayerHurtEvent { Damage = damage, HasSource = sourcePos.HasValue, SourcePos = sourcePos ?? Vector3.zero };
+            _sendTo(victim, NetMessagePak.Pack(ReplicationIds.EventPlayerHurt, hurt.Write));
             if (cs.HealthExact > 0f) return;
 
             killed = true;

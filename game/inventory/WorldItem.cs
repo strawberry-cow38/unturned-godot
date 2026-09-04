@@ -129,7 +129,7 @@ namespace UnturnedGodot
                         var tp = ProjectSettings.GlobalizePath($"{ItemsRoot}/{texv.AsString()}");
                         if (System.IO.File.Exists(tp))
                         {
-                            var img = Image.LoadFromFile(tp);
+                            var img = ContentProvider.LoadImage(tp);
                             if (img != null)
                             {
                                 img.GenerateMipmaps();
@@ -182,7 +182,7 @@ namespace UnturnedGodot
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
         public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name)
         {
-            var p = new WorldItemPuppet();
+            var p = new WorldItemPuppet { ItemId = itemId };
             var visual = BuildReplicaVisual(itemId, rarity);
             p.AddChild(visual);
 
@@ -439,19 +439,15 @@ namespace UnturnedGodot
                         if (LosCompare && _hitPts.Length >= 9)
                         {
                             bool other = Scan(order == null ? Los3 : null);
-                            Prof.Count("los_checked", 1);
-                            if (other != show) Prof.Count("los_DISAGREE", 1);
                         }
                         // How many of the nine we actually spend. Break-on-first-clear means a VISIBLE item is
                         // 1 and an occluded one is 9, so rays-per-call is the number that says whether cutting
                         // the sample count is worth anything or is a rounding error. Measure, then decide.
-                        Prof.Count("los_rays", _rays);
                     }
                 }
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles
                 _shown = show;
                 if (!show && _glow != null && _glow.Visible) _glow.Visible = false;
-                Prof.Add("item_LOS", _pt);
             }
         }
     }
@@ -462,6 +458,7 @@ namespace UnturnedGodot
     public partial class WorldItemPuppet : Node3D, IPuppetFocusable
     {
         public uint NetId;   // the server world-item entity this puppet mirrors (VehiclePuppet.NetId pattern) -- the F-chain pickup request addresses the server by this id
+        public ushort ItemId;   // what it is -- the pickup request remembers it so the echo that holsters it can force it into the hands
 
         MeshInstance3D _glow;
         Label3D _label;

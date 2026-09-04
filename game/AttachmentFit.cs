@@ -165,6 +165,19 @@ namespace UnturnedGodot
         /// way, which is what makes the loss invisible.
         ///
         /// Only fills an UNSET slot (-1), so it can run on every equip without overwriting what the player fitted.</summary>
+        /// <summary>Is the sight on this gun its own factory irons? Irons are NOT an item (strawberry 2026-09-04: "irons
+        /// should be non-removable, only removed visually when a new scope is attached. they shouldnt be their own
+        /// item"): they cannot be detached, fitting a scope over them displaces nothing, and taking the scope off
+        /// puts them back. The sight slot still stores their id so the viewmodel knows what to draw.</summary>
+        public static bool IsDefaultIrons(Item gunItem)
+        {
+            if (gunItem == null || gunItem.gunSightId < 0) return false;
+            string name = Assets.find(gunItem.id)?.itemName;
+            int irons = DefaultIronsId(name);
+            return irons >= 0 && gunItem.gunSightId == irons;
+        }
+        public static int DefaultIronsIdOf(Item gunItem) => gunItem == null ? -1 : DefaultIronsId(Assets.find(gunItem.id)?.itemName);
+
         public static void SeedDefaults(Item gunItem, string gunItemName)
         {
             if (gunItem == null || gunItem.gunAttachSeeded) return;

@@ -169,7 +169,10 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventPlayerFired = 37;       // a gun WENT OFF: shooter, muzzle origin, direction, gun asset name. Nothing was broadcast on a shot at all before this, which is why another player's gunfire had no sound and drew no tracer on your screen (strawberry 2026-09-03 "network gun sounds, gun tracers"; the in-game report "I hear no gunshot sounds even when someone's shooting across the street from me"). Damage is NOT on this event -- the server already resolves that analytically and unicasts a hit confirm; this is purely what the shot LOOKS and SOUNDS like to everyone else.
         public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
+        public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
+        public const byte EventPlayerMelee = 39;       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }
 
     /// <summary>
@@ -195,6 +198,7 @@ namespace UnturnedGodot.Net
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
         public byte Buttons;      // v2: held-button bits (ButtonJump | PackStance(...))
+        public ushort HeldItemId; // v22: the item id in the player's hands (0 = nothing/fists) -- the server republishes it in the appearance block so other clients draw the gun/melee on the puppet
         // v9 (mp-clientauth-foot): the C2 ClaimedPos/HasClaim claim fields are GONE from the wire --
         // the shell client no longer sends MoveInput at all (it streams PlayerStateCommand and the
         // server adopts it); MoveInput remains the demo-walker/loopback movement intent only.
@@ -237,6 +241,7 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
+            w.WriteUInt16(HeldItemId);   // v22 (NetProtocol.Version 22): held item id
         }
 
         public static bool TryRead(NetPakReader r, out MoveInput cmd)
@@ -247,7 +252,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float my)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
-            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
+            if (!r.ReadUInt16(out ushort held)) return false;
+            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons, HeldItemId = held };
             return true;
         }
 

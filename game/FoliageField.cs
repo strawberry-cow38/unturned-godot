@@ -88,7 +88,7 @@ namespace UnturnedGodot
             if (File.Exists(tp))
             {
                 var img = new Image();
-                if (img.Load(tp) == Error.Ok)
+                if (ContentProvider.LoadOk(img, tp))
                 {
                     img.GenerateMipmaps();
                     var tex = ImageTexture.CreateFromImage(img);

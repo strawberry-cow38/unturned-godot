@@ -43,6 +43,31 @@ namespace UnturnedGodot
         // glow, so looking anywhere on the prop highlights the WHOLE thing, not just the door (master). Null for
         // a container door (StoreShelf owns its own outline) or --doortest.
         public MeshInstance3D BodyOutline;
+        // GLASS PANE (strawberry 2026-09-04 "add the same glass as cars have for their windows onto the cooler door, that
+        // opens/closes with it"): a quad in the leaf's frame opening, the vehicle window material, child of _pivot so
+        // it swings with the leaf. The rip kept the door FRAME (the glass material was dropped), so the pane is added
+        // back by measurement -- see StoreShelf.TrySpawnDoors for the cooler's numbers.
+        bool _glassPending; Vector3 _glassCentre, _glassNormal; Vector2 _glassSize;
+        public void AddGlassPane(Vector3 centreLocal, Vector2 size, Vector3 normalLocal)
+        {
+            _glassCentre = centreLocal; _glassSize = size; _glassNormal = normalLocal; _glassPending = true;
+            if (_pivot != null) BuildGlassPane();
+        }
+        void BuildGlassPane()
+        {
+            if (!_glassPending || _pivot == null) return;
+            _glassPending = false;
+            var n = _glassNormal.LengthSquared() > 1e-6f ? _glassNormal.Normalized() : Vector3.Back;
+            var basis = Basis.Identity;
+            float ang = Vector3.Back.AngleTo(n);
+            if (ang > 1e-4f) basis = ang > Mathf.Pi - 1e-4f ? new Basis(Vector3.Right, Mathf.Pi) : new Basis(Vector3.Back.Cross(n).Normalized(), ang);   // turn the quad's +Z onto the leaf's normal
+            var glass = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.70f, 0.78f, 0.35f), Metallic = 0.3f, Roughness = 0.1f,
+                                                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // == Vehicle's window glass
+            var pane = new MeshInstance3D { Name = "Glass", Mesh = new QuadMesh { Size = _glassSize }, MaterialOverride = glass,
+                                            Transform = new Transform3D(basis, -_pivotLocal + _glassCentre), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            if (_cull > 0f) pane.VisibilityRangeEnd = _cull;
+            _pivot.AddChild(pane);
+        }
         MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)
         CollisionShape3D _leafCollider;   // look-ray + solidity hitbox (bit 6). DIRECT child of this StaticBody -- Godot needs a shape direct-to-body to collide, so it can't parent to the swinging _pivot; ApplySwing rotates its transform about the hinge so the hitbox TRACKS the leaf (master: the look-at orb followed the outline but the collider stayed pinned at the closed pose).
         Vector3 _leafColliderCenter;      // collider box's closed-pose centre (leaf AABB centre); ApplySwing re-places it about the pivot each frame
@@ -129,6 +154,7 @@ namespace UnturnedGodot
                 // (the body's outline) -- together they light up the entire prop, body + door, when looked at (master).
                 _leafOutline = OutlineOverlay.MakeOutline(_leafMesh, new Transform3D(Basis.Identity, -_pivotLocal));
                 _pivot.AddChild(_leafOutline);
+                BuildGlassPane();   // a pane requested before _Ready (Spawn -> AddGlassPane on a not-yet-in-tree parent)
 
                 // Box collider = the look-ray + solidity hitbox (bit 6), sized from the leaf's OWN closed-pose
                 // AABB (already ObjectDoor-local: at rest pivot=+pivotLocal, leaf=-pivotLocal, sum zero). It is a
@@ -225,7 +251,6 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            using var _prof = Prof.Scope("ObjectDoor.phys");
             float want = IsOpen ? 1f : 0f;
             if (Mathf.IsEqualApprox(_swing, want))
             {

@@ -64,8 +64,11 @@ namespace UnturnedGodot.Testing
             var start2 = p2.GlobalPosition;
             p2.GlobalPosition = start2 + new Vector3(140f, 0f, 60f);   // the naive teleport, no snapshot reset
             yield return Ticks(3);
-            T.Check($"a bare position write really IS undone by the tick ({p2.GlobalPosition} back at {start2}) -- so check 2 has teeth",
-                SameXZ(p2.GlobalPosition, start2));
+            // CONTRACT CHANGE 2026-09-03: the tick no longer undoes an external move -- anything off the prev->curr lerp segment is
+            // ADOPTED as the new physics truth (PlayerController.PhysicsTick; the ladder tests teleport this way and used to lose it).
+            // So the naive write STICKS now, which is the behaviour a scripted teleport actually wants; the check pins that.
+            T.Check($"a bare position write is ADOPTED by the tick, not undone ({p2.GlobalPosition} vs {start2 + new Vector3(140f, 0f, 60f)})",
+                SameXZ(p2.GlobalPosition, start2 + new Vector3(140f, 0f, 60f)));
 
             yield break;
         }

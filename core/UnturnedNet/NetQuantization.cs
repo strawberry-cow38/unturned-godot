@@ -34,13 +34,27 @@ namespace UnturnedGodot.Net
         /// <summary>Round a value through the exact wire quantization (encode then decode) so a value stored
         /// authoritatively is already bit-identical to what every client reconstructs after the wire
         /// round-trip -- StateHash comparisons then need no tolerance, they're exact equality.</summary>
+        // PERF (ETW allocation ticks, 2026-09-02): these round-trips ran every physics step for every replicated value
+        // (the SP loopback too) and each call allocated a NetPakWriter + an 8-byte buffer + a NetPakReader -- 74% of ALL
+        // managed garbage in a PEI idle capture (~2.5 MB/s), driving a ~16 ms gen1 GC pause every ~4 s (the periodic
+        // physics hitch). One writer/reader pair per thread, reused; Reset()/SetBufferSegment re-arm them per call.
+        [System.ThreadStatic] static NetPakWriter _w;
+        [System.ThreadStatic] static NetPakReader _r;
+        static NetPakWriter Writer() => _w ??= new NetPakWriter { buffer = new byte[8] };
+        static NetPakReader Reader()
+        {
+            var r = _r ??= new NetPakReader();
+            r.Reset();   // SetBufferSegment only swaps the buffer; without this the read index/scratch carry over, the 3rd call reads past the 8-byte buffer, and from then on every read fails quietly (value 0). Shipped that way in 6e19565b for ~an hour -- never again.
+            return r;
+        }
+
         public static float QuantizeClampedFloat(float value, int intBits, int fracBits)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
+            var w = Writer();
             w.Reset();
             w.WriteClampedFloat(value, intBits, fracBits);
             w.Flush();
-            var r = new NetPakReader();
+            var r = Reader();
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             r.ReadClampedFloat(intBits, fracBits, out float result);
             return result;
@@ -51,11 +65,11 @@ namespace UnturnedGodot.Net
         /// before integrating, so it consumes exactly the bytes the server will read (MP_PLAN §2.5b).</summary>
         public static float QuantizeSignedNormalizedFloat(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
+            var w = Writer();
             w.Reset();
             w.WriteSignedNormalizedFloat(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
+            var r = Reader();
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             r.ReadSignedNormalizedFloat(bitCount, out float result);
             return result;
@@ -68,11 +82,11 @@ namespace UnturnedGodot.Net
         /// mirror above, unsigned.</summary>
         public static float QuantizeUnsignedNormalizedFloat(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
+            var w = Writer();
             w.Reset();
             w.WriteUnsignedNormalizedFloat(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
+            var r = Reader();
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             r.ReadUnsignedNormalizedFloat(bitCount, out float result);
             return result;
@@ -81,11 +95,11 @@ namespace UnturnedGodot.Net
         /// <summary>Same idea as QuantizeClampedFloat, for WriteDegrees/ReadDegrees.</summary>
         public static float QuantizeDegrees(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[4] };
+            var w = Writer();
             w.Reset();
             w.WriteDegrees(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
+            var r = Reader();
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             r.ReadDegrees(out float result, bitCount);
             return result;

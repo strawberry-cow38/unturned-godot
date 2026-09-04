@@ -50,7 +50,7 @@ namespace UnturnedGodot
             if (mesh == null) { GD.Print("[elevator] no Elevator_0.obj mesh"); return e; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + "Elevator_0_tex.png";
-            if (Godot.FileAccess.FileExists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            if (Godot.FileAccess.FileExists(tp)) { var img = ContentProvider.LoadImage(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             // ORIENT: the extracted Elevator_0.obj is tipped (measured AABB 5.0 x 4.4 x 3.9). Master's steer: the
             // machinery housing that sat on the +Z 'front' face belongs on TOP -- RotX -90 rolls +Z up to +Y so the
             // motor/winch sits atop the ~5 x 4.4 m car. Master 2026-08-29: "machinery on the front should be on top".

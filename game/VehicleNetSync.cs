@@ -57,6 +57,31 @@ namespace UnturnedGodot
         {
             _server = server;
             _host = host;
+            // WHO IS NEAR A CAR, answered from the replicated player positions rather than a camera. The
+            // alarm's own check falls back to GetViewport().GetCamera3D(), which is null on a dedicated
+            // server -- so the machine that owns every car could never set one off, and a listen-server host
+            // only ever triggered on HIS own proximity. This is the whole population, on both.
+            //
+            // AND IT IS CLEARED WHEN THIS HOST GOES AWAY. It is a static holding a lambda that captures
+            // _server, so leaving it set outlives the server it belongs to: the next world in the same
+            // process -- which is every L1 run after the first -- would answer proximity out of a dead
+            // session's player list. That is the leaked-global shape, and it is silent, because a stale
+            // answer is still an answer.
+            var owner = host;
+            Vehicle.AlarmProximityTest = Proximity;
+            if (owner != null)
+                owner.TreeExiting += () => { if (Vehicle.AlarmProximityTest == Proximity) Vehicle.AlarmProximityTest = null; };
+        }
+
+        bool Proximity(Vector3 pos)
+        {
+            var u = ToU(pos);
+            foreach (var pe in _server.Players.All)
+            {
+                float dx = pe.Pos.x - u.x, dy = pe.Pos.y - u.y, dz = pe.Pos.z - u.z;
+                if (dx * dx + dy * dy + dz * dz < Vehicle.AlarmRadiusSq) return true;
+            }
+            return false;
         }
 
         /// <summary>B11 server-side reach: the requester must be near BOTH vehicles being roped. The client aims
@@ -164,6 +189,10 @@ namespace UnturnedGodot
                     // every existing vehicle is bit-identical to before.
                     _server.Vehicles.ServerSpawn(id, (byte)(typeIdx < 0 ? 0 : typeIdx), (byte)v.SpawnVariant,
                                                  ToU(v.GlobalPosition), tick, v.SpeedMaxMps, v.ClimbMaxMps, v.FallMaxMps);
+                    // How many people this thing seats, from the spec the game layer already has. The server
+                    // validates every seat request against it; core cannot see SeatLocals and must be told.
+                    // Never written to the wire -- both ends resolve TypeId through the same spec table.
+                    _server.Vehicles.ServerSetSeatCount(id, v.SeatCount);
                     t = new Tracked { NetId = id.Value, Node = v };
                     _tracked[v] = t;
                     _byId[t.NetId] = t;
@@ -236,6 +265,7 @@ namespace UnturnedGodot
                 {
                     t.AppliedRemoteDriver = 0;
                     v.NetDriverId = 0;
+                    v.ReleaseControls();   // same as the SP exit: the held axes go with the driver, the rpm falls to idle
                     // Engine deliberately UNTOUCHED on exit: it stays as the driver left it, same as SP. Park()
                     // below still holds the car so it cannot roll away -- that was always the brake's job, not
                     // the engine's.
@@ -269,7 +299,9 @@ namespace UnturnedGodot
                                       | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
                                       | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
                                       | (v.BrakingNow ? VehicleReplication.FlagBraking : 0)
-                                      | (v.Exploded ? VehicleReplication.FlagExploded : 0));
+                                      | (v.Exploded ? VehicleReplication.FlagExploded : 0)
+                                      | (v.AlarmedForTest ? VehicleReplication.FlagAlarmed : 0)
+                                      | (v.AlarmActiveForTest ? VehicleReplication.FlagAlarming : 0));
                     _server.Vehicles.ServerPublish(new NetId(t.NetId), ToU(v.GlobalPosition), ToU(euler),
                         ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
                         v.Fuel, v.Health, v.Battery, flags, tick);

@@ -35,11 +35,14 @@ namespace UnturnedGodot
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
-            var dim = new ColorRect { Color = UITheme.Scrim };
+            var dim = new ColorRect();   // the same frosted-glass backdrop as the inventory/crafting screens (unified UI, master 2026-09-03)
+            dim.Material = new ShaderMaterial { Shader = new Shader { Code = InventoryUI.BACKDROP_BLUR } };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
+            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
             _panel = new Panel { CustomMinimumSize = new Vector2(PANELW, PANELH), Size = new Vector2(PANELW, PANELH) };
+            UITheme.Panel(_panel);
             _root.AddChild(_panel);
             _header = new Label { Position = new Vector2(20, 14), Size = new Vector2(PANELW - 40, 30) };
             _header.AddThemeFontSizeOverride("font_size", 24);
@@ -54,7 +57,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_open && _panel != null)
-                _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+                _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, MenuNavbar.Height + Mathf.Max(16f, (_root.Size.Y - MenuNavbar.Height - PANELH) / 2f));   // centred under the shared navbar
             // MP only: the upgrade is applied by the SERVER (the levels/XP change in the background when
             // the owner skills echo adopts) -- repaint off a cheap signature, like the InventoryUI poll.
             if (_open && Player?.NetUpgradeSkill != null)
@@ -75,6 +78,7 @@ namespace UnturnedGodot
             return h;
         }
 
+        MenuNavbar _navbar;
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Open() { _open = true; Visible = true; Refresh(); }
         public void Close() { _open = false; Visible = false; }

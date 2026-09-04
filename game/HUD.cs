@@ -53,7 +53,10 @@ namespace UnturnedGodot
             Current._alertLeft = seconds;
         }
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
-        Control _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
+        HurtDirectionIndicator _hurtIndicator;
+        public HurtDirectionIndicator HurtIndicator => _hurtIndicator;
+        LowHealthOverlay _lowHp;
+        Crosshair3PControl _crosshair3p;   // centre-screen crosshair, shown only in third person (master) -- the 1P has the viewmodel reticle, the 3P had nothing marking the aim
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
         public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
@@ -80,6 +83,32 @@ namespace UnturnedGodot
             _pain.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_pain);
             _playerOnly.Add(_pain);
+
+            // Low-HP vignette + desaturation (master 2026-09-03: "add a red vignette and lose color saturation
+            // when low hp"). No retail source for this -- it isn't a port, it's a game-feel addition -- so it is
+            // driven straight off the health FRACTION with no other opinion attached. Its own screen-space
+            // shader (RainOverlay's exact shape: CanvasLayer + ColorRect + ShaderMaterial) rather than writing
+            // Godot.Environment.AdjustmentSaturation: that Environment is ONE shared world resource
+            // (DayNightCycle already animates it for time-of-day), so a second writer fighting it every frame
+            // would make lighting flicker for every player sharing the world, not just the hurt one -- and in MP
+            // it is shared, so it would desaturate everyone's screen for ONE player's low HP. A screen-space
+            // overlay is the only thing that is naturally per-viewer.
+            _lowHp = new LowHealthOverlay();
+            _lowHp.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _lowHp.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_lowHp);
+            _playerOnly.Add(_lowHp);
+
+            // Directional hurt indicator (master 2026-09-03: "add directional visual hit feedback when you get
+            // hurt by something"). A ring of wedges around the screen centre, one per recent hit, drawn toward
+            // where the hit came from and faded out over HurtDirectionIndicator.MarkTime -- the flash says "you
+            // got hit", this says "from over there". Its own Control.Draw rather than a texture: retail's is a
+            // shader-drawn arc too (PlayerDamageArrowUI), and there is no arrow asset in the ripped content.
+            _hurtIndicator = new HurtDirectionIndicator();
+            _hurtIndicator.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _hurtIndicator.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_hurtIndicator);
+            _playerOnly.Add(_hurtIndicator);
 
             // vitals draw on their OWN CanvasLayer ABOVE the inventory (layer 11) so the health/food/water/stamina/
             // infection bars stay visible with the bag open (master 2026-08-26). The rest of the HUD stays on layer 10.
@@ -384,11 +413,17 @@ namespace UnturnedGodot
             }
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
             foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
             RefreshHotbar();
-            if (_crosshair3p != null) _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
+            if (_crosshair3p != null)
+            {
+                _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
+                if (_crosshair3p.Visible && Mathf.Abs(_crosshair3p.Spread - Player.CrosshairSpread01) > 0.005f) { _crosshair3p.Spread = Player.CrosshairSpread01; _crosshair3p.QueueRedraw(); }   // DYNAMIC: tightens on ADS, blooms on move/recoil (master 2026-09-04)
+            }
 
             // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself
             if (_alert != null && _alertLeft > 0f)
@@ -434,6 +469,8 @@ namespace UnturnedGodot
                     _weaponName.Modulate = asset != null ? SDG.Unturned.ItemTool.RarityColorUI(asset.rarity) : Colors.White;
                 }
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
+                _hurtIndicator.Cam = Player.Camera;   // kept in sync every frame -- the same camera that drives the flinch, so the two never disagree about which way "forward" means
+                _lowHp.SetFraction(Player.MaxHealth > 0f ? Player.Health / Player.MaxHealth : 1f);
             }
 
             bool inVeh = Vehicle != null;
@@ -450,11 +487,11 @@ namespace UnturnedGodot
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
-                _vehRpmGear.Text = Vehicle.EngineOn
+                _vehRpmGear.Text = Vehicle.EngineOn && Vehicle.EngineStarting ? "starting…" : Vehicle.EngineOn
                     ? $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}"   // MPH speedometer + rpm + gear (master)
                     // Engine off is now a state you can sit in, so the cluster has to SAY so -- otherwise a
                     // stopped car reads as "0 mph, 0 rpm" and looks broken rather than switched off.
-                    : (Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
+                    : (Vehicle.EngineDrowned ? "engine DROWNED · dead for good" : Vehicle.EngineDead ? "engine DEAD · repair it" : Vehicle.CanStartEngine ? "engine off · N or gas to start" : "engine off · battery flat");
             }
             else if (inRail)
             {
@@ -470,7 +507,7 @@ namespace UnturnedGodot
         static Texture2D LoadTex(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
         }
 
@@ -479,7 +516,9 @@ namespace UnturnedGodot
         // on top, so the reticle keeps its contrast whether it sits over bright sky or dark ground.
         private sealed partial class Crosshair3PControl : Control
         {
-            const float Gap = 3f, Len = 9f, Thick = 2f, Dot = 3f;   // gap from centre, arm length, arm thickness, centre dot
+            const float Len = 9f, Thick = 2f, Dot = 3f;   // arm length, arm thickness, centre dot
+            public float Spread = 1f;                         // PlayerController.CrosshairSpread01: hip 1 (gap 12 px) -> ADS ~0.05 (gap 3 px); bloom past 1
+            float Gap => 2.5f + 9.5f * Spread;                // gap from centre follows the spread
             static readonly Color Ink = Colors.White;                      // the mark (thin white lines)
             static readonly Color Edge = new Color(0f, 0f, 0f, 0.85f);     // a solid dark halo so it reads on sky, grass or a wall alike
 

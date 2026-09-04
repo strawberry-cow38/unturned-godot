@@ -98,7 +98,7 @@ namespace UnturnedGodot
             if (File.Exists(tex))
             {
                 var img = new Image();
-                if (img.Load(tex) == Error.Ok)
+                if (ContentProvider.LoadOk(img, tex))
                 {
                     img.GenerateMipmaps();
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);

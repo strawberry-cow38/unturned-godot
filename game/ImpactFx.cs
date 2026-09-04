@@ -36,7 +36,7 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath(rel);
             if (!System.IO.File.Exists(p)) return null;
-            var img = Image.LoadFromFile(p);
+            var img = ContentProvider.LoadImage(p);
             return img != null ? ImageTexture.CreateFromImage(img) : null;
         }
         static AudioStream LoadWav(string rel)
@@ -55,7 +55,8 @@ namespace UnturnedGodot
         static Texture2D DecalTex(Surf s)   // only hard surfaces leave a hole; concrete stands in for a missing one
             => _decal.TryGetValue(s, out var t) ? t : (_decal[s] = LoadTex($"res://content/decal_{(s == Surf.Metal ? "metal" : s == Surf.Wood ? "wood" : "concrete")}.png"));
         static AudioStream Snd(Surf s)
-            => _snd.TryGetValue(s, out var a) ? a : (_snd[s] = LoadWav($"res://content/impact_{MatName(s)}.wav"));
+            => GameAudio.Pick("bulletimpacts", GameAudio.BulletSurface(s))   // retail effects/physics/bulletimpact/<material> variation bank (8-9 clips each)
+               ?? (_snd.TryGetValue(s, out var a) ? a : (_snd[s] = LoadWav($"res://content/impact_{MatName(s)}.wav")));
 
         /// <summary>A bullet hit at `point` on a surface with outward `normal`, material `surf`. Spawns the debris
         /// burst (+ a decal on hard surfaces, + a spark on metal), or the water splash. `attachTo` parents the decal

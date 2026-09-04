@@ -50,6 +50,78 @@ namespace UnturnedGodot
         public static ShadowQuality Shadows = ShadowQuality.High;
         public static int Aniso = 4;
         public static float DrawDistance = 1.0f;
+        /// <summary>Directional shadow distance in metres (strawberry 2026-09-04 "add options for shadow distance"). The world's sun
+        /// (group "sun") gets DirectionalShadowMaxDistance = this at build and whenever the row is cycled. 120 was the fixed value.</summary>
+        public static float ShadowDistance = 120f;
+
+        // ---- PORTED FROM RETAIL GraphicsSettingsData (strawberry 2026-09-04 "port more graphics options etc from the source") ----
+        // Retail's list: FullscreenMode, UserInterfaceScale, TargetFrameRate, AmbientOcclusion, GrassDisplacement, Ragdolls, Wind, VSync,
+        // Bloom, EffectQuality, SunShafts, ScreenSpaceReflection, PlanarReflection, ScopeQuality, OutlineQuality (+ chromatic aberration,
+        // film grain, triplanar, nice-blend, debris/blast/puddle/glitter/clutter -- no Godot-side hook for those yet, so they are not
+        // shown rather than shown as dead rows). Each one below maps onto a real switch in this codebase.
+        public enum GfxQuality { Off, Low, Medium, High, Ultra }
+        public static readonly GfxQuality[] QualityOrder = { GfxQuality.Off, GfxQuality.Low, GfxQuality.Medium, GfxQuality.High, GfxQuality.Ultra };
+        public static readonly GfxQuality[] QualityOrderNoOff = { GfxQuality.Low, GfxQuality.Medium, GfxQuality.High, GfxQuality.Ultra };
+        public enum FullscreenMode { Windowed, Borderless, Exclusive }
+        public static readonly FullscreenMode[] FullscreenOrder = { FullscreenMode.Windowed, FullscreenMode.Borderless, FullscreenMode.Exclusive };
+        public static FullscreenMode Fullscreen = FullscreenMode.Windowed;
+        public static readonly float[] UiScaleOrder = { 0.75f, 0.85f, 1.0f, 1.15f, 1.3f };
+        public static float UiScale = 1.0f;
+        public static readonly int[] FpsOrder = { 0, 60, 120, 144, 240 };
+        public static int TargetFps = 0;   // 0 = uncapped
+        public static bool VSync = false;
+        public static bool AmbientOcclusion = false;
+        public static bool Bloom = true;
+        public static bool SunShafts = false;          // -> Godot volumetric fog (the nearest thing to retail's sun shafts)
+        public static bool ScreenSpaceReflections = false;
+        public static GfxQuality EffectQuality = GfxQuality.High;      // particle count + size (ParticleFx) -- takes effect on the next map load
+        public static GfxQuality PlanarReflection = GfxQuality.Medium;   // water mirror: Off / every 4th frame / every 2nd (the pre-option default) / every frame
+        public static GfxQuality ScopeQuality = GfxQuality.High;       // scope PiP viewport: 360 / 540 / 720 / 1080 (applied when a scope is next mounted)
+        public static bool Outline = true;              // look-at outline overlay
+        public static bool GrassDisplacement = true;
+        public static bool Wind = true;                 // foliage sway + flag cloth
+        public static bool Ragdolls = true;
+        public static bool WellShaft = false;   // the bottomless-well disc (console `wellshaft on|off`, applies on the next map load); OFF until master clears it -- it cost GPU-driver timeouts on 2026-09-04
+        public static float EffectMul => EffectQuality switch { GfxQuality.Off => 0.05f, GfxQuality.Low => 0.5f, GfxQuality.Medium => 0.75f, GfxQuality.High => 1f, _ => 1.5f };
+        public static int ScopeSize => ScopeQuality switch { GfxQuality.Off or GfxQuality.Low => 360, GfxQuality.Medium => 540, GfxQuality.High => 720, _ => 1080 };
+        public static int PlanarEvery => PlanarReflection switch { GfxQuality.Low => 4, GfxQuality.Medium => 2, _ => 1 };
+        public static string OnOff(bool b) => b ? "On" : "Off";
+        public static void ApplyWindow()
+        {
+            switch (Fullscreen)
+            {
+                case FullscreenMode.Exclusive: DisplayServer.WindowSetMode(DisplayServer.WindowMode.ExclusiveFullscreen); break;
+                case FullscreenMode.Borderless: DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen); break;
+                default: DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed); break;
+            }
+            DisplayServer.WindowSetVsyncMode(VSync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
+            Engine.MaxFps = TargetFps;
+        }
+        public static void ApplyUiScale(Node ctx) { var root = ctx?.GetTree()?.Root; if (root != null) root.ContentScaleFactor = UiScale; }
+        /// <summary>The world's environment (WorldEnvironment nodes in group "world_env"): AO, bloom, SSR, sun shafts.</summary>
+        public static void ApplyEnvironment(Node ctx)
+        {
+            var tree = ctx?.GetTree(); if (tree == null) return;
+            foreach (var n in tree.GetNodesInGroup("world_env")) if (n is WorldEnvironment we && we.Environment != null) ApplyEnvironment(we.Environment);
+        }
+        public static void ApplyEnvironment(Godot.Environment env)
+        {
+            if (env == null) return;
+            env.SsaoEnabled = AmbientOcclusion;
+            env.GlowEnabled = Bloom;
+            env.SsrEnabled = ScreenSpaceReflections;
+            env.VolumetricFogEnabled = SunShafts;
+            // density: Godot's default 0.05 is the night key; DayNightCycle drives it by sun elevation (night 0.05, horizon 0.010, noon 0.003)
+        }
+        public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
+        public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }
+        public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
+        public static string ShadowDistLabel(float d) => $"{d:0} m";
+        public static void ApplyShadowDistance(Node ctx)
+        {
+            var tree = ctx?.GetTree(); if (tree == null) return;
+            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = ShadowDistance;
+        }
         public static Vector2I Resolution = Vector2I.Zero;   // (0,0) = leave the window alone / native
 
         // VERTEX LIGHTING A/B (strawberry 2026-08-16). Flips every StandardMaterial3D in the tree between
@@ -147,10 +219,146 @@ namespace UnturnedGodot
 
         /// <summary>Apply everything to the live renderer. Safe to call with no window (the L1 harness runs headless),
         /// which is why each step guards rather than assuming a viewport exists.</summary>
+        // ---- MULTITHREADED RENDERER (restart required). Godot reads rendering/driver/threads/thread_model ONCE at boot,
+        // but honours an override.cfg beside project.godot (source runs) / the executable (exports) at the next start.
+        // The toggle writes exactly that one key and the row says "(restart)" until the running process matches.
+        // Measured 2026-09-03 on the 4080S: +26% on the CPU-bound idle scene. Shipped as opt-in first; DEFAULT-ON since the
+        // evening of 2026-09-03 (master: "flip multithreaded renderer on by default") -- project.godot carries thread_model=2,
+        // so "Multi" = no override line and "Single" writes an explicit =1.
+        public const string ThreadModelKey = "rendering/driver/threads/thread_model";
+        public static bool RenderThreadActive => ProjectSettings.GetSetting(ThreadModelKey, 2).AsInt32() == 2;   // what THIS process booted with (project default: 2 = multi)
+        static bool? _renderThreadWanted;
+        public static bool RenderThreadWanted { get => _renderThreadWanted ?? RenderThreadActive; private set => _renderThreadWanted = value; }
+        public static string RenderThreadLabel => (RenderThreadWanted ? "Multi" : "Single") + (RenderThreadWanted != RenderThreadActive ? " (restart)" : "");
+        static string OverridePath => OS.HasFeature("template")
+            ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath()) ?? ".", "override.cfg")   // exported build: res:// is a read-only pack
+            : ProjectSettings.GlobalizePath("res://override.cfg");
+        public static void SetRenderThreadWanted(bool on)
+        {
+            RenderThreadWanted = on;
+            // the project default is MULTI (2) now; only Single needs an explicit line
+            WriteOverride("driver/threads/thread_model", on ? null : new[] { "driver/threads/thread_model=1" }, $"render thread -> {(on ? "multi" : "single")}");
+        }
+
+        // ---- VOLUMETRIC FOG QUALITY (restart required). The froxel grid (rendering/environment/volumetric_fog/volume_size x
+        // volume_depth) and its filter are boot-time project settings like the thread model, so they ride override.cfg too.
+        // strawberry 2026-09-04: "the volumetric fog looks amazing ... any way to make it perform better? -20fps". The cost is
+        // the froxel count x lights in range: project.godot carries 48x48 (42% of Godot's 64x64 default) as Medium; Low is
+        // 32x32 unfiltered (12.5% of default, temporal reprojection hides most of the blockiness); High is the engine default.
+        public const string FogSizeKey = "rendering/environment/volumetric_fog/volume_size";
+        public static readonly string[] FogQualityNames = { "Low", "Medium", "High" };
+        static readonly int[] FogQualitySize = { 32, 48, 64 };
+        public static int VolumetricFogActive
+        {
+            get { int sz = ProjectSettings.GetSetting(FogSizeKey, 48).AsInt32(); return sz <= 32 ? 0 : sz >= 64 ? 2 : 1; }   // what THIS process booted with
+        }
+        static int? _fogWanted;
+        public static int VolumetricFogWanted { get => _fogWanted ?? VolumetricFogActive; private set => _fogWanted = value; }
+        public static string VolumetricFogLabel => FogQualityNames[VolumetricFogWanted] + (VolumetricFogWanted != VolumetricFogActive ? " (restart)" : "");
+        public static void SetVolumetricFogQuality(int q)
+        {
+            q = Mathf.Clamp(q, 0, 2);
+            VolumetricFogWanted = q;
+            string[] lines = q == 1 ? null : new[]   // Medium = the project default: no override lines
+            {
+                $"environment/volumetric_fog/volume_size={FogQualitySize[q]}",
+                $"environment/volumetric_fog/volume_depth={FogQualitySize[q]}",
+                $"environment/volumetric_fog/use_filter={(q == 0 ? 0 : 1)}",
+            };
+            WriteOverride("environment/volumetric_fog/", lines, $"volumetric fog -> {FogQualityNames[q]}");
+        }
+
+        /// <summary>Rewrite override.cfg's [rendering] section: drop every line starting with <paramref name="keyPrefix"/> (ours),
+        /// add <paramref name="lines"/> (null = the project default, no line), leave anything else in the file alone.</summary>
+        static void WriteOverride(string keyPrefix, string[] lines, string what)
+        {
+            try
+            {
+                string path = OverridePath;
+                var all = System.IO.File.Exists(path) ? new System.Collections.Generic.List<string>(System.IO.File.ReadAllLines(path)) : new System.Collections.Generic.List<string>();
+                all.RemoveAll(l => l.TrimStart().StartsWith(keyPrefix));
+                if (lines != null && lines.Length > 0)
+                {
+                    int sec = all.FindIndex(l => l.Trim() == "[rendering]");
+                    if (sec < 0) { if (all.Count > 0 && all[all.Count - 1].Trim() != "") all.Add(""); all.Add("[rendering]"); sec = all.Count - 1; }
+                    all.InsertRange(sec + 1, lines);
+                }
+                for (int i = all.Count - 1; i >= 0; i--)   // drop a [rendering] header we emptied
+                    if (all[i].Trim() == "[rendering]" && (i + 1 >= all.Count || all[i + 1].Trim() == "" || all[i + 1].TrimStart().StartsWith("["))) all.RemoveAt(i);
+                if (all.TrueForAll(l => l.Trim() == "")) { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
+                else System.IO.File.WriteAllLines(path, all);
+                GD.Print($"[graphics] {what} on next start ({path})");
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not write override.cfg: {e.Message}"); }
+        }
+
+        // ---- PERSISTENCE (strawberry 2026-09-04 "make all persist"): user://graphics.cfg holds every graphics + controls row.
+        // Loaded once at boot (Main._Ready) and applied; saved by the panel after every change. The render-thread toggle
+        // lives in override.cfg (Godot reads it at boot) and is not duplicated here.
+        const string ConfigPath = "user://graphics.cfg";
+        public static void Save()
+        {
+            try
+            {
+                var cfg = new ConfigFile();
+                cfg.SetValue("graphics", "aa", (int)AA);
+                cfg.SetValue("graphics", "shadows", (int)Shadows);
+                cfg.SetValue("graphics", "aniso", Aniso);
+                cfg.SetValue("graphics", "draw_distance", DrawDistance);
+                cfg.SetValue("graphics", "shadow_distance", ShadowDistance);
+                cfg.SetValue("graphics", "resolution_x", Resolution.X);
+                cfg.SetValue("graphics", "resolution_y", Resolution.Y);
+                cfg.SetValue("graphics", "fullscreen", (int)Fullscreen); cfg.SetValue("graphics", "ui_scale", UiScale); cfg.SetValue("graphics", "target_fps", TargetFps); cfg.SetValue("graphics", "vsync", VSync);
+                cfg.SetValue("graphics", "ambient_occlusion", AmbientOcclusion); cfg.SetValue("graphics", "bloom", Bloom); cfg.SetValue("graphics", "sun_shafts", SunShafts); cfg.SetValue("graphics", "ssr", ScreenSpaceReflections);
+                cfg.SetValue("graphics", "effect_quality", (int)EffectQuality); cfg.SetValue("graphics", "planar_reflection", (int)PlanarReflection); cfg.SetValue("graphics", "scope_quality", (int)ScopeQuality);
+                cfg.SetValue("graphics", "outline", Outline); cfg.SetValue("graphics", "grass_displacement", GrassDisplacement); cfg.SetValue("graphics", "wind", Wind); cfg.SetValue("graphics", "ragdolls", Ragdolls); cfg.SetValue("graphics", "well_shaft", WellShaft);
+                cfg.SetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity);
+                cfg.SetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
+                cfg.SetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
+                cfg.SetValue("controls", "invert_plane_pitch", ControlsOptions.InvertPlanePitch);
+                cfg.SetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity);
+                cfg.Save(ConfigPath);
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not save {ConfigPath}: {e.Message}"); }
+        }
+        public static void Load()
+        {
+            try
+            {
+                if (System.Environment.GetEnvironmentVariable("UG_SUNSHAFTS") == "1") SunShafts = true;   // offline render hook: volumetric fog on for headless shots
+                var cfg = new ConfigFile();
+                if (cfg.Load(ConfigPath) != Error.Ok) return;   // first run: defaults
+                AA = (AAMode)Mathf.Clamp((int)cfg.GetValue("graphics", "aa", (int)AA), 0, AAOrder.Length - 1);
+                Shadows = (ShadowQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "shadows", (int)Shadows), 0, ShadowOrder.Length - 1);
+                Aniso = (int)cfg.GetValue("graphics", "aniso", Aniso);
+                DrawDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "draw_distance", DrawDistance), 0.25f, 1f);
+                ShadowDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "shadow_distance", ShadowDistance), 40f, 300f);
+                Resolution = new Vector2I((int)cfg.GetValue("graphics", "resolution_x", Resolution.X), (int)cfg.GetValue("graphics", "resolution_y", Resolution.Y));
+                Fullscreen = (FullscreenMode)Mathf.Clamp((int)cfg.GetValue("graphics", "fullscreen", (int)Fullscreen), 0, 2);
+                UiScale = Mathf.Clamp((float)cfg.GetValue("graphics", "ui_scale", UiScale), 0.5f, 2f);
+                TargetFps = Mathf.Clamp((int)cfg.GetValue("graphics", "target_fps", TargetFps), 0, 1000);
+                VSync = (bool)cfg.GetValue("graphics", "vsync", VSync);
+                AmbientOcclusion = (bool)cfg.GetValue("graphics", "ambient_occlusion", AmbientOcclusion); Bloom = (bool)cfg.GetValue("graphics", "bloom", Bloom);
+                SunShafts = (bool)cfg.GetValue("graphics", "sun_shafts", SunShafts); ScreenSpaceReflections = (bool)cfg.GetValue("graphics", "ssr", ScreenSpaceReflections);
+                EffectQuality = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "effect_quality", (int)EffectQuality), 0, 4);
+                PlanarReflection = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "planar_reflection", (int)PlanarReflection), 0, 4);
+                ScopeQuality = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "scope_quality", (int)ScopeQuality), 0, 4);
+                Outline = (bool)cfg.GetValue("graphics", "outline", Outline); GrassDisplacement = (bool)cfg.GetValue("graphics", "grass_displacement", GrassDisplacement);
+                Wind = (bool)cfg.GetValue("graphics", "wind", Wind); Ragdolls = (bool)cfg.GetValue("graphics", "ragdolls", Ragdolls); WellShaft = (bool)cfg.GetValue("graphics", "well_shaft", WellShaft);
+                ControlsOptions.MouseSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity), ControlsOptions.MouseSensMin, ControlsOptions.MouseSensMax);
+                ControlsOptions.InvertLookY = (bool)cfg.GetValue("controls", "invert_look_y", ControlsOptions.InvertLookY);
+                ControlsOptions.InvertHeliPitch = (bool)cfg.GetValue("controls", "invert_heli_pitch", ControlsOptions.InvertHeliPitch);
+                ControlsOptions.InvertPlanePitch = (bool)cfg.GetValue("controls", "invert_plane_pitch", ControlsOptions.InvertPlanePitch);
+                ControlsOptions.HeliSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity), ControlsOptions.HeliSensMin, ControlsOptions.HeliSensMax);
+            }
+            catch (System.Exception e) { GD.PrintErr($"[graphics] could not load {ConfigPath}: {e.Message}"); }
+        }
         public static void ApplyAll(Node ctx)
         {
             ApplyAA(ctx);
             ApplyShadows();
+            ApplyShadowDistance(ctx);
+            ApplyWindow(); ApplyUiScale(ctx); ApplyEnvironment(ctx); ApplyEffects(); ApplyWater();
             ApplyAniso();
             ApplyResolution();
             ApplyRenderDistance(ctx?.GetTree()?.Root);

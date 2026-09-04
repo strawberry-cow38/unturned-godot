@@ -35,7 +35,13 @@ namespace UnturnedGodot.Testing
                         if (cc is CollisionShape3D cs && cs.Shape is BoxShape3D b) { hull = sb; shape = cs; box = b; }
             T.Check("the puppet carries a StaticBody3D hull with a box shape", hull != null && box != null);
             if (hull == null || box == null) yield break;
-            T.Check($"the hull is on the world layer (bit 0) the shell's mask includes (layer 0x{hull.CollisionLayer:X})", (hull.CollisionLayer & (1u << 0)) != 0);
+            // The hull must be on a layer the SHELL masks -- but NOT one any vehicle masks. Bit 0 satisfies the
+            // first and violates the second: every VehicleBody3D masks bit 0 to find the terrain, so a puppet on
+            // bit 0 is solid to the real car it mirrors, which shoved a parked jeep 123 m in net.shell_drive.
+            // Asserting bit 0 specifically is what let that ship, so assert the two PROPERTIES instead.
+            uint shellMask = (1u << 0) | (1u << 6) | RemotePlayers.RemotePlayerLayer | Vehicle.HitMeshBit;
+            T.Check($"the hull is on a layer the shell's mask includes (layer 0x{hull.CollisionLayer:X})", (hull.CollisionLayer & shellMask) != 0);
+            T.Check($"...and on NO layer a vehicle masks -- bit 0 would make it solid to the car it mirrors (layer 0x{hull.CollisionLayer:X})", (hull.CollisionLayer & (1u << 0)) == 0);
             T.Check($"...and still on the vehicle layer (bit 5) the look-ray and tow scan probe (layer 0x{hull.CollisionLayer:X})", (hull.CollisionLayer & (1u << 5)) != 0);
             float nearFaceZ = puppet.GlobalPosition.Z + shape.Position.Z + box.Size.Z * 0.5f;   // the face toward the walker (+Z side)
             float farFaceZ = puppet.GlobalPosition.Z + shape.Position.Z - box.Size.Z * 0.5f;

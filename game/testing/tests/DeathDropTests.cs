@@ -13,13 +13,14 @@ namespace UnturnedGodot.Testing
     // rifle and beans dies to real server damage, and (1) the items appear as world-item PUPPET NODES in ANOTHER
     // client's world -- built by that client's own WorldItemReplicaView from its own replica, i.e. the thing a
     // second player would walk up to and press F on -- (2) the victim's own view shows them too, (3) the victim's
-    // adopted bag is empty, and (4) on respawn the spawn outfit (hoodie + cargo pants, the grid) is back on the
-    // server AND adopted by the shell, so the new life can pick things up again.
+    // adopted bag is empty, and (4) on respawn the player comes back BARE (spawns carry no clothing since 2026-09-03):
+    // no outfit re-grant on the server or the shell, the dropped clothes stay on the ground, and the hands grid is
+    // still there so the new life can pick things up again.
     //
     // TEETH: the assertions are on world items that EXIST, keyed by NetId, in a second client's node tree.
     // "The inventory is empty" alone would also pass if the items had been deleted. Reverting the
     // Combat.PlayerDied wiring in NetWorldServer leaves the ground unchanged and the bag full: (1)-(3) fail.
-    // Reverting the DedicatedServer respawn re-grant leaves the respawned player naked with no grid: (4) fails.
+    // A respawn that re-granted an outfit would double the clothes on the ground: (4) catches it.
     public class NetDeathDropsItemsVisibleToOthers : GameTest
     {
         public override string Name => "net.death_drops_items_visible_to_others";
@@ -64,14 +65,18 @@ namespace UnturnedGodot.Testing
             var shell = sess.Shell;
             ushort me = sess.Client.PlayerId;
 
-            // stock the VICTIM'S SERVER grid (the authority): a rifle with state + beans, on top of the spawn clothes
+            // stock the VICTIM'S SERVER grid (the authority): a rifle with state + beans, plus a hoodie + pants worn by the fixture
             var serverInv = ded.Server.Transactions.InventoryForTest(me);
             T.Check("the server grid exists", serverInv != null);
             if (serverInv == null) { world.Sim.Sim.Remove(pump); yield break; }
             var rifle = new Item(RifleId) { quality = 61, gunAmmo = 9 };
             T.Check("fixture: rifle granted server-side", serverInv.tryAddItem(rifle));
             T.Check("fixture: beans granted server-side", serverInv.tryAddItem(new Item(BeansId)));
-            T.Check("fixture: wearing the spawn hoodie + cargo pants", serverInv.wornShirt?.id == HoodieId && serverInv.wornPants?.id == CargoPantsId);
+            // players spawn BARE since 2026-09-03 (strawberry), so the fixture dresses the victim itself -- the clothes are
+            // still part of what a death has to put on the ground
+            serverInv.wearShirt(new Item(HoodieId));
+            serverInv.wearPants(new Item(CargoPantsId));
+            T.Check("fixture: dressed in a hoodie + cargo pants (server-side)", serverInv.wornShirt?.id == HoodieId && serverInv.wornPants?.id == CargoPantsId);
             int carried = Carried(serverInv);
             T.Check($"fixture: {carried} things carried (rifle, beans, hoodie, pants)", carried == 4);
             yield return Until(() => shell.Inventory.getItemCount(RifleId) == 1 && shell.Inventory.getItemCount(BeansId) == 1, 5);
@@ -116,17 +121,18 @@ namespace UnturnedGodot.Testing
             T.Check($"the victim's adopted bag is EMPTY ({Carried(shell.Inventory)} carried)", Carried(shell.Inventory) == 0);
             T.Check("the victim is not holding the rifle it just dropped", !shell.HasSomethingHeld && shell.Gun == null);
 
-            // (4) respawn: the spawn outfit is back on the server and adopted -- the new life has a grid
+            // (4) respawn: the new life is BARE (no outfit re-grant) and the clothes it dropped stay on the ground
             yield return Until(() => !shell.IsDead, 8);
             T.Check("the owner revived on the server respawn fact", !shell.IsDead);
-            T.Check("the server re-issued the spawn outfit (hoodie + cargo pants)", serverInv.wornShirt?.id == HoodieId && serverInv.wornPants?.id == CargoPantsId);
-            yield return Until(() => shell.Inventory.wornShirt?.id == HoodieId && shell.Inventory.wornPants?.id == CargoPantsId, 5);
-            T.Check("...and the shell adopted it", shell.Inventory.wornShirt?.id == HoodieId && shell.Inventory.wornPants?.id == CargoPantsId);
-            T.Check($"the pants page is a real grid again ({shell.Inventory.items[PlayerInventory.PANTS].width}x{shell.Inventory.items[PlayerInventory.PANTS].height})",
-                    shell.Inventory.items[PlayerInventory.PANTS].width > 0);
+            // spawns are BARE since 2026-09-03 (strawberry): a new life gets NO outfit -- the hoodie + pants stay on the ground
+            T.Check("the server respawned the player bare (no outfit re-grant)", serverInv.wornShirt == null && serverInv.wornPants == null && Carried(serverInv) == 0);
+            yield return Ticks(10);
+            T.Check("...and the shell is bare too", shell.Inventory.wornShirt == null && shell.Inventory.wornPants == null && Carried(shell.Inventory) == 0);
+            T.Check($"bare life: no pants page ({shell.Inventory.items[PlayerInventory.PANTS].width}x{shell.Inventory.items[PlayerInventory.PANTS].height}) but the hands grid is there to pick things up ({shell.Inventory.items[PlayerInventory.SLOTS].width}x{shell.Inventory.items[PlayerInventory.SLOTS].height})",
+                    shell.Inventory.items[PlayerInventory.PANTS].width == 0 && shell.Inventory.items[PlayerInventory.SLOTS].width > 0);
             T.Check("the respawned player did NOT get the rifle back (it is still on the ground)",
                     shell.Inventory.getItemCount(RifleId) == 0 && ded.Server.WorldItems.TryGet(groundRifle?.NetIdValue ?? 0, out _));
-            T.Check("the outfit re-grant did not double up: the ground still holds exactly one hoodie + one pants from this death",
+            T.Check("the respawn did not double up the clothes: the ground still holds exactly one hoodie + one pants from this death",
                     ded.Server.WorldItems.All.Count(e => !groundBefore.Contains(e.NetIdValue) && e.ItemId == HoodieId) == 1
                     && ded.Server.WorldItems.All.Count(e => !groundBefore.Contains(e.NetIdValue) && e.ItemId == CargoPantsId) == 1);
 

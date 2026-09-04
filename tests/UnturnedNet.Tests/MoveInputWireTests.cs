@@ -26,8 +26,8 @@ namespace UnturnedNet.Tests
         [Test]
         public void MoveInputPacket_SingleEntry_GoldenBytes()
         {
-            // count:2 + one 51-bit entry = 53 bits -> 7 payload bytes after the id byte.
-            // Re-goldened for Version = 9 (the claim bit is gone; the entry payload is the v3/v4 shape).
+            // count:2 + one 67-bit entry = 69 bits -> 9 payload bytes after the id byte.
+            // Re-goldened for Version = 22 (HeldItemId u16 after Buttons; 0 here). Before that Version = 9 (the claim bit is gone; the entry payload is the v3/v4 shape).
             var pkt = new MoveInputPacket { Count = 1, I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump } };
             var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
             Assert.That(ToHex(bytes), Is.EqualTo(GoldenSingle));
@@ -48,9 +48,9 @@ namespace UnturnedNet.Tests
             Assert.That(ToHex(bytes), Is.EqualTo(GoldenTriple));
         }
 
-        // goldened for Version = 9 on first landing; locked from then on
-        const string GoldenSingle = "01090400FF012800";
-        const string GoldenTriple = "010B0400FF0128602000E0AF4002040120FF050600";
+        // goldened for Version = 9 on first landing; re-goldened for Version = 22 (+16 zero bits per entry: HeldItemId); locked from then on
+        const string GoldenSingle = "01090400FF0128000000";
+        const string GoldenTriple = "010B0400FF01280000602000E0AF40020000040120FF0506000000";
 
         [Test]
         public void MoveInputPacket_RoundTrip_AndRejects()

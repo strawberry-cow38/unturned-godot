@@ -185,6 +185,27 @@ namespace UnturnedGodot
                 HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
                 GD.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
             };
+            // WE got hit. Only sent to the victim, so no PlayerId filter needed -- unlike PlayerFired above,
+            // there is no "was this my own action" case to skip.
+            Client.PlayerHurt += e =>
+            {
+                if (Shell != null && IsInstanceValid(Shell))
+                    Shell.NetHurt(e.Damage, e.HasSource ? new Vector3(e.SourcePos.x, e.SourcePos.y, e.SourcePos.z) : (Vector3?)null);
+            };
+            // SOMEBODY ELSE FIRED. Skip our own shots: the local trigger pull already drew its own tracer and
+            // played its own report the instant it happened, and drawing the echo would double every shot.
+            Client.PlayerFired += e =>
+            {
+                if (e.PlayerId == Client.PlayerId) return;
+                if (Shell != null && IsInstanceValid(Shell))
+                    Shell.RemoteShotFx(new Vector3(e.Origin.x, e.Origin.y, e.Origin.z),
+                                       new Vector3(e.Dir.x, e.Dir.y, e.Dir.z), e.Gun);
+            };
+            Client.PlayerMeleed += e =>
+            {
+                if (e.PlayerId == Client.PlayerId) return;   // our own swing already played on our body
+                Remotes?.OnRemoteMelee(e.PlayerId, e.Strong);
+            };
             Client.ImpactFx += e =>
             {
                 if (Shell != null && IsInstanceValid(Shell))
@@ -194,9 +215,13 @@ namespace UnturnedGodot
             // rendered melee blood onto ZombiePuppets and logged zombie kills; both events still exist on
             // NetWorldClient, a core/ type that is NOT deleted, but nothing server-side fires them anymore.)
             Client.GrenadeExploded += e =>
+            {
                 // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
                 // same params) -- fx only, zero damage: the server already applied the authoritative damage
-                PlayerRegistry.FlinchAllFromExplosion(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), Mathf.Max(e.Radius * 2f, 12f), 30f);
+                var ep = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
+                PlayerRegistry.FlinchAllFromExplosion(ep, Mathf.Max(e.Radius * 2f, 12f), 30f);
+                if (IsInsideTree()) GameAudio.Explosion(this, ep, e.Radius);   // a remote blast is heard too (retail Bomb effect audio)
+            };
             Client.ItemPickupDenied += e =>
             {
                 // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the
@@ -277,7 +302,7 @@ namespace UnturnedGodot
                 // the picture costs nothing the second time because the SERVER dedupes by content hash and
                 // only pushes bytes a peer has not already been sent.
                 _profileSent = true;
-                Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng);
+                Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng, PlayerProfile.Face);
             }
             if (!_holidayApplied)
             {
@@ -383,7 +408,7 @@ namespace UnturnedGodot
         {
             // VIEW-only suppression: the replica STORE keeps mirroring snapshots verbatim (hash parity),
             // only the puppet render for this NetId stops -- retail tellState's isDriver early-return
-            VehicleView.Suppressed.Add(_ridingNetId);
+            VehicleView.Suppress(_ridingNetId);   // ...and its puppet retires THIS tick, not at the next process-frame sweep
             string key = e.TypeId < Vehicle.SpecNames.Length ? Vehicle.SpecNames[e.TypeId] : "jeep";
             var v = Vehicle.BuildByName(key, e.Variant);
             v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
@@ -410,6 +435,8 @@ namespace UnturnedGodot
                               | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)
                               | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
                               | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
+                              | (v.AlarmedForTest ? VehicleReplication.FlagAlarmed : 0)
+                              | (v.AlarmActiveForTest ? VehicleReplication.FlagAlarming : 0)
                               | (v.BrakingNow ? VehicleReplication.FlagBraking : 0));
             Client.SendVehicleState(_ridingNetId, ToU(v.GlobalPosition), new UnityEngine.Vector3(euler.X, euler.Y, euler.Z),
                 ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
@@ -488,7 +515,7 @@ namespace UnturnedGodot
             WorldBuilder.AttachPlayerShell(this, shell, withCropManager: false);   // the SP shell block verbatim; crops: the SERVER owns growth
             // C6: the shell's F-interact near a VehiclePuppet requests the seat over the wire (the MP
             // analogue of the SP direct EnterVehicle); F while riding requests the exit. Server validates.
-            shell.NetEnterVehicle = netId => Client.SendEnterVehicle(netId);
+            shell.NetEnterVehicle = (netId, seat) => Client.SendEnterVehicle(netId, seat);
             shell.NetExitVehicle = () => Client.SendExitVehicle();
             // D1: trigger pulls route over the wire (fx stay local + immediate, damage waits for the server;
             // the null default of each seam keeps SP/loopback byte-identical -- only THIS session wires them)

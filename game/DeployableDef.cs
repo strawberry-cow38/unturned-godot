@@ -537,7 +537,7 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(tp))
             {
                 var img = new Image();
-                if (img.Load(tp) == Error.Ok)
+                if (ContentProvider.LoadOk(img, tp))
                 {
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                     mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // crisp 2x2 palette cells

@@ -103,6 +103,28 @@ namespace UnturnedGodot
         //      scale.y mirror is skipped (SP -- source only mirrors for the 1P left-handed viewmodel).
         BoneAttachment3D _hatAtt, _maskAtt, _glassesAtt, _vestAtt, _backpackAtt;
 
+        // ---- FACES (strawberry 2026-09-04): the 32 retail faces (core.masterbundle Items/Faces/<n>/Texture.png, 16x16,
+        //      transparent bg; face 14 also has an Emission.png) ripped to content/faces/face_<n>.png. The face is the
+        //      Skull-attached decal quad built in BuildFrom; SetFace swaps its texture (+ emission when that face has one).
+        MeshInstance3D _faceQuad;
+        public int Face { get; private set; } = -1;
+        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, 31)}.png";
+        public void SetFace(int face)
+        {
+            face = Mathf.Clamp(face, 0, 31);
+            if (_faceQuad == null || !GodotObject.IsInstanceValid(_faceQuad)) return;
+            if (_faceQuad.MaterialOverride is not StandardMaterial3D m) return;
+            var tex = LoadTexCached(FacePath(face));
+            if (tex == null) return;
+            m.AlbedoTexture = tex;
+            string em = $"res://content/faces/face_{face}_emission.png";
+            var etex = System.IO.File.Exists(ProjectSettings.GlobalizePath(em)) ? LoadTexCached(em) : null;
+            m.EmissionEnabled = etex != null;
+            m.EmissionTexture = etex;
+            if (etex != null) { m.Emission = Colors.White; m.EmissionEnergyMultiplier = 1.5f; }
+            Face = face;
+        }
+
         void AttachGear(ref BoneAttachment3D slot, string boneName, Mesh mesh, Texture2D albedo, Vector3 offset, string name)
         {
             DetachGear(ref slot);                        // source Destroy(model.gameObject) before re-instantiate
@@ -173,6 +195,52 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // ---- PERF: never leave a manually-advanced player parked on a FINISHED clip ----
+        // Measured 2026-09-02 (ETW + stopwatch + the caches_cleared signal): the 1P arms cost ~0.7 ms per frame with
+        // NOTHING playing. Godot's AnimationPlayer, once a non-looping clip has reached its end, re-enters the end on
+        // every manual advance() (_process_playback_data: prev_pos <= end && next_pos == end) and _blend_post_process
+        // then calls _clear_caches() -- so the next advance rebuilds the track cache over the WHOLE library (this rig
+        // shares one library of ~640 clips / 23k tracks). A 1-clip player on the same skeleton: 0.4 us. The cure is to
+        // hold the end POSE with a looping 1-key clip instead of sitting on the finished one: pixel-identical, the
+        // cache stays valid, and a plain advance is cheap. Two ways a player ends up parked: a clip finishing
+        // (animation_finished -> ParkOnHold) and the Snap* helpers (Play + Seek-to-end never signals -> play the hold
+        // directly). Same trap, same fix for the 3P gun overlay (_gunAp) on every player body.
+        string HoldOf(AnimationPlayer ap, string clip)
+        {
+            if (ap == null || string.IsNullOrEmpty(clip) || _lib == null) return null;
+            string hold = clip + "__hold";
+            if (ap.HasAnimation(hold)) return hold;
+            if (!ap.HasAnimation(clip)) return null;
+            var src = ap.GetAnimation(clip);
+            double end = src.Length;
+            var a = new Animation { Length = 0.1f, LoopMode = Animation.LoopModeEnum.Linear };
+            for (int t = 0; t < src.GetTrackCount(); t++)
+            {
+                var type = src.TrackGetType(t);
+                switch (type)
+                {
+                    case Animation.TrackType.Position3D: { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.PositionTrackInsertKey(k, 0.0, src.PositionTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Rotation3D: { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.RotationTrackInsertKey(k, 0.0, src.RotationTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Scale3D:    { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.ScaleTrackInsertKey(k, 0.0, src.ScaleTrackInterpolate(t, end)); break; }
+                    case Animation.TrackType.Value:      { int k = a.AddTrack(type); a.TrackSetPath(k, src.TrackGetPath(t)); a.TrackInsertKey(k, 0.0, src.ValueTrackInterpolate(t, end)); a.ValueTrackSetUpdateMode(k, src.ValueTrackGetUpdateMode(t)); break; }
+                    default: break;   // method/audio/bezier/blend-shape tracks carry nothing to hold
+                }
+            }
+            _lib.AddAnimation(hold, a);   // shared library -> every player of this rig sees it from now on
+            return hold;
+        }
+        void ParkOnHold(AnimationPlayer ap, StringName finished)
+        {
+            if (ap == null || ap.CallbackModeProcess != AnimationMixer.AnimationCallbackModeProcess.Manual) return;   // engine-driven players stop processing on finish by themselves
+            string f = finished.ToString();
+            if (f.EndsWith("__hold")) return;
+            string h = HoldOf(ap, f);
+            if (h != null) ap.Play(h);
+        }
+        void OnApFinished(StringName anim) => ParkOnHold(_ap, anim);
+        void OnGunApFinished(StringName anim) => ParkOnHold(_gunAp, anim);
+        static string BaseClip(string s) => s != null && s.EndsWith("__hold") ? s.Substring(0, s.Length - 6) : s;
+
         // Scale locomotion playback rate (1 = the clip's authored speed). ZombieBody matches the shamble cycle to the
         // actual travel speed with this so the feet don't skate backward (foot-slide / moonwalk) when the body moves
         // faster than the clip's natural stride. Set per-frame; cheap (no re-Play, so it never restarts the cycle).
@@ -184,6 +252,8 @@ namespace UnturnedGodot
         {
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
             {
+                string h = HoldOf(_ap, name);   // PERF: a looping 1-key end pose instead of parking on the finished clip (see HoldOf)
+                if (h != null) { _ap.Play(h); return; }
                 _ap.Play(name);
                 _ap.Seek(_ap.GetAnimation(name).Length, true);
             }
@@ -252,11 +322,11 @@ namespace UnturnedGodot
         // 3P GUN (source: PlayerAnimator adds the equipped gun's clip to the third-person animator; the body holds the
         // gun on the SAME Right_Hook hand bone the 1P viewmodel uses). Attach the gun mesh to the hand; play the gun's
         // clip ({Gun}_Equip / Gun_Equip) to pose the arms around it. Replaces any prior attached gun.
-        public void AttachGun(string gunName)
+        public void AttachGun(string gunName, bool leftHook = false)
         {
             if (Skeleton == null || string.IsNullOrEmpty(gunName)) return;
             Skeleton.GetNodeOrNull("GunAttach")?.QueueFree();
-            int hb = Skeleton.FindBone("Right_Hook");
+            int hb = Skeleton.FindBone(leftHook ? "Left_Hook" : "Right_Hook");   // bows hang off the left hook (retail EquipableModelParent)
             if (hb < 0) hb = Skeleton.FindBone("Right_Hand");
             if (hb < 0) return;
             var att = new BoneAttachment3D { Name = "GunAttach" };
@@ -270,7 +340,7 @@ namespace UnturnedGodot
             if (info.Albedo != null)
             {
                 string ap = ProjectSettings.GlobalizePath($"res://content/{info.Albedo}");
-                if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+                if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             }
             var mi = new MeshInstance3D { Name = "GunMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) };   // barrel is gun-local +Y; roll about local +Z (world-vertical here) swings it to the char forward (-Z)
             att.AddChild(mi);
@@ -282,7 +352,7 @@ namespace UnturnedGodot
             // the REAL 1P muzzle flash: the Muzzle_0 star sprite on content/muzzleflash.gdshader (rolls per shot), same as the viewmodel (master)
             _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
             string ffp = ProjectSettings.GlobalizePath("res://content/muzzleflash.png");
-            if (System.IO.File.Exists(ffp)) { var fimg = Image.LoadFromFile(ffp); if (fimg != null) _flashMat.SetShaderParameter("tex", ImageTexture.CreateFromImage(fimg)); }
+            if (System.IO.File.Exists(ffp)) { var fimg = ContentProvider.LoadImage(ffp); if (fimg != null) _flashMat.SetShaderParameter("tex", ImageTexture.CreateFromImage(fimg)); }
             _flashMat.SetShaderParameter("roll", 0f);
             _flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.55f, 0.55f) }, MaterialOverride = _flashMat });
             _muzzle.AddChild(_flash);
@@ -290,6 +360,25 @@ namespace UnturnedGodot
 
         // Remove the held gun (weapon holstered / swapped away). Safe if nothing's attached.
         public void DetachGun() { Skeleton?.GetNodeOrNull("GunAttach")?.QueueFree(); _muzzle = null; _flash = null; }
+
+        /// <summary>A melee weapon/tool in the right hand (content/{name}.txt + {name}_albedo.png, the viewmodel's own melee
+        /// files) on the same Right_Hook the gun uses. The 3P body -- yours and other players' puppets -- never showed one.</summary>
+        public void AttachMelee(string meleeName)
+        {
+            if (Skeleton == null || string.IsNullOrEmpty(meleeName)) return;
+            Skeleton.GetNodeOrNull("MeleeAttach")?.QueueFree();
+            int hb = Skeleton.FindBone("Right_Hook"); if (hb < 0) hb = Skeleton.FindBone("Right_Hand"); if (hb < 0) return;
+            var mesh = ContentProvider.ParseObj($"res://content/{meleeName}.txt");
+            if (mesh == null) return;
+            var att = new BoneAttachment3D { Name = "MeleeAttach" };
+            Skeleton.AddChild(att);
+            att.BoneName = Skeleton.GetBoneName(hb);
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+            string ap = ProjectSettings.GlobalizePath($"res://content/{meleeName}_albedo.png");
+            if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            att.AddChild(new MeshInstance3D { Name = "MeleeMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) });   // held-model localRotation = Euler(0,0,90), same as the viewmodel's melee
+        }
+        public void DetachMelee() => Skeleton?.GetNodeOrNull("MeleeAttach")?.QueueFree();
 
         // The attached gun mesh (for mounting 3P attachments + a muzzle marker on it). Null when unarmed.
         public MeshInstance3D HeldGunMesh => Skeleton?.GetNodeOrNull("GunAttach")?.GetNodeOrNull<MeshInstance3D>("GunMesh");
@@ -322,6 +411,10 @@ namespace UnturnedGodot
             if (_flashT > 0f) { _flashT -= (float)delta; if (_flashT <= 0f && _flash != null && IsInstanceValid(_flash)) _flash.Visible = false; }
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
+                // PERF: a player that has never played anything (or was explicitly stopped) has no pose to refresh and no
+                // aim blend to layer -- skip the advance. (Finished clips park on a looping hold instead, see HoldOf, so
+                // in steady state the players are always "playing" and a plain advance stays cheap.)
+                if (!_ap.IsPlaying() && AimBlend <= 0.0001f && !(_gunLayer && _gunAp != null && _gunAp.IsPlaying())) return;
                 _ap.Advance(delta);   // base pose: locomotion (full-body 3P) or equip/hold (1P arms), manually driven
                 if (_gunLayer && _gunAp != null && Skeleton != null)
                 {
@@ -578,6 +671,7 @@ namespace UnturnedGodot
             _gunAp = new AnimationPlayer { Name = "GunAnim" };
             AddChild(_gunAp);
             _gunAp.AddAnimationLibrary("", _lib);
+            _gunAp.AnimationFinished += OnGunApFinished;   // PERF: see HoldOf
             _gunAp.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual;
             string[] lower = { "Skeleton", "Left_Hip", "Left_Leg", "Left_Foot", "Right_Hip", "Right_Leg", "Right_Foot" };
             var idx = new List<int>();
@@ -617,10 +711,42 @@ namespace UnturnedGodot
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
+            string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
+            if (h != null) { _gunAp.Play(h); return; }
             _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
         }
 
-        public string GunOverlayClip => _gunAp?.CurrentAnimation ?? "";
+        // ---- MELEE on the same upper-body overlay the gun uses (strawberry 2026-09-03: "third person cam doesnt show melee
+        // animation? and they dont hold the weapon in the 'ready to swing' sorta state. just glued to their hand") ----
+        // The rig ships per-weapon {Cap}_Equip/_Weak/_Strong clips (Katana_*, Axe_fire_*, Knife_butcher_* ...) plus generic
+        // Melee_* fallbacks and Punch_Left/Right for fists. The END of _Equip is the ready hold, exactly as Gun_Equip is for guns.
+        public (string equip, string weak, string strong) MeleeClipsFor(string meleeName)
+        {
+            if (string.IsNullOrEmpty(meleeName) || meleeName == "fists") return ("", "Punch_Left", "Punch_Right");
+            string cap = char.ToUpper(meleeName[0]) + meleeName.Substring(1);
+            string Pick(string a, string b) => ClipLength(a) > 0f ? a : (ClipLength(b) > 0f ? b : "");
+            return (Pick(cap + "_Equip", "Melee_Equip"), Pick(cap + "_Weak", "Melee_Weak"), Pick(cap + "_Strong", "Melee_Strong"));
+        }
+        /// <summary>Ready-to-swing hold for a drawn melee weapon: the upper-body layer parked on the end of its Equip clip.</summary>
+        public void ShowMeleeHold(string meleeName)
+        {
+            var (equip, _, _) = MeleeClipsFor(meleeName);
+            if (equip == "") { if (_gunLayer && BaseClip(_gunAp?.CurrentAnimation ?? "").StartsWith("Punch")) DisableGunLayer(); return; }   // fists: no hold pose
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");   // the additive aim bake is inert at AimBlend 0; the layer is what we want
+            SnapGunOverlay(equip);
+        }
+        /// <summary>Play a weak/strong swing on the upper body. Returns the clip length so the caller can return to the hold.</summary>
+        public float PlayMeleeSwing(string meleeName, bool strong)
+        {
+            var (_, weak, strongClip) = MeleeClipsFor(meleeName);
+            string clip = strong ? strongClip : weak;
+            if (clip == "" || ClipLength(clip) <= 0f) return 0f;
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");
+            if (_gunAp != null && _gunAp.CurrentAnimation == clip) _gunAp.Stop();   // a second swing of the same clip must restart, not be ignored
+            SetGunOverlay(clip, 1f, loop: false);
+            return ClipLength(clip);
+        }
+        public string GunOverlayClip => BaseClip(_gunAp?.CurrentAnimation ?? "");
         /// <summary>The looping locomotion/seated clip currently held (test seam).</summary>
         public string CurrentLoopClip => _loco ?? "";
         public bool GunLayerOn => _gunLayer;
@@ -700,6 +826,7 @@ namespace UnturnedGodot
         public void RagdollStart(Vector3 impulse)
         {
             if (_ragdolling) return;
+            if (!GraphicsOptions.Ragdolls) { _ragdolling = true; _ap?.Stop(); return; }   // retail IsRagdollsEnabled off: the body just stops where it is
             BuildRagdoll();
             _ragdolling = true;
             _ap?.Stop();
@@ -728,6 +855,145 @@ namespace UnturnedGodot
         public bool IsRagdolling => _ragdolling;
 
         static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+        static readonly bool LoadProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
+
+        /// <summary>Binary cache of a parsed RigData (strawberry 2026-09-03 loading optimizations; disk over compute). rig.json is
+        /// 22 MB of JSON doubles -- ~400 ms to deserialize on every launch. The first launch parses it and writes
+        /// user://rig_cache/<name>_<json size>.rig; later launches read that in a few tens of ms. Keyed by the JSON's
+        /// size, so an edited rig.json re-parses. Format is versioned; anything unreadable falls back to JSON.</summary>
+        static class RigBin
+        {
+            const int Version = 1;
+            static string CachePath(string resPath)
+            {
+                long len = 0; try { len = new System.IO.FileInfo(ProjectSettings.GlobalizePath(resPath)).Length; } catch { }
+                return ProjectSettings.GlobalizePath($"user://rig_cache/{System.IO.Path.GetFileNameWithoutExtension(resPath)}_{len}.rig");
+            }
+            public static RigData TryLoad(string resPath)
+            {
+                string path = CachePath(resPath);
+                if (!System.IO.File.Exists(path)) return null;
+                try
+                {
+                    using var br = new System.IO.BinaryReader(new System.IO.BufferedStream(System.IO.File.OpenRead(path), 1 << 20));
+                    if (br.ReadInt32() != 0x47495231 || br.ReadInt32() != Version) return null;   // "RIG1"
+                    var r = new RigData { vcount = br.ReadInt32() };
+                    r.positions = D2(br); r.normals = D2(br); r.uvs = D2(br); r.skin_index = I2(br); r.skin_weight = D2(br); r.faces = I1(br);
+                    int nb = br.ReadInt32(); r.bones = nb < 0 ? null : new BoneData[nb];
+                    for (int i = 0; i < nb; i++) r.bones[i] = new BoneData { name = Str(br), parent = br.ReadInt32(), pos = D1(br), rot = D1(br), scale = D1(br) };
+                    int ns = br.ReadInt32(); r.skin = ns < 0 ? null : new SkinBind[ns];
+                    for (int i = 0; i < ns; i++) r.skin[i] = new SkinBind { bone = br.ReadInt32(), pos = D1(br), rot = D1(br), scale = D1(br) };
+                    int na = br.ReadInt32(); r.anims = na < 0 ? null : new Dictionary<string, ClipData>(na);
+                    for (int i = 0; i < na; i++)
+                    {
+                        string key = Str(br);
+                        var c = new ClipData { fps = br.ReadDouble(), length = br.ReadDouble(), loop = br.ReadBoolean() };
+                        int nt = br.ReadInt32(); c.tracks = nt < 0 ? null : new Dictionary<string, TrackData>(nt);
+                        for (int k = 0; k < nt; k++) { string tk = Str(br); c.tracks[tk] = new TrackData { rot = D2(br), pos = D2(br), scale = D2(br) }; }
+                        r.anims[key] = c;
+                    }
+                    int nr = br.ReadInt32(); r.ragdoll = nr < 0 ? null : new Dictionary<string, RagBone>(nr);
+                    for (int i = 0; i < nr; i++)
+                    {
+                        string key = Str(br); var rb = new RagBone();
+                        if (br.ReadBoolean()) rb.rb = new RagRb { mass = br.ReadDouble(), drag = br.ReadDouble(), adrag = br.ReadDouble() };
+                        if (br.ReadBoolean()) rb.box = new RagBox { center = D1(br), size = D1(br) };
+                        if (br.ReadBoolean()) rb.joint = new RagJoint { swing1 = br.ReadDouble(), swing2 = br.ReadDouble(), lowTwist = br.ReadDouble(), highTwist = br.ReadDouble() };
+                        r.ragdoll[key] = rb;
+                    }
+                    if (br.ReadBoolean())
+                        r.arms = new MeshData { vcount = br.ReadInt32(), positions = D2(br), normals = D2(br), uvs = D2(br), skin_index = I2(br), skin_weight = D2(br), faces = I1(br) };
+                    if (br.ReadInt32() != 0x444E4521) return null;   // "!END" trailer: a truncated file is not a rig
+                    return r;
+                }
+                catch (System.Exception e) { GD.PushWarning($"[rig] bad cache {path}: {e.Message}"); return null; }
+            }
+            public static void TrySave(string resPath, RigData r)
+            {
+                try
+                {
+                    string path = CachePath(resPath);
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                    using var bw = new System.IO.BinaryWriter(new System.IO.BufferedStream(System.IO.File.Create(path), 1 << 20));
+                    bw.Write(0x47495231); bw.Write(Version); bw.Write(r.vcount);
+                    W(bw, r.positions); W(bw, r.normals); W(bw, r.uvs); W(bw, r.skin_index); W(bw, r.skin_weight); W(bw, r.faces);
+                    bw.Write(r.bones?.Length ?? -1); foreach (var b in r.bones ?? System.Array.Empty<BoneData>()) { Str(bw, b.name); bw.Write(b.parent); W(bw, b.pos); W(bw, b.rot); W(bw, b.scale); }
+                    bw.Write(r.skin?.Length ?? -1); foreach (var b in r.skin ?? System.Array.Empty<SkinBind>()) { bw.Write(b.bone); W(bw, b.pos); W(bw, b.rot); W(bw, b.scale); }
+                    bw.Write(r.anims?.Count ?? -1);
+                    if (r.anims != null) foreach (var kv in r.anims)
+                    {
+                        Str(bw, kv.Key); bw.Write(kv.Value.fps); bw.Write(kv.Value.length); bw.Write(kv.Value.loop);
+                        bw.Write(kv.Value.tracks?.Count ?? -1);
+                        if (kv.Value.tracks != null) foreach (var t in kv.Value.tracks) { Str(bw, t.Key); W(bw, t.Value.rot); W(bw, t.Value.pos); W(bw, t.Value.scale); }
+                    }
+                    bw.Write(r.ragdoll?.Count ?? -1);
+                    if (r.ragdoll != null) foreach (var kv in r.ragdoll)
+                    {
+                        Str(bw, kv.Key);
+                        bw.Write(kv.Value.rb != null); if (kv.Value.rb != null) { bw.Write(kv.Value.rb.mass); bw.Write(kv.Value.rb.drag); bw.Write(kv.Value.rb.adrag); }
+                        bw.Write(kv.Value.box != null); if (kv.Value.box != null) { W(bw, kv.Value.box.center); W(bw, kv.Value.box.size); }
+                        bw.Write(kv.Value.joint != null); if (kv.Value.joint != null) { bw.Write(kv.Value.joint.swing1); bw.Write(kv.Value.joint.swing2); bw.Write(kv.Value.joint.lowTwist); bw.Write(kv.Value.joint.highTwist); }
+                    }
+                    bw.Write(r.arms != null);
+                    if (r.arms != null) { bw.Write(r.arms.vcount); W(bw, r.arms.positions); W(bw, r.arms.normals); W(bw, r.arms.uvs); W(bw, r.arms.skin_index); W(bw, r.arms.skin_weight); W(bw, r.arms.faces); }
+                    bw.Write(0x444E4521);
+                    GD.Print($"[rig] cached {resPath} -> {path}");
+                }
+                catch (System.Exception e) { GD.PushWarning($"[rig] could not write cache: {e.Message}"); }
+            }
+            public static Dictionary<string, ClipData> TryLoadClips(string resPath)
+            {
+                string path = CachePath(resPath);
+                if (!System.IO.File.Exists(path)) return null;
+                try
+                {
+                    using var br = new System.IO.BinaryReader(new System.IO.BufferedStream(System.IO.File.OpenRead(path), 1 << 20));
+                    if (br.ReadInt32() != 0x434C5031 || br.ReadInt32() != Version) return null;   // "CLP1"
+                    int na = br.ReadInt32(); if (na < 0) return null;
+                    var d = new Dictionary<string, ClipData>(na);
+                    for (int i = 0; i < na; i++)
+                    {
+                        string key = Str(br);
+                        var c = new ClipData { fps = br.ReadDouble(), length = br.ReadDouble(), loop = br.ReadBoolean() };
+                        int nt = br.ReadInt32(); c.tracks = nt < 0 ? null : new Dictionary<string, TrackData>(nt);
+                        for (int k = 0; k < nt; k++) { string tk = Str(br); c.tracks[tk] = new TrackData { rot = D2(br), pos = D2(br), scale = D2(br) }; }
+                        d[key] = c;
+                    }
+                    if (br.ReadInt32() != 0x444E4521) return null;
+                    return d;
+                }
+                catch (System.Exception e) { GD.PushWarning($"[rig] bad clip cache {path}: {e.Message}"); return null; }
+            }
+            public static void TrySaveClips(string resPath, Dictionary<string, ClipData> d)
+            {
+                try
+                {
+                    string path = CachePath(resPath);
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                    using var bw = new System.IO.BinaryWriter(new System.IO.BufferedStream(System.IO.File.Create(path), 1 << 20));
+                    bw.Write(0x434C5031); bw.Write(Version); bw.Write(d.Count);
+                    foreach (var kv in d)
+                    {
+                        Str(bw, kv.Key); bw.Write(kv.Value.fps); bw.Write(kv.Value.length); bw.Write(kv.Value.loop);
+                        bw.Write(kv.Value.tracks?.Count ?? -1);
+                        if (kv.Value.tracks != null) foreach (var t in kv.Value.tracks) { Str(bw, t.Key); W(bw, t.Value.rot); W(bw, t.Value.pos); W(bw, t.Value.scale); }
+                    }
+                    bw.Write(0x444E4521);
+                }
+                catch (System.Exception e) { GD.PushWarning($"[rig] could not write clip cache: {e.Message}"); }
+            }
+            // --- primitives: null-aware arrays (length -1 = null) ---
+            static void Str(System.IO.BinaryWriter bw, string s) { bw.Write(s != null); if (s != null) bw.Write(s); }
+            static string Str(System.IO.BinaryReader br) => br.ReadBoolean() ? br.ReadString() : null;
+            static void W(System.IO.BinaryWriter bw, double[] a) { bw.Write(a?.Length ?? -1); if (a != null) foreach (var d in a) bw.Write(d); }
+            static void W(System.IO.BinaryWriter bw, int[] a) { bw.Write(a?.Length ?? -1); if (a != null) foreach (var d in a) bw.Write(d); }
+            static void W(System.IO.BinaryWriter bw, double[][] a) { bw.Write(a?.Length ?? -1); if (a != null) foreach (var row in a) W(bw, row); }
+            static void W(System.IO.BinaryWriter bw, int[][] a) { bw.Write(a?.Length ?? -1); if (a != null) foreach (var row in a) W(bw, row); }
+            static double[] D1(System.IO.BinaryReader br) { int n = br.ReadInt32(); if (n < 0) return null; var a = new double[n]; for (int i = 0; i < n; i++) a[i] = br.ReadDouble(); return a; }
+            static int[] I1(System.IO.BinaryReader br) { int n = br.ReadInt32(); if (n < 0) return null; var a = new int[n]; for (int i = 0; i < n; i++) a[i] = br.ReadInt32(); return a; }
+            static double[][] D2(System.IO.BinaryReader br) { int n = br.ReadInt32(); if (n < 0) return null; var a = new double[n][]; for (int i = 0; i < n; i++) a[i] = D1(br); return a; }
+            static int[][] I2(System.IO.BinaryReader br) { int n = br.ReadInt32(); if (n < 0) return null; var a = new int[n][]; for (int i = 0; i < n; i++) a[i] = I1(br); return a; }
+        }
 
         static readonly System.Collections.Generic.Dictionary<string, RigData> _rigCache = new();   // per-path (player/deer/pig/cow rigs coexist)
 
@@ -753,7 +1019,7 @@ namespace UnturnedGodot
         {
             if (resPath == null) return null;
             if (_texCache.TryGetValue(resPath, out var cached) && cached != null) return cached;
-            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(resPath));
+            var img = ContentProvider.LoadImage(ProjectSettings.GlobalizePath(resPath));
             if (img == null) return null;
             var tex = ImageTexture.CreateFromImage(img);
             _texCache[resPath] = tex;
@@ -769,7 +1035,19 @@ namespace UnturnedGodot
             {
                 _consumableAnims = new();
                 using var f = FileAccess.Open("res://content/consumable_anims.json", FileAccess.ModeFlags.Read);
-                if (f != null) _consumableAnims = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, ClipData>>(f.GetAsText(), JsonOpts) ?? new();
+                if (f != null)
+                {
+                    long tc = System.Diagnostics.Stopwatch.GetTimestamp();
+                    _consumableAnims = RigBin.TryLoadClips("res://content/consumable_anims.json");   // same binary cache as the rig (user://rig_cache)
+                    string src = "bin";
+                    if (_consumableAnims == null)
+                    {
+                        _consumableAnims = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, ClipData>>(f.GetBuffer((long)f.GetLength()), JsonOpts) ?? new();
+                        RigBin.TrySaveClips("res://content/consumable_anims.json", _consumableAnims);
+                        src = "json";
+                    }
+                    if (LoadProf) GD.Print($"[rigprof] consumable_anims parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - tc) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
+                }
             }
             return _consumableAnims;
         }
@@ -778,10 +1056,20 @@ namespace UnturnedGodot
         {
             if (!_rigCache.TryGetValue(resPath, out var rigData))
             {
-                using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
-                if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
-                rigData = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                string src = "bin";
+                rigData = RigBin.TryLoad(resPath);   // user://rig_cache/<name>_<size>.rig -- the JSON parsed ONCE per machine (rig.json is 22 MB)
+                if (rigData == null)
+                {
+                    using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
+                    if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
+                    var bytes = f.GetBuffer((long)f.GetLength());   // parse the UTF-8 bytes directly: GetAsText() built a 44 MB UTF-16 copy first
+                    rigData = JsonSerializer.Deserialize<RigData>(bytes, JsonOpts);
+                    RigBin.TrySave(resPath, rigData);
+                    src = "json";
+                }
                 _rigCache[resPath] = rigData;
+                if (LoadProf) GD.Print($"[rigprof] {resPath} parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             return BuildFrom(rigData, tint, armsOnly, albedoTexPath, faceTexPath);
         }
@@ -921,6 +1209,8 @@ namespace UnturnedGodot
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
                     att.AddChild(fq);
+                    root._faceQuad = fq;
+                    { var fm = System.Text.RegularExpressions.Regex.Match(faceTexPath, @"face_(\d+)"); if (fm.Success && int.TryParse(fm.Groups[1].Value, out int fi)) root.SetFace(fi); }   // picks up the emission map for faces that have one
                     fq.Position = new Vector3(-0.43f, 0f, -0.25f);
                     fq.Basis = new Basis(new Vector3(0f, -1f, 0f), new Vector3(-1f, 0f, 0f), new Vector3(0f, 0f, -1f));
                 }
@@ -935,9 +1225,16 @@ namespace UnturnedGodot
             root.AddChild(ap);
             if (!_animCache.TryGetValue((rig, armsOnly), out var built))
             {
+                long ta = System.Diagnostics.Stopwatch.GetTimestamp();
                 var lib = new AnimationLibrary();
                 var names = new List<string>();
-                if (rig.anims != null)
+                if (_animCache.TryGetValue((rig, !armsOnly), out var sibling))
+                {
+                    // the body and the viewmodel arms share one rig -> the SAME Animation resources; only the arms add the
+                    // consumable clips below. Building the 316 clips twice was ~a third of the Player load phase.
+                    foreach (var nm in sibling.names) { lib.AddAnimation(nm, sibling.lib.GetAnimation(nm)); names.Add(nm); }
+                }
+                else if (rig.anims != null)
                     foreach (var kv in rig.anims)
                     {
                         lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
@@ -948,9 +1245,11 @@ namespace UnturnedGodot
                         if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
                 built = (lib, names.ToArray());
                 _animCache[(rig, armsOnly)] = built;
+                if (LoadProf) GD.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             ap.AddAnimationLibrary("", built.lib);
             root._ap = ap;
+            ap.AnimationFinished += root.OnApFinished;   // PERF: park on a looping hold instead of the finished clip (see HoldOf)
             root._lib = built.lib;   // kept so a lazily-created gun-overlay AnimationPlayer (3P) can share the same clips
             root.ClipNames = built.names;
             root._rag = rig.ragdoll;

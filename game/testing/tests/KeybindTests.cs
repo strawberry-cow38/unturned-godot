@@ -27,7 +27,11 @@ namespace UnturnedGodot.Testing.Tests
             // Naming the exceptions keeps the real check -- a NEW action with no default still fails here --
             // while letting a deliberate one through. An entry that stops being unbound also fails, so this
             // cannot rot into a blanket exemption.
-            var intentionallyUnbound = new HashSet<GameAction> { GameAction.Grenade };
+            var intentionallyUnbound = new HashSet<GameAction>
+            {
+                GameAction.Grenade,
+                GameAction.Melee,   // G unbound 2026-09-03 (strawberry: "remove whatever was on G, its broken"); melee swings on Fire, the action stays rebindable
+            };
 
             var missing = new List<string>();
             var unbound = new List<string>();

@@ -38,7 +38,7 @@ namespace UnturnedGodot
         // blur of what's behind." Replaces the flat 72% black scrim. 5x5 weighted taps + a mip-LOD bias so the blur is
         // robust even if the screen copy's mipmaps are shallow. The panels are translucent, so this shows through the
         // entire dashboard (paperdoll included).
-        const string BACKDROP_BLUR = @"
+        internal const string BACKDROP_BLUR = @"
 shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
 uniform float lod = 1.5;
@@ -108,6 +108,9 @@ void fragment() {
         readonly List<(Control slot, Label label, System.Func<Item> worn, EItemType type)> _clothing = new();
         bool _open;
         float _storageW, _storageH;
+        static readonly HashSet<byte> _collapsed = new();                    // clothing pages whose grid is folded away (items stay, header stays); STATIC so it survives inventory open/close and a rebuilt dashboard (master)
+        readonly List<(Control icon, EItemType type)> _headerIcons = new();  // the small worn-item icon on each page header: draggable = take it off
+        VScrollBar _vscroll; float _scrollY; bool _scrollTestApplied, _foldTestApplied;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
 
         // quick-craft: a dashboard SECTION under the bags (icons of recipes you can afford); LMB queues 1, RMB queues 5.
         readonly List<(Control tile, BlueprintDef bp)> _quickTiles = new();
@@ -115,6 +118,7 @@ void fragment() {
 
         // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
+        int _pendingSlotEquip = -1; ushort _pendingSlotEquipId;   // paperdoll drop in MP: equip into the hands once the server echo lands the weapon in this slot
         bool _dragging;
         byte _dragPage, _dragX0, _dragY0, _dragRot;
         bool _dragFromCloth;          // the drag started on a clothing equip slot (the worn garment, not a page cell)
@@ -253,10 +257,7 @@ void fragment() {
 
         /// <summary>A navbar tab was clicked. Only Craft is wired so far -- Skills/Information have no page yet,
         /// and silently doing nothing is better than pretending. Inventory is the page you are already on.</summary>
-        void OnTab(string label)
-        {
-            if (label == "Craft") { Close(); Player?.OpenCrafting(); }
-        }
+        void OnTab(string label) { }   // tabs route through PlayerController.ShowMenu now (MenuNavbar)
 
         public void Toggle() { if (_open) Close(); else Open(); }
         // The Nearby/AREA refresh lives HERE, not at the call sites, because there are four ways to open the bag
@@ -266,7 +267,7 @@ void fragment() {
         // while the demo path in Main.cs worked fine. Scanning on Open closes the whole class instead of the
         // one call site that got noticed.
         public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
-        public void Close() { _open = false; Visible = false; _pdDragging = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
+        public void Close() { _open = false; Visible = false; _pdDragging = false; _pendingSlotEquip = -1; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
@@ -348,6 +349,12 @@ void fragment() {
         public override void _Input(InputEvent e)
         {
             if (!_open || Inv == null) return;
+            if (e is InputEventMouseButton wh && wh.Pressed && (wh.ButtonIndex == MouseButton.WheelUp || wh.ButtonIndex == MouseButton.WheelDown)
+                && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
+            {
+                _vscroll.Value = Mathf.Clamp(_vscroll.Value + (wh.ButtonIndex == MouseButton.WheelUp ? -60 : 60), 0, _vscroll.MaxValue - _vscroll.Page);   // wheel over the box scrolls the clothing column
+                GetViewport().SetInputAsHandled(); return;
+            }
             if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
                 if (mb.Pressed)
@@ -434,8 +441,26 @@ void fragment() {
             }
         }
 
+        bool PointToHeaderIcon(Vector2 global, out EItemType type, out Control icon)
+        {
+            foreach (var (ic, t) in _headerIcons)
+                if (GodotObject.IsInstanceValid(ic) && ic.IsVisibleInTree() && new Rect2(ic.GlobalPosition, ic.Size).HasPoint(global)) { type = t; icon = ic; return true; }
+            type = default; icon = null; return false;
+        }
+
         void StartDrag(Vector2 global)
         {
+            if (PointToHeaderIcon(global, out var hType, out var hIcon))   // the small icon on a clothing tab: the same drag as pulling it off the paperdoll
+            {
+                var wornIt = WornFor(hType);
+                if (wornIt == null) return;
+                _dragFromCloth = true; _dragClothType = hType;
+                _dragJar = new ItemJar(wornIt); _dragRot = 0;
+                _grab = global - hIcon.GlobalPosition;
+                _dragging = true;
+                RebuildDragTile();
+                return;
+            }
             // grabbing a WORN garment off a clothing equip slot (the worn item lives in Inv.worn*, not a page) -> a drag-out
             // unequip if dropped on a grid, or a re-equip if dropped back on a slot. The tile is a transient jar over the item.
             if (PointToClothSlot(global, out int ci))
@@ -456,8 +481,23 @@ void fragment() {
             _dragFromCloth = false;
             _dragJar = pg.getItem(idx);
             _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
-            Vector2 itemTopLeft = ctl.GlobalPosition + (isSlot ? Vector2.Zero : new Vector2(_dragJar.x * CELL, _dragJar.y * CELL));
-            _grab = global - itemTopLeft;
+            Vector2 itemTopLeft;
+            if (isSlot)
+            {
+                // A hand slot is one WIDE tile with the icon centred in it (KeepAspectCentered), but the drag tile is
+                // item-sized -- so the grab is measured from where that item-sized tile sits centred in the slot, and
+                // clamped onto it, or the tile hangs off to the side of the cursor by half the slot's width (master
+                // 2026-09-04 "when dragging an item from a 1/2 slot, the item is offset from the mouse").
+                var itemSize = new Vector2(_dragJar.size_x * CELL, _dragJar.size_y * CELL);   // slots force rot 0
+                itemTopLeft = ctl.GlobalPosition + (ctl.Size - itemSize) / 2f;
+                _grab = global - itemTopLeft;
+                _grab = new Vector2(Mathf.Clamp(_grab.X, CELL * 0.25f, itemSize.X - CELL * 0.25f), Mathf.Clamp(_grab.Y, CELL * 0.25f, itemSize.Y - CELL * 0.25f));
+            }
+            else
+            {
+                itemTopLeft = ctl.GlobalPosition + new Vector2(_dragJar.x * CELL, _dragJar.y * CELL);
+                _grab = global - itemTopLeft;
+            }
             _dragging = true;
             RebuildDragTile();
             PlayInventoryAudio();   // #4: source startDrag plays inventory audio on grab
@@ -541,7 +581,39 @@ void fragment() {
                 return;
             }
 
-            if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
+            // WEAPON onto the PAPERDOLL (master 2026-09-04): it goes into ITS OWN hand slot -- primary-able -> PRIMARY, else
+            // SECONDARY (an "any" item takes the empty hand first). Whatever was in that slot goes back to the grid, and
+            // if nothing has room for it, onto the ground. The dragged weapon always wins the slot.
+            bool ownPageToDoll = !fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE;
+            if (ownPageToDoll && WeaponSlotFor(_dragJar) is byte wslot)
+            {
+                EquipToHandSlot(sp, sx, sy, wslot);
+                CloseSelection(); Refresh();
+                return;
+            }
+            // ...and ANYTHING ELSE you can hold, dropped on the paperdoll, goes into your hands (master 2026-09-04
+            // "dragging ANYTHING you can hold onto the paperdoll should equip it, too"): the exact chain the item
+            // menu's one hand button runs (Hold a consumable / bottle / gas can, Equip a deployable / tool / rod /
+            // anything else with a hand action), seeded off the dragged cell like the Debug* seams do.
+            if (ownPageToDoll && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
+            {
+                _selPage = sp; _selX = sx; _selY = sy;
+                HandActionSelected(handAsset);
+                return;
+            }
+
+            if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
+            {
+                // RIGHT-HALF release = DROP IT (master 2026-09-04): let go anywhere on the right half of the screen that is
+                // not a real grid/slot (those matched above) and the item goes on the ground. Only from your OWN pages --
+                // a crate's or the ground's items just snap home.
+                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE)
+                {
+                    _selPage = sp; _selX = sx; _selY = sy;
+                    DropSelected();   // MP request / SP world drop + the held-hand reset, then CloseSelection+Refresh
+                }
+                return;
+            }
             if (TryStartLoad(sp, sx, sy, page, x1, y1)) { CloseSelection(); Refresh(); return; }   // a loose round dropped onto a mag -> LOAD it (timed wheel), never a move/swap; both keep their slots (strawberry)
             if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
             // MP: the move is a REQUEST -- the server's TryDrag validates+applies and the owner echo
@@ -549,6 +621,79 @@ void fragment() {
             if (Player != null && Player.RequestMoveItem(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
             else if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
         }
+
+        /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the item's own .dat): the slot it
+        /// PREFERS -- secondary-able (sidearms, ALL melee) -> SECONDARY, primary-only -> PRIMARY; null for anything
+        /// that is not a holster item.</summary>
+        byte? WeaponSlotFor(ItemJar jar)
+        {
+            var a = jar?.GetAsset();
+            if (a == null || Inv == null) return null;
+            int pref = a.slot.PreferredSlot();
+            return pref < 0 ? null : (byte)pref;
+        }
+
+        /// <summary>The item menu's one hand button, as a call: the same Hold/Equip dispatch on the selected cell.</summary>
+        void HandActionSelected(ItemAsset asset)
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            var jar = idx == byte.MaxValue ? null : pg.getItem(idx);
+            if (jar?.item == null) { CloseSelection(); Refresh(); return; }
+            if (Player != null && Player.IsHeld(asset, jar.item)) { Player.Dequip(); CloseSelection(); Refresh(); return; }
+            if (asset.IsFluidContainer) HoldFluidSelected();
+            else if (asset.IsConsumable) HoldSelected();
+            else if (asset.IsFuelContainer) HoldFuelSelected();
+            else if (DeployableDef.ById(asset.id) != null) PlaceSelected();
+            else if (ToolDef.ById(asset.id) != null) ToolSelected();
+            else if (asset.type == EItemType.FISHER) FisherSelected();
+            else EquipSelected();
+        }
+
+        /// <summary>Put the weapon at (sp,sx,sy) into hand slot `slot`. Occupied: first try the plain drag-SWAP (the occupant
+        /// takes the weapon's old cell, retail's own behaviour); if it does not fit there, the occupant goes to the first
+        /// page with room; if none, it is dropped on the ground. Then the weapon takes the emptied slot.</summary>
+        void EquipToHandSlot(byte sp, byte sx, byte sy, byte slot)
+        {
+            var slotPage = Inv.items[slot];
+            var occ = slotPage.getItemCount() > 0 ? slotPage.getItem(0) : null;
+            byte idx = Inv.items[sp].getIndex(sx, sy);
+            if (idx == byte.MaxValue) return;
+            var jar = Inv.items[sp].getItem(idx);
+            if (jar?.item == null) return;
+            bool serverOwned = Player != null && Player.InventoryIsServerOwned;
+            bool swapFits = occ != null && Inv.items[sp].checkSpaceSwap(sx, sy, jar.size_x, jar.size_y, jar.rot, occ.size_x, occ.size_y, 0);
+            ushort weaponId = jar.item.id;
+            if (occ == null || swapFits)
+            {
+                if (serverOwned) { if (Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0)) ArmSlotEquip(slot, weaponId); }
+                else if (Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0)) EquipFromSlotNow(slot);
+                return;
+            }
+            bool occHeld = Player != null && (Player.IsHeld(occ.GetAsset(), occ.item) || Player.IsHeldAt(slot, occ.x, occ.y));   // the displaced weapon was in the hands -> go unarmed (as DropSelected does)
+            if (serverOwned)
+            {
+                if (ResolveMoveDest(occ, 255, out byte dp, out byte dx, out byte dy, out byte drot))
+                {
+                    if (!Player.RequestMoveItem(slot, occ.x, occ.y, dp, dx, dy, drot)) return;
+                }
+                else if (!Player.RequestDropItem(slot, occ.x, occ.y)) return;
+                if (occHeld) Player.EquipUnarmed();
+                if (Player.RequestMoveItem(sp, sx, sy, slot, 0, 0, 0)) ArmSlotEquip(slot, weaponId);
+                return;
+            }
+            slotPage.removeItem(0);
+            if (!Inv.tryAddItem(occ.item) && Player != null)   // no room anywhere -> the ground, just in front of the player
+                Player.DropWorldItem(occ.item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+            if (occHeld) Player?.EquipUnarmed();
+            if (Inv.TryDrag(sp, sx, sy, slot, 0, 0, 0)) EquipFromSlotNow(slot);
+        }
+
+        // "after the item is assigned to the slot, force equip it into your hands" (master 2026-09-04). SP: the slot
+        // holds it now -> the menu's own Equip on that cell (in-hand + NoteHeldFrom + closes the dashboard). MP: the
+        // move is a request and the slot fills on the owner echo -> arm it, Refresh fires the same Equip when it lands.
+        void EquipFromSlotNow(byte slot) { _pendingSlotEquip = -1; _selPage = slot; _selX = 0; _selY = 0; EquipSelected(); }
+        void ArmSlotEquip(byte slot, ushort id) { _pendingSlotEquip = slot; _pendingSlotEquipId = id; }
 
         // map a screen point to (page, cellX, cellY) over a registered drop zone
         bool PointToCell(Vector2 global, out byte page, out byte cx, out byte cy, out Control ctl, out bool isSlot)
@@ -1055,8 +1200,18 @@ void fragment() {
                 Player.NetUnwearClothing((byte)slotType);
                 return true;
             }
+            // Everything INSIDE the garment first (master 2026-09-03): pull the page's items out, then unwear (the page
+            // goes 0x0), then each item tries every remaining page and anything that doesn't fit drops at your feet.
+            var spill = new List<Item>();
+            byte spillPage = slotType switch { EItemType.BACKPACK => PlayerInventory.BACKPACK, EItemType.VEST => PlayerInventory.VEST, EItemType.SHIRT => PlayerInventory.SHIRT, EItemType.PANTS => PlayerInventory.PANTS, _ => byte.MaxValue };
+            if (spillPage != byte.MaxValue && spillPage < Inv.items.Length)
+            {
+                var pg = Inv.items[spillPage];
+                for (int i = pg.getItemCount() - 1; i >= 0; i--) { var j = pg.getItem((byte)i); if (j?.item != null) spill.Add(j.item); pg.removeItem((byte)i); }
+            }
             UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
-            ReturnToGrid(old);
+            ReturnToGrid(old);        // the garment itself: a free slot, else the ground
+            foreach (var it in spill) ReturnToGrid(it);   // ReturnToGrid = tryAddItem across the pages, else DropWorldItem
             return true;
         }
 
@@ -1446,7 +1601,7 @@ void fragment() {
             if (idx != byte.MaxValue)
             {
                 var jar = pg.getItem(idx); var item = jar.item;
-                bool wasHeld = Player != null && Player.IsHeld(jar.GetAsset(), item);   // dropping the HELD item -> go unarmed (strawberry)
+                bool wasHeld = Player != null && (Player.IsHeld(jar.GetAsset(), item) || Player.IsHeldAt(_selPage, _selX, _selY));   // dropping the HELD item -> go unarmed (strawberry; by reference OR by grid address, so an echo-rebuilt jar still counts)
                 if (Player != null && Player.RequestDropItem(_selPage, _selX, _selY))
                 {   // MP: the server removes the jar + tosses the world item (the echo empties the cell,
                     // the item puppet renders the drop); the hand state below is client-local either way
@@ -1490,54 +1645,12 @@ void fragment() {
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
         // Top navbar: a full-width 60px strip with the dashboard tab labels (source PlayerDashboardUI nav, above the
         // inventory content). The Inventory tab reads active; the rest are placeholders for the sibling dashboards.
-        void BuildNavbar()
+        MenuNavbar _navbar;
+        void BuildNavbar()   // the SHARED strip (MenuNavbar): identical geometry on every menu, live key labels
         {
-            var nav = new Panel();
-            nav.SetAnchorsPreset(Control.LayoutPreset.TopWide);
-            nav.OffsetBottom = NAVH;
-            StyleBox(nav, UI_NAV);
-            _dash.AddChild(nav);
-            // Retail's navbar is four WIDE TAB BUTTONS spanning the bar with their keybind in the label
-            // ("Inventory [G]"), evenly filling the nav bar -- not left-aligned plain text.
-            (string label, string key)[] tabs =
-            {
-                ("Inventory", "G"), ("Craft", "Y"), ("Skills", "U"), ("Information", "M"),
-            };
-            float vpw = GetViewport().GetVisibleRect().Size.X;
-            const float TABGAP = 8f;                                  // slim gap between tabs (square icon buttons removed)
-            float tabW = (vpw - MARGIN * 2 - TABGAP * (tabs.Length - 1)) / tabs.Length;
-            float tx2 = MARGIN;
-            for (int i = 0; i < tabs.Length; i++)
-            {
-                var btn = new Panel { Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
-                StyleBox(btn, i == 0 ? UI_TAB_ON : UI_TAB_OFF);        // the open page reads as the lit tab
-                _dash.AddChild(btn);
-
-                var t = new Label { Text = $"{tabs[i].label} [{tabs[i].key}]", Position = new Vector2(tx2, 8),
-                                    Size = new Vector2(tabW, NAVH - 16),
-                                    HorizontalAlignment = HorizontalAlignment.Center,
-                                    VerticalAlignment = VerticalAlignment.Center };
-                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : UITheme.TextBody);   // neutral, was blue-leaning
-                t.AddThemeFontSizeOverride("font_size", 32);
-                _dash.AddChild(t);
-
-                // THESE TABS WERE DECORATION. A Panel and a Label with no click handling anywhere, and the "[Y]"
-                // in the Craft label promised a keybind whose only handler in the codebase fires in BUILD mode --
-                // so the crafting menu was reachable on K and nothing else, and "the inventory crafting button"
-                // did not exist. A transparent Button over each tab makes them real without disturbing the
-                // existing styling (the Panel underneath still draws the lit/unlit state).
-                var hit = new Button { Flat = true, Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
-                hit.MouseFilter = Control.MouseFilterEnum.Stop;
-                string tabLabel = tabs[i].label;
-                hit.Pressed += () => OnTab(tabLabel);
-                _dash.AddChild(hit);
-
-                tx2 += tabW + TABGAP;
-            }
+            _navbar = MenuNavbar.Build(_dash, MenuNavbar.Tab.Inventory, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
         }
 
-        // Name + faction badge at the character panel's top (source characterPlayer / SleekPlayer @ (10,10), 410x50):
-        // an avatar chip, username (yellow), faction "Neutral [0]" under it, and a yellow + on the right. Themed to match.
         void BuildNameBadge(Panel box)
         {
             var badge = new Panel { Position = new Vector2(8, 6), Size = new Vector2(CHARW - 16, 76) };
@@ -1546,12 +1659,25 @@ void fragment() {
             var av = new Panel { Position = new Vector2(10, 10), Size = new Vector2(56, 56) };
             StyleBox(av, UI_TAB_OFF);
             badge.AddChild(av);
+            if (PlayerProfile.HasAvatar)   // the launcher's picture (UG_PROFILE_PNG, already size/format-checked by PlayerProfile) fills the square
+            {
+                var img = new Image();
+                if (img.LoadPngFromBuffer(PlayerProfile.AvatarPng) == Error.Ok)
+                {
+                    // ExpandMode BEFORE Size: with the default expand mode the 128 px texture clamps the control's minimum size, and a
+                    // Size set first stays 128 (the picture spilled out of the 56 px square in the first render).
+                    var pic = new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    pic.Texture = ImageTexture.CreateFromImage(img);
+                    pic.Position = new Vector2(2, 2); pic.Size = new Vector2(52, 52);
+                    av.AddChild(pic);
+                }
+            }
             // Survivor + faction/rank[rep], vertically CENTERED as a block in the badge (master 2026-08-26).
             var textCol = new VBoxContainer { Position = new Vector2(78, 0), Size = new Vector2(CHARW - 16 - 78 - 40, 76) };
             textCol.Alignment = BoxContainer.AlignmentMode.Center; textCol.AddThemeConstantOverride("separation", 0);
             textCol.MouseFilter = Control.MouseFilterEnum.Ignore;
             badge.AddChild(textCol);
-            var uname = new Label { Text = "Survivor" };
+            var uname = new Label { Text = string.IsNullOrEmpty(PlayerProfile.Name) ? "Survivor" : PlayerProfile.Name };   // the launcher name (UG_USERNAME); "Survivor" only when none is set
             uname.AddThemeColorOverride("font_color", UITheme.Accent); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
             textCol.AddChild(uname);
             var fac = new Label { Text = "Neutral [0]" };
@@ -1650,19 +1776,19 @@ void fragment() {
             // clears _pdFramed on a resize so FramePaperdoll recomputes the distance for the real aspect.
             _pdVp.AddChild(_pdCam);
 
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-30f, 150f, 0f), LightEnergy = 0.75f });   // key: 1.2 + ACES blew the head out to near-white (master 2026-09-03 "fix the lighting")                                          // key
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.35f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
             _pdVp.AddChild(new WorldEnvironment
             {
                 Environment = new Godot.Environment
                 {
                     BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
-                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.53f, 0.53f, 0.53f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
-                    TonemapMode = Godot.Environment.ToneMapper.Aces,
+                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.42f, 0.42f, 0.44f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
+                    TonemapMode = Godot.Environment.ToneMapper.Filmic,   // ACES crushed the lit side to white; filmic keeps the shirt/skin colour
                 },
             });
 
-            _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // same rig + skin as the live 3P body
+            _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // same rig + skin as the live 3P body, wearing your face (master 2026-09-04)
             if (_pdBody != null)
             {
                 _pdVp.AddChild(_pdBody);
@@ -1730,6 +1856,11 @@ void fragment() {
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
+            if (_pendingSlotEquip >= 0)   // a paperdoll drop's weapon just landed in its slot (owner echo) -> into the hands
+            {
+                var sp = Inv.items[_pendingSlotEquip];
+                if (sp.getItemCount() > 0 && sp.getItem(0)?.item?.id == _pendingSlotEquipId) { EquipFromSlotNow((byte)_pendingSlotEquip); return; }   // EquipSelected repaints itself
+            }
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
             _quickTiles.Clear();   // quick-craft is rebuilt as a dashboard section in the layout below
 
@@ -1758,7 +1889,8 @@ void fragment() {
             foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
             foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
             foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
-            _drop.Clear();
+            _drop.Clear(); _headerIcons.Clear();
+            if (!_foldTestApplied && byte.TryParse(System.Environment.GetEnvironmentVariable("UG_INVFOLD"), out var _fp)) { _collapsed.Add(_fp); _foldTestApplied = true; }   // render harness: start with a page folded
 
             // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character). They
             // register as page-0/1 drop targets inside AddSlotAt, so they MUST be built AFTER _drop.Clear() -- previously
@@ -1786,7 +1918,7 @@ void fragment() {
                 var pg = Inv.items[page];
                 if (pg.width == 0 || pg.height == 0) continue;   // source: header hidden when newHeight == 0
                 AddGridAt(WornName(page, fallback), pg, new Vector2(0, yC), _clothingCol, colW, WornItem(page));
-                yC += pg.height * CELL + GRIDPAD + PAGEADV;      // source: y += items.SizeOffset_Y + 80
+                yC += _collapsed.Contains(page) ? HDRH + 10 : pg.height * CELL + GRIDPAD + PAGEADV;   // source: y += items.SizeOffset_Y + 80; a folded tab is header-height only
             }
             // Worn clothing that grants NO storage still gets a bar (source headers[7]/[8]/[9] = hat/mask/glasses:
             // visible only when that item is worn, advance 70, and NO grid beneath).
@@ -1817,6 +1949,18 @@ void fragment() {
             }
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;
+            // SCROLL (master 2026-09-03): the clothing column can outgrow the screen; clip the box and hang a scrollbar on its right.
+            float visibleH = vpsz.Y - NAVH - MARGIN;   // to the bottom of the screen (master 2026-09-03: "the scrollable region should go all the way to the bottom")
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLTEST"), out var _vh) && _vh > 100f) visibleH = _vh;   // render harness: cap the box height so the scrollbar shows on a short column
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY"), out var _sy) && !_scrollTestApplied) { _scrollY = _sy; _scrollTestApplied = true; }   // render harness: pre-scrolled
+            _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
+            float maxScroll = Mathf.Max(0f, yC - visibleH);
+            _scrollY = Mathf.Clamp(_scrollY, 0f, maxScroll);
+            _clothingCol.Position = new Vector2(0f, -_scrollY);
+            if (_vscroll == null) { _vscroll = new VScrollBar { Step = 10 }; _vscroll.ValueChanged += v => { _scrollY = (float)v; _clothingCol.Position = new Vector2(0f, -_scrollY); }; _storageCol.AddChild(_vscroll); }
+            _vscroll.Visible = maxScroll > 0f;
+            _vscroll.MaxValue = yC; _vscroll.Page = visibleH; _vscroll.SetValueNoSignal(_scrollY);
+            _vscroll.Position = new Vector2(Mathf.Min(colW, 8 * CELL) + 8f, 0f); _vscroll.Size = new Vector2(14f, visibleH);   // hugs the widest grid (8 cells), not the split -- it was landing on the Nearby column
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
@@ -1828,7 +1972,7 @@ void fragment() {
             if (_charBox != null)
             {
                 _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
-                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 155);   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
+                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 215);   // master 2026-09-03: "move primary and secondary up a bit so they are above the vitals bars" (was -155: the slots touched the bars)   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
                 // rotation slider + cosmetic buttons sit in the reserved COSMH strip just above the weapon slots
                 if (_cosmeticRow != null) _cosmeticRow.Position = new Vector2(0, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - COSMH);
 
@@ -1888,7 +2032,8 @@ void fragment() {
         {
             col ??= _clothingCol;
             if (colW <= 0f) colW = page.width * CELL;
-            col.AddChild(HeaderBar(name, pos, colW, worn, worn == null ? page.getItemCount() : -1));
+            col.AddChild(HeaderBar(name, pos, colW, worn, worn == null ? page.getItemCount() : -1, page.page));
+            if (_collapsed.Contains(page.page)) return;   // folded: header only, the items stay in the page untouched
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
                                        Position = pos + new Vector2(0, HDRGAP), Size = new Vector2(page.width * CELL, page.height * CELL) };
             col.AddChild(grid);
@@ -1918,7 +2063,7 @@ void fragment() {
             if (_iconCache.TryGetValue(id, out var t)) return t;
             t = null;
             var p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
-            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
+            if (System.IO.File.Exists(p)) { var img = ContentProvider.LoadImage(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
             _iconCache[id] = t;
             return t;
         }
@@ -2093,11 +2238,17 @@ void fragment() {
         // SizeOffset_Y = 60, SizeScale_X = 1) with the worn item's icon on the left, its name centred, and the
         // item's condition on the right. The old plain text label was the single biggest visual gap vs the
         // reference -- retail's inventory reads as a stack of BARS, not a list of captions.
-        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1)
+        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null, int count = -1, byte page = byte.MaxValue)
         {
             width = Mathf.Min(width, 8 * CELL);   // master 2026-08-26: clothing tabs never extend past 8 tiles' width (the widest grid, Alicepack, is 8)
             var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
             StyleBox(bar, UI_BAR);
+            if (page != byte.MaxValue && page > PlayerInventory.SLOTS)   // a clothing page: clicking the tab folds/unfolds its grid (master 2026-09-03)
+            {
+                var fold = new Button { Flat = true, Position = new Vector2(HDRH, 0), Size = new Vector2(Mathf.Max(0f, width - HDRH), HDRH), MouseFilter = Control.MouseFilterEnum.Stop };
+                fold.Pressed += () => { if (!_collapsed.Remove(page)) _collapsed.Add(page); Refresh(); };
+                bar.AddChild(fold);
+            }
 
             if (worn != null)
             {
@@ -2105,6 +2256,8 @@ void fragment() {
                 icon.Position = new Vector2(6, 6);
                 icon.MouseFilter = Control.MouseFilterEnum.Ignore;
                 bar.AddChild(icon);
+                var wt = worn.GetAsset()?.type ?? EItemType.HAT;
+                _headerIcons.Add((icon, wt));   // drag this icon onto a grid to take the garment off (StartDrag -> the cloth-drag path -> TakeOff)
             }
 
             var name = new Label { Text = text, Position = new Vector2(0, 0), Size = new Vector2(width, HDRH),

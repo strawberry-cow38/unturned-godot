@@ -16,14 +16,15 @@ namespace UnturnedGodot
         public float Intensity;    // rint 0..1 (WeatherManager drives it)
         public float Shelter = 1f; // 1 = open sky .. 0 = fully under a roof (WeatherManager drives it)
 
-        AudioStreamPlayer _light, _heavy;
+        AudioStreamPlayer _light, _heavy, _retail;   // _retail = retail's own defaultrainambience bed (ripped 2026-09-03), under the two freesound layers
         AudioEffectLowPassFilter _lp;
         string _busName;           // the name AudioServer ACTUALLY gave us (it dedupes "Rain"->"Rain 2"); own it for the players + the removal
         bool _busAdded;
-        float _lightDb = -80f, _heavyDb = -80f, _lastCut = -1f;
+        float _lightDb = -80f, _heavyDb = -80f, _retailDb = -80f, _lastCut = -1f;
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             int idx = AudioServer.BusCount;
             AudioServer.AddBus(idx);
             AudioServer.SetBusName(idx, "Rain");
@@ -37,6 +38,7 @@ namespace UnturnedGodot
             _heavy = MakeLoop("res://content/rain_heavy.wav");
             if (_light != null) AddChild(_light);
             if (_heavy != null) AddChild(_heavy);
+            if (GameAudio.Clip("ambience", "defaultrainambience") is AudioStreamOggVorbis _rov) { _rov.Loop = true; _retail = new AudioStreamPlayer { Stream = _rov, Bus = _busName, VolumeDb = -80f }; AddChild(_retail); }
         }
 
         AudioStreamPlayer MakeLoop(string res)
@@ -52,7 +54,8 @@ namespace UnturnedGodot
             return new AudioStreamPlayer { Stream = w, Bus = _busName, VolumeDb = -80f };   // silent until _Process slews it up
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
             float rint = Mathf.Clamp(Intensity, 0f, 1f);
             float shelter = Mathf.Clamp(Shelter, 0f, 1f);
@@ -69,6 +72,7 @@ namespace UnturnedGodot
             // NO thunder duck (master dropped it): the claps clear the rain bed by ~8-9dB on their own, so dipping the
             // rain under them was pure impact-polish that read as a mixer glitch. Rain level tracks intensity + shelter only.
             _lightDb = SlewLayer(_light, _lightDb, rint > 0.02f ? lightTgt + shelterDb : -80f, dt);
+            _retailDb = SlewLayer(_retail, _retailDb, rint > 0.02f ? lightTgt + shelterDb - 4f : -80f, dt);   // retail bed sits 4 dB under the light layer
             _heavyDb = SlewLayer(_heavy, _heavyDb, heavyAmt > 0.02f ? heavyTgt + shelterDb : -80f, dt);
 
             // shelter low-pass: sweep the cutoff in LOG domain (a linear sweep sounds like a wah) -- ~20kHz open

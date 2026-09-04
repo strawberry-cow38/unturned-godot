@@ -26,8 +26,8 @@ namespace UnturnedGodot
             float len = Mathf.Max(0.5f, aabb.Position.Y + aabb.Size.Y);            // free-edge Y = flying length (amplitude ramp)
             _shader ??= GD.Load<Shader>("res://content/flag.gdshader");
             fc._mat = new ShaderMaterial { Shader = _shader };
-            fc._mat.SetShaderParameter("flag_tex", tex);
-            fc._mat.SetShaderParameter("flag_len", len);
+            fc._mat.SetShaderParameter(Sn.flag_tex, tex);
+            fc._mat.SetShaderParameter(Sn.flag_len, len);
             fc._pivot.AddChild(new MeshInstance3D
             {
                 Mesh = clothMesh,
@@ -44,14 +44,16 @@ namespace UnturnedGodot
         public void SetBroken(bool broken)
         {
             Visible = !broken;
-            SetProcess(!broken);   // no point rippling/swivelling a hidden cloth
+            TickHub.Remove(this); if (!broken && IsInsideTree()) TickHub.Add(this, HubTick, 20f);   // no point rippling/swivelling a hidden cloth
         }
 
-        public override void _Process(double delta)
+        public override void _EnterTree() { TickHub.Add(this, HubTick, 20f); }
+        public override void _ExitTree() { TickHub.Remove(this); }
+        public void HubTick(double delta)   // PERF: hub-ticked at 20 Hz (was a per-frame engine callback; see TickHub)
         {
             if (_mat == null || _pivot == null) return;
             Vector3 wp = GlobalTransform.Origin;                                    // the placed flag's world position = wind sample point
-            _mat.SetShaderParameter("wind", WindField.SampleWind(wp));
+            _mat.SetShaderParameter(Sn.wind, WindField.SampleWind(wp));
             // FACE THE WIND: rotate the pivot around the pole axis (local Z) so the cloth's +Y flying direction aims
             // where the wind blows. Convert the world wind into this flag's own (placement) frame, then its bearing in
             // the local X-Y plane.

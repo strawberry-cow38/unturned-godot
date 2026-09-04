@@ -275,12 +275,113 @@ for take_max, label in ((True, 'rear'), (False, 'windshield')):
     add(label, qs)
     print(f"  {label}: {len(rows)} rows, width {max(b - a for _, a, b in rows):.2f}")
 
+# ---- 4. ROOF GLASS: skylights and glazed rear ceilings (strawberry 2026-09-03, offroader: "a skylight
+# above the front seat and the rear ceiling (made of glass) should mate with the existing trunk glass").
+#
+# Same algorithm as the side glass, cast DOWN instead of sideways: grid the roof plan-view, keep the cells
+# a vertical ray passes clean through, flood-fill, and drop any component touching the scan edge -- one
+# that does is open air past the roof rail, not an aperture in it.
+#
+# THE TRAP THIS EXISTS TO AVOID, written down because it cost a wrong answer: "did the ray hit anything"
+# is NOT "is there a roof here". Every downward ray hits the FLOOR, so that test reports a solid roof over
+# the whole car and finds no apertures at all. It has to ignore everything below the cabin -- hence
+# ROOF_MIN. The offroader read as fully solid under the naive test and actually has two openings.
+ROOF_MIN = band_hi          # anything above the window band is roof/cage; below it is floor, seats, bonnet
+ROOF_STEP = 0.04
+rxs = np.arange(V[:, 0].min() - 0.05, V[:, 0].max() + 0.05, ROOF_STEP)
+rzs = np.arange(V[:, 2].min() - 0.05, V[:, 2].max() + 0.05, ROOF_STEP)
+
+def _roof_hit(x, z):
+    """Highest surface above the window band under (x,z), or None -- the roof skin, ignoring the floor."""
+    o = np.array([x, V[:, 1].max() + 5.0, z]); d = np.array([0.0, -1.0, 0.0])
+    dn = d / np.linalg.norm(d); P = np.cross(dn, E2); det = (E1 * P).sum(1)
+    ok = np.abs(det) > 1e-9; inv = np.where(ok, 1.0 / np.where(ok, det, 1), 0)
+    Tv = o - A; u = (Tv * P).sum(1) * inv; Q = np.cross(Tv, E1)
+    v = (dn * Q).sum(1) * inv; t = (E2 * Q).sum(1) * inv
+    m = ok & (u >= -1e-6) & (v >= -1e-6) & (u + v <= 1 + 1e-6) & (t > 1e-4)
+    ys = o[1] - t[m]
+    ys = ys[ys > ROOF_MIN]
+    return float(ys.max()) if len(ys) else None
+
+rgrid = np.array([[_roof_hit(x, z) is None for z in rzs] for x in rxs])   # True = open sky
+
+# CLOSE THE ENDS AT THE GLASS. A glazed rear ceiling is bounded on three sides by roof structure and on
+# the fourth by the REAR WINDOW -- the roof just stops there. Left alone, that opening reaches the back of
+# the scan, the edge rule reads it as open air beside the vehicle (correctly, for a side window) and drops
+# it, which is exactly what happened: the offroader derived its skylight and silently lost its rear
+# ceiling. So the already-derived windscreen and rear panes are treated as solid here, which is what they
+# physically are to a ray coming down -- and it is also what makes the ceiling MEET the rear window rather
+# than stop short of it or hang past it.
+_ends = {l: np.array([p for q in qs for p in q]) for l, qs in panes if l in ('windshield', 'rear')}
+# The z where each end pane meets the roof is the z of its HIGHEST vertex -- not its min or max z, which
+# depend on which way the glass rakes. A rear window leaning back has its TOP at min z and its bottom at
+# max z, so taking max z put the boundary 14cm behind the roofline and left a full-width slot open there;
+# the ceiling then leaked into the air beside the car and the whole thing was dropped as one edge-touching
+# blob. Both ends leaked this way, front and rear.
+def _meets_roof_z(pts): return float(pts[np.argmax(pts[:, 1]), 2])
+_zf = _meets_roof_z(_ends['windshield']) if 'windshield' in _ends else None
+_zr = _meets_roof_z(_ends['rear']) if 'rear' in _ends else None
+for j, z in enumerate(rzs):
+    # Inclusive: the slot AT the boundary is the pane's own aperture, already glazed by that pane.
+    if (_zf is not None and z <= _zf) or (_zr is not None and z >= _zr):
+        rgrid[:, j] = False
+rlab = -np.ones(rgrid.shape, int); rc = 0
+for i in range(rgrid.shape[0]):
+    for j in range(rgrid.shape[1]):
+        if not rgrid[i, j] or rlab[i, j] >= 0: continue
+        q = deque([(i, j)]); rlab[i, j] = rc
+        while q:
+            a_, b_ = q.popleft()
+            for da, db in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                na, nb = a_ + da, b_ + db
+                if 0 <= na < rgrid.shape[0] and 0 <= nb < rgrid.shape[1] and rgrid[na, nb] and rlab[na, nb] < 0:
+                    rlab[na, nb] = rc; q.append((na, nb))
+        rc += 1
+
+roof_panes = []
+for c in range(rc):
+    cells = np.argwhere(rlab == c)
+    # touching the scan edge = open air beside/behind the vehicle, not a hole in its roof
+    if (cells[:, 0].min() == 0 or cells[:, 0].max() == rgrid.shape[0] - 1
+            or cells[:, 1].min() == 0 or cells[:, 1].max() == rgrid.shape[1] - 1):
+        continue
+    x0, x1 = rxs[cells[:, 0].min()], rxs[cells[:, 0].max()]
+    z0, z1 = rzs[cells[:, 1].min()], rzs[cells[:, 1].max()]
+    if (x1 - x0) < 0.25 or (z1 - z0) < 0.25: continue   # a vent or a gap between bars, not a window
+    roof_panes.append((x0, x1, z0, z1))
+roof_panes.sort(key=lambda p: p[2])   # front to back
+
+# Height: sit each pane in the surrounding roof PLANE, sampled just outside its own edge rather than
+# assumed flat -- and let the rear edge follow the roof down if it slopes, so a glazed ceiling meets the
+# rear window instead of hanging 2cm proud of it ("should mate with the existing trunk glass").
+def _plane_y(x0, x1, z):
+    for dx in (x0 - ROOF_STEP, x1 + ROOF_STEP):
+        y = _roof_hit(dx, z)
+        if y is not None: return y
+    return None
+
+for n, (x0, x1, z0, z1) in enumerate(roof_panes):
+    label = 'roof_front' if n == 0 and len(roof_panes) > 1 else ('roof_rear' if n else 'roof')
+    yf = _plane_y(x0, x1, z0) or _plane_y(x0, x1, (z0 + z1) / 2)
+    yb = _plane_y(x0, x1, z1) or yf
+    if yf is None: print(f"  !! {label}: no roof plane to sit in"); continue
+    qs, STEPS = [], 12
+    for k in range(STEPS):
+        za, zb = z0 + (z1 - z0) * k / STEPS, z0 + (z1 - z0) * (k + 1) / STEPS
+        ya = yf + (yb - yf) * k / STEPS
+        yb_ = yf + (yb - yf) * (k + 1) / STEPS
+        qs.append([[x0, ya, za], [x1, ya, za], [x1, yb_, zb], [x0, yb_, zb]])
+    add(label, qs)
+    print(f"  {label}: x {x0:.2f}..{x1:.2f}  z {z0:.2f}..{z1:.2f}  y {yf:.3f}->{yb:.3f}")
+if not roof_panes: print("  (no roof apertures)")
+
 base = OUT[:-4] if OUT.endswith('.txt') else OUT
 # Clear this vehicle's old panes first. Pane files are per-label, so a run that derives FEWER panes
 # than the last one leaves the extras on disk and Vehicle loads them: the roadster reported 6 panes,
 # 2 of them from a previous naming scheme, and the count assertion was the only thing that noticed.
 for _lbl in ('windshield', 'rear', 'l_front', 'r_front', 'l_rear', 'r_rear',
-             'l_mid1', 'r_mid1', 'l_mid2', 'r_mid2'):
+             'l_mid1', 'r_mid1', 'l_mid2', 'r_mid2',
+             'roof', 'roof_front', 'roof_rear'):
     _f = f"{base}_{_lbl}.txt"
     if os.path.exists(_f): os.remove(_f)
 panes = [(l, q) for l, q in panes if l not in SKIP]

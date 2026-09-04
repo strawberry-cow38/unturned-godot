@@ -58,15 +58,20 @@ namespace UnturnedGodot
         // loopback) -- it routes over the console plane like the cheats, but it's a legit mechanic the server runs
         // BEFORE its AllowCheats gate. The early toggleGlobalPower branch below does the routing; membership here
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
+        // `save` and `wipe` live entirely on the HOST (WorldSaveDriver owns the file), so they always route to
+        // the server -- on a joined client and on the consuming loopback alike, which is what singleplayer is.
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits" };
+        // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
+        // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
+        // the note above this list warns about. Found by running the verb rather than by reading it.
+        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "wellshaft", "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -219,6 +224,55 @@ namespace UnturnedGodot
                 return;
             }
 
+            // sethp <n> -- debug: bring health DOWN to n via a real TakeDamage call. NOT a direct Health write --
+            // that looked like it worked (Player.Health read back correctly the instant after) and then
+            // silently reverted one tick later, because under the loopback (every mode reaches this by default
+            // via AttachMpLoopback) Health is SERVER-owned: AdoptReplicatedVitals re-pins it from the server's
+            // own combat-block echo every tick, and a client-side write that never told the server anything is
+            // exactly what that echo overwrites. Routing a real hit through TakeDamage -> NetDamageSink damages
+            // the actual authority, so the next echo reflects reality instead of fighting a local write it
+            // knows nothing about. Caught by comparing a render against the console's OWN reported value, which
+            // was correct on read and had already been quietly overwritten by the time the shot was taken.
+            if (verb == "sethp" && arg.Length > 0)
+            {
+                if (Player == null) { Log("sethp: no player"); return; }
+                if (!float.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hp))
+                { Log("sethp: not a number"); return; }
+                float dmg = Mathf.Max(0f, Player.Health - Mathf.Clamp(hp, 0f, Player.MaxHealth));
+                if (dmg > 0f) Player.TakeDamage(dmg);
+                Log($"sethp: took {dmg:0} damage -> {Player.Health:0}/{Player.MaxHealth:0}");
+                return;
+            }
+
+            // hurttest [n|s|e|w] -- debug: fire PlayerHurtEvent's client-side cosmetics (flash/flinch/directional
+            // indicator) as if a real MP hit landed from that compass direction, WITHOUT touching HP. Non-lethal
+            // damage on a real MP client's own NetAvatar is otherwise invisible to a headless run -- the only
+            // code path that renders it is the wire event this drives -- so this is what tools/shot.py's `hurt`
+            // scene fires through UG_BOOTCMD to make the indicator renderable at all.
+            if (verb.StartsWith("hurttest"))
+            {
+                if (Player == null) { Log("hurttest: no player"); return; }
+                Vector3 off = arg.ToLowerInvariant() switch
+                {
+                    "n" => new Vector3(0f, 0f, -10f), "s" => new Vector3(0f, 0f, 10f),
+                    "e" => new Vector3(10f, 0f, 0f), "w" => new Vector3(-10f, 0f, 0f),
+                    _ => new Vector3(10f, 0f, 0f),
+                };
+                Player.NetHurt(20f, Player.GlobalPosition + off);
+                // Log the bearing the indicator SHOULD be showing, so a render can be checked against a number
+                // instead of eyeballed -- the camera's facing at the moment this fires is not otherwise knowable
+                // from outside a scripted demo sequence.
+                if (Player.Camera != null)
+                {
+                    Vector3 camFwd = -Player.Camera.GlobalTransform.Basis.Z; camFwd.Y = 0f;
+                    Vector3 camRight = Player.Camera.GlobalTransform.Basis.X; camRight.Y = 0f;
+                    float bearing = Mathf.RadToDeg(Mathf.Atan2(camRight.Normalized().Dot(off.Normalized()), camFwd.Normalized().Dot(off.Normalized())));
+                    Log($"hurttest: hit from {arg.ToLowerInvariant()}, bearing {bearing:0}deg (0=ahead/top, +90=right, 180=behind/bottom, -90=left)");
+                }
+                else Log($"hurttest: hit from {arg.ToLowerInvariant()}");
+                return;
+            }
+
             // vertexlight [on|off] -- flip every material between per-pixel and per-vertex shading, to A/B
             // lighting cost on REAL hardware (this dev box is software-rasterised, so the measurement is
             // meaningless here). Reports how many materials changed, because a switch that silently matched
@@ -244,20 +298,6 @@ namespace UnturnedGodot
             // are free for vehicle seats (strawberry 2026-08-16). Above the arg guard because every one of
             // them is a bare no-arg toggle. (zshadows/freezerigs -- the old F5/F6 zombie-rig dev tools --
             // removed with the zombie system.)
-            if (verb is "profiler" or "fps")
-            {
-                var pr = Profiler.Instance;
-                if (pr == null) { Log("profiler: no profiler in this scene"); return; }
-                Log($"profiler overlay {(pr.ToggleOverlay() ? "ON" : "OFF")}");
-                return;
-            }
-            if (verb is "renderscale" or "res3d")
-            {
-                var pr = Profiler.Instance;
-                if (pr == null) { Log("renderscale: no profiler in this scene"); return; }
-                Log($"3D render scale -> {pr.CycleRenderScale():0.##}x");
-                return;
-            }
             // (zshadows / freezerigs+animcut commands removed with the zombie system: they toggled
             // ZombieDirector's rig shadow casting and ZombieAnimCut's frozen-rig overlay, both gone.)
 
@@ -782,6 +822,14 @@ namespace UnturnedGodot
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+            }
+            else if (verb == "wellshaft")
+            {
+                // wellshaft [on|off]  -- the bottomless-well disc; persisted in graphics.cfg, applies on the next map load
+                string a = (arg ?? "").Trim().ToLowerInvariant();
+                if (a == "on" || a == "off") { GraphicsOptions.WellShaft = a == "on"; GraphicsOptions.Save(); }
+                Log($"well shaft: {(GraphicsOptions.WellShaft ? "ON" : "OFF")}{(a == "on" || a == "off" ? " (applies on the next map load)" : "")}");
+                return;
             }
             else if (verb == "weather")
             {

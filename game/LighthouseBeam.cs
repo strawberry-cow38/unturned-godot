@@ -43,6 +43,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             // BeamMesh runs along -Y; rotate it -90 about X so the shaft points HORIZONTALLY (+Z), then the NODE spins
             // around world-Y so the beam sweeps the horizon. Narrow at the lamp, widening to FarRadius far out.
             var mesh = StreetLight.BeamMesh(BeamLen, SrcRadius, SrcRadius, FarRadius, morphEnd: 0.12f, seg: 20, rings: 22);
@@ -68,9 +69,9 @@ namespace UnturnedGodot
             AddChild(_cone);
         }
 
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        public void HubProcess(double delta)
         {
-            using var _prof = Prof.Scope("LighthouseBeam");
             // NIGHT-GATE: only sweep at night. Self-gated off DayNightCycle.IsNightTime (default night if no cycle),
             // so this touches nothing shared -- no group registration, no edit to the day/night sweep.
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;

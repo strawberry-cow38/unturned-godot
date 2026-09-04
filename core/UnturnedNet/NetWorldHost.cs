@@ -56,6 +56,11 @@ namespace UnturnedGodot.Net
         // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
         // which the existing vitals + combat paths already replicate.
         public readonly ServerDeadzones Deadzones = new ServerDeadzones();
+        /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
+        /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
+        /// which for a dedicated server is minutes or days after the world came up. The game side sets this
+        /// before opening the socket, and clears it on a wipe.</summary>
+        public WorldSave PendingSave;
         // ...and the join answer for the above: the events carry changes, this block carries the state a
         // late joiner never saw change.
         public readonly InteractableStateReplication InteractableState = new InteractableStateReplication();
@@ -217,7 +222,7 @@ namespace UnturnedGodot.Net
                     // faster is either a bug or a client turning its one 64 KB upload into 64 KB x every peer,
                     // repeatedly. Drop the whole command rather than applying the name and refusing the picture.
                     if (!Profiles.ServerProfileAccepted(sender, Session.CurrentTick)) return;
-                    if (!Profiles.ServerApplyProfile(sender, cmd.Name, cmd.AvatarPng, Session.CurrentTick, out var verdict))
+                    if (!Profiles.ServerApplyProfile(sender, cmd.Name, cmd.AvatarPng, Session.CurrentTick, out var verdict, cmd.Face))
                     {
                         if (verdict != ProfileRules.AvatarVerdict.Ok && verdict != ProfileRules.AvatarVerdict.Empty)
                             NetLog.Info($"player {sender}: profile picture refused ({ProfileRules.Explain(verdict)})");
@@ -251,6 +256,15 @@ namespace UnturnedGodot.Net
                 // never make a later delta once this client acks it (found by the Part C desync detector:
                 // two simultaneous joiners each permanently missing the other's combat entity). §2.5's
                 // "replication send last" applies to the join snapshot too.
+                // PERSISTENCE (WorldSave): everything above just created this player at defaults. If the world
+                // was loaded from a save and it has a block for them, overwrite those defaults NOW -- before
+                // TickReplication composes the join snapshot below, so the client's very first picture of
+                // itself is its restored state rather than a spawn it sees corrected a tick later.
+                // The key is the name as PROFILES holds it, not peer.Name: ServerAdd sanitises on the way in and
+                // Capture reads it back out, so keying on the raw handshake string would miss every name the
+                // sanitiser touched.
+                if (PendingSave != null && Profiles.TryGet(peer.PlayerId, out var prof))
+                    PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick);
                 _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>
@@ -533,6 +547,7 @@ namespace UnturnedGodot.Net
         // Phase 5 combat facts (server -> this client). The shell subscribes to drive local fx/HUD:
         // damage numbers wait for HitConfirmed (§3.4); ImpactFx spawns decals/blood for OTHER players' shots.
         public event System.Action<HitConfirmEvent> HitConfirmed;
+        public event System.Action<PlayerHurtEvent> PlayerHurt;   // to THIS client, when it was the one hit -- drives the directional hurt indicator
         public event System.Action<ImpactFxEvent> ImpactFx;
         public event System.Action<PlayerDiedEvent> PlayerDied;
         public event System.Action<PlayerRespawnedEvent> PlayerRespawned;
@@ -558,6 +573,8 @@ namespace UnturnedGodot.Net
         public event System.Action<StorageClosedEvent> StorageClosed;
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
+        public event System.Action<PlayerFiredEvent> PlayerFired;
+        public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
@@ -616,6 +633,7 @@ namespace UnturnedGodot.Net
                 if (ApplySnapshot(snapshot, len)) JoinSnapshotsApplied++;
             });
             Events.Register<HitConfirmEvent>(ReplicationIds.EventHitConfirm, HitConfirmEvent.TryRead, e => HitConfirmed?.Invoke(e));
+            Events.Register<PlayerHurtEvent>(ReplicationIds.EventPlayerHurt, PlayerHurtEvent.TryRead, e => PlayerHurt?.Invoke(e));
             Events.Register<ImpactFxEvent>(ReplicationIds.EventImpactFx, ImpactFxEvent.TryRead, e => ImpactFx?.Invoke(e));
             Events.Register<PlayerDiedEvent>(ReplicationIds.EventPlayerDied, PlayerDiedEvent.TryRead, e => PlayerDied?.Invoke(e));
             Events.Register<PlayerRespawnedEvent>(ReplicationIds.EventPlayerRespawned, PlayerRespawnedEvent.TryRead, e => PlayerRespawned?.Invoke(e));
@@ -646,6 +664,9 @@ namespace UnturnedGodot.Net
             Events.Register<ConsoleResultEvent>(ReplicationIds.EventConsoleResult, ConsoleResultEvent.TryRead, e => ConsoleResult?.Invoke(e));
             Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
+            Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
+                e => PlayerFired?.Invoke(e));
+            Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
             Events.Register<VehicleEnteredEvent>(ReplicationIds.EventVehicleEntered, VehicleEnteredEvent.TryRead,
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
@@ -687,9 +708,9 @@ namespace UnturnedGodot.Net
         /// <summary>Tell the server who we are. Sent once the session is Connected, on every join -- the
         /// server holds no profile database, so a rejoin re-states it. The name is sanitised HERE too, so the
         /// player sees the name they will actually get; the server does not rely on that and re-runs it.</summary>
-        public bool SendSetProfile(string name, byte[] avatarPng)
+        public bool SendSetProfile(string name, byte[] avatarPng, byte face = 0)
             => SendCommand(ReplicationIds.CommandSetProfile,
-                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng }.Write,
+                           new SetProfileCommand { Name = ProfileRules.SanitizeName(name), AvatarPng = avatarPng, Face = PlayerProfileReplication.ClampFace(face) }.Write,
                            bufferSize: ProfileBufferSize(avatarPng));
 
         /// <summary>Send a profile WITHOUT the client-side sanitise -- what a modified client, or one written
@@ -739,10 +760,10 @@ namespace UnturnedGodot.Net
         /// (MoveInput.ButtonJump | ...). C1 (plan §4.2): the datagram carries the newest input plus the
         /// previous two (MoveInputPacket), so a single lost/overtaken datagram costs the server nothing
         /// -- the next one backfills the hole.</summary>
-        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0)
+        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0, ushort heldItemId = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
-            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons };
+            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons, HeldItemId = heldItemId };
             if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
             // a PAUSE in the send stream (ride mode, respawn -- anything that stopped ShellStep sending)
             // voids the redundancy ring: the server cleared its input state at the pause boundary
@@ -1002,8 +1023,10 @@ namespace UnturnedGodot.Net
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 
-        public bool SendEnterVehicle(uint netId)
-            => SendCommand(ReplicationIds.CommandEnterVehicle, new EnterVehicleCommand { NetId = netId }.Write);
+        /// <summary>Ask for a seat. Default AnySeat = the first free one, driver first -- what walking up to
+        /// a car and pressing F has always meant. A door zone that names a seat passes it here.</summary>
+        public bool SendEnterVehicle(uint netId, byte seat = EnterVehicleCommand.AnySeat)
+            => SendCommand(ReplicationIds.CommandEnterVehicle, new EnterVehicleCommand { NetId = netId, Seat = seat }.Write);
 
         public bool SendExitVehicle()
             => SendCommand(ReplicationIds.CommandExitVehicle, new ExitVehicleCommand().Write);

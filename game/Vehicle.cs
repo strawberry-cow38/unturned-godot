@@ -828,7 +828,9 @@ namespace UnturnedGodot
         public bool Declutched => _clutchT > 0f;   // test/HUD seam
         float _peakTorque, _dragK, _rollK, _driveR, _shiftCd; int _nTraction;   // drivetrain: peak engine torque (Nm), aero drag coeff (N per (m/s)^2), rolling resistance (N), driven wheel radius, shift lockout, traction wheel count
         AudioStreamPlayer3D _engineAudio, _ignitionAudio; bool _ignitionFired; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
-        const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
+        float _engineWind = -1f, _windPitch0, _windVol0;   // engine-off WIND-DOWN (master 2026-09-04): -1 = not winding; else 0..1 progress
+        const float EngineWindDownSec = 1.4f;              // the loop sags in pitch and dies over this, then STOPS (it used to cut to -80 dB)
+        const float EngineVolumeBoost = 2.8f;   // 1.5 -> 2.8 (strawberry 2026-09-04 "make all vehicle engines much louder and travel much further"); distances raised with it below   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         // ---- DRIVETRAIN. A real one: an engine that makes TORQUE as a function of its own RPM, a gearbox
         // that MULTIPLIES that torque, and a top speed that falls out of DRAG instead of out of an
@@ -1347,14 +1349,16 @@ namespace UnturnedGodot
                 foreach (var st in seats) { frontSeat = Mathf.Min(frontSeat, st.Z); rearSeat = Mathf.Max(rearSeat, st.Z); }
 
                 float hoodRun = frontSeat - front;
-                if (hoodRun > MinCompartmentRun)
+                if (hoodRun > MinCompartmentRun && !s.RearEngine)   // a rear-engined bus has no bonnet to open at the front
                     zones.Add(new AccessZone(AccessKind.Hood, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, front + hoodRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, hoodRun * 0.8f)));
 
+                // The rear compartment is the BOOT -- or, rear-engined, the engine bay (the bus: master
+                // "move the bus' engine to the back"). NoTrunk drops the boot outright (bus, tractor).
                 float trunkRun = rear - rearSeat;
-                if (trunkRun > MinCompartmentRun)
-                    zones.Add(new AccessZone(AccessKind.Trunk, -1,
+                if (trunkRun > MinCompartmentRun && (s.RearEngine || !s.NoTrunk))
+                    zones.Add(new AccessZone(s.RearEngine ? AccessKind.Hood : AccessKind.Trunk, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
             }
@@ -1527,6 +1531,7 @@ namespace UnturnedGodot
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat; Node3D _headlightFill;
+        readonly System.Collections.Generic.List<Vector3> _autoSpot = new(), _autoTail = new();   // lamp emitter spots DERIVED from the lens meshes when the spec authors none (quad, bus)
         MeshInstance3D _headlightBeam;
         // Lamp tint, decided by the lens SHAPE. Round lamps read as older/halogen and go considerably warmer than
         // rectangular ones (strawberry). Derived from the hull the beam already computes -- a hexagonal outline IS
@@ -1538,8 +1543,25 @@ namespace UnturnedGodot
         CpuParticles3D _headlightMotes; Color _hlMoteBase; float _hlMoteFade = 0f;   // dust in the beam -- night only, on the STREETLIGHT clock   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
-        StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
+        CpuParticles3D _exhaust; float _exhaustPuff;   // tailpipe smoke while running; a fat puff for a moment after the engine catches
+        StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;
+        MeshInstance3D _sirenMi0, _sirenMi1, _sirenCentre;   // the two lenses + a hidden CENTRE hit-box between them (all three are shoot-out lamps: lightbar_l / lightbar_r / lightbar_c)
+        public int LightbarPattern { get; private set; }   // 0 alternate L/R (retail wee-oo), 1 double-strobe both, 2 fast wig-wag -- ctrl-hold radial (strawberry 2026-09-04)
+        public static readonly string[] LightbarPatternNames = { "wail", "double strobe", "wig-wag" };
+        static readonly float[] LightbarSirenPitch = { 1.0f, 1.12f, 0.88f };   // the same siren.wav per pattern until master sources the three real ones
+        /// <summary>ENGINE hp, separate from body hp (strawberry 2026-09-04 "split vehicle HP into body hp, and engine hp"). The engine only
+        /// starts while this is above zero; a DROWNED engine (swamped in water) is zero for good -- no repair brings it back.</summary>
+        public float EngineHealth, EngineHealthMax;
+        public bool EngineDrowned { get; private set; }
+        public bool EngineDead => EngineHealth <= 0f;
+        float _carIgnitionLeft;   // seconds of ignition left before the drivetrain answers the throttle (strawberry 2026-09-04 "delay between starting the engine and the ability to start moving")
+        public bool EngineStarting => _carIgnitionLeft > 0f;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        /// <summary>Is anyone close enough to set an alarm off? Set by the side that owns the cars and knows
+        /// where every player is (VehicleNetSync on a server); null falls back to the local camera, which is
+        /// what singleplayer has always used.</summary>
+        public static System.Func<Vector3, bool> AlarmProximityTest;
+        public const float AlarmRadiusSq = 49f;   // ~7 m
         bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player) or damage sets off a ~30s honk+lights blip loop (master)
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
@@ -1565,7 +1587,10 @@ namespace UnturnedGodot
         public bool AlarmedForTest { get => _alarmed; set => _alarmed = value; }
         public bool AlarmActiveForTest => _alarmTimer > 0f;
         public bool BrakingNow => _braking;
-        public float SteerAngleDegrees => _steerAngle;      // MP §3.6: the wheel-steer summary the snapshot carries
+        public float SteerAngleDegrees => _steerAngle;
+        public bool HasSteerWheel => _steerPivot != null;                           // a real steering-wheel model exists (its pivot = where 1P driving hands go)
+        public Vector3 SteerPivotLocal => _steerPivot != null ? _steerPivot.Position : Vector3.Zero;
+        public Vector3 SteerAxisLocal => _steerAxis;                                 // wheel disc normal, vehicle-local      // MP §3.6: the wheel-steer summary the snapshot carries
         public float SpeedMaxMps => _speedMax;              // MP Part A: the spec Speed_Max -- the server envelope's horizontal cap derives from it (spec-derived, never hardcoded)
 
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
@@ -1695,6 +1720,7 @@ namespace UnturnedGodot
             public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
+            public bool NoTrunk, RearEngine;   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
@@ -1866,7 +1892,7 @@ namespace UnturnedGodot
             // GenerateMipmaps: a runtime Image.LoadFromFile texture has NO mipmaps, so the default Linear-mipmap filter
             // samples BLACK once the sprite MINIFIES (small/dense particles) -> the "stationary black smoke cluster" at
             // the engine (same root cause as the old guns-render-black bug). Mips make minified particles sample grey.
-            if (System.IO.File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            if (System.IO.File.Exists(tp)) { var tex = ContentProvider.TextureCached(tp, mipmaps: true); if (tex != null) { mat.AlbedoTexture = tex; } }
             if (fire)   // veh_fire.png is a 4-frame flipbook (64x16 = 4x16^2) -> animate the frames, don't stretch all 4 onto one quad (master)
             {
                 mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
@@ -1917,13 +1943,23 @@ namespace UnturnedGodot
             }
         }
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
-        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
+        public void ToggleSiren() { if (HasSiren && (Battery > 0f || _sirenOn)) _sirenOn = !_sirenOn; }
+        /// <summary>Ctrl-hold radial: pick a flash pattern (turns the lightbar on), or -1 = lightbar off.</summary>
+        public void SetLightbar(int pattern)
+        {
+            if (!HasSiren) return;
+            if (pattern < 0) { _sirenOn = false; return; }
+            LightbarPattern = Mathf.Clamp(pattern, 0, LightbarPatternNames.Length - 1);
+            if (Battery > 0f) _sirenOn = true;
+        }
+        public bool IsLightbarLensBroken(int side) { int i = _lampLabels.IndexOf(side == 0 ? "lightbar_l" : "lightbar_r"); return i >= 0 && _lampBroken[i]; }
+        public bool IsLightbarCentreBroken { get { int i = _lampLabels.IndexOf("lightbar_c"); return i >= 0 && _lampBroken[i]; } }   // master: ctrl toggles the siren/lightbar while driving. A flat battery can't power it -- but you can always switch it OFF
 
         /// <summary>Can the starter turn it over? A flat battery clicks and nothing happens.
         ///
         /// The threshold is above zero deliberately: at exactly 0 the player can keep cranking on the last drop
         /// forever, which reads as the starter being broken rather than the battery being flat.</summary>
-        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin;
+        public bool CanStartEngine => !OnFire && Battery >= BatteryStartMin && EngineHealth > 0f;   // + a live engine (drowned/shot-out engines never start)
 
         /// <summary>Start it if the battery can. Returns whether it caught.
         ///
@@ -1938,6 +1974,8 @@ namespace UnturnedGodot
             // _ignitionAudio off the rotor spin-up, where the clip's LENGTH is the spin-up gate, and firing it
             // from here as well would play it twice and desync that gate from the sound it is derived from.
             if (!_heli && _ignitionAudio != null && !_ignitionAudio.Playing) _ignitionAudio.Play();
+            if (!_heli) _carIgnitionLeft = _ignitionAudio?.Stream != null && _ignitionAudio.Stream.GetLength() > 0.3 ? Mathf.Min(2.5f, (float)_ignitionAudio.Stream.GetLength()) : 1.2f;   // the drivetrain answers only after the crank (strawberry 2026-09-04)
+            _exhaustPuff = 1.0f;   // cold start: a thick puff (the exhaust block reads it)
             return true;
         }
 
@@ -2067,11 +2105,28 @@ namespace UnturnedGodot
             LastAttackedAtMsec = Godot.Time.GetTicksMsec();
         }
 
-        public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
+        /// <summary>Bullets hitting the front third of the hull (the engine bay) go to the ENGINE hp instead of the body.</summary>
+        bool _rearEngine;   // Spec.RearEngine: the engine bay is the back third (bus), not the front
+        public bool IsEngineBay(Vector3 world) => _hullSizeLocal.Z > 0f && (_rearEngine ? ToLocal(world).Z > AccessBoxCenter.Z + 0.15f * _hullSizeLocal.Z
+                                                                                  : ToLocal(world).Z < AccessBoxCenter.Z - 0.15f * _hullSizeLocal.Z);   // forward = -Z
+        Vector3 _hullSizeLocal;
+        public void TakeEngineDamage(float amount)
+        {
+            if (NetClientPredicted || _exploded || amount <= 0f || EngineHealth <= 0f) return;
+            EngineHealth = Mathf.Max(0f, EngineHealth - amount);
+            TriggerAlarm();
+            if (EngineHealth <= 0f)
+            {
+                EngineOn = false;   // dies where it stands; no restart until repaired (never, if drowned)
+                if (_smoke0 != null) _smoke0.Emitting = true;
+            }
+        }
+        public void TakeDamage(float amount, float engineShare = 0.5f)   // source askDamage; engineShare = the fraction ALSO taken off the engine (explosions/crashes 0.5; a body-panel bullet 0): reduce health; at 0 the EXPLODE timer starts
         {
             if (NetClientPredicted) return;   // MP Part A: the driver's client-local vehicle -- health/explosion are SERVER truth (replica Exploded flag); a local crash must not eject the driver on damage the server never applied
             if (_exploded || amount <= 0f) return;
             Health = Mathf.Max(0f, Health - amount);
+            if (engineShare > 0f) TakeEngineDamage(amount * engineShare);
             TriggerAlarm();   // damaging an alarmed car sets off its alarm (master)
             if (Health <= 0f && _deadTimer < 0f)
             {
@@ -2096,6 +2151,10 @@ namespace UnturnedGodot
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
             SetHeadlights(false); SetTaillights(false);   // a corpse's lamps go dark -- kill the head + tail lights (master)
+            // ...and SHOT OUT, not just switched off (strawberry 2026-09-03: "destroy headlights, tail lights, through the
+            // shooting-them-out path when a car explodes") -- the same BreakLamp the bullet path uses, so the wreck's
+            // lenses carry the smashed look and nothing can re-light them.
+            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li);
             // ...but killing the lamps here is NOT enough on its own, and that was the bug: an alarmed car's
             // blip loop below re-lights them every 0.5s and honks, on a burning wreck. Worse, once the hulk
             // settles it becomes a _husk and the per-frame sim early-returns for good -- so whatever the blip
@@ -2168,10 +2227,9 @@ namespace UnturnedGodot
         // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
         static ShaderMaterial PaintMat(string palette, Color paint)
         {
-            var sh = new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/vehicle_paint.gdshader")) };
+            var sh = ContentProvider.ShaderCached(ProjectSettings.GlobalizePath("res://content/vehicle_paint.gdshader"));   // ONE compiled shader for the fleet (was a new Shader per vehicle)
             var m = new ShaderMaterial { Shader = sh };
-            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{palette}"));
-            m.SetShaderParameter("palette", ImageTexture.CreateFromImage(img));
+            m.SetShaderParameter("palette", ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{palette}")));   // decoded once per palette
             var lin = paint.SrgbToLinear();   // ALBEDO is linear; the palette texels already come through source_color (sRGB->linear), but the raw paint Vector3 did not -> #437c44 rendered as a washed-out light green. Convert so it shows true deep forest (master: "our render is diff")
             m.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
             return m;
@@ -2201,6 +2259,10 @@ namespace UnturnedGodot
         // covers every build variant. A trailer is never driven -> 0 burn. TANK CAPACITY is now the per-vehicle Spec.Fuel
         // (metric mL, set on each spec), NOT here -- so a jerrycan (mL) and a vehicle tank share units. Burn stays PZ-scale
         // for now: consumption is masked by the infFuel default, so a metric consumption pass is deferred.
+        /// <summary>strawberry 2026-09-03: "10x vehicle hp". ONE multiplier on every Spec.Health at build time (the specs keep
+        /// their source-relative numbers; HeliBase-built specs pass health positionally, so a per-spec edit would miss them).
+        /// Damage dealt (bullets, explosion chain 500, collisions) is deliberately untouched -- cars just last 10x longer.</summary>
+        public const float VehicleHealthScale = 10f;
         static float FuelBurnClassOf(string name)
         {
             string n = name ?? "";
@@ -2268,6 +2330,10 @@ namespace UnturnedGodot
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
             ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.000f, 0.000f, -0.000f) },   // tank: 2 seats, verbatim from the prefab
+            // OTTER was never actually in this table (the comment above describing its Z-negation fix documented a
+            // finding that never got wired in) -- it fell through to SeatOf's jeep-shaped default, a car seat height
+            // inside a floatplane cockpit. Verbatim retail Seat_0/Seat_1 (tools/vehicle_seats.json): tandem, both X=0.
+            ["otter"] = new[] { new Vector3(0.000f, 0.666f, -1.318f), new Vector3(0.000f, 0.666f, -0.504f) },
         };
         static Vector3 SeatOf(string name) => name switch
         {
@@ -2284,6 +2350,20 @@ namespace UnturnedGodot
             "Police" => new Vector3(-0.50f, 0.02f, -0.63f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
+        /// <summary>The 11 classes above (+ Jeep, which legitimately IS the fallback) that ever got an eyeballed
+        /// per-vehicle rise off their own extracted Seat_0. Everything else used to fall through to the SAME
+        /// switch -> the Jeep's absolute spot, not "a small rise on THIS vehicle's own seat": a Huey/APC/Tank/
+        /// boat/Otter/Semi driver sat at a car's seat coordinate regardless of that vehicle's own size or shape
+        /// (strawberry 2026-09-03: "theres still a lot of vehicle seating positions that arent accurate. fix them
+        /// all"). Mirrors the identical BuildByName/SpecFor gap fixed 2026-08-16 one level up (whole SPEC, not
+        /// just the seat) -- same shape of bug, in the sibling table nobody re-checked when that one was found.</summary>
+        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Hatchback" or "Humvee" or "Roadster"
+            or "Bus" or "Quad" or "Ambulance" or "Firetruck" or "Tractor" or "Ural" or "Police" or "Jeep";
+        /// <summary>Average of the 11 hand-tuned deltas above against their own real Seat_0 (Y +0.04 to +0.10,
+        /// Z from -0.005 to +0.09 with no consistent sign -- not touching Z avoids guessing the wrong direction).
+        /// Applied to a vehicle's OWN real seat instead of borrowing Jeep's, this is a small forgiving nudge off
+        /// a correct base rather than a substitute for one.</summary>
+        static readonly Vector3 GenericSeatRise = new Vector3(0f, 0.08f, 0f);
 
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
@@ -2343,6 +2423,13 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.70f, false), (1.28f, 0.55f,  3.70f, false),   // rear axle 2 (tandem, drive) -- moved back 3.5->3.7 (strawberry)
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
+            // No vehicle prefab to extract a Seats node from (Semi_0 is a repurposed static PROP, not one of the
+            // Bundles/Vehicles/* entries tools/dump_vehicle_seats.py scans) -- it fell through to SeatOf's jeep
+            // spot, seating the driver at a car's Y=0.10 inside a cab whose own floor sits at Y~1.5. Triangulated
+            // instead from geometry this Spec ALREADY authors for the same driver: X=-0.5 matches SteerPivot.X and
+            // DriverEye.X on every other vehicle's convention; Y/Z = SeatModel, the real ripped seat mesh's own
+            // placement, so the body sits ON the visible seat rather than at an unrelated vehicle's coordinate.
+            Seats = new[] { new Vector3(-0.5f, 2.2f, 0.3f) },
             FifthWheel = new Vector3(0f, 0.62f, 3.0f),   // over the rear tandem (moved back from 2.6 -> pivot sits further back on the cab, more trailer clearance). Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL. (strawberry 2026-07-15)
         };
 
@@ -2429,7 +2516,8 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
-            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",   // 200 L tank (metric 1u=1mL; realistic bus)
+            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
+            NoTrunk = true, RearEngine = true,   // no boot; the engine bay is the back (master 2026-09-04)   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -2617,7 +2705,8 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 40_000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",   // 40 L (metric 1u=1mL)
+            Fuel = 40_000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",
+            NoTrunk = true,   // no boot on a tractor (master 2026-09-04)   // 40 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.40f, 1.26f, -2.65f), new Vector3(0.40f, 1.26f, -2.65f) }, OmniPos = new Vector3(0f, 1.40f, -2.62f),
             TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
             SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
@@ -2989,7 +3078,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(5.4f, 1.8f, 8.5f), BoxCenter = new Vector3(0f, 1.45f, 0f),   // hull collision box, tightened to the model + BELLY CUT: bottom sits at local 0.55 (above the wheel AXLES 0.556, well clear of the ground on bumps/slopes) so the box can't drag (master: "cut the belly... otherwise we backtrack on the hitbox dragging"). The 8 wheels carry the ride; this box is the UPPER hull only
             ForwardGears = new[] { 16f, 9f }, ReverseGear = 8f, ShiftUpRpm = 3500f,
             Sound = "engine_large.ogg", IdlePitch = 0.65f, MaxPitch = 1.25f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // heavy diesel rumble
-            Fuel = 2000f, Health = 1600f, Name = "Tank",
+            Fuel = 2000f, Health = 1600f, Name = "Tank", IgnitionSound = "audio/vehicles/tank_ignition.wav",   // retail Tank.dat: its own ignition clip (ripped)
             Wheels = new (float, float, float, bool)[]   // 8 road wheels (rig, Z-negated); none STEERED (tracked)
             {
                 (-2.0f, 0.556f, -3.0f, false), (2.0f, 0.556f, -3.0f, false),
@@ -3488,7 +3577,7 @@ namespace UnturnedGodot
             Sound = "fighterjet_engine.ogg", IgnitionSound = "fighterjet_ignition.ogg", IdlePitch = 0.9f, MaxPitch = 1.7f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // the REAL dedicated jet engine + ignition (from the prefab)
             Palette = "fighter_jet_body_tex.png", DefaultPaints = new[] { "#bcbcbc" },   // real .dat DefaultPaintColors = military grey; paintable panels + fixed tan/grey details
             Fuel = 1000f, Health = 800f, Name = "Fighter Jet",
-            Seats = new[] { new Vector3(0f, 0.55f, -4.30f) },   // driver seat IN the cockpit tub (master 2026-08-18)
+            Seats = new[] { new Vector3(0f, 0.05f, -4.053f) },   // verbatim retail Seat_0 (fighter_jet, tools/vehicle_seats.json) -- the hand-placed guess (master 2026-08-18) sat the pilot 0.5m too high
             DriverEye = new Vector3(0f, 1.58f, -4.50f),   // FP eye in the cockpit, under the canopy, looking out the windscreen (master 2026-08-18)
         };
         public static Vehicle BuildFighterJet(int variant = 0) => Build(_fighterjet, variant, "fighterjet");
@@ -3537,7 +3626,8 @@ namespace UnturnedGodot
         public static VehiclePuppet BuildPuppetByName(string name, int variant)
         {
             var s = SpecFor(name);
-            var p = new VehiclePuppet { SpecKey = name, SeatOffset = SeatOf(s.Name) };
+            var pSeatLocals = s.Seats ?? (SeatTable.TryGetValue(name, out var pst) ? pst : new[] { SeatOf(s.Name) });
+            var p = new VehiclePuppet { SpecKey = name, SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : pSeatLocals[0] + GenericSeatRise };
             // Opt the puppet OUT of Godot's global physics interpolation (project.godot physics_interpolation=true), like
             // the PlayerController shell does (PlayerController.cs:1674). VehicleReplicaView repositions the puppet every
             // _Process frame with its OWN manual glide/dead-reckoning; leaving Godot interp ON renders the puppet at its
@@ -3549,7 +3639,38 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            p.AddChild(new MeshInstance3D { Name = "Body", Mesh = ContentProvider.ParseObj($"res://content/{s.Body}"), MaterialOverride = bodyMat });
+            // SPLIT THE LENSES OUT, exactly as Build() does. The puppet used to load the body WHOLE, so its
+            // headlights and taillights were baked into the paintwork and could never emit -- which is why a
+            // remote car drove around dark no matter what its driver did. Same zones, same X-mirror, so the
+            // lens geometry a puppet lights is the same geometry the real car lights.
+            ArrayMesh pBody = null, pHl = null, pTl = null;
+            var pTlZones = s.TaillightZoneMin != s.TaillightZoneMax
+                ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
+                          (new Vector3(-s.TaillightZoneMax.X, s.TaillightZoneMin.Y, s.TaillightZoneMin.Z), new Vector3(-s.TaillightZoneMin.X, s.TaillightZoneMax.Y, s.TaillightZoneMax.Z)) }
+                : null;
+            if (s.HeadlightZoneMin != s.HeadlightZoneMax)
+            {
+                var lz = (s.HeadlightZoneMin, s.HeadlightZoneMax);
+                var rz = (new Vector3(-s.HeadlightZoneMax.X, s.HeadlightZoneMin.Y, s.HeadlightZoneMin.Z), new Vector3(-s.HeadlightZoneMin.X, s.HeadlightZoneMax.Y, s.HeadlightZoneMax.Z));
+                (pBody, pHl) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", new[] { lz, rz });
+            }
+            else if (pTlZones != null)
+                (pBody, pTl) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", pTlZones);
+            else
+                pBody = ContentProvider.ParseObj($"res://content/{s.Body}");
+            p.AddChild(new MeshInstance3D { Name = "Body", Mesh = pBody, MaterialOverride = bodyMat });
+            if (pHl != null)
+            {
+                var m = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                p.AddChild(new MeshInstance3D { Name = "PuppetHeadlights", Mesh = pHl, MaterialOverride = m });
+                p.HeadlightMat = m;   // tint matches the real vehicle default (Vehicle._lampTint)
+            }
+            if (pTl != null)
+            {
+                var m = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                p.AddChild(new MeshInstance3D { Name = "PuppetTaillights", Mesh = pTl, MaterialOverride = m });
+                p.TaillightMat = m;
+            }
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
                 {
@@ -3576,8 +3697,7 @@ namespace UnturnedGodot
             Material wheelMat;
             if (s.WheelTex != null)
             {
-                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
-                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}")), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -3595,6 +3715,16 @@ namespace UnturnedGodot
                 p.AddChild(pivot);
                 p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
             }
+            // A car alarm you cannot hear is not an alarm. Same clip, same 3D falloff as the real vehicle's.
+            if (s.Horn != null)
+            {
+                var hogg = ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"), loop: false);   // shared decoded stream (was a decode per vehicle)
+                if (hogg != null)
+                {
+                    p.HornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
+                    p.AddChild(p.HornAudio);
+                }
+            }
             // A6 rope-tow attach nodes: the IDENTICAL formula the real Build uses (lines ~1143-1147) so the
             // client's cosmetic rope hangs off the same bumper-height spots the host's physics rope does.
             float towFrontZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f - 0.15f;
@@ -3606,7 +3736,7 @@ namespace UnturnedGodot
             p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
             p.SetNameLabel(s.Name, p.OutlineColor);              // look-at name tag (hidden until focused), like the real Vehicle's InfoBillboard title
             // The puppet's hull (client-only): a StaticBody3D box on the SAME layers the real Vehicle body carries --
-            // bit 0 (the world/solid layer a VehicleBody3D sits on by default) + bit 5 (the vehicle layer the look-ray,
+            // HitMeshBit (bit 15 -- the layer NO vehicle masks, same as HitMesh/GlassHit below) + bit 5 (the look-ray,
             // bullets and the tow scan probe). CollisionMask 0: it is placed, never pushed.
             //
             // Until 2026-09-02 this was bit 5 ALONE, by design ("detection only, it never blocks movement") -- and that
@@ -3622,7 +3752,7 @@ namespace UnturnedGodot
             // and to the LOS/bullet rays -- parity with SP. It is still repositioned per render frame (a StaticBody3D
             // teleport), so a moving remote car BLOCKS a standing player rather than shoving them; that is the
             // remaining gap, not this one.
-            var focusBody = new StaticBody3D { CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
+            var focusBody = new StaticBody3D { CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
             focusBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             p.AddChild(focusBody);
             return p;
@@ -3653,7 +3783,11 @@ namespace UnturnedGodot
         // generator's l_mid1/r_mid1/l_mid2/r_mid2 files were written to disk and then never loaded.
         public static readonly string[] GlassPaneLabels = { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear",
                                                             "l_mid1", "r_mid1", "l_mid2", "r_mid2",
-                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4" };
+                                                            "l_mid3", "r_mid3", "l_mid4", "r_mid4",
+                                                            // ROOF GLASS (strawberry 2026-09-03, offroader: a skylight over the front
+                                                            // seats and a glazed rear ceiling meeting the trunk glass). `roof` is the
+                                                            // single-aperture case; front/rear when a cross-member splits it in two.
+                                                            "roof", "roof_front", "roof_rear" };
         public static string GlassPaneDisplay(string label) => label switch
         {
             "windshield" => "windscreen", "rear" => "rear window",
@@ -3662,10 +3796,12 @@ namespace UnturnedGodot
             "l_mid1" => "left mid 1", "r_mid1" => "right mid 1",
             "l_mid2" => "left mid 2", "r_mid2" => "right mid 2",
             "l_mid3" => "left mid 3", "r_mid3" => "right mid 3",
-            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4", _ => label,
+            "l_mid4" => "left mid 4", "r_mid4" => "right mid 4",
+            "roof" => "roof glass", "roof_front" => "skylight", "roof_rear" => "rear ceiling", _ => label,
         };
 
         readonly System.Collections.Generic.List<MeshInstance3D> _glassNodes = new();
+        readonly System.Collections.Generic.List<StaticBody3D> _glassBodies = new();   // parallel to _glassNodes when MeshHitbox is on, empty otherwise
         readonly System.Collections.Generic.List<string> _glassLabels = new();
         bool[] _glassBroken = System.Array.Empty<bool>();
 
@@ -3676,11 +3812,23 @@ namespace UnturnedGodot
 
         /// <summary>Break a pane. Deliberately does NOT self-heal: the pane stays gone until RepairGlass, which
         /// is what strawberry asked for ("doesnt respawn unless 'fixed' in the vehicle mechanics ui").</summary>
+        /// <summary>Put pane `i`'s collider in or out of the player/bullet layers. The LAYER, not the shape's
+        /// Disabled flag, because this is called from inside a physics callback (a bullet resolving its own hit)
+        /// where toggling a shape has to be deferred; writing a layer does not. A no-op when the panes have no
+        /// colliders at all, which is every vehicle with the mesh hitbox off.</summary>
+        void SetPaneSolid(int i, bool solid)
+        {
+            if ((uint)i >= (uint)_glassBodies.Count) return;
+            var b = _glassBodies[i];
+            if (GodotObject.IsInstanceValid(b)) b.CollisionLayer = solid ? HitMeshBit | (1u << 5) : 0u;
+        }
+
         public bool BreakGlass(int i)
         {
             if ((uint)i >= (uint)_glassNodes.Count || _glassBroken[i]) return false;
             _glassBroken[i] = true;
             if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = false;
+            SetPaneSolid(i, false);   // a broken window is a hole you can shoot and climb through, not an invisible pane
             return true;
         }
 
@@ -3689,6 +3837,7 @@ namespace UnturnedGodot
             if ((uint)i >= (uint)_glassNodes.Count || !_glassBroken[i]) return false;
             _glassBroken[i] = false;
             if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = true;
+            SetPaneSolid(i, true);
             return true;
         }
 
@@ -3707,11 +3856,12 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<string> _lampLabels = new();
         bool[] _lampBroken = System.Array.Empty<bool>();
 
-        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r" };
+        public static readonly string[] LampLabels = { "headlight_l", "headlight_r", "taillight_l", "taillight_r", "lightbar_l", "lightbar_r", "lightbar_c" };
         public static string LampDisplay(string label) => label switch
         {
             "headlight_l" => "left headlight",  "headlight_r" => "right headlight",
-            "taillight_l" => "left taillight",  "taillight_r" => "right taillight", _ => label,
+            "taillight_l" => "left taillight",  "taillight_r" => "right taillight",
+            "lightbar_l" => "lightbar red lens", "lightbar_r" => "lightbar blue lens", "lightbar_c" => "lightbar centre", _ => label,
         };
         public int LampCount => _lampNodes.Count;
         public string LampLabel(int i) => (uint)i < (uint)_lampLabels.Count ? _lampLabels[i] : "";
@@ -3744,11 +3894,26 @@ namespace UnturnedGodot
         /// <summary>Re-apply every lamp's visual from its broken flag AND the current on/off state. Called on
         /// break, on repair, and from SetHeadlights/SetTaillights -- so a lamp shot out while the lights are
         /// OFF still stays dark when they are switched on, which is the whole point of the feature.</summary>
+        /// <summary>Brake flare / running glow on EVERY tail lamp: the single _taillightMat (the first/left half of a split
+        /// lens, or the shared box material) plus every _lampMats entry labelled taillight_*. A shot-out lamp stays dark.</summary>
+        void SetTailFlare(bool braking)
+        {
+            float e = braking ? 6f : 2f;
+            if (_taillightMat != null) _taillightMat.EmissionEnergyMultiplier = e;
+            for (int i = 0; i < _lampMats.Count; i++)
+                if (_lampMats[i] != null && _lampLabels[i].StartsWith("taillight") && !_lampBroken[i]) _lampMats[i].EmissionEnergyMultiplier = e;
+        }
         void ApplyLampState()
         {
             for (int i = 0; i < _lampNodes.Count; i++)
             {
                 bool dead = _lampBroken[i];
+                if (_lampLabels[i].StartsWith("lightbar"))   // the flash block drives these; here only the shot-out look
+                {
+                    if (dead && _lampMats[i] != null) { _lampMats[i].EmissionEnabled = false; _lampMats[i].AlbedoColor = new Color(0.12f, 0.12f, 0.12f); }
+                    if (dead && GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = false;
+                    continue;
+                }
                 bool head = _lampLabels[i].StartsWith("headlight");
                 bool lit = !dead && (head ? _headlightsOn : _taillightsOn);
                 if (GodotObject.IsInstanceValid(_lampLights[i])) _lampLights[i].Visible = lit;
@@ -3992,6 +4157,52 @@ namespace UnturnedGodot
         static (ArrayMesh, ArrayMesh) SplitMeshByX(Mesh src)
             => SplitMeshBy(src, (p0, p1, p2) => (p0.X + p1.X + p2.X) / 3f < 0f);
 
+        /// <summary>The world-space centre of pane `i`, or Vector3.Zero if there is no such pane. Exposed so a
+        /// test can aim AT a window without hard-coding a number that every vehicle would need its own copy of.</summary>
+        public Vector3 GlassPaneCenter(int i)
+            => (uint)i < (uint)_glassNodes.Count && GodotObject.IsInstanceValid(_glassNodes[i])
+               ? _glassNodes[i].GlobalTransform * _glassNodes[i].GetAabb().GetCenter()
+               : Vector3.Zero;
+
+        /// <summary>Outward world-space normal of pane `i` -- its THINNEST local axis, flipped to point away
+        /// from the vehicle's own origin. A pane is a flat slab, so its thin axis is its face direction; taking
+        /// it off the mesh rather than assuming local Z is what makes it right for a RAKED windscreen and for
+        /// the roof panes, whose thin axis is Y.</summary>
+        public Vector3 GlassPaneNormal(int i)
+        {
+            if ((uint)i >= (uint)_glassNodes.Count || !GodotObject.IsInstanceValid(_glassNodes[i])) return Vector3.Zero;
+            var mi = _glassNodes[i];
+            var sz = mi.GetAabb().Size;
+            var axis = sz.X <= sz.Y && sz.X <= sz.Z ? Vector3.Right
+                     : sz.Y <= sz.Z ? Vector3.Up : Vector3.Back;
+            var n = (mi.GlobalTransform.Basis * axis).Normalized();
+            var outward = GlassPaneCenter(i) - GlobalPosition;
+            return n.Dot(outward) < 0f ? -n : n;
+        }
+
+        /// <summary>The Vehicle a physics collider belongs to, or null. THE reason this exists: once the mesh
+        /// hitbox is on, what a bullet ray or a look ray actually hits is the HitMesh StaticBody3D CHILD, and
+        /// every `collider is Vehicle` test in the game silently stops matching -- shooting a car would do
+        /// nothing at all, quietly, with no error anywhere. Walking up from the collider is the resolution that
+        /// holds in both modes, and it also covers the child bodies that already existed (the ship's ladder, the
+        /// helicopter's rotor hub boxes), which previously each needed their own GetParent() dance.
+        ///
+        /// Bounded to a few levels rather than walking to the scene root: an unbounded walk would report the
+        /// world's terrain as belonging to whatever vehicle happened to be an ancestor of it in some future
+        /// re-parenting, and a wrong Vehicle is worse than no Vehicle.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D> _triCache = new();
+        StaticBody3D _hitMesh;   // the model-as-hitbox child, when UG_MESHHITBOX is on; null otherwise
+
+        const int OwningMaxDepth = 4;   // collider -> body -> vehicle, with headroom; see the note above
+        public static Vehicle Owning(GodotObject o)
+        {
+            if (o is Vehicle direct) return IsInstanceValid(direct) ? direct : null;
+            var n = o as Node;
+            for (int depth = 0; n != null && depth < OwningMaxDepth; depth++, n = n.GetParent())
+                if (n is Vehicle v) return IsInstanceValid(v) ? v : null;
+            return null;
+        }
+
         public int ResolveHitGlass(Vector3 world, float tol = 0.28f)
         {
             int best = -1; float bestD = tol;
@@ -4021,7 +4232,40 @@ namespace UnturnedGodot
             new Color(1f, 0.55f, 0f),   new Color(0.6f, 0.2f, 1f), new Color(1f, 1f, 1f),
             new Color(0.1f, 0.35f, 0.2f), new Color(0.5f, 0.9f, 0.1f), new Color(0.9f, 0.4f, 0.6f),
             new Color(0.2f, 0.2f, 0.6f), new Color(0.7f, 0.7f, 0.2f),
+            // three more for the roof labels -- this array must never be SHORTER than GlassPaneLabels or the
+            // index wraps and two panes share a colour, which is the one thing the debug view exists to rule out
+            new Color(0.0f, 0.8f, 0.6f), new Color(0.85f, 0.3f, 0.0f), new Color(0.45f, 0.65f, 1f),
         };
+
+        /// <summary>Settle which body carries the player/bullet layers, once it is known whether this vehicle
+        /// got a HitMesh at all, and record the result as the un-ghosted base.
+        ///
+        /// WHY IT IS CONDITIONAL, and it is the bug this method exists for. The strip used to run early and
+        /// UNCONDITIONALLY, on every vehicle. But the HitMesh is only built on the car-body branch: a ship goes
+        /// down the HullBands/HullDecompose path and an aircraft may take the plain box, and neither gets one.
+        /// So those vehicles handed bit0|bit5 away and received nothing back -- no collider on any layer a
+        /// player, a bullet, a look ray or the crane scans. The container ship measured 792 probe points with
+        /// model but NO collider (against the old box hull's 972) and a player could not stand on her deck.
+        /// A vehicle with no hit mesh keeps the layers it always had.</summary>
+        static void FinaliseHitboxLayers(Vehicle v)
+        {
+            if (MeshHitbox && v._hitMesh != null)
+            {
+                // The convex hulls stop being what the player walks into and what bullets stop on; they keep
+                // driving the car and colliding with terrain, props and each other.
+                // The chassis gives up BOTH bit 0 and bit 5 -- those are the layers the player, bullets and
+                // every vehicle-scanner look at, and the mesh takes that job. Note bit 0 here is the layer the
+                // chassis SITS ON, which is a different thing from the bit 0 in its MASK: the car still masks
+                // bit 0 and so still collides with the terrain exactly as before. Conflating the two is what
+                // made the first attempt at fixing the self-collision put bit 0 back on the layer, which
+                // quietly returned the hulls to the bullet and walk masks and undid the entire change (the
+                // roof went back to stopping a footstep 7 cm proud of the model).
+                v.CollisionLayer = (v.CollisionLayer & ~((1u << 0) | (1u << 5))) | ChassisBit;
+                v.CollisionMask |= ChassisBit;   // ...so car-on-car still resolves, with real impulses
+            }
+            v._baseCollisionLayer = v.CollisionLayer;   // the un-ghosted layer, so a towed trailer can swap the solid bit for bit6 and restore it
+            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
+        }
 
         static void AddGlassOverlay(Vehicle v, Spec s)
         {
@@ -4047,6 +4291,7 @@ namespace UnturnedGodot
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                 v.AddChild(mi);
                 v._glassNodes.Add(mi); v._glassLabels.Add(label);
+                AddPaneCollider(v, mi, $"{base_}_{label}.txt", m);
             }
             if (v._glassNodes.Count == 0)   // no per-pane files -- fall back to a single mesh (the jet's canopy)
             {
@@ -4058,6 +4303,39 @@ namespace UnturnedGodot
                 v._glassNodes.Add(mi); v._glassLabels.Add("canopy");
             }
             v._glassBroken = new bool[v._glassNodes.Count];
+        }
+
+        static readonly System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D> _paneTriCache = new();
+
+        /// <summary>Give one glass pane a collider of its own, but ONLY with the mesh hitbox on.
+        ///
+        /// WHY IT EXISTS. With the hulls out of the player and bullet layers, the windscreen APERTURE is a hole:
+        /// the hull used to be what stopped a round at the glass, and the panes have never carried a collider.
+        /// Measured on a sedan, a ray fired along the windscreen's own normal stopped 0.26 m short of the pane
+        /// on the hull -- and passed clean through the car, hitting NOTHING AT ALL, with the mesh hitbox on.
+        ///
+        /// WHY NOT ALWAYS. With the hulls still on those layers the pane sits INSIDE a collider that already
+        /// stops everything, so these bodies would add six more shapes to every physics query the car takes
+        /// part in and change nothing observable. That was the stated reason the panes had no collider, and it
+        /// is still the right call in that mode.
+        ///
+        /// The body hangs off the PANE, so it inherits the pane's transform and Vehicle.Owning resolves a hit
+        /// through it (body -> pane -> vehicle, inside OwningMaxDepth). Excepted from the car for the same
+        /// reason HitMesh is: bit 0 is a layer the chassis masks, and a car must not collide with its own glass.</summary>
+        static void AddPaneCollider(Vehicle v, MeshInstance3D pane, string key, Mesh m)
+        {
+            if (!MeshHitbox) return;
+            if (!_paneTriCache.TryGetValue(key, out var tri))
+            {
+                tri = m.CreateTrimeshShape();
+                tri.BackfaceCollision = true;   // a pane is a single-sided quad; a round from outside must stop on it
+                _paneTriCache[key] = tri;
+            }
+            var body = new StaticBody3D { Name = "GlassHit", CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
+            body.AddChild(new CollisionShape3D { Shape = tri });
+            pane.AddChild(body);
+            v.AddCollisionExceptionWith(body);
+            v._glassBodies.Add(body);
         }
 
         /// <summary>LoadOptionalObj without the "missing" print -- probing per-pane files, absence is normal.</summary>
@@ -4532,15 +4810,9 @@ namespace UnturnedGodot
             v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v.CollisionMask |= 1u << 8;    // bit 8 = "solid small prop" -> a car collides with fences/hydrants/barrels instead of phasing through (NOT bit6, so trailer ghosting is unaffected) (strawberry)
-            if (MeshHitbox)
-            {
-                // The convex hulls stop being what the player walks into and what bullets stop on; they keep
-                // driving the car and colliding with terrain, props and each other.
-                v.CollisionLayer = (v.CollisionLayer & ~((1u << 0) | (1u << 5))) | ChassisBit;
-                v.CollisionMask |= ChassisBit;   // ...so car-on-car still resolves, with real impulses
-            }
-            v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
-            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (now incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
+            // The chassis layers are finalised at the END of Build (FinaliseHitboxLayers), because whether this
+            // vehicle gives bit0|bit5 up depends on whether it actually GETS a HitMesh, and that is not known
+            // until the body has been built.
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             // ENGINE AND BRAKE SCALE WITH MASS, for now. Both are FORCES applied through the wheels, and both
@@ -4847,12 +5119,18 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
-            v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            v.HealthMax = v.Health = s.Health * VehicleHealthScale; v.Battery = BatteryMax; v.DisplayName = s.Name;
+            v.EngineHealthMax = v.EngineHealth = s.Health * VehicleHealthScale * 0.4f; v._hullSizeLocal = s.BoxSize;   // engine hp = 40% of body hp (a separate pool, not a slice of it)   // 10x hp (strawberry 2026-09-03); damage numbers untouched
             // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
-            // hand-tuned driver spot. The fallback matters -- semi and trailer have no bundle prefab to extract
-            // from, and a null here would crash every seat lookup rather than degrading to one seat.
-            v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { v.SeatOffset });
+            // hand-tuned driver spot. The fallback matters -- trailer has no bundle prefab to extract from, and a
+            // null here would crash every seat lookup rather than degrading to one seat.
+            v.SeatLocals = s.Seats ?? (SeatTable.TryGetValue(specKey, out var st) ? st : new[] { SeatOf(s.Name) });
+            // SeatOffset (the visible 3rd-person BODY spot -- SeatBodyLocal, PlayerController.cs) uses the eyeballed
+            // rise ONLY for the 11 classes it was actually tuned against; anyone else gets THEIR OWN real seat
+            // plus a small generic rise, not the Jeep's absolute coordinate wearing this vehicle's name.
+            v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : v.SeatLocals[0] + GenericSeatRise;
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
+            v._rearEngine = s.RearEngine;
             v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
             // TURRETS. Two nested pivots per mount -- yaw about the vehicle's up, pitch inside it -- with each
@@ -5024,7 +5302,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 {
                     var (dlo, dhi) = s.HullDecompose.Value;
                     v._decomposeMesh = MeshRegion(bodyMesh, dlo, dhi);
-                    v._decomposeKey = $"{s.Body}|{dlo}|{dhi}";
+                    v._decomposeKey = $"{s.Body}|{dlo}|{dhi}|{BodyStamp(s.Body)}";   // BodyStamp: a changed body mesh invalidates its baked hulls
                     if (v._decomposeMesh != null) made++;
                 }
                 if (s.HullBands != null && bodyMesh != null)
@@ -5072,21 +5350,30 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // The model itself, on its own static body so Jolt will accept a mesh shape at all, and
                     // exempted from the car so the car is not permanently inside its own hitbox. It carries
                     // the layers the player and bullets scan; the chassis has just given them up.
-                    var hit = new StaticBody3D { Name = "HitMesh", CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
-                    // BackfaceCollision, because these bodies are NOT watertight and their winding is not
-                    // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces. Measured
-                    // without it, a ray straight down on the player's own layers passed THROUGH the bonnet
-                    // and stopped on the floorpan at y -0.11 -- a hole you could shoot and walk through, over
-                    // the whole front of the car. With it the same ray stops on the bonnet.
-                    var tri = bodyMesh.CreateTrimeshShape();
-                    tri.BackfaceCollision = true;
+                    var hit = new StaticBody3D { Name = "HitMesh", CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
+                    v._hitMesh = hit;
+                    // Measured without BackfaceCollision, a ray straight down on the player's own layers passed
+                    // THROUGH the bonnet and stopped on the floorpan at y -0.11 -- a hole you could shoot and
+                    // walk through, over the whole front of the car. With it the same ray stops on the bonnet.
+                    // CACHED PER BODY MESH, like the hulls above and for the same reason. Build() runs once per
+                    // vehicle INSTANCE, not once per spec: a real PEI load spawns 88 vehicles from ~15 specs, so
+                    // an uncached CreateTrimeshShape is 88 trimesh builds to describe 15 distinct shapes. The
+                    // shape is immutable and refcounted, so every car of a spec can share one.
+                    if (!_triCache.TryGetValue(s.Body, out var tri))
+                    {
+                        tri = bodyMesh.CreateTrimeshShape();
+                        // BackfaceCollision, because these bodies are NOT watertight and their winding is not
+                        // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces.
+                        tri.BackfaceCollision = true;
+                        _triCache[s.Body] = tri;
+                    }
                     hit.AddChild(new CollisionShape3D { Shape = tri });
                     v.AddChild(hit);
                     v.AddCollisionExceptionWith(hit);
                     v.DebugHitMeshTris = bodyMesh.GetFaces().Length / 3;
                 }
                 v._decomposeMesh = bodyMesh;
-                v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}";
+                v._decomposeKey = $"body|{s.Body}|{s.Name}|{System.Environment.GetEnvironmentVariable("UG_CARHULLS")}|{System.Environment.GetEnvironmentVariable("UG_CARCONCAVITY")}|{BodyStamp(s.Body)}";
                 v._decomposeCars = true;
                 // The box is BUILT but taken out of physics once the hulls land (see DecomposeHulls). It was
                 // kept as a belly-pan on the reasoning that a hollow chassis decomposes to hulls that hug the
@@ -5161,8 +5448,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             Material wheelMat;
             if (s.WheelTex != null)   // real wheel albedo (tyre + rim), nearest-sampled like the game
             {
-                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
-                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ContentProvider.TextureCached(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}")), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -5337,6 +5623,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         var (lhalf, rhalf) = SplitMeshByX(full);
                         if (lhalf != null && rhalf != null)   // BOTH halves, or it is not a per-side pair
                         {
+                            // NO AUTHORED EMITTERS (quad, bus: master "no actual light sources") -> derive one per
+                            // lens half from the lens geometry itself: its centre, pushed just outside the lens
+                            // face (front for a headlight, rear for a taillight) so the beam is not born inside
+                            // the mesh. Same vehicle-local frame as the lens (both hang straight off the body).
+                            if (isHead ? s.SpotPos == null : s.TailPos == null)
+                            {
+                                foreach (var half in new[] { lhalf, rhalf })
+                                {
+                                    var ab = half.GetAabb(); var c = ab.GetCenter();
+                                    float z = isHead ? ab.Position.Z - 0.06f : ab.End.Z + 0.06f;
+                                    (isHead ? v._autoSpot : v._autoTail).Add(new Vector3(c.X, c.Y, z));
+                                    GD.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
+                                }
+                            }
                             foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
                             {
                                 string label = (isHead ? "headlight_" : "taillight_") + side;
@@ -5368,9 +5668,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
                     if (txt.Contains("headlight") && mi.Mesh != null) v.BuildHeadlightBeam(mi.Mesh);   // the visible shaft, shaped from these very lenses
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
-                    if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
-                    if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
+                    if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); v._sirenMi0 = mi; v._lampNodes.Add(mi); v._lampMats.Add(pm); v._lampLights.Add(v._sirenLight0); v._lampLabels.Add("lightbar_l"); }   // + a shoot-out lamp   // red lens: glow the material + cast a real red light from that side (master)
+                    if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); v._sirenMi1 = mi; v._lampNodes.Add(mi); v._lampMats.Add(pm); v._lampLights.Add(v._sirenLight1); v._lampLabels.Add("lightbar_r"); }      // blue lens: material glow + real blue light from the other side
                 }
+            if (v._sirenMi0 != null && v._sirenMi1 != null)   // LIGHTBAR CENTRE: a hidden hit-box between the lenses; shot out -> the siren mangles/mutes (strawberry 2026-09-04)
+            {
+                var c0 = v._sirenMi0.Position + v._sirenMi0.Mesh.GetAabb().GetCenter(); var c1 = v._sirenMi1.Position + v._sirenMi1.Mesh.GetAabb().GetCenter();
+                v._sirenCentre = new MeshInstance3D { Name = "Lamp_lightbar_c", Mesh = new BoxMesh { Size = new Vector3(0.36f, 0.16f, 0.24f) }, Position = (c0 + c1) * 0.5f, Visible = false };
+                v.AddChild(v._sirenCentre);
+                v._lampNodes.Add(v._sirenCentre); v._lampMats.Add(null); v._lampLights.Add(null); v._lampLabels.Add("lightbar_c");
+            }
+            System.Array.Resize(ref v._lampBroken, v._lampNodes.Count);   // the lamp arrays were sized before the lightbar joined them
             if (s.TaillightMesh != null)   // red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
             {
                 var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
@@ -5404,11 +5712,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.AddChild(v._sirenAudio);
             }
 
-            if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
+            var spotPos = s.SpotPos ?? (v._autoSpot.Count > 0 ? v._autoSpot.ToArray() : null);   // authored, else derived from the lens meshes
+            var tailPos = s.TailPos ?? (v._autoTail.Count > 0 ? v._autoTail.ToArray() : null);
+            if (spotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
             {
                 var warm = v._lampTint;   // the EMITTER matches the lens it sits behind, per lamp shape
                 v._headlights = new Node3D { Visible = false };
-                foreach (var p in s.SpotPos)
+                foreach (var p in spotPos)
                 {
                     var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
@@ -5430,11 +5740,11 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.AddChild(v._headlights);
             }
 
-            if (s.TailPos != null)   // running taillights: dim red spots at the rear (aim +Z, backward), on while driving
+            if (tailPos != null)   // running taillights: dim red spots at the rear (aim +Z, backward), on while driving
             {
                 var red = new Color(0.996f, 0f, 0f);
                 v._taillights = new Node3D { Visible = false };
-                foreach (var p in s.TailPos)
+                foreach (var p in tailPos)
                 {
                     var ts = new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f };
                     v._taillights.AddChild(ts);
@@ -5453,15 +5763,16 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
             if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
             {
-                var hogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"));
+                var hogg = ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"), loop: false);   // shared decoded stream (was a decode per vehicle)
                 v._hornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
                 v.AddChild(v._hornAudio);
             }
 
             if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
             {
-                var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
-                ogg.Loop = true;
+                AudioStream ogg = s.Sound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
+                    ? PlayerController.LoadWavOneShot($"res://content/{s.Sound}", loop: true)   // retail rips (content/audio/vehicles) are wav
+                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"), loop: true);   // shared decoded stream, Loop baked into the cache key
                 // HELICOPTERS CARRY. A car at 80 m is a car you have driven past; a helicopter is the thing you
                 // hear long before you see it, and that is most of what makes one feel big. UnitSize is the
                 // distance at which the attenuation curve starts, so raising BOTH is what actually extends the
@@ -5476,16 +5787,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // four HeliBase airframes shared one IdlePitch, so the tiny Hummingbird sounded exactly like the
                 // 21-tonne Skycrane. (strawberry: "heavier helis should alter the sound too")
                 float sizePitch = HeliSizePitch(s);
-                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 34f : 10f, MaxDistance = s.Heli ? 520f : 80f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = s.Heli ? 52f : 26f, MaxDistance = s.Heli ? 800f : 300f, PitchScale = s.IdlePitch * sizePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost * (s.Heli ? 2.0f : 1f)), Autoplay = true };
                 if (s.Heli) { v._idlePitch = s.IdlePitch * sizePitch; v._maxPitch = s.MaxPitch * sizePitch; }
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
-            if (s.IgnitionSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
+            // RETAIL IGNITION (strawberry 2026-09-04 "source the ignition sound from the official game files"): every ground vehicle .dat in the
+            // retail Bundles points at Sounds/CarIgnition.mp3 (49 of them; the tank has its own) -> ripped from core.masterbundle as car_ignition.wav (2.04 s).
+            string ignSound = s.IgnitionSound ?? ((!s.Heli && !s.Plane) ? "car_ignition.wav" : null);
+            if (ignSound != null)   // one-shot spin-up; NOT autoplayed -- StepHeli fires it on a start
             {
-                var ig = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.IgnitionSound}"));
+                AudioStream ig = ignSound.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase)
+                    ? PlayerController.LoadWavOneShot($"res://content/{ignSound}")
+                    : ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{ignSound}"), loop: false);
                 if (ig != null)
                 {
-                    ig.Loop = false;
+                    // (Loop=false is part of the cached stream)
                     // The clip's own length becomes the spin-up gate, so "the rotor is ready" and "the start-up
                     // sound has finished" are the same instant by construction rather than two numbers someone
                     // has to keep in step.
@@ -5506,6 +5822,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true,  1.0f, 2.0f);   // explosion fire; src startSize 1-2m
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
+            if (!s.Heli && !s.Plane && s.BoxSize != Vector3.Zero)   // EXHAUST: a small grey puff-stream off the tailpipe while the engine runs (strawberry 2026-09-04 "so you can see visually when its running")
+            {
+                v._exhaust = MakeSmoke("veh_smoke_1.png", new Color(0.66f, 0.66f, 0.64f, 0.8f), 1.3f, 1.3f, 14, false, 0.14f, 0.34f);
+                v._exhaust.Direction = new Vector3(0f, 0.35f, 1f); v._exhaust.Spread = 16f; v._exhaust.Gravity = new Vector3(0f, 0.7f, 0f);   // out the back, drifting up
+                v._exhaust.Position = new Vector3(-(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies
+                v.AddChild(v._exhaust);
+            }
             // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's
             // ground CONTACT point, aimed UP at low speed -> tilting ~45deg backward at speed, only while grounded + moving.
             // NOTE: vanilla assigns NO TireMotionEffect to any physics material (the whole system is WIP "WipDoNotUse"), so
@@ -5524,11 +5847,12 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             v._fireLight.AddToGroup("dynlight");   // a burning wreck spills onto the FP gun (light-scan)
             v.AddChild(v._fireLight);
-            v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
+            v._explosionAudio = new AudioStreamPlayer3D { Stream = ContentProvider.OggCached(ProjectSettings.GlobalizePath("res://content/explosion.ogg"), loop: false), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
-            v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master)
+            v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master). Only real Vehicles roll; a client's PUPPET is told via FlagAlarmed, so the two sides cannot disagree about which cars have alarms.
             ApplyVehicleCull(v);   // driveable vehicles had NO distance cull -> rendered full-detail at every range (master); cap them like props
+            FinaliseHitboxLayers(v);
             return v;
         }
 
@@ -6350,8 +6674,20 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_spawnGrace > 0f) _spawnGrace -= dt;
         }
 
+        /// <summary>The driver got out: drop every held axis so the car stops pulling the last throttle/steer it
+        /// was given and the rpm falls back to idle (master: "vehicles hold the last player input when you exit
+        /// them, and also the last rpm"). The brake is left as the driver left it and nothing parks here --
+        /// momentum is still theirs to leave behind (see PlayerController.ExitVehicle).</summary>
+        public void ReleaseControls()
+        {
+            _inThrottle = 0f; _inSteer = 0f; _rawThrottle = 0f;
+            _inCollective = 0f; _inYaw = 0f; _inPitch = 0f; _inRoll = 0f;
+            if (!_heli) { EngineForce = 0f; Steering = 0f; _steerTarget = 0f; }   // _steerTarget too, or the smoothing re-applies the last steer next tick
+        }
+
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            if (_carIgnitionLeft > 0f) { _carIgnitionLeft -= (float)GetPhysicsProcessDeltaTime(); throttle = 0f; }   // still cranking: no drive yet (steering + brakes work)
             // A helicopter has no wheels to turn or brake. The MP fallback and any generic caller still reach it
             // through this one seam, mapped onto the flight axes it does have -- throttle is the collective,
             // steer is the pedals. Pitch/roll are absent here on purpose: they arrive as the reported TRANSFORM
@@ -6390,7 +6726,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 bool tCoast = Mathf.Abs(throttle) < 0.05f && Mathf.Abs(steer) < 0.05f && !footBrake;     // no throttle AND no steer input -> engine-brake it down (a steer-only pivot must NOT coast-brake, or it can't spin)
                 Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (tCoast ? _brakeForce * FootBrakeScale * EngineBrakeScale * EngineRpmNorm : 0f));   // engine braking scales with revs, same as the car
                 _braking = handbrake || footBrake;
-                if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;
+                if (_taillightsOn) SetTailFlare(_braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
                 return;
             }
             float eng = (footBrake || neutral) ? 0f : ThrottleForcePerWheel(throttle);
@@ -6522,7 +6858,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 Brake = footB;
             }
             _braking = handbrake || footBrake;   // remembered for the trailer brake-light pass-through (UpdateCoupled)
-            if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
+            if (_taillightsOn) SetTailFlare(_braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
         }
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
@@ -6905,6 +7241,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
         public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
         {
+            _live.Remove(this);
+            GrassDisplacers.Unregister(this);
             if (Towing != null || TowedBy != null) DetachTow();
             if (_magnet != null) StowSling();   // a despawned/wrecked crane must not leave an orphan magnet hanging in the sky
         }
@@ -6915,7 +7253,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // player (mask bit6) still collides, so no hole. Idempotent. (strawberry 2026-07-15)
         public void SetTowGhost(bool ghost)
         {
-            uint wantLayer = ghost ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            // SolidBit, not a literal bit 0. The sibling ghost path at SetGhosted was updated for the mesh
+            // hitbox and this one was not, so with the hitbox on `& ~(1u << 0)` cleared a bit the base layer no
+            // longer has: the trailer stayed solid and was never actually ghosted.
+            uint wantLayer = ghost ? (_baseCollisionLayer & ~SolidBit) | (1u << 6) : _baseCollisionLayer;
             if (CollisionLayer != wantLayer) CollisionLayer = wantLayer;
             // Also SCAN bit6 while ghosted so the towing cab's separate sleeper hull (layer bit6) still blocks this
             // trailer -> the deck/headboard can't phase through the sleeper (anti-clip). The cab body never scans bit6,
@@ -7195,7 +7536,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         public void DriveTrailerLights(bool running, bool braking)
         {
             if (_taillightsOn != running) SetTaillights(running);
-            if (_taillightMat != null && running) _taillightMat.EmissionEnergyMultiplier = braking ? 6f : 2f;
+            if (running) SetTailFlare(braking);   // BOTH tail lamps (the baked lens is split L/R with a material each; _taillightMat alone was the left one -- strawberry 2026-09-04 "only the left brake light works")
         }
 
         // A real colored light cast from a lightbar lens (source Siren_0/Siren_1 are GameObjects with Unity Lights).
@@ -7331,6 +7672,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             if (_exploded) return;
             Health = Mathf.Min(HealthMax, Health + amount);
+            if (!EngineDrowned && HealthMax > 0f) EngineHealth = Mathf.Min(EngineHealthMax, EngineHealth + EngineHealthMax * (amount / HealthMax));   // same fraction to the engine; a drowned one is past repair
             if (!_heli || HealthMax <= 0f) return;
             float frac = amount / HealthMax;
             _mainRotorHp = Mathf.Min(_mainRotorHpMax, _mainRotorHp + _mainRotorHpMax * frac);
@@ -7346,9 +7688,59 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             QueueFree();
         }
 
-        public override void _PhysicsProcess(double delta)
+        // PERF (ETW 2026-09-02): 88 parked cars x (_Process + _PhysicsProcess) = ~25% of the main thread, nearly all of it
+        // GodotSharp dispatch (StringName walk of Vehicle->VehicleBody3D->...->GodotObject per call). The physics tick is
+        // now driven from ONE node (TickHub._PhysicsProcess -> PhysicsTickAll), same phase, one dispatch instead of 88.
+        static readonly System.Collections.Generic.List<Vehicle> _live = new();
+        public static System.Collections.Generic.IReadOnlyList<Vehicle> Live => _live;   // every vehicle in the tree (PlayerController look scan reads it instead of GetNodesInGroup)
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public static long PhysicsTickAllCalls;   // wiring probe for tests: proves the hub reaches this every physics tick
+        static double _awakeLogT;
+        public static void PhysicsTickAll(double delta)
         {
-            using var _prof = Prof.Scope("Vehicle.phys");
+            PhysicsTickAllCalls++;
+            if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_awakeLogT += delta) >= 3.0)   // [vehawake]: how many bodies the physics + the C# bridge still see every step
+            {
+                _awakeLogT = 0; int asleep = 0, frozen = 0, awake = 0, proc = 0;
+                foreach (var v in _live) { if (!GodotObject.IsInstanceValid(v)) continue; if (v.Freeze) frozen++; else if (v.Sleeping) asleep++; else awake++; if (v.IsProcessing()) proc++; }
+                GD.Print($"[vehawake] live={_live.Count} awake={awake} asleep={asleep} frozen={frozen} processing={proc}");
+            }
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var v = _live[i];
+                if (!GodotObject.IsInstanceValid(v)) { _live.RemoveAt(i); continue; }
+                if (!v.CanProcess()) continue;   // honour pause / ProcessMode exactly like the old per-node callback
+                v.PhysicsTick(delta);
+            }
+        }
+        bool _interpOff, _interpNear = true; float _interpNearT, _creepT;   // PERF: physics interpolation opted out while parked / far-and-bobbing (see PhysicsTick); creep-sleep timer
+        public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
+        {
+            // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
+            // VehicleBody3D::_update_process_mode enables INTERNAL_PROCESS on ITSELF just to interpolate the wheel
+            // visuals, so all 88 PEI cars took NOTIFICATION_INTERNAL_PROCESS every rendered frame -- and every one of
+            // those walked the whole C# dispatch chain (~10% of the main thread, parked). Interpolation only matters
+            // while the body moves, so a car at rest with the engine off and nothing roped to it opts out; it opts
+            // back in the physics step it starts moving, is started, towed, or net-held (before any visible motion).
+            {
+                bool wantInterp = EngineOn || NetHeld || Towing != null || TowedBy != null
+                    || LinearVelocity.LengthSquared() > 0.0025f || AngularVelocity.LengthSquared() > 0.0025f;
+                // A floating boat bobs forever, so the velocity gate never releases it; past ~150 m nobody can see a
+                // 50 Hz bob step, so only keep interpolating while someone is close enough to look at it.
+                if (wantInterp && !EngineOn && !NetHeld && _water != WaterMode.Car && (_interpNearT -= (float)delta) <= 0f)
+                {
+                    _interpNearT = 0.5f;
+                    var np = PlayerRegistry.Nearest(GlobalPosition);
+                    _interpNear = np != null && np.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 150f * 150f;
+                }
+                if (!EngineOn && !NetHeld && _water != WaterMode.Car && !_interpNear) wantInterp = false;
+                if (wantInterp == _interpOff)
+                {
+                    _interpOff = !wantInterp;
+                    PhysicsInterpolationMode = wantInterp ? PhysicsInterpolationModeEnum.Inherit : PhysicsInterpolationModeEnum.Off;
+                    if (wantInterp) ResetPhysicsInterpolation();   // the stored "previous" xform is from opt-out time; without this the first interpolated frame smears from there (tinyclaw; same lesson as Main.cs's teleport reset)
+                }
+            }
             // Turret cycle timers. Ticked BEFORE the perf early-returns below, so a turret does not jam because
             // its vehicle happened to be far enough away to skip a frame of simulation.
             if (_turretCd != null)
@@ -7519,6 +7911,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * hsp * hsp + _rollK));
             }
             if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
+            // CREEP-SLEEP (census 2026-09-03: both firetrucks, a sedan and a hatchback crept at 0.4-1.1 m/s "parked"
+            // forever -- the parking brake can't hold a heavy hull on a slope, so Jolt never sleeps them and they pay
+            // the full wheel sim + interpolation every frame). An unattended car that has been slow (< 1.5 m/s) for a
+            // second with nobody within 40 m is put to sleep where it stands; a touch (collision) or a driver wakes it
+            // exactly like the 84 that Jolt parked on its own.
+            if (unattended && !towed && !Freeze && !Sleeping && LinearVelocity.LengthSquared() < 2.25f)
+            {
+                if ((_creepT += (float)delta) >= 1f)
+                {
+                    _creepT = 0f;
+                    var np = PlayerRegistry.Nearest(GlobalPosition);
+                    if (np == null || np.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 40f * 40f) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; Sleeping = true; }
+                }
+            }
+            else _creepT = 0f;
             // NO manual wheel spin: Godot's VehicleWheel3D already bakes the ROLL (+ suspension + steering) into its own
             // node transform every physics tick, and the wheel MESH is a child that inherits it. An old manual
             // _wMeshes[i].Rotation added an equal+opposite roll that CANCELLED the node's auto-roll in world space -> the
@@ -7582,12 +7989,25 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
                     _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n) * EngineVolumeBoost);
                     if (!_engineAudio.Playing) _engineAudio.Play();   // resume the loop STOPPED below
+                    _engineWind = -1f;
                 }
                 // STOP it, don't just silence it. Autoplay=true starts this loop the moment the vehicle enters
                 // the tree, and -80 dB is still a playing stream: the mixer keeps decoding the ogg every frame
                 // for something nobody can hear. PEI places ~89 vehicles, so the map booted with ~89 permanently
                 // inaudible loops running. Volume alone was never going to stop that; Playing is the switch.
-                else if (_engineAudio.Playing) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); }
+                // ...but not INSTANTLY: the engine WINDS DOWN first (master 2026-09-04 "the sound should sorta wind
+                // down as the engine turns off, not just a fadeout") -- the pitch sags toward a stalled idle, fast at
+                // first then trailing, while the volume falls; the loop stops when it is gone. A wreck's husk path
+                // has already slammed the volume to -80 dB, so an explosion still cuts dead.
+                else if (_engineAudio.Playing)
+                {
+                    if (_engineWind < 0f) { _engineWind = 0f; _windPitch0 = _engineAudio.PitchScale; _windVol0 = Mathf.DbToLinear(_engineAudio.VolumeDb); }
+                    _engineWind += (float)GetPhysicsProcessDeltaTime() / EngineWindDownSec;
+                    float k = Mathf.Clamp(_engineWind, 0f, 1f), ease = 1f - (1f - k) * (1f - k);
+                    _engineAudio.PitchScale = Mathf.Lerp(_windPitch0, _idlePitch * 0.45f, ease);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Max(0.0001f, _windVol0 * (1f - ease)));
+                    if (k >= 1f) { _engineAudio.VolumeDb = -80f; _engineAudio.Stop(); _engineWind = -1f; }
+                }
             }
             // Phase 3 hearing: a running, MOVING car makes engine/tire noise a listener would hear -- source DRIVING
             // stealth radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like
@@ -7634,8 +8054,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (_alarmCheckT <= 0f)
                     {
                         _alarmCheckT = 0.3f;
-                        var acam = GetViewport().GetCamera3D();
-                        bool near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 49f;   // player within ~7m
+                        // WHO COUNTS AS "somebody walked past". The local camera is the right answer in
+                        // singleplayer and on a listen-server host, and the WRONG one on a dedicated server,
+                        // which has no camera at all -- GetCamera3D returns null there, so an alarm could
+                        // never fire on the machine that owns the car. AlarmProximityTest lets whoever knows
+                        // where the players actually are answer it; nothing sets it in SP, which keeps the
+                        // camera behaviour byte-identical.
+                        bool near;
+                        if (AlarmProximityTest != null) near = AlarmProximityTest(GlobalPosition);
+                        else
+                        {
+                            var acam = GetViewport().GetCamera3D();
+                            near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < AlarmRadiusSq;   // player within ~7m
+                        }
                         // (enemy proximity check removed with the zombie system)
                         if (near) TriggerAlarm();
                     }
@@ -7650,17 +8081,60 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)
                 }
             }
+            if (_exhaust != null)   // tailpipe: runs with the engine, thickens with revs, a fat puff for the first moment after it catches
+            {
+                bool run = EngineOn && !_exploded;
+                if (_exhaust.Emitting != run) _exhaust.Emitting = run;
+                if (run)
+                {
+                    if (_exhaustPuff > 0f) _exhaustPuff -= (float)delta;
+                    float revs = Mathf.Clamp(EngineRpm / 6000f, 0f, 1f);
+                    int want = _exhaustPuff > 0f ? 24 : (revs > 0.6f ? 16 : revs > 0.25f ? 10 : 6);   // CpuParticles3D has no AmountRatio: step the pool size instead (idle wisp -> revving stream -> cold-start puff)
+                    if (_exhaust.Amount != want) _exhaust.Amount = want;
+                }
+            }
             if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
             {
                 if (_sirenOn && !_exploded)
                 {
-                    if (_sirenAudio != null && !_sirenAudio.Playing) _sirenAudio.Play();
+                    bool lBroken = IsLightbarLensBroken(0), rBroken = IsLightbarLensBroken(1), cBroken = IsLightbarCentreBroken;
+                    if (_sirenAudio != null)
+                    {
+                        if (lBroken && rBroken && cBroken) { if (_sirenAudio.Playing) _sirenAudio.Stop(); }   // the whole bar is gone: silence
+                        else
+                        {
+                            if (!_sirenAudio.Playing) _sirenAudio.Play();
+                            float basePitch = LightbarSirenPitch[LightbarPattern];
+                            if (cBroken)   // a shot centre = the amp: warbles, drops out, muffled (strawberry: "mess up / mute the siren sound when damaged/broken")
+                            {
+                                float wob = Mathf.Sin(_sirenFlash * 23f) * 0.18f + Mathf.Sin(_sirenFlash * 5.3f) * 0.12f;
+                                bool dropout = (_sirenFlash % 1.7f) > 1.35f;
+                                _sirenAudio.PitchScale = Mathf.Max(0.3f, basePitch + wob);
+                                _sirenAudio.VolumeDb = dropout ? -40f : -12f;
+                            }
+                            else { _sirenAudio.PitchScale = basePitch; _sirenAudio.VolumeDb = 2f; }
+                        }
+                    }
                     _sirenFlash += (float)delta;
-                    bool red = (_sirenFlash % 0.66f) < 0.33f;   // source UpdateSirenVisuals: sirenState flips only every 0.33s (lastWeeoo gate) -> each lens lit 0.33s; mine was toggling every 0.1s (~3x too fast, master caught it)
-                    _sirenMat0.EmissionEnabled = true; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = red ? 4f : 0f;
-                    _sirenMat1.EmissionEnabled = true; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = red ? 0f : 4f;
-                    if (_sirenLight0 != null) _sirenLight0.LightEnergy = red ? 5f : 0f;   // real red light from the left lens
-                    if (_sirenLight1 != null) _sirenLight1.LightEnergy = red ? 0f : 5f;   // real blue light from the right lens (master)
+                    // PATTERNS (ctrl-hold radial): 0 wail = alternate 0.33s each (retail sirenState/lastWeeoo); 1 double strobe = both lenses
+                    // pop twice then rest; 2 wig-wag = fast 0.12s alternation.
+                    bool lLit, rLit;
+                    switch (LightbarPattern)
+                    {
+                        case 1:   // double strobe (strawberry 2026-09-04): LEFT pops twice, then RIGHT pops twice, and so on
+                        {
+                            float t = _sirenFlash % 0.8f; bool leftHalf = t < 0.4f; float u = leftHalf ? t : t - 0.4f;
+                            bool pop = u < 0.07f || (u >= 0.15f && u < 0.22f);
+                            lLit = leftHalf && pop; rLit = !leftHalf && pop; break;
+                        }
+                        case 2: { bool a = (_sirenFlash % 0.24f) < 0.12f; lLit = a; rLit = !a; break; }
+                        default: { bool a = (_sirenFlash % 0.66f) < 0.33f; lLit = a; rLit = !a; break; }
+                    }
+                    if (lBroken) lLit = false; if (rBroken) rLit = false;
+                    _sirenMat0.EmissionEnabled = !lBroken; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = lLit ? 4f : 0f;
+                    _sirenMat1.EmissionEnabled = !rBroken; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = rLit ? 4f : 0f;
+                    if (_sirenLight0 != null) _sirenLight0.LightEnergy = lLit ? 5f : 0f;
+                    if (_sirenLight1 != null) _sirenLight1.LightEnergy = rLit ? 5f : 0f;
                 }
                 else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenLight0 != null) _sirenLight0.LightEnergy = 0f; if (_sirenLight1 != null) _sirenLight1.LightEnergy = 0f; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
@@ -7747,6 +8221,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, steerRate * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
+            SyncHitMeshVelocity();           // MESH HITBOX: hand the static child our motion so a rider is carried
             CarryDeckRiders((float)delta);   // MOVING DECK: carry anything standing on us. Outside ApplyWaterPhysics
                                              // deliberately -- that returns early when the hull is not afloat, and a
                                              // grounded or beached vessel still has a deck.
@@ -7826,15 +8301,56 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // to leave the layers those scan: the chassis moves to a private bit that only other vehicles mask,
         // and bit0|bit5 go to the mesh.
         //
-        // OFF BY DEFAULT. It changes which layer every car sits on, and about fifteen call sites outside this
-        // file scan bit 5 (harbour crane, sling magnet, deck rays, bullet rays, look focus). That is not a
-        // change to flip on unattended and unmeasured, so it ships behind a switch and stays dark until it
-        // has been driven.
-        public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") == "1";
+        // ON BY DEFAULT since 2026-09-03 (strawberry: "do it on real collision. we will fix as we go").
+        // UG_MESHHITBOX=0 puts every car back on its convex hulls, so the A/B is one flag on one binary.
+        //
+        // What it cost to turn on, all of it measured on a sedan in vehicle.mesh_hitbox rather than reasoned
+        // about, and none of it visible to a test that only asked whether a ray hit something:
+        //   * SHOOTING A CAR DID NOTHING AT ALL. 6000 -> 6000 hp on a round through the door, no glass, no
+        //     lamp, nothing logged. A ray now returns the HitMesh CHILD, so every `collider is Vehicle` in the
+        //     game stopped matching. Fixed by resolving through Vehicle.Owning at the four sites that took a
+        //     collider and cast it -- bullets, look focus, the deck ray, the ladder carry.
+        //   * THE WINDSCREEN WAS A HOLE. The hull was what stopped a round at the glass; a ray along the
+        //     windscreen's own normal passed clean through the car and hit NOTHING. The panes now carry their
+        //     own colliders (mesh-hitbox mode only), and a pane that BREAKS gives its collider up.
+        //   * A RIDER WAS LEFT BEHIND. A player on the roof tracked the car 1.00 for 1.00 on the hulls and
+        //     0.21 with the hitbox on -- a StaticBody3D reports no velocity to stand on. SyncHitMeshVelocity
+        //     publishes it; back to 0.97.
+        // The gain it was turned on for: a down-ray over the cabin stops at the model's real roof, 2.160,
+        // instead of 7 cm proud of it at 2.237.
+        public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") != "0";
         const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for
-        /// <summary>The layer bit that means "this vehicle's solid body" for ghosting purposes -- bit 0
-        /// normally, the private chassis bit once the mesh hitbox has taken bit 0 for itself.</summary>
-        static uint SolidBit => MeshHitbox ? ChassisBit : 1u << 0;
+
+        /// <summary>The layer the model-as-hitbox sits on, alongside bit 5.
+        ///
+        /// NOT BIT 0, and this is the whole point of having a bit of its own. The hitbox first borrowed bit 0
+        /// because that is the layer the player's capsule walks on -- but EVERY VEHICLE MASKS BIT 0 too (it is
+        /// how a car finds the terrain), so each vehicle's own wheels, tracks and hulls collided with its own
+        /// hitbox. The vehicle then sat permanently inside a collider it could not resolve, exactly the failure
+        /// the ship's own deckhouse exception was written for. Measured, with the hitbox on bit 0:
+        ///   tank    flipped upside down (up.y -1.00) and slid 20 m instead of pivoting on the spot
+        ///   sedan   top speed 8.42 m/s against a 14.7 floor, and no coast-down at all off the throttle
+        ///   jeep    a released hold skidded to rest in 0.39 m instead of the verified 0.74 m
+        /// All three passed with the flag off, on the same binary, in the same isolation.
+        ///
+        /// Bit 15 is otherwise unused, so nothing else in the game masks it: a hitbox can never again be
+        /// something its own vehicle -- or any other vehicle -- runs into. The player's capsule masks it
+        /// explicitly (PlayerController), which is a more honest statement of "the player collides with
+        /// vehicles" than borrowing the world layer was. Bit 5 stays for the things that SCAN for vehicles --
+        /// bullets, look focus, the deck ray, the crane and the sling.</summary>
+        public const uint HitMeshBit = 1u << 15;
+        /// <summary>The layer bits that make THIS vehicle solid to other vehicles -- what ghosting has to
+        /// clear so a towing cab can phase through the trailer it is backing under.
+        ///
+        /// The private chassis bit for a vehicle with a mesh hitbox, bit 0 for one without.
+        ///
+        /// PER INSTANCE, not per build. Keyed on the global flag it would claim a ship -- which never gets a
+        /// hitbox, so never gives bit 0 up -- sits on a layer it does not have.</summary>
+        uint SolidBit => _hitMesh != null ? ChassisBit : 1u << 0;
+
+        /// <summary>Test seam: the bit that means "solid" for THIS vehicle. Exposed so a test can assert the
+        /// un-ghosted layer was restored without hard-coding a layer scheme that has now changed twice.</summary>
+        public uint DebugSolidBit => SolidBit;
 
         public int DebugBoxHullsDisabled;   // fitted boxes taken out of physics once the hulls landed
         public int DebugHitMeshTris;        // triangles in the mesh hitbox, 0 when it is off
@@ -7850,10 +8366,13 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// repeat for every ship that spawns.</summary>
         public override void _Ready()
         {
+            SetProcess(false); if (_water != WaterMode.Car) TickHub.AddProcess(this, HubProcess);   // PERF: boat-only wake tick, through the hub (3 boats x 500 fps of chain-walk was 15% of the bridge)
             base._Ready();
             GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
             if (_decomposeMesh == null || ForceBoxHull) return;
-            if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes))
+            if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes) && (shapes = LoadBakedHulls(_decomposeKey)) != null)
+                _decomposeCache[_decomposeKey] = shapes;   // BAKED (shipped in content/vehicle_hulls or the machine's user:// cache): no VHACD on load
+            if (shapes == null)
             {
                 var mi = new MeshInstance3D { Mesh = _decomposeMesh };
                 AddChild(mi);
@@ -7893,6 +8412,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                             if (cs is CollisionShape3D csh && csh.Shape is ConvexPolygonShape3D) shapes.Add(csh.Shape);
                 GD.Print($"[DECOMP] region tris={_decomposeMesh.GetFaces().Length / 3} -> {shapes.Count} convex hulls");
                 _decomposeCache[_decomposeKey] = shapes;
+                SaveBakedHulls(_decomposeKey, shapes);   // next load on this machine reads the bake instead of decomposing
                 mi.QueueFree();   // takes the generated body with it; the shapes themselves are refcounted and survive
             }
             foreach (var sh in shapes) AddChild(new CollisionShape3D { Shape = sh });
@@ -7923,6 +8443,69 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         }
 
         /// <summary>The triangles of `mesh` inside an AABB, as their own mesh -- what gets decomposed.</summary>
+        // ---- BAKED CONVEX HULLS (strawberry 2026-09-03: "loading optimizations ... vehicles is 50% of the loading!") ----
+        // VHACD (CreateMultipleConvexCollisions) ran on the FIRST vehicle of every spec at scene entry: ~100-150 ms x ~13
+        // specs on a PEI load, most of the "AddChild" half of the vehicle phase. The result is a pure function of the
+        // body mesh + the settings baked into _decomposeKey, so it is stored: res://content/vehicle_hulls/<key-hash>.hulls
+        // ships the fleet's bakes (generated by a normal load on the 4080 and committed), user://vehicle_hulls/ caches
+        // anything new on first sight. Format: i32 hulls, per hull i32 points, f32 xyz. Disk over compute (master).
+        /// <summary>Size of the body mesh file, folded into the decomposition key so a re-ripped/edited mesh never reuses a stale bake.</summary>
+        static string BodyStamp(string body)
+        {
+            try { return new System.IO.FileInfo(ProjectSettings.GlobalizePath($"res://content/{body}")).Length.ToString(); } catch { return "0"; }
+        }
+        static string HullFileName(string key)
+        {
+            ulong h = 14695981039346656037UL;
+            foreach (char c in key) { h ^= c; h *= 1099511628211UL; }
+            return h.ToString("x16") + ".hulls";
+        }
+        static Godot.Collections.Array<Shape3D> LoadBakedHulls(string key)
+        {
+            string fn = HullFileName(key);
+            foreach (var dir in new[] { "res://content/vehicle_hulls/", "user://vehicle_hulls/" })
+            {
+                string path = ProjectSettings.GlobalizePath(dir + fn);
+                if (!System.IO.File.Exists(path)) continue;
+                try
+                {
+                    using var br = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+                    int hulls = br.ReadInt32();
+                    if (hulls <= 0 || hulls > 256) continue;
+                    var shapes = new Godot.Collections.Array<Shape3D>();
+                    for (int i = 0; i < hulls; i++)
+                    {
+                        int n = br.ReadInt32();
+                        if (n <= 0 || n > 4096) { shapes = null; break; }
+                        var pts = new Vector3[n];
+                        for (int k = 0; k < n; k++) pts[k] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+                        shapes.Add(new ConvexPolygonShape3D { Points = pts });
+                    }
+                    if (shapes != null && shapes.Count > 0) { GD.Print($"[DECOMP] baked hulls: {shapes.Count} from {dir}{fn}"); return shapes; }
+                }
+                catch (System.Exception e) { GD.PushWarning($"[DECOMP] bad hull bake {path}: {e.Message}"); }
+            }
+            return null;
+        }
+        static void SaveBakedHulls(string key, Godot.Collections.Array<Shape3D> shapes)
+        {
+            try
+            {
+                string dir = ProjectSettings.GlobalizePath("user://vehicle_hulls/");
+                System.IO.Directory.CreateDirectory(dir);
+                using var bw = new System.IO.BinaryWriter(System.IO.File.Create(dir + HullFileName(key)));
+                bw.Write(shapes.Count);
+                foreach (var sh in shapes)
+                {
+                    var pts = (sh as ConvexPolygonShape3D)?.Points ?? System.Array.Empty<Vector3>();
+                    bw.Write(pts.Length);
+                    foreach (var pt in pts) { bw.Write(pt.X); bw.Write(pt.Y); bw.Write(pt.Z); }
+                }
+                GD.Print($"[DECOMP] baked {shapes.Count} hulls -> user://vehicle_hulls/{HullFileName(key)}  (key: {key})");
+            }
+            catch (System.Exception e) { GD.PushWarning($"[DECOMP] could not bake hulls: {e.Message}"); }
+        }
+
         static bool In(Vector3 p, Vector3 lo, Vector3 hi) =>
             p.X >= lo.X && p.X <= hi.X && p.Y >= lo.Y && p.Y <= hi.Y && p.Z >= lo.Z && p.Z <= hi.Z;
 
@@ -8009,6 +8592,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// velocity added once, because that is what it was actually doing -- stepping off a moving deck, not
         /// coming to a dead stop in mid-air. That is also what makes taking off from a moving ship work: the
         /// aircraft is already doing 12 m/s when it breaks contact, exactly like a real deck launch.</summary>
+        /// <summary>Publish this vehicle's motion on the HitMesh child, so a player standing on the roof is
+        /// carried along.
+        ///
+        /// THE PROBLEM. CharacterBody3D reads a moving floor's velocity off the body it is standing on. A
+        /// RigidBody3D reports its own, which is why a rider on the hulls was carried perfectly -- measured, the
+        /// rider tracked the car 1.00 for 1.00 over 12 m. A StaticBody3D reports ConstantLinearVelocity, which
+        /// is zero unless something sets it, and with the hitbox on the body under the rider's feet IS a
+        /// StaticBody3D: the same 12 m drive carried the rider 2.7 m, a ratio of 0.21. The car drove out from
+        /// under them.
+        ///
+        /// ConstantLinearVelocity is exactly the knob for this -- it means "I am static, but treat me as moving
+        /// at this rate for the purposes of things resting on me", and it costs one vector write per tick. The
+        /// ANGULAR half matters as much for a car as the linear: a rider on the roof of a car going round a
+        /// corner should turn with it rather than slide off the outside.</summary>
+        void SyncHitMeshVelocity()
+        {
+            if (_hitMesh == null || !IsInstanceValid(_hitMesh)) return;
+            _hitMesh.ConstantLinearVelocity = LinearVelocity;
+            _hitMesh.ConstantAngularVelocity = AngularVelocity;
+        }
+
         void CarryDeckRiders(float delta)
         {
             DebugDeckRiders = 0;
@@ -8224,7 +8828,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 _swamped = false; _swampTime = 0f;   // drove back out -> the timer resets, but the engine stays off until restarted
                 return;
             }
-            if (!_swamped) _swamped = true;
+            if (!_swamped) { _swamped = true; EngineHealth = 0f; EngineDrowned = true; }   // DROWNED: engine hp gone and stays gone (strawberry 2026-09-04 "shouldnt be able to restart their engine ever")
             _swampTime += delta;
 
             // The engine is cut EVERY tick it is under, not once on entry: otherwise the driver simply restarts it
@@ -8277,7 +8881,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // foam wake on the RENDER frame: drive it from the INTERPOLATED hull pose so the leading
         // foam stays glued to the visually-rendered ship. Building it off the raw 50Hz physics pose
         // lags/jitters a step behind her -- the same interp trap as the flatbed container rider.
-        public override void _Process(double delta)
+        public override void _Process(double delta) => HubProcess(delta);   // forwarder; boats register HubProcess with TickHub (_Ready), the engine callback stays off
+        public void HubProcess(double delta)
         {
             if (_water == WaterMode.Car) return;
             bool active = _afloat && _buoys != null;

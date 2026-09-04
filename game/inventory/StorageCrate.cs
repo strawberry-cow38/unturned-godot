@@ -23,6 +23,28 @@ namespace UnturnedGodot
             return c;
         }
 
+        // PERF (ETW 2026-09-02): every container with a `_Process` override cost a native->managed transition + a
+        // StringName walk of the whole class chain per frame (StoreShelf/Refrigerator ~19% of the main thread on PEI,
+        // 419 containers). Containers register here and are ticked from ONE node (TickHub) at 4 Hz instead.
+        static readonly System.Collections.Generic.List<StorageCrate> _live = new();
+        static double _tickAcc;
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+        protected virtual void Tick(double delta) { }
+        public static void TickAll(double delta)
+        {
+            _tickAcc += delta;
+            if (_tickAcc < 0.25) return;
+            double dt = _tickAcc; _tickAcc = 0;
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var c = _live[i];
+                if (!GodotObject.IsInstanceValid(c)) { _live.RemoveAt(i); continue; }
+                if (!c.CanProcess()) continue;   // honour pause / ProcessMode exactly like the old per-node callback
+                c.Tick(dt);
+            }
+        }
+
         public override void _Ready()
         {
             AddToGroup("crates");
@@ -89,7 +111,13 @@ namespace UnturnedGodot
         // preserves ONLY while its own port is wired + powered (was PowerNet.GlobalPower in the stub)
         public override bool Preserves => _consumerPort != null && GodotObject.IsInstanceValid(_consumerPort) && _consumerPort.Powered;
 
-        public static Refrigerator Spawn(Node parent, Vector3 pos, byte w = 5, byte h = 4, float yawDeg = 0f)
+        /// <summary>The fridge's grid. Named rather than repeated as a literal because the SERVER registers
+        /// the authoritative crate at these dimensions (DeployableNetSchema -> DeployableNetDef.Storage*)
+        /// while the client materializes the visible one here: if the two ever disagreed, items would sit in
+        /// cells the other side does not believe exist.</summary>
+        public const byte GridW = 5, GridH = 4;
+
+        public static Refrigerator Spawn(Node parent, Vector3 pos, byte w = GridW, byte h = GridH, float yawDeg = 0f)
         {
             var c = new Refrigerator { Width = w, Height = h };
             parent.AddChild(c);
@@ -114,7 +142,7 @@ namespace UnturnedGodot
 
         // Sync the per-item `preserved` flag so BOTH the spoilage sweep and the inv-UI snowflake see it. Set on FOOD in
         // the grid while powered; clear it on anything that LEFT the fridge (else it'd never spoil again anywhere).
-        public override void _Process(double delta)
+        protected override void Tick(double delta)   // hub-ticked (4 Hz) -- was a per-frame _Process
         {
             bool powered = Preserves;
             var current = new System.Collections.Generic.HashSet<Item>();

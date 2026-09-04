@@ -13,7 +13,18 @@ namespace UnturnedGodot
         {
             foreach (var def in DeployableDef.All)
             {
-                if (def.Fluid != null || def.IsStorage || def.DoorProp != null) continue;   // FLUID + STORAGE (fridge) + DOOR devices spawn LOCALLY (device replication = fast-follow), so they're NOT
+                // STORAGE is no longer excluded (strawberry 2026-09-03: "not networking the smart containers
+                // (fridges etc)"). It was in this list because device replication was a fast-follow, which
+                // meant a placed fridge existed only on the machine that placed it -- nobody else could see
+                // it, never mind open it. It replicates like any other deployable now, and carries its grid
+                // dimensions so the server can register a crate under its NetId at placement.
+                //
+                // FLUID and DOOR devices are still local, and still deliberately: this is one class at a
+                // time, and each needs its own client materializer (a fluid tank and a door are not a
+                // StorageCrate). Keeping them out makes ServerPlace no-op their ids (no phantom replica)
+                // while OnPlaceDeployable still SPENDS the item -> their place routes the spend server-side
+                // without a spawn.
+                if (def.Fluid != null || def.DoorProp != null) continue;
                                                     // server-replicated deployables. Keeping them out of the schema makes the server's
                                                     // ServerPlace no-op a fluid id (no phantom replica) while OnPlaceDeployable still
                                                     // SPENDS the item -> the fluid place routes its spend server-side without a spawn.
@@ -31,6 +42,12 @@ namespace UnturnedGodot
                     // Deployable.Salvage yields 2x Metal Scrap (67); a ShatterOnDeath def leaves no wreck to salvage
                     SalvageItemId = def.ShatterOnDeath ? (ushort)0 : (ushort)67,
                     SalvageCount = def.ShatterOnDeath ? (byte)0 : (byte)2,
+                    // The fridge's own grid, from Refrigerator's constants rather than repeated here: the
+                    // server registers the authoritative crate at these dimensions and the client
+                    // materializes the visible one at the same, so a literal in two places is a silent
+                    // desync waiting for someone to change one of them.
+                    StorageWidth = def.IsStorage ? Refrigerator.GridW : (byte)0,
+                    StorageHeight = def.IsStorage ? Refrigerator.GridH : (byte)0,
                 });
             }
         }

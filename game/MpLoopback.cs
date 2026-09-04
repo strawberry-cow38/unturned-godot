@@ -48,6 +48,10 @@ namespace UnturnedGodot
 
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
+        /// <summary>Which map this world is, for the save filename and the load-time map guard. Set by
+        /// Main.AttachMpLoopback from the map root; "world" when nothing says otherwise.</summary>
+        public string MapId;
+        public WorldSaveDriver Save { get; private set; }
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
@@ -223,6 +227,10 @@ namespace UnturnedGodot
                 // per-tick HP adoption itself rides TickLocal (mirrors the owner-inventory adoption there).
                 Client.PlayerDied += e => { if (e.Victim == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetDie(); };
                 Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetRespawn(reposition: true); };
+                // The death screen's Respawn buttons. Singleplayer IS this listen-server, so "the server owns the
+                // respawn clock" must not mean "the player cannot ask" -- it just means the ask goes through it.
+                if (Player != null && IsInstanceValid(Player))
+                    Player.NetRequestRespawn = () => Server.Combat.ServerRequestRespawn(Client.PlayerId, Server.Session.CurrentTick);
                 // P3b (SP/MP-unify): the loopback host shell is the listen-server's OWN authority (not a follower
                 // body, not a client-auth claim stream), so its LOCAL environmental damage (blast, fall, OOB --
                 // originally also zombie melee/acid) has nowhere to go under P3a's NetVitalsAdopted no-op. Route it to the server
@@ -357,6 +365,18 @@ namespace UnturnedGodot
             // would have the loopback server and the local node both acting on the same press. Leaving them
             // at NetId 0 is what keeps singleplayer byte-identical -- see InteractableNetSync, which the
             // DEDICATED server does register (it has no PlayerControllers to run the direct paths).
+            // PERSISTENCE. Built HERE, at the end of _Ready, because the load has to sit in a narrow window: the
+            // syncs above have just registered the map's containers, resources and destructibles (all in their
+            // constructors), so the overlaid state finally has something to overlay -- and the local player has
+            // not joined yet, because that happens on the first Net.Tick inside TickLocal. Any earlier and the
+            // restore writes into fixtures that do not exist; any later and the player has already spawned at
+            // defaults. Doors are the known gap: a loopback deliberately leaves them unregistered (see the note
+            // above), so door state is dedicated-only and simply finds nothing to match in SP.
+            Save = new WorldSaveDriver(Server, MapId, DayNight);
+            GD.Print("[SAVE] " + Save.LoadIntoWorld());
+            Server.Transactions.WipeSaveHandler = () => Save.Wipe();
+            Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }
@@ -388,7 +408,7 @@ namespace UnturnedGodot
             // Singleplayer is a join too. The loopback server runs the same profile validation as a dedicated
             // one, so the local player's name and picture take the SAME path here as over a real wire -- which
             // is also what makes them verifiable without two machines.
-            if (!_profileSent) { _profileSent = true; Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng); }
+            if (!_profileSent) { _profileSent = true; Client.SendSetProfile(PlayerProfile.Name, PlayerProfile.AvatarPng, PlayerProfile.Face); }
 
             // P1b: the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457). The
             // ReplicaUpdated subscription re-adopts every echo AFTER this; this catches the join snapshot's
@@ -432,7 +452,7 @@ namespace UnturnedGodot
             //    stance for the stamina drain -- stamina server-owned while the sprint decision stays client-auth.
             float yaw = Player.RotationDegrees.Y;
             ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
-                                              MoveInput.PackStance(Player.Stance));
+                                              MoveInput.PackStance(Player.Stance), Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets
 
             // 1b) A SERVER-SIDE TELEPORT has to be adopted BEFORE step 2 overwrites it.
             //
