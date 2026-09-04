@@ -322,11 +322,11 @@ namespace UnturnedGodot
         // 3P GUN (source: PlayerAnimator adds the equipped gun's clip to the third-person animator; the body holds the
         // gun on the SAME Right_Hook hand bone the 1P viewmodel uses). Attach the gun mesh to the hand; play the gun's
         // clip ({Gun}_Equip / Gun_Equip) to pose the arms around it. Replaces any prior attached gun.
-        public void AttachGun(string gunName)
+        public void AttachGun(string gunName, bool leftHook = false)
         {
             if (Skeleton == null || string.IsNullOrEmpty(gunName)) return;
             Skeleton.GetNodeOrNull("GunAttach")?.QueueFree();
-            int hb = Skeleton.FindBone("Right_Hook");
+            int hb = Skeleton.FindBone(leftHook ? "Left_Hook" : "Right_Hook");   // bows hang off the left hook (retail EquipableModelParent)
             if (hb < 0) hb = Skeleton.FindBone("Right_Hand");
             if (hb < 0) return;
             var att = new BoneAttachment3D { Name = "GunAttach" };

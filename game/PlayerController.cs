@@ -5164,7 +5164,7 @@ namespace UnturnedGodot
             if (backingItem != null) AttachmentFit.SeedDefaults(backingItem, SDG.Unturned.Assets.find(backingItem.id)?.itemName);
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { GunName = _gunName };
+            _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };
             AddChild(_viewmodel);
             ApplyGunToViewmodel();   // the replacement viewmodel starts on defaults -- re-push the gun's tuning
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
@@ -5272,7 +5272,7 @@ namespace UnturnedGodot
                 CallDeferred(Node.MethodName.AddSibling, _body);
             }
             _ppB = System.Diagnostics.Stopwatch.GetTimestamp();
-            _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
+            _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };   // per-gun visuals
             AddChild(_viewmodel);
             ApplyGunToViewmodel();
             _rng.Randomize();
@@ -7177,7 +7177,7 @@ namespace UnturnedGodot
             if (_gunName != _bodyGunName)                       // just drew or swapped a gun
             {
                 string capGun = char.ToUpper(_gunName[0]) + _gunName.Substring(1);
-                _body.AttachGun(_gunName);
+                _body.AttachGun(_gunName, Gun?.LeftHook ?? false);
                 MountBody3PAttachments();   // sights/scope/mag/barrel on the 3P gun, from the held item's installed ids
                 _bodyAimClip    = _body.ClipLength(capGun + "_Aim")    > 0f ? capGun + "_Aim"    : "Gun_Aim";
                 _bodyReloadClip = _body.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";

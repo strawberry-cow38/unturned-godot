@@ -172,6 +172,7 @@ namespace UnturnedGodot
         // (_Ready builds the gun). Aim hooks: Eaglefire SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+
         // Aim(0,-0.6,0.0918) -> port (0,-0.4688,-0.2098); Maplestrike Aim(0,-0.57,0.1111) -> port (0,-0.4388,-0.2291).
         public string GunName = "eaglefire";
+        public bool LeftHook;   // GunDef.LeftHook: the model hangs off Left_Hook (bows) instead of Right_Hook -- retail EquipableModelParent
         public string MeleeMesh, MeleeAlbedo;   // set (instead of GunName) to show a MELEE weapon in-hand: mesh + albedo only, no sight/mag/muzzle/fire
         public bool EmptyHands;   // holding-something-with-no-arm-model (e.g. a deployable) -> arms in a static rest hold, no weapon mesh
         public bool Fists;        // UNARMED combat state -> bare arms in the melee ready hold + weak/strong punch swings, no mesh (src: empty hands = hardcoded fists)
@@ -445,6 +446,7 @@ namespace UnturnedGodot
                                  : DeployableMesh != null ? (NaturalHold ? (_arms.ClipLength("Fuel_Equip") > 0f ? "Fuel_Equip" : "Deploy_Equip") : (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip"))   // deployable: the src barricade "Equip" raise-to-hold; NaturalHold (gas can) = its OWN TWO-HANDED Fuel_Equip carry (both hands on the can, source animations.prefab)
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
+                GD.Print($"[vm] hold clip {equipClip} (capGun {capGun}, len {_arms.ClipLength(equipClip):0.###}s)");   // which per-item hold posed the hands (bow frame audit)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
                 _holdClip = equipClip;   // remember THIS item's hold so sprint-exit (etc.) restores it, not the gun pose
                 if (Fists) _arms.SnapToEnd(equipClip);   // fists: snap straight to the guard pose -- don't play a jab-on-equip when you put an item away
@@ -453,8 +455,8 @@ namespace UnturnedGodot
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
                 var skel = _arms.Skeleton;
-                int hb = skel.FindBone("Right_Hook");
-                if (hb < 0) hb = skel.FindBone("Right_Hand");
+                int hb = skel.FindBone(LeftHook ? "Left_Hook" : "Right_Hook");   // retail EquipableModelParent: bows parent to the LEFT hook
+                if (hb < 0) hb = skel.FindBone(LeftHook ? "Left_Hand" : "Right_Hand");
                 if (hb >= 0 && !EmptyHands && !Fists)   // EmptyHands/Fists -> no weapon mesh; just the bare arms in the ready hold
                 {
                     var att = new BoneAttachment3D { Name = "GunAttach" };
@@ -482,6 +484,7 @@ namespace UnturnedGodot
                     ArrayMesh bodyMesh;
                     if (isGunBody) { var _sp = ContentProvider.ParseObjSplitByAlbedoMarker($"res://content/{gv.Gun}", albedoImg); bodyMesh = _sp.body; sightDots = _sp.markers; }
                     else bodyMesh = ContentProvider.ParseObj($"res://content/{gv.Gun}");
+                    if (bodyMesh != null) GD.Print($"[vm] gun mesh {gv.Gun} aabb pos={bodyMesh.GetAabb().Position} size={bodyMesh.GetAabb().Size}");   // which axis is the long one -- the bow frame audit (2026-09-04)
                     var mi = new MeshInstance3D { Mesh = bodyMesh };
                     // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
                     // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"

@@ -9,6 +9,10 @@ namespace UnturnedGodot
     {
         public string Id;
         public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...
+        /// <summary>Retail ItemAsset.EquipableModelParent == LeftHook (the .dat key, or the legacy `Backward` flag): the held model
+        /// parents to the LEFT hand hook -- the four bows. Everything else hangs off Right_Hook. Parenting a bow to the right
+        /// hook was why it held as a limb pointing forward and aimed from inside the riser (strawberry 2026-09-04).</summary>
+        public bool LeftHook;
         public bool IsShotgun => Action == "Pump" || Action == "Break";   // shell-calibre guns
 
         /// <summary>Can this gun carry a round in the chamber on top of a full magazine (the "30 + 1")?
@@ -315,6 +319,7 @@ namespace UnturnedGodot
             {
                 Id = d.GetString("ID"),
                 Action = d.GetString("Action"),
+                LeftHook = string.Equals(d.GetString("EquipableModelParent"), "LeftHook", System.StringComparison.OrdinalIgnoreCase) || d.ContainsKey("Backward"),
                 PlayerDamage = d.ParseFloat("Player_Damage"),
                 ZombieDamage = d.ParseFloat("Zombie_Damage"),
                 VehicleDamage = d.ParseFloat("Vehicle_Damage", 40f),   // .dat Vehicle_Damage (all stock guns specify it; 40 = fallback)
