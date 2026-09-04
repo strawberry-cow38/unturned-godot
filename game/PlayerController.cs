@@ -7516,6 +7516,7 @@ namespace UnturnedGodot
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
+            v.CycleDoor();   // the bus door swings for whoever boards
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
             // car you climb into is however you left it. N / throttle / the speedo click are the ignition.
@@ -7540,7 +7541,7 @@ namespace UnturnedGodot
             if (!v.SeatFree(want)) return false;
 
             v.OccupiedSeats.Remove(_seatIndex);
-            v.OccupiedSeats.Add(want);
+            v.OccupiedSeats.Add(want); v.CycleDoor();
             bool wasDriver = _seatIndex == 0;
             _seatIndex = want;
 
@@ -7568,6 +7569,7 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
+            v?.CycleDoor();
             if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
@@ -7591,6 +7593,7 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
+            v?.CycleDoor();
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;

@@ -789,6 +789,7 @@ namespace UnturnedGodot
         public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
+        Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpenWanted; float _doorFoldDeg = 90f;   // bi-fold door (bus): fold 0..1, hold-open timer
         float _driveIdle = 999f;   // seconds since anything last called Drive() on this car. UNATTENDED is a fact about the present, not about how the car was spawned -- see the settle block
         float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
@@ -1720,7 +1721,10 @@ namespace UnturnedGodot
             public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
-            public bool NoTrunk, RearEngine;   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
+            public bool NoTrunk, RearEngine;
+            public Vector3 DoorZoneMin, DoorZoneMax;   // BI-FOLD DOOR (bus): the body triangles inside this box become the door; split at DoorSplitZ into two leaves
+            public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // (0 = 90 degrees)   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
+            public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
@@ -2517,7 +2521,12 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
-            NoTrunk = true, RearEngine = true,   // no boot; the engine bay is the back (master 2026-09-04)   // 200 L tank (metric 1u=1mL; realistic bus)
+            NoTrunk = true, RearEngine = true,   // no boot; the engine bay is the back (master 2026-09-04)
+            // FUNCTIONAL BI-FOLD DOOR (master 2026-09-04 "give the bus a functional bi-fold door"): the door panel is the 12.5 cm box
+            // inside the front-right doorway (X 1.293..1.418, Z -3.35..-2.15, Y -0.23..1.97, measured off bus_body.txt), two windows
+            // split by the mullion at Z -2.75. Leaf A hinges at the front jamb, leaf B at the mullion; both windows ride their leaf.
+            DoorZoneMin = new Vector3(1.28f, -0.25f, -3.36f), DoorZoneMax = new Vector3(1.43f, 1.99f, -2.14f),
+            DoorHingeX = 1.356f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -4102,6 +4111,120 @@ namespace UnturnedGodot
         /// golden (jeep_vside 0.0017 -> 0.0023) that I had written off as a harmless side effect of splitting.
         /// A list of attributes is a list you can be one short of, so this copies whatever is present and
         /// computes nothing. Anything added to these meshes later comes along without a code change here.</summary>
+        // ---- BI-FOLD DOOR (bus) ----------------------------------------------------------------------------------
+        /// <summary>Hang the door panel peeled out of the body as two leaves on two vertical hinges: leaf A on the front
+        /// jamb, leaf B on the mullion between the two windows (a child of leaf A, so it folds back onto it like a
+        /// jackknife). The meshes stay in BODY space and are offset back by their pivot, so at fold 0 nothing moves.
+        /// The two window panes ride their leaves. Opens on enter/exit (CycleDoor) and folds shut after a hold.</summary>
+        static void BuildBiFoldDoor(Vehicle v, Spec s, ArrayMesh doorMesh, Material bodyMat)
+        {
+            var (leafA, leafB) = ClipMeshAtZ(doorMesh, s.DoorSplitZ);
+            if (leafA == null) { leafA = doorMesh; leafB = null; }   // nothing on the front side of the split -> one leaf
+            v._doorFoldDeg = s.DoorFoldDeg > 0f ? s.DoorFoldDeg : 90f;
+            v._doorPivotA = new Node3D { Name = "DoorHingeA", Position = new Vector3(s.DoorHingeX, 0f, s.DoorHingeZ) };
+            v._doorPivotA.AddChild(new MeshInstance3D { Name = "DoorLeafA", Mesh = leafA, MaterialOverride = bodyMat, Position = -v._doorPivotA.Position });
+            if (leafB != null)
+            {
+                v._doorPivotB = new Node3D { Name = "DoorHingeB", Position = new Vector3(0f, 0f, s.DoorSplitZ - s.DoorHingeZ) };
+                v._doorPivotB.AddChild(new MeshInstance3D { Name = "DoorLeafB", Mesh = leafB, MaterialOverride = bodyMat, Position = new Vector3(-s.DoorHingeX, 0f, -s.DoorSplitZ) });
+                v._doorPivotA.AddChild(v._doorPivotB);
+            }
+            v.AddChild(v._doorPivotA);
+            // the windows in the door ride their leaf (they were built in body space under the vehicle: keep that offset)
+            for (int i = 0; i < v._glassNodes.Count; i++)
+            {
+                var g = v._glassNodes[i]; string label = v._glassLabels[i];
+                Node3D pivot = label == s.DoorGlassA ? v._doorPivotA : (label == s.DoorGlassB ? v._doorPivotB : null);
+                if (pivot == null || !IsInstanceValid(g)) continue;
+                var bodyOffset = pivot == v._doorPivotA ? -v._doorPivotA.Position : new Vector3(-s.DoorHingeX, 0f, -s.DoorSplitZ);
+                g.GetParent()?.RemoveChild(g);
+                pivot.AddChild(g);
+                g.Position = bodyOffset;
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") { v._doorOpenWanted = true; v._doorHold = 1e9f; }   // harness: hold it open for a render
+        }
+
+        /// <summary>Somebody got in or out: swing the door open, hold, fold shut.</summary>
+        public void CycleDoor()
+        {
+            if (_doorPivotA == null) return;
+            _doorOpenWanted = true; _doorHold = 1.6f;
+        }
+        public float DoorFold => _doorT;
+
+        void UpdateDoor(float dt)
+        {
+            if (_doorOpenWanted) { _doorHold -= dt; if (_doorHold <= 0f) _doorOpenWanted = false; }
+            float target = _doorOpenWanted ? 1f : 0f;
+            if (Mathf.Abs(_doorT - target) < 1e-4f) return;
+            _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
+            float e = _doorT < 0.5f ? 2f * _doorT * _doorT : 1f - Mathf.Pow(-2f * _doorT + 2f, 2f) / 2f;   // ease in-out
+            _doorPivotA.RotationDegrees = new Vector3(0f, -_doorFoldDeg * e, 0f);            // leaf A swings INTO the bus (its free edge goes -X)
+            if (_doorPivotB != null) _doorPivotB.RotationDegrees = new Vector3(0f, 2f * _doorFoldDeg * 0.97f * e, 0f);   // leaf B folds back onto A (just short of flat: no z-fight)
+        }
+
+        /// <summary>Cut a mesh along the plane z = zc into the part below (z <= zc) and above, CLIPPING the triangles
+        /// that straddle it (Sutherland-Hodgman per triangle) so a panel modelled as one big quad still splits cleanly.
+        /// Normals, UVs and colours are interpolated across the cut; tangents are dropped.</summary>
+        static (ArrayMesh below, ArrayMesh above) ClipMeshAtZ(Mesh src, float zc)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
+            var arrays = src.SurfaceGetArrays(0);
+            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 3) return (null, null);
+            var nv = arrays[(int)Mesh.ArrayType.Normal]; var nrm = nv.VariantType != Variant.Type.Nil ? nv.AsVector3Array() : null;
+            var uvv = arrays[(int)Mesh.ArrayType.TexUV]; var uv = uvv.VariantType != Variant.Type.Nil ? uvv.AsVector2Array() : null;
+            var cv = arrays[(int)Mesh.ArrayType.Color]; var col = cv.VariantType != Variant.Type.Nil ? cv.AsColorArray() : null;
+            if (nrm != null && nrm.Length != verts.Length) nrm = null;
+            if (uv != null && uv.Length != verts.Length) uv = null;
+            if (col != null && col.Length != verts.Length) col = null;
+            var idxVar = arrays[(int)Mesh.ArrayType.Index];
+            int[] idx;
+            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
+            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
+
+            var stA = new SurfaceTool(); stA.Begin(Mesh.PrimitiveType.Triangles);
+            var stB = new SurfaceTool(); stB.Begin(Mesh.PrimitiveType.Triangles);
+            int nA = 0, nB = 0;
+            var poly = new System.Collections.Generic.List<(Vector3 p, Vector3 n, Vector2 t, Color c)>(5);
+            for (int t = 0; t + 2 < idx.Length; t += 3)
+            {
+                for (int side = 0; side < 2; side++)
+                {
+                    bool below = side == 0;
+                    poly.Clear();
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int ia = idx[t + k], ib = idx[t + (k + 1) % 3];
+                        var a = (p: verts[ia], n: nrm != null ? nrm[ia] : Vector3.Up, t: uv != null ? uv[ia] : Vector2.Zero, c: col != null ? col[ia] : Colors.White);
+                        var b = (p: verts[ib], n: nrm != null ? nrm[ib] : Vector3.Up, t: uv != null ? uv[ib] : Vector2.Zero, c: col != null ? col[ib] : Colors.White);
+                        bool ina = below ? a.p.Z <= zc : a.p.Z >= zc, inb = below ? b.p.Z <= zc : b.p.Z >= zc;
+                        if (ina) poly.Add(a);
+                        if (ina != inb)
+                        {
+                            float f = Mathf.Clamp((zc - a.p.Z) / (b.p.Z - a.p.Z), 0f, 1f);
+                            poly.Add((a.p.Lerp(b.p, f), a.n.Lerp(b.n, f).Normalized(), a.t.Lerp(b.t, f), a.c.Lerp(b.c, f)));
+                        }
+                    }
+                    if (poly.Count < 3) continue;
+                    var st = below ? stA : stB;
+                    for (int k = 1; k + 1 < poly.Count; k++)   // fan from the first vertex keeps the source winding
+                    {
+                        foreach (var q in new[] { poly[0], poly[k], poly[k + 1] })
+                        {
+                            if (nrm != null) st.SetNormal(q.n);
+                            if (uv != null) st.SetUV(q.t);
+                            if (col != null) st.SetColor(q.c);
+                            st.AddVertex(q.p);
+                        }
+                        if (below) nA += 3; else nB += 3;
+                    }
+                }
+            }
+            if (nrm == null) { if (nA > 0) stA.GenerateNormals(); if (nB > 0) stB.GenerateNormals(); }
+            return (nA > 0 ? stA.Commit() : null, nB > 0 ? stB.Commit() : null);
+        }
+
         static (ArrayMesh a, ArrayMesh b) SplitMeshBy(Mesh src, System.Func<Vector3, Vector3, Vector3, bool> intoA)
         {
             if (src == null || src.GetSurfaceCount() == 0) return (null, null);
@@ -5176,7 +5299,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            ArrayMesh bodyMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
+            ArrayMesh bodyMesh = null, doorMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
             // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
             (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
                 ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
@@ -5203,6 +5326,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var rz = (new Vector3(-s.HeadlightZoneMax.X, s.HeadlightZoneMin.Y, s.HeadlightZoneMin.Z), new Vector3(-s.HeadlightZoneMin.X, s.HeadlightZoneMax.Y, s.HeadlightZoneMax.Z));
                 (bodyMesh, hlMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", new[] { lz, rz });
             }
+            else if (s.DoorZoneMin != s.DoorZoneMax)   // bi-fold door: peel the door panel out of the body so it can swing
+                (bodyMesh, doorMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.DoorZoneMin, s.DoorZoneMax);
             else
                 bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             if (bodyMesh != null)   // null only for the procedural heli, whose BuildHeliModel already set _bodyMesh
@@ -5210,6 +5335,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
                 v.AddChild(v._bodyMesh);
                 if (!s.Plane) AddGlassOverlay(v, s);   // road-car windows (the plane builder adds its own canopy)
+                if (doorMesh != null) BuildBiFoldDoor(v, s, doorMesh, bodyMat);
             }
             if (s.Tracked) { v.MuzzleLocal = s.Muzzle; BuildTankExtras(v, s, bodyMat); }   // tank: treads + turret/gun aim pivots on top of the shared hull/wheel/collision path
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
@@ -7841,6 +7967,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             _driveIdle += (float)delta;   // Drive() zeroes this; a car nobody is steering climbs away from zero
+            if (_doorPivotA != null) UpdateDoor((float)delta);
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
