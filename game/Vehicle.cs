@@ -3726,7 +3726,7 @@ namespace UnturnedGodot
             p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
             p.SetNameLabel(s.Name, p.OutlineColor);              // look-at name tag (hidden until focused), like the real Vehicle's InfoBillboard title
             // The puppet's hull (client-only): a StaticBody3D box on the SAME layers the real Vehicle body carries --
-            // bit 0 (the world/solid layer a VehicleBody3D sits on by default) + bit 5 (the vehicle layer the look-ray,
+            // HitMeshBit (bit 15 -- the layer NO vehicle masks, same as HitMesh/GlassHit below) + bit 5 (the look-ray,
             // bullets and the tow scan probe). CollisionMask 0: it is placed, never pushed.
             //
             // Until 2026-09-02 this was bit 5 ALONE, by design ("detection only, it never blocks movement") -- and that
@@ -3742,7 +3742,7 @@ namespace UnturnedGodot
             // and to the LOS/bullet rays -- parity with SP. It is still repositioned per render frame (a StaticBody3D
             // teleport), so a moving remote car BLOCKS a standing player rather than shoving them; that is the
             // remaining gap, not this one.
-            var focusBody = new StaticBody3D { CollisionLayer = (1u << 0) | (1u << 5), CollisionMask = 0 };
+            var focusBody = new StaticBody3D { CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };
             focusBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             p.AddChild(focusBody);
             return p;
