@@ -3212,7 +3212,7 @@ namespace UnturnedGodot
             HeliThrust = 12.9f, HeliPitchTorque = 1.12f, HeliRollTorque = 1.32f, HeliYawTorque = 1.03f, HeliLevel = 0f,
             HeliClimbMax = 18f, HeliFallMax = 40f,
             RotorRadius = 5.57f, TailRotorRadius = 1.28f,        // the mesh's own spans -- no scaling for this one
-            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(0.55f, 3.57f, 6.68f),   // prefab local positions, Z negated. Tail hub X was -0.45: the post is on the STARBOARD side (measured +0.55), so the hub sat in empty air off the port boom -- see the note on _hind
+            RotorHub = new Vector3(0f, 3.01f, -0.25f), TailRotorHub = new Vector3(-0.55f, 3.57f, 6.68f),   // prefab local positions, Z negated. Tail hub X was -0.45: the post is on the STARBOARD side (measured +0.55), so the hub sat in empty air off the port boom -- see the note on _hind
             HeliBodyMeshes = new[] { "huey_body.txt", "huey_body_1.txt" },
             Turrets = HueyDoorGuns(),   // door gunners, port + starboard
             Parts = HeliParts("huey"),   // same three as the rest of the fleet, despite this spec predating HeliBase
