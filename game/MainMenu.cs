@@ -591,6 +591,7 @@ namespace UnturnedGodot
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
             if (_settingsPanel != null) _settingsPanel.Visible = false;
+            if (_graphicsPanel != null) _graphicsPanel.Visible = false;   // was missing: Back (BackToDashboard -> HideAllPanels) left the Graphics panel up over the dashboard (strawberry 2026-09-04)
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_serversPanel != null) _serversPanel.Visible = false;
             if (_survivorsPanel != null) _survivorsPanel.Visible = false;
