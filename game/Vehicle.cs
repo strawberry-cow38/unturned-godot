@@ -1725,7 +1725,8 @@ namespace UnturnedGodot
             public Vector3 DoorZoneMin, DoorZoneMax;   // BI-FOLD DOOR (bus): the body triangles inside this box become the door; split at DoorSplitZ into two leaves
             public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // hinge A on the panel's INNER face at the front jamb; (fold 0 = 90 degrees)
             public float DoorHingeBX;   // hinge B (mullion) X: the panel's OUTER face (+ a hair), so leaf B folds back beside leaf A instead of through it   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
-            public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
+            public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B
+            public Vector3 DoorFloorCutMin, DoorFloorCutMax; public float DoorPocketY;   // cabin floor box cut out where the leaves swing, replaced by a lowered pocket floor at DoorPocketY + risers   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
@@ -2527,7 +2528,10 @@ namespace UnturnedGodot
             // inside the front-right doorway (X 1.293..1.418, Z -3.35..-2.15, Y -0.23..1.97, measured off bus_body.txt), two windows
             // split by the mullion at Z -2.75. Leaf A hinges at the front jamb, leaf B at the mullion; both windows ride their leaf.
             DoorZoneMin = new Vector3(1.28f, -0.25f, -3.36f), DoorZoneMax = new Vector3(1.43f, 1.99f, -2.14f),
-            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",   // 200 L tank (metric 1u=1mL; realistic bus)
+            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
+            // the door bottom (-0.23) sits 35 cm under the cabin floor (+0.125): the floor is cut where the leaves swing (the hinge's
+            // 0.6 m quarter-circle + the strip leaf B sweeps along the wall) and a pocket floor at the step-well level takes its place
+            DoorFloorCutMin = new Vector3(0.68f, 0.05f, -3.41f), DoorFloorCutMax = new Vector3(1.235f, 0.20f, -2.15f), DoorPocketY = -0.365f,   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -4119,8 +4123,20 @@ namespace UnturnedGodot
         /// The two window panes ride their leaves. Opens on enter/exit (CycleDoor) and folds shut after a hold.</summary>
         static void BuildBiFoldDoor(Vehicle v, Spec s, ArrayMesh doorMesh, Material bodyMat)
         {
-            var (leafA, leafB) = ClipMeshAtZ(doorMesh, s.DoorSplitZ);
-            if (leafA == null) { leafA = doorMesh; leafB = null; }   // nothing on the front side of the split -> one leaf
+            // Two leaves out of one panel: cut at the mullion. CLOSE THE CUT (master: "close up the open ends on the mesh, that
+            // cutting left"): the panel is a hollow box, so the cut opens both leaves -- cap each with the convex hull of the
+            // cut loop, coloured like the panel's inner face (one palette cell).
+            var door = MeshCut.Read(doorMesh);
+            var cut = new System.Collections.Generic.List<MeshCut.V>();
+            var (setA, setB) = MeshCut.Split(door, 2, s.DoorSplitZ, cut);
+            bool two = setA.Tris.Count > 0 && setB.Tris.Count > 0;
+            if (two && cut.Count >= 3)
+            {
+                var inner = cut[0]; foreach (var c in cut) if (c.P.X < inner.P.X) inner = c;
+                MeshCut.CapHull(setA, cut, 2, Vector3.Back, inner.T, inner.C);      // leaf A's cut face looks +Z (at B)
+                MeshCut.CapHull(setB, cut, 2, Vector3.Forward, inner.T, inner.C);   // leaf B's looks -Z
+            }
+            ArrayMesh leafA = two ? MeshCut.Commit(setA) : doorMesh, leafB = two ? MeshCut.Commit(setB) : null;
             v._doorFoldDeg = s.DoorFoldDeg > 0f ? s.DoorFoldDeg : 90f;
             v._doorPivotA = new Node3D { Name = "DoorHingeA", Position = new Vector3(s.DoorHingeX, 0f, s.DoorHingeZ) };
             v._doorPivotA.AddChild(new MeshInstance3D { Name = "DoorLeafA", Mesh = leafA, MaterialOverride = bodyMat, Position = -v._doorPivotA.Position });
@@ -4145,6 +4161,26 @@ namespace UnturnedGodot
                 pivot.AddChild(g);
                 g.Position = bodyOffset;
             }
+            // FLOOR POCKET (master: "clip out a chunk of the floor in the bus, theres a step up that the door clips with"): the
+            // leaves' bottom is well under the cabin floor, so cut the floor where they swing and put a lowered floor at the
+            // step-well level there with risers on its three inner sides -- the step well just gets bigger.
+            if (s.DoorFloorCutMin != s.DoorFloorCutMax && v._bodyMesh != null)
+            {
+                var body = MeshCut.Read(v._bodyMesh.Mesh);
+                var dropped = new System.Collections.Generic.List<MeshCut.V>();
+                var kept = MeshCut.SubtractBox(body, new Aabb(s.DoorFloorCutMin, s.DoorFloorCutMax - s.DoorFloorCutMin), dropped);
+                if (dropped.Count > 0)
+                {
+                    var f = dropped[0];   // the floor face's UV/colour (its palette cell) for the pocket
+                    float x0 = s.DoorFloorCutMin.X, x1 = s.DoorFloorCutMax.X, z0 = s.DoorFloorCutMin.Z, z1 = s.DoorFloorCutMax.Z, yF = f.P.Y, yP = s.DoorPocketY;
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yP, z1), new Vector3(x0, yP, z1), Vector3.Up, f.T, f.C);        // pocket floor
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x0, yP, z1), new Vector3(x0, yF, z1), new Vector3(x0, yF, z0), Vector3.Right, f.T, f.C);     // inner riser (looks into the pocket)
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z1), new Vector3(x1, yP, z1), new Vector3(x1, yF, z1), new Vector3(x0, yF, z1), Vector3.Forward, f.T, f.C);   // rear riser
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yF, z0), new Vector3(x0, yF, z0), Vector3.Back, f.T, f.C);      // front riser
+                    var nb = MeshCut.Commit(kept);
+                    if (nb != null) v._bodyMesh.Mesh = nb;
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") { v._doorOpenWanted = true; v._doorHold = 1e9f; }   // harness: hold it open for a render
         }
 
@@ -4165,68 +4201,6 @@ namespace UnturnedGodot
             float e = _doorT < 0.5f ? 2f * _doorT * _doorT : 1f - Mathf.Pow(-2f * _doorT + 2f, 2f) / 2f;   // ease in-out
             _doorPivotA.RotationDegrees = new Vector3(0f, -_doorFoldDeg * e, 0f);            // leaf A swings INTO the bus (its free edge goes -X)
             if (_doorPivotB != null) _doorPivotB.RotationDegrees = new Vector3(0f, 2f * _doorFoldDeg * e, 0f);   // leaf B folds fully back beside A (hinge B is a hair outside A's face: no z-fight)
-        }
-
-        /// <summary>Cut a mesh along the plane z = zc into the part below (z <= zc) and above, CLIPPING the triangles
-        /// that straddle it (Sutherland-Hodgman per triangle) so a panel modelled as one big quad still splits cleanly.
-        /// Normals, UVs and colours are interpolated across the cut; tangents are dropped.</summary>
-        static (ArrayMesh below, ArrayMesh above) ClipMeshAtZ(Mesh src, float zc)
-        {
-            if (src == null || src.GetSurfaceCount() == 0) return (null, null);
-            var arrays = src.SurfaceGetArrays(0);
-            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            if (verts.Length < 3) return (null, null);
-            var nv = arrays[(int)Mesh.ArrayType.Normal]; var nrm = nv.VariantType != Variant.Type.Nil ? nv.AsVector3Array() : null;
-            var uvv = arrays[(int)Mesh.ArrayType.TexUV]; var uv = uvv.VariantType != Variant.Type.Nil ? uvv.AsVector2Array() : null;
-            var cv = arrays[(int)Mesh.ArrayType.Color]; var col = cv.VariantType != Variant.Type.Nil ? cv.AsColorArray() : null;
-            if (nrm != null && nrm.Length != verts.Length) nrm = null;
-            if (uv != null && uv.Length != verts.Length) uv = null;
-            if (col != null && col.Length != verts.Length) col = null;
-            var idxVar = arrays[(int)Mesh.ArrayType.Index];
-            int[] idx;
-            if (idxVar.VariantType != Variant.Type.Nil) idx = idxVar.AsInt32Array();
-            else { idx = new int[verts.Length]; for (int i = 0; i < idx.Length; i++) idx[i] = i; }
-
-            var stA = new SurfaceTool(); stA.Begin(Mesh.PrimitiveType.Triangles);
-            var stB = new SurfaceTool(); stB.Begin(Mesh.PrimitiveType.Triangles);
-            int nA = 0, nB = 0;
-            var poly = new System.Collections.Generic.List<(Vector3 p, Vector3 n, Vector2 t, Color c)>(5);
-            for (int t = 0; t + 2 < idx.Length; t += 3)
-            {
-                for (int side = 0; side < 2; side++)
-                {
-                    bool below = side == 0;
-                    poly.Clear();
-                    for (int k = 0; k < 3; k++)
-                    {
-                        int ia = idx[t + k], ib = idx[t + (k + 1) % 3];
-                        var a = (p: verts[ia], n: nrm != null ? nrm[ia] : Vector3.Up, t: uv != null ? uv[ia] : Vector2.Zero, c: col != null ? col[ia] : Colors.White);
-                        var b = (p: verts[ib], n: nrm != null ? nrm[ib] : Vector3.Up, t: uv != null ? uv[ib] : Vector2.Zero, c: col != null ? col[ib] : Colors.White);
-                        bool ina = below ? a.p.Z <= zc : a.p.Z >= zc, inb = below ? b.p.Z <= zc : b.p.Z >= zc;
-                        if (ina) poly.Add(a);
-                        if (ina != inb)
-                        {
-                            float f = Mathf.Clamp((zc - a.p.Z) / (b.p.Z - a.p.Z), 0f, 1f);
-                            poly.Add((a.p.Lerp(b.p, f), a.n.Lerp(b.n, f).Normalized(), a.t.Lerp(b.t, f), a.c.Lerp(b.c, f)));
-                        }
-                    }
-                    if (poly.Count < 3) continue;
-                    var st = below ? stA : stB;
-                    for (int k = 1; k + 1 < poly.Count; k++)   // fan from the first vertex keeps the source winding
-                    {
-                        foreach (var q in new[] { poly[0], poly[k], poly[k + 1] })
-                        {
-                            if (nrm != null) st.SetNormal(q.n);
-                            if (uv != null) st.SetUV(q.t);
-                            if (col != null) st.SetColor(q.c);
-                            st.AddVertex(q.p);
-                        }
-                        if (below) nA += 3; else nB += 3;
-                    }
-                }
-            }
-            if (nrm == null) { if (nA > 0) stA.GenerateNormals(); if (nB > 0) stB.GenerateNormals(); }
-            return (nA > 0 ? stA.Commit() : null, nB > 0 ? stB.Commit() : null);
         }
 
         static (ArrayMesh a, ArrayMesh b) SplitMeshBy(Mesh src, System.Func<Vector3, Vector3, Vector3, bool> intoA)
