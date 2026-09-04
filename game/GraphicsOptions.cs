@@ -110,7 +110,7 @@ namespace UnturnedGodot
             env.GlowEnabled = Bloom;
             env.SsrEnabled = ScreenSpaceReflections;
             env.VolumetricFogEnabled = SunShafts;
-            if (SunShafts && env.VolumetricFogDensity <= 0f) env.VolumetricFogDensity = 0.004f;   // seed only; DayNightCycle drives the density by time of day (night thick, noon thin)
+            // density: Godot's default 0.05 is the night key; DayNightCycle drives it by sun elevation (night 0.05, horizon 0.010, noon 0.003)
         }
         public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
         public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }

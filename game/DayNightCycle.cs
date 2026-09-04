@@ -460,9 +460,12 @@ void sky() {
                 if (Env.VolumetricFogEnabled)
                 {
                     float elevation = -Mathf.Cos(Time * Mathf.Tau) * 90f;   // +90 overhead at noon, -90 at midnight (the sun block's own, out of scope here)
-                    float vol = elevation <= -12f ? 0.010f                                                        // NIGHT: as it was
-                              : elevation <= 0f ? Mathf.Lerp(0.010f, 0.005f, (elevation + 12f) / 12f)             // last twilight before the sun clears the horizon
-                              : Mathf.Lerp(0.005f, 0.002f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.005 -> 0.002 from 60 deg
+                    // The night key is 0.05 = Godot's Environment DEFAULT: the "Sun shafts" row only seeded 0.01 when the density
+                    // was <= 0, which it never was, so the SUPER-foggy night master loved was the untouched engine default,
+                    // not 0.01 ("im on high. the vm fog is there but its nowhere near as intense as it was").
+                    float vol = elevation <= -12f ? 0.05f                                                         // NIGHT: the engine default, as it was
+                              : elevation <= 0f ? Mathf.Lerp(0.05f, 0.010f, (elevation + 12f) / 12f)              // last twilight before the sun clears the horizon
+                              : Mathf.Lerp(0.010f, 0.003f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.010 -> 0.003 from 60 deg
                     Env.VolumetricFogDensity = vol * (Overcast ? 1.5f : 1f);
                     Env.VolumetricFogSkyAffect = elevation <= -12f ? 1f : Mathf.Lerp(1f, 0.25f, Mathf.Clamp((elevation + 12f) / 72f, 0f, 1f));   // noon sky stays blue; night = default 1.0
                 }
