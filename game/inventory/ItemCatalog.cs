@@ -90,6 +90,11 @@ namespace SDG.Unturned
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
             Add(1240, "Detonator",        2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The remote trigger for your charges. Equip it and LEFT-CLICK to detonate every Remote Explosive you've planted, at once. (Held model is a placeholder coil for now.)");
+            // Charcoal: the barbecue's only fuel. A NEW item -- retail has no charcoal and no coal (the only
+            // "coal" in the catalog is Coalition uniforms), so a BBQ that "can only take charcoal" needed one
+            // to exist before it could take anything. See Cooking.CharcoalId for the known source gap.
+            Add(9150, "Charcoal", 1, 1, EItemType.SUPPLY, EItemRarity.COMMON, 0, 0,
+                "A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.");
             Add(386,  "Barbed Wire",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Coils of barbed wire. Anything that walks into it gets torn up (80 to zombies, 40 to players); it wears ~5 HP per hit and breaks after ~14. Tougher + nastier than wooden spikes, and unrepairable.");
             WireExtractedGuns();
             WireExtractedMelee();

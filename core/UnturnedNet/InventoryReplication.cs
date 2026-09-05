@@ -649,6 +649,19 @@ namespace UnturnedGodot.Net
             // next drag. One byte, unconditional: gating it behind a bit would cost 9 bits for magazines to
             // save 8 for everything else, which is the wrong trade at one byte.
             w.WriteUInt8(Assets.MagRoundToId(j.item?.magLoadedRound));
+            // COOKING. Item.cooked / Item.cookStyle -- the fourth and fifth fields to be added to Item, and the
+            // first ones to join this schema in the SAME change that adds them rather than three features later.
+            // The two blocks above are the record of what happens otherwise: an owner echo rebuilds the jar
+            // without them, so a roast taken out of the oven and dragged one cell would come back raw and
+            // unlabelled, exactly as a fitted scope came back missing and a part-loaded magazine came back
+            // unlocked.
+            //
+            // GATED behind one bit, unlike magLoadedRound's unconditional byte, and the trade genuinely differs:
+            // a cartridge lock is one byte against magazines-only, while this is TWO bytes against a set that is
+            // even smaller (cooked FOOD, not all food). One bit for every bandage and bullet, 17 for a steak.
+            bool cook = j.item != null && (j.item.cooked != 0 || j.item.cookStyle != 0);
+            w.WriteBit(cook);
+            if (cook) { w.WriteUInt8(j.item.cooked); w.WriteUInt8(j.item.cookStyle); }
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -682,11 +695,15 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
             if (!r.ReadBit(out bool autoDrink)) return false;                    // autodrink toggle
             if (!r.ReadUInt8(out byte magRoundId)) return false;                 // magazine cartridge lock
+            byte cooked = 0, cookStyle = 0;                                      // cooking -- symmetric with WriteJar's `cook` bit
+            if (!r.ReadBit(out bool cook)) return false;
+            if (cook) { if (!r.ReadUInt8(out cooked)) return false; if (!r.ReadUInt8(out cookStyle)) return false; }
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
                                                    fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink,
                                                    gunSightId = sight, gunBarrelId = barrel, gunGripId = grip, gunTacticalId = tactical,
                                                    gunChambered = chambered, gunAttachSeeded = attachSeeded,
-                                                   magLoadedRound = Assets.MagRoundFromId(magRoundId) };
+                                                   magLoadedRound = Assets.MagRoundFromId(magRoundId),
+                                                   cooked = cooked, cookStyle = cookStyle };
             // The chambered round's AMMO TYPE is re-derived from the loaded magazine rather than sent: it is a
             // string, this stack has no string primitive, and the mag id it comes from is already on the wire.
             // One case loses fidelity by doing it this way and it is worth naming: after a TACTICAL swap the
