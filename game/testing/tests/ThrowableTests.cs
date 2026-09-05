@@ -189,11 +189,17 @@ namespace UnturnedGodot.Testing
             p.EquipItemAsset(Assets.find(259), p.Inventory.items[pgF].getItem(p.Inventory.items[pgF].getIndex(fx, fy))?.item);
             yield return Ticks(2);
             T.Check($"a flare equips ({p.HeldThrowableDef?.Name})", p.HeldThrowableDef?.Kind == EThrowableKind.Flare);
-            yield return Ticks(60);   // clear the throw cooldown from the smokes
+            yield return Ticks(90);   // clear the previous swing
             p.ThrowHeld();
-            yield return Ticks(3);    // FAR short of the 3 s fuse: a burning flare must not be waiting on one
+            // 55 ticks: PAST the release (60 % of the 1.63 s TU_0 = 0.98 s = 49 ticks) and FAR short of the fuse,
+            // which does not even start until the release and then runs 150 more. So finding a burning flare here
+            // still proves it lit on the THROW rather than on the fuse -- a fuse-lit flare shows nothing until
+            // tick ~199. This wait was Ticks(3), correct when the throw left the hand on the click; the retail
+            // 60 % release moved the event and the assertion had to move with it. Four sibling waits were updated
+            // for the new timing and this one was missed, which is what made main red rather than any feature bug.
+            yield return Ticks(55);
             var burns = Descend<FlareBurn>(World).ToList();
-            T.Check($"the flare is lit the moment it is thrown, not 3 s later ({burns.Count} burning)", burns.Count > 0);
+            T.Check($"the flare is lit as it leaves the hand, not 3 s later on a fuse ({burns.Count} burning)", burns.Count > 0);
 
             if (GodotObject.IsInstanceValid(dropped)) dropped.QueueFree();
             yield return Ticks(1);
