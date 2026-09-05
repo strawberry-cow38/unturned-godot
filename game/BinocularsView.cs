@@ -60,6 +60,7 @@ namespace UnturnedGodot
             var sz = new Vector2I(Mathf.Max(16, Mathf.RoundToInt(h * win.X / Mathf.Max(1f, win.Y))), h);
             if (sz == _size) return;
             _size = sz; _world.Size = sz;
+            (_overlay?.Material as ShaderMaterial)?.SetShaderParameter("screen_aspect", win.X / Mathf.Max(1f, win.Y));   // keeps the retail overlay's holes round on non-16:9 screens
         }
 
         public override void _Process(double delta)
