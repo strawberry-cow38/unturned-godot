@@ -12,13 +12,16 @@ uniform float flag_len = 4.0;    // cloth flying length (local +Y) -> the amplit
 void vertex() {
     float y = VERTEX.y;                                       // flying distance from the pole (0 .. flag_len)
     float f = clamp(y / flag_len, 0.0, 1.0);                  // 0 at the pole (fixed), 1 at the free edge (loosest)
-    // DROOP at very low wind (master): the free edge sags DOWN the pole (base -Z) + curls IN toward it (less +Y),
-    // ramping in only below a light breeze so a flag with any real wind still flies out horizontally.
-    float droop = 1.0 - smoothstep(0.2, 0.55, wind);   // master: raised so a flag actually droops in the common calm dips, not only dead-still
-    VERTEX.z -= droop * y * 0.9;                              // sag downward (base -Z = down the pole after placement)
-    VERTEX.y -= droop * y * 0.6;                              // curl the cloth in toward the pole
+    // NO SAG (master 2026-09-05 "remove the sag effect on the windy flag shader"). The cloth used to fold down the
+    // pole and curl in toward it below a light breeze; the flag now flies from its own geometry at every wind speed.
+    //
+    // The calm factor STAYS, because it was doing two different jobs under one name. Bending the mesh was the sag
+    // and is gone; damping the RIPPLE so a still flag is not snapping in dead air is not sag, and removing it as
+    // well would have tripled the amplitude at wind 0 -- a feel change nobody asked for, arriving under the
+    // heading of a removal. Renamed to what it actually measures.
+    float calm = 1.0 - smoothstep(0.2, 0.55, wind);
     // RIPPLE: a travelling sine on the thin axis, fading with wind (a limp flag barely moves)
-    float amp = (0.06 + 0.55 * wind) * f * (1.0 - 0.7 * droop);
+    float amp = (0.06 + 0.55 * wind) * f * (1.0 - 0.7 * calm);
     float ph  = y * 2.4 - TIME * (2.0 + 4.0 * wind);          // wave crawls down the flag, faster in stronger wind
     float d = sin(ph) + 0.35 * sin(ph * 0.53 + VERTEX.z * 1.7);   // a 2nd mode + height variation -> non-uniform snap
     VERTEX.x += d * amp;
