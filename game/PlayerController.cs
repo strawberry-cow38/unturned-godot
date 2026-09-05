@@ -1811,7 +1811,7 @@ namespace UnturnedGodot
             else _salvageTimer = 0f;
             // Repeated tool: drive the continuous-use ANIM off the LMB edge -- Start_Swing (loops) on press, Stop_Swing on release (source startSwing/stopSwing)
             bool wantTorch = IsRepeatedMelee && lmb;
-            if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(); _torchAnimOn = true; }
+            if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(sound: !IsRepeatedDamage); _torchAnimOn = true; }   // the chainsaw has its own sound (UpdateChainsaw); the torch loop is the blowtorch's
             else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
@@ -1837,9 +1837,37 @@ namespace UnturnedGodot
         public void DebugTickChainsaw(float dt, bool lmb) => UpdateChainsaw(dt, lmb);
         public Vector3 DebugSawShake => _lastSawShake;
 
+        // SOUND. Retail ships ONE chainsaw clip (items/melee/chainsaw/use, 0.76 s) and no AudioSource: while swinging,
+        // UseableMelee re-triggers `use` every 0.1 s at half volume, and the overlapping bursts are what a running saw
+        // sounds like there. Same here on the cut. While the saw is merely HELD it is still running (the idle shake
+        // above), so the same clip idles underneath as a low, slowed native loop -- retail's idle is silent; this is the
+        // one line to drop if it grates. Off disk (LoadWavLooped / GameAudio), never res:// -- content/ wavs are unimported.
+        AudioStreamPlayer3D _sawIdle; AudioStream _sawUse; float _sawSndT;
+        const float SawUseRetrigger = 0.1f;   // source UseableMelee: Time.realtimeSinceStartup - startedSwing > 0.1
         void UpdateChainsaw(float delta, bool lmb)
         {
-            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; return; }
+            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; _sawSndT = 0f; if (_sawIdle != null && _sawIdle.Playing) _sawIdle.Stop(); return; }
+            if (_sawIdle == null)
+            {
+                var idle = Viewmodel.LoadWavLooped("res://content/audio/items/melee_chainsaw_use.wav");
+                if (idle != null) { _sawIdle = new AudioStreamPlayer3D { Stream = idle, VolumeDb = -14f, PitchScale = 0.8f, UnitSize = 5f, MaxDistance = 35f, Position = new Vector3(0f, 1.2f, 0f) }; AddChild(_sawIdle); }
+            }
+            if (_sawIdle != null)
+            {
+                if (!_sawIdle.Playing) _sawIdle.Play();
+                _sawIdle.VolumeDb = lmb ? -20f : -14f;   // ducks under the cutting bursts
+            }
+            if (lmb)
+            {
+                _sawSndT -= delta;
+                if (_sawSndT <= 0f)
+                {
+                    _sawSndT = SawUseRetrigger;
+                    _sawUse ??= GameAudio.Clip("items", "melee_chainsaw_use");
+                    if (_sawUse != null) GameAudio.PlayAt(GetTree()?.CurrentScene ?? this, _sawUse, GlobalPosition + Vector3.Up * 1.2f, -6f, 6f, 40f, 1f);   // retail: use @ 0.5 volume every 0.1 s
+                }
+            }
+            else _sawSndT = 0f;
             // SHAKE. Deliberately outside the lmb branch: strawberry's "shakes while on (while held)" means the saw
             // is running whenever it is out, so the idle tremor is a property of holding it, not of attacking.
             var amp = lmb ? SawCutShake : SawIdleShake;

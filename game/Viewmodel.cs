@@ -813,10 +813,11 @@ namespace UnturnedGodot
                 _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
         }
         AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav, NATIVELY looped -> gapless) -- plays while the torch runs
-        public void StartTorch()
+        public void StartTorch(bool sound = true)   // sound: the BLOWTORCH loop -- a chainsaw brings its own (PlayerController.UpdateChainsaw)
         {
             if (!HasStartSwing) return;
             _arms.Play(_meleeCap + "_Start_Swing");
+            if (!sound) return;
             if (_torchSnd == null)
             {
                 _torchSnd = new AudioStreamPlayer { Stream = LoadWavLooped("res://content/blowtorch_use.wav"), VolumeDb = -5f };
@@ -1613,7 +1614,7 @@ namespace UnturnedGodot
 
         // Load a .wav as a NATIVELY-LOOPING AudioStreamWav (LoopMode.Forward) so a held loop (blowtorch) has NO gap
         // between repeats (the Finished->replay trick left an audible seam). Minimal RIFF parse: fmt + data chunks.
-        static AudioStream LoadWavLooped(string res)
+        public static AudioStream LoadWavLooped(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);
             if (!System.IO.File.Exists(p)) return null;
