@@ -16,7 +16,7 @@ namespace UnturnedGodot
         Fire, Aim, Reload, Firemode, Melee, Grenade, Interact, AttachMenu, ToggleFirstPerson, Flashlight,
         Inventory, Map, Craft, Skills, Console,
         Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
-        VehicleHandbrake,
+        VehicleHandbrake, VehicleDoor,
         BugReport,
     }
 
@@ -167,6 +167,7 @@ namespace UnturnedGodot
             [GameAction.Hotbar8] = new Bind(Key.Key8),
             [GameAction.Hotbar9] = new Bind(Key.Key9),
             [GameAction.VehicleHandbrake] = new Bind(Key.Space), // defaults to Space like Jump but its OWN action -- rebinding Jump must not strand the handbrake
+            [GameAction.VehicleDoor] = new Bind(Key.Ctrl),      // the bus's folding door, from the driver's seat (master 2026-09-05 "ctrl in the drivers seat should open/close it")
             [GameAction.BugReport] = new Bind(Key.Backslash),
         };
 
@@ -180,6 +181,7 @@ namespace UnturnedGodot
             [GameAction.Prone] = BindContext.OnFoot, [GameAction.LeanLeft] = BindContext.OnFoot,
             [GameAction.LeanRight] = BindContext.OnFoot,
             [GameAction.VehicleHandbrake] = BindContext.Driving,
+            [GameAction.VehicleDoor] = BindContext.Driving,
         };
 
         public static BindContext Context(GameAction a) => Contexts.TryGetValue(a, out var c) ? c : BindContext.Anywhere;

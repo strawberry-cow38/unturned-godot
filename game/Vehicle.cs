@@ -789,7 +789,7 @@ namespace UnturnedGodot
         public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
-        Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpenWanted; float _doorFoldDeg = 90f;   // bi-fold door (bus): fold 0..1, hold-open timer
+        Node3D _doorPivotA, _doorPivotB; float _doorT; bool _doorOpen; float _doorFoldDeg = 90f; AudioStreamPlayer3D _doorAudio;   // bi-fold door (bus): fold 0..1, wanted state, swing sound
         float _driveIdle = 999f;   // seconds since anything last called Drive() on this car. UNATTENDED is a fact about the present, not about how the car was spawned -- see the settle block
         float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
@@ -1279,7 +1279,7 @@ namespace UnturnedGodot
         // strawberry: "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f
         // gets you in at that seat. add volumes for the hood and trunk too". The car's overall hull is kept --
         // it still owns collision and damage; this is only about what the LOOK RAY resolves to.
-        public enum AccessKind { Door, Hood, Trunk }
+        public enum AccessKind { Door, Hood, Trunk, BiFold }   // BiFold: the bus's folding passenger door -- Interact toggles it
         public readonly record struct AccessZone(AccessKind Kind, int Seat, Vector3 Center, Vector3 Size);
         public AccessZone[] AccessZones = System.Array.Empty<AccessZone>();
         // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
@@ -1362,6 +1362,14 @@ namespace UnturnedGodot
                     zones.Add(new AccessZone(s.RearEngine ? AccessKind.Hood : AccessKind.Trunk, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
+            }
+            // THE BI-FOLD DOOR is its own target (master 2026-09-05 "interacting with the door should open/close it"): a box
+            // over the doorway, pushed a little outboard so a look from outside lands in it whether the leaves are shut
+            // (the ray stops on them) or open (the ray goes through into the cabin).
+            if (s.DoorZoneMin != s.DoorZoneMax)
+            {
+                var c = (s.DoorZoneMin + s.DoorZoneMax) * 0.5f; var sz = s.DoorZoneMax - s.DoorZoneMin;
+                zones.Add(new AccessZone(AccessKind.BiFold, -1, new Vector3(c.X + 0.15f, c.Y, c.Z), new Vector3(0.8f, sz.Y + 0.2f, sz.Z)));
             }
             return zones.ToArray();
         }
@@ -4128,7 +4136,7 @@ namespace UnturnedGodot
         /// <summary>Hang the door panel peeled out of the body as two leaves on two vertical hinges: leaf A on the front
         /// jamb, leaf B on the mullion between the two windows (a child of leaf A, so it folds back onto it like a
         /// jackknife). The meshes stay in BODY space and are offset back by their pivot, so at fold 0 nothing moves.
-        /// The two window panes ride their leaves. Opens on enter/exit (CycleDoor) and folds shut after a hold.</summary>
+        /// The two window panes ride their leaves. A persistent state: Interact on the door, or the driver's door key, toggles it.</summary>
         static void BuildBiFoldDoor(Vehicle v, Spec s, ArrayMesh doorMesh, Material bodyMat)
         {
             // Two leaves out of one panel: cut at the mullion. CLOSE THE CUT (master: "close up the open ends on the mesh, that
@@ -4169,6 +4177,24 @@ namespace UnturnedGodot
                     MeshCut.CapHull(leaf, cutBot, 1, Vector3.Down, inner.T, inner.C);
                 }
             }
+            // SEAM TONGUE (master: "a very slight gap between the doors when they are closed"): the two leaves are separate
+            // meshes under separate transforms, so their shared edge never lands on the same sub-pixel and the seam sparkles.
+            // Leaf A grows a 4 mm tongue past the cut, recessed 0.6 mm inside every face, in the faces' own colours: any
+            // crack along the seam now shows door, not daylight. Hidden while shut; a 4 mm nub on A's end while open.
+            if (two)
+            {
+                float xmin = float.MaxValue, xmax = float.MinValue, ymax = float.MinValue;
+                foreach (var tr in setA.Tris) foreach (var q in new[] { tr.A, tr.B, tr.C }) { xmin = Mathf.Min(xmin, q.P.X); xmax = Mathf.Max(xmax, q.P.X); ymax = Mathf.Max(ymax, q.P.Y); }
+                var outerV = cut[0]; foreach (var c in cut) if (c.P.X > outerV.P.X) outerV = c;
+                const float R = 0.0006f, L = 0.004f;
+                float x0 = xmin + R, x1 = xmax - R, y0 = (trim ? s.DoorTrimY : -1e9f) + R, y1 = ymax - R, z0 = s.DoorSplitZ - 0.002f, z1 = s.DoorSplitZ + L;
+                if (!trim) { float ymin = float.MaxValue; foreach (var tr in setA.Tris) foreach (var q in new[] { tr.A, tr.B, tr.C }) ymin = Mathf.Min(ymin, q.P.Y); y0 = ymin + R; }
+                MeshCut.Quad(setA, new Vector3(x1, y0, z0), new Vector3(x1, y0, z1), new Vector3(x1, y1, z1), new Vector3(x1, y1, z0), Vector3.Right, outerV.T, outerV.C);   // outer face
+                MeshCut.Quad(setA, new Vector3(x0, y0, z0), new Vector3(x0, y1, z0), new Vector3(x0, y1, z1), new Vector3(x0, y0, z1), Vector3.Left, inner.T, inner.C);     // inner face
+                MeshCut.Quad(setA, new Vector3(x0, y1, z0), new Vector3(x1, y1, z0), new Vector3(x1, y1, z1), new Vector3(x0, y1, z1), Vector3.Up, outerV.T, outerV.C);      // top
+                MeshCut.Quad(setA, new Vector3(x0, y0, z0), new Vector3(x0, y0, z1), new Vector3(x1, y0, z1), new Vector3(x1, y0, z0), Vector3.Down, outerV.T, outerV.C);    // bottom
+                MeshCut.Quad(setA, new Vector3(x0, y0, z1), new Vector3(x0, y1, z1), new Vector3(x1, y1, z1), new Vector3(x1, y0, z1), Vector3.Back, inner.T, inner.C);     // tip
+            }
             ArrayMesh leafA = two ? MeshCut.Commit(setA) : (trim ? MeshCut.Commit(door) : doorMesh), leafB = two ? MeshCut.Commit(setB) : null;
             v._doorFoldDeg = s.DoorFoldDeg > 0f ? s.DoorFoldDeg : 90f;
             v._doorPivotA = new Node3D { Name = "DoorHingeA", Position = new Vector3(s.DoorHingeX, 0f, s.DoorHingeZ) };
@@ -4183,6 +4209,25 @@ namespace UnturnedGodot
                 v._doorPivotA.AddChild(v._doorPivotB);
             }
             v.AddChild(v._doorPivotA);
+            // The leaves BLOCK bullets, zombies and cars (layer 5) but NOT players (no HitMeshBit: the player masks that,
+            // not 5) -- master 2026-09-05 "remove player collision on just the door, and JUST for players so you can
+            // actually walk inside". Each box rides its leaf, so a shut door stops a round and an open one does not.
+            foreach (var (leaf, pivot, bodyOff) in new[] { (leafA, v._doorPivotA, -v._doorPivotA.Position),
+                                                             (leafB, v._doorPivotB, leafB != null ? new Vector3(-(s.DoorHingeBX != 0f ? s.DoorHingeBX : s.DoorHingeX), 0f, -s.DoorSplitZ) : Vector3.Zero) })
+            {
+                if (leaf == null || pivot == null) continue;
+                var ab = leaf.GetAabb();
+                var body = new StaticBody3D { Name = "DoorHit", CollisionLayer = 1u << 5, CollisionMask = 0, Position = bodyOff + ab.GetCenter() };
+                body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ab.Size } });
+                pivot.AddChild(body);
+                v.AddCollisionExceptionWith(body);
+            }
+            var doorSnd = PlayerController.LoadWavOneShot("res://content/busdoor_open.wav", loop: false);   // CC0 (Jedo), picked by master; tinyclaw ripped it
+            if (doorSnd != null)
+            {
+                v._doorAudio = new AudioStreamPlayer3D { Stream = doorSnd, UnitSize = 6f, MaxDistance = 40f, VolumeDb = -2f, Position = (s.DoorZoneMin + s.DoorZoneMax) * 0.5f };
+                v.AddChild(v._doorAudio);
+            }
             // the windows in the door ride their leaf (they were built in body space under the vehicle: keep that offset)
             for (int i = 0; i < v._glassNodes.Count; i++)
             {
@@ -4193,6 +4238,7 @@ namespace UnturnedGodot
                 g.GetParent()?.RemoveChild(g);
                 pivot.AddChild(g);
                 g.Position = bodyOffset;
+                foreach (var ch in g.GetChildren()) if (ch is StaticBody3D gb) gb.CollisionLayer = 1u << 5;   // the door's panes: shootable, but players walk through (see DoorHit)
             }
             // FLOOR POCKET (master: "clip out a chunk of the floor in the bus, theres a step up that the door clips with"): the
             // leaves' bottom is well under the cabin floor, so cut the floor where they swing and put a lowered floor at the
@@ -4217,22 +4263,27 @@ namespace UnturnedGodot
                     if (nb != null) v._bodyMesh.Mesh = nb;
                 }
             }
-            if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") { v._doorOpenWanted = true; v._doorHold = 1e9f; }   // harness: hold it open for a render
+            if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") v._doorOpen = true;   // harness: open for a render
         }
 
-        /// <summary>Somebody got in or out: swing the door open, hold, fold shut.</summary>
-        public void CycleDoor()
-        {
-            if (_doorPivotA == null) return;
-            _doorOpenWanted = true; _doorHold = 1.6f;
-        }
+        /// <summary>This vehicle has the folding passenger door (the bus).</summary>
+        public bool HasBiFoldDoor => _doorPivotA != null;
+        /// <summary>The door's WANTED state: true from the moment it is told to open (it may still be swinging). The
+        /// boarding/leaving gates read this (master 2026-09-05 "in order to get into/out of any seat the door must be open").</summary>
+        public bool DoorOpen => _doorOpen;
         public float DoorFold => _doorT;
+        public void ToggleDoor() => SetDoorOpen(!_doorOpen);
+        public void SetDoorOpen(bool open)
+        {
+            if (_doorPivotA == null || _doorOpen == open) return;
+            _doorOpen = open;
+            if (_doorAudio != null && IsInstanceValid(_doorAudio)) _doorAudio.Play();   // same clip both ways (the leaves fold the same, just backwards)
+        }
 
         void UpdateDoor(float dt)
         {
-            if (_doorOpenWanted) { _doorHold -= dt; if (_doorHold <= 0f) _doorOpenWanted = false; }
-            float target = _doorOpenWanted ? 1f : 0f;
-            if (Mathf.Abs(_doorT - target) < 1e-4f) return;
+            float target = _doorOpen ? 1f : 0f;
+            if (_doorT == target) return;
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
             float e = _doorT < 0.5f ? 2f * _doorT * _doorT : 1f - Mathf.Pow(-2f * _doorT + 2f, 2f) / 2f;   // ease in-out
             _doorPivotA.RotationDegrees = new Vector3(0f, -_doorFoldDeg * e, 0f);            // leaf A swings INTO the bus (its free edge goes -X)
@@ -5501,7 +5552,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // shape is immutable and refcounted, so every car of a spec can share one.
                     if (!_triCache.TryGetValue(s.Body, out var tri))
                     {
-                        tri = bodyMesh.CreateTrimeshShape();
+                        tri = (v._bodyMesh?.Mesh ?? bodyMesh).CreateTrimeshShape();   // the RENDERED body (the bus's floor pocket is in it) so the player walks the same floor they see
                         // BackfaceCollision, because these bodies are NOT watertight and their winding is not
                         // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces.
                         tri.BackfaceCollision = true;

@@ -214,7 +214,6 @@ namespace UnturnedGodot
                     {
                         t.AppliedRemoteDriver = driver;
                         v.NetDriverId = driver;
-                        v.CycleDoor();   // a remote driver boarding swings the bus door too
                         // NO EngineOn = true here any more (strawberry_cow 2026-08-24). The engine stopped being
                         // a side effect of occupancy in SP, and mirroring the OLD rule here would leave the same
                         // key meaning two different things depending on whether you were hosting. The real state
@@ -266,7 +265,6 @@ namespace UnturnedGodot
                 {
                     t.AppliedRemoteDriver = 0;
                     v.NetDriverId = 0;
-                    v.CycleDoor();
                     v.ReleaseControls();   // same as the SP exit: the held axes go with the driver, the rpm falls to idle
                     // Engine deliberately UNTOUCHED on exit: it stays as the driver left it, same as SP. Park()
                     // below still holds the car so it cannot roll away -- that was always the brake's job, not

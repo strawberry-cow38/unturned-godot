@@ -3841,6 +3841,7 @@ namespace UnturnedGodot
         {
             if (NetExitVehicle == null) return false;
             if (_riding == null && !DrivingPredicted) return false;
+            if (DrivingPredicted && _driving != null && _driving.HasBiFoldDoor && !_driving.DoorOpen) { HUD.Alert("Open the door first"); return true; }   // same gate as the SP exit
             NetExitVehicle();
             return true;
         }
@@ -5598,6 +5599,10 @@ namespace UnturnedGodot
             // thrown away while the key was down. Review 2026-08-16.
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
+            else if (_driving != null && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
+            {
+                if (_seatIndex == 0 && _driving.HasBiFoldDoor) _driving.ToggleDoor();   // the driver works the bus door (master: Ctrl in the driver's seat)
+            }
             else if (Keybinds.JustPressed(GameAction.Firemode, @event))
             {
                 // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
@@ -5634,6 +5639,7 @@ namespace UnturnedGodot
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
+                else if (_driving != null && !DrivingPredicted && _driving.HasBiFoldDoor && !_driving.DoorOpen) HUD.Alert(_seatIndex == 0 ? $"Open the door first ([{Keybinds.Get(GameAction.VehicleDoor).Label}])" : "The door is closed");   // the bus: no leaving through a shut door (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (_ridingCrane != null) ExitCrane();                     // hop out of a boarded crane
@@ -5644,8 +5650,10 @@ namespace UnturnedGodot
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer)
                 {
                     // WHAT you are aiming at now decides what F does, instead of one action for the whole car.
-                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
+                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.BiFold) _focusVehicle.ToggleDoor();   // the bus door: open / close it (master)
+                    else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
                     else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Hood) OpenVehicleHood(_focusVehicle);
+                    else if (_focusVehicle.HasBiFoldDoor && !_focusVehicle.DoorOpen) HUD.Alert("The door is closed");   // no seat through a shut bus door (master)
                     else EnterVehicle(_focusVehicle, _focusAccessValid ? _focusAccess.Seat : -1);   // a door -> THAT seat; no zone -> the old first-free behaviour
                 }
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
@@ -7488,9 +7496,11 @@ namespace UnturnedGodot
             {
                 case Vehicle.AccessKind.Trunk: return $"[{key}] open trunk";
                 case Vehicle.AccessKind.Hood:  return $"[{key}] open hood";
+                case Vehicle.AccessKind.BiFold: return v.DoorOpen ? $"[{key}] close door" : $"[{key}] open door";
                 default:
                     int seat = _focusAccess.Seat;
                     string who = seat == 0 ? "driver" : $"seat {seat + 1}";
+                    if (v.HasBiFoldDoor && !v.DoorOpen) return "door closed";
                     return v.SeatFree(seat) ? $"[{key}] enter ({who})" : $"{who} occupied";
             }
         }
@@ -7516,7 +7526,6 @@ namespace UnturnedGodot
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
-            v.CycleDoor();   // the bus door swings for whoever boards
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
             // car you climb into is however you left it. N / throttle / the speedo click are the ignition.
@@ -7541,7 +7550,7 @@ namespace UnturnedGodot
             if (!v.SeatFree(want)) return false;
 
             v.OccupiedSeats.Remove(_seatIndex);
-            v.OccupiedSeats.Add(want); v.CycleDoor();
+            v.OccupiedSeats.Add(want);
             bool wasDriver = _seatIndex == 0;
             _seatIndex = want;
 
@@ -7569,7 +7578,6 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
-            v?.CycleDoor();
             if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
             // Only the driver leaving shuts it down. A passenger hopping out of a moving car must not kill the
             // engine and park it underneath the person still driving.
@@ -7593,7 +7601,6 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
-            v?.CycleDoor();
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             GlobalPosition = exitPos;
