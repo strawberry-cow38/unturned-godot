@@ -2171,7 +2171,7 @@ namespace UnturnedGodot
             // ...and SHOT OUT, not just switched off (strawberry 2026-09-03: "destroy headlights, tail lights, through the
             // shooting-them-out path when a car explodes") -- the same BreakLamp the bullet path uses, so the wreck's
             // lenses carry the smashed look and nothing can re-light them.
-            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li);
+            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li, fx: false);   // the blast has its own effects; no four glass bursts on top
             // ...but killing the lamps here is NOT enough on its own, and that was the bug: an alarmed car's
             // blip loop below re-lights them every 0.5s and honks, on a burning wreck. Worse, once the hulk
             // settles it becomes a _husk and the per-frame sim early-returns for good -- so whatever the blip
@@ -3854,11 +3854,23 @@ namespace UnturnedGodot
             if (GodotObject.IsInstanceValid(b)) b.CollisionLayer = solid ? HitMeshBit | (1u << 5) : 0u;
         }
 
-        public bool BreakGlass(int i)
+        public bool BreakGlass(int i, bool fx = true)
         {
             if ((uint)i >= (uint)_glassNodes.Count || _glassBroken[i]) return false;
             _glassBroken[i] = true;
-            if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = false;
+            if (GodotObject.IsInstanceValid(_glassNodes[i]))
+            {
+                var g = _glassNodes[i];
+                if (fx)   // the same shard burst + crash a window pane makes (master 2026-09-05)
+                {
+                    var sz = g.GetAabb().Size; var c = (g.MaterialOverride as StandardMaterial3D)?.AlbedoColor ?? new Color(0.62f, 0.73f, 0.78f);
+                    var centre = GlassPaneCenter(i); var scene = GetTree()?.CurrentScene;
+                    GlassPane.SpawnShards(scene, centre, GlassPaneNormal(i), new Vector3(Mathf.Max(sz.X * 0.5f, 0.2f), Mathf.Max(sz.Y * 0.5f, 0.2f), Mathf.Max(sz.Z * 0.5f, 0.2f)),
+                                          new Color(Mathf.Lerp(c.R, 1f, 0.35f), Mathf.Lerp(c.G, 1f, 0.35f), Mathf.Lerp(c.B, 1f, 0.35f), 0.5f), 1.4f, 0.8f);   // more chips than a building pane, a touch smaller
+                    GlassPane.PlayBreakSound(scene, centre);
+                }
+                g.Visible = false;
+            }
             SetPaneSolid(i, false);   // a broken window is a hole you can shoot and climb through, not an invisible pane
             return true;
         }
@@ -3906,10 +3918,21 @@ namespace UnturnedGodot
         }
 
         /// <summary>Shoot a lamp out. No self-heal -- it stays dead until RepairLamp, same contract as glass.</summary>
-        public bool BreakLamp(int i)
+        public bool BreakLamp(int i, bool fx = true)
         {
             if ((uint)i >= (uint)_lampNodes.Count || _lampBroken[i]) return false;
             _lampBroken[i] = true;
+            if (fx && GodotObject.IsInstanceValid(_lampNodes[i]))   // a lens is glass too: a small burst in the lamp's own colour, out of its face (master 2026-09-05)
+            {
+                var n = _lampNodes[i]; var ab = n.GetAabb();
+                var centre = n.GlobalTransform * ab.GetCenter();
+                var outward = GlobalTransform.Basis * (_lampLabels[i].StartsWith("tail") ? Vector3.Back : Vector3.Forward);   // headlights face -Z, taillights +Z
+                var c = (n.MaterialOverride as StandardMaterial3D)?.AlbedoColor ?? new Color(0.94f, 0.89f, 0.73f);
+                var sz = ab.Size * 0.5f;
+                GlassPane.SpawnShards(GetTree()?.CurrentScene, centre, outward.Normalized(), new Vector3(Mathf.Max(sz.X, 0.06f), Mathf.Max(sz.Y, 0.06f), Mathf.Max(sz.Z, 0.06f)),
+                                      new Color(c.R, c.G, c.B, 0.5f), 1.5f, 0.6f);   // a fistful of small chips in the lamp's colour
+                GlassPane.PlayBreakSound(GetTree()?.CurrentScene, centre);
+            }
             ApplyLampState();
             return true;
         }
