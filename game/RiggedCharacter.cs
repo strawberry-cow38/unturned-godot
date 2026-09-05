@@ -1051,6 +1051,28 @@ namespace UnturnedGodot
             }
             return _consumableAnims;
         }
+        // THE THROWABLES' clips (TE_0 draw / TU_0 throw -- one archetype shared by all 21 retail throwables, ripped by
+        // tools/extract_throwable_anims.py from each item's animations.prefab "Equip"/"Use"; there is no Throw_Start/Stop
+        // anywhere in the bundle). Same file shape as consumable_anims.json, same binary cache, arms-only like them.
+        static System.Collections.Generic.Dictionary<string, ClipData> _throwableAnims;
+        static System.Collections.Generic.Dictionary<string, ClipData> ThrowableAnims()
+        {
+            if (_throwableAnims == null)
+            {
+                _throwableAnims = new();
+                using var f = FileAccess.Open("res://content/throwable_anims.json", FileAccess.ModeFlags.Read);
+                if (f != null)
+                {
+                    _throwableAnims = RigBin.TryLoadClips("res://content/throwable_anims.json");
+                    if (_throwableAnims == null)
+                    {
+                        _throwableAnims = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, ClipData>>(f.GetBuffer((long)f.GetLength()), JsonOpts) ?? new();
+                        RigBin.TrySaveClips("res://content/throwable_anims.json", _throwableAnims);
+                    }
+                }
+            }
+            return _throwableAnims;
+        }
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
         public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null, string faceTexPath = null)
         {
@@ -1240,9 +1262,13 @@ namespace UnturnedGodot
                         lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
                         names.Add(kv.Key);
                     }
-                if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n)
+                if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n) and the throwables' draw/throw (TE_0/TU_0)
+                {
                     foreach (var kv in ConsumableAnims())
                         if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
+                    foreach (var kv in ThrowableAnims())
+                        if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
+                }
                 built = (lib, names.ToArray());
                 _animCache[(rig, armsOnly)] = built;
                 if (LoadProf) GD.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
