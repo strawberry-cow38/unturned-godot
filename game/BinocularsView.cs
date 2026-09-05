@@ -3,30 +3,71 @@ using Godot;
 namespace UnturnedGodot
 {
     /// <summary>BINOCULARS (master 2026-09-05: "copy the scope viewport thing method. one magnified viewport, cut out for
-    /// each lens"). The scope's two-render PiP, full-screen: ONE SubViewport renders the main world from a second camera
-    /// riding the main camera's transform at FOV / Zoom, and content/binoculars.gdshader shows it through two overlapping
-    /// circular cut-outs (one per lens) with the housing black outside. Lives on CanvasLayer 6: over the viewmodel
-    /// composite (5), under the HUD (10). The viewport inherits the main World3D (OwnWorld3D=true would duplicate an
-    /// EMPTY world and render sky only -- the scope lesson).</summary>
+    /// each lens" / "make it look like two distinct lenses, and use the binocular model"). Two renders:
+    ///   1. the WORLD, magnified: a SubViewport inheriting the main World3D, its camera on the main camera's transform at
+    ///      FOV / Zoom (OwnWorld3D=true would duplicate an EMPTY world and render sky only -- the scope lesson);
+    ///   2. the RIG: the binoculars item model (content/items/333) held to the eyes in its own little world, eyepieces
+    ///      toward a camera at the origin, with a lens disc in each eyepiece (content/binoculars.gdshader) that shows
+    ///      render 1 through SCREEN_UV -- so the one image runs across both lenses and each eyepiece cuts its circle.
+    /// Composited on CanvasLayer 6 (over the viewmodel composite at 5, under the HUD at 10): black eyecup darkness, the
+    /// rig on top. The eyepiece rings were measured off the model: centres x = +-0.0791, inner radius 0.0372, on the
+    /// end face y = -0.259; barrels run along +Y.</summary>
     public partial class BinocularsView : CanvasLayer
     {
         public float Zoom = 4f;
-        SubViewport _vp; Camera3D _cam; ColorRect _rect; ShaderMaterial _mat; Vector2I _size;
+        const float EyeX = 0.0791f, EyeY = -0.259f, LensR = 0.0372f;   // the model's eyepiece rings (measured)
+        const float EyeDist = 0.165f;   // eyepiece plane this far in front of the rig camera: two distinct lenses inside a 16:9 frame (0.113 put them off the sides, 0.150 kissed the edges)
+        const float RigFov = 60f;
+
+        SubViewport _world, _rig; Camera3D _cam, _rigCam; Node3D _model; ShaderMaterial _lens; TextureRect _rigRect; Vector2I _size;
 
         public override void _Ready()
         {
             Layer = 6;
             ProcessPriority = 200;   // after the player has placed the main camera for this frame
-            _vp = new SubViewport { OwnWorld3D = false, RenderTargetUpdateMode = SubViewport.UpdateMode.Always, HandleInputLocally = false };
-            AddChild(_vp);
+
+            // 1. the magnified world
+            _world = new SubViewport { OwnWorld3D = false, RenderTargetUpdateMode = SubViewport.UpdateMode.Always, HandleInputLocally = false };
+            AddChild(_world);
             _cam = new Camera3D { Current = true };
-            _vp.AddChild(_cam);
-            _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/binoculars.gdshader") };
-            _rect = new ColorRect { Material = _mat, MouseFilter = Control.MouseFilterEnum.Ignore };
-            _rect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            AddChild(_rect);
+            _world.AddChild(_cam);
             var main = GetViewport()?.GetCamera3D();
-            if (main != null) _vp.World3D = main.GetWorld3D();
+            if (main != null) _world.World3D = main.GetWorld3D();
+
+            // 2. the held model, its own world, transparent where there is no model
+            _rig = new SubViewport { OwnWorld3D = true, TransparentBg = true, RenderTargetUpdateMode = SubViewport.UpdateMode.Always, HandleInputLocally = false, Msaa3D = Viewport.Msaa.Msaa4X };
+            AddChild(_rig);
+            _rigCam = new Camera3D { Current = true, Fov = RigFov, Near = 0.01f, Far = 5f };
+            _rig.AddChild(_rigCam);
+            _model = new Node3D { Name = "Binoculars" };
+            _rig.AddChild(_model);
+            var mesh = ContentProvider.ParseObj("res://content/items/333.txt");
+            if (mesh != null)
+            {
+                var mat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.42f, 0.42f, 0.42f) };
+                string tp = ProjectSettings.GlobalizePath("res://content/items/333.png");
+                if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest; } }
+                _model.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+            }
+            _lens = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/binoculars.gdshader") };
+            _lens.SetShaderParameter("flip_y", System.Environment.GetEnvironmentVariable("UG_BINOFLIP") == "1");
+            foreach (float sx in new[] { -EyeX, EyeX })
+            {
+                var disc = new MeshInstance3D { Mesh = new QuadMesh { Size = Vector2.One * (LensR * 2f), Material = _lens },
+                    Position = new Vector3(sx, EyeY - 0.002f, 0f), RotationDegrees = new Vector3(90f, 0f, 0f) };   // a hair OUTSIDE the end face so the round glass sits over the hex rim, facing -Y (the eye)
+                _model.AddChild(disc);
+            }
+            // barrels (+Y) away from the eye: -90 about X maps +Y -> -Z; the eyepiece face then sits at z = +0.259 -> pull it to z = -EyeDist
+            _model.RotationDegrees = new Vector3(-90f, 0f, 0f);
+            _model.Position = new Vector3(0f, 0f, -(EyeDist - EyeY));
+
+            // composite: eyecup black, then the rig
+            var black = new ColorRect { Color = Colors.Black, MouseFilter = Control.MouseFilterEnum.Ignore };
+            black.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(black);
+            _rigRect = new TextureRect { StretchMode = TextureRect.StretchModeEnum.Scale, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _rigRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(_rigRect);
             Resize();
         }
 
@@ -36,9 +77,11 @@ namespace UnturnedGodot
             int h = Mathf.Clamp(GraphicsOptions.ScopeSize * 2, 540, Mathf.Max(540, (int)win.Y));   // Low 720 / Medium 1080 / High = the screen
             var sz = new Vector2I(Mathf.Max(16, Mathf.RoundToInt(h * win.X / Mathf.Max(1f, win.Y))), h);
             if (sz == _size) return;
-            _size = sz; _vp.Size = sz;
-            _mat.SetShaderParameter("aspect", win.X / Mathf.Max(1f, win.Y));
-            _mat.SetShaderParameter("view", _vp.GetTexture());
+            _size = sz;
+            _world.Size = sz;
+            _rig.Size = new Vector2I(Mathf.Max(16, (int)win.X), Mathf.Max(16, (int)win.Y));
+            _lens.SetShaderParameter("view", _world.GetTexture());
+            _rigRect.Texture = _rig.GetTexture();
         }
 
         public override void _Process(double delta)
