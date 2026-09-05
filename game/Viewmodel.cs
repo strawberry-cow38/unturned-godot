@@ -925,12 +925,17 @@ namespace UnturnedGodot
         public void PlayThrow()
         {
             if (_arms == null) return;
-            string clip = _arms.ClipLength("Melee_Strong") > 0f ? "Melee_Strong"
+            string clip = _arms.ClipLength(ConsumableUseClip) > 0f ? ConsumableUseClip   // the ripped retail "Use" (TU_0) when the throwable came through the consumable path
+                        : _arms.ClipLength("Melee_Strong") > 0f ? "Melee_Strong"
                         : _arms.ClipLength("Deploy_Use") > 0f ? "Deploy_Use" : null;
             if (clip == null) return;
             _arms.SetClipLoop(clip, false);
             _arms.Play(clip, 1f);
         }
+
+        /// <summary>The held model has left the hand (a throwable released at 60 % of its "Use"): hide it while the arms
+        /// finish the swing. The tail that follows (re-equip or fall back) rebuilds the viewmodel, so nothing un-hides it.</summary>
+        public void HideHeldItem() { if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = false; }
 
         // Deployable place motion on LMB -- the src barricade "Use" clip (UseableBarricade.build plays "Use"). One-shot.
         public void PlayDeployUse()

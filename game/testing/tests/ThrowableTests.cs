@@ -115,14 +115,18 @@ namespace UnturnedGodot.Testing
                     p.HeldThrowableTint.R > 0.45f && p.HeldThrowableTint.G < 0.25f);
 
             p.ThrowHeld();
-            yield return Ticks(2);
+            // RETAIL TIMING (UseableThrowable): the click starts the swing; the canister leaves the hand -- and is spent --
+            // at 60 % of the "Use" clip (0.98 s of TU_0, or 0.6 s of the 1 s stand-in when no arms rig is loaded), and the
+            // hand is busy until the clip ends (1.63 s). So: 55 ticks to see the spend, 90 between throws.
+            yield return Ticks(55);
             T.Check($"throwing spends one ({p.Inventory.getItemCount(266)} left)", p.Inventory.getItemCount(266) == 1);
             T.Check("...and re-arms with the next of the same kind", p.HoldingThrowable && p.HeldThrowableDef?.Id == 266);
 
-            // The 1 s cooldown is real, so the second throw has to wait it out.
-            yield return Ticks(60);
+            // Busy for the whole swing, so the second throw has to wait it out; and the hand falls back only once the
+            // follow-through has finished (retail dequips after useTime), hence the long wait before the fallback check.
+            yield return Ticks(90);
             p.ThrowHeld();
-            yield return Ticks(2);
+            yield return Ticks(90);
             T.Check($"the last one empties the stack ({p.Inventory.getItemCount(266)} left)", p.Inventory.getItemCount(266) == 0);
             T.Check("...and the hand falls back (no throwable held)", !p.HoldingThrowable);
 
@@ -140,9 +144,9 @@ namespace UnturnedGodot.Testing
             p.EquipItemAsset(Assets.find(254), p.Inventory.items[pgG].getItem(p.Inventory.items[pgG].getIndex(ggx, ggy))?.item);
             yield return Ticks(2);
             T.Check("...the frag replaces it in the hand", p.HoldingThrowable && !p.HasGunOut);
-            yield return Ticks(60);   // clear the throw cooldown
+            yield return Ticks(90);   // clear the swing
             p.ThrowHeld();
-            yield return Ticks(3);
+            yield return Ticks(90);   // release at 60 %, then the follow-through, then the hand falls back
             T.Check($"throwing the LAST one hands the rifle back, not fists (gun out={p.HasGunOut})",
                     !p.HoldingThrowable && p.HasGunOut);
 

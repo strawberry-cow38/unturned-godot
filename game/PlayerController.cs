@@ -2237,12 +2237,12 @@ namespace UnturnedGodot
         // throw animation had come through the rip. The search was right and the conclusion was not -- retail
         // names them "Equip" and "Use" PER THROWABLE (the same generic naming the consumables use for CE_n/CU_n),
         // in each item's own animations.prefab rather than in rig.json. cow tools found and extracted them
-        // (content/throwable_anims.json, TE_0/TU_0) and is wiring the 1p viewmodel on top of this. Until that
-        // lands, Melee_Equip carries and Melee_Strong (the overhand) throws.
+        // (content/throwable_anims.json, TE_0/TU_0); the 1p viewmodel now plays them (BuildThrowableViewmodel).
         //
-        // Retail's timing, from UseableThrowable.cs, for whoever wires those clips: useTime = the length of "Use"
-        // (1.63 s), the item leaves the hand at 60% of it (isThrowable => elapsed > useTime * 0.6f), and you are
-        // busy until the clip ends. This port throws on the press instead -- swap that over with the clips.
+        // Retail's timing, from UseableThrowable.cs, wired below: useTime = the length of "Use" (1.63 s), the item
+        // leaves the hand at 60% of it (isThrowable => elapsed > useTime * 0.6f), and you are busy until the clip
+        // ends. Then (PlayerEquipment.useStepB at useTime) the hand dequips and the next of the same kind is
+        // equipped again -- "Equip" (TE_0) raises it from the hip -- or, stack empty, the hand falls back.
         ItemAsset _heldThrowable; SDG.Unturned.Item _heldThrowableItem; ThrowableDef _throwDef; Color _throwTint = Colors.White;
         float _throwCd;
         const float ThrowCooldown = 1.0f;     // matches ServerCombat.DefaultGrenade.CooldownTicks (50 ticks @50 Hz)
@@ -2253,6 +2253,11 @@ namespace UnturnedGodot
         // it too, or a weak toss would loft as high as a hard throw and simply land nearer.
         const float WeakThrowScale = 0.545f;
         const float ThrowLift = 5f;
+        // THE RETAIL THROW (UseableThrowable.cs): "Use" plays on the swing, the item leaves the hand at 60 % of the clip
+        // (isThrowable => elapsed > useTime * 0.6f) and you are busy until the clip ends (isUseable => elapsed > useTime).
+        // useTime is the length of the ripped TU_0 (1.63 s); with no arms rig loaded (a headless fixture) the old 1 s stands in.
+        const float ThrowReleaseFraction = 0.6f;
+        float _throwPendingT; bool _throwPendingStrong, _throwRevertAtEnd, _throwRearmAtEnd;   // the two TAILS a finished swing can have (useStepB): raise the next one, or fall back
         // Retail casts 1.5 m down the aim before spawning and pulls the throwable back to 0.5 m off whatever it
         // hits, so throwing while hugging a wall does not put the grenade INSIDE or behind it. Without this the
         // spawn was a flat 0.5 m in front of the eye and a wall-hugging throw dropped the grenade through.
@@ -2273,6 +2278,12 @@ namespace UnturnedGodot
             // EquipHeldConsumable follow, and without it ThrowHeld's revert would fire whatever a completely
             // unrelated earlier consumable had stashed.
             if (!HoldingThrowable) _revertEquip = CaptureHeldForRevert();
+            // Re-selecting the SAME kind (hotbar key again, an inventory re-equip) keeps the hand as it is -- only a
+            // FRESH item rebuilds the viewmodel. The between-throws re-arm is NOT this path: retail (useStepA/useStepB)
+            // spends the item at the release and re-equips the next one when the "Use" clip ends, which replays
+            // "Equip" -- that is the _throwRearmAtEnd tail below, via BuildThrowableViewmodel.
+            if (HoldingThrowable && _heldThrowable.id == asset.id && _viewmodel != null && IsInstanceValid(_viewmodel))
+            { _heldThrowableItem = backing; return; }
             ClearDeployable(); ClearFisher(); ClearHeldOptic(); ClearHeldThrowable();
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
@@ -2280,15 +2291,26 @@ namespace UnturnedGodot
             _heldThrowable = asset; _heldThrowableItem = backing;
             _throwDef = Throwables.Find(asset.id);
             _throwTint = WorldItem.PaletteColor(asset.id) ?? Colors.White;   // the canister's own paint -> the smoke/flare colour
-            _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { DeployableMesh = $"items/{asset.id}.txt", DeployableAlbedo = $"items/{asset.id}.png", NaturalHold = true,
-                                         HoldPos = new Vector3(0.06f, 0.30f, -0.10f), HoldScale = 1f };
-            AddChild(_viewmodel);
-            RelinkViewmodelLighting();
+            BuildThrowableViewmodel();
             GD.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
         }
 
-        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; }
+        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; }   // switching away mid-swing drops the pending release + tail with it
+
+        // The item's OWN 1p model in the hand, through the consumable path: it follows the hand bone with the source's
+        // held-model roll (PlayerEquipment.firstModel Euler(0,0,90)), TE_0 raises it (the retail "Equip", 0.47 s) and TU_0
+        // throws it (the retail "Use", 1.63 s) -- both ripped from the item's own animations.prefab, shared by all 21
+        // throwables (tools/extract_throwable_anims.py). Replaces the Melee_Equip / Melee_Strong stand-in and its guessed pose.
+        // Called on a fresh equip AND at the end of every swing that has another of the same kind to raise (the retail re-equip).
+        void BuildThrowableViewmodel()
+        {
+            if (_heldThrowable == null) return;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ConsumableMesh = $"items/{_heldThrowable.id}.txt", ConsumableAlbedo = $"items/{_heldThrowable.id}.png",
+                                         ConsumableEquipClip = "TE_0", ConsumableUseClip = "TU_0" };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+        }
 
         /// <summary>Where the throwable actually leaves the hand. Source UseableThrowable.tick: cast 1.5 m down
         /// the aim, and if something is there put the throwable 0.5 m short of it instead of a fixed distance in
@@ -2314,11 +2336,25 @@ namespace UnturnedGodot
         /// stack of food runs out, because "the item left your hand and is gone" is the same problem.</summary>
         public void ThrowHeld(bool strong = true)
         {
-            if (_heldThrowable == null || _throwCd > 0f || _dead) return;
-            _throwCd = ThrowCooldown;
-
-            var asset = _heldThrowable; var def = _throwDef; ushort id = asset.id; Color tint = _throwTint;
+            if (_heldThrowable == null || _throwCd > 0f || _throwPendingT > 0f || _dead) return;
+            // The SWING: the arm comes over the top now (TU_0); the canister leaves the hand at 60 % of the clip in
+            // ReleaseThrow (ticked below), and nothing else can be started until the clip has run out.
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen < 0.1f) useLen = ThrowCooldown;   // no arms rig (headless fixture): the old cadence
             _viewmodel?.PlayThrow();
+            _throwPendingT = useLen * ThrowReleaseFraction;
+            _throwPendingStrong = strong;
+            _throwCd = useLen;
+            GD.Print($"[throw] swing ({(strong ? "strong" : "weak")}), release in {_throwPendingT:0.00}s, busy {useLen:0.00}s");
+        }
+
+        /// <summary>The moment in the swing where the item actually leaves the hand -- computed HERE, off the aim at
+        /// release like retail's tick(), not off where you were looking when you clicked.</summary>
+        void ReleaseThrow()
+        {
+            if (_heldThrowable == null || _dead) return;
+            bool strong = _throwPendingStrong;
+            var asset = _heldThrowable; var def = _throwDef; ushort id = asset.id; Color tint = _throwTint;
 
             Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
             float scale = strong ? 1f : WeakThrowScale;
@@ -2351,8 +2387,12 @@ namespace UnturnedGodot
                 Inventory?.removeItemAmount(id, 1);
                 left = Inventory?.getItemCount(id) ?? 0;
             }
-            if (left > 0) EquipHeldThrowable(asset, null);     // another of the same in the bag -> straight back to the hand
-            else (_revertEquip ?? EquipUnarmed)();             // stack empty -> back to what was held before, else fists
+            _viewmodel?.HideHeldItem();   // it is in the air now: the follow-through swings an empty hand (retail's arm is out of frame here either way)
+            // The TAIL, when the clip ends (retail useStepB at useTime): another of the same kind in the bag -> it is raised
+            // again with "Equip" (retail dequips + ServerEquips the next one); stack empty -> back to what was held before
+            // (the port's deliberate choice over retail's sendSlot; throwable.equip_throw_effect pins "the rifle back, not fists").
+            if (left > 0) _throwRearmAtEnd = true;
+            else _throwRevertAtEnd = true;
         }
 
         // Tear down the rod + any deployed line/bobber. Called by every other equip path (so switching items ends the cast)
@@ -8732,7 +8772,10 @@ namespace UnturnedGodot
             UpdateVitals(moving, (float)delta);
             FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
-            if (_throwCd > 0f) _throwCd -= (float)delta;   // the 1 s between throws (mirrors ServerCombat.DefaultGrenade.CooldownTicks)
+            if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
+            if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
+            if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) GD.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
+            if (_throwRevertAtEnd && _throwCd <= 0f) { _throwRevertAtEnd = false; (_revertEquip ?? EquipUnarmed)(); }   // the last one is gone and the follow-through is done
             TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting
             ScanWorldLights();   // mirror nearby dynamic world lights (muzzle/headlights/flares) onto the gun
