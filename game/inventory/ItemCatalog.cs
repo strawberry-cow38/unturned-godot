@@ -203,6 +203,42 @@ namespace SDG.Unturned
             Shell(5006, 203, 1);   // 7.62x51mm NATO -> SCAR-H body (group 203)
             { var b = SDG.Unturned.Assets.find(5006); if (b != null) { b.stackSize = 80; b.ammoType = "FMJ"; b.magRound = "7.62x51mm NATO"; } }
             DeriveMagazinesFromGuns();
+            StripUnityRichText();   // last: after every overlay above has finished writing descriptions
+        }
+
+        // Unity rich text, which Godot does not speak. Both description widgets are a plain Label
+        // (InventoryUI.cs, CraftingMenu.cs), so a surviving tag is shown to the player as literal angle
+        // brackets: "military grade <color=rare>Avenger</color> magazine".
+        //
+        // ONLY THE KNOWN UNITY TAG SET, not "anything in angle brackets" -- a description is ripped text and
+        // may legitimately contain a "<" (a "<1 second" fuse would be eaten by a greedy rule).
+        static readonly System.Text.RegularExpressions.Regex UnityRichText = new(
+            @"</?(?:color|b|i|size|material|quad)[^>]*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// <summary>Strip Unity rich-text markup from every description, so none of it reaches a Label as literal
+        /// angle brackets (strawberry 2026-09-05 asked for "proper formatting, color tags").
+        ///
+        /// STRIPPED rather than converted to BBCode, which would need a RichTextLabel. That is a bigger change than
+        /// it looks: Nameplate.cs records choosing Label3D over RichTextLabel as a SECURITY decision, and turning
+        /// BBCode on for item text would want every other bracket in the catalogue audited. For one magazine's
+        /// rarity colour that trade is not worth taking -- but the tag showing raw is a bug either way, and this
+        /// fixes that half without betting anything.
+        ///
+        /// This is a SWEEP, not a fix for the one item known today. My own audit counted 59 affected items; the
+        /// caliber overlay above has since eaten 58 of them as a side effect of rewriting the phrase they wrapped,
+        /// leaving only item 1022 (a magazine, which no gun rewrite touches). Re-ripping the missing English.dat
+        /// files -- still outstanding -- puts the rest straight back, so this runs over the whole catalogue.</summary>
+        static void StripUnityRichText()
+        {
+            int n = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+            {
+                if (a?.description == null || a.description.IndexOf('<') < 0) continue;
+                string clean = UnityRichText.Replace(a.description, string.Empty);
+                if (clean != a.description) { a.description = clean; n++; }
+            }
+            if (n > 0) Godot.GD.Print($"[item-text] stripped Unity rich-text markup from {n} description(s)");
         }
 
         /// <summary>
@@ -261,7 +297,9 @@ namespace SDG.Unturned
         /// faithful on disk; the port's correction lives in the port.
         ///
         /// Rewrites only the noun phrase between "chambered in" and its ammunition word, so the PDW keeps its
-        /// "Internally suppressed." tail and the Shadowstalker keeps its colour tag. Skips a gun whose description
+        /// "Internally suppressed." tail. (This used to add "and the Shadowstalker keeps its colour tag" -- it does
+        /// not: its tag wrapped the fake round name, so the rewrite eats both. Correct behaviour, wrong comment.)
+        /// Skips a gun whose description
         /// ALREADY names the cartridge -- every shotgun does ("12 Gauge Shells"), and rewriting those to
         /// "chambered in 12 Gauge" would lose the word that says they are shells.
         ///

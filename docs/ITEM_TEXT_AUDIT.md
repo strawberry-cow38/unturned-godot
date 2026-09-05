@@ -29,13 +29,23 @@ removing the already-named guard each turn it red.
 
 ## Found, NOT fixed — needs a decision
 
-### 1. Colour tags do not render. 59 items affected.
+### 1. Colour tags do not render. ~~59 items affected.~~ FIXED 2026-09-05 (1 item by then).
 `<color=legendary>Timberwolf</color>` is Unity rich text. Both description widgets are a plain `Label`
-(`InventoryUI.cs:1328`, `CraftingMenu.cs:480`) — there is no `RichTextLabel` anywhere in the inventory
-and nothing strips or converts the tags at load. **The player sees the literal angle brackets.**
-Fix is small and self-contained: convert `<color=<rarity>>` to Godot BBCode using the per-rarity colours
-`ItemTool.RarityColorUI` already provides, and render in a `RichTextLabel`. Not done here because it is a
-UI change rather than a text one, and worth doing deliberately.
+(`InventoryUI.cs`, `CraftingMenu.cs`) — no `RichTextLabel` anywhere in the inventory, and nothing stripped
+or converted the tags at load. **The player saw the literal angle brackets.**
+
+**The count above was already stale when it was written down.** The caliber overlay in the same batch of
+work rewrites the phrase `chambered in <color=X>Name</color> ammunition`, and ate the tag along with it on
+58 of the 59 — leaving only item 1022, an Avenger *magazine*, which no gun rewrite touches. A number
+measured before a related change is not a number that survives it.
+
+`ItemCatalog.StripUnityRichText()` now strips the known Unity tag set from every description at load. It
+STRIPS rather than converting to BBCode: that would need a `RichTextLabel`, and `Nameplate.cs` records
+choosing `Label3D` over one as a *security* decision — not a trade worth taking for a single magazine's
+rarity colour. If the colour is actually wanted on screen, that is the deliberate UI change to make.
+
+It runs over the whole catalogue rather than the one known item, because fixing §2/§3 by re-ripping the
+missing `English.dat` files puts the other 58 straight back.
 
 ### 2. 656 items show an INTERNAL name. A third of the catalog.
 `Tuxedo_Bottom_Gold`, `Festive_Hat`, `Mystery_Box_0`, `Honeybadger_Barrel`, `Key_0`. Cause is
