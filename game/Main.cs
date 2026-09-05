@@ -145,7 +145,7 @@ namespace UnturnedGodot
             bool rainMatTest = false;
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -175,6 +175,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
+                else if (arg == "--throwtest") throwTest = true;     // thrown smoke + flares landing on a plain stage -> verify the throwable FX (--peiplay cannot show them: its script is in a jeep by 1.7 s)
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
                 else if (arg == "--barricadeplay") barricadePlay = true;   // INTERACTIVE: fly (hold RMB) + LMB-place barricades on a structure room -- test placement feel ([1-3]=def, Tab=mount, R=rotate)
@@ -500,6 +501,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildDeployTest();
+                return;
+            }
+
+            if (throwTest)   // throwable FX showcase: real thrown canisters, fused, landing on a stage
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildThrowTest();
                 return;
             }
 
@@ -3915,6 +3924,78 @@ namespace UnturnedGodot
             if (w < 0.5f)  return new Color(0f, 1f, 1f - (w - 0.25f) * 4f);
             if (w < 0.75f) return new Color((w - 0.5f) * 4f, 1f, 0f);
             return new Color(1f, 1f - (w - 0.75f) * 4f, 0f);
+        }
+
+        // --throwtest : the throwable FX, on a bare stage.
+        //
+        // It exists because --peiplay CANNOT show them. Its scripted player is in the jeep by frame 50 (~1.7 s)
+        // and drives off, so a thrown flare is behind you before the shot fires and a smoke grenade's 3 s fuse
+        // has not even run. Two 22-minute renders went into learning that; this one costs about a minute,
+        // because a plane and some particles is all the frame has in it.
+        //
+        // These are REAL thrown Grenades with real velocities, not hand-placed SmokeCloud/FlareBurn nodes. The
+        // fuse runs, the ray-swept bounce runs, the cloud is built by the same code the game builds it with --
+        // so a picture that looks right is evidence about the feature and not about the harness. UG_SHOTTIME
+        // picks the moment (4.5-5 gives the clouds ~1.5 s to build after the 3 s fuse).
+        void BuildThrowTest()
+        {
+            // Dusk, not noon: a flare is a LIGHT, and a light says nothing against a fully-lit scene. Dim enough
+            // for the glow and the sparks to register, bright enough to still read the smoke's colour.
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.10f, 0.12f, 0.17f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.34f, 0.36f, 0.44f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-32f, -40f, 0f), LightEnergy = 0.55f, ShadowEnabled = true });
+
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(120f, 120f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.23f, 0.19f), Roughness = 1f },
+            });
+            var ground = new StaticBody3D { CollisionLayer = 1u << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            ground.AddToGroup("terrain");
+            AddChild(ground);
+
+            // A low wall behind the row, so the smoke has something solid to read against rather than open sky.
+            var wallSize = new Vector3(46f, 5f, 0.8f);
+            var wall = new StaticBody3D { Position = new Vector3(0f, 2.5f, -14f), CollisionLayer = 1u << 0 };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wallSize } });
+            wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wallSize }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.27f, 0.28f, 0.31f), Roughness = 0.95f } });
+            AddChild(wall);
+
+            // Thrown left to right: red / green / white smoke, then a red and a blue flare in front. Colours
+            // chosen to prove the palette lookup rather than to look pretty -- white and the two saturated ones
+            // are what a hardcoded tint table would get wrong.
+            (ushort id, Vector3 from)[] set =
+            {
+                (266, new Vector3(-16f, 1.6f, 10f)),   // Red Smoke
+                (263, new Vector3(-5f,  1.6f, 10f)),   // Green Smoke
+                (267, new Vector3( 6f,  1.6f, 10f)),   // White Smoke
+                (259, new Vector3(-11f, 1.6f, 4f)),    // Red Flare
+                (255, new Vector3( 1f,  1.6f, 4f)),    // Blue Flare
+            };
+            foreach (var (id, from) in set)
+            {
+                var def = SDG.Unturned.Throwables.Find(id);
+                var g = new Grenade
+                {
+                    Def = def, ItemId = id,
+                    Tint = WorldItem.PaletteColor(id) ?? Colors.White,
+                    Vel = new Vector3(0f, 3.5f, -9f),   // a flat lob toward the wall; the fuse fires where it lands
+                };
+                AddChild(g);
+                g.GlobalPosition = from;
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(2f, 6.5f, 26f);
+            cam.LookAt(new Vector3(-4f, 1.6f, -4f), Vector3.Up);
+            GD.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
         }
 
         // --impacttest : fire ONE reimplemented ImpactFx per surface across a grey wall (concrete / metal / wood / dirt

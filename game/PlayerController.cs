@@ -2232,14 +2232,31 @@ namespace UnturnedGodot
         // SDG.Unturned.Throwables, read off the retail .dats, so the server resolves an incoming throw against the
         // same table this equips from.
         //
-        // The one thing NOT ported is the throw ANIMATION: the extracted rig (rig.json, 569 clips) has no Throw_*
-        // clip at all -- retail's UseableThrowable plays Throw_Equip/Throw_Start/Throw_Stop and none of the three
-        // came through the rip. Melee_Strong is the overhand swing in the set, so it stands in for the throw and
-        // Melee_Equip for the carry. Substitution, not a match; a real throw clip needs another extraction pass.
+        // The throw ANIMATION here is a STAND-IN, and the reason is worth recording because I got it wrong first:
+        // I searched rig.json for a clip matching /throw|toss|lob/, found none among its 569, and concluded no
+        // throw animation had come through the rip. The search was right and the conclusion was not -- retail
+        // names them "Equip" and "Use" PER THROWABLE (the same generic naming the consumables use for CE_n/CU_n),
+        // in each item's own animations.prefab rather than in rig.json. cow tools found and extracted them
+        // (content/throwable_anims.json, TE_0/TU_0) and is wiring the 1p viewmodel on top of this. Until that
+        // lands, Melee_Equip carries and Melee_Strong (the overhand) throws.
+        //
+        // Retail's timing, from UseableThrowable.cs, for whoever wires those clips: useTime = the length of "Use"
+        // (1.63 s), the item leaves the hand at 60% of it (isThrowable => elapsed > useTime * 0.6f), and you are
+        // busy until the clip ends. This port throws on the press instead -- swap that over with the clips.
         ItemAsset _heldThrowable; SDG.Unturned.Item _heldThrowableItem; ThrowableDef _throwDef; Color _throwTint = Colors.White;
         float _throwCd;
         const float ThrowCooldown = 1.0f;     // matches ServerCombat.DefaultGrenade.CooldownTicks (50 ticks @50 Hz)
-        const float ThrowSpeed = 16f;         // forward component; the arc adds 5 m/s of lift on top
+        const float ThrowSpeed = 16f;         // LMB, forward component; the arc adds 5 m/s of lift on top
+        // RMB is the WEAK toss (retail startSecondary -> ESwingMode.WEAK). Retail's numbers are AddForce
+        // magnitudes on a rigidbody -- Strong_Throw_Force 1100, Weak_Throw_Force 600 -- so the absolute value
+        // does not transfer without the prefab's mass, but the RATIO does: 600/1100 = 0.545. The lift scales with
+        // it too, or a weak toss would loft as high as a hard throw and simply land nearer.
+        const float WeakThrowScale = 0.545f;
+        const float ThrowLift = 5f;
+        // Retail casts 1.5 m down the aim before spawning and pulls the throwable back to 0.5 m off whatever it
+        // hits, so throwing while hugging a wall does not put the grenade INSIDE or behind it. Without this the
+        // spawn was a flat 0.5 m in front of the eye and a wall-hugging throw dropped the grenade through.
+        const float ThrowClearProbe = 1.5f, ThrowClearGap = 0.5f;
         public bool HoldingThrowable => _heldThrowable != null;
         public ThrowableDef HeldThrowableDef => _throwDef;          // test seam
         public Color HeldThrowableTint => _throwTint;               // test seam
@@ -2273,10 +2290,29 @@ namespace UnturnedGodot
 
         void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; }
 
+        /// <summary>Where the throwable actually leaves the hand. Source UseableThrowable.tick: cast 1.5 m down
+        /// the aim, and if something is there put the throwable 0.5 m short of it instead of a fixed distance in
+        /// front of the eye -- otherwise a throw made while facing a wall spawns inside or behind it.
+        ///
+        /// Clamped at zero, which retail does not do: with the muzzle closer than 0.5 m to a surface,
+        /// `hit.distance - 0.5` goes NEGATIVE and puts the spawn behind the thrower's own head.</summary>
+        Vector3 ThrowOrigin(Vector3 fwd)
+        {
+            Vector3 eye = _cam?.GlobalPosition ?? GlobalPosition;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return eye + fwd * ThrowClearGap;
+            var q = PhysicsRayQueryParameters3D.Create(eye, eye + fwd * ThrowClearProbe, (1u << 0) | (1u << 6),
+                                                      new Godot.Collections.Array<Rid> { GetRid() });
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return eye + fwd * 1f;   // clear ahead: source `origin += direction`, a full metre
+            float d = eye.DistanceTo((Vector3)hit["position"]);
+            return eye + fwd * Mathf.Max(0f, d - ThrowClearGap);
+        }
+
         /// <summary>LMB with a throwable in hand: lob it, spend one from the bag, and either re-arm with the next
         /// of the same kind or fall back to whatever was held before -- the same tail TickConsume runs when a
         /// stack of food runs out, because "the item left your hand and is gone" is the same problem.</summary>
-        public void ThrowHeld()
+        public void ThrowHeld(bool strong = true)
         {
             if (_heldThrowable == null || _throwCd > 0f || _dead) return;
             _throwCd = ThrowCooldown;
@@ -2285,8 +2321,9 @@ namespace UnturnedGodot
             _viewmodel?.PlayThrow();
 
             Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
-            Vector3 vel = fwd * ThrowSpeed + Vector3.Up * 5f + Velocity;   // arc forward + inherit the thrower's motion
-            Vector3 origin = (_cam?.GlobalPosition ?? GlobalPosition) + fwd * 0.5f;
+            float scale = strong ? 1f : WeakThrowScale;
+            Vector3 vel = fwd * (ThrowSpeed * scale) + Vector3.Up * (ThrowLift * scale) + Velocity;   // arc forward + inherit the thrower's motion
+            Vector3 origin = ThrowOrigin(fwd);
 
             if (NetGrenade != null)   // MP: the SERVER flies and resolves it (ProjectileReplicaView renders the flight)
             {
@@ -2299,7 +2336,7 @@ namespace UnturnedGodot
                 GetParent()?.AddChild(g);   // the player's own parent, as ThrowGrenade has always done -- NOT CurrentScene, which escapes an L1 test's sandbox world
                 g.GlobalPosition = origin;
             }
-            GD.Print($"[throw] {asset.itemName} away");
+            GD.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
 
             // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner
             // echo empties the cell; in SP we remove it ourselves.
@@ -5858,6 +5895,7 @@ namespace UnturnedGodot
                 else if (HoldingDeployable) { if (Keybinds.IsDown(@event)) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFluidItem != null) { if (Keybinds.IsDown(@event)) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (Keybinds.IsDown(@event)) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
+                else if (HoldingThrowable) { if (Keybinds.IsDown(@event)) ThrowHeld(strong: false); }   // RMB with a throwable = the WEAK toss (source startSecondary -> ESwingMode.WEAK); LMB is the hard throw
                 else if (HoldingLight) { if (Keybinds.IsDown(@event)) ToggleHeldLight(); }   // RMB with the torch in hand toggles it (strawberry 2026-09-04 "change the flashlight to be toggled on/off with rmb instead of b"). Ahead of the strong-swing branch on purpose: the flashlight IS a melee item, so without this it would keep swinging instead.
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)

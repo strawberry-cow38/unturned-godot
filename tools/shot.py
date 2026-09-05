@@ -119,6 +119,10 @@ SCENES = {
                   # scene's proven 1.4/3.2 timing: ~1.8 s of burn, landed.
                   {"UG_BOOTCMD": "throw Red Flare", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "3.2"}, True, 900,
                   "a lit road flare on the ground: glow, flicker, sparks"),
+    # The throwable FX on a bare stage -- see BuildThrowTest for why --peiplay cannot show these (its
+    # scripted player is in the jeep by 1.7 s). Cheap: a plane and some particles, ~1 min rather than 22.
+    "throwables":(["--throwtest", "--shot={OUT}"], {"UG_SHOTTIME": "4.8"}, False, 400,
+                  "thrown smoke (red/green/white) + two lit flares, ~1.8s after the fuse"),
     # The throwable IN HAND -- the carry pose, which neither the smoke nor the flare shot can show because
     # both fire after the throw and the hand is empty by then.
     "holdnade":  (["--peiplay", "--shot={OUT}"],

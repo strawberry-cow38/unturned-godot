@@ -916,10 +916,12 @@ namespace UnturnedGodot
             _arms?.Play(ConsumeUseClipName(), 1f);
         }
 
-        /// <summary>The throw motion. SUBSTITUTED, not ported: retail's UseableThrowable plays Throw_Start /
-        /// Throw_Stop and neither clip is in the extracted rig (rig.json carries 569 clips and not one matches
-        /// /throw|toss|lob/), so the overhand Melee_Strong stands in for the arm coming over the top. It reads
-        /// right and it is honestly the wrong clip; a real one needs another extraction pass.</summary>
+        /// <summary>The throw motion, SUBSTITUTED for now. The real clips DO exist -- retail names them "Equip"
+        /// and "Use" per throwable, in each item's own animations.prefab rather than in rig.json, which is why a
+        /// search of rig.json's 569 clips for /throw|toss|lob/ found nothing and I wrongly concluded none had
+        /// come through the rip. cow tools extracted them (content/throwable_anims.json, TE_0/TU_0); the 1p
+        /// viewmodel that plays them is theirs to wire on top of this. Until then the overhand Melee_Strong
+        /// stands in for the arm coming over the top.</summary>
         public void PlayThrow()
         {
             if (_arms == null) return;
