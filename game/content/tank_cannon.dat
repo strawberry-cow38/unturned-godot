@@ -1,0 +1,65 @@
+// Retail Items/Guns/Tank_Cannon/Tank_Cannon.dat (ID 1300, the Tank's Turret_0_Item_ID), carried over verbatim
+// where the port reads the same keys. Retail fires this as an Action Rocket PROJECTILE (Ballistic_Force 3000 on a
+// rigidbody) and uses Range 14 as the BLAST radius; the port flies every round through the bullet stepper, so the
+// blast moved onto the Explosion_* keys the launcher already uses and the flight itself is spelled out below:
+// 5 m per 0.02 s step = 250 m/s, 120 steps = 600 m of reach, no drop (the barrel is laid straight on the
+// crosshair point, and a shell that drops would land short of where the operator was told it would land).
+GUID 6ba6d68072014ae8817df797c0825219
+Type Gun
+Rarity Legendary
+Useable Gun
+Slot Primary
+ID 1300
+
+Sight 1301
+Magazine 1302
+
+Ammo_Min 1
+Ammo_Max 1
+
+Semi
+
+Caliber 29
+Caliber_Name "Missile"
+
+Firerate 50
+Action Rocket
+
+Player_Damage 200
+Zombie_Damage 200
+Animal_Damage 200
+Barricade_Damage 1000
+Structure_Damage 1000
+Vehicle_Damage 1000
+Resource_Damage 2000
+Object_Damage 1000
+
+Range 600
+Ballistic_Travel 5
+Ballistic_Steps 120
+Ballistic_Drop 0
+
+Explosion 45
+Explosion_Radius 14
+Explosion_Zombie_Damage 200
+Explosion_Player_Damage 200
+Explosion_Vehicle_Damage 1000
+
+Aim_In_Duration 0.3
+Spread_Aim 0.2
+Spread_Angle_Degrees 2.86
+
+Ballistic_Force 3000
+
+Recoil_Min_X -3
+Recoil_Min_Y 3
+Recoil_Max_X 3
+Recoil_Max_Y 5
+
+Recover_X 0.7
+Recover_Y 0.7
+
+Muzzle 42
+
+Reload_Time 2
+Turret

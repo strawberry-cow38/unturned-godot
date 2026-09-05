@@ -421,7 +421,7 @@ namespace UnturnedGodot
             RefreshHotbar();
             if (_crosshair3p != null)
             {
-                _crosshair3p.Visible = Player != null && Player.ThirdPersonActive;   // centre crosshair: third person only
+                _crosshair3p.Visible = Player != null && (Player.ThirdPersonActive || Player.CannonAiming);   // centre crosshair: third person -- and while a cannon is being laid on the screen centre (the seated FP view has no other reticle)
                 if (_crosshair3p.Visible && Mathf.Abs(_crosshair3p.Spread - Player.CrosshairSpread01) > 0.005f) { _crosshair3p.Spread = Player.CrosshairSpread01; _crosshair3p.QueueRedraw(); }   // DYNAMIC: tightens on ADS, blooms on move/recoil (master 2026-09-04)
             }
 

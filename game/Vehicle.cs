@@ -1120,6 +1120,32 @@ namespace UnturnedGodot
             public string GunId = "nykorev";
             public int Belt = 200;
             public Color Colour = new Color(0.16f, 0.17f, 0.14f);
+            /// <summary>Seconds between shots. A belt gun cycles at 0.12 s; a breech-loaded cannon takes its
+            /// retail Reload_Time between rounds (Tank_Cannon.dat: 2 s), and one field serves both because the
+            /// mount does not care WHY it is waiting.</summary>
+            public float Cycle = 0.12f;
+            /// <summary>Full 360-degree traverse: yaw WRAPS instead of clamping to YawMin/YawMax. A chin turret
+            /// stops at its airframe; a tank turret on a ring does not stop at all (master: "the turret tilts 360
+            /// degrees around").</summary>
+            public bool YawFree;
+            /// <summary>The DRIVER operates this mount while its own seat is empty, and loses it the moment
+            /// somebody takes that seat (master: "the 2nd player ALWAYS gets priority control over the turret,
+            /// the driver loses access until the 2nd seat is free"). Resolved per call through TurretIndexFor,
+            /// never cached, so the hand-over is immediate in both directions.</summary>
+            public bool DriverFallback;
+            /// <summary>Laid on the operator's CROSSHAIR POINT while they hold Aim, and left where it was when
+            /// they let go -- instead of slaving the barrel to the look angles every frame the way a door gun
+            /// does. Both tank seats work this way; the Hind's chin gun keeps following the gunner's eyes.</summary>
+            public bool CrosshairAim;
+            /// <summary>Slew rates in degrees per second; 0 = the mount snaps. A forty-tonne turret that snaps
+            /// 180 degrees in one frame reads as a bug, so the tank's traverses at a finite rate and the shell
+            /// leaves along wherever the barrel has GOT TO, which is what TryTurretFire already guarantees.</summary>
+            public float YawRate, PitchRate;
+            /// <summary>The pitch pivot's offset INSIDE the yaw frame. The generic builder used to put the pitch
+            /// node at the yaw node's origin, which is right for a chin gun on a single ball mount and wrong for a
+            /// tank, whose trunnion sits 2.8 m above and 2 m ahead of the ring axis (prefab Turrets/Turret_1/Yaw ->
+            /// Pitch at (0, 2.8, 2.0)).</summary>
+            public Vector3 PitchOffset = Vector3.Zero;
         }
         public TurretDef[] Turrets = System.Array.Empty<TurretDef>();
         Node3D[] _turretYaw, _turretPitch;
@@ -1183,16 +1209,22 @@ namespace UnturnedGodot
             return false;
         }
 
-        public int TurretAmmo(int seat)
+        public int TurretAmmo(int seat) { int i = TurretIndexFor(seat); return i >= 0 ? _turretAmmo?[i] ?? 0 : 0; }
+        public bool HasTurret(int seat) => TurretIndexFor(seat) >= 0;
+        /// <summary>The mount `seat` operates RIGHT NOW, or null. Every turret query goes through this one rule:
+        /// a seat's own mount first; failing that, the driver gets any DriverFallback mount whose own seat is
+        /// empty. Gunner priority is therefore a consequence of seat occupancy, not a state that has to be handed
+        /// back and forth -- the instant someone sits in the gunner's chair the driver's queries return -1.</summary>
+        public int TurretIndexFor(int seat)
         {
-            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return _turretAmmo?[i] ?? 0;
-            return 0;
+            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return i;
+            if (seat == 0)
+                for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].DriverFallback && SeatFree(Turrets[i].Seat)) return i;
+            return -1;
         }
-        public bool HasTurret(int seat)
-        {
-            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return true;
-            return false;
-        }
+        public TurretDef TurretFor(int seat) { int i = TurretIndexFor(seat); return i >= 0 ? Turrets[i] : null; }
+        /// <summary>Seconds until the mount `seat` operates can fire again (0 = ready). The HUD's reload cue.</summary>
+        public float TurretCooldown(int seat) { int i = TurretIndexFor(seat); return i >= 0 && _turretCd != null ? Mathf.Max(0f, _turretCd[i]) : 0f; }
 
         /// <summary>Try to fire the turret on `seat`. Returns false -- without consuming anything -- if that seat
         /// has no turret, the belt is empty, or it is still cycling. On success yields the world muzzle and the
@@ -1202,22 +1234,17 @@ namespace UnturnedGodot
         public bool TryTurretFire(int seat, out Vector3 origin, out Vector3 dir, out string gunId)
         {
             origin = Vector3.Zero; dir = Vector3.Forward; gunId = null;
-            for (int i = 0; i < Turrets.Length; i++)
-            {
-                if (Turrets[i].Seat != seat) continue;
-                if (_turretPitch?[i] == null || _turretAmmo == null) return false;
-                if (_turretCd[i] > 0f || _turretAmmo[i] <= 0) return false;
-                var t = Turrets[i];
-                origin = _turretPitch[i].ToGlobal(t.Muzzle);
-                dir = -_turretPitch[i].GlobalTransform.Basis.Z;   // barrel axis, not the look ray
-                gunId = t.GunId;
-                if (!InfiniteTurretBelt) _turretAmmo[i]--;   // an AI gunship is not a looting problem; see the field
-                _turretCd[i] = TurretCycle;
-                return true;
-            }
-            return false;
+            int i = TurretIndexFor(seat);
+            if (i < 0 || _turretPitch?[i] == null || _turretAmmo == null) return false;
+            if (_turretCd[i] > 0f || _turretAmmo[i] <= 0) return false;
+            var t = Turrets[i];
+            origin = _turretPitch[i].ToGlobal(t.Muzzle);
+            dir = -_turretPitch[i].GlobalTransform.Basis.Z;   // barrel axis, not the look ray
+            gunId = t.GunId;
+            if (!InfiniteTurretBelt) _turretAmmo[i]--;   // an AI gunship is not a looting problem; see the field
+            _turretCd[i] = t.Cycle;   // 0.12 s belt cadence, or the cannon's 2 s reload -- the mount's own figure
+            return true;
         }
-        const float TurretCycle = 0.12f;   // belt-fed cadence; the gun's own Firerate governs the held-weapon path
         /// <summary>Never run this mount dry (strawberry: "does it have infinite ammo? it should"). Set by the AI
         /// on the aircraft it flies, NOT on the spec -- a player who takes the Hind's gunner seat still gets the
         /// finite 200-round belt, because the reason to give an NPC an endless one is that nobody can reload it,
@@ -1228,20 +1255,57 @@ namespace UnturnedGodot
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
-        public bool AimTurret(int seat, float yawDeg, float pitchDeg)
+        public bool AimTurret(int seat, float yawDeg, float pitchDeg, float delta = 0f)
         {
-            if (_turretYaw == null) return false;
-            for (int i = 0; i < Turrets.Length; i++)
+            int i = TurretIndexFor(seat);
+            if (i < 0 || _turretYaw == null) return false;
+            SetTurretAngles(i, yawDeg, pitchDeg, delta);
+            return true;
+        }
+
+        /// <summary>Lay the mount `seat` operates on a WORLD point (master: "the cannon will aim wherever your
+        /// crosshair is pointing"). Bearing is taken from the RING axis and elevation from the TRUNNION, each in
+        /// the frame that actually rotates it: the yaw pivot hangs off the hull, so the bearing is hull-local
+        /// (the hull's own pitch and roll on a slope fall out of ToLocal), and the pitch pivot hangs off the
+        /// yaw frame, so the elevation is measured after the yaw the ring is being sent to. The trunnion sits on
+        /// the ring axis in X on every mount this port has, which makes both angles exact rather than a first
+        /// iteration. `delta` > 0 slews at the mount's rates; 0 snaps.</summary>
+        public bool AimTurretAt(int seat, Vector3 worldPoint, float delta)
+        {
+            int i = TurretIndexFor(seat);
+            if (i < 0 || _turretYaw?[i] == null || _turretPitch?[i] == null) return false;
+            var hull = _turretYaw[i].GetParent() as Node3D ?? this;
+            Vector3 dl = hull.ToLocal(worldPoint) - _turretYaw[i].Position;   // ring axis -> target, hull-local
+            float yaw = Mathf.RadToDeg(Mathf.Atan2(-dl.X, -dl.Z));           // barrel rests along -Z; +yaw swings it toward -X
+            Vector3 dp = new Basis(Vector3.Up, Mathf.DegToRad(yaw)).Inverse() * dl - _turretPitch[i].Position;   // trunnion -> target, in the ring's frame
+            float pitch = Mathf.RadToDeg(Mathf.Atan2(dp.Y, Mathf.Sqrt(dp.X * dp.X + dp.Z * dp.Z)));
+            SetTurretAngles(i, yaw, pitch, delta);
+            return true;
+        }
+
+        /// <summary>The one place mount angles are written. Clamps (or wraps, for a free ring) to the traverse,
+        /// then slews from the CURRENT pose at the mount's rates when given a delta. The current pose is read
+        /// back off the nodes rather than kept in a field so that the harness, the AI and the player all move
+        /// the same turret without three copies of where it is.</summary>
+        void SetTurretAngles(int i, float yawDeg, float pitchDeg, float delta)
+        {
+            var t = Turrets[i];
+            float y = t.YawFree ? Mathf.Wrap(yawDeg, -180f, 180f) : Mathf.Clamp(yawDeg, t.YawMin, t.YawMax);
+            float p = Mathf.Clamp(pitchDeg, t.PitchMin, t.PitchMax);
+            if (delta > 0f)
             {
-                if (Turrets[i].Seat != seat) continue;
-                var t = Turrets[i];
-                float y = Mathf.Clamp(yawDeg, t.YawMin, t.YawMax);
-                float p = Mathf.Clamp(pitchDeg, t.PitchMin, t.PitchMax);
-                if (_turretYaw[i] != null) _turretYaw[i].Rotation = new Vector3(0f, Mathf.DegToRad(y), 0f);
-                if (_turretPitch[i] != null) _turretPitch[i].Rotation = new Vector3(Mathf.DegToRad(p), 0f, 0f);
-                return true;
+                if (t.YawRate > 0f && _turretYaw[i] != null)
+                {
+                    float cy = Mathf.RadToDeg(_turretYaw[i].Rotation.Y);
+                    float step = t.YawRate * delta;
+                    y = t.YawFree ? Mathf.Wrap(cy + Mathf.Clamp(Mathf.Wrap(y - cy, -180f, 180f), -step, step), -180f, 180f)   // shortest way round the ring
+                                  : Mathf.MoveToward(cy, y, step);
+                }
+                if (t.PitchRate > 0f && _turretPitch[i] != null)
+                    p = Mathf.MoveToward(Mathf.RadToDeg(_turretPitch[i].Rotation.X), p, t.PitchRate * delta);
             }
-            return false;
+            if (_turretYaw[i] != null) _turretYaw[i].Rotation = new Vector3(0f, Mathf.DegToRad(y), 0f);
+            if (_turretPitch[i] != null) _turretPitch[i].Rotation = new Vector3(Mathf.DegToRad(p), 0f, 0f);
         }
 
         /// <summary>World direction the BARREL points for `seat`, or the hull's forward if there is no such
@@ -1249,10 +1313,8 @@ namespace UnturnedGodot
         /// it -- the aim derivation is a sign question and this file has a history with those.</summary>
         public Vector3 TurretBarrelDir(int seat)
         {
-            if (_turretPitch != null)
-                for (int i = 0; i < Turrets.Length; i++)
-                    if (Turrets[i].Seat == seat && _turretPitch[i] != null)
-                        return -_turretPitch[i].GlobalTransform.Basis.Z;
+            int i = TurretIndexFor(seat);
+            if (i >= 0 && _turretPitch?[i] != null) return -_turretPitch[i].GlobalTransform.Basis.Z;
             return -GlobalTransform.Basis.Z;
         }
 
@@ -1260,11 +1322,8 @@ namespace UnturnedGodot
         /// points rather than where the operator's head is.</summary>
         public Vector3? TurretMuzzle(int seat)
         {
-            if (_turretPitch == null) return null;
-            for (int i = 0; i < Turrets.Length; i++)
-                if (Turrets[i].Seat == seat && _turretPitch[i] != null)
-                    return _turretPitch[i].ToGlobal(Turrets[i].Muzzle);
-            return null;
+            int i = TurretIndexFor(seat);
+            return i >= 0 && _turretPitch?[i] != null ? _turretPitch[i].ToGlobal(Turrets[i].Muzzle) : null;
         }
 
         public int TurretCountBuilt => _turretYaw?.Length ?? 0;
@@ -2351,7 +2410,7 @@ namespace UnturnedGodot
             ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
-            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.000f, 0.000f, -0.000f) },   // tank: 2 seats, verbatim from the prefab
+            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(-0.471f, 2.348f, 1.421f) },   // tank: driver from the root Seats; the GUNNER is the turret's Seats/Seat_1 -- Yaw (0,0,-0.85) + Seats (0,2.8,2.0) + Seat_1 (-0.471,-0.452,-2.571), Z-negated. The root's own Seat_1 is a (0,0,0) placeholder and had the gunner sitting in the hull floor.
             // OTTER was never actually in this table (the comment above describing its Z-negation fix documented a
             // finding that never got wired in) -- it fell through to SeatOf's jeep-shaped default, a car seat height
             // inside a floatplane cockpit. Verbatim retail Seat_0/Seat_1 (tools/vehicle_seats.json): tandem, both X=0.
@@ -3109,6 +3168,7 @@ namespace UnturnedGodot
             Treads = "tank_treads.txt",
             TurretMeshes = new[] { "tank_turret.txt", "tank_turret_1.txt" }, TurretYawPivot = new Vector3(0f, 0f, 0.85f),
             GunMesh = "tank_gun.txt", GunPitchPivot = new Vector3(0f, 2.8f, -1.15f), Muzzle = new Vector3(0f, 2.8f, -6.306f),
+            Turrets = TankCannon(),   // the mount those pivots ARE -- see BuildTankExtras, which hangs the meshes off it
             Wheel = "tank_wheel.txt", WheelRadius = 0.74f,   // REAL road-wheel radius (tank_wheel.txt bbox Y+-0.74); a too-small 0.5 sat the hull LOW so the collision box scraped the ground (master). no WheelTex -> solid dark, hidden inside the treads
             Engine = 2000f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 9f, SpeedMin = -4f, Brake = 48f,   // strong engine so a turn (which drags via the skid) keeps decent speed rather than crawling (master); top speed still capped at SpeedMax 9. SteerMax 0 -> tracked differential steer
             BoxSize = new Vector3(5.4f, 1.8f, 8.5f), BoxCenter = new Vector3(0f, 1.45f, 0f),   // hull collision box, tightened to the model + BELLY CUT: bottom sits at local 0.55 (above the wheel AXLES 0.556, well clear of the ground on bumps/slopes) so the box can't drag (master: "cut the belly... otherwise we backtrack on the hitbox dragging"). The 8 wheels carry the ride; this box is the UPPER hull only
@@ -3128,6 +3188,27 @@ namespace UnturnedGodot
             // view (and tinyclaw's seat system) later; the exterior stays a clean closed hull.
             Parts = new (string, Color)[] { },
         };
+        /// <summary>THE MAIN GUN. Retail Tank.dat: Turrets 1, Turret_0_Seat_Index 1, Turret_0_Item_ID 1300 (Tank_Cannon,
+        /// an Action Rocket gun with Reload_Time 2), Pitch 45..105 in retail's 0-up/180-down convention = 45 deg up
+        /// to 15 deg down. Retail also clamps yaw to +/-135, which master overruled ("the turret tilts 360 degrees
+        /// around") -> YawFree. The pivots are the prefab's own: Turrets/Turret_1/Yaw at (0,0,-0.85) -> Pitch at
+        /// (0,2.8,2.0) -> Aim+Barrel at (0,0,5.156), Z-negated for the port. Seat 1 is the gunner and the driver
+        /// gets the gun only while that chair is empty (DriverFallback); both lay it on the crosshair.</summary>
+        // A METHOD, not a static field, for the same reason the door guns are (see HueyDoorGuns): `_tank` is a static
+        // field initialised in textual order, and a static array declared BELOW it is still null when `_tank` reads
+        // it -- the first render had a tank with no mount at all (hasTurret=False), silently.
+        static TurretDef[] TankCannon() => new[]
+        {
+            new TurretDef
+            {
+                Seat = 1, DriverFallback = true, CrosshairAim = true,
+                Pivot = new Vector3(0f, 0f, 0.85f), PitchOffset = new Vector3(0f, 2.8f, -2.0f),
+                Muzzle = new Vector3(0f, 0f, -5.156f),
+                YawFree = true, PitchMin = -15f, PitchMax = 45f,
+                YawRate = 60f, PitchRate = 30f,   // a forty-tonne turret: a full about-face in three seconds, not one frame
+                GunId = "tank_cannon", Cycle = 2f, Belt = 60,   // Reload_Time 2; sixty rounds of Missile_1 in the racks
+            },
+        };
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
 
         /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted
@@ -3144,17 +3225,23 @@ namespace UnturnedGodot
                 v.AddChild(new MeshInstance3D { Name = "Treads", Mesh = ContentProvider.ParseObj($"res://content/{s.Treads}"), MaterialOverride = SolidMat(new Color(0.14f, 0.14f, 0.15f)) });
             if (s.TurretMeshes != null)
             {
-                v.TurretPivot = new Node3D { Name = "TurretYaw", Position = s.TurretYawPivot };   // yaws about local Y (weapon system)
+                // THE MOUNT IS THE GENERIC ONE when the spec declares a TurretDef (the tank's cannon): Build has
+                // already made the yaw/pitch nodes at the same pivots, and hanging the tank's own meshes off THOSE
+                // is what lets AimTurret/TryTurretFire/TurretIndexFor drive the tank exactly like the Hind's chin
+                // gun. Two private pivots that only looked like the mount is how the tank sat with a cannon that
+                // could not be aimed or fired. A spec without a TurretDef keeps the old cosmetic pivots.
+                bool mounted = v._turretYaw != null && v._turretYaw.Length > 0 && v._turretYaw[0] != null;
+                v.TurretPivot = mounted ? v._turretYaw[0] : new Node3D { Name = "TurretYaw", Position = s.TurretYawPivot };   // yaws about local Y (weapon system)
                 foreach (var t in s.TurretMeshes)   // baked centred on the yaw pivot -> local 0
                     v.TurretPivot.AddChild(new MeshInstance3D { Name = t.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t}"), MaterialOverride = bodyMat });
-                v.AddChild(v.TurretPivot);
+                if (!mounted) v.AddChild(v.TurretPivot);
                 if (s.GunMesh != null)
                 {
                     // gun pivot is a CHILD of the turret so it yaws with it; offset by the pivot delta, then the gun
                     // mesh (baked centred on the pitch pivot) sits at local 0 and elevates about local X.
-                    v.GunPivot = new Node3D { Name = "GunPitch", Position = s.GunPitchPivot - s.TurretYawPivot };
+                    v.GunPivot = mounted && v._turretPitch[0] != null ? v._turretPitch[0] : new Node3D { Name = "GunPitch", Position = s.GunPitchPivot - s.TurretYawPivot };
                     v.GunPivot.AddChild(new MeshInstance3D { Name = "tank_gun", Mesh = ContentProvider.ParseObj($"res://content/{s.GunMesh}"), MaterialOverride = bodyMat });
-                    v.TurretPivot.AddChild(v.GunPivot);
+                    if (v.GunPivot.GetParent() == null) v.TurretPivot.AddChild(v.GunPivot);
                 }
             }
         }
@@ -5352,7 +5439,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 var t = v.Turrets[i];
                 var yaw = new Node3D { Name = $"TurretYaw{t.Seat}", Position = t.Pivot };
-                var pitch = new Node3D { Name = $"TurretPitch{t.Seat}" };
+                var pitch = new Node3D { Name = $"TurretPitch{t.Seat}", Position = t.PitchOffset };   // the trunnion: on the ring axis for a chin gun, up on the turret roof for the tank
                 var mat = SolidMat(t.Colour);
                 if (t.YawMesh != null)
                     yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat });
