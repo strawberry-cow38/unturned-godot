@@ -1822,6 +1822,7 @@ namespace UnturnedGodot
             UpdateChainsaw(delta, lmb);
             UpdateOptic();
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
+            UpdateNightVision();  // the worn goggles' screen pass (N)
         }
 
         // ---- CHAINSAW -------------------------------------------------------------------------------------------
@@ -3180,6 +3181,27 @@ namespace UnturnedGodot
         // 1.3). "More powerful" is measured against those: longer throw, tighter beam, brighter. If the retail
         // .dat ever gets ripped, these three constants are what it should replace.
         const ushort HeadlampItemId = 1199;
+        // ---- WORN NIGHTVISION (master 2026-09-05): the two retail goggles, both Glasses items, both toggled with N like the
+        // headlamp. The look is NightVision (a screen pass) + DayNightCycle's fog/glow modulation; this is the switch.
+        const ushort MilitaryNightvisionId = 334, CivilianNightvisionId = 1044;
+        bool _nightVisionOn; NightVision _nightVision;
+        public bool WearingNightvision => Inventory?.wornGlasses?.id is MilitaryNightvisionId or CivilianNightvisionId;
+        public bool NightvisionMilitary => Inventory?.wornGlasses?.id == MilitaryNightvisionId;
+        public bool NightVisionOn => _nightVisionOn && WearingNightvision;
+        public void ToggleNightVision()
+        {
+            if (!WearingNightvision) return;
+            _nightVisionOn = !_nightVisionOn;
+            PlaySelectorSwitchSound();   // the same click the headlamp and the handheld make
+        }
+        /// <summary>Per frame: the goggles' view follows the switch AND the slot -- taking them off kills the view, and the
+        /// switch stays where it was so putting them back on brings it straight back.</summary>
+        void UpdateNightVision()
+        {
+            bool on = NightVisionOn && !_dead;
+            if (on && _nightVision == null) { _nightVision = new NightVision(); AddChild(_nightVision); }
+            _nightVision?.Set(on, NightvisionMilitary);
+        }
         const float HeadlampRange = 90f;        // vs the handheld's 64 -- it throws further
         const float HeadlampConeFull = 74f;     // vs 90 -- tighter, so the same energy lands concentrated
         const float HeadlampEnergy = 2.1f;      // vs 1.3 -- and it is simply brighter
@@ -5981,7 +6003,13 @@ namespace UnturnedGodot
                 _fHeldDoor = null; _doorLockTimer = 0f;
             }
             else if (Keybinds.JustPressed(GameAction.Flashlight, @event))
-                ToggleHeadlamp();     // Flashlight key (now N): the WORN headlamp. The handheld torch moved to RMB. Self-guards on actually wearing one.
+            {
+                // N = the vision item in the GLASSES slot, whichever it is: nightvision goggles or the headlamp. Both live in the
+                // same slot so only one can be worn (master 2026-09-05: "you would only want one or the other. if you have a
+                // flashlight why are u using nvgs?"); no ambiguity to resolve.
+                if (WearingNightvision) ToggleNightVision();
+                else ToggleHeadlamp();     // Flashlight key (now N): the WORN headlamp. The handheld torch moved to RMB. Self-guards on actually wearing one.
+            }
             // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
             // B used to toggle it and now belongs to the torch, which is the source binding. BuildTool itself is
             // untouched and intact -- Toggle/CycleType/Place/Spawn all still work -- but nothing calls Toggle(),
@@ -6615,12 +6643,23 @@ namespace UnturnedGodot
             _cannonAiming = false;
             var t = OperatedTurret;
             if (t == null) return;   // no mount in the selected slot right now (the gunner has them): keep the SELECTION, it comes back with the mounts -- resetting it here handed the driver the cannon after they had picked the HMG
-            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); return; }
+            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); HeldFireTick(); return; }
             bool hold = !t.HoldToAim || _seatIndex != 0 || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));   // the GUNNER lays continuously (the sight IS the crosshair, RMB is his zoom); only the driver holds RMB
             if (!hold) return;
             _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
             _cannonAiming = true;
             _driving.AimTurretAt(_seatIndex, _cannonAimPoint, delta, _turretSlot);
+            HeldFireTick();
+        }
+
+        /// <summary>HELD trigger on a mount, every seated tick: TryTurretFire meters the cadence (the HMG's 0.14 s belt, the
+        /// cannon's 2 s reload), so holding LMB is full auto on one and "fires when ready" on the other. This poll used to sit
+        /// in PhysicsTick BELOW the seated early return, where no seated player ever reached it -- every mount was one shot
+        /// per click, and the harness never noticed because it calls Fire() itself (master 2026-09-05 "the hmg is not full
+        /// auto"). Runs from TurretTick, which IS the seated path.</summary>
+        void HeldFireTick()
+        {
+            if (TurretTriggerLive && !NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire)) Fire();
         }
 
         /// <summary>Where the screen centre lands: a ray from the ACTIVE camera (chase or first person) down its
@@ -8617,7 +8656,6 @@ namespace UnturnedGodot
             // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
             // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
             // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
-            if (TurretTriggerLive && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
