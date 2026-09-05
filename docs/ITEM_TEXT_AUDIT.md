@@ -27,7 +27,11 @@ Covered by `gun.description_names_caliber` (9 checks), including a sweep over ev
 added later with retail text fails here instead of shipping. Teeth verified: disabling the overlay and
 removing the already-named guard each turn it red.
 
-## Found, NOT fixed — needs a decision
+## Found, since ALL FIXED (2026-09-05)
+Each of these was written up as needing a decision; all three closed the same day. Kept rather than
+deleted, with what was wrong about them intact, because two of the three were wrong in a way worth
+keeping: a count that a change in the same batch had already invalidated (§1), and a cause traced only
+as far as the line that emitted the symptom (§2).
 
 ### 1. Colour tags do not render. ~~59 items affected.~~ FIXED 2026-09-05 (1 item by then).
 `<color=legendary>Timberwolf</color>` is Unity rich text. Both description widgets are a plain `Label`
@@ -47,17 +51,38 @@ rarity colour. If the colour is actually wanted on screen, that is the deliberat
 It runs over the whole catalogue rather than the one known item, because fixing §2/§3 by re-ripping the
 missing `English.dat` files puts the other 58 straight back.
 
-### 2. 656 items show an INTERNAL name. A third of the catalog.
-`Tuxedo_Bottom_Gold`, `Festive_Hat`, `Mystery_Box_0`, `Honeybadger_Barrel`, `Key_0`. Cause is
-`gen_item_catalog.py:42` — `name = eng.get('Name') or os.path.splitext(fn)[0]` — so any item whose
-`English.dat` lacks a `Name` (or is missing) gets its FILENAME. Mostly cosmetics (177 shirts, 125 hats,
-105 pants) but includes 23 boxes, 16 keys, 7 barrels, 1 sight and 1 gun.
-This is a rip gap, not a code bug: fixing it means re-ripping those `English.dat` files on the Windows
-box. Worth doing before anyone sees a "Mystery_Box_3" in their inventory.
+### 2. ~~656 items show an INTERNAL name.~~ FIXED 2026-09-05 by cow tools (main `bc23f76d`). 15 remain.
+`Tuxedo_Bottom_Gold`, `Festive_Hat`, `Mystery_Box_0`, `Honeybadger_Barrel`, `Key_0`.
 
-### 3. 773 items have no description; 52 of them are functional.
-721 are cosmetics, which retail largely leaves blank too — low value. The 52 that matter:
-`Box 24, Key 17, Barrel 7, Storage 2, Sight 1, Gun 1`. Same rip gap as above, same fix.
+**I named the wrong cause, and so the wrong fix.** This section said the cause was `gen_item_catalog.py:42`
+(`name = eng.get('Name') or os.path.splitext(fn)[0]`) and that the remedy was re-ripping the missing
+`English.dat` files. That fallback is only where the bad name comes OUT. Those 656 items have no
+`English.dat` **at all** and never did — there was nothing to re-rip. Their real names live in Steam's
+economy cache, `EconInfo.bin` at the game root (6 MB, ~16k itemdefs), which is exactly why the affected
+set was "cosmetics, boxes and keys": those are the items Steam owns rather than the game files.
+
+Tracing a symptom to the line that emits it is not the same as finding where the data should have come
+from. I stopped at the first and stated the second with confidence.
+
+Layout is pinned in `tools/econ_info.py`'s docstring; keyed by the item `.dat` GUID, plain entry (no
+skin/effect) wins. The generator now MERGES into the committed `.tsv` instead of regenerating it, so hand
+corrections survive a re-run — the same failure the caliber overlay exists to dodge.
+
+Verified against the catalogue rather than taken on report: 641 names changed, 757 descriptions gained,
+internal names 656 → 15, row count unchanged at 1944.
+
+The **15 that remain are correct as they stand** — they have no econ entry either, and retail also shows
+the asset name for them: 7 gun barrels (`Honeybadger_Barrel`, `Crossbow_Barrel`, `Bow_Barrel`,
+`Matamorez_Barrel`, `Nailgun_Barrel`, `Paintballgun_Barrel`, +1), `Tank_Scope`, `Cobra_Jam`,
+`Bluntforce_Muffler`, `Medic_Glasses`, and the `DL_`/contest cosmetics. Not a gap to chase.
+
+### 3. ~~773 items have no description; 52 functional.~~ FIXED alongside §2. 16 remain, 11 functional.
+Same cause, same fix: the econ cache carries descriptions too, so this closed with §2 rather than needing
+a pass of its own.
+
+Remaining: 7 `Barrel`, 2 `Storage`, 1 `Sight`, 1 `Gun` (11 functional) plus 5 cosmetics — the same items
+as §2's 15, and blank in retail as well.
+
 
 ## Checked and genuinely fine — not padding
 
