@@ -26,7 +26,7 @@ namespace UnturnedGodot
     public sealed partial class RainRoofMap : Node3D
     {
         public const float Half = 32f;         // half-size of the square the shaders see (m)
-        public const int Res = 64;             // cells per side of that window -> 1 m cells
+        public const int Res = 128;            // cells per side of that window -> 0.5 m cells (strawberry 2026-09-05 "up the rain occlusion mask resolution a bit"). 4x the cells, so the first window costs ~16k casts instead of ~4k at RaysPerFrame each -- a couple of seconds of fill on entering a fresh area, then the static cache serves it for the session.
         public const float Cell = 2f * Half / Res;
         public const float Above = 120f;       // rays start this far above the followed camera (above anything PEI builds)
         public const float RayLen = 400f;
@@ -133,7 +133,10 @@ namespace UnturnedGodot
         // once per collider off its CollisionShape3D children and remembered by instance id.
         public const float SmallHeight = 1.7f, SmallArea = 1.5f;   // m, m^2 (X*Z footprint)
         static readonly Dictionary<ulong, bool> _small = new();
-        static bool IsSmallProp(GodotObject o)
+        /// <summary>PUBLIC so the audio shelter probe uses THIS rule rather than a second definition of "small"
+        /// (tinyclaw 2026-09-05). ShelterProbe's own header says the two cover implementations must share one rule;
+        /// that applies just as much to what counts as too small to be cover.</summary>
+        public static bool IsSmallProp(GodotObject o)
         {
             if (o is not CollisionObject3D body || body is Vehicle) return false;
             ulong id = body.GetInstanceId();

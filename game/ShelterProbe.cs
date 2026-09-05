@@ -38,17 +38,38 @@ namespace UnturnedGodot
             var space = world.DirectSpaceState;
             if (space == null) return null;
 
-            var hit = space.IntersectRay(new PhysicsRayQueryParameters3D
+            // SMALL PROPS ARE NOT COVER (strawberry 2026-09-05 "prevent the muffle effect when standing under small
+            // props"). Standing under a sign or a lamp head was muffling the rain like a roof. The rule is NOT a new
+            // one: RainRoofMap.IsSmallProp already decides this for the visual mask (fence height or post-thin gets
+            // cast through), and this file's own header insists the cover implementations share one rule -- so it
+            // calls that predicate rather than defining "small" a second time and letting the two drift.
+            //
+            // THIS LOOP IS NOT THE LOOP THE HEADER BURIED. That one stepped past near-vertical hits, a measure-zero
+            // case no fixture could reach, which is why its mutations survived a green suite. Skipping a small prop
+            // is an ordinary, common hit -- a sign really is between you and the roof -- so the loop has real work
+            // and a real bound.
+            var exclude = new Godot.Collections.Array<Rid>();
+            for (int i = 0; i < 8; i++)   // bounded: a stack of eight small props above one point is not a real world
             {
-                From = at,
-                To = at + new Vector3(0f, maxUp, 0f),
-                CollisionMask = 1u << 0,
-            });
-            if (hit.Count == 0) return null;                          // open sky
+                var hit = space.IntersectRay(new PhysicsRayQueryParameters3D
+                {
+                    From = at,
+                    To = at + new Vector3(0f, maxUp, 0f),
+                    CollisionMask = 1u << 0,
+                    Exclude = exclude,
+                });
+                if (hit.Count == 0) return null;                          // open sky
 
-            var n = (Vector3)hit["normal"];
-            if (Mathf.Abs(n.Y) <= RainShelter.MinFacing) return null; // edge-on: keeps no rain off
-            return ((Vector3)hit["position"]).Y;
+                if (hit.TryGetValue("collider", out var col) && RainRoofMap.IsSmallProp(col.As<GodotObject>()))
+                {
+                    if (hit.TryGetValue("rid", out var rid)) { exclude.Add(rid.As<Rid>()); continue; }
+                    return null;   // no rid to exclude -> cannot advance past it; call the sky open rather than spin
+                }
+                var n = (Vector3)hit["normal"];
+                if (Mathf.Abs(n.Y) <= RainShelter.MinFacing) return null; // edge-on: keeps no rain off
+                return ((Vector3)hit["position"]).Y;
+            }
+            return null;   // eight small props deep and still nothing solid -- treat as open sky
         }
 
         public static bool IsSheltered(World3D world, Vector3 at, float maxUp = 60f)

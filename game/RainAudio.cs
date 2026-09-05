@@ -77,7 +77,12 @@ namespace UnturnedGodot
 
             // shelter low-pass: sweep the cutoff in LOG domain (a linear sweep sounds like a wah) -- ~20kHz open
             // outdoors, ~900Hz fully under cover. Change-guarded so it's not rewritten every idle frame.
-            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(900f), 1f - shelter));   // 900Hz floor is ROOF-correct (a solid roof muffles hard); a permeable CANOPY never reaches it -- its Shelter is capped in WeatherManager so it only takes the top off
+            // 2200 Hz floor, was 900 (strawberry 2026-09-05 "change the muffle effect in buildings to not mute rain,
+            // but make it still audible"). 900 with a 24 dB/oct slope puts the whole hiss of rain -- which lives well
+            // above 2 kHz -- below the knee, so indoors read as silence rather than as shelter. 2200 keeps the body of
+            // the sound present and still audibly dulled. The -7 dB shelter trim below is untouched; it was never the
+            // part doing the swallowing.
+            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(2200f), 1f - shelter));
             if (_lp != null && Mathf.Abs(cut - _lastCut) > 1f) { _lastCut = cut; _lp.CutoffHz = cut; }
         }
 
