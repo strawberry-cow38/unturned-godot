@@ -119,6 +119,11 @@ SCENES = {
                   # scene's proven 1.4/3.2 timing: ~1.8 s of burn, landed.
                   {"UG_BOOTCMD": "throw Red Flare", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "3.2"}, True, 900,
                   "a lit road flare on the ground: glow, flicker, sparks"),
+    # The throwable IN HAND -- the carry pose, which neither the smoke nor the flare shot can show because
+    # both fire after the throw and the hand is empty by then.
+    "holdnade":  (["--peiplay", "--shot={OUT}"],
+                  {"UG_BOOTCMD": "hold Fragmentation Grenade", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "2.0"}, True, 900,
+                  "a grenade held in the hand (the carry pose)"),
     "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),

@@ -810,11 +810,15 @@ namespace UnturnedGodot
             }
             else if (verb == "hold")
             {
-                // hold <consumable>  -- equip a consumable (food/drink) to the hands; LMB eats/drinks it. (mesh must be extracted)
+                // hold <item>  -- put anything equippable in the hands. Goes through EquipItemAsset, the SAME
+                // dispatch a real equip-from-the-bag uses, so `hold Red Smoke` gets the throwable path rather
+                // than being force-fed to EquipHeldConsumable -- which is what this did to every item, and which
+                // for a non-consumable means the wrong mesh and the wrong animation with no error.
                 var asset = ResolveItem(arg);
                 if (asset == null) { Log($"no item '{arg}'"); return; }
+                if (Player.EquipItemAsset(asset, null)) { Log($"holding {asset.itemName}"); return; }
                 string mesh = asset.itemName.ToLowerInvariant().Replace(" ", "_");
-                Player.EquipHeldConsumable(asset, mesh);
+                Player.EquipHeldConsumable(asset, mesh);   // nothing claimed it -> the old consumable guess, mesh by name
                 Log($"holding {asset.itemName} -- LMB to eat/drink");
             }
             else if (verb == "xp")
