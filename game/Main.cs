@@ -3993,8 +3993,8 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 60f, Far = 10000f };
             AddChild(cam);
-            cam.Position = new Vector3(2f, 6.5f, 26f);
-            cam.LookAt(new Vector3(-4f, 1.6f, -4f), Vector3.Up);
+            cam.Position = new Vector3(1f, 4.2f, 15f);   // closer: at 26 m the effects were small in frame and read worse than they are
+            cam.LookAt(new Vector3(-4f, 2.2f, -5f), Vector3.Up);
             GD.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
         }
 

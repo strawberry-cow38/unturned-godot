@@ -29,7 +29,11 @@ namespace UnturnedGodot
         {
             _p = new CpuParticles3D
             {
-                Emitting = true, OneShot = false, Amount = 90, Lifetime = PuffLife, Explosiveness = 0f,
+                // 220, not 90. At 90 the puffs stayed visually SEPARATE -- the render showed a cluster of
+                // distinguishable blobs where a smokescreen has to read as one body you cannot see through.
+                // Density is the lever, not size: the particles were already 3-5 m across and overlapping
+                // barely, so making them bigger would only have made bigger blobs.
+                Emitting = true, OneShot = false, Amount = 220, Lifetime = PuffLife, Explosiveness = 0f,
                 // Puffs are BORN spread through the volume, not fired from a point: a smokescreen is a body of
                 // smoke you cannot see through, and a jet from one spot reads as a chimney.
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere,
@@ -55,8 +59,8 @@ namespace UnturnedGodot
             var ramp = new Gradient();
             ramp.SetColor(0, new Color(Tint, 0f));
             ramp.SetColor(1, new Color(Tint, 0f));
-            ramp.AddPoint(0.12f, new Color(Tint, 0.72f));
-            ramp.AddPoint(0.65f, new Color(Tint, 0.55f));
+            ramp.AddPoint(0.08f, new Color(Tint, 0.88f));   // reach full opacity SOONER: at 0.12 the newest puffs
+            ramp.AddPoint(0.70f, new Color(Tint, 0.72f));   // were still translucent, which is what made the mass read as separate pieces
             _p.ColorRamp = ramp;
             var grow = new Curve(); grow.AddPoint(new Vector2(0f, 0.35f)); grow.AddPoint(new Vector2(1f, 1f));
             _p.ScaleAmountCurve = grow;
@@ -89,11 +93,11 @@ namespace UnturnedGodot
 
         const float FadeTail = 4f;    // the last seconds ramp everything to zero, so it dies down instead of switching off
 
-        OmniLight3D _light;
+        OmniLight3D _light, _glow;
         CpuParticles3D _sparks, _plume;
         MeshInstance3D _core;
         float _t, _seed;
-        float _baseEnergy = 3.4f;
+        float _baseEnergy = 9f;    // 3.4 lit almost nothing -- no pool on the ground at all in the first render
 
         public float Elapsed => _t;   // test seam
 
@@ -106,9 +110,25 @@ namespace UnturnedGodot
             _light = new OmniLight3D
             {
                 LightColor = Tint.Lerp(Colors.White, 0.35f),
-                LightEnergy = _baseEnergy, OmniRange = 16f, ShadowEnabled = false,
+                LightEnergy = _baseEnergy, OmniRange = 22f, ShadowEnabled = false,
+                // RAISED off the deck, and this is a bug fix rather than a taste call. Both lights sat at the
+                // node origin, which after the flare settles is ~6 cm above flat ground -- and a point light that
+                // close to a horizontal surface has N.L ~ 0 everywhere except directly beneath it, so it lit
+                // essentially nothing however far its energy was cranked. The first two renders showed no pool at
+                // all at energy 3.4 and then at 9; the geometry was the problem, not the brightness.
+                Position = new Vector3(0f, 0.45f, 0f),
             };
             AddChild(_light);
+            // A second, wide, dim light purely for the POOL on the ground. One omni bright enough to throw a
+            // pool blows out its own core into a white disc; splitting the job keeps the burning tip readable
+            // while the ground still says "something is burning here".
+            _glow = new OmniLight3D
+            {
+                LightColor = Tint.Lerp(Colors.White, 0.15f),
+                LightEnergy = _baseEnergy * 0.45f, OmniRange = 46f, ShadowEnabled = false,
+                Position = new Vector3(0f, 0.9f, 0f),   // higher still: the wide pool wants the shallowest grazing angle of the two
+            };
+            AddChild(_glow);
 
             // The burning tip itself -- a small unshaded blob so the source of the light is visible, not just
             // its effect on the ground.
@@ -128,12 +148,12 @@ namespace UnturnedGodot
 
             _sparks = new CpuParticles3D
             {
-                Emitting = true, OneShot = false, Amount = 34, Lifetime = 0.85f, Explosiveness = 0f,
+                Emitting = true, OneShot = false, Amount = 90, Lifetime = 0.85f, Explosiveness = 0f,   // 34 read as a thin wisp rather than a spit of sparks
                 Direction = Vector3.Up, Spread = 42f,
                 InitialVelocityMin = 1.6f, InitialVelocityMax = 4.2f,
                 Gravity = new Vector3(0f, -7.5f, 0f),   // sparks ARC: thrown up, pulled down, bright the whole way
                 DampingMin = 0.5f, DampingMax = 1.5f,
-                ScaleAmountMin = 0.03f, ScaleAmountMax = 0.075f,
+                ScaleAmountMin = 0.05f, ScaleAmountMax = 0.12f,
                 Mesh = new QuadMesh { Size = Vector2.One },
                 MaterialOverride = new StandardMaterial3D
                 {
@@ -206,8 +226,9 @@ namespace UnturnedGodot
             if (_light != null)
             {
                 _light.LightEnergy = _baseEnergy * flicker * fade;
-                _light.OmniRange = 16f * (0.92f + 0.08f * flicker) * Mathf.Max(0.2f, fade);
+                _light.OmniRange = 22f * (0.92f + 0.08f * flicker) * Mathf.Max(0.2f, fade);
             }
+            if (_glow != null) _glow.LightEnergy = _baseEnergy * 0.45f * flicker * fade;   // the pool breathes with the flame, at the same rate
             if (_core != null && _core.MaterialOverride is StandardMaterial3D cm)
                 cm.AlbedoColor = new Color(Tint.Lerp(Colors.White, 0.6f), Mathf.Clamp(flicker, 0f, 1f) * fade);
         }
