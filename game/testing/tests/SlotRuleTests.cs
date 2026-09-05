@@ -108,15 +108,23 @@ namespace UnturnedGodot.Testing
             var hud = new HUD { Player = p };
             World.AddChild(hud);
             yield return Ticks(3);
+            // The HUD's hotbar refresh is a 30 Hz RENDER-frame cadence (TickHub.Add from _Process, delta-accumulated), while
+            // Ticks() advances PHYSICS steps. Alone, render frames interleave and the row is built inside three ticks; in the
+            // full batch under load three physics ticks can pass with no 30 Hz render tick at all and the row reads 0 cells
+            // (nightly 2026-09-05, "passes alone, fails in the batch", identical without any of the day's branches). The row
+            // logic is what this test is about, so drive the tick the way tests drive p._Process(dt): directly.
+            hud.HubTick(0.05);
             int cells = hud.DebugHotbarCells;
             T.Check($"a player holding a primary gun and one bind shows those entries ({cells})", cells == 2);
 
             p.Inventory.items[0].removeItem(0);   // empty the primary
             yield return Ticks(3);
+            hud.HubTick(0.05);
             T.Check($"...emptying the primary drops it from the row ({hud.DebugHotbarCells})", hud.DebugHotbarCells == 1);
 
             p.HotbarBinds.Clear();
             yield return Ticks(3);
+            hud.HubTick(0.05);
             T.Check($"...and with nothing slotted or bound the row is empty ({hud.DebugHotbarCells})", hud.DebugHotbarCells == 0);
 
             yield break;
