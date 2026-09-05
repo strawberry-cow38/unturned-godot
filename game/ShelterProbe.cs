@@ -60,7 +60,9 @@ namespace UnturnedGodot
                 });
                 if (hit.Count == 0) return null;                          // open sky
 
-                if (hit.TryGetValue("collider", out var col) && RainRoofMap.IsSmallProp(col.As<GodotObject>()))
+                // FOOTPRINT, not thickness -- IsTooSmallForCover, NOT IsSmallProp. See that method: IsSmallProp
+                // treats "thin in Y" as small, which is a roof, so this probe cast through every roof in the game.
+                if (hit.TryGetValue("collider", out var col) && RainRoofMap.IsTooSmallForCover(col.As<GodotObject>()))
                 {
                     if (hit.TryGetValue("rid", out var rid)) { exclude.Add(rid.As<Rid>()); continue; }
                     return null;   // no rid to exclude -> cannot advance past it; call the sky open rather than spin

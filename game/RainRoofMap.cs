@@ -133,9 +133,32 @@ namespace UnturnedGodot
         // once per collider off its CollisionShape3D children and remembered by instance id.
         public const float SmallHeight = 1.7f, SmallArea = 1.5f;   // m, m^2 (X*Z footprint)
         static readonly Dictionary<ulong, bool> _small = new();
-        /// <summary>PUBLIC so the audio shelter probe uses THIS rule rather than a second definition of "small"
-        /// (tinyclaw 2026-09-05). ShelterProbe's own header says the two cover implementations must share one rule;
-        /// that applies just as much to what counts as too small to be cover.</summary>
+        static readonly Dictionary<ulong, bool> _tiny = new();
+
+        /// <summary>Too small to be OVERHEAD COVER: judged on FOOTPRINT ONLY, never on thickness.
+        ///
+        /// This exists because sharing IsSmallProp with the shelter probe was wrong, and wrong in a way that read as
+        /// correct: that rule is `thin in Y OR small in plan`, and a ROOF IS THIN IN Y. Cast downward onto the world
+        /// it means "a fence or a sign, skip it"; cast UPWARD from a player it describes the exact thing being looked
+        /// for. Reusing it made every roof invisible to the audio probe -- buildtool.shelter_probe_sees_past_walls
+        /// failed all three checks, "the middle of the room is sheltered" included (nightly 2026-09-05).
+        ///
+        /// A predicate whose meaning depends on which way the ray was travelling cannot be shared between two casts
+        /// that travel opposite ways, however much the two want one rule. What survives sharing is the FOOTPRINT
+        /// half: a sign or lamp head is small in plan (&lt;= SmallArea), a roof is not, and neither statement cares
+        /// about the direction of travel.</summary>
+        public static bool IsTooSmallForCover(GodotObject o)
+        {
+            if (o is not CollisionObject3D body || body is Vehicle) return false;
+            ulong id = body.GetInstanceId();
+            if (_tiny.TryGetValue(id, out var known)) return known;
+            var box = BodyAabb(body);
+            bool tiny = box.HasValue && box.Value.Size.X * box.Value.Size.Z <= SmallArea;
+            _tiny[id] = tiny;
+            return tiny;
+        }
+
+        /// <summary>PUBLIC for the visual occlusion path. NOT for the shelter probe -- see IsTooSmallForCover.</summary>
         public static bool IsSmallProp(GodotObject o)
         {
             if (o is not CollisionObject3D body || body is Vehicle) return false;
@@ -166,6 +189,33 @@ namespace UnturnedGodot
             _small[id] = small;
             return small;
         }
+        /// <summary>The body's merged collision AABB in world space, or null when it has no measurable shapes
+        /// (or is the terrain heightmap). The geometry half of both predicates above, so they cannot disagree
+        /// about the SHAPE while disagreeing about the rule.</summary>
+        static Aabb? BodyAabb(CollisionObject3D body)
+        {
+            Aabb acc = default; bool any = false;
+            foreach (var ch in body.GetChildren())
+            {
+                if (ch is not CollisionShape3D cs || cs.Shape == null) continue;
+                Aabb local;
+                switch (cs.Shape)
+                {
+                    case HeightMapShape3D: return null;   // the ground itself
+                    case BoxShape3D b: local = new Aabb(-b.Size * 0.5f, b.Size); break;
+                    case SphereShape3D sp: local = new Aabb(-Vector3.One * sp.Radius, Vector3.One * 2f * sp.Radius); break;
+                    case CapsuleShape3D cp: local = new Aabb(new Vector3(-cp.Radius, -cp.Height * 0.5f, -cp.Radius), new Vector3(cp.Radius * 2f, cp.Height, cp.Radius * 2f)); break;
+                    case CylinderShape3D cy: local = new Aabb(new Vector3(-cy.Radius, -cy.Height * 0.5f, -cy.Radius), new Vector3(cy.Radius * 2f, cy.Height, cy.Radius * 2f)); break;
+                    case ConvexPolygonShape3D cv: local = PointsAabb(cv.Points); break;
+                    case ConcavePolygonShape3D cc: local = PointsAabb(cc.Data); break;
+                    default: return null;
+                }
+                var world = cs.GlobalTransform * local;
+                acc = any ? acc.Merge(world) : world; any = true;
+            }
+            return any ? acc : null;
+        }
+
         static Aabb PointsAabb(Vector3[] pts)
         {
             if (pts == null || pts.Length == 0) return new Aabb(Vector3.Zero, Vector3.Zero);
