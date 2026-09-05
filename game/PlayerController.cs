@@ -3112,7 +3112,7 @@ namespace UnturnedGodot
         public void MeleeAttack(bool strong = false)
         {
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
-            if (IsSwimming || _swimMeleeGrace > 0f) return;   // no melee/punching while swimming (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false). The grace also blocks a swing for a beat AFTER surfacing: a Fire click the engine buffers during the water->land transition arrives the frame after IsSwimming clears, which used to sneak a "queued" punch through on exit (master, intermittent).
+            if (IsSwimming || _swimMeleeGrace > 0f || _climbing) return;   // no melee/punching while swimming, none on a ladder either (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false). The grace also blocks a swing for a beat AFTER surfacing: a Fire click the engine buffers during the water->land transition arrives the frame after IsSwimming clears, which used to sneak a "queued" punch through on exit (master, intermittent).
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
             float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
@@ -6008,7 +6008,7 @@ namespace UnturnedGodot
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
             if (AltLooking) return;   // looking around with ALT: no shooting (master 2026-09-04)
-            if (IsSwimming) return;   // no firing while swimming -- guns are canUseUnderwater=false (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
+            if (IsSwimming || _climbing) return;   // no firing while swimming (guns are canUseUnderwater=false) nor on a ladder (retail dequips there) (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use)
             if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
             if (_unloading) { if (Ammo > 0) { _unloading = false; _viewmodel?.SetReloading(false); } else return; }   // firing INTERRUPTS an unload -> keep what's still loaded (master: the pie reopens only once the action is finished/interrupted)
@@ -6083,7 +6083,7 @@ namespace UnturnedGodot
             if (_driving == null && !IsOnFloor() && !IsSwimming) return false;   // and none in the AIR either (master 2026-09-05): feet on the ground to shoot
 
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
-                || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
+                || !HasGunOut || IsSwimming || _climbing || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
@@ -7026,7 +7026,7 @@ namespace UnturnedGodot
                         _magSwapAutoRack = false;
                         _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
                     }
-                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null)
+                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming)
                         _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
                 }
             }
@@ -8544,11 +8544,15 @@ namespace UnturnedGodot
             // A ladder outranks everything, including water -- retail's simulate() runs the ladder block first
             // and RETURNS out of the stance function while attached, so a ladder in the shallows keeps you
             // climbing rather than dropping you into a swim.
-            if (!NetAvatar && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
-            // Water overrides the key-driven stance. NetAvatars hold the replicated stance (NetHoldPose), so
-            // only a locally-simulated shell decides here.
-            else if (!NetAvatar && BodyUnderwater)
+            // WATER OUTRANKS THE LADDER (master 2026-09-05 "the ladder state is overwriting the swimming state. swimming
+            // should overwrite climbing"): a submerged body swims and lets go of any rungs. NetAvatars hold the replicated
+            // stance (NetHoldPose), so only a locally-simulated shell decides here.
+            if (!NetAvatar && BodyUnderwater)
+            {
+                LadderDetach();
                 _move.Stance = EPlayerStance.SWIM;   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
+            }
+            else if (!NetAvatar && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
             else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
                 _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)

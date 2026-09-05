@@ -706,19 +706,31 @@ namespace UnturnedGodot
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
         public void SetLocomotion(bool moving, EPlayerStance stance, bool safe = false, float moveX = 0f, float moveZ = 0f)
         {
-            bool leftSwim = _stance == EPlayerStance.SWIM && stance != EPlayerStance.SWIM;
+            static bool HandsOff(EPlayerStance st) => st == EPlayerStance.SWIM || st == EPlayerStance.CLIMB;
+            bool wasOff = HandsOff(_stance), nowOff = HandsOff(stance);
             _moving = moving; _stance = stance; _safe = safe;
             _moveInput = new Vector2(moveX, moveZ);   // x=strafe, y=forward -> the movement sway tilt
             if (_arms == null) return;
-            // 1p arms swim: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim on the FIRST-PERSON
-            // animator too (not just 3p), overriding the equipped-item hold -- otherwise the empty-hand melee
-            // ready pose (Melee_Equip) shows while swimming. Revert to the held pose on leaving the water.
-            if (stance == EPlayerStance.SWIM)
+            // 1p arms swim / climb: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim and Idle_Climb/Move_Climb on
+            // the FIRST-PERSON animator too (not just 3p), and PlayerEquipment.simulate_MustDequip puts the item AWAY for both
+            // (a ladder, or water with canUseUnderwater=false). So: the stance clip on the arms, the held model hidden, no ADS
+            // (master 2026-09-05: "prevent holding a weapon ... on a ladder ... make sure the gun in your hands is hidden while
+            // swimming too"). Back to the held pose + model on leaving.
+            if (nowOff)
             {
-                string want = moving ? "Move_Swim" : "Idle_Swim";
+                string want = stance == EPlayerStance.SWIM ? (moving ? "Move_Swim" : "Idle_Swim") : (moving ? "Move_Climb" : "Idle_Climb");
                 if (_arms.ClipLength(want) > 0f) { _arms.SetClipLoop(want, true); _arms.PlayLoop(want); }
+                if (!wasOff)
+                {
+                    if (_aiming) SetAiming(false);
+                    if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = false;   // the item is put away, retail-style
+                }
             }
-            else if (leftSwim) _arms.Play(_holdClip);
+            else if (wasOff)
+            {
+                if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
+                _arms.Play(_holdClip);
+            }
         }
 
         // ---- INPUT INERTIA (PlayerAnimator.rotationInputViewmodelRoll, source lines 1480-1485) ----------------
@@ -895,7 +907,7 @@ namespace UnturnedGodot
         // implementing either alone still leaves a way into sprint-ADS. `_stance == SPRINT && _moving` mirrors retail's
         // own isSprinting (UseableGun.cs:3947). Can_Aim_During_Sprint is a per-gun .dat exception, default false, and
         // nothing in our content sets it -- so this is unconditional here until something does.
-        public void SetAiming(bool on) { if (on && (!EquipDone || _attachView || _reloading || _hammering || (_stance == EPlayerStance.SPRINT && _moving))) return; if (on && _inspecting) CancelInspect(); _aiming = on; }   // no ADS while the attach menu is up, or during ANY active reload / rack / bolt-cycle (source canStartAim: !isReloading && !isHammering) (master); ADS mid-inspect cancels the inspect then aims
+        public void SetAiming(bool on) { if (on && (!EquipDone || _attachView || _reloading || _hammering || (_stance == EPlayerStance.SPRINT && _moving) || _stance == EPlayerStance.SWIM || _stance == EPlayerStance.CLIMB)) return; /* no ADS with the item put away (swim / ladder) */ if (on && _inspecting) CancelInspect(); _aiming = on; }   // no ADS while the attach menu is up, or during ANY active reload / rack / bolt-cycle (source canStartAim: !isReloading && !isHammering) (master); ADS mid-inspect cancels the inspect then aims
         // Consumable eat/drink motion on click -- this item's OWN archetype (CU_n: eat/drink/pills/syringe/bandage),
         // else the generic Consume_Use, else re-raise (Melee_Equip placeholder).
         public void PlayConsumeUse()
