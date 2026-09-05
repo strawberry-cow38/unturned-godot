@@ -1821,6 +1821,7 @@ namespace UnturnedGodot
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
             UpdateOptic();
+            UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
         }
 
         // ---- CHAINSAW -------------------------------------------------------------------------------------------
@@ -5728,7 +5729,11 @@ namespace UnturnedGodot
             }
             else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (_driving != null) { if (Keybinds.IsDown(@event) && !(OperatedTurret?.CrosshairAim ?? false)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
+                if (_driving != null)
+                {
+                    if (Keybinds.IsDown(@event) && GunsightActive) CycleGunsightZoom();   // in the gunsight, an RMB TAP steps the zoom (master: "tapping rmb cycles zoom, clicking shoots")
+                    else if (Keybinds.IsDown(@event) && !(OperatedTurret?.CrosshairAim ?? false)) _driving.ToggleHeadlights();
+                }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (Keybinds.IsDown(@event)) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingHoseTool) { if (Keybinds.IsDown(@event)) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
@@ -5770,6 +5775,8 @@ namespace UnturnedGodot
             }
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
+            else if (_driving != null && _driving.HasTurretHatch && _seatIndex == 1 && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
+                _driving.GunnerHeadOut = !_driving.GunnerHeadOut;   // the tank gunner pops out of / drops back into the top hatch (master 2026-09-05: "press ctrl to toggle")
             else if (_driving != null && _driving.HasBiFoldDoor && Keybinds.JustPressed(GameAction.VehicleDoor, @event))   // ONLY a vehicle with the folding door claims Ctrl here -- Ctrl is also the siren tap / lightbar hold further down (master: "i cant open the lightbar radial menu anymore")
             {
                 if (_seatIndex == 0) _driving.ToggleDoor();   // the driver works the bus door (master: Ctrl in the driver's seat)
@@ -6460,6 +6467,36 @@ namespace UnturnedGodot
         /// <summary>Harness: keep the viewmodel layer off. It is a CanvasLayer composited over the whole window, so
         /// an OUTSIDE harness camera still got the driver's arms painted across the shot.</summary>
         public bool HideViewmodelDebug;
+        public void DebugToggleHeadOut() { if (_driving != null) _driving.GunnerHeadOut = !_driving.GunnerHeadOut; }   // harness: the gunner's Ctrl
+
+        // ---- THE TANK'S OPTICS (master 2026-09-05): "in first person, the driver should get a binocular overlay, that acts
+        // as a periscope for outside. the turret gunner in 1st person, inside the turret gets an 8x scope reticle (but
+        // cycling zoom levels like binoculars). tapping rmb cycles zoom, clicking shoots the weapon".
+        TankOptics _tankOptics; int _gunsightZoomIdx; float _tankBaseFov = 75f; bool _tankOpticsWas;
+        static readonly float[] GunsightZooms = { 8f, 12f, 4f };   // starts at the 8x master named, then steps like the binoculars
+        /// <summary>The gunner, first person, buttoned up inside the turret: the reticle view.</summary>
+        public bool GunsightActive => _fp && !_dead && _driving != null && _seatIndex == 1 && _driving.HasTurretHatch && !_driving.GunnerHeadOut;
+        /// <summary>The driver, first person: looking out of the visor window through the periscope mask.</summary>
+        public bool PeriscopeActive => _fp && !_dead && _driving != null && _seatIndex == 0 && _driving.HasPeriscope;
+        public bool TankOpticsActive => (GunsightActive || PeriscopeActive) && !HideViewmodelDebug;   // the outside-camera harness runs draw no overlay
+        public void CycleGunsightZoom() { _gunsightZoomIdx = (_gunsightZoomIdx + 1) % GunsightZooms.Length; }
+        void UpdateTankOptics()
+        {
+            bool on = TankOpticsActive && _cam != null;
+            if (on && _tankOptics == null) { _tankOptics = new TankOptics(); AddChild(_tankOptics); }
+            if (on && !_tankOpticsWas) _tankBaseFov = _cam.Fov;   // rising edge: remember the un-zoomed FOV before touching it (the binoculars lesson)
+            if (on)
+            {
+                _tankOptics.Mode = GunsightActive ? TankOptics.OpticMode.Gunsight : TankOptics.OpticMode.Periscope;
+                _cam.Fov = GunsightActive ? _tankBaseFov / GunsightZooms[_gunsightZoomIdx] : _tankBaseFov;   // the periscope is 1x: a window, not a telescope
+            }
+            else if (_tankOpticsWas)
+            {
+                if (_tankOptics != null) _tankOptics.Mode = TankOptics.OpticMode.None;
+                if (_cam != null) _cam.Fov = _tankBaseFov;
+            }
+            _tankOpticsWas = on;
+        }
         const float CannonReach = 600f;     // the crosshair ray's length; past it the gun is laid on the ray itself (a shell at a distant hillside still flies where the crosshair sits)
         Godot.Collections.Array<Rid> _cannonExclude; Vehicle _cannonExcludeFor; PhysicsRayQueryParameters3D _cannonRayQ;
 
@@ -6473,7 +6510,7 @@ namespace UnturnedGodot
             var t = OperatedTurret;
             if (t == null) return;   // no mount in the selected slot right now (the gunner has them): keep the SELECTION, it comes back with the mounts -- resetting it here handed the driver the cannon after they had picked the HMG
             if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); return; }
-            bool hold = !t.HoldToAim || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));
+            bool hold = !t.HoldToAim || _seatIndex != 0 || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));   // the GUNNER lays continuously (the sight IS the crosshair, RMB is his zoom); only the driver holds RMB
             if (!hold) return;
             _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
             _cannonAiming = true;
@@ -7539,7 +7576,7 @@ namespace UnturnedGodot
                     else _viewmodel.ClearDrivingWheel();
                 }
                 else _viewmodel.ClearDrivingWheel();
-                _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug);   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
+                _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug && !TankOpticsActive);   // no arms over a periscope or a gunsight   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }
             if (_body == null) return;
@@ -7916,6 +7953,7 @@ namespace UnturnedGodot
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
+            if (v.SeatEyeOverride(_seatIndex, out _)) _rideLookPitch = 0f;   // a seat behind an OPTIC starts looking LEVEL: the classic over-the-hood gaze put an 8x gunsight on the hull deck and a periscope on the glacis
             v.CycleDoor();   // the bus door swings for whoever boards, then folds shut (cosmetic)
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
@@ -8152,6 +8190,7 @@ namespace UnturnedGodot
                                               : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
             var eye = SeatedEyeLocal(_driving.SeatBodyLocal(_seatIndex), eyeFallback);   // the seated model's own eyes (per seat), not a per-vehicle hand number
             eye += DriverPeekOffset();
+            if (_driving.SeatEyeOverride(_seatIndex, out var opticEye)) eye = opticEye;   // a tank seat sees through its optic (visor window / mantlet sight / open cupola), not from its head
             if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
             {
                 // Alt released: ease the free-look back to the default chase angle (strawberry 2026-09-03 "it should lerp back")

@@ -88,6 +88,45 @@ namespace UnturnedGodot
         // (tinyclaw) aims them independently of the hull: TurretPivot yaws about local Y, GunPivot (its child)
         // pitches about local X, and MuzzleLocal is the cannon tip for shell spawns. Null/Zero on non-tanks.
         public Node3D TurretPivot, GunPivot; public Vector3 MuzzleLocal;
+        // TANK HATCHES (master 2026-09-05): the model ships both hatches OPEN -- the turret's top lid standing on the roof
+        // and the driver's visor lifted over his window. Peeled out of their meshes by BuildTankExtras and hinged, so they
+        // can close: the visor is up while somebody sits in the driver's seat, the lid while the gunner has his head out.
+        Node3D _turretHatch, _driverHatch; float _turretHatchDeg, _driverHatchDeg;   // current hinge angles (0 = as modelled = open)
+        /// <summary>The gunner is standing in the open hatch (Ctrl toggles; PlayerController). Cleared when seat 1 empties.</summary>
+        public bool GunnerHeadOut;
+        public bool HasTurretHatch => _turretHatch != null;
+        public bool HasPeriscope => _driverHatch != null;
+        /// <summary>Tank seats look out through FIXED optics, not from their heads: the driver through the visor window
+        /// (a periscope), the gunner through the sight on the mantlet -- or from the cupola with the lid open. Returns the
+        /// hull-local eye for PositionVehicleCam, or false for a vehicle/seat without one. The gunner's points live in
+        /// the TURRET frame and are converted, so they turn with the turret.</summary>
+        public bool SeatEyeOverride(int seat, out Vector3 local)
+        {
+            local = Vector3.Zero;
+            if (seat == 0 && _driverHatch != null) { local = TankPeriscopeEye; return true; }
+            if (seat == 1 && _turretHatch != null && TurretPivot != null) { local = ToLocal(TurretPivot.ToGlobal(GunnerHeadOut ? TankCupolaEye : TankSightEye)); return true; }
+            return false;
+        }
+        /// <summary>Hinge the two peeled hatches toward their targets (120 deg/s -- a heavy steel lid, not a car door).
+        /// Driver's visor: OPEN while the driver's seat is taken. Turret lid: OPEN while the gunner is aboard with his head
+        /// out; a gunner who leaves is no longer standing in it.</summary>
+        void UpdateHatches(float dt)
+        {
+            if (SeatFree(1)) GunnerHeadOut = false;
+            float rate = 120f * dt;
+            if (_turretHatch != null)
+            {
+                float target = GunnerHeadOut && !SeatFree(1) ? 0f : TankTopHatchClosedDeg;
+                _turretHatchDeg = Mathf.MoveToward(_turretHatchDeg, target, rate);
+                _turretHatch.RotationDegrees = new Vector3(_turretHatchDeg, 0f, 0f);
+            }
+            if (_driverHatch != null)
+            {
+                float target = SeatFree(0) ? TankDriverHatchClosedDeg : 0f;
+                _driverHatchDeg = Mathf.MoveToward(_driverHatchDeg, target, rate);
+                _driverHatch.RotationDegrees = new Vector3(_driverHatchDeg, 0f, 0f);
+            }
+        }
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
         const float DiscSwapSpool = 0.35f;   // RETIRED: the blur-plate swap threshold. Kept as the record of what the
                                              // retail prefab did; the real blades are drawn and spun at every rpm now.
@@ -3228,7 +3267,11 @@ namespace UnturnedGodot
             Body = "tank_hull.txt", Palette = "tank_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable olive (same texel as the APC)
             Tracked = true,
             Treads = "tank_treads.txt",
-            TurretMeshes = new[] { "tank_turret.txt", "tank_turret_1.txt" }, TurretYawPivot = new Vector3(0f, 0f, 0.85f),
+            // ONE turret mesh. tank_turret_1.txt is the prefab's Yaw/Model_1 -- the LOD1 of the same turret (26 verts, a solid
+            // lid up to y 3.44), and drawing it alongside LOD0 put a plate over the hatch opening LOD0 models (master 2026-09-05
+            // "are we maybe layering two LODs of the tank or something? lol"). We were.
+            TurretMeshes = new[] { "tank_turret.txt" }, TurretYawPivot = new Vector3(0f, 0f, 0.85f),
+            DriverEye = TankPeriscopeEye,   // the FP driver looks out of the visor window (SeatEyeOverride does the same; this keeps the fallback honest)
             GunMesh = "tank_gun.txt", GunPitchPivot = new Vector3(0f, 2.8f, -1.15f), Muzzle = new Vector3(0f, 2.8f, -6.306f),
             Turrets = TankCannon(),   // the mount those pivots ARE -- see BuildTankExtras, which hangs the meshes off it
             Wheel = "tank_wheel.txt", WheelRadius = 0.74f,   // REAL road-wheel radius (tank_wheel.txt bbox Y+-0.74); a too-small 0.5 sat the hull LOW so the collision box scraped the ground (master). no WheelTex -> solid dark, hidden inside the treads
@@ -3294,6 +3337,26 @@ namespace UnturnedGodot
         /// the box is peeled with the SINGLE-zone call -- a straddling triangle stays out of a single-zone peel.</summary>
         static readonly (Vector3 min, Vector3 max) TankMgBox = (new Vector3(-1.05f, 3.25f, -1.72f), new Vector3(-0.20f, 4.10f, -0.88f));
         static readonly (Vector3 min, Vector3 max) TankMgBarrel = (new Vector3(-0.90f, 3.60f, -3.80f), new Vector3(-0.60f, 3.90f, -1.40f));
+        /// <summary>The turret's top hatch LID, modelled swung open: a 1.27 m plate standing on the roof's rear edge (x -0.2..1.08,
+        /// z 1.16..1.60), leaning back ~10 deg, 3.62 up to 4.75, with a hinge wedge reaching down to 3.26 at x 0.44. Its 20
+        /// tris sit wholly inside this zone; the roof and the shaft below the opening (x -0.2..1.08, z -0.14..1.33, down to
+        /// y 2.40 -- the opening master could not see because the LOD1 turret mesh was drawn over it) straddle and stay.</summary>
+        static readonly (Vector3 min, Vector3 max) TankTopHatch = (new Vector3(-0.25f, 3.20f, 1.05f), new Vector3(1.12f, 4.80f, 1.65f));
+        static readonly Vector3 TankTopHatchHinge = new Vector3(0.44f, 3.64f, 1.29f);   // turret frame: the plate's bottom-centre
+        const float TankTopHatchClosedDeg = -100f;   // about +X: forward and down until the 10-deg back-lean lies flat on the roof
+        /// <summary>The driver's VISOR on the glacis: a 1.7 m plate (x +/-0.85) over the window opening (x +/-0.75, y 1.61..1.94,
+        /// z -4.09..-3.17), modelled lifted -- its front edge at y 2.04..2.09 (z -3.88) stands 0.35 m off the glacis and its
+        /// rear edge (y 1.86..1.90, z -3.40) sits on it, so the rear edge is the hinge. 10 tris, none straddling.</summary>
+        static readonly (Vector3 min, Vector3 max) TankDriverHatch = (new Vector3(-0.9f, 1.84f, -3.92f), new Vector3(0.9f, 2.12f, -3.36f));
+        static readonly Vector3 TankDriverHatchHinge = new Vector3(0f, 1.88f, -3.40f);   // hull frame
+        const float TankDriverHatchClosedDeg = -40f;   // about +X: the front edge drops onto the glacis (flush at z -3.89)
+        /// <summary>Where the tank's seats SEE from. Driver: just outside the glacis at the window opening, clear of the raised
+        /// visor's lip (the glacis passes y 1.69 at z -3.92). Gunner: the sight aperture on the mantlet face beside the gun (turret
+        /// frame): the sight sits on the turret's yaw axis, 0.86 m over the roof and above the gun box, so turning the turret never
+        /// drags anything across the eyepiece; or, head out, 1 m above the open hatch.</summary>
+        public static readonly Vector3 TankPeriscopeEye = new Vector3(0f, 1.98f, -3.92f);   // 4 cm ahead of the raised visor's lip, 0.3 m over the glacis: the eye at plate level saw half a frame of its own hull
+        static readonly Vector3 TankSightEye = new Vector3(0f, 4.3f, -0.8f);   // a roof PERISCOPE sight on the yaw axis: a mantlet-face eye swung with the turret while the view stayed hull-relative, so a laid gun put its own barrel across the glass
+        static readonly Vector3 TankCupolaEye = new Vector3(0.44f, 4.45f, 0.60f);
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
 
         /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted
@@ -3330,16 +3393,39 @@ namespace UnturnedGodot
                     // offset by minus the mount pivot so the vertices stay exactly where the modeller put them: the box
                     // then yaws about its own centre, the barrel pitches about the box centre at its own axis height.
                     string path = $"res://content/{t}";
-                    var (rest, _) = ContentProvider.ParseObjSplitByZone(path, new[] { TankMgBox, TankMgBarrel });
+                    var (rest, _) = ContentProvider.ParseObjSplitByZone(path, new[] { TankMgBox, TankMgBarrel, TankTopHatch });
                     var (_, box) = ContentProvider.ParseObjSplitByZone(path, TankMgBox.min, TankMgBox.max);
                     var (_, barrel) = ContentProvider.ParseObjSplitByZone(path, TankMgBarrel.min, TankMgBarrel.max);
+                    var (_, lid) = ContentProvider.ParseObjSplitByZone(path, TankTopHatch.min, TankTopHatch.max);
                     if (rest != null) v.TurretPivot.AddChild(new MeshInstance3D { Name = "tank_turret", Mesh = rest, MaterialOverride = bodyMat });
                     var mgPivot = v._turretYaw[1].Position;   // TankCannon()[1].Pivot, in the turret frame
                     if (box != null) v._turretYaw[1].AddChild(new MeshInstance3D { Name = "tank_mg_box", Mesh = box, MaterialOverride = bodyMat, Position = -mgPivot });
                     if (barrel != null) v._turretPitch[1].AddChild(new MeshInstance3D { Name = "tank_mg_barrel", Mesh = barrel, MaterialOverride = bodyMat, Position = -mgPivot });
-                    GD.Print($"[tank] roof gun peeled: box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, turret rest {(rest != null ? "ok" : "MISSING")}");
+                    // THE TOP HATCH LID, hinged at its bottom edge; it starts closed (nobody aboard) and UpdateHatches swings it
+                    if (lid != null)
+                    {
+                        v._turretHatch = new Node3D { Name = "TurretHatch", Position = TankTopHatchHinge, RotationDegrees = new Vector3(TankTopHatchClosedDeg, 0f, 0f) };
+                        v._turretHatchDeg = TankTopHatchClosedDeg;
+                        v._turretHatch.AddChild(new MeshInstance3D { Name = "tank_top_hatch", Mesh = lid, MaterialOverride = bodyMat, Position = -TankTopHatchHinge });
+                        v.TurretPivot.AddChild(v._turretHatch);
+                    }
+                    GD.Print($"[tank] turret peeled: gun box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, lid {(lid != null ? "ok" : "MISSING")}, rest {(rest != null ? "ok" : "MISSING")}");
                 }
                 if (!mounted) v.AddChild(v.TurretPivot);
+                // THE DRIVER'S VISOR, peeled off the hull and hinged at its rear edge: closed until somebody takes the seat.
+                if (mounted && v._bodyMesh != null && s.Body == "tank_hull.txt")
+                {
+                    var (hullRest, visor) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", TankDriverHatch.min, TankDriverHatch.max);
+                    if (hullRest != null && visor != null)
+                    {
+                        v._bodyMesh.Mesh = hullRest;
+                        v._driverHatch = new Node3D { Name = "DriverHatch", Position = TankDriverHatchHinge, RotationDegrees = new Vector3(TankDriverHatchClosedDeg, 0f, 0f) };
+                        v._driverHatchDeg = TankDriverHatchClosedDeg;
+                        v._driverHatch.AddChild(new MeshInstance3D { Name = "tank_driver_hatch", Mesh = visor, MaterialOverride = bodyMat, Position = -TankDriverHatchHinge });
+                        v.AddChild(v._driverHatch);
+                    }
+                    else GD.Print("[tank] driver visor NOT peeled (zone matched nothing)");
+                }
                 if (s.GunMesh != null)
                 {
                     // gun pivot is a CHILD of the turret so it yaws with it; offset by the pivot delta, then the gun
@@ -8266,6 +8352,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             _driveIdle += (float)delta;   // Drive() zeroes this; a car nobody is steering climbs away from zero
             if (_doorPivotA != null) UpdateDoor((float)delta);
+            if (_turretHatch != null || _driverHatch != null) UpdateHatches((float)delta);
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;

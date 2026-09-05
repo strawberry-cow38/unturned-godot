@@ -2089,15 +2089,17 @@ namespace UnturnedGodot
             _ttVeh.AddToGroup("vehicles");
             AddChild(_ttVeh);
 
-            _dtPlayer = new PlayerController { CaptureMouse = false, HideViewmodelDebug = true };   // no arms over the outside shot
+            _dtPlayer = new PlayerController { CaptureMouse = false, HideViewmodelDebug = System.Environment.GetEnvironmentVariable("UG_TANKFP") != "1" };   // no arms over the outside shot
             AddChild(_dtPlayer);
             _dtPlayer.GlobalPosition = new Vector3(4.5f, 1.0f, 0f);   // beside the hull; the script seats them directly
 
             // created AFTER the player so its Current wins (the player cam is made Current once at build, never re-asserted)
             _ttCam = new Camera3D { Fov = 58f, Current = true, Far = 800f };
             AddChild(_ttCam);
-            _ttCam.GlobalPosition = new Vector3(13f, 7.5f, 15f);
-            _ttCam.LookAt(new Vector3(-3f, 2.2f, -24f), Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_TANKCAM") == "front")   // the glacis + the turret roof: the driver's visor and the top hatch
+            { _ttCam.GlobalPosition = new Vector3(-9f, 5.5f, -13f); _ttCam.LookAt(new Vector3(0.5f, 2.6f, -0.5f), Vector3.Up); }
+            else { _ttCam.GlobalPosition = new Vector3(13f, 7.5f, 15f); _ttCam.LookAt(new Vector3(-3f, 2.2f, -24f), Vector3.Up); }
+            if (System.Environment.GetEnvironmentVariable("UG_TANKFP") == "1") { _ttCam.Current = false; _ttCam.QueueFree(); _ttCam = null; }   // UG_TANKFP=1: the SEATED player's own view (periscope / gunsight overlays)
         }
 
         // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
@@ -8442,6 +8444,8 @@ namespace UnturnedGodot
                     {
                         if (t == 25) _dtPlayer.EnterVehicle(_ttVeh, ttSeat);
                         if (t == 40) _dtPlayer.DebugSelectTurret(ttWeapon);
+                        if (System.Environment.GetEnvironmentVariable("UG_TANKHEADOUT") == "1" && (t == 60 || t == 200)) _dtPlayer.DebugToggleHeadOut();   // the gunner's Ctrl: lid opens at 60, closes at 200
+                        if (System.Environment.GetEnvironmentVariable("UG_TANKZOOMCYCLE") == "1" && t == 150) _dtPlayer.CycleGunsightZoom();   // an RMB tap in the gunsight: 8x -> 12x
                         if (t >= 40) { _dtPlayer.DebugCannonAim = true; _dtPlayer.DebugCannonAimPoint = t < 180 ? _ttTargetA : _ttTargetB; }   // "RMB held": lay on A, then on B
                         if (ttWeapon == 0 ? (t == 140 || t == 305) : ((t >= 100 && t < 140) || (t >= 300 && t < 330))) _dtPlayer.Fire();   // LMB: a shell at each block -- or an HMG burst held for 0.8 s
                         if (ttSeat == 0 && t == 200) _ttVeh.OccupiedSeats.Add(1);      // a gunner sits down mid-slew: the driver loses the gun and it must FREEZE
