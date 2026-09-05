@@ -1137,6 +1137,17 @@ namespace UnturnedGodot
             /// they let go -- instead of slaving the barrel to the look angles every frame the way a door gun
             /// does. Both tank seats work this way; the Hind's chin gun keeps following the gunner's eyes.</summary>
             public bool CrosshairAim;
+            /// <summary>With CrosshairAim: the mount moves only while Aim is HELD (the cannon: RMB lays it, LMB fires)
+            /// when true; when false it tracks the crosshair point every tick and fires on LMB alone -- "works like
+            /// any other gun" (the tank's HMG).</summary>
+            public bool HoldToAim = true;
+            /// <summary>Index of the mount whose YAW frame this one rides on, or -1 for the hull. The tank's roof HMG
+            /// sits on the turret and turns with it, then traverses on its own ring on top of that.</summary>
+            public int ParentMount = -1;
+            /// <summary>Euler degrees for the YAW mesh, as MeshRotationDeg is for the pitch mesh. The Hind's ring and
+            /// gun are authored HANGING (a chin turret, everything below the pivot); a half-turn about Z stands the
+            /// same meshes upright on a roof without mirroring anything.</summary>
+            public Vector3 YawMeshRotationDeg = Vector3.Zero;
             /// <summary>Slew rates in degrees per second; 0 = the mount snaps. A forty-tonne turret that snaps
             /// 180 degrees in one frame reads as a bug, so the tank's traverses at a finite rate and the shell
             /// leaves along wherever the barrel has GOT TO, which is what TryTurretFire already guarantees.</summary>
@@ -1209,32 +1220,39 @@ namespace UnturnedGodot
             return false;
         }
 
-        public int TurretAmmo(int seat) { int i = TurretIndexFor(seat); return i >= 0 ? _turretAmmo?[i] ?? 0 : 0; }
+        public int TurretAmmo(int seat, int slot = 0) { int i = TurretIndexFor(seat, slot); return i >= 0 ? _turretAmmo?[i] ?? 0 : 0; }
         public bool HasTurret(int seat) => TurretIndexFor(seat) >= 0;
-        /// <summary>The mount `seat` operates RIGHT NOW, or null. Every turret query goes through this one rule:
-        /// a seat's own mount first; failing that, the driver gets any DriverFallback mount whose own seat is
-        /// empty. Gunner priority is therefore a consequence of seat occupancy, not a state that has to be handed
-        /// back and forth -- the instant someone sits in the gunner's chair the driver's queries return -1.</summary>
-        public int TurretIndexFor(int seat)
+        /// <summary>The mount `seat` operates RIGHT NOW in weapon slot `slot`, or -1. Every turret query goes through
+        /// this one rule: a seat's own mounts first, in spec order; failing that, the driver gets any DriverFallback
+        /// mount whose own seat is empty. Gunner priority is therefore a consequence of seat occupancy, not a state
+        /// that has to be handed back and forth -- the instant someone sits in the gunner's chair the driver's
+        /// queries return -1. `slot` picks among several mounts one seat operates (the tank: 0 = cannon, 1 = HMG,
+        /// the operator's 1/2 keys), so a mount is never addressed by a seat alone once a seat has two.</summary>
+        public int TurretIndexFor(int seat, int slot = 0)
         {
-            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat) return i;
+            int n = 0;
+            for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].Seat == seat && n++ == slot) return i;
+            if (n > 0) return -1;   // the seat has its own mounts, just not that many slots
             if (seat == 0)
-                for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].DriverFallback && SeatFree(Turrets[i].Seat)) return i;
+                for (int i = 0; i < Turrets.Length; i++) if (Turrets[i].DriverFallback && SeatFree(Turrets[i].Seat) && n++ == slot) return i;
             return -1;
         }
-        public TurretDef TurretFor(int seat) { int i = TurretIndexFor(seat); return i >= 0 ? Turrets[i] : null; }
+        public TurretDef TurretFor(int seat, int slot = 0) { int i = TurretIndexFor(seat, slot); return i >= 0 ? Turrets[i] : null; }
+        /// <summary>How many mounts `seat` operates right now (the driver's fallback ones included while the gunner's
+        /// chair is empty). The 1..N keys select among them.</summary>
+        public int TurretSlotCount(int seat) { int n = 0; while (TurretIndexFor(seat, n) >= 0) n++; return n; }
         /// <summary>Seconds until the mount `seat` operates can fire again (0 = ready). The HUD's reload cue.</summary>
-        public float TurretCooldown(int seat) { int i = TurretIndexFor(seat); return i >= 0 && _turretCd != null ? Mathf.Max(0f, _turretCd[i]) : 0f; }
+        public float TurretCooldown(int seat, int slot = 0) { int i = TurretIndexFor(seat, slot); return i >= 0 && _turretCd != null ? Mathf.Max(0f, _turretCd[i]) : 0f; }
 
         /// <summary>Try to fire the turret on `seat`. Returns false -- without consuming anything -- if that seat
         /// has no turret, the belt is empty, or it is still cycling. On success yields the world muzzle and the
         /// direction the BARREL points, which is not the direction the gunner is looking: the mount clamps, the
         /// view does not, and a shot that came out of the camera instead of the gun would quietly ignore the
         /// traverse limits that are the whole point of a chin turret.</summary>
-        public bool TryTurretFire(int seat, out Vector3 origin, out Vector3 dir, out string gunId)
+        public bool TryTurretFire(int seat, out Vector3 origin, out Vector3 dir, out string gunId, int slot = 0)
         {
             origin = Vector3.Zero; dir = Vector3.Forward; gunId = null;
-            int i = TurretIndexFor(seat);
+            int i = TurretIndexFor(seat, slot);
             if (i < 0 || _turretPitch?[i] == null || _turretAmmo == null) return false;
             if (_turretCd[i] > 0f || _turretAmmo[i] <= 0) return false;
             var t = Turrets[i];
@@ -1255,9 +1273,9 @@ namespace UnturnedGodot
 
         /// <summary>Aim the turret operated by `seat`, in degrees, clamped to its traverse limits. Returns false
         /// if that seat has no turret -- callers must not assume every seat is a gun position.</summary>
-        public bool AimTurret(int seat, float yawDeg, float pitchDeg, float delta = 0f)
+        public bool AimTurret(int seat, float yawDeg, float pitchDeg, float delta = 0f, int slot = 0)
         {
-            int i = TurretIndexFor(seat);
+            int i = TurretIndexFor(seat, slot);
             if (i < 0 || _turretYaw == null) return false;
             SetTurretAngles(i, yawDeg, pitchDeg, delta);
             return true;
@@ -1270,9 +1288,9 @@ namespace UnturnedGodot
         /// yaw frame, so the elevation is measured after the yaw the ring is being sent to. The trunnion sits on
         /// the ring axis in X on every mount this port has, which makes both angles exact rather than a first
         /// iteration. `delta` > 0 slews at the mount's rates; 0 snaps.</summary>
-        public bool AimTurretAt(int seat, Vector3 worldPoint, float delta)
+        public bool AimTurretAt(int seat, Vector3 worldPoint, float delta, int slot = 0)
         {
-            int i = TurretIndexFor(seat);
+            int i = TurretIndexFor(seat, slot);
             if (i < 0 || _turretYaw?[i] == null || _turretPitch?[i] == null) return false;
             var hull = _turretYaw[i].GetParent() as Node3D ?? this;
             Vector3 dl = hull.ToLocal(worldPoint) - _turretYaw[i].Position;   // ring axis -> target, hull-local
@@ -1311,18 +1329,18 @@ namespace UnturnedGodot
         /// <summary>World direction the BARREL points for `seat`, or the hull's forward if there is no such
         /// mount. Exposed so a test can measure where the gun ended up instead of trusting the maths that aimed
         /// it -- the aim derivation is a sign question and this file has a history with those.</summary>
-        public Vector3 TurretBarrelDir(int seat)
+        public Vector3 TurretBarrelDir(int seat, int slot = 0)
         {
-            int i = TurretIndexFor(seat);
+            int i = TurretIndexFor(seat, slot);
             if (i >= 0 && _turretPitch?[i] != null) return -_turretPitch[i].GlobalTransform.Basis.Z;
             return -GlobalTransform.Basis.Z;
         }
 
         /// <summary>World-space muzzle of the turret on `seat`, for spawning a shot where the barrel actually
         /// points rather than where the operator's head is.</summary>
-        public Vector3? TurretMuzzle(int seat)
+        public Vector3? TurretMuzzle(int seat, int slot = 0)
         {
-            int i = TurretIndexFor(seat);
+            int i = TurretIndexFor(seat, slot);
             return i >= 0 && _turretPitch?[i] != null ? _turretPitch[i].ToGlobal(Turrets[i].Muzzle) : null;
         }
 
@@ -3207,6 +3225,21 @@ namespace UnturnedGodot
                 YawFree = true, PitchMin = -15f, PitchMax = 45f,
                 YawRate = 60f, PitchRate = 30f,   // a forty-tonne turret: a full about-face in three seconds, not one frame
                 GunId = "tank_cannon", Cycle = 2f, Belt = 60,   // Reload_Time 2; sixty rounds of Missile_1 in the racks
+            },
+            // THE ROOF HMG (master 2026-09-05: "wiring the HMG on the tank turret ... hmg works like any other gun,
+            // firing towards the crosshair with tracers spawning from the muzzle"). Retail's tank has no machine
+            // gun at all -- the prefab carries one turret and the roof geometry is a hatch and a cupola -- so the
+            // gun is the Hind's .50 mount (hind_turret_yaw/pitch, the HMG item 1394) stood upright on the flat
+            // roof (y 3.44) beside the commander's hatch, riding the turret's yaw frame. Slot 1 = the 2 key.
+            new TurretDef
+            {
+                Seat = 1, DriverFallback = true, CrosshairAim = true, HoldToAim = false, ParentMount = 0,
+                YawMesh = "hind_turret_yaw.txt", PitchMesh = "hind_turret_pitch.txt",
+                YawMeshRotationDeg = new Vector3(0f, 0f, 180f), MeshRotationDeg = new Vector3(0f, 0f, 180f),   // chin mount -> roof mount: the half-turn stands both meshes on the pivot
+                Pivot = new Vector3(0.62f, 3.44f, -1.30f),      // turret-frame: right of the hatch (x -1.0..-0.24), on the roof plate, clear of the rear cupola (z >= 1.1)
+                Muzzle = new Vector3(-0.229f, 0.2f, -2.6f),     // the Hind's (0.229,-0.2,-2.6) after the same half-turn
+                YawFree = true, PitchMin = -10f, PitchMax = 60f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun
+                GunId = "hmg", Cycle = 0.14f, Belt = 400,       // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
             },
         };
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
@@ -5442,7 +5475,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var pitch = new Node3D { Name = $"TurretPitch{t.Seat}", Position = t.PitchOffset };   // the trunnion: on the ring axis for a chin gun, up on the turret roof for the tank
                 var mat = SolidMat(t.Colour);
                 if (t.YawMesh != null)
-                    yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat });
+                    yaw.AddChild(new MeshInstance3D { Name = t.YawMesh.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t.YawMesh}"), MaterialOverride = mat, RotationDegrees = t.YawMeshRotationDeg });
                 if (t.PitchMesh != null)
                     pitch.AddChild(new MeshInstance3D
                     {
@@ -5456,7 +5489,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         Visible = t.GunnerAt == Vector3.Zero,
                     });
                 yaw.AddChild(pitch);
-                v.AddChild(yaw);
+                // A mount can ride another mount's yaw frame (the tank's roof HMG turns with the turret, then
+                // traverses on its own ring). Only an EARLIER mount can be the parent -- it has to exist by now.
+                if (t.ParentMount >= 0 && t.ParentMount < i && v._turretYaw[t.ParentMount] != null) v._turretYaw[t.ParentMount].AddChild(yaw);
+                else v.AddChild(yaw);
                 v._turretYaw[i] = yaw; v._turretPitch[i] = pitch;
             }
             v._turretCrew = new TargetDummy[v.Turrets.Length];
