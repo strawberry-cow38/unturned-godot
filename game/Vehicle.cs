@@ -5693,16 +5693,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         // Its own body, not a shape on the vehicle: the vehicle is a VehicleBody3D and a trimesh
                         // on it is exactly the unsupported case. A StaticBody3D child inherits the parent's
                         // transform, so it rides along for free.
-                        // ANIMATABLE, NOT STATIC. A StaticBody3D is declared to the broadphase as a thing that does
-                        // not move; this one is a child of a 67 m hull that moves constantly, so its physics
-                        // representation lags the transform it is drawn at. That mismatch has BOTH signatures at
-                        // once -- you fall through the deckhouse where it is drawn, and you walk into it where it
-                        // used to be -- which is exactly what was reported: asked whether the superstructure was
-                        // invisible walls or walk-through, strawberry said "both". AnimatableBody3D is the same
-                        // static body with its physics state synced from the transform each tick, which is the
-                        // one thing this collider actually needs. (2026-09-05: "give the ship superstructure its
-                        // collision" -- the shape was always here, it was declared immovable.)
-                        var tri = new AnimatableBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0, SyncToPhysics = true };
+                        // STATIC, and I tried the alternative and it was worse. Reasoning that a StaticBody3D is
+                        // "declared immovable" while riding a 67 m hull, I made this an AnimatableBody3D with
+                        // SyncToPhysics -- and the nightly caught vehicle.ship_hull_1to1 failing with the inbound
+                        // ray stopping at z=NaN, i.e. hitting NOTHING. sync_to_physics is for a body you move
+                        // yourself in _physics_process; it takes over placement, and on a body whose transform
+                        // comes from its PARENT it puts the collider somewhere the ray never reaches. Measured,
+                        // all three ways: sync=true FAILS, sync=false passes 11 checks, plain StaticBody3D passes
+                        // the same 11. And sync=false is what AnimatableBody3D IS with its one feature off, so the
+                        // change was a no-op in the good case and a regression in the other.
+                        //
+                        // Which leaves "give the ship superstructure its collision" (strawberry 2026-09-05) still
+                        // open, and my diagnosis of it unsupported: this collider IS solid to a ray from outside
+                        // while she is PARKED, which is all the test exercises. If it fails under way, that is a
+                        // different mechanism than the node type and wants the symptom named before another guess.
+                        var tri = new StaticBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0 };
                         tri.AddChild(new CollisionShape3D { Shape = region.CreateTrimeshShape() });
                         v.AddChild(tri);
                         // AND EXEMPT THE HULL FROM ITS OWN DECKHOUSE. A static child is a SEPARATE body, not a
