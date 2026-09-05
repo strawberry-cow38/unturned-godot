@@ -5728,7 +5728,7 @@ namespace UnturnedGodot
             }
             else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (_driving != null) { if (Keybinds.IsDown(@event) && !(_driving.TurretFor(_seatIndex)?.CrosshairAim ?? false)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
+                if (_driving != null) { if (Keybinds.IsDown(@event) && !(OperatedTurret?.CrosshairAim ?? false)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (Keybinds.IsDown(@event)) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingHoseTool) { if (Keybinds.IsDown(@event)) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
@@ -5760,6 +5760,14 @@ namespace UnturnedGodot
             // number key ran the equip/de-equip toggle at the OS key-repeat rate -- each pass frees the viewmodel
             // and builds a new one, so the weapon strobed and ~30 Viewmodel nodes a second were constructed and
             // thrown away while the key was down. Review 2026-08-16.
+            else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int mtSlot && _driving != null && mtSlot <= _driving.TurretSlotCount(_seatIndex))
+            {
+                // SEATED AT A MOUNT the 1..N keys pick the mount, overriding the backpack's primary/secondary
+                // (master: "the main cannon and hmg are on 1 and 2 keys, overriding whatevers in ur primary and
+                // secondary slots"). Tank: 1 = cannon, 2 = HMG. A seat with no mount falls through to the bag.
+                _turretSlot = mtSlot - 1;
+                GD.Print($"[turret] slot {mtSlot}: {_driving.TurretFor(_seatIndex, _turretSlot)?.GunId ?? "?"}");
+            }
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (_driving != null && _driving.HasBiFoldDoor && Keybinds.JustPressed(GameAction.VehicleDoor, @event))   // ONLY a vehicle with the folding door claims Ctrl here -- Ctrl is also the siren tap / lightbar hold further down (master: "i cant open the lightbar radial menu anymore")
@@ -6376,7 +6384,7 @@ namespace UnturnedGodot
         bool FireTurret()
         {
             if (_dead || (_invUI?.IsOpen ?? false)) return false;
-            if (!_driving.TryTurretFire(_seatIndex, out var origin, out var dir, out var gunId)) return false;
+            if (!_driving.TryTurretFire(_seatIndex, out var origin, out var dir, out var gunId, _turretSlot)) return false;
 
             var def = TurretGunDef(gunId);
             float dmg = def?.PlayerDamage ?? 40f;
@@ -6425,12 +6433,16 @@ namespace UnturnedGodot
         // driver's trigger and aim both go dead the frame somebody sits in the gunner's chair and come back the
         // frame it empties. A cached "who has the gun" flag would have needed hand-over code in enter, exit, death
         // and the MP seat sync, and would have been wrong in whichever one forgot to write it.
-        /// <summary>The mount this seat operates right now, or null.</summary>
-        Vehicle.TurretDef OperatedTurret => _driving?.TurretFor(_seatIndex);
+        /// <summary>The mount this seat operates right now in the selected weapon slot, or null.</summary>
+        Vehicle.TurretDef OperatedTurret => _driving?.TurretFor(_seatIndex, _turretSlot);
+        /// <summary>Which of the seat's mounts the 1..N keys have selected (master 2026-09-05: "the main cannon and hmg are
+        /// on 1 and 2 keys, overriding whatevers in ur primary and secondary slots"). 0 on entering a vehicle.</summary>
+        int _turretSlot;
+        public void DebugSelectTurret(int slot) => _turretSlot = slot;   // harness seam
         /// <summary>Is the trigger connected to a mount? A look-slaved door gun always; a crosshair-laid cannon only
         /// while the operator is holding Aim -- "the turret will launch a shell towards THAT point" presumes there
         /// is a point, and a click without one would send a shell wherever the gun last sat.</summary>
-        bool TurretTriggerLive => OperatedTurret is { } t && (!t.CrosshairAim || _cannonAiming);
+        bool TurretTriggerLive => OperatedTurret is { } t && (!t.CrosshairAim || _cannonAiming);   // an HMG (HoldToAim=false) is "aiming" every tick it is selected
         bool _cannonAiming;                 // Aim held on a crosshair-laid mount THIS tick (TurretTick clears and re-derives it)
         Vector3 _cannonAimPoint;            // where the crosshair ray stopped
         /// <summary>HUD: draw the centre crosshair while a cannon is being laid -- the first-person driver has no
@@ -6452,13 +6464,13 @@ namespace UnturnedGodot
         {
             _cannonAiming = false;
             var t = OperatedTurret;
-            if (t == null) return;
-            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch); return; }
-            bool hold = DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));
+            if (t == null) return;   // no mount in the selected slot right now (the gunner has them): keep the SELECTION, it comes back with the mounts -- resetting it here handed the driver the cannon after they had picked the HMG
+            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); return; }
+            bool hold = !t.HoldToAim || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));
             if (!hold) return;
             _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
             _cannonAiming = true;
-            _driving.AimTurretAt(_seatIndex, _cannonAimPoint, delta);
+            _driving.AimTurretAt(_seatIndex, _cannonAimPoint, delta, _turretSlot);
         }
 
         /// <summary>Where the screen centre lands: a ray from the ACTIVE camera (chase or first person) down its
@@ -6530,7 +6542,7 @@ namespace UnturnedGodot
             mat.SetShaderParameter("roll", GD.Randf() * 6.28318f);   // the star spins per shot, as the 1P one does
             var flash = new Node3D { Name = "NpcMuzzleFlash" };
             flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f * scale, 2.6f * scale) }, MaterialOverride = mat });
-            flash.AddChild(new OmniLight3D { OmniRange = 18f * Mathf.Sqrt(scale), LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = scale > 1f ? 5f : 7f, ShadowEnabled = false });   // a cannon lights further but not brighter -- 7 x 2.2 over 40 m painted the whole tank solid yellow
+            flash.AddChild(new OmniLight3D { OmniRange = scale > 1f ? 12f * Mathf.Sqrt(scale) : 8f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = scale > 1f ? 5f : 1.5f, ShadowEnabled = false });   // the Hind's 18 m / 7.0 was tuned for a gun seen from a valley away; on the tank's own roof it strobed the whole hull yellow at 7 rounds a second. Now the on-foot muzzle light's 3.5, a little further
             host.AddChild(flash);
             flash.GlobalPosition = origin + dir.Normalized() * 0.35f * scale;   // just off the muzzle, not inside the barrel
             if (scale > 1f) host.AddChild(BlastSmoke(origin + dir.Normalized() * 0.6f, dir.Normalized(), 0.35f * scale, 12, 0.9f, new Color(0.55f, 0.52f, 0.46f)));   // a cannon also throws a gout of propellant smoke off the muzzle
@@ -6976,12 +6988,18 @@ namespace UnturnedGodot
         }
 
         // The rocket launcher's projectile is a VISIBLE flying rocket (projectile.prefab Model_0; no _MainTex -> flat dark body).
-        ArrayMesh _rocketMesh; bool _rocketTried;
+        ArrayMesh _rocketMesh; bool _rocketTried; static AudioStream _projectileFire; static bool _projectileFireTried;
         Node3D SpawnRocketVis(Vector3 pos)
         {
             if (!_rocketTried) { _rocketTried = true; try { _rocketMesh = ContentProvider.ParseObj("res://content/rocket_projectile.txt"); } catch { } }
             if (_rocketMesh == null) return null;
             var rv = new MeshInstance3D { Mesh = _rocketMesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f } };   // projectile.prefab material _Color (olive body) + _Glossiness 0.25 -> roughness 0.75
+            // The projectile's own ROAR: retail's projectile.prefab (tank cannon and rocket launcher share it) carries an
+            // AudioSource playing "Fire" for the whole flight -- the one shell-specific clip the source has (master
+            // 2026-09-05 "extract tank shell specific sounds": no Shoot clip exists for the cannon, only this, the
+            // Bomb_2 blast Explode() already plays, and the reload). Rides the visual, so it dies with the round.
+            if (!_projectileFireTried) { _projectileFireTried = true; _projectileFire = NpcLoadOgg("res://content/projectile_fire.ogg"); if (_projectileFire is AudioStreamOggVorbis ov) ov.Loop = true; }
+            if (_projectileFire != null) rv.AddChild(new AudioStreamPlayer3D { Stream = _projectileFire, UnitSize = 12f, MaxDistance = 320f, VolumeDb = 2f, Autoplay = true });
             GetTree().CurrentScene?.AddChild(rv);
             rv.GlobalPosition = pos;
             return rv;
@@ -7887,6 +7905,7 @@ namespace UnturnedGodot
             _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; _peekX = 0f;
             _driveCamYaw = 0f; _driveCamPitch = 15f;
             _flyLookYaw = 0f; _flyLookPitch = 0f;
+            _turretSlot = 0;   // first mount (the tank's cannon) until a 1..N key says otherwise
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);

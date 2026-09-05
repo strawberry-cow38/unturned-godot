@@ -8437,15 +8437,17 @@ namespace UnturnedGodot
                     // render runs SLOWER than 50 Hz and physics catches up two or three ticks per frame, so an `==`
                     // on a milestone tick was simply skipped (the first outside run captured three frames and then
                     // waited forever for a tick it had already passed).
+                    int ttWeapon = int.TryParse(System.Environment.GetEnvironmentVariable("UG_TANKWEAPON"), out var tw) ? tw : 0;   // UG_TANKWEAPON=1: the roof HMG (the 2 key) instead of the cannon
                     for (int t = _ttLastPf + 1; t <= pf; t++)
                     {
                         if (t == 25) _dtPlayer.EnterVehicle(_ttVeh, ttSeat);
+                        if (t == 40) _dtPlayer.DebugSelectTurret(ttWeapon);
                         if (t >= 40) { _dtPlayer.DebugCannonAim = true; _dtPlayer.DebugCannonAimPoint = t < 180 ? _ttTargetA : _ttTargetB; }   // "RMB held": lay on A, then on B
-                        if (t == 140 || t == 305) _dtPlayer.Fire();   // LMB: a shell at each block
+                        if (ttWeapon == 0 ? (t == 140 || t == 305) : ((t >= 100 && t < 140) || (t >= 300 && t < 330))) _dtPlayer.Fire();   // LMB: a shell at each block -- or an HMG burst held for 0.8 s
                         if (ttSeat == 0 && t == 200) _ttVeh.OccupiedSeats.Add(1);      // a gunner sits down mid-slew: the driver loses the gun and it must FREEZE
                         if (ttSeat == 0 && t == 260) _ttVeh.OccupiedSeats.Remove(1);   // ...and gets it back the moment the chair empties
-                        if (t == 140 || t == 200 || t == 240 || t == 260 || t == 300 || t == 305)
-                            GD.Print($"[tanktest] pf{t} barrel={_ttVeh.TurretBarrelDir(ttSeat)} hasTurret={_ttVeh.HasTurret(ttSeat)} cd={_ttVeh.TurretCooldown(ttSeat):0.00} ammo={_ttVeh.TurretAmmo(ttSeat)} hp={_ttVeh.Health:0}");
+                        if (t == 105 || t == 140 || t == 200 || t == 240 || t == 260 || t == 300 || t == 305)
+                            GD.Print($"[tanktest] pf{t} w{ttWeapon} barrel={_ttVeh.TurretBarrelDir(ttSeat, ttWeapon)} hasTurret={_ttVeh.HasTurret(ttSeat)} slots={_ttVeh.TurretSlotCount(ttSeat)} cd={_ttVeh.TurretCooldown(ttSeat, ttWeapon):0.00} ammo={_ttVeh.TurretAmmo(ttSeat, ttWeapon)} hp={_ttVeh.Health:0}");
                         if (t == 156 || t == 318)   // every live light, so a stray glow can be NAMED rather than guessed at
                         {
                             foreach (var ln in FindChildren("*", "OmniLight3D", true, false))
@@ -8458,7 +8460,7 @@ namespace UnturnedGodot
                     // mid-slew with a gunner seated -> laid on B -> B's blast. One slot per render frame, pinned as
                     // soon as its tick has PASSED (>=), so two milestones inside one slow frame capture on
                     // consecutive frames instead of the second one being lost.
-                    int[] ttCaps = { 30, 52, 100, 141, 146, 156, 175, 240, 300, 318 };
+                    int[] ttCaps = ttWeapon == 0 ? new[] { 30, 52, 100, 141, 146, 156, 175, 240, 300, 318 } : new[] { 30, 52, 100, 104, 112, 126, 175, 240, 300, 312 };   // HMG: bursts at 100-140 / 300-330, tracers in flight
                     if (_rigShot < ttCaps.Length && pf >= ttCaps[_rigShot]) _rigCaptureFrames[_rigShot] = _frame;
                 }
                 else if (_driveTest && _dtPlayer != null)
