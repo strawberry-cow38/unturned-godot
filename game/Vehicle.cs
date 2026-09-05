@@ -3271,21 +3271,29 @@ namespace UnturnedGodot
                 GunId = "tank_cannon", Cycle = 2f, Belt = 60,   // Reload_Time 2; sixty rounds of Missile_1 in the racks
             },
             // THE ROOF HMG (master 2026-09-05: "wiring the HMG on the tank turret ... hmg works like any other gun,
-            // firing towards the crosshair with tracers spawning from the muzzle"). Retail's tank has no machine
-            // gun at all -- the prefab carries one turret and the roof geometry is a hatch and a cupola -- so the
-            // gun is the Hind's .50 mount (hind_turret_yaw/pitch, the HMG item 1394) stood upright on the flat
-            // roof (y 3.44) beside the commander's hatch, riding the turret's yaw frame. Slot 1 = the 2 key.
+            // firing towards the crosshair with tracers spawning from the muzzle"; then "the hmg 'shell' is already
+            // on the tank turret. the black box with a barrel portruding"). The prefab carries no turret node for it,
+            // but the MODEL does: tank_turret.txt has a 0.76 m box on the left of the roof (x -1.0..-0.24, z -1.68..
+            // -0.92, y 3.29..4.06) with a 0.14 m barrel running 2.2 m forward out of its face (x -0.83..-0.69,
+            // y 3.68..3.82, z -3.70..-1.50) -- which I first misread as the commander's hatch and a stowed rail and
+            // replaced with the Hind's chin mount. BuildTankExtras peels that box and barrel out of the turret mesh
+            // and hangs them on THIS mount: the box yaws on the roof, the barrel pitches inside it. Slot 1 = the 2 key.
             new TurretDef
             {
                 Seat = 1, DriverFallback = true, CrosshairAim = true, HoldToAim = false, ParentMount = 0,
-                YawMesh = "hind_turret_yaw.txt", PitchMesh = "hind_turret_pitch.txt",
-                YawMeshRotationDeg = new Vector3(0f, 0f, 180f), MeshRotationDeg = new Vector3(0f, 0f, 180f),   // chin mount -> roof mount: the half-turn stands both meshes on the pivot
-                Pivot = new Vector3(0.62f, 3.44f, -1.30f),      // turret-frame: right of the hatch (x -1.0..-0.24), on the roof plate, clear of the rear cupola (z >= 1.1)
-                Muzzle = new Vector3(-0.229f, 0.2f, -2.6f),     // the Hind's (0.229,-0.2,-2.6) after the same half-turn
-                YawFree = true, PitchMin = -10f, PitchMax = 60f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun
-                GunId = "hmg", Cycle = 0.14f, Belt = 400,       // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
+                YawMesh = null, PitchMesh = null,                // the meshes come out of tank_turret.txt (TankMgBox / TankMgBarrel zones), not from files
+                Pivot = new Vector3(-0.62f, 3.75f, -1.30f),      // turret-frame: the box's centre in plan, at the barrel's axis height
+                Muzzle = new Vector3(-0.14f, 0f, -2.40f),        // the barrel tip (-0.76, 3.75, -3.70) relative to that pivot
+                YawFree = true, PitchMin = -10f, PitchMax = 45f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun; +45 keeps the barrel root inside the box face
+                GunId = "hmg", Cycle = 0.14f, Belt = 400,        // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
             },
         };
+        /// <summary>The roof gun's housing and barrel inside tank_turret.txt (turret frame), peeled by BuildTankExtras.
+        /// Measured off the mesh: the box's 5 visible faces (10 tris) sit wholly inside the first zone; the barrel's
+        /// 10 tris wholly inside the second, and its rear verts at z -1.50 fall inside the box zone too, which is why
+        /// the box is peeled with the SINGLE-zone call -- a straddling triangle stays out of a single-zone peel.</summary>
+        static readonly (Vector3 min, Vector3 max) TankMgBox = (new Vector3(-1.05f, 3.25f, -1.72f), new Vector3(-0.20f, 4.10f, -0.88f));
+        static readonly (Vector3 min, Vector3 max) TankMgBarrel = (new Vector3(-0.90f, 3.60f, -3.80f), new Vector3(-0.60f, 3.90f, -1.40f));
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
 
         /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted
@@ -3309,8 +3317,28 @@ namespace UnturnedGodot
                 // could not be aimed or fired. A spec without a TurretDef keeps the old cosmetic pivots.
                 bool mounted = v._turretYaw != null && v._turretYaw.Length > 0 && v._turretYaw[0] != null;
                 v.TurretPivot = mounted ? v._turretYaw[0] : new Node3D { Name = "TurretYaw", Position = s.TurretYawPivot };   // yaws about local Y (weapon system)
+                bool mg = mounted && v._turretYaw.Length > 1 && v._turretYaw[1] != null && v._turretPitch[1] != null;   // the roof HMG mount exists to hang the gun on
                 foreach (var t in s.TurretMeshes)   // baked centred on the yaw pivot -> local 0
-                    v.TurretPivot.AddChild(new MeshInstance3D { Name = t.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t}"), MaterialOverride = bodyMat });
+                {
+                    if (!(mg && t == "tank_turret.txt"))
+                    {
+                        v.TurretPivot.AddChild(new MeshInstance3D { Name = t.Replace(".txt", ""), Mesh = ContentProvider.ParseObj($"res://content/{t}"), MaterialOverride = bodyMat });
+                        continue;
+                    }
+                    // THE ROOF GUN IS IN THIS MESH (master: "the hmg 'shell' is already on the tank turret. the black box
+                    // with a barrel portruding"). Peel its housing and barrel out and hang them on the HMG mount, each
+                    // offset by minus the mount pivot so the vertices stay exactly where the modeller put them: the box
+                    // then yaws about its own centre, the barrel pitches about the box centre at its own axis height.
+                    string path = $"res://content/{t}";
+                    var (rest, _) = ContentProvider.ParseObjSplitByZone(path, new[] { TankMgBox, TankMgBarrel });
+                    var (_, box) = ContentProvider.ParseObjSplitByZone(path, TankMgBox.min, TankMgBox.max);
+                    var (_, barrel) = ContentProvider.ParseObjSplitByZone(path, TankMgBarrel.min, TankMgBarrel.max);
+                    if (rest != null) v.TurretPivot.AddChild(new MeshInstance3D { Name = "tank_turret", Mesh = rest, MaterialOverride = bodyMat });
+                    var mgPivot = v._turretYaw[1].Position;   // TankCannon()[1].Pivot, in the turret frame
+                    if (box != null) v._turretYaw[1].AddChild(new MeshInstance3D { Name = "tank_mg_box", Mesh = box, MaterialOverride = bodyMat, Position = -mgPivot });
+                    if (barrel != null) v._turretPitch[1].AddChild(new MeshInstance3D { Name = "tank_mg_barrel", Mesh = barrel, MaterialOverride = bodyMat, Position = -mgPivot });
+                    GD.Print($"[tank] roof gun peeled: box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, turret rest {(rest != null ? "ok" : "MISSING")}");
+                }
                 if (!mounted) v.AddChild(v.TurretPivot);
                 if (s.GunMesh != null)
                 {
