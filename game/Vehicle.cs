@@ -74,6 +74,10 @@ namespace UnturnedGodot
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
         static float MaxLatAccel => float.TryParse(System.Environment.GetEnvironmentVariable("UG_LATG"), out var _g) ? _g * 9.8f : 8.3f;   // ~0.85 g of cornering a car may ASK for; the steer angle is capped to it
         const float MinSteerDeg = 3.5f;   // never fade lock away entirely, however fast it is going
+        // DERIVED from the low-pass it compensates for, not picked: _velAvg lerps at 0.12 per physics tick (60 Hz),
+        // a time constant of ~0.14 s. Four of those is 0.55 s -- long enough that anything the filter can hide has
+        // had four time constants to show itself, and short enough to be invisible when you actually stop.
+        const float HandbrakeSettleDwell = 0.55f;
         const float SuspensionHeadroom = 3f;   // suspension max force, as a multiple of the static load ONE wheel carries
         const float TankMaxYawRate = 0.6f, TankYawGain = 60000f, TankYawSpeedFade = 0.7f;   // TANK skid-steer: a REAL torque (ApplyTorque -- integrated into owned momentum, MP-safe + survives slopes/walls, per VoX) GOVERNED toward TankMaxYawRate*input. A plain constant torque is bang-bang here (the wheels' yaw resistance is ~constant -> stalls or runs away), so this feedback torque holds a stable rate. TankYawSpeedFade FADES the target as forward speed rises: a tight pivot at rest, a WIDE arc at speed, so a turn doesn't drag to a crawl (master). Tunable.
         float _tankYawInput;   // TANK: yaw request [-1,1] from the track difference (set in Drive, applied as a real torque in _PhysicsProcess)
@@ -787,7 +791,8 @@ namespace UnturnedGodot
         /// instead of by what a car falling off a hill does.</summary>
         public float ClimbMaxMps => _heliClimbMax;
         public float FallMaxMps => _heliFallMax;
-        bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;
+        float _hbDwell;   // seconds the driver-held handbrake has read "settled" -- see the dwell note at the hold   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
         Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpen; float _doorFoldDeg = 90f; AudioStreamPlayer3D _doorAudio;   // bi-fold door (bus): fold 0..1, auto-close timer, wanted state, swing sound
         const float DoorHoldSeconds = 2.5f;   // boarding/leaving swings it open and it folds shut this much later (master 2026-09-05)
@@ -8082,9 +8087,23 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // it on the first run -- the rammed jeep was still awake 10 s later with the rammer 130 m away.
             // Time since anyone last touched the controls is the honest test of "nobody is driving this".
             bool unattended = _parked || _driveIdle > 1.0f;
+            // A LOW-PASS CANNOT SEE AN OSCILLATION, which is the whole reason it is here: _velAvg exists so "the
+            // jitter's rapid back-and-forth cancels to ~0 in the running average". A suspension BOUNCE cancels in
+            // exactly the same way -- mean zero, moving the whole time -- so _velAvg reads "settled" mid-travel and
+            // the hold below freezes the hull part-way through its spring, velocity zeroed. Let go of the handbrake
+            // and the spring finishes the travel it was interrupted in: strawberry 2026-09-05, "holding spacebar in
+            // a vehicle enables bouncy mode ... they sink on their suspension and then spring up when you release".
+            // It shows up on big hulls because those are the ones running trimmed suspension headroom (1.8x instead
+            // of 3x, see SetupDrivetrain) -- they sit nearest the bottom of their travel to begin with.
+            //
+            // The low-pass is the right instrument for "is it drifting" and the wrong one for "is it still moving".
+            // Rather than swap it out under the parked-car path that depends on its blindness, require the driver's
+            // handbrake to read settled CONTINUOUSLY before freezing anything. A bounce stops reading settled the
+            // moment it crosses zero; jitter never stops, so a jittering car still parks -- just later.
+            _hbDwell = (_handbraking && _velAvg.LengthSquared() < 0.06f) ? _hbDwell + (float)delta : 0f;
             bool wantHold = !towed && _wakeGrace <= 0f && _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
                                                                           : mostlyGrounded && (unattended ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
-                                                                                                          : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
+                                                                                                          : (_handbraking && _velAvg.LengthSquared() < 0.06f && _hbDwell >= HandbrakeSettleDwell)));
             if (wantHold && !Freeze && !Sleeping)
             {
                 LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
