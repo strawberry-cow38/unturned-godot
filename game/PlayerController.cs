@@ -6516,12 +6516,23 @@ namespace UnturnedGodot
             _cannonAiming = false;
             var t = OperatedTurret;
             if (t == null) return;   // no mount in the selected slot right now (the gunner has them): keep the SELECTION, it comes back with the mounts -- resetting it here handed the driver the cannon after they had picked the HMG
-            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); return; }
+            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); HeldFireTick(); return; }
             bool hold = !t.HoldToAim || _seatIndex != 0 || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));   // the GUNNER lays continuously (the sight IS the crosshair, RMB is his zoom); only the driver holds RMB
             if (!hold) return;
             _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
             _cannonAiming = true;
             _driving.AimTurretAt(_seatIndex, _cannonAimPoint, delta, _turretSlot);
+            HeldFireTick();
+        }
+
+        /// <summary>HELD trigger on a mount, every seated tick: TryTurretFire meters the cadence (the HMG's 0.14 s belt, the
+        /// cannon's 2 s reload), so holding LMB is full auto on one and "fires when ready" on the other. This poll used to sit
+        /// in PhysicsTick BELOW the seated early return, where no seated player ever reached it -- every mount was one shot
+        /// per click, and the harness never noticed because it calls Fire() itself (master 2026-09-05 "the hmg is not full
+        /// auto"). Runs from TurretTick, which IS the seated path.</summary>
+        void HeldFireTick()
+        {
+            if (TurretTriggerLive && !NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Fire)) Fire();
         }
 
         /// <summary>Where the screen centre lands: a ray from the ACTIVE camera (chase or first person) down its
@@ -8468,7 +8479,6 @@ namespace UnturnedGodot
             // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
             // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
             // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
-            if (TurretTriggerLive && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
