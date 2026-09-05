@@ -89,7 +89,7 @@ namespace UnturnedGodot
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
         // ---- shared item-model cache: parse each id's mesh/tex/box ONCE, reuse across its many spawns/despawns ----
-        class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Vector3 Box; public Vector3 Center; public bool Ok; }
+        class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Color? Palette; public Vector3 Box; public Vector3 Center; public bool Ok; }
         static readonly Dictionary<int, Model> _cache = new();
         static Godot.Collections.Dictionary _manifest;
         const string ItemsRoot = "res://content/items";
@@ -132,6 +132,13 @@ namespace UnturnedGodot
                             var img = ContentProvider.LoadImage(tp);
                             if (img != null)
                             {
+                                // The item's BODY COLOUR, before mipmaps flatten it. These albedos are not UV
+                                // textures -- extract_items.py writes a tiny palette strip (the throwables are 2x1:
+                                // pixel 0 the painted body, pixel 1 the shared grey cap), so pixel 0 IS the item's
+                                // colour. That is what makes "coloured depending on the colour of the one you threw"
+                                // (strawberry 2026-09-05) a lookup rather than a hand-typed table of eight reds:
+                                // White Smoke reads (212,212,212) and Black Smoke (53,53,53) straight off the asset.
+                                if (img.GetWidth() > 0 && img.GetHeight() > 0) m.Palette = img.GetPixel(0, 0);
                                 img.GenerateMipmaps();
                                 m.Mat = new StandardMaterial3D
                                 {
@@ -153,6 +160,15 @@ namespace UnturnedGodot
             }
             _cache[id] = m;
             return m;
+        }
+
+        /// <summary>The item's own body colour, read off its extracted palette strip (pixel 0) -- see the note
+        /// in GetModel. Null when the id has no model or no texture. Cached with the model, so a smoke grenade
+        /// asking for its colour on every throw costs one dictionary lookup.</summary>
+        public static Color? PaletteColor(int itemId)
+        {
+            var m = itemId > 0 ? GetModel(itemId) : null;
+            return m != null && m.Ok ? (m.Palette ?? m.FlatColor) : null;
         }
 
         /// <summary>C5 (PEI_CLIENT_PLAN §3): VISUAL-ONLY reuse of the shared item-model cache for the

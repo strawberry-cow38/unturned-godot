@@ -916,6 +916,20 @@ namespace UnturnedGodot
             _arms?.Play(ConsumeUseClipName(), 1f);
         }
 
+        /// <summary>The throw motion. SUBSTITUTED, not ported: retail's UseableThrowable plays Throw_Start /
+        /// Throw_Stop and neither clip is in the extracted rig (rig.json carries 569 clips and not one matches
+        /// /throw|toss|lob/), so the overhand Melee_Strong stands in for the arm coming over the top. It reads
+        /// right and it is honestly the wrong clip; a real one needs another extraction pass.</summary>
+        public void PlayThrow()
+        {
+            if (_arms == null) return;
+            string clip = _arms.ClipLength("Melee_Strong") > 0f ? "Melee_Strong"
+                        : _arms.ClipLength("Deploy_Use") > 0f ? "Deploy_Use" : null;
+            if (clip == null) return;
+            _arms.SetClipLoop(clip, false);
+            _arms.Play(clip, 1f);
+        }
+
         // Deployable place motion on LMB -- the src barricade "Use" clip (UseableBarricade.build plays "Use"). One-shot.
         public void PlayDeployUse()
         {

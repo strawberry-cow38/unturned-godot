@@ -254,7 +254,11 @@ namespace UnturnedGodot.Net
     /// server-spawned short-lived entities: Snap while flying, explosion Event"). Same full/delta/tombstone
     /// shape as the other systems; entities live a couple of seconds so the block stays tiny.
     /// </summary>
-    public enum ProjectileKind : byte { Grenade = 0 }
+    /// <summary>What is flying. The byte was already on the projectile wire and only ever held 0, so v27
+    /// spends the values it was reserved for rather than widening the snapshot. It is the FAMILY, not the item:
+    /// a client rendering a flight sees "a smoke canister", not "a red smoke canister" -- the exact item (and so
+    /// the exact colour) rides GrenadeExplodedEvent, which is where the cloud is actually built.</summary>
+    public enum ProjectileKind : byte { Grenade = 0, Smoke = 1, Flare = 2 }
 
     public sealed class ProjectileReplication : IReplicatedSystem
     {

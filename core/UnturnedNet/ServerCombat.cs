@@ -69,7 +69,11 @@ namespace UnturnedGodot.Net
         public float PlayerDamage = 175f;       // Grenade.dat
         public float ZombieDamage = 175f;
         public float Radius = 8f;
-        public int FuseTicks = 125;             // 2.5 s
+        // DERIVED, not duplicated. This used to be a literal 125 (2.5 s) alongside SDG.Unturned.Throwables'
+        // own fuse, and the moment strawberry's 3 s landed the two disagreed: OnGrenade armed at 150 ticks while
+        // ServerCombatTests still stepped DefaultGrenade.FuseTicks + 15 = 140 and waited for a blast that had not
+        // happened yet. One number, one place.
+        public int FuseTicks = Throwables.FuseTicks;
         public int CooldownTicks = 50;          // 1 s between throws (the SP _grenadeCd)
         public float MaxThrowSpeed = 48f;       // sanity cap on the commanded velocity
     }
@@ -204,6 +208,8 @@ namespace UnturnedGodot.Net
             public ushort Owner;
             public Vector3 Pos, Vel;
             public long ExplodeTick;
+            public ushort ItemId;          // v27: which throwable, so Explode can look up what it actually does
+            public ThrowableDef Def;       // resolved ONCE at accept time -- never re-derived from client input later
         }
         readonly List<GrenadeEntity> _grenades = new List<GrenadeEntity>();
 
@@ -315,12 +321,32 @@ namespace UnturnedGodot.Net
             if (tick < cs.GrenadeReadyTick) { Diag.GrenadesRejected++; return; }
             if ((cmd.Origin - pe.Pos).magnitude > DefaultGun.MaxAimOriginOffset) { Diag.GrenadesRejected++; return; }
             if (cmd.Velocity.magnitude > DefaultGrenade.MaxThrowSpeed) { Diag.GrenadesRejected++; return; }
+            // WHICH throwable, resolved against the shared table -- not taken as the client says. An id of 0 is
+            // the pre-v27 shape and means the frag; any other id that is not a known throwable is REFUSED rather
+            // than defaulted, because defaulting an unknown id to the frag would let a client throw a 175-damage
+            // blast by naming a bandage.
+            ThrowableDef def = cmd.ItemId == 0 ? Throwables.Find(254) : Throwables.Find(cmd.ItemId);
+            if (def == null) { Diag.GrenadesRejected++; return; }
             cs.GrenadeReadyTick = tick + DefaultGrenade.CooldownTicks;
             var id = _ids.Mint();
-            _grenades.Add(new GrenadeEntity { NetIdValue = id.Value, Owner = sender, Pos = cmd.Origin, Vel = cmd.Velocity, ExplodeTick = tick + DefaultGrenade.FuseTicks });
-            _projectiles.ServerSpawn(id, ProjectileKind.Grenade, cmd.Origin, tick);
+            // A FLARE has no fuse to run out: it is lit before it leaves the hand and the projectile IS the
+            // burning flare, so the server flies it for the whole burn and retires it at the end. That is what
+            // lets a joined client light it the moment the entity appears (ProjectileReplicaView reads the kind
+            // byte) instead of three seconds after it lands. Explosives and smoke end on the fuse.
+            long endTick = tick + Throwables.FuseTicks
+                         + (def.Kind == EThrowableKind.Flare ? (long)(def.EffectSeconds * 50f) : 0L);
+            _grenades.Add(new GrenadeEntity { NetIdValue = id.Value, Owner = sender, Pos = cmd.Origin, Vel = cmd.Velocity,
+                                              ExplodeTick = endTick, ItemId = def.Id, Def = def });
+            _projectiles.ServerSpawn(id, KindOf(def), cmd.Origin, tick);
             Diag.GrenadesAccepted++;
         }
+
+        static ProjectileKind KindOf(ThrowableDef d) => d.Kind switch
+        {
+            EThrowableKind.Smoke => ProjectileKind.Smoke,
+            EThrowableKind.Flare => ProjectileKind.Flare,
+            _ => ProjectileKind.Grenade,
+        };
 
         // ------------------------------------------------------------------ the 50 Hz combat step
 
@@ -585,14 +611,29 @@ namespace UnturnedGodot.Net
 
         void Explode(GrenadeEntity g, long tick)
         {
+            // Smoke and flares do NO damage -- their retail .dats carry no damage keys and no `Explosive` flag
+            // at all. They still broadcast, because every client has to be told to build the cloud or light the
+            // flare; the event is the whole of their effect.
+            if (g.Def != null && !g.Def.Explosive)
+            {
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded,
+                                              new GrenadeExplodedEvent { Pos = g.Pos, Radius = g.Def.Radius, ItemId = g.ItemId }.Write));
+                return;
+            }
             var prof = DefaultGrenade;
+            // Per-throwable numbers where we have them: the makeshift grenade is 150/6 and does nothing to a
+            // vehicle, where the frag is 175/8/100. DefaultGrenade stays the fallback so a pre-v27 throw (ItemId
+            // 0) and every existing test still resolve to exactly the numbers they always did.
+            float radius = g.Def?.Radius ?? prof.Radius;
+            float zombieDamage = g.Def?.ZombieDamage ?? prof.ZombieDamage;
+            float playerDamage = g.Def?.PlayerDamage ?? prof.PlayerDamage;
             if (ZombieHost != null)
                 foreach (var ze in _zombies.All)
                 {
                     if (ze.IsDead) continue;
                     float range = (ze.Pos - g.Pos).magnitude;
-                    if (range > prof.Radius || Blocked(g.Pos, ze.Pos)) continue;
-                    float dmg = ExplosionMath.Linear(prof.ZombieDamage, range, prof.Radius);   // zombies: LINEAR falloff (Zombie.cs:270)
+                    if (range > radius || Blocked(g.Pos, ze.Pos)) continue;
+                    float dmg = ExplosionMath.Linear(zombieDamage, range, radius);   // zombies: LINEAR falloff (Zombie.cs:270)
                     bool killed = ZombieHost.DamageZombie(ze.NetIdValue, dmg, ze.Pos, (ze.Pos - g.Pos).normalized, g.Owner, false);
                     if (killed)
                     {
@@ -607,11 +648,11 @@ namespace UnturnedGodot.Net
                 {
                     if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
                     float pr = (pe.Pos - g.Pos).magnitude;
-                    if (pr > prof.Radius || Blocked(g.Pos, pe.Pos)) continue;
-                    float dmg = ExplosionMath.Squared(prof.PlayerDamage, pr, prof.Radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
+                    if (pr > radius || Blocked(g.Pos, pe.Pos)) continue;
+                    float dmg = ExplosionMath.Squared(playerDamage, pr, radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
                     if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
                 }
-            var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = prof.Radius };
+            var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = radius, ItemId = g.ItemId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
         }
 

@@ -616,6 +616,7 @@ namespace SDG.Unturned
             "Glasses" => EItemType.GLASSES, "Supply" => EItemType.SUPPLY,
             "Fisher" => EItemType.FISHER,
             "Optic" => EItemType.OPTIC,   // binoculars (333): held, LMB cycles zoom (PlayerController.EquipHeldOptic)
+            "Throwable" => EItemType.THROWABLE,   // grenades / smoke / flares (254, 255-268, 1242): held, LMB throws (PlayerController.EquipHeldThrowable). The catalog marks 21 items Throwable; SDG.Unturned.Throwables backs 16 of them, and the equip dispatch checks THAT table rather than this type, so a Flashbang stays unequippable until its mechanic exists.
             _ => EItemType.GENERIC,
         };
 

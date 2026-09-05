@@ -1967,7 +1967,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer) ClearHeldOptic();
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable/optic/throwable (not a layer). The ClearHeldOptic() used to sit INSIDE this comment, so it never ran: binoculars -> a melee left _heldOptic set, and LMB cycled a dead zoom instead of swinging (the same paste lost it in EquipHeldGun).
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -2051,7 +2051,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1; _heldPage = -1;   // holding nothing -> no grid address to rebind to
@@ -2120,6 +2120,7 @@ namespace UnturnedGodot
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
             if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }
             if (asset.type == EItemType.OPTIC) { EquipHeldOptic(asset, backing); return true; }   // binoculars -> raised at once, LMB cycles the zoom   // a fishing rod -> hold it, LMB casts (UseableFisher)
+            if (Throwables.Is(asset.id)) { EquipHeldThrowable(asset, backing); return true; }   // grenade / smoke / flare -> hold it, LMB lobs it. Gated on the TABLE, not on EItemType.THROWABLE: the catalog marks flashbangs and sticky grenades Throwable too, and those mechanics do not exist yet -- an item that equips and then throws as something it is not is worse than one that will not equip.
             return false;
         }
 
@@ -2129,7 +2130,7 @@ namespace UnturnedGodot
         public void EquipHeldFuelCan(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFuelItem = backing;
@@ -2146,7 +2147,7 @@ namespace UnturnedGodot
         public void EquipHeldFisher(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();   // ClearDeployable tears down any prior rod/line before we set up the new one
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFisherItem = backing;
@@ -2197,7 +2198,7 @@ namespace UnturnedGodot
         }
         public void EquipHeldOptic(ItemAsset asset, SDG.Unturned.Item backing)
         {
-            SaveGunState(); ClearDeployable(); ClearFisher(); ClearHeldOptic();
+            SaveGunState(); ClearDeployable(); ClearFisher(); ClearHeldOptic(); ClearHeldThrowable();
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
@@ -2223,6 +2224,97 @@ namespace UnturnedGodot
             _opticZoomIdx = (_opticZoomIdx + 1) % OpticZoomLevels.Length;
             _bino.Zoom = OpticZoomLevels[_opticZoomIdx];
             PlaySelectorSwitchSound();   // the click a firemode switch makes -- a detent between zoom stops
+        }
+
+        // ---- THROWABLES (strawberry 2026-09-05: "grenades, smoke grenades and flares. grenades are equippable,
+        // thrown from the hand. 3s fuse before detonation"). Item type THROWABLE; the numbers live in
+        // SDG.Unturned.Throwables, read off the retail .dats, so the server resolves an incoming throw against the
+        // same table this equips from.
+        //
+        // The one thing NOT ported is the throw ANIMATION: the extracted rig (rig.json, 569 clips) has no Throw_*
+        // clip at all -- retail's UseableThrowable plays Throw_Equip/Throw_Start/Throw_Stop and none of the three
+        // came through the rip. Melee_Strong is the overhand swing in the set, so it stands in for the throw and
+        // Melee_Equip for the carry. Substitution, not a match; a real throw clip needs another extraction pass.
+        ItemAsset _heldThrowable; SDG.Unturned.Item _heldThrowableItem; ThrowableDef _throwDef; Color _throwTint = Colors.White;
+        float _throwCd;
+        const float ThrowCooldown = 1.0f;     // matches ServerCombat.DefaultGrenade.CooldownTicks (50 ticks @50 Hz)
+        const float ThrowSpeed = 16f;         // forward component; the arc adds 5 m/s of lift on top
+        public bool HoldingThrowable => _heldThrowable != null;
+        public ThrowableDef HeldThrowableDef => _throwDef;          // test seam
+        public Color HeldThrowableTint => _throwTint;               // test seam
+
+        /// <summary>Hold a grenade / smoke / flare. The item's OWN model goes in the hand (items/&lt;id&gt;.txt) and
+        /// its palette colour is latched here rather than at throw time, because the throw deletes the item from
+        /// the bag and the colour has to outlive it by the length of a fuse.</summary>
+        public void EquipHeldThrowable(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState();
+            // Remember what to come back to when the stack runs out -- BEFORE ClearHeldThrowable wipes the flag
+            // that says whether this is a fresh switch. Only on a fresh switch: re-arming with the next grenade
+            // must not overwrite the rifle you were holding with "a grenade". Same rule EquipTool and
+            // EquipHeldConsumable follow, and without it ThrowHeld's revert would fire whatever a completely
+            // unrelated earlier consumable had stashed.
+            if (!HoldingThrowable) _revertEquip = CaptureHeldForRevert();
+            ClearDeployable(); ClearFisher(); ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldFluidItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldThrowable = asset; _heldThrowableItem = backing;
+            _throwDef = Throwables.Find(asset.id);
+            _throwTint = WorldItem.PaletteColor(asset.id) ?? Colors.White;   // the canister's own paint -> the smoke/flare colour
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { DeployableMesh = $"items/{asset.id}.txt", DeployableAlbedo = $"items/{asset.id}.png", NaturalHold = true,
+                                         HoldPos = new Vector3(0.06f, 0.30f, -0.10f), HoldScale = 1f };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
+        }
+
+        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; }
+
+        /// <summary>LMB with a throwable in hand: lob it, spend one from the bag, and either re-arm with the next
+        /// of the same kind or fall back to whatever was held before -- the same tail TickConsume runs when a
+        /// stack of food runs out, because "the item left your hand and is gone" is the same problem.</summary>
+        public void ThrowHeld()
+        {
+            if (_heldThrowable == null || _throwCd > 0f || _dead) return;
+            _throwCd = ThrowCooldown;
+
+            var asset = _heldThrowable; var def = _throwDef; ushort id = asset.id; Color tint = _throwTint;
+            _viewmodel?.PlayThrow();
+
+            Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            Vector3 vel = fwd * ThrowSpeed + Vector3.Up * 5f + Velocity;   // arc forward + inherit the thrower's motion
+            Vector3 origin = (_cam?.GlobalPosition ?? GlobalPosition) + fwd * 0.5f;
+
+            if (NetGrenade != null)   // MP: the SERVER flies and resolves it (ProjectileReplicaView renders the flight)
+            {
+                if (vel.Length() > 47.5f) vel = vel.Normalized() * 47.5f;   // stay under the server's 48 m/s cap -- a sprint-throw must not be silently rejected
+                NetGrenade(origin, vel, id);
+            }
+            else
+            {
+                var g = new Grenade { Thrower = this, Vel = vel, Def = def, ItemId = id, Tint = tint };
+                GetParent()?.AddChild(g);   // the player's own parent, as ThrowGrenade has always done -- NOT CurrentScene, which escapes an L1 test's sandbox world
+                g.GlobalPosition = origin;
+            }
+            GD.Print($"[throw] {asset.itemName} away");
+
+            // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner
+            // echo empties the cell; in SP we remove it ourselves.
+            int left;
+            if (NetConsume != null)
+            {
+                if (FindBagCell(id, out byte cp, out byte cx, out byte cy)) NetConsume(cp, cx, cy);
+                left = (Inventory?.getItemCount(id) ?? 1) - 1;
+            }
+            else
+            {
+                Inventory?.removeItemAmount(id, 1);
+                left = Inventory?.getItemCount(id) ?? 0;
+            }
+            if (left > 0) EquipHeldThrowable(asset, null);     // another of the same in the bag -> straight back to the hand
+            else (_revertEquip ?? EquipUnarmed)();             // stack empty -> back to what was held before, else fists
         }
 
         // Tear down the rod + any deployed line/bobber. Called by every other equip path (so switching items ends the cast)
@@ -2459,7 +2551,7 @@ namespace UnturnedGodot
         public void EquipHeldFluidContainer(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFluidItem = backing;
@@ -2645,7 +2737,7 @@ namespace UnturnedGodot
             _heldConsumable = asset;
             _heldConsumableMesh = meshName;   // remembered so consuming one can auto-equip another of the same type (master)
             _consumeTimer = 0f;
-            _melee = null; ClearDeployable(); ClearHeldOptic();
+            _melee = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();
             var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
             _consumeUseLen = an.UseLen > 0f ? an.UseLen : ConsumeUseTime;
             _viewmodel?.QueueFree();
@@ -2730,7 +2822,7 @@ namespace UnturnedGodot
             SaveGunState();
             ClearFisher();   // this equip path sets _deployable directly (doesn't go through ClearDeployable) -> reel in the rod here
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -2761,7 +2853,7 @@ namespace UnturnedGodot
             SaveGunState();
             bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : HoldingWireTool;
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
@@ -3422,11 +3514,11 @@ namespace UnturnedGodot
             if (NetGrenade != null)   // D1: the SERVER spawns/flies/explodes it (ProjectileReplicaView renders the flight)
             {
                 if (vel.Length() > 47.5f) vel = vel.Normalized() * 47.5f;   // stay under the server's 48 m/s sanity cap (a sprint-throw must not get silently rejected)
-                NetGrenade(origin, vel);
+                NetGrenade(origin, vel, 254);
                 GD.Print("[grenade] thrown (wire)");
                 return;
             }
-            var g = new Grenade { Thrower = this, Vel = vel };
+            var g = new Grenade { Thrower = this, Vel = vel, Def = Throwables.Find(254), ItemId = 254 };
             GetParent().AddChild(g);
             g.GlobalPosition = origin;
             GD.Print("[grenade] thrown");
@@ -3891,7 +3983,7 @@ namespace UnturnedGodot
         public System.Action<Vector3, Vector3> NetFire;      // (muzzle, undeviated aim axis) -> Client.SendFire
         public System.Action<int, float> NetDamageObject;    // (destructibleIndex, objectDamage) -> the authoritative ServerDestructibles in the loopback. In SP the local bullet path (StepBullets) owns hits, but destructible HEALTH is server-owned (ServerDestructibles mirrors the alive-bit back onto the field), so a local prop hit must route THERE, not break the field locally (a local break gets reverted by the next mirror tick). Null in pure --direct SP (no server) -> props inert there (documented fallback).
         public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
-        public System.Action<Vector3, Vector3> NetGrenade;   // (origin, velocity) -> Client.SendGrenade
+        public System.Action<Vector3, Vector3, ushort> NetGrenade;   // (origin, velocity, throwable item id) -> Client.SendGrenade. The ID is what lets the server pick the right fuse/blast/effect out of SDG.Unturned.Throwables instead of assuming every throw is a frag.
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
         public System.Action<uint> NetPickupItem;            // wired by ClientWorldSession: F on a focused WorldItemPuppet asks the server for the item (Client.SendPickupItem)
 
@@ -5371,7 +5463,7 @@ namespace UnturnedGodot
             // you rather than deleting them (strawberry: "irons are their own item and can be installed across
             // weapons"). Only fills an UNSET slot, so it never overwrites what the player fitted.
             if (backingItem != null) AttachmentFit.SeedDefaults(backingItem, SDG.Unturned.Assets.find(backingItem.id)?.itemName);
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master ClearHeldOptic();
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // equipping a gun REPLACES the held consumable/melee/deployable/optic/throwable (not a layer) -- master. ClearHeldOptic() was inside this comment and never ran: binoculars -> a rifle left _heldOptic set, and LMB cycled the dead zoom instead of FIRING.
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };
             AddChild(_viewmodel);
@@ -5716,6 +5808,7 @@ namespace UnturnedGodot
                 else if (HoldingDetonatorTool) TryDetonateCharges();    // detonator: LMB plunge -> fire all placed remote charges
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
+                else if (HoldingThrowable) ThrowHeld();                 // holding a grenade/smoke/flare: LMB lobs it (strawberry 2026-09-05)
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
@@ -6961,7 +7054,7 @@ namespace UnturnedGodot
         /// <summary>A radial soft blob, drawn once: a hard-edged square particle is the difference between smoke
         /// and confetti, and content has no generic soft sprite (the vehicle smoke png is a puff, fine for the
         /// column but too textured for the fireball).</summary>
-        static ImageTexture BlastSoftTex()
+        internal static ImageTexture BlastSoftTex()   // internal: ThrowableFx builds smoke and flare sparks out of the same soft round sprite
         {
             if (_blastSoftTex != null) return _blastSoftTex;
             const int n = 64; var im = Image.CreateEmpty(n, n, false, Image.Format.Rgba8);
@@ -8563,6 +8656,7 @@ namespace UnturnedGodot
             UpdateVitals(moving, (float)delta);
             FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
+            if (_throwCd > 0f) _throwCd -= (float)delta;   // the 1 s between throws (mirrors ServerCombat.DefaultGrenade.CooldownTicks)
             TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting
             ScanWorldLights();   // mirror nearby dynamic world lights (muzzle/headlights/flares) onto the gun

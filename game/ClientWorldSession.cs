@@ -216,9 +216,23 @@ namespace UnturnedGodot
             // NetWorldClient, a core/ type that is NOT deleted, but nothing server-side fires them anymore.)
             Client.GrenadeExploded += e =>
             {
-                // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
-                // same params) -- fx only, zero damage: the server already applied the authoritative damage
+                // A thrown item reached its end. FX ONLY, zero damage: the server already applied whatever
+                // damage there was (and for smoke and flares there is none by definition).
                 var ep = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
+                var def = e.ItemId != 0 ? SDG.Unturned.Throwables.Find(e.ItemId) : null;   // ItemId 0 = a pre-v27 throw -> the frag, as before
+                if (def != null && def.Kind == SDG.Unturned.EThrowableKind.Smoke)
+                {
+                    var cloud = new SmokeCloud
+                    {
+                        Tint = WorldItem.PaletteColor(e.ItemId) ?? new Color(0.8f, 0.8f, 0.8f),   // the canister's own paint, same lookup the thrower's machine does
+                        Radius = def.Radius,
+                        Duration = def.EffectSeconds,
+                    };
+                    cloud.Position = ep + Vector3.Up * 0.35f;   // positioned BEFORE the add: a particle system reads the transform it entered the tree with
+                    (GetTree().CurrentScene ?? (Node)this).AddChild(cloud);
+                    return;
+                }
+                if (def != null && def.Kind == SDG.Unturned.EThrowableKind.Flare) return;   // a flare burns on its PROJECTILE node (ProjectileReplicaView) and goes out when the server retires it -- nothing to build here
                 PlayerRegistry.FlinchAllFromExplosion(ep, Mathf.Max(e.Radius * 2f, 12f), 30f);
                 if (IsInsideTree()) GameAudio.Explosion(this, ep, e.Radius);   // a remote blast is heard too (retail Bomb effect audio)
             };
@@ -521,7 +535,7 @@ namespace UnturnedGodot
             // the null default of each seam keeps SP/loopback byte-identical -- only THIS session wires them)
             shell.NetFire = (muzzle, aim) => Client.SendFire(ToU(muzzle), ToU(aim));
             shell.NetMelee = (strong, yaw) => Client.SendMelee(strong, yaw);
-            shell.NetGrenade = (origin, vel) => Client.SendGrenade(ToU(origin), ToU(vel));
+            shell.NetGrenade = (origin, vel, itemId) => Client.SendGrenade(ToU(origin), ToU(vel), itemId);
             shell.NetReload = () => Client.SendReload();
             // Phase 6 pickup: F on a focused WorldItemPuppet is a REQUEST -- "the client never pockets the
             // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only

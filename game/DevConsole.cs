@@ -60,7 +60,7 @@ namespace UnturnedGodot
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
         // `save` and `wipe` live entirely on the HOST (WorldSaveDriver owns the file), so they always route to
         // the server -- on a joined client and on the consuming loopback alike, which is what singleplayer is.
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe" };
+        static readonly string[] ServerGatedVerbs = { "give", "throw", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
@@ -71,7 +71,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "wellshaft", "give", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -589,7 +589,25 @@ namespace UnturnedGodot
 
             Vector3 at = Player?.LookPoint() ?? Vector3.Zero;
 
-            if (verb == "give")
+            // `throw <name>` -- put a throwable in the hand and lob it, in one line.
+            //
+            // Here for the same reason hurttest is: the state is otherwise UNRENDERABLE headless. A smoke cloud
+            // or a lit flare only exists after a real equip and a real LMB, and a --shot run has no mouse. This
+            // drives the actual EquipHeldThrowable/ThrowHeld path (not a hand-built SmokeCloud), so what a render
+            // shows is what a player gets rather than a staged copy of it.
+            if (verb == "throw")
+            {
+                if (Player == null) { Log("throw: no player"); return; }
+                var ta = ResolveItem(arg);
+                if (ta == null) { Log($"no item matching '{arg}'"); return; }
+                if (!SDG.Unturned.Throwables.Is(ta.id))
+                { Log($"{ta.itemName} (#{ta.id}) is not a throwable -- try a grenade, a flare or a smoke"); return; }
+                if ((Player.Inventory?.getItemCount(ta.id) ?? 0) == 0) Player.Inventory?.tryAddItem(new SDG.Unturned.Item(ta.id));
+                Player.EquipItemAsset(ta, null);
+                Player.ThrowHeld();
+                Log($"threw {ta.itemName} (#{ta.id}) -- {SDG.Unturned.Throwables.FuseSeconds:0.#}s fuse");
+            }
+            else if (verb == "give")
             {
                 var asset = ResolveItem(arg);
                 if (asset == null) { Log($"no item matching '{arg}'"); return; }

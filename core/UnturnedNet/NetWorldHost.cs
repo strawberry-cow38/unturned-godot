@@ -810,10 +810,12 @@ namespace UnturnedGodot.Net
             return cmd.Seq;
         }
 
-        public ushort SendGrenade(Vector3 origin, Vector3 velocity)
+        /// <summary>Throw a throwable. itemId defaults to the frag so every pre-v27 caller (and the combat
+        /// coalescing tests) still means exactly what it meant.</summary>
+        public ushort SendGrenade(Vector3 origin, Vector3 velocity, ushort itemId = 254)
         {
             if (Session.State != NetSessionState.Connected) return 0;
-            var cmd = new GrenadeCommand { Seq = NextCombatSeq(), Origin = origin, Velocity = velocity };
+            var cmd = new GrenadeCommand { Seq = NextCombatSeq(), Origin = origin, Velocity = velocity, ItemId = itemId };
             EnqueueCombat(new CarriedCombatEvent { Kind = CombatEventKind.Grenade, Grenade = cmd });
             return cmd.Seq;
         }

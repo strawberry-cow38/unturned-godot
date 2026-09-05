@@ -62,19 +62,27 @@ namespace UnturnedGodot.Net
         }
     }
 
-    /// <summary>Client grenade throw: origin + initial velocity. The grenade itself is a SERVER-spawned
-    /// short-lived entity (§3.4) -- it snaps while flying (ProjectileReplication) and explodes by Event.</summary>
+    /// <summary>Client throwable throw: origin, initial velocity, and WHICH throwable. The projectile itself
+    /// is a SERVER-spawned short-lived entity (§3.4) -- it snaps while flying (ProjectileReplication) and ends
+    /// by Event.
+    ///
+    /// ItemId is v27. Before it the command said only "a grenade was thrown" and the server had exactly one
+    /// profile, so a smoke canister thrown in multiplayer would have detonated as a 175-damage frag. The id is
+    /// NOT trusted as a behaviour spec: the server looks it up in SDG.Unturned.Throwables and an id that is not
+    /// in that table is refused, so this widens the payload without widening what a client can ask for.</summary>
     public struct GrenadeCommand
     {
         public ushort Seq;
         public Vector3 Origin;
         public Vector3 Velocity;   // clamped-float ±64 m/s per axis on the wire
+        public ushort ItemId;      // v27: which throwable (254 frag, 255-260 flares, 261-268 smoke, 1242 makeshift)
 
         public void Write(NetPakWriter w)
         {
             w.WriteUInt16(Seq);
             NetWire.WritePos(w, Origin);
             NetWire.WriteVel(w, Velocity);
+            w.WriteUInt16(ItemId);
         }
 
         public static bool TryRead(NetPakReader r, out GrenadeCommand cmd)
@@ -83,7 +91,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort seq)) return false;
             if (!NetWire.ReadPos(r, out Vector3 origin)) return false;
             if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
-            cmd = new GrenadeCommand { Seq = seq, Origin = origin, Velocity = vel };
+            if (!r.ReadUInt16(out ushort itemId)) return false;
+            cmd = new GrenadeCommand { Seq = seq, Origin = origin, Velocity = vel, ItemId = itemId };
             return true;
         }
     }
@@ -355,19 +364,24 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>A thrown item reached the end of its fuse. ItemId is v27: without it every client rendered a
+    /// blast, so a smoke grenade landing in front of you produced a fireball and no smoke. The receiving client
+    /// resolves the id to a kind and a colour exactly as the thrower's own machine does.</summary>
     public struct GrenadeExplodedEvent
     {
         public Vector3 Pos;
         public float Radius;
+        public ushort ItemId;   // v27: 0 = an unidentified throw (pre-v27 shape) -> treat as the frag
 
-        public void Write(NetPakWriter w) { NetWire.WritePos(w, Pos); w.WriteClampedFloat(Radius, 6, 4); }
+        public void Write(NetPakWriter w) { NetWire.WritePos(w, Pos); w.WriteClampedFloat(Radius, 6, 4); w.WriteUInt16(ItemId); }
 
         public static bool TryRead(NetPakReader r, out GrenadeExplodedEvent evt)
         {
             evt = default;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadClampedFloat(6, 4, out float radius)) return false;
-            evt = new GrenadeExplodedEvent { Pos = pos, Radius = radius };
+            if (!r.ReadUInt16(out ushort itemId)) return false;
+            evt = new GrenadeExplodedEvent { Pos = pos, Radius = radius, ItemId = itemId };
             return true;
         }
     }

@@ -10,7 +10,7 @@ namespace SDG.Unturned
     // SIGHT/BARREL/GRIP/TACTICAL appended (not inserted) so no persisted ordinal shifts. Before these existed every
     // attachment in items_catalog.tsv fell through ParseType to GENERIC -- 48 sights, 59 magazines' worth of
     // siblings, all indistinguishable from a rock -- so nothing could ask "what fits this slot?".
-    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC, SIGHT, BARREL, GRIP, TACTICAL, FISHER, OPTIC }
+    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC, SIGHT, BARREL, GRIP, TACTICAL, FISHER, OPTIC, THROWABLE }
 
     // ItemTool rarity -> the tile's colour in the UI (getRarityColorUI)
     public enum EItemRarity { COMMON, UNCOMMON, RARE, EPIC, LEGENDARY, MYTHICAL }

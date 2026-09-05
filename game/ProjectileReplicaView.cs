@@ -32,7 +32,18 @@ namespace UnturnedGodot
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     var vis = new Node3D();
-                    vis.AddChild(Grenade.BuildVisual());   // kind is Grenade-only today; switch on e.Kind when more fly
+                    // v27: the kind byte finally means something. A representative id per family, because the
+                    // wire carries the FAMILY in flight and not the exact item -- so somebody else's blue smoke
+                    // flies as a generic canister and only becomes blue when it pops (GrenadeExploded carries
+                    // the real id). A generic model of the right SHAPE beats a frag standing in for everything.
+                    var kind = (ProjectileKind)e.Kind;
+                    ushort model = kind switch { ProjectileKind.Smoke => (ushort)267, ProjectileKind.Flare => (ushort)259, _ => (ushort)254 };
+                    vis.AddChild(Grenade.BuildVisual(model));
+                    // A flare is BURNING for its whole flight -- it was lit before it was thrown. The server
+                    // keeps the entity alive for the burn and retires it at the end, so the light living on this
+                    // node is exactly as long-lived as the flare.
+                    if (kind == ProjectileKind.Flare)
+                        vis.AddChild(new FlareBurn { Tint = new Color(0.95f, 0.45f, 0.2f), Duration = 3600f });   // Duration is a safety net only: the node is freed when the server retires the entity
                     parent.AddChild(vis);
                     vis.GlobalPosition = target;
                     vis.ResetPhysicsInterpolation();   // don't smear from (0,0,0) to the throw point

@@ -103,6 +103,22 @@ SCENES = {
     "lowhp":     (["--peiplay", "--shot={OUT}"],
                   {"UG_BOOTCMD": "sethp 5", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "2.4"}, True, 700,
                   "the low-HP vignette + desaturation at 5/100 health"),
+    # Throwables. A smoke cloud and a lit flare exist only AFTER a real equip and a real LMB, which a
+    # --shot run has no mouse for -- so UG_BOOTCMD fires the console `throw`, exactly as `death` fires
+    # `kill`. MOVIE seconds again (fixed 30 fps): the fuse is 3 s, so the smoke shot has to be past 1.4+3
+    # or it captures a canister in mid-air and nothing else. The flare is lit on the throw, so its shot
+    # only needs long enough for it to land.
+    "smoke":     (["--peiplay", "--shot={OUT}"],
+                  # 1.4 is peiplay's settled-on-foot mark (the `death` scene establishes it); the fuse is 3 s,
+                  # so the cloud is only ~1.6 s old at 6.0 and that is what fixes the budget: peiplay renders
+                  # ~7 s per MOVIE frame on this box's software rasteriser, so frame 180 is ~22 min, not 6.
+                  {"UG_BOOTCMD": "throw Red Smoke", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "6.0"}, True, 2000,
+                  "a red smoke grenade, ~2s into its cloud"),
+    "flare":     (["--peiplay", "--shot={OUT}"],
+                  # No fuse to wait out -- a flare is lit before it leaves the hand -- so this is the `death`
+                  # scene's proven 1.4/3.2 timing: ~1.8 s of burn, landed.
+                  {"UG_BOOTCMD": "throw Red Flare", "UG_BOOTCMD_AT": "1.4", "UG_SHOTTIME": "3.2"}, True, 900,
+                  "a lit road flare on the ground: glow, flicker, sparks"),
     "walls":     (["--walls", "--shot={OUT}"], {}, False, 200, "building tool: a drawn room with openings"),
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),
