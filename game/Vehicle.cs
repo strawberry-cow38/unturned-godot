@@ -4250,8 +4250,8 @@ namespace UnturnedGodot
 
         /// <summary>This vehicle has the folding passenger door (the bus).</summary>
         public bool HasBiFoldDoor => _doorPivotA != null;
-        /// <summary>The door's WANTED state: true from the moment it is told to open (it may still be swinging). The
-        /// boarding/leaving gates read this (master 2026-09-05 "in order to get into/out of any seat the door must be open").</summary>
+        /// <summary>The door's WANTED state: true from the moment it is told to open (it may still be swinging). Purely
+        /// cosmetic (master 2026-09-05): nothing gates boarding or leaving on it.</summary>
         public bool DoorOpen => _doorOpen;
         public float DoorFold => _doorT;
         public void ToggleDoor() => SetDoorOpen(!_doorOpen);

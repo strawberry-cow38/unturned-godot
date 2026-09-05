@@ -3869,7 +3869,6 @@ namespace UnturnedGodot
         {
             if (NetExitVehicle == null) return false;
             if (_riding == null && !DrivingPredicted) return false;
-            if (DrivingPredicted && _driving != null && _driving.HasBiFoldDoor && !_driving.DoorOpen) { HUD.Alert("Open the door first"); return true; }   // same gate as the SP exit
             NetExitVehicle();
             return true;
         }
@@ -5667,7 +5666,6 @@ namespace UnturnedGodot
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
-                else if (_driving != null && !DrivingPredicted && _driving.HasBiFoldDoor && !_driving.DoorOpen) HUD.Alert(_seatIndex == 0 ? $"Open the door first ([{Keybinds.Get(GameAction.VehicleDoor).Label}])" : "The door is closed");   // the bus: no leaving through a shut door (master)
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (_ridingCrane != null) ExitCrane();                     // hop out of a boarded crane
@@ -5681,7 +5679,6 @@ namespace UnturnedGodot
                     if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.BiFold) _focusVehicle.ToggleDoor();   // the bus door: open / close it (master)
                     else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
                     else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Hood) OpenVehicleHood(_focusVehicle);
-                    else if (_focusVehicle.HasBiFoldDoor && !_focusVehicle.DoorOpen) HUD.Alert("The door is closed");   // no seat through a shut bus door (master)
                     else EnterVehicle(_focusVehicle, _focusAccessValid ? _focusAccess.Seat : -1);   // a door -> THAT seat; no zone -> the old first-free behaviour
                 }
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
@@ -7528,7 +7525,6 @@ namespace UnturnedGodot
                 default:
                     int seat = _focusAccess.Seat;
                     string who = seat == 0 ? "driver" : $"seat {seat + 1}";
-                    if (v.HasBiFoldDoor && !v.DoorOpen) return "door closed";
                     return v.SeatFree(seat) ? $"[{key}] enter ({who})" : $"{who} occupied";
             }
         }
