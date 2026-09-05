@@ -2096,8 +2096,11 @@ namespace UnturnedGodot
             // created AFTER the player so its Current wins (the player cam is made Current once at build, never re-asserted)
             _ttCam = new Camera3D { Fov = 58f, Current = true, Far = 800f };
             AddChild(_ttCam);
-            if (System.Environment.GetEnvironmentVariable("UG_TANKCAM") == "front")   // the glacis + the turret roof: the driver's visor and the top hatch
+            string ttCamMode = System.Environment.GetEnvironmentVariable("UG_TANKCAM");
+            if (ttCamMode == "front")   // the glacis + the turret roof: the driver's visor and the top hatch
             { _ttCam.GlobalPosition = new Vector3(-9f, 5.5f, -13f); _ttCam.LookAt(new Vector3(0.5f, 2.6f, -0.5f), Vector3.Up); }
+            else if (ttCamMode == "nose")   // straight down the nose, close: does the visor cover the window hole
+            { _ttCam.Fov = 40f; _ttCam.GlobalPosition = new Vector3(0f, 2.9f, -11.5f); _ttCam.LookAt(new Vector3(0f, 1.85f, -3.6f), Vector3.Up); }
             else { _ttCam.GlobalPosition = new Vector3(13f, 7.5f, 15f); _ttCam.LookAt(new Vector3(-3f, 2.2f, -24f), Vector3.Up); }
             if (System.Environment.GetEnvironmentVariable("UG_TANKFP") == "1") { _ttCam.Current = false; _ttCam.QueueFree(); _ttCam = null; }   // UG_TANKFP=1: the SEATED player's own view (periscope / gunsight overlays)
         }
@@ -8465,6 +8468,12 @@ namespace UnturnedGodot
                     // soon as its tick has PASSED (>=), so two milestones inside one slow frame capture on
                     // consecutive frames instead of the second one being lost.
                     int[] ttCaps = ttWeapon == 0 ? new[] { 30, 52, 100, 141, 146, 156, 175, 240, 300, 318 } : new[] { 30, 52, 100, 104, 112, 126, 175, 240, 300, 312 };   // HMG: bursts at 100-140 / 300-330, tracers in flight
+                    var ttCapsEnv = System.Environment.GetEnvironmentVariable("UG_TANKCAPS");   // UG_TANKCAPS=10,100,...: capture at these ticks instead (a hatch shot before anyone boards)
+                    if (!string.IsNullOrEmpty(ttCapsEnv))
+                    {
+                        var parts = ttCapsEnv.Split(','); var arr = new int[parts.Length]; for (int ci = 0; ci < arr.Length; ci++) int.TryParse(parts[ci], out arr[ci]); ttCaps = arr;
+                        if (_rigCaptureFrames.Length != arr.Length) { _rigCaptureFrames = new int[arr.Length]; for (int ci = 0; ci < arr.Length; ci++) _rigCaptureFrames[ci] = int.MaxValue; }   // as many slots as captures, or the harness waits for ten and times out
+                    }
                     if (_rigShot < ttCaps.Length && pf >= ttCaps[_rigShot]) _rigCaptureFrames[_rigShot] = _frame;
                 }
                 else if (_driveTest && _dtPlayer != null)
