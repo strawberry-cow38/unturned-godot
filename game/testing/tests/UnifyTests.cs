@@ -2528,4 +2528,57 @@ namespace UnturnedGodot.Testing
             return -999f;
         }
     }
+    // A DROPPED ITEM FALLS. strawberry 2026-09-05: "dropped item physics are completely broken. dropped items
+    // float where they are dropped." They were not falling slowly or landing wrong -- nothing simulated them at
+    // all. A player's drop calls SpawnWorldItem directly, making a server ENTITY with no local node, and
+    // WorldItemNetSync only ever walked nodes in the "worlditems" group. No node -> no gravity, no settle event,
+    // and the client replica moves only when the entity position changes. So it hung at the drop point forever.
+    //
+    // TEETH: the whole unify suite was green while this was broken, because every existing world-item test spawns
+    // its entity at the player's FEET and never asks whether it moved. This one drops from 3 m and requires the
+    // entity's own replicated Y to come down. Revert WorldItemNetSync's entity->node pass and it fails on the
+    // first check, not the second.
+    public sealed class DroppedItemFallsTests : GameTest
+    {
+        public override string Name => "unify.dropped_item_falls";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260905);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            world.Sim.Sim.Add(new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump"));
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            yield return Until(() => ded.Server.Players.TryGetByOwner(client.PlayerId, out _), 5);
+            T.Check("server owns the player entity", ded.Server.Players.TryGetByOwner(client.PlayerId, out _));
+            ded.Server.Players.TryGetByOwner(client.PlayerId, out var me);
+
+            // Drop it 3 m up so falling is unambiguous -- at the feet, "did it move" is inside the settle noise.
+            var from = new UnityEngine.Vector3(me.Pos.x, me.Pos.y + 3f, me.Pos.z);
+            var e = ded.Server.Transactions.SpawnWorldItem(new Item(458), from, UnityEngine.Vector3.zero);
+            T.Check("the server made the drop entity", e != null);
+            float startY = e.Pos.y;
+
+            yield return Until(() => ded.Server.WorldItems.TryGet(e.NetIdValue, out var q) && q.Pos.y < startY - 0.5f, 150);
+            bool got = ded.Server.WorldItems.TryGet(e.NetIdValue, out var now);
+            T.Check($"the dropped item FELL (y {startY:0.00} -> {(got ? now.Pos.y : startY):0.00})",
+                    got && now.Pos.y < startY - 0.5f);
+
+            yield return Until(() => ded.Server.WorldItems.TryGet(e.NetIdValue, out var q2) && q2.Settled, 400);
+            bool got2 = ded.Server.WorldItems.TryGet(e.NetIdValue, out var end);
+            T.Check($"...and came to rest, so the replica has a resting place to draw (settled={(got2 && end.Settled)})",
+                    got2 && end.Settled);
+        }
+    }
 }

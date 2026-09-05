@@ -1222,6 +1222,7 @@ namespace UnturnedGodot.Net
         public WorldItemReplication.WorldItemEntity SpawnWorldItem(Item item, Vector3 pos, Vector3 vel)
         {
             var e = _worldItems.ServerSpawn(_ids.Mint(), item, pos, _tick());
+            e.ServerVel = vel;   // kept, not just broadcast: the game side needs it to give this entity a falling node
             var evt = new WorldItemSpawnedEvent { NetId = e.NetIdValue, ItemId = e.ItemId, Amount = e.Amount, Quality = e.Quality, Pos = e.Pos, Vel = vel };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventWorldItemSpawned, evt.Write));
             return e;

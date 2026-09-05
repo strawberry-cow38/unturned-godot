@@ -108,6 +108,15 @@ namespace UnturnedGodot.Net
 
             /// <summary>Server-only: the real dropped Item (never on the wire; null on replicas).</summary>
             public Item ServerItem;
+
+            /// <summary>Server-only: the velocity the item was thrown with, kept so the server can hand it to a
+            /// real physics node. It was already computed and BROADCAST in WorldItemSpawnedEvent.Vel and then
+            /// dropped at both ends -- nothing stored it, so nothing could act on it.</summary>
+            public Vector3 ServerVel;
+
+            /// <summary>Server-only: a physics node has been made for this entity, so it is being simulated and
+            /// will report its own settle. Guards against minting a second node every sync tick.</summary>
+            public bool ServerSimulated;
         }
 
         public byte SystemId => ReplicationIds.SystemWorldItems;
