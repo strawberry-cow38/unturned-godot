@@ -22,7 +22,7 @@ namespace UnturnedGodot
         {
             Layer = 6; ProcessPriority = 200;
             _periscope = MakeOverlay("res://content/binoculars_overlay.gdshader", "mask", "res://content/ui/binoculars_overlay.png");
-            _gunsight = MakeOverlay("res://content/tank_gunsight.gdshader", "reticle", "res://content/cross_scope_reticle.png");
+            _gunsight = MakeOverlay("res://content/tank_gunsight.gdshader", "reticle", "res://content/scope_8x_reticle.png");   // THE 8x SCOPE's own ripped reticle (item 21), full-glass scale, untinted -- not the Cross Scope's fat white +, which is what the first cut grabbed by name (master: "copy the 8x's reticle")
             _win = GetViewport().GetVisibleRect().Size;   // read ONCE + on resize (per-frame GetVisibleRect is a RenderingServer sync -- the binoculars lesson)
             GetTree().Root.SizeChanged += () => { _win = GetViewport().GetVisibleRect().Size; Resize(); };
             Resize();
