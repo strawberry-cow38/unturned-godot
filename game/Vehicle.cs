@@ -114,6 +114,7 @@ namespace UnturnedGodot
         {
             if (SeatFree(1)) GunnerHeadOut = false;
             float rate = 120f * dt;
+            _gunnerRise = Mathf.MoveToward(_gunnerRise, GunnerHeadOut && !SeatFree(1) ? 1f : 0f, 3f * dt);   // the gunner stands up / drops down over a third of a second
             if (_turretHatch != null)
             {
                 float target = GunnerHeadOut && !SeatFree(1) ? 0f : TankTopHatchClosedDeg;
@@ -1157,6 +1158,7 @@ namespace UnturnedGodot
             /// assumed -- the AABB says which axis is the barrel.</summary>
             public Vector3 MeshRotationDeg = Vector3.Zero;
             public string GunId = "nykorev";
+            public string DisplayName = "HMG";   // the HUD's bottom-right weapon name while this mount is in hand
             public int Belt = 200;
             public Color Colour = new Color(0.16f, 0.17f, 0.14f);
             /// <summary>Seconds between shots. A belt gun cycles at 0.12 s; a breech-loaded cannon takes its
@@ -1569,7 +1571,15 @@ namespace UnturnedGodot
         /// the seat rather than through the floor. Passengers get their own extracted seat plus that SAME delta,
         /// so the tuning carries across instead of being re-guessed per seat -- and so a vehicle whose driver
         /// pose is already right cannot have its passengers sitting at a different height to him.</summary>
-        public Vector3 SeatBodyLocal(int i) => i == 0 ? SeatOffset : SeatLocal(i) + (SeatOffset - SeatLocal(0));
+        public Vector3 SeatBodyLocal(int i)
+        {
+            // THE TANK GUNNER RIDES THE TURRET: his seat is in the turret's hatch shaft, so it turns with the turret and rises out
+            // of the hatch when he stands (master 2026-09-05: "the turret gunner seated postion doesnt move with the turret").
+            if (i == 1 && _turretHatch != null && TurretPivot != null) return ToLocal(TurretPivot.ToGlobal(TankGunnerSeatDown + Vector3.Up * (TankGunnerRise * _gunnerRise)));
+            return i == 0 ? SeatOffset : SeatLocal(i) + (SeatOffset - SeatLocal(0));
+        }
+        /// <summary>The seated body's facing, vehicle-local: the hull's for everyone but a turret gunner, who faces where the turret does.</summary>
+        public Basis SeatBodyBasis(int i) => i == 1 && _turretHatch != null && TurretPivot != null ? TurretPivot.Basis : Basis.Identity;
         public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
@@ -3311,7 +3321,7 @@ namespace UnturnedGodot
                 Muzzle = new Vector3(0f, 0f, -5.156f),
                 YawFree = true, PitchMin = -15f, PitchMax = 45f,
                 YawRate = 60f, PitchRate = 30f,   // a forty-tonne turret: a full about-face in three seconds, not one frame
-                GunId = "tank_cannon", Cycle = 2f, Belt = 60,   // Reload_Time 2; sixty rounds of Missile_1 in the racks
+                GunId = "tank_cannon", DisplayName = "Tank Cannon", Cycle = 2f, Belt = 60,   // Reload_Time 2; sixty rounds of Missile_1 in the racks
             },
             // THE ROOF HMG (master 2026-09-05: "wiring the HMG on the tank turret ... hmg works like any other gun,
             // firing towards the crosshair with tracers spawning from the muzzle"; then "the hmg 'shell' is already
@@ -3328,7 +3338,7 @@ namespace UnturnedGodot
                 Pivot = new Vector3(-0.62f, 3.75f, -1.30f),      // turret-frame: the box's centre in plan, at the barrel's axis height
                 Muzzle = new Vector3(-0.14f, 0f, -2.40f),        // the barrel tip (-0.76, 3.75, -3.70) relative to that pivot
                 YawFree = true, PitchMin = -10f, PitchMax = 45f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun; +45 keeps the barrel root inside the box face
-                GunId = "hmg", Cycle = 0.14f, Belt = 400,        // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
+                GunId = "hmg", DisplayName = "HMG", Cycle = 0.14f, Belt = 400,        // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
             },
         };
         /// <summary>The roof gun's housing and barrel inside tank_turret.txt (turret frame), peeled by BuildTankExtras.
@@ -3342,8 +3352,8 @@ namespace UnturnedGodot
         /// tris sit wholly inside this zone; the roof and the shaft below the opening (x -0.2..1.08, z -0.14..1.33, down to
         /// y 2.40 -- the opening master could not see because the LOD1 turret mesh was drawn over it) straddle and stay.</summary>
         static readonly (Vector3 min, Vector3 max) TankTopHatch = (new Vector3(-0.25f, 3.20f, 1.05f), new Vector3(1.12f, 4.80f, 1.65f));
-        static readonly Vector3 TankTopHatchHinge = new Vector3(0.44f, 3.64f, 1.29f);   // turret frame: the plate's bottom-centre
-        const float TankTopHatchClosedDeg = -100f;   // about +X: forward and down until the 10-deg back-lean lies flat on the roof
+        static readonly Vector3 TankTopHatchHinge = new Vector3(0.44f, 3.44f, 1.33f);   // turret frame: ROOF level at the opening's rear edge. The plate's own foot is 0.2 m above the roof (its hinge wedge reaches down to 3.26), and hinging there left the closed lid floating 0.2 m over the hole (master: "the hatch doesnt fully close")
+        const float TankTopHatchClosedDeg = -97f;   // about +X: forward and down; with the roof-level hinge the 0.25 m plate lies along the roof (foot end 6 cm sunk, far end 4 cm proud)
         /// <summary>The driver's VISOR on the glacis: a 1.7 m plate (x +/-0.85) over the window opening (x +/-0.75, y 1.61..1.94,
         /// z -4.09..-3.17), modelled lifted -- its front edge at y 2.04..2.09 (z -3.88) stands 0.35 m off the glacis and its
         /// rear edge (y 1.86..1.90, z -3.40) sits on it, so the rear edge is the hinge. 10 tris, none straddling.</summary>
@@ -3356,7 +3366,13 @@ namespace UnturnedGodot
         /// drags anything across the eyepiece; or, head out, 1 m above the open hatch.</summary>
         public static readonly Vector3 TankPeriscopeEye = new Vector3(0f, 1.98f, -3.92f);   // 4 cm ahead of the raised visor's lip, 0.3 m over the glacis: the eye at plate level saw half a frame of its own hull
         static readonly Vector3 TankSightEye = new Vector3(0f, 4.3f, -0.8f);   // a roof PERISCOPE sight on the yaw axis: a mantlet-face eye swung with the turret while the view stayed hull-relative, so a laid gun put its own barrel across the glass
-        static readonly Vector3 TankCupolaEye = new Vector3(0.44f, 4.45f, 0.60f);
+        static readonly Vector3 TankCupolaEye = new Vector3(0.44f, 4.2f, 0.60f);
+        /// <summary>The gunner's BODY, turret frame: seated on the shaft floor of the hatch opening (x -0.2..1.08, z -0.14..1.33,
+        /// floor y 2.40), low enough buttoned up that the head stays under the roof, and risen TankGunnerRise with the lid open
+        /// so the torso stands out of the hatch (master: "should be in that little carved hole ... they should pop up/down").</summary>
+        static readonly Vector3 TankGunnerSeatDown = new Vector3(0.44f, 2.0f, 0.60f);   // 2.15 left the crown of the seated head poking through the closed lid
+        const float TankGunnerRise = 0.7f;
+        float _gunnerRise;   // 0 = down, 1 = up; eased in UpdateHatches
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
 
         /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted

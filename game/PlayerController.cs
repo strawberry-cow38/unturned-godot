@@ -5583,7 +5583,8 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape);   // Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
+                    || (Keybinds.HotbarSlot(@event) is int hk && _driving != null && hk <= _driving.TurretSlotCount(_seatIndex)));   // + the 1..N keys while seated at a MOUNT (they pick the weapon; this list ate them, so nobody could switch to the HMG -- master 2026-09-05). Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
@@ -6448,7 +6449,12 @@ namespace UnturnedGodot
         // frame it empties. A cached "who has the gun" flag would have needed hand-over code in enter, exit, death
         // and the MP seat sync, and would have been wrong in whichever one forgot to write it.
         /// <summary>The mount this seat operates right now in the selected weapon slot, or null.</summary>
-        Vehicle.TurretDef OperatedTurret => _driving?.TurretFor(_seatIndex, _turretSlot);
+        public Vehicle.TurretDef OperatedTurret => _driving?.TurretFor(_seatIndex, _turretSlot);
+        // HUD readout for the mount in hand (master: "should show the weapon and ammo count in the bottom right like every
+        // other weapon does. switching when you switch weapons")
+        public int MountAmmo => _driving?.TurretAmmo(_seatIndex, _turretSlot) ?? 0;
+        public int MountSlot => _turretSlot;
+        public int MountSlotCount => _driving?.TurretSlotCount(_seatIndex) ?? 0;
         /// <summary>Which of the seat's mounts the 1..N keys have selected (master 2026-09-05: "the main cannon and hmg are
         /// on 1 and 2 keys, overriding whatevers in ur primary and secondary slots"). 0 on entering a vehicle.</summary>
         int _turretSlot;
@@ -6468,6 +6474,7 @@ namespace UnturnedGodot
         /// an OUTSIDE harness camera still got the driver's arms painted across the shot.</summary>
         public bool HideViewmodelDebug;
         public void DebugToggleHeadOut() { if (_driving != null) _driving.GunnerHeadOut = !_driving.GunnerHeadOut; }   // harness: the gunner's Ctrl
+        public void DebugSetFirstPerson(bool fp) => _fp = fp;   // harness: the K toggle, so an outside camera can see the seated body
 
         // ---- THE TANK'S OPTICS (master 2026-09-05): "in first person, the driver should get a binocular overlay, that acts
         // as a periscope for outside. the turret gunner in 1st person, inside the turret gets an 8x scope reticle (but
@@ -7601,7 +7608,7 @@ namespace UnturnedGodot
                 // The driving camera already reads the interpolated transform for exactly this reason. Using
                 // the same source here is what puts the body, the car and the view in one frame of reference
                 // rather than two.
-                _body.GlobalTransform = _driving.GetGlobalTransformInterpolated() * new Transform3D(Basis.Identity, _driving.SeatBodyLocal(_seatIndex));
+                _body.GlobalTransform = _driving.GetGlobalTransformInterpolated() * new Transform3D(_driving.SeatBodyBasis(_seatIndex), _driving.SeatBodyLocal(_seatIndex));   // a turret gunner's seat turns with the turret (SeatBodyBasis) and rises out of the hatch (SeatBodyLocal)
                 // The DRIVER mimes a wheel; a passenger must not, or the back seats all sit there steering an
                 // invisible car -- and it reads worse now they are holding a rifle while doing it.
                 _body.PlayLoop(_seatIndex == 0

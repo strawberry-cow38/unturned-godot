@@ -440,10 +440,20 @@ namespace UnturnedGodot
                 box.Visible = on();
             if (Player != null)
             {
-                bool gun = Player.HasGunOut;                       // ammo counter + firemode ONLY when a gun is genuinely out (master: off for fists/melee/held item)
+                var mount = Player.OperatedTurret;                 // seated at a turret: the readout is the MOUNT's, not the rifle in the bag (master 2026-09-05)
+                bool gun = mount != null || Player.HasGunOut;      // ammo counter + firemode ONLY when a gun is genuinely out (master: off for fists/melee/held item)
                 bool bagOpen = Player.InventoryOpen;               // master 2026-08-26: hide the bottom-right weapon/ammo readout while the inventory is open
                 _ammo.Visible = gun && !bagOpen; _fireMode.Visible = gun && !bagOpen; _weaponName.Visible = gun && !bagOpen;
-                if (gun)
+                if (mount != null)
+                {
+                    _ammo.Text = $"{Player.MountAmmo} / {mount.Belt}";
+                    string cadence = mount.Cycle > 0.5f ? "Semi" : "Auto";
+                    _fireMode.Text = Player.MountSlotCount > 1 ? $"[{Player.MountSlot + 1}] {cadence}" : cadence;   // which key this mount answers to, so switching reads at a glance
+                    _fireMode.Modulate = new Color(1f, 1f, 1f, 0.7f);
+                    _weaponName.Text = mount.DisplayName ?? mount.GunId;
+                    _weaponName.Modulate = Colors.White;
+                }
+                else if (gun)
                 {
                     // "x + 1 / max" when a round rides the chamber (master). The +1 is REAL state, not decoration:
                     // Ammo can legitimately exceed AmmoMax, and rendering it as a flat "31 / 30" reads as a bug in
