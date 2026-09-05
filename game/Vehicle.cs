@@ -126,6 +126,7 @@ namespace UnturnedGodot
                 float target = SeatFree(0) ? TankDriverHatchClosedDeg : 0f;
                 _driverHatchDeg = Mathf.MoveToward(_driverHatchDeg, target, rate);
                 _driverHatch.RotationDegrees = new Vector3(_driverHatchDeg, 0f, 0f);
+                _driverHatch.Position = TankDriverHatchHinge + Vector3.Up * (TankDriverHatchLift * (_driverHatchDeg / TankDriverHatchClosedDeg));   // rides up out of the recess as it closes (see TankDriverHatchLift)
             }
         }
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
@@ -3292,10 +3293,14 @@ namespace UnturnedGodot
             Fuel = 2000f, Health = 1600f, Name = "Tank", IgnitionSound = "audio/vehicles/tank_ignition.wav",   // retail Tank.dat: its own ignition clip (ripped)
             Wheels = new (float, float, float, bool)[]   // 8 road wheels (rig, Z-negated); none STEERED (tracked)
             {
-                (-2.0f, 0.556f, -3.0f, false), (2.0f, 0.556f, -3.0f, false),
-                (-2.0f, 0.556f, -1.0f, false), (2.0f, 0.556f, -1.0f, false),
-                (-2.0f, 0.556f,  1.0f, false), (2.0f, 0.556f,  1.0f, false),
-                (-2.0f, 0.556f,  3.0f, false), (2.0f, 0.556f,  3.0f, false),
+                // x +/-2.261, not the rig's +/-2.0: that is the Wheels node position, but retail's WheelConfigurations set
+                // ModelUseColliderPose, so the wheel MODEL sits at the Tire collider (x +/-2.261) -- which is also the exact
+                // centre of each track band in tank_treads.txt (x 1.561..2.961). At 2.0 the 1.3 m wide wheel sat 0.26 m
+                // inboard of its track (master 2026-09-05 "the inner wheels in the tracks need to be more centered").
+                (-2.261f, 0.556f, -3.0f, false), (2.261f, 0.556f, -3.0f, false),
+                (-2.261f, 0.556f, -1.0f, false), (2.261f, 0.556f, -1.0f, false),
+                (-2.261f, 0.556f,  1.0f, false), (2.261f, 0.556f,  1.0f, false),
+                (-2.261f, 0.556f,  3.0f, false), (2.261f, 0.556f,  3.0f, false),
             },
             // No exterior Parts: the driver/gunner seats + steering are INTERIOR on a buttoned-up tank and clip
             // through the closed hull if drawn from outside. The meshes are extracted (content/tank_seat_driver,
@@ -3359,6 +3364,12 @@ namespace UnturnedGodot
         /// rear edge (y 1.86..1.90, z -3.40) sits on it, so the rear edge is the hinge. 10 tris, none straddling.</summary>
         static readonly (Vector3 min, Vector3 max) TankDriverHatch = (new Vector3(-0.9f, 1.84f, -3.92f), new Vector3(0.9f, 2.12f, -3.36f));
         static readonly Vector3 TankDriverHatchHinge = new Vector3(0f, 1.88f, -3.40f);   // hull frame
+        /// <summary>The model's open visor has its rear edge SUNK 6-10 cm below the glacis (the glacis passes y 1.955 at z -3.40,
+        /// the edge sits at 1.86-1.90). A pure swing about that edge therefore closes the plate 6-10 cm INSIDE the glacis plane,
+        /// cutting through the window recess's side walls (master 2026-09-05: "not clipping the hole when closed. should close
+        /// on the outside of the opening"). So the closing swing also lifts the hinge this much, and the plate lands ON the
+        /// glacis over the opening, its rear edge flush at 1.96 and its front edge 2 cm proud at z -3.89.</summary>
+        const float TankDriverHatchLift = 0.10f;
         const float TankDriverHatchClosedDeg = -50f;   // about +X: the plate lies ON the glacis (its open pose is 23.6 deg above level, the glacis runs 26.6 deg below it); -40 left the front edge 8 cm proud -- master 2026-09-05 "the hatch doesnt fully close"
         /// <summary>Where the tank's seats SEE from. Driver: just outside the glacis at the window opening, clear of the raised
         /// visor's lip (the glacis passes y 1.69 at z -3.92). Gunner: the sight aperture on the mantlet face beside the gun (turret

@@ -2099,6 +2099,8 @@ namespace UnturnedGodot
             string ttCamMode = System.Environment.GetEnvironmentVariable("UG_TANKCAM");
             if (ttCamMode == "front")   // the glacis + the turret roof: the driver's visor and the top hatch
             { _ttCam.GlobalPosition = new Vector3(-9f, 5.5f, -13f); _ttCam.LookAt(new Vector3(0.5f, 2.6f, -0.5f), Vector3.Up); }
+            else if (ttCamMode == "side")   // pure left profile: are the road wheels centred in their track
+            { _ttCam.Fov = 45f; _ttCam.GlobalPosition = new Vector3(-13f, 1.6f, 0f); _ttCam.LookAt(new Vector3(0f, 1.0f, 0f), Vector3.Up); }
             else if (ttCamMode == "nose")   // straight down the nose, close: does the visor cover the window hole
             { _ttCam.Fov = 40f; _ttCam.GlobalPosition = new Vector3(0f, 2.9f, -11.5f); _ttCam.LookAt(new Vector3(0f, 1.85f, -3.6f), Vector3.Up); }
             else { _ttCam.GlobalPosition = new Vector3(13f, 7.5f, 15f); _ttCam.LookAt(new Vector3(-3f, 2.2f, -24f), Vector3.Up); }
