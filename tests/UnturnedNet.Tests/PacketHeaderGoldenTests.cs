@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751B08000000000000002800"));   // byte[1]=0x1B = Version 27 (v27 throwables: GrenadeCommand/GrenadeExplodedEvent gain ItemId) -- ONLY that byte moved from 0x1A/26, which is the whole point of this golden. (The comment here read "0x17 = Version 23" while the literal said 0x1A: an earlier bump re-goldened the hex and left the prose behind. Fixed.)
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751C08000000000000002800"));   // byte[1]=0x1C = Version 28 (v28 cooking: the item wire gains cooked/cookStyle + CommandSetCookerOn(43)) -- ONLY that byte moved from 0x1A/26, which is the whole point of this golden. (The comment here read "0x17 = Version 23" while the literal said 0x1A: an earlier bump re-goldened the hex and left the prose behind. Fixed.)
         }
 
         [Test]

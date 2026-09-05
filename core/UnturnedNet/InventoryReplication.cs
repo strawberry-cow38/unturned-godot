@@ -245,6 +245,25 @@ namespace UnturnedGodot.Net
 
     /// <summary>Set the autodrink flag on the item at (Page,X,Y). Id is identity, as in GunStateCommand: an
     /// address alone would let a command that arrives after a swap set the flag on whatever landed there.</summary>
+    /// <summary>Flip a cooking appliance on or off (strawberry 2026-09-05: "a new on/off button for
+    /// cooking"). Addressed by the appliance's crate NetId, which is what the player already has open --
+    /// and the server checks it IS a registered cooker, so a forged id for an arbitrary crate does nothing
+    /// rather than conjuring an oven.</summary>
+    public struct SetCookerOnCommand
+    {
+        public uint NetId;
+        public bool On;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(On); }
+        public static bool TryRead(NetPakReader r, out SetCookerOnCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint netId)) return false;
+            if (!r.ReadBit(out bool on)) return false;
+            cmd = new SetCookerOnCommand { NetId = netId, On = on };
+            return true;
+        }
+    }
+
     public struct SetAutoDrinkCommand
     {
         public byte Page, X, Y;
@@ -314,16 +333,31 @@ namespace UnturnedGodot.Net
         public static bool TryRead(NetPakReader r, out CloseStorageCommand cmd) { cmd = default; return true; }
     }
 
+    /// <summary>v28 gains IsCooker/CookerKind/CookerOn. The SERVER is the authority on whether a container
+    /// cooks -- the client would otherwise have to guess from a mesh name it does not reliably have -- and the
+    /// moment it needs to know is exactly when it opens the thing and has to decide whether to draw an on/off
+    /// button under the grid.</summary>
     public struct StorageOpenedEvent
     {
         public uint NetId;
         public byte Width, Height;
-        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height); }
+        public bool IsCooker;
+        public byte CookerKind;   // ECookerKind, meaningful only when IsCooker
+        public bool CookerOn;
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height);
+            w.WriteBit(IsCooker);
+            if (IsCooker) { w.WriteUInt8(CookerKind); w.WriteBit(CookerOn); }
+        }
         public static bool TryRead(NetPakReader r, out StorageOpenedEvent evt)
         {
             evt = default;
             if (!r.ReadUInt32(out uint id) || !r.ReadUInt8(out byte width) || !r.ReadUInt8(out byte height)) return false;
-            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height };
+            if (!r.ReadBit(out bool isCooker)) return false;
+            byte kind = 0; bool on = false;
+            if (isCooker) { if (!r.ReadUInt8(out kind)) return false; if (!r.ReadBit(out on)) return false; }
+            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on };
             return true;
         }
     }

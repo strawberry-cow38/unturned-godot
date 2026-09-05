@@ -1316,11 +1316,21 @@ void fragment() {
 
             // right-top: name (rarity-coloured) + info line
             Color rar = ItemTool.RarityColorUI(asset.rarity);
-            var name = new Label { Text = asset.itemName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
+            // COOKING PREFIX (strawberry 2026-09-05). Empty for raw food AND for plainly-cooked food, which is
+            // what "average (no label)" asks for -- a label on every steak is a label on nothing. So the name
+            // reads "Bread" raw, "Cooked Bread" out of a toaster, "Charcoal Grilled Beef" off a grill, and
+            // "Burnt Beef" if you walked away.
+            string cookLabel = Cooking.Label(jar.item?.cooked ?? 0, (ECookStyle)(jar.item?.cookStyle ?? 0));
+            var name = new Label { Text = cookLabel.Length > 0 ? $"{cookLabel} {asset.itemName}" : asset.itemName,
+                                   Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
             name.AddThemeColorOverride("font_color", rar);
             name.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             panel.AddChild(name);
-            var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}",
+            // The raw number too, not just the band: "83% cooked" tells you to put it back in, where a bare
+            // "raw" does not say whether that means five more seconds or thirty. Only shown once something has
+            // actually started cooking, so nothing changes for the 1900 items this will never apply to.
+            string cookInfo = (jar.item?.cooked ?? 0) > 0 ? $"  ·  {jar.item.cooked}% cooked" : "";
+            var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}{cookInfo}",
                                    Position = new Vector2(228, 46), Size = new Vector2(258, 20) };
             info.AddThemeColorOverride("font_color", rar.Lerp(UITheme.TextDim, 0.5f));
             info.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
@@ -1963,6 +1973,22 @@ void fragment() {
                 }
                 AddGridAt(name, pg, new Vector2(0, yA), aCol, colW);
                 yA += pg.height * CELL + GRIDPAD + PAGEADV;
+                // THE COOKING SWITCH (strawberry 2026-09-05: "a new on/off button for cooking"). Under the
+                // STORAGE grid only, and only when the container you have open actually cooks -- so a fridge
+                // or a bookcase is unchanged. The label names the appliance rather than saying "On/Off",
+                // because the same button sits under four different machines with four different rules.
+                if (page == PlayerInventory.STORAGE && Player?.OpenCookerKind is ECookerKind ck)
+                {
+                    var btn = new Button
+                    {
+                        Text = Player.OpenCookerOn ? $"{ck} \u2014 ON" : $"{ck} \u2014 OFF",
+                        Position = new Vector2(0, yA), Size = new Vector2(colW, 30),
+                    };
+                    btn.AddThemeColorOverride("font_color", Player.OpenCookerOn ? new Color(1f, 0.72f, 0.3f) : UITheme.TextDim);
+                    btn.Pressed += () => { Player.ToggleOpenCooker(); Refresh(); };   // repaint so the label flips on the same frame
+                    aCol.AddChild(btn);
+                    yA += 34f;
+                }
             }
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using SDG.Unturned;
+using UnityEngine;
 
 namespace UnturnedGodot.Net
 {
@@ -31,6 +32,15 @@ namespace UnturnedGodot.Net
         readonly Dictionary<uint, Cooker> _cookers = new Dictionary<uint, Cooker>();
         readonly InventoryReplication _inventories;
         readonly System.Func<long> _tick;
+
+        /// <summary>How a detonating microwave actually explodes. Injected rather than called directly so this
+        /// class keeps owning the RULE and not the fireball -- and so an L0 test can assert that a can of beans
+        /// sets it off without needing a combat system at all.</summary>
+        public System.Action<Vector3, float, float> Detonate;
+
+        /// <summary>A microwave is a small box, not a grenade: it takes the kitchen, not the street.</summary>
+        public const float MicrowaveBlastRadius = 3.5f;
+        public const float MicrowaveBlastDamage = 60f;
 
         public ServerCooking(InventoryReplication inventories, System.Func<long> tick)
         { _inventories = inventories; _tick = tick; }
@@ -89,6 +99,7 @@ namespace UnturnedGodot.Net
                     if (Cooking.Detonates(c.Kind, asset))
                     {
                         c.On = false;
+                        Detonate?.Invoke(crate.Pos, MicrowaveBlastRadius, MicrowaveBlastDamage);
                         (blew ??= new List<uint>()).Add(c.NetId);
                         break;
                     }

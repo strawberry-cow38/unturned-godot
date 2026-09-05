@@ -48,6 +48,9 @@ namespace UnturnedNet.Tests
             // v17 (player-profiles): who you are, as an intent. Every field is attacker-controlled and lands
             // on someone else's screen, so the server re-runs ProfileRules and publishes its OWN answer.
             [42] = "CommandSetProfile",
+            // v28 (cooking): the appliance on/off button. Addressed by crate NetId, reach-checked and
+            // validated against the registered-cooker set, so a forged id is a no-op rather than an oven.
+            [43] = "CommandSetCookerOn",
         };
 
         static Dictionary<byte, string> Actual() =>

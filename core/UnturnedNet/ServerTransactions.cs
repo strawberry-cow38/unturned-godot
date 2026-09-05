@@ -143,6 +143,11 @@ namespace UnturnedGodot.Net
         readonly Action<byte[]> _broadcast;
         readonly Action<ushort, byte[]> _sendTo;
 
+        /// <summary>The cooking appliances. Settable rather than a constructor argument, the same shape
+        /// ServerCombat.ZombieHost uses: an optional collaborator that a bare transactional harness does not
+        /// need, on a constructor that already takes twelve things.</summary>
+        public ServerCooking Cooking;
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
@@ -311,6 +316,20 @@ namespace UnturnedGodot.Net
                                            && cmd.MagPage < PlayerInventory.PAGES
                                            && cmd.RoundPage < PlayerInventory.PAGES);
 
+            // THE ON/OFF BUTTON. Reach-checked exactly like opening the thing: the client can already only
+            // see a cooker it is standing at, and this makes the server agree rather than take its word.
+            // SetOn returns false for a NetId that is not a registered cooker, so a forged id for some other
+            // crate -- or for nothing at all -- is a no-op instead of creating an appliance.
+            commands.Register<SetCookerOnCommand>(ReplicationIds.CommandSetCookerOn, SetCookerOnCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (Cooking == null) return;
+                    if (!TryGetSenderPos(sender, out var pos)) return;
+                    if (!_inventories.TryGetCrate(cmd.NetId, out var crate)) return;
+                    if ((crate.Pos - pos).magnitude > InventoryReplication.StorageReach) return;
+                    Cooking.SetOn(cmd.NetId, cmd.On);
+                });
+
             commands.Register<SetAutoDrinkCommand>(ReplicationIds.CommandSetAutoDrink, SetAutoDrinkCommand.TryRead,
                 (sender, cmd) =>
                 {
@@ -352,7 +371,14 @@ namespace UnturnedGodot.Net
                     if (_inventories.ServerOpenStorage(sender, cmd.NetId, pos, _tick())
                         && _inventories.TryGetCrate(cmd.NetId, out var crate))
                     {
-                        var evt = new StorageOpenedEvent { NetId = cmd.NetId, Width = crate.Width, Height = crate.Height };
+                        bool isCooker = Cooking != null && Cooking.TryGet(cmd.NetId, out var ck);
+                        var evt = new StorageOpenedEvent
+                        {
+                            NetId = cmd.NetId, Width = crate.Width, Height = crate.Height,
+                            IsCooker = isCooker,
+                            CookerKind = isCooker && Cooking.TryGet(cmd.NetId, out var ck2) ? (byte)ck2.Kind : (byte)0,
+                            CookerOn = isCooker && Cooking.TryGet(cmd.NetId, out var ck3) && ck3.On,
+                        };
                         _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
                     }
                 });

@@ -609,6 +609,20 @@ namespace UnturnedGodot.Net
             }
         }
 
+        /// <summary>Blow something up at a point, with a thrower of 0 (nobody). Exists so a MICROWAVE with
+        /// metal in it detonates through the SAME path a grenade does -- same damage model, same falloff, same
+        /// broadcast, so every client renders it -- rather than growing a second, subtly different explosion
+        /// that would drift from this one the first time either was tuned. strawberry 2026-09-05: microwaves
+        /// "will EXPLODE if you add metal".</summary>
+        public void ServerDetonateAt(Vector3 pos, float radius, float playerDamage, long tick)
+        {
+            var g = new GrenadeEntity { NetIdValue = 0, Owner = 0, Pos = pos,
+                                        Def = new ThrowableDef { Id = 0, Kind = EThrowableKind.Explosive,
+                                                                 Radius = radius, PlayerDamage = playerDamage,
+                                                                 ZombieDamage = playerDamage, VehicleDamage = 0f } };
+            Explode(g, tick);
+        }
+
         void Explode(GrenadeEntity g, long tick)
         {
             // Smoke and flares do NO damage -- their retail .dats carry no damage keys and no `Explosive` flag
