@@ -1815,6 +1815,7 @@ namespace UnturnedGodot
             else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
+            UpdateOptic();
         }
 
         // ---- CHAINSAW -------------------------------------------------------------------------------------------
@@ -2157,10 +2158,20 @@ namespace UnturnedGodot
         // method. one magnified viewport, cut out for each lens. lmb cycles three zoom levels"). Item type OPTIC (333); retail
         // Binoculars.dat Zoom 12 is the top level, RMB zoom + 1/zoom look sensitivity (UseableOptic). Here they are up the
         // moment they are in the hands and LMB cycles the level. No viewmodel to see: the lenses fill the screen.
-        ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx;
+        ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx; bool _opticForceRaise;
         static readonly float[] OpticZoomLevels = { 4f, 8f, 12f };
         public bool HoldingOptic => _heldOptic != null;
         public float OpticZoom => _bino?.Zoom ?? 1f;
+        public bool OpticRaised => _bino != null && _bino.Raised;
+        /// <summary>Per tick: RMB HELD presents the binoculars to the eyes (master 2026-09-05); release lowers them to the two-hand carry.</summary>
+        void UpdateOptic()
+        {
+            if (_bino == null) return;
+            bool want = (_opticForceRaise || (Input.MouseMode == Input.MouseModeEnum.Captured && !UiInputBlocked && Keybinds.Pressed(GameAction.Aim))) && !_dead && _driving == null;
+            if (want == _bino.Raised) return;
+            _bino.Raised = want;
+            _viewmodel?.SetShown(!want);   // the carried pair hides while they are at the eyes (the rig IS the pair then)
+        }
         public void EquipHeldOptic(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable(); ClearFisher(); ClearHeldOptic();
@@ -2169,12 +2180,13 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };   // every other path expects a viewmodel; the arms stay hidden -- the binoculars ARE the hands here
+            _viewmodel = new Viewmodel { DeployableMesh = "items/333.txt", DeployableAlbedo = "items/333.png", NaturalHold = true,
+                                         HoldPos = new Vector3(0f, 0.36f, -0.16f), HoldRoll = new Vector3(0f, 0f, 90f), HoldScale = 1f };   // LOWERED: carried at the chest, eyepieces to you, barrels forward (dialled on renders 2026-09-05)
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            _viewmodel.SetShown(false);
-            _bino = new BinocularsView { Zoom = OpticZoomLevels[0] };
+            _bino = new BinocularsView { Zoom = OpticZoomLevels[0], Raised = false };   // RAISED only while RMB is held (UpdateOptic)
             AddChild(_bino);
+            _opticForceRaise = System.Environment.GetEnvironmentVariable("UG_ADS") == "1";   // harness: hold them up for a render
             GD.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");
         }
         void ClearHeldOptic()
@@ -5590,7 +5602,7 @@ namespace UnturnedGodot
                     float aim = _viewmodel?.AimAlpha ?? 0f;
                     float sens = MouseSensitivity;
                     if (aim > 0f) { float mag = ScopeMag; sens *= Mathf.Lerp(1f, mag > 1f ? 1f / mag : AdsSensScale, aim); }
-                    if (_bino != null) sens /= Mathf.Max(1f, _bino.Zoom);   // binoculars: retail shouldUseZoomFactorForSensitivity -- the mouse turns 1/zoom as much
+                    if (_bino != null && _bino.Raised) sens /= Mathf.Max(1f, _bino.Zoom);   // binoculars at the eyes: retail shouldUseZoomFactorForSensitivity -- the mouse turns 1/zoom as much
                     RotateY(Mathf.DegToRad(-mm.Relative.X * sens));
                     _pitchDeg = Mathf.Clamp(_pitchDeg + (ControlsOptions.InvertLookY ? mm.Relative.Y : -mm.Relative.Y) * sens, -89f, 89f);   // InvertLookY (Controls tab): off = mouse up -> look up
                     _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);

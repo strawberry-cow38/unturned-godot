@@ -181,6 +181,7 @@ namespace UnturnedGodot
         public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         public string DeployableMesh, DeployableAlbedo;   // set (instead of GunName) to HOLD a deployable (generator/spotlight): item.prefab carry mesh + palette, Deploy_Equip hold + Deploy_Use place anim, no gun FX
         public string ToolMesh; public Color? ToolColor;   // set (instead of GunName) to HOLD a tool in-hand (the Wire wiring tool): static mesh + generic ready hold, flat colour, no gun/deploy FX
+        public Vector3? HoldPos, HoldRoll; public float HoldScale = 0f;   // per-item carry pose for a DeployableMesh (view-space nudge / Euler degrees / scale); unset = the gas-can defaults below
         public bool NaturalHold;   // for a DeployableMesh that is HELD not PLACED (the portable gas can): use the Melee_Equip ready-hold + tool offset instead of the low carry-to-place stance
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
@@ -1522,17 +1523,17 @@ namespace UnturnedGodot
             {
                 // Deployable: FOLLOW THE HAND BONE so the Deploy_Equip raise + Deploy_Use place anims move the carry model
                 // (same as consumable/melee). Held-model localRotation = Euler(0,0,90) (source PlayerEquipment.firstModel), tunable via UG_DROLL.
-                Vector3 droll = NaturalHold ? new Vector3(180f, 0f, 90f) : new Vector3(0f, 0f, 90f);   // gas can (NaturalHold): +180 pitch so the yellow CAP sits UP (the baked mesh + Fuel_Equip pose left it cap-down / upside-down)
+                Vector3 droll = HoldRoll ?? (NaturalHold ? new Vector3(180f, 0f, 90f) : new Vector3(0f, 0f, 90f));   // gas can (NaturalHold): +180 pitch so the yellow CAP sits UP (the baked mesh + Fuel_Equip pose left it cap-down / upside-down)
                 if (System.Environment.GetEnvironmentVariable("UG_DROLL") is string _dr && _dr.Split(',').Length == 3)
                 { var pp = _dr.Split(','); droll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 var drollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(droll.X), Mathf.DegToRad(droll.Y), Mathf.DegToRad(droll.Z)));
-                float natScale = NaturalHold ? 1.6f : 1f;   // gas can scaled up so the two-handed Fuel_Equip carry reads BIG + in-your-face in the port's (wider) FP camera (master's ask); env UG_VMSCALE overrides for tuning
+                float natScale = HoldScale > 0f ? HoldScale : (NaturalHold ? 1.6f : 1f);   // gas can scaled up so the two-handed Fuel_Equip carry reads BIG + in-your-face in the port's (wider) FP camera (master's ask); env UG_VMSCALE overrides for tuning
                 if (System.Environment.GetEnvironmentVariable("UG_VMSCALE") is string _sc2 && float.TryParse(_sc2, out var _s2)) natScale = _s2;
                 if (natScale != 1f) drollB = drollB.Scaled(new Vector3(natScale, natScale, natScale));
                 // The generator is a big object centered on the hand -> it hangs mostly below the view. Lift it into
                 // frame in VIEW space (the arms live in the SubViewport, whose world axes are the camera axes: +Y up,
                 // -Z forward). Tunable via UG_DPOS="x,y,z".
-                Vector3 dpos = NaturalHold ? new Vector3(0f, 0.04f, -0.06f) : (ToolMesh != null ? new Vector3(0f, 0.02f, 0.04f) : new Vector3(0f, 0.30f, -0.10f));   // gas can: nudge the two-handed carry up + toward the camera (in-your-face); Fuel_Equip poses the hook; tool sits in the hand; the big generator gets lifted into frame
+                Vector3 dpos = HoldPos ?? (NaturalHold ? new Vector3(0f, 0.04f, -0.06f) : (ToolMesh != null ? new Vector3(0f, 0.02f, 0.04f) : new Vector3(0f, 0.30f, -0.10f)));   // gas can: nudge the two-handed carry up + toward the camera (in-your-face); Fuel_Equip poses the hook; tool sits in the hand; the big generator gets lifted into frame
                 if (System.Environment.GetEnvironmentVariable("UG_DPOS") is string _dp && _dp.Split(',').Length == 3)
                 { var pp = _dp.Split(','); dpos = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 _gun.GlobalTransform = new Transform3D(datt.GlobalTransform.Basis * drollB, datt.GlobalPosition + dpos);

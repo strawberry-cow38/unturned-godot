@@ -15,6 +15,20 @@ namespace UnturnedGodot
     public partial class BinocularsView : CanvasLayer
     {
         public float Zoom = 4f;
+        bool _raised;
+        /// <summary>Up at the eyes (RMB held -- master 2026-09-05 "require rmb hold to present binoculars to the eyes"). Lowered, the
+        /// overlay is hidden AND both viewports stop rendering, so a holstered pair costs nothing.</summary>
+        public bool Raised
+        {
+            get => _raised;
+            set
+            {
+                _raised = value; Visible = value;
+                var mode = value ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
+                if (_world != null) _world.RenderTargetUpdateMode = mode;
+                if (_rig != null) _rig.RenderTargetUpdateMode = mode;
+            }
+        }
         const float EyeX = 0.0791f, EyeY = -0.259f, LensR = 0.0372f;   // the model's eyepiece rings (measured)
         const float EyeDist = 0.165f;   // eyepiece plane this far in front of the rig camera: two distinct lenses inside a 16:9 frame (0.113 put them off the sides, 0.150 kissed the edges)
         const float RigFov = 60f;
@@ -69,6 +83,7 @@ namespace UnturnedGodot
             _rigRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             AddChild(_rigRect);
             Resize();
+            Raised = _raised;   // apply the state set before _Ready (starts lowered)
         }
 
         void Resize()
@@ -86,6 +101,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (!_raised) return;
             var main = GetViewport()?.GetCamera3D();
             if (main == null) return;
             Resize();
