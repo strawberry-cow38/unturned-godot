@@ -789,7 +789,8 @@ namespace UnturnedGodot
         public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
-        Node3D _doorPivotA, _doorPivotB; float _doorT; bool _doorOpen; float _doorFoldDeg = 90f; AudioStreamPlayer3D _doorAudio;   // bi-fold door (bus): fold 0..1, wanted state, swing sound
+        Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpen; float _doorFoldDeg = 90f; AudioStreamPlayer3D _doorAudio;   // bi-fold door (bus): fold 0..1, auto-close timer, wanted state, swing sound
+        const float DoorHoldSeconds = 2.5f;   // boarding/leaving swings it open and it folds shut this much later (master 2026-09-05)
         float _driveIdle = 999f;   // seconds since anything last called Drive() on this car. UNATTENDED is a fact about the present, not about how the car was spawned -- see the settle block
         float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
@@ -4136,7 +4137,8 @@ namespace UnturnedGodot
         /// <summary>Hang the door panel peeled out of the body as two leaves on two vertical hinges: leaf A on the front
         /// jamb, leaf B on the mullion between the two windows (a child of leaf A, so it folds back onto it like a
         /// jackknife). The meshes stay in BODY space and are offset back by their pivot, so at fold 0 nothing moves.
-        /// The two window panes ride their leaves. A persistent state: Interact on the door, or the driver's door key, toggles it.</summary>
+        /// The two window panes ride their leaves. Interact on the door or the driver's door key toggles it; boarding/leaving
+        /// any seat swings it open and it folds shut a moment later (CycleDoor). Cosmetic only.</summary>
         static void BuildBiFoldDoor(Vehicle v, Spec s, ArrayMesh doorMesh, Material bodyMat)
         {
             // Two leaves out of one panel: cut at the mullion. CLOSE THE CUT (master: "close up the open ends on the mesh, that
@@ -4254,7 +4256,15 @@ namespace UnturnedGodot
         /// cosmetic (master 2026-09-05): nothing gates boarding or leaving on it.</summary>
         public bool DoorOpen => _doorOpen;
         public float DoorFold => _doorT;
-        public void ToggleDoor() => SetDoorOpen(!_doorOpen);
+        public void ToggleDoor() { _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close
+        /// <summary>Somebody got in or out: the door opens (if it is not already) and folds shut DoorHoldSeconds later.
+        /// Purely cosmetic -- nothing waits for it (master 2026-09-05).</summary>
+        public void CycleDoor()
+        {
+            if (_doorPivotA == null) return;
+            SetDoorOpen(true);
+            _doorHold = DoorHoldSeconds;
+        }
         public void SetDoorOpen(bool open)
         {
             if (_doorPivotA == null || _doorOpen == open) return;
@@ -4264,6 +4274,7 @@ namespace UnturnedGodot
 
         void UpdateDoor(float dt)
         {
+            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) SetDoorOpen(false); }
             float target = _doorOpen ? 1f : 0f;
             if (_doorT == target) return;
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
