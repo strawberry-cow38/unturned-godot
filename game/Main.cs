@@ -89,7 +89,7 @@ namespace UnturnedGodot
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
-        PlayerController _pdPlayer; int _pdFireT, _holdThrowT; bool _holdItemDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
+        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
@@ -8070,6 +8070,15 @@ namespace UnturnedGodot
             }
             if (_peiPlayable && _pdPlayer != null && _holdItemDone && int.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDTHROW"), out var thf) && ++_holdThrowT == thf)   // UG_HOLDTHROW=N: LMB N frames after the equip (the throw swing on camera)
             { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
+            if (_peiPlayable && _pdPlayer != null && _worldReady && int.TryParse(System.Environment.GetEnvironmentVariable("UG_ENTERCAR"), out var ecf) && ++_enterCarT == ecf)   // UG_ENTERCAR=N: N ticks after the world is up, spawn a sedan ahead + take the driver's seat (the in-vehicle rain muffle check, rainshot.ps1)
+            {
+                var car = Vehicle.BuildByName("sedan");
+                var fwd = -_pdPlayer.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                _pdPlayer.GetParent()?.AddChild(car);
+                car.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 5f + Vector3.Up * 1.0f;
+                _pdPlayer.EnterVehicle(car, 0);
+                GD.Print($"[entercar] entered {car.Name} at movie frame {Engine.GetFramesDrawn()}");
+            }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
             if (_rigDir != null)
             {

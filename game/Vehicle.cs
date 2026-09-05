@@ -68,6 +68,7 @@ namespace UnturnedGodot
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
         float _ignitionLeft, _ignitionLen;   // start-up gate: the rotor winds up THROUGH the clip, thrust waits for it
+        bool _cabin;     // a closed passenger cell (roofed car / tracked hull / canopy / pod heli) -- see HasCabin
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
@@ -768,6 +769,15 @@ namespace UnturnedGodot
         }
         public bool IsHeli => _heli;
         public bool IsPlane => _plane;
+        /// <summary>A closed passenger cell around the seats: a roofed car (RoofBox), a tracked hull, a cockpit canopy, the pod
+        /// heli. The weather's shelter probe treats a seated player as under cover through this -- its up-ray starts INSIDE
+        /// the hull's collision box, and a ray never hits the shape it begins in, so a cabin read as open sky (strawberry
+        /// 2026-09-05 "muffle rain sound when in a vehicle"). Open-top (jeep/quad/tractor/boats/ultralight) = false: the ray
+        /// decides, same as on foot.</summary>
+        public bool HasCabin => _cabin;
+        /// <summary>How open that cabin is to the weather, 0 (every pane intact) .. 1 (every pane smashed): a broken window
+        /// lets the rain back in pro rata. No glass at all (tank) = 0, the hull is the shelter.</summary>
+        public float CabinOpenness => _cabin && GlassCount > 0 ? (float)GlassBrokenCount / GlassCount : 0f;
         public bool HasRetractGear => _gearPivots != null;   // driven vehicle has retractable gear (jet) -> G toggles it
         public void ToggleGear()
         {
@@ -5365,6 +5375,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // approximate here, because inertia and mass move together.
             v._tankYawGain = TankYawGain * massScale;
             v._heli = s.Heli; v._tracked = s.Tracked;
+            v._cabin = RoofBox(s.Name).HasValue || s.Tracked || s.Plane || (s.Heli && s.Frame == HeliFrame.Pod);   // closed cell for the weather's shelter (HasCabin); the RoofBox list is the roofed-car list
             v._plane = s.Plane; v._planeThrust = s.PlaneThrust; v._planeLift = s.PlaneLift; v._planeTargetSpeed = s.PlaneTargetSpeed;
             v._planePitchTq = s.PlanePitchTorque; v._planeRollTq = s.PlaneRollTorque; v._planeYawTq = s.PlaneYawTorque;
             if (s.PlaneSteerFade > 0f) v._planeSteerFade = s.PlaneSteerFade;

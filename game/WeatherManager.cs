@@ -165,12 +165,23 @@ namespace UnturnedGodot
             if (_shelterPoll <= 0f)
             {
                 _shelterPoll = ShelterPollSeconds;
-                _shelterTarget = ShelterProbe.IsSheltered(cam.GetWorld3D(), cam.GlobalPosition) ? 0f : 1f;
+                // IN A VEHICLE (strawberry 2026-09-05 "muffle rain sound when in a vehicle"): the up-ray below starts INSIDE the
+                // hull's collision box, and a ray never hits the shape it begins in, so a closed cabin read as open sky. Ask
+                // the seat instead: a roofed / tracked / canopied vehicle shelters its occupants (Vehicle.HasCabin), smashed
+                // panes let the weather back in pro rata (CabinOpenness). Open-top vehicles fall through to the ray, same as
+                // on foot -- a jeep parked in a garage is still under the garage. This feeds the SAME scalar RainAudio's
+                // low-pass + trim already muffle by (and the roof map already kills the drops at a car roof), so a cabin
+                // and a building roof are one mechanism, not two that can disagree.
+                var seatVeh = PlayerRegistry.Nearest(cam.GlobalPosition)?.Driving;
+                float cabin = seatVeh != null && seatVeh.HasCabin ? seatVeh.CabinOpenness : 1f;
+                _shelterTarget = cabin < 1f ? cabin : (ShelterProbe.IsSheltered(cam.GetWorld3D(), cam.GlobalPosition) ? 0f : 1f);
+                if (_shelterTarget != _lastShelterLog && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
+                { _lastShelterLog = _shelterTarget; GD.Print($"[shelter] target={_shelterTarget:0.00} cabin={(cabin < 1f ? seatVeh.Name : "none")} (movie frame {Engine.GetFramesDrawn()})"); }
             }
             _shelter = Mathf.MoveToward(_shelter, _shelterTarget, dt / ShelterFadeSeconds);
             return _shelter;
         }
-        float _shelterTarget = 1f;
+        float _shelterTarget = 1f, _lastShelterLog = -1f;
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
