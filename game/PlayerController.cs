@@ -2169,9 +2169,10 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };   // bare arms underneath (hidden by the housing, but every other path expects a viewmodel)
+            _viewmodel = new Viewmodel { EmptyHands = true };   // every other path expects a viewmodel; the arms stay hidden -- the binoculars ARE the hands here
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
+            _viewmodel.SetShown(false);
             _bino = new BinocularsView { Zoom = OpticZoomLevels[0] };
             AddChild(_bino);
             GD.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");
