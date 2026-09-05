@@ -1952,6 +1952,7 @@ namespace UnturnedGodot
             _veh = Vehicle.BuildByName(type, _vehVariant);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
+            NightVision.DebugAttach(this);   // UG_NIGHTVISION=military|civilian: the goggles' pass over the night jeep + its lights
 
             // UG_VEHOCCUPANT=1 (+ UG_SEATIDX=N, default 0): drop a rigged body into a seat so a --vehicle= showcase
             // actually shows where a body sits, not just the empty shell -- SeatBodyLocal is the exact placement
@@ -7084,6 +7085,7 @@ namespace UnturnedGodot
 
         void BuildDayNightDemo()
         {
+            NightVision.DebugAttach(this);   // UG_NIGHTVISION=military|civilian: goggles over the real sky/fog/glow cycle
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,

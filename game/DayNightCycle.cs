@@ -387,6 +387,7 @@ void sky() {
                 Env.GlowStrength = 1.0f;
                 Env.GlowBloom = 0.1f;                                                                                     // a touch of full-screen bloom under the threshold
                 Env.GlowHdrThreshold = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GLOWTHRESH"), out var gt) ? gt : 0.9f;  // only the top brightness blooms
+                _glowBaseIntensity = Env.GlowIntensity; _glowBaseBloom = Env.GlowBloom; _glowBaseThreshold = Env.GlowHdrThreshold;   // what NIGHTVISION opens up from, and returns to
                 Env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Screen;                                            // natural bloom (not additive blowout)
             }
             // ACES filmic tonemap: cinematic highlight rolloff (near-free) vs clipping to flat white. UG_LINEAR=1 reverts.
@@ -502,7 +503,27 @@ void sky() {
                     if (Env.VolumetricFogEnabled) Env.VolumetricFogDensity = Mathf.Lerp(Env.VolumetricFogDensity, 0.012f, storm);   // storm haze in the volume too
                 }
             }
+            // NIGHTVISION (master 2026-09-05): worn goggles pull the fog back (the tube sees through haze the eye cannot) and open
+            // the glow up so every light source blooms hard and bright. Done HERE, on the Environment the rest of this method
+            // just built, so it is real world lighting the tint pass then amplifies -- not paint. Military stronger than civilian.
+            if (NightVision.Active)
+            {
+                Env.FogDensity *= NightVision.FogScale;
+                if (Env.VolumetricFogEnabled) Env.VolumetricFogDensity *= NightVision.FogScale;
+                if (Env.GlowEnabled)
+                {
+                    var g = NightVision.Glow;
+                    Env.GlowIntensity = _glowBaseIntensity * g.intensity; Env.GlowBloom = g.bloom; Env.GlowHdrThreshold = _glowBaseThreshold * g.threshold;
+                }
+                _nvGlowApplied = true;
+            }
+            else if (_nvGlowApplied && Env.GlowEnabled)
+            {
+                Env.GlowIntensity = _glowBaseIntensity; Env.GlowBloom = _glowBaseBloom; Env.GlowHdrThreshold = _glowBaseThreshold;
+                _nvGlowApplied = false;
+            }
         }
+        float _glowBaseIntensity = 0.8f, _glowBaseBloom = 0.1f, _glowBaseThreshold = 0.9f; bool _nvGlowApplied;
 
         public bool Overcast;   // denser fog + greyer feel (a simple weather state; map-editor toggle)
         public float StormAmount;   // 0..1 storm intensity (WeatherManager sets it from the rain) -> blends the scene toward the moody overcast look in Apply(). Defaults 0 = fair weather, so editor/demos/golden are unchanged.
