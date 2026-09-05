@@ -64,3 +64,4 @@ game/content/spawns/
 # per-machine engine overrides written by the in-game graphics options (render thread toggle)
 game/override.cfg
 override.cfg
+.shots/

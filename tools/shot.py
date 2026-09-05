@@ -3,7 +3,7 @@
 shot — take a screenshot of the game. One front door.
 
     tools/shot.py list
-    tools/shot.py deploy               -> .testresults/shots/deploy.png
+    tools/shot.py deploy               -> .shots/deploy.png
     tools/shot.py pei -o /tmp/pei.png
 
 Why this exists
@@ -40,7 +40,13 @@ GODOT = os.environ.get("GODOT", os.path.expanduser(
     "~/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64"))
 VK_ICD = "/usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
 UNTURNED = os.environ.get("UG_UNTURNED_DIR", "/home/ec2-user/unturned")
-OUT_DIR = os.path.join(ROOT, ".testresults/shots")
+# NOT under .testresults: test.sh CLEARS that directory at the start of every run, and it used to be
+# where these landed. So running any test while a render was in flight deleted the render's output from
+# under a live Godot process -- no error, the render just kept burning a core and produced nothing, which
+# from the outside is indistinguishable from "renders are slow again". It cost a 12-minute render, and
+# then cost a finished one that was waiting to be sent. Its own directory removes the trap instead of
+# asking everyone to remember the ordering.
+OUT_DIR = os.path.join(ROOT, ".shots")
 
 # name -> (args, env, needs_map, seconds, blurb).  {OUT} is the png path, {TMP} its directory.
 # The env matters as much as the args: the vehicle scene without UG_QUICK runs a slow six-frame
@@ -265,7 +271,7 @@ def take(scene, out, verbose, realtime=False):
 def main():
     ap = argparse.ArgumentParser(description="take a screenshot of the game (one front door)")
     ap.add_argument("scene", nargs="?", help="scene name, or 'list'")
-    ap.add_argument("-o", "--out", help="output png (default .testresults/shots/<scene>.png)")
+    ap.add_argument("-o", "--out", help="output png (default .shots/<scene>.png)")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--realtime", action="store_true",
                     help="drop movie mode and render in REAL TIME. Movie mode is a fixed deterministic "
