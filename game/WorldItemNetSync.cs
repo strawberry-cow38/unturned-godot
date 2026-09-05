@@ -79,7 +79,13 @@ namespace UnturnedGodot
             // the world position itself, so hand it the host directly.
             foreach (var ent in _server.WorldItems.All)
                 {
-                    if (ent.Settled || ent.ServerSimulated || ent.ServerItem == null) continue;
+                    // ServerDropped is the gate, and it is the whole of this fix. Without it this pass materialised a
+                // RigidBody for EVERY world-item entity the server knew about -- streamed loot included -- so a
+                // populated map woke 300 bodies at once, they all fell and jittered, every one published a position
+                // delta, and the WorldItems block hit 2329 B against an 1187 B budget and was dropped
+                // (net.populated_world_quiet; system 8 named by the composer's own oversize warning, not inferred).
+                // Loot lying on the ground was never what "dropped items float where they are dropped" was about.
+                if (!ent.ServerDropped || ent.Settled || ent.ServerSimulated || ent.ServerItem == null) continue;
                     if (_nodes.ContainsKey(ent.NetIdValue)) continue;
                     var node = WorldItem.Spawn(_host, ent.ServerItem,
                         new Vector3(ent.Pos.x, ent.Pos.y, ent.Pos.z));

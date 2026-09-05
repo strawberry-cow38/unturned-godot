@@ -117,6 +117,15 @@ namespace UnturnedGodot.Net
             /// <summary>Server-only: a physics node has been made for this entity, so it is being simulated and
             /// will report its own settle. Guards against minting a second node every sync tick.</summary>
             public bool ServerSimulated;
+
+            /// <summary>Server-only: this entity came from a real DROP (a player tossing an item, a salvage or a
+            /// storage spill) and therefore needs a falling physics node. False for the far more numerous entities
+            /// the server simply PLACES at rest -- streamed loot, LootField population, a test fixture.
+            ///
+            /// A flag rather than `ServerVel != 0` on purpose: SpillStorage and the salvage path both drop with an
+            /// explicitly zero velocity, so a velocity heuristic would refuse to simulate exactly the drops that
+            /// most need it.</summary>
+            public bool ServerDropped;
         }
 
         public byte SystemId => ReplicationIds.SystemWorldItems;

@@ -1223,6 +1223,7 @@ namespace UnturnedGodot.Net
         {
             var e = _worldItems.ServerSpawn(_ids.Mint(), item, pos, _tick());
             e.ServerVel = vel;   // kept, not just broadcast: the game side needs it to give this entity a falling node
+            e.ServerDropped = true;   // ...and THIS says it needs one at all. Only a real drop comes through here.
             var evt = new WorldItemSpawnedEvent { NetId = e.NetIdValue, ItemId = e.ItemId, Amount = e.Amount, Quality = e.Quality, Pos = e.Pos, Vel = vel };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventWorldItemSpawned, evt.Write));
             return e;
