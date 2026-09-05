@@ -2158,7 +2158,8 @@ namespace UnturnedGodot
         // method. one magnified viewport, cut out for each lens. lmb cycles three zoom levels"). Item type OPTIC (333); retail
         // Binoculars.dat Zoom 12 is the top level, RMB zoom + 1/zoom look sensitivity (UseableOptic). Here they are up the
         // moment they are in the hands and LMB cycles the level. No viewmodel to see: the lenses fill the screen.
-        ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx; bool _opticForceRaise;
+        ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx; bool _opticForceRaise, _opticLensesDone; float _opticBaseFov = 75f; int _opticDbgT;
+        const float OpticEyeX = 0.0791f, OpticEyeY = -0.259f, OpticLensR = 0.0372f;   // the 333 model's eyepiece rings (measured; barrels along +Y)
         static readonly float[] OpticZoomLevels = { 4f, 8f, 12f };
         public bool HoldingOptic => _heldOptic != null;
         public float OpticZoom => _bino?.Zoom ?? 1f;
@@ -2168,9 +2169,25 @@ namespace UnturnedGodot
         {
             if (_bino == null) return;
             bool want = (_opticForceRaise || (Input.MouseMode == Input.MouseModeEnum.Captured && !UiInputBlocked && Keybinds.Pressed(GameAction.Aim))) && !_dead && _driving == null;
+            if (!_opticLensesDone && _viewmodel != null && _bino.ViewTexture != null)   // the carried pair's eyepieces get their PiP discs once the held model exists
+            {
+                var lens = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/binoculars.gdshader") };
+                lens.SetShaderParameter("view", _bino.ViewTexture);
+                lens.SetShaderParameter("over", Viewmodel.ViewportOversize);
+                lens.SetShaderParameter("debug", System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1");
+                bool ok = true;
+                foreach (float sx in new[] { -OpticEyeX, OpticEyeX })
+                    ok &= _viewmodel.AddHeldLens(lens, new Vector3(sx, OpticEyeY - 0.008f, 0f), new Vector3(90f, 0f, 0f), OpticLensR * 1.05f);   // a hair outside the end face, facing -Y (the eye)
+                _opticLensesDone = ok;
+                if (ok) GD.Print("[optic] PiP lenses on the carried pair");
+            }
+            if (want && !_bino.Raised) _opticBaseFov = _cam.Fov;   // rising edge: remember the UN-zoomed FOV first (reading it after the zoom below stacked 75 -> 18.75 -> 4.7)
+            if (want) _cam.Fov = _opticBaseFov / Mathf.Max(1f, _bino.Zoom);   // RAISED = retail PlayerLook.enableZoom: the MAIN camera zooms (kept per tick so LMB's zoom step lands at once)
+            if (System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1" && ++_opticDbgT % 60 == 0) GD.Print($"[opticdbg] want={want} raised={_bino.Raised} vm={_viewmodel?.ShownDebug} fov={_cam.Fov:0.0}");
+            _viewmodel?.SetShown(!want);   // every tick, not on the edge: the first edge can land before the Viewmodel's _Ready (no layer yet -> a silent no-op, the pair stayed on screen while raised)
             if (want == _bino.Raised) return;
             _bino.Raised = want;
-            _viewmodel?.SetShown(!want);   // the carried pair hides while they are at the eyes (the rig IS the pair then)
+            if (!want) _cam.Fov = _opticBaseFov;
         }
         public void EquipHeldOptic(ItemAsset asset, SDG.Unturned.Item backing)
         {
@@ -2178,10 +2195,10 @@ namespace UnturnedGodot
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
-            _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0;
+            _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0; _opticLensesDone = false; _opticBaseFov = _cam?.Fov ?? 75f;
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { DeployableMesh = "items/333.txt", DeployableAlbedo = "items/333.png", NaturalHold = true,
-                                         HoldPos = new Vector3(0f, 0.36f, -0.16f), HoldRoll = new Vector3(0f, 0f, 90f), HoldScale = 1f };   // LOWERED: carried at the chest, eyepieces to you, barrels forward (dialled on renders 2026-09-05)
+                                         HoldPos = new Vector3(0f, 0.44f, -0.14f), HoldRoll = new Vector3(0f, 0f, -90f), HoldScale = 1f };   // LOWERED: carried at the chest, EYEPIECES to you (the +90 roll showed the objectives -- the lens debug put the eyepiece discs 27 cm behind the pair), barrels forward
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             _bino = new BinocularsView { Zoom = OpticZoomLevels[0], Raised = false };   // RAISED only while RMB is held (UpdateOptic)
@@ -2192,7 +2209,7 @@ namespace UnturnedGodot
         void ClearHeldOptic()
         {
             _heldOptic = null; _heldOpticItem = null;
-            if (_bino != null) { if (IsInstanceValid(_bino)) _bino.QueueFree(); _bino = null; }
+            if (_bino != null) { if (_bino.Raised && _cam != null) _cam.Fov = _opticBaseFov; if (IsInstanceValid(_bino)) _bino.QueueFree(); _bino = null; }
         }
         void CycleOpticZoom()
         {
@@ -7233,7 +7250,7 @@ namespace UnturnedGodot
                     else _viewmodel.ClearDrivingWheel();
                 }
                 else _viewmodel.ClearDrivingWheel();
-                _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead) || drivingArms);   // FP gun arms on foot, driving arms at the wheel
+                _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms);   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }
             if (_body == null) return;

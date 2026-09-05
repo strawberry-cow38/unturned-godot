@@ -1282,6 +1282,27 @@ namespace UnturnedGodot
         public float ScopeZoom => _isScope && _scopeCam != null && Godot.GodotObject.IsInstanceValid(_scopeCam) ? 90f / _scopeCam.Fov : 0f;   // mounted scope's zoom (90/fov): aug=4, 8x=8, 16x=16... -> drives ADS-sens reduction
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
+        public string ShownDebug => $"layer={( _layer == null ? "null" : _layer.Visible.ToString())} layerN={_layer?.Layer} rectVis={_vpRect?.IsVisibleInTree()} rectParent={_vpRect?.GetParent()?.Name}";
+        /// <summary>A lens disc on the CARRIED model (binoculars: one per eyepiece, mesh-local placement) drawing `mat` -- the
+        /// magnified-world disc of content/binoculars.gdshader. False until the held model exists (call again next tick).</summary>
+        public bool AddHeldLens(Material mat, Vector3 localPos, Vector3 localRotDeg, float radius)
+        {
+            if (_gun == null || !Godot.GodotObject.IsInstanceValid(_gun)) return false;
+            bool dbg = System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1";
+            var disc = new MeshInstance3D { Name = "HeldLens", Mesh = new QuadMesh { Size = Vector2.One * (radius * 2f * (dbg ? 3f : 1f)), Material = mat },
+                                            Position = localPos, RotationDegrees = localRotDeg, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+            _gun.AddChild(disc);
+            if (dbg) _lensDbg.Add(disc);
+            return true;
+        }
+        readonly System.Collections.Generic.List<MeshInstance3D> _lensDbg = new(); int _lensDbgT;
+        void LensDebugTick()
+        {
+            if (_lensDbg.Count == 0 || ++_lensDbgT % 60 != 0) return;
+            var d = _lensDbg[0];
+            GD.Print($"[lensdbg] disc {d.GlobalPosition} vis={d.IsVisibleInTree()} gun {_gun?.GlobalPosition} gunVis={_gun?.IsVisibleInTree()} gunChildren={_gun?.GetChildCount()} cam {_cam?.GlobalPosition} camFwd {-_cam?.GlobalTransform.Basis.Z} gunAabb={(_gun as MeshInstance3D)?.GetAabb()} gunType={_gun?.GetType().Name}");
+        }
+        public static readonly Vector2 ViewportOversize = new Vector2(VpOverX, VpOverY);   // for a SCREEN_UV-sampling material drawn in the arms viewport
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
@@ -1537,6 +1558,7 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_DPOS") is string _dp && _dp.Split(',').Length == 3)
                 { var pp = _dp.Split(','); dpos = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 _gun.GlobalTransform = new Transform3D(datt.GlobalTransform.Basis * drollB, datt.GlobalPosition + dpos);
+                LensDebugTick();
             }
             else if (_gun != null && ConsumableMesh != null && _gun.GetParent() is Node3D catt)
             {
