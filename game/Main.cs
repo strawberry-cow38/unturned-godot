@@ -89,7 +89,7 @@ namespace UnturnedGodot
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
-        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
+        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
@@ -8077,7 +8077,18 @@ namespace UnturnedGodot
                 _pdPlayer.GetParent()?.AddChild(car);
                 car.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 5f + Vector3.Up * 1.0f;
                 _pdPlayer.EnterVehicle(car, 0);
+                if (System.Environment.GetEnvironmentVariable("UG_TP") == "1") _pdPlayer.DebugSetFirstPerson(false);   // UG_TP=1: the chase camera -> the glass seen from OUTSIDE
                 GD.Print($"[entercar] entered {car.Name} at movie frame {Engine.GetFramesDrawn()}");
+            }
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_glassPaneDone && System.Environment.GetEnvironmentVariable("UG_GLASSPANE") == "1")   // UG_GLASSPANE=1: a building-editor window pane 3 m ahead, facing the player (the rain-on-glass check, glassshot.ps1)
+            {
+                _glassPaneDone = true;
+                var fwd = -_pdPlayer.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                var pane = GlassPane.Build(new Vector2(1.2f, 1.5f), null, 1f, true, 0.02f);
+                _pdPlayer.GetParent()?.AddChild(pane);
+                pane.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 3f + Vector3.Up * 1.0f;
+                pane.LookAt(pane.GlobalPosition - fwd, Vector3.Up);   // the pane's face toward the player
+                GD.Print($"[glasspane] pane 3 m ahead at movie frame {Engine.GetFramesDrawn()}");
             }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
             if (_rigDir != null)
