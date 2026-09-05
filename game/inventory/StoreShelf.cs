@@ -33,11 +33,16 @@ namespace UnturnedGodot
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
-        class Profile { public float[] TierY; public int PerTier; public float WidthUse; public float FrontZ; public int Min, Max; }
+        class Profile { public float[] TierY; public int PerTier; public float WidthUse; public float FrontZ; public int Min, Max;
+                       public byte GridW, GridH; }   // SOLID-container grid override; 0 = the default roomy 8x6
         static readonly Dictionary<string, Profile> Profiles = new()
         {
             ["Shelf_1"] = new Profile { TierY = new[] { 0.20f, 0.50f, 0.80f }, PerTier = 8, WidthUse = 0.90f, FrontZ = 0.30f, Min = 12, Max = 22 },   // store gondola (5m wide): 8 slots/tier, packed tight
             ["Shelf_0"] = new Profile { TierY = new[] { 0.18f, 0.48f, 0.78f }, PerTier = 3, WidthUse = 0.78f, FrontZ = 0.45f, Min = 5, Max = 10 },   // wood/metal shelf (~1.9m wide, deep)
+            // "toaster holds TWO slots" (strawberry 2026-09-05). The loot count comes down with the grid: every other
+            // solid container falls through to Shelf_1's 12-22, and rolling 22 items at a 2-slot box would just be 20
+            // silent tryAddItem failures.
+            ["Toaster_0"] = new Profile { TierY = new[] { 0.5f }, PerTier = 2, WidthUse = 0.8f, FrontZ = 0.3f, Min = 1, Max = 2, GridW = 2, GridH = 1 },
         };
         static Profile Prof(string mesh) => Profiles.TryGetValue(mesh, out var p) ? p : Profiles["Shelf_1"];
 
@@ -47,7 +52,7 @@ namespace UnturnedGodot
         public static (byte w, byte h) GridDims(string mesh, bool display)
         {
             var pr = Prof(mesh);
-            return display ? ((byte)pr.PerTier, (byte)pr.TierY.Length) : ((byte)8, (byte)6);
+            return display ? ((byte)pr.PerTier, (byte)pr.TierY.Length) : (pr.GridW != 0 ? pr.GridW : (byte)8, pr.GridH != 0 ? pr.GridH : (byte)6);
         }
         public static (int min, int max) LootCount(string mesh) { var pr = Prof(mesh); return (pr.Min, pr.Max); }
         public static void RollInto(Items storage, int minItems, int maxItems, int table)
@@ -121,9 +126,10 @@ namespace UnturnedGodot
         public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true, bool serverOwned = false, Basis? rot = null)
         {
             var pr = Prof(meshName);
+            var dims = GridDims(meshName, showItems);   // ONE source for the grid, shared with the MP server path
             var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh, ServerOwned = serverOwned,
                                      // a DISPLAY shelf's grid mirrors its tiers 1:1 (UI pos == shelf pos); a SOLID container (fridge/counter/crate) has no visual mirror -> keep normal 8x6 storage
-                                     Width = showItems ? (byte)pr.PerTier : (byte)8, Height = showItems ? (byte)pr.TierY.Length : (byte)6 };
+                                     Width = dims.w, Height = dims.h };
             parent.AddChild(s);   // _Ready fires here (skips the local roll when serverOwned)
             // rot = the FULL placement basis (WorldBuilder.TryContainer). A prop placed upside-down / rolled used to
             // render UPRIGHT because only yaw was applied (master). rot * _upright.Inverse() puts the body at the full
@@ -238,6 +244,23 @@ namespace UnturnedGodot
                         foreach (var _bc in _shelfBody.GetChildren())
                             if (_bc is CollisionShape3D _sc && _sc.Shape is ConcavePolygonShape3D _cps)
                                 _cps.BackfaceCollision = true;
+                // A CONTAINER PROP LOSES ITS SmartProps BEHAVIOUR, because TryContainer intercepts the placement and it
+                // never reaches PlaceObject (the same interception this file's door catalogue exists to undo -- a doored
+                // container re-spawns its leaf here rather than inheriting one). Doors were the only case that mattered
+                // until the toaster became a container: Toaster_0 is the one prop in ContainerShelf that is ALSO a
+                // SmartProp and has NO door row, so without this it would silently stop popping bread when shot, and
+                // nothing about the change would point at the cause. Re-attach it to the body we just built.
+                if (MeshName == "Toaster_0")
+                {
+                    var toaster = Toaster.Make(mi);
+                    if (toaster != null)
+                    {
+                        AddChild(toaster);
+                        // the look/shoot ray resolves through the body's meta, exactly as SmartProps.TagBody does
+                        foreach (var _child in mi.GetChildren())
+                            if (_child is StaticBody3D _tb) _tb.SetMeta(Toaster.HitMeta, toaster);
+                    }
+                }
                 _shelfGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(_upright, Vector3.Zero));   // whole-shelf outline silhouette (hidden until looked at)
                 AddChild(_shelfGlow);
                 // Interior glow: a fridge/cooler lights up inside when opened (master). A subtle omni at the interior
