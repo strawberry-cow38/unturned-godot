@@ -83,7 +83,7 @@ namespace UnturnedGodot
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
-        bool _driveTest, _swarm, _drivethru, _nade, _grassTest; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
+        bool _driveTest, _swarm, _drivethru, _nade, _grassTest, _tankTest; PlayerController _dtPlayer; Vehicle _ttVeh; Camera3D _ttCam; Vector3 _ttTargetA, _ttTargetB; int _ttLastPf = -1;   // --tanktest=DIR: the tank cannon laid on two targets, with a simulated gunner stealing it in between      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
         bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
@@ -126,7 +126,7 @@ namespace UnturnedGodot
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
                 GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
-            string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
+            string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, tanktest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
             bool bakeHulls = false;   // --bakehulls: build every vehicle spec once so the convex-hull bakes get written (user://vehicle_hulls -> commit into content/vehicle_hulls)
             bool zperf = false;
             bool zbody = false;
@@ -198,6 +198,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--glassshot=")) { glassShot = arg["--glassshot=".Length..]; _shotRequested = glassShot; }   // parked vehicle, PLAYER-EYE orbit, one frame per yaw
                 else if (arg.StartsWith("--boattest=")) boattest = arg["--boattest=".Length..];   // spawn a BOAT on a flat test sea + auto-drive (verify buoyancy + water propulsion)
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
+                else if (arg.StartsWith("--tanktest=")) tanktest = arg["--tanktest=".Length..];   // the tank's main gun: a seated driver lays it on a point, fires, then loses it to a gunner
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
                 else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
@@ -849,6 +850,17 @@ namespace UnturnedGodot
                 _driveTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDriveTest();
+                return;
+            }
+            if (tanktest != null)
+            {
+                _rigDir = tanktest;
+                // parked -> slewing onto A -> laid on A -> muzzle flash -> shell landing -> smoke hanging -> a "gunner" has
+                // taken the chair and the driver's slew toward B has FROZEN -> chair empty again, laid on B -> B's blast
+                _rigCaptureFrames = new int[10]; for (int ci = 0; ci < _rigCaptureFrames.Length; ci++) _rigCaptureFrames[ci] = int.MaxValue;   // slots; the script pins each to a render frame when its physics tick arrives (see the loop)
+                _driveTest = true; _tankTest = true;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildTankTest();
                 return;
             }
 
@@ -2034,6 +2046,58 @@ namespace UnturnedGodot
                 // the third harness in two days that could not express the state being judged.
                 _veh.SetHeadlightMoteFade(1f);
             }
+        }
+
+        // --tanktest=DIR : a player beside a parked tank; scripts the DRIVER laying the main gun on a target block by the
+        // crosshair seam (DebugCannonAim), firing, re-laying on a second block while a simulated gunner occupies seat 1
+        // (the driver must lose the gun and the turret must FREEZE), then finishing the lay and firing once the chair
+        // empties. One fixed external camera so the turret slew, the shell and the blast are all in frame.
+        void BuildTankTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var ground = new StaticBody3D();
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.30f) };
+            ground.AddChild(gmesh);
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            // two concrete blocks to shoot at: A off the left bow, B off the right -- the slew between them is the
+            // 360-ring + gunner-priority test, the blocks are what the shells land on
+            _ttTargetA = new Vector3(-24f, 1.5f, -58f); _ttTargetB = new Vector3(20f, 1.5f, -36f);
+            foreach (var tp in new[] { _ttTargetA, _ttTargetB })
+            {
+                var blk = new StaticBody3D { CollisionLayer = 1 << 0 };
+                var bsz = new Vector3(3f, 3f, 3f);
+                blk.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = bsz } });
+                blk.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = bsz }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.57f) } });
+                blk.Position = tp;
+                AddChild(blk);
+            }
+
+            _ttVeh = Vehicle.BuildByName("tank", 0);
+            _ttVeh.Position = new Vector3(0f, 1.2f, 0f);
+            _ttVeh.AddToGroup("vehicles");
+            AddChild(_ttVeh);
+
+            _dtPlayer = new PlayerController { CaptureMouse = false, HideViewmodelDebug = true };   // no arms over the outside shot
+            AddChild(_dtPlayer);
+            _dtPlayer.GlobalPosition = new Vector3(4.5f, 1.0f, 0f);   // beside the hull; the script seats them directly
+
+            // created AFTER the player so its Current wins (the player cam is made Current once at build, never re-asserted)
+            _ttCam = new Camera3D { Fov = 58f, Current = true, Far = 800f };
+            AddChild(_ttCam);
+            _ttCam.GlobalPosition = new Vector3(13f, 7.5f, 15f);
+            _ttCam.LookAt(new Vector3(-3f, 2.2f, -24f), Vector3.Up);
         }
 
         // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
@@ -8359,7 +8423,45 @@ namespace UnturnedGodot
                         ApplyCamOrbit(_vehCam, vt.Origin + Vector3.Up * 1.0f);
                     }
                 }
-                if (_driveTest && _dtPlayer != null)
+                if (_tankTest && _dtPlayer != null && _ttVeh != null)
+                {
+                    // SCRIPTED IN PHYSICS TICKS, not render frames. _frame counts RENDER frames, and this scene renders
+                    // at several hundred fps offline while physics holds 50 Hz -- so a script keyed on _frame ran the
+                    // turret for 0.08 s of sim per 40 frames and the "reload" barely moved. Every milestone below is a
+                    // 50 Hz tick, and each capture is triggered by pinning the NEXT capture slot to the current render
+                    // frame when its tick arrives (the capture check runs later in this same frame).
+                    if (_ttCam != null && !_ttCam.Current) _ttCam.MakeCurrent();   // the seated player's own camera takes over on entry; this shot is the OUTSIDE view
+                    int pf = (int)Engine.GetPhysicsFrames();
+                    int ttSeat = int.TryParse(System.Environment.GetEnvironmentVariable("UG_SEATIDX"), out var tsi) ? tsi : 0;   // UG_SEATIDX=1: run the same script from the GUNNER's chair
+                    // Every tick since the last render frame gets its step, in order: with the outside camera the
+                    // render runs SLOWER than 50 Hz and physics catches up two or three ticks per frame, so an `==`
+                    // on a milestone tick was simply skipped (the first outside run captured three frames and then
+                    // waited forever for a tick it had already passed).
+                    for (int t = _ttLastPf + 1; t <= pf; t++)
+                    {
+                        if (t == 25) _dtPlayer.EnterVehicle(_ttVeh, ttSeat);
+                        if (t >= 40) { _dtPlayer.DebugCannonAim = true; _dtPlayer.DebugCannonAimPoint = t < 180 ? _ttTargetA : _ttTargetB; }   // "RMB held": lay on A, then on B
+                        if (t == 140 || t == 305) _dtPlayer.Fire();   // LMB: a shell at each block
+                        if (ttSeat == 0 && t == 200) _ttVeh.OccupiedSeats.Add(1);      // a gunner sits down mid-slew: the driver loses the gun and it must FREEZE
+                        if (ttSeat == 0 && t == 260) _ttVeh.OccupiedSeats.Remove(1);   // ...and gets it back the moment the chair empties
+                        if (t == 140 || t == 200 || t == 240 || t == 260 || t == 300 || t == 305)
+                            GD.Print($"[tanktest] pf{t} barrel={_ttVeh.TurretBarrelDir(ttSeat)} hasTurret={_ttVeh.HasTurret(ttSeat)} cd={_ttVeh.TurretCooldown(ttSeat):0.00} ammo={_ttVeh.TurretAmmo(ttSeat)} hp={_ttVeh.Health:0}");
+                        if (t == 156 || t == 318)   // every live light, so a stray glow can be NAMED rather than guessed at
+                        {
+                            foreach (var ln in FindChildren("*", "OmniLight3D", true, false))
+                                if (ln is OmniLight3D ol && ol.IsVisibleInTree() && ol.LightEnergy > 0.01f)
+                                    GD.Print($"[tanktest] pf{t} light {ol.GetPath()} at {ol.GlobalPosition} E={ol.LightEnergy:0.0} R={ol.OmniRange:0.0}");
+                        }
+                    }
+                    _ttLastPf = pf;
+                    // parked -> mid-slew -> laid on A -> muzzle flash -> shell in flight -> A's blast -> smoke -> FROZEN
+                    // mid-slew with a gunner seated -> laid on B -> B's blast. One slot per render frame, pinned as
+                    // soon as its tick has PASSED (>=), so two milestones inside one slow frame capture on
+                    // consecutive frames instead of the second one being lost.
+                    int[] ttCaps = { 30, 52, 100, 141, 146, 156, 175, 240, 300, 318 };
+                    if (_rigShot < ttCaps.Length && pf >= ttCaps[_rigShot]) _rigCaptureFrames[_rigShot] = _frame;
+                }
+                else if (_driveTest && _dtPlayer != null)
                 {
                     if (_frame == 25 && !_nade && !_grassTest) _dtPlayer.EnterNearestVehicle();             // hop in (skip for --nade: keep the jeep parked to grenade it; grasstest: keep it parked on the lawn)
                     if (_frame >= 30 && !_grassTest) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve

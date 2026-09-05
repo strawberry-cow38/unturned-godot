@@ -3377,6 +3377,7 @@ namespace UnturnedGodot
                 var wscene = GetTree().CurrentScene;
                 if (wscene != null) SpawnWaterSplash(wscene, new Vector3(point.X, Terrain.SeaLevelY, point.Z), Mathf.Clamp(radius / 5f, 2f, 4f));
             }
+            SpawnBlastFx(point, radius);
             GD.Print($"[explode] r={radius} at {point}");
         }
 
@@ -5663,9 +5664,12 @@ namespace UnturnedGodot
                     // clamping here would fight them.
                     // A TURRET SEAT IS EXEMPT: AimTurret already clamps to the mount's own traverse limits, and a
                     // second clamp here would fight them -- the gunner's view would stop before the gun did.
-                    bool turretSeat = false;
-                    if (_driving?.Turrets != null)
-                        foreach (var td in _driving.Turrets) if (td != null && td.Seat == _seatIndex) { turretSeat = true; break; }
+                    // ...and "turret seat" means the mount this seat OPERATES (TurretFor: a gunner's own, or the
+                    // driver's fallback while the gunner's chair is empty). A crosshair-laid cannon exempts only
+                    // its gunner: the tank driver's head keeps the +/-160 -- the gun is laid off the crosshair
+                    // point, not off where the head can turn, so nothing is lost by keeping the seat's limits.
+                    var tdef = _driving?.TurretFor(_seatIndex);
+                    bool turretSeat = tdef != null && (_seatIndex != 0 || !tdef.CrosshairAim);
                     if (!turretSeat)
                     {
                         float yawLim = (_driving != null && _seatIndex == 0) ? DriverYawLimit : PassengerYawLimit;
@@ -5701,7 +5705,7 @@ namespace UnturnedGodot
                 // the auto poll, so a Hind nose-gunner could aim the chin gun perfectly, click, and honk the
                 // helicopter. HeliPartsTests calls TryTurretFire on the Vehicle directly, so the routing was never
                 // covered. Fire() already short-circuits to FireTurret for a turret seat. Review 2026-08-16.
-                if (_driving != null) { if (_seatIndex != 0 && _driving.HasTurret(_seatIndex)) Fire(); else _driving.Honk(); }
+                if (_driving != null) { if (TurretTriggerLive) Fire(); else _driving.Honk(); }   // the mount you operate (driver included, while laying the tank gun); else the horn
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (_heldOptic != null) CycleOpticZoom();          // binoculars up: LMB steps the zoom 4x -> 8x -> 12x -> 4x (master)
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
@@ -5724,7 +5728,7 @@ namespace UnturnedGodot
             }
             else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (_driving != null) { if (Keybinds.IsDown(@event)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                if (_driving != null) { if (Keybinds.IsDown(@event) && !(_driving.TurretFor(_seatIndex)?.CrosshairAim ?? false)) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (Keybinds.IsDown(@event)) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingHoseTool) { if (Keybinds.IsDown(@event)) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
@@ -6167,7 +6171,7 @@ namespace UnturnedGodot
             // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
             // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
-            if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
+            if (TurretTriggerLive)
                 return FireTurret();
             // NO SHOOTING WHILE SPRINTING, nor for a beat after (master 2026-09-05): the gun comes back up from the
             // sprint carry first. On foot only -- a gunner's mount above and a driver's horn never sprint.
@@ -6379,9 +6383,103 @@ namespace UnturnedGodot
             float veh = def?.VehicleDamage ?? 10f;
             float obj = def?.ObjectDamage ?? 25f;
             float muzzleVel = def?.MuzzleVelocity ?? 120f;
-            int steps = def != null ? Mathf.Max(1, (int)(def.Range / 2f)) : 75;
-            SpawnBullet(origin, dir * muzzleVel, steps, 0f, dmg, veh, obj, dmg);
+            // The .dat's own step count when it declares one (tank_cannon.dat: 120 x 5 m); the old Range/2 guess
+            // otherwise. srcGun is the MOUNT'S gun, not whatever the operator is carrying: the blast keys and the
+            // visible Action-Rocket projectile are read off the round's own gun in SpawnBullet, and before this the
+            // tank's shell would have inherited the rifle in the driver's backpack.
+            int steps = def != null ? (def.BallisticSteps > 0 ? def.BallisticSteps : Mathf.Max(1, (int)(def.Range / 2f))) : 75;
+            SpawnBullet(origin, dir * muzzleVel, steps, 0f, dmg, veh, obj, dmg, srcGun: def, anchorMuzzle: false);   // the streak starts at the MOUNT's muzzle, not the operator's viewmodel
+            // A player's mount had no report and no flash at all -- only the AI's path called NpcTurretFx. Same fx,
+            // scaled up for a cannon (a 2.6 m star reads as an HMG; a 120 mm gun wants the bigger one).
+            bool cannon = def != null && def.BlastRadius > 0f;
+            NpcTurretFx(origin, dir, gunId, cannon ? 2.2f : 1f);
+            if (cannon)
+            {
+                FlinchFromExplosion(origin, 40f, 4f);   // the whole hull rocks under the operator: a kick through the existing flinch spring
+                var cue = TurretReloadCue(gunId);       // retail Tank_Cannon reload.mp3, ripped: the breech cycling behind the 2 s Reload_Time
+                if (cue != null && _driving != null)
+                {
+                    var ap = new AudioStreamPlayer3D { Stream = cue, UnitSize = 6f, MaxDistance = 40f, VolumeDb = 2f };
+                    _driving.AddChild(ap);
+                    ap.Position = Vector3.Zero;
+                    ap.Play();
+                    ap.Finished += ap.QueueFree;
+                }
+            }
             return true;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<string, AudioStream> _turretReloadSnd = new();
+        static AudioStream TurretReloadCue(string gunId)
+        {
+            if (!_turretReloadSnd.TryGetValue(gunId ?? "", out var snd)) { snd = NpcLoadOgg($"res://content/{gunId}_reload.ogg"); _turretReloadSnd[gunId ?? ""] = snd; }
+            return snd;
+        }
+
+        // ---- THE MOUNT THIS SEAT OPERATES (master 2026-09-05: "wire the tank cannon to work ... while holding rmb in
+        // the drivers seat, the cannon will aim wherever your crosshair is pointing. the turret will launch a shell
+        // towards that point. the person in the 2nd seat can also control the turret. the 2nd player ALWAYS gets
+        // priority control over the turret, the driver loses access until the 2nd seat is free.")
+        //
+        // Priority is not state here: Vehicle.TurretFor resolves it from seat occupancy on every query, so the
+        // driver's trigger and aim both go dead the frame somebody sits in the gunner's chair and come back the
+        // frame it empties. A cached "who has the gun" flag would have needed hand-over code in enter, exit, death
+        // and the MP seat sync, and would have been wrong in whichever one forgot to write it.
+        /// <summary>The mount this seat operates right now, or null.</summary>
+        Vehicle.TurretDef OperatedTurret => _driving?.TurretFor(_seatIndex);
+        /// <summary>Is the trigger connected to a mount? A look-slaved door gun always; a crosshair-laid cannon only
+        /// while the operator is holding Aim -- "the turret will launch a shell towards THAT point" presumes there
+        /// is a point, and a click without one would send a shell wherever the gun last sat.</summary>
+        bool TurretTriggerLive => OperatedTurret is { } t && (!t.CrosshairAim || _cannonAiming);
+        bool _cannonAiming;                 // Aim held on a crosshair-laid mount THIS tick (TurretTick clears and re-derives it)
+        Vector3 _cannonAimPoint;            // where the crosshair ray stopped
+        /// <summary>HUD: draw the centre crosshair while a cannon is being laid -- the first-person driver has no
+        /// viewmodel reticle to aim with, and the gun is laid on the screen centre.</summary>
+        public bool CannonAiming => _cannonAiming;
+        /// <summary>Harness seams: lay the operated mount on a fixed world point without a mouse (the tank render).</summary>
+        public bool DebugCannonAim; public Vector3 DebugCannonAimPoint;
+        /// <summary>Harness: keep the viewmodel layer off. It is a CanvasLayer composited over the whole window, so
+        /// an OUTSIDE harness camera still got the driver's arms painted across the shot.</summary>
+        public bool HideViewmodelDebug;
+        const float CannonReach = 600f;     // the crosshair ray's length; past it the gun is laid on the ray itself (a shell at a distant hillside still flies where the crosshair sits)
+        Godot.Collections.Array<Rid> _cannonExclude; Vehicle _cannonExcludeFor; PhysicsRayQueryParameters3D _cannonRayQ;
+
+        /// <summary>Per physics tick, seated: drive the mount this seat operates. A look-slaved mount (the Hind's
+        /// chin gun) follows the free-look angles as before. A crosshair-laid one (the tank) moves ONLY while Aim is
+        /// held, toward the point under the screen centre, at its own slew rates -- and stays put when Aim is
+        /// released, so the gun is where you left it and not wherever you happened to look next.</summary>
+        void TurretTick(float delta)
+        {
+            _cannonAiming = false;
+            var t = OperatedTurret;
+            if (t == null) return;
+            if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch); return; }
+            bool hold = DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));
+            if (!hold) return;
+            _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
+            _cannonAiming = true;
+            _driving.AimTurretAt(_seatIndex, _cannonAimPoint, delta);
+        }
+
+        /// <summary>Where the screen centre lands: a ray from the ACTIVE camera (chase or first person) down its
+        /// own axis, through the world, props, vehicles and water, ignoring the vehicle being ridden (the chase
+        /// cam sits behind the hull and the driver's eye sits inside it -- either would hit the tank first) and the
+        /// rider. Query objects are built once per vehicle and reused, as the look ray's are.</summary>
+        Vector3 CrosshairPoint()
+        {
+            if (_cam == null || _driving == null) return GlobalPosition - GlobalTransform.Basis.Z * CannonReach;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            if (_cannonRayQ == null || _cannonExcludeFor != _driving)
+            {
+                _cannonExclude = new Godot.Collections.Array<Rid> { GetRid(), _driving.GetRid() };
+                foreach (var n in _driving.FindChildren("*", "CollisionObject3D", true, false))   // door zones, the hit trimesh, wheel bodies -- everything the hull carries
+                    if (n is CollisionObject3D co) _cannonExclude.Add(co.GetRid());
+                _cannonExcludeFor = _driving;
+                _cannonRayQ = new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9), Exclude = _cannonExclude };
+            }
+            _cannonRayQ.From = from; _cannonRayQ.To = from + fwd * CannonReach;
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(_cannonRayQ);
+            return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * CannonReach;
         }
 
         static ImageTexture _npcFlashTex; static bool _npcFlashTexTried;
@@ -6399,7 +6497,7 @@ namespace UnturnedGodot
         ///
         /// Sounds and the flash texture are cached: a burst is seven to twenty two rounds and neither a
         /// per-shot file read nor a per-shot PNG decode is acceptable at that rate.</summary>
-        void NpcTurretFx(Vector3 origin, Vector3 dir, string gunId)
+        void NpcTurretFx(Vector3 origin, Vector3 dir, string gunId, float scale = 1f)
         {
             // ---- REPORT. The HMG ships no loose audio (retail keeps it in the bundle), so it falls back the way
             // the viewmodel does -- but to the Nykorev rather than the Eaglefire, since a .50 belt gun should not
@@ -6412,7 +6510,7 @@ namespace UnturnedGodot
             var host = GetParent();
             if (snd != null && host != null)
             {
-                var ap = new AudioStreamPlayer3D { Stream = snd, UnitSize = 34f, MaxDistance = 650f, VolumeDb = 9f };
+                var ap = new AudioStreamPlayer3D { Stream = snd, UnitSize = 34f * scale, MaxDistance = 650f * scale, VolumeDb = 9f + (scale > 1f ? 3f : 0f) };
                 host.AddChild(ap);
                 ap.GlobalPosition = origin;   // world position is only meaningful once it is in the tree
                 ap.Play();
@@ -6431,10 +6529,11 @@ namespace UnturnedGodot
             if (_npcFlashTex != null) mat.SetShaderParameter("tex", _npcFlashTex);
             mat.SetShaderParameter("roll", GD.Randf() * 6.28318f);   // the star spins per shot, as the 1P one does
             var flash = new Node3D { Name = "NpcMuzzleFlash" };
-            flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f, 2.6f) }, MaterialOverride = mat });
-            flash.AddChild(new OmniLight3D { OmniRange = 18f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 7f, ShadowEnabled = false });
+            flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f * scale, 2.6f * scale) }, MaterialOverride = mat });
+            flash.AddChild(new OmniLight3D { OmniRange = 18f * Mathf.Sqrt(scale), LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = scale > 1f ? 5f : 7f, ShadowEnabled = false });   // a cannon lights further but not brighter -- 7 x 2.2 over 40 m painted the whole tank solid yellow
             host.AddChild(flash);
-            flash.GlobalPosition = origin + dir.Normalized() * 0.35f;   // just off the muzzle, not inside the barrel
+            flash.GlobalPosition = origin + dir.Normalized() * 0.35f * scale;   // just off the muzzle, not inside the barrel
+            if (scale > 1f) host.AddChild(BlastSmoke(origin + dir.Normalized() * 0.6f, dir.Normalized(), 0.35f * scale, 12, 0.9f, new Color(0.55f, 0.52f, 0.46f)));   // a cannon also throws a gout of propellant smoke off the muzzle
             GetTree().CreateTimer(0.05).Timeout += () => { if (IsInstanceValid(flash)) flash.QueueFree(); };
         }
 
@@ -6487,7 +6586,7 @@ namespace UnturnedGodot
         void Hitmark(Bullet b, bool head) { if (!b.Npc) HitmarkerHUD.Instance?.Show(head); }
         void HitmarkCircle(Bullet b) { if (!b.Npc) HitmarkerHUD.Instance?.ShowCircle(); }
 
-        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f, GunDef srcGun = null, bool npc = false)
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage, float playerDamage = 0f, GunDef srcGun = null, bool npc = false, bool anchorMuzzle = true)
         {
             var g = srcGun ?? Gun;
             var b = new Bullet { Npc = npc, Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
@@ -6499,7 +6598,7 @@ namespace UnturnedGodot
             // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
             // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
             // the straight-from-origin streak (HasAnchor stays false; a point behind the cam fails the guard).
-            if (npc) { }   // somebody else's gun: straight-from-origin streak, never the player's muzzle
+            if (npc || !anchorMuzzle) { }   // somebody else's gun, or a MOUNT's: straight-from-origin streak, never the player's muzzle. A turret round anchored to the viewmodel drew its streak from the driver's EYE, inside the hull, out through the floor.
             else if (!NetAvatar && !_fp && _body != null && _body.MuzzleWorld is Vector3 _bmz)   // 3P: anchor the tracer at the 3P gun's OWN muzzle (position); it still flies to the converged aim, so it tracks the bullet
             { b.MuzzleAnchor = _bmz; b.HasAnchor = true; }
             else if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
@@ -6779,6 +6878,102 @@ namespace UnturnedGodot
         }
 
         void RemoveBullet(int i) { _bullets[i].Tracer?.QueueFree(); _bullets[i].RocketVis?.QueueFree(); _bullets.RemoveAt(i); }
+
+        // ---- BLAST PICTURE. Explode() carried the audio, the damage and the camera shake and NOTHING VISIBLE: a
+        // grenade or rocket went off as a noise. A tank shell landing with no boom to look at is the same hole,
+        // so the visual lives on Explode and every warhead gets it. Three parts, all CpuParticles3D one-shots
+        // (GPU particles do not render in the offline movie harness -- see RainSystem3D): a fireball that goes
+        // orange -> dark and dies in half a second, a dust/smoke column that hangs and drifts up for a few seconds,
+        // and a light that flashes and is gone. Sizes scale with the blast radius so a grenade (r 8) and the
+        // cannon (r 14) read as different sizes of the same thing.
+        static ImageTexture _blastSoftTex;
+        /// <summary>A radial soft blob, drawn once: a hard-edged square particle is the difference between smoke
+        /// and confetti, and content has no generic soft sprite (the vehicle smoke png is a puff, fine for the
+        /// column but too textured for the fireball).</summary>
+        static ImageTexture BlastSoftTex()
+        {
+            if (_blastSoftTex != null) return _blastSoftTex;
+            const int n = 64; var im = Image.CreateEmpty(n, n, false, Image.Format.Rgba8);
+            for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
+            {
+                float dx = (x + 0.5f) / n - 0.5f, dy = (y + 0.5f) / n - 0.5f;
+                float r = Mathf.Sqrt(dx * dx + dy * dy) * 2f;               // 0 centre .. 1 edge
+                float a = Mathf.Clamp(1f - r, 0f, 1f); a = a * a * (3f - 2f * a);   // smoothstep falloff
+                im.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+            }
+            _blastSoftTex = ImageTexture.CreateFromImage(im);
+            return _blastSoftTex;
+        }
+        static CpuParticles3D BlastSmoke(Vector3 at, Vector3 dir, float size, int count, float life, Color tint)
+        {
+            var p = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Explosiveness = 1f, Amount = count, Lifetime = life,
+                Direction = dir, Spread = 35f, InitialVelocityMin = 3f, InitialVelocityMax = 7f,
+                Gravity = new Vector3(0f, 0.6f, 0f), DampingMin = 3f, DampingMax = 3f,
+                ScaleAmountMin = size, ScaleAmountMax = size * 1.8f,
+                Mesh = new QuadMesh { Size = Vector2.One },
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, BillboardKeepScale = true, VertexColorUseAsAlbedo = true,
+                    AlbedoTexture = BlastSoftTex(), CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                },
+            };
+            var ramp = new Gradient(); ramp.SetColor(0, new Color(tint, 0.85f)); ramp.SetColor(1, new Color(tint, 0f)); p.ColorRamp = ramp;
+            var grow = new Curve(); grow.AddPoint(new Vector2(0f, 0.55f)); grow.AddPoint(new Vector2(1f, 1f)); p.ScaleAmountCurve = grow;
+            p.Position = at;
+            p.VisibilityAabb = new Aabb(new Vector3(-30f, -30f, -30f), new Vector3(60f, 60f, 60f));
+            p.Finished += p.QueueFree;
+            return p;
+        }
+        void SpawnBlastFx(Vector3 point, float radius)
+        {
+            var host = GetTree().CurrentScene ?? GetParent();
+            if (host == null) return;
+            float k = Mathf.Clamp(radius / 9f, 0.6f, 2.2f);   // the launcher's 9 m blast is the reference size
+            // the light: a white-orange flash that is gone in a quarter second
+            var light = new OmniLight3D { OmniRange = 14f * k + 8f, LightColor = new Color(1f, 0.72f, 0.35f), LightEnergy = 14f, ShadowEnabled = false };
+            host.AddChild(light); light.GlobalPosition = point + Vector3.Up * 0.8f;
+            var t1 = GetTree().CreateTimer(0.08); t1.Timeout += () => { if (IsInstanceValid(light)) light.LightEnergy = 5f; };
+            var t2 = GetTree().CreateTimer(0.28); t2.Timeout += () => { if (IsInstanceValid(light)) light.QueueFree(); };
+            // the fireball: fast, short, orange -> dark red -> gone
+            var fire = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Explosiveness = 1f, Amount = 28, Lifetime = 0.55f,
+                Direction = Vector3.Up, Spread = 180f, InitialVelocityMin = 4f * k, InitialVelocityMax = 11f * k,
+                Gravity = new Vector3(0f, 2f, 0f), DampingMin = 6f, DampingMax = 6f,
+                ScaleAmountMin = 1.6f * k, ScaleAmountMax = 3.2f * k,
+                Mesh = new QuadMesh { Size = Vector2.One },
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, BillboardKeepScale = true, VertexColorUseAsAlbedo = true,
+                    AlbedoTexture = BlastSoftTex(), CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                },
+            };
+            var fr = new Gradient();
+            fr.SetColor(0, new Color(1f, 0.85f, 0.45f, 1f)); fr.SetColor(1, new Color(0.35f, 0.05f, 0.0f, 0f));
+            fr.AddPoint(0.35f, new Color(1f, 0.42f, 0.08f, 0.9f));
+            fire.ColorRamp = fr;
+            var fs = new Curve(); fs.AddPoint(new Vector2(0f, 0.5f)); fs.AddPoint(new Vector2(0.3f, 1f)); fs.AddPoint(new Vector2(1f, 0.7f)); fire.ScaleAmountCurve = fs;
+            fire.VisibilityAabb = new Aabb(new Vector3(-30f, -30f, -30f), new Vector3(60f, 60f, 60f));
+            fire.Finished += fire.QueueFree;
+            // POSITION BEFORE AddChild, like BlastSmoke does. An explosive one-shot CpuParticles3D emits its whole burst
+            // with the transform it had on ENTERING the tree; a GlobalPosition written one line after AddChild is too
+            // late, and the first tank render had every fireball going off around the hull at the world origin while
+            // the dust column (positioned first) rose from the target. The scene root is at identity, so local = world.
+            fire.Position = point + Vector3.Up * 0.5f;
+            string _bfDbg = System.Environment.GetEnvironmentVariable("UG_BLASTFX");   // harness: "nofire" / "nodust" isolate one part of the picture
+            if (_bfDbg != "nofire") host.AddChild(fire);
+            // the column: dust and smoke that hangs for seconds
+            if (_bfDbg != "nodust")
+            {
+                host.AddChild(BlastSmoke(point + Vector3.Up * 0.6f, Vector3.Up, 2.2f * k, 36, 3.2f, new Color(0.32f, 0.30f, 0.27f)));
+                host.AddChild(BlastSmoke(point + Vector3.Up * 0.3f, Vector3.Up, 1.6f * k, 24, 1.6f, new Color(0.62f, 0.56f, 0.46f)));   // the lighter ground dust, gone sooner
+            }
+        }
 
         // The rocket launcher's projectile is a VISIBLE flying rocket (projectile.prefab Model_0; no _MainTex -> flat dark body).
         ArrayMesh _rocketMesh; bool _rocketTried;
@@ -7319,7 +7514,7 @@ namespace UnturnedGodot
                     else _viewmodel.ClearDrivingWheel();
                 }
                 else _viewmodel.ClearDrivingWheel();
-                _viewmodel.SetShown((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms);   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
+                _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug);   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
             }
             if (_body == null) return;
@@ -7810,13 +8005,9 @@ namespace UnturnedGodot
             // before any input is read, so a passenger holding W is not merely ignored by the vehicle but never
             // reaches it -- LastDriveInput is the MP fallback axes, and a back-seat passenger filling those in
             // would have every rider fighting the driver for the same channel.
+            TurretTick(delta);   // the mount this seat operates, if any -- the driver's too (the tank gun while the gunner's chair is empty)
             if (_seatIndex != 0)
             {
-                // A gunner's LOOK aims the turret. Fed the same vehicle-local free-look angles the camera uses,
-                // so the barrel and the view cannot drift apart; the mount clamps them to its own traverse, which
-                // is why the camera is NOT clamped to match -- you can look past where the gun can point, and
-                // seeing the gun stop is the feedback that tells you so.
-                _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch);
                 GlobalPosition = _driving.GlobalPosition;   // still ride along, so the exit spot and cam track the vehicle
                 return;
             }
@@ -8098,6 +8289,11 @@ namespace UnturnedGodot
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
                                       //  polled after them would freeze at whatever it was when you got into the car and stay there.
+            // ROUNDS FLY WHILE YOU ARE SEATED. StepBullets used to sit below the four early returns here, so a shot
+            // from a turret seat -- the Hind's chin gun, the tank's main gun -- spawned a bullet that never took a
+            // step until its gunner climbed out: the tank's first shell hung at the muzzle for the whole render and
+            // no blast ever printed. A bullet has nothing to do with how its shooter is moving; step it first.
+            StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick -- matches the source 0.02s step
             if (_ridingCrane != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveCrane((float)delta); return; }   // riding a crane: skip on-foot movement, drive the gantry
             if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
@@ -8114,7 +8310,6 @@ namespace UnturnedGodot
                 if (DistToSegmentSq(gnow, _interpPrev, _interpCurr) > 0.05f * 0.05f) { _interpPrev = _interpCurr = gnow; }
                 else GlobalPosition = _interpCurr;
             }
-            StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
@@ -8201,8 +8396,7 @@ namespace UnturnedGodot
             // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
             // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
             // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
-            if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex)
-                && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();
+            if (TurretTriggerLive && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
