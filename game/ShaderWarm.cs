@@ -10,7 +10,14 @@ namespace UnturnedGodot
     /// for a few frames right after the build, draw a tiny quad with EVERY spatial `.gdshader` in content/ in front of
     /// the camera. Uniform values do not change pipelines, so default-uniform materials compile the real ones; the
     /// globals those shaders read are registered first (the GrassDisplacers lesson: a material that links a missing
-    /// global dies). A new shader dropped into content/ is warmed automatically -- nothing to remember.</summary>
+    /// global dies). A new shader dropped into content/ is warmed automatically -- nothing to remember.
+    ///
+    /// CANVAS SHADERS TOO, since 2026-09-05. The first cut filtered to `shader_type spatial` and waved the rest
+    /// off as "they draw elsewhere" -- which says where they draw, not when they COMPILE, and compiling is the
+    /// whole hazard. A canvas_item shader's first draw is the same synchronous pipeline build, and a full-screen
+    /// overlay is a worse case than a 5 cm quad: binoculars_overlay lands the frame someone first raises them,
+    /// which is exactly the "mid-action, on top of streaming" shape that cost the two driver timeouts. Warmed on
+    /// a CanvasLayer at the back, one pixel, transparent.</summary>
     public sealed partial class ShaderWarm : Node3D
     {
         public const int Frames = 4;
@@ -62,9 +69,41 @@ namespace UnturnedGodot
                 }
             }
             catch (System.Exception e) { GD.PrintErr($"[shaderwarm] {e.Message}"); }
-            LastCount = n;
-            GD.Print($"[shaderwarm] {n} spatial shaders drawn for {Frames} frames behind the load");
-            if (n == 0) QueueFree();
+            int c = WarmCanvasShaders(dir);
+            LastCount = n + c;
+            GD.Print($"[shaderwarm] {n} spatial + {c} canvas shaders drawn for {Frames} frames behind the load");
+            if (n + c == 0) QueueFree();
+        }
+
+        /// <summary>Same trick on a CanvasLayer: one transparent pixel per canvas_item shader, behind everything.
+        /// It builds the pipeline without being visible, and rides the same Frames countdown -- the layer is a child
+        /// of this node, so QueueFree takes it with us.</summary>
+        int WarmCanvasShaders(string dir)
+        {
+            int c = 0;
+            try
+            {
+                var layer = new CanvasLayer { Layer = -128 };   // behind every real UI
+                foreach (var file in System.IO.Directory.GetFiles(dir, "*.gdshader"))
+                {
+                    string text;
+                    try { text = System.IO.File.ReadAllText(file); } catch { continue; }
+                    if (!text.Contains("shader_type canvas_item")) continue;
+                    var shader = GD.Load<Shader>("res://content/" + System.IO.Path.GetFileName(file));
+                    if (shader == null) continue;
+                    layer.AddChild(new ColorRect
+                    {
+                        Material = new ShaderMaterial { Shader = shader },
+                        Size = new Vector2(1f, 1f),
+                        Modulate = new Color(1f, 1f, 1f, 0.004f),   // non-zero: a fully transparent rect can be culled before it ever compiles
+                        MouseFilter = Control.MouseFilterEnum.Ignore,
+                    });
+                    c++;
+                }
+                if (c > 0) AddChild(layer); else layer.QueueFree();
+            }
+            catch (System.Exception e) { GD.PrintErr($"[shaderwarm/canvas] {e.Message}"); }
+            return c;
         }
 
         public override void _Process(double delta)
