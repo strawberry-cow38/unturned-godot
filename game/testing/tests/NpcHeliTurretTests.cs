@@ -215,8 +215,8 @@ namespace UnturnedGodot.Testing
                 if (n is AudioStreamPlayer3D ap) sndDist = ap.MaxDistance;
             }
             GD.Print($"[TURRET] fx: flash quad {flashQuad:0.0} m, light range {lightRange:0} m, report carries {sndDist:0} m");
-            T.Check($"the muzzle flash is scaled for an aircraft, not a held rifle (quad {flashQuad:0.0} m vs the 0.55 m 1P/3P one)",
-                flashQuad > 1.5f && lightRange > 8f);
+            T.Check($"the muzzle flash is scaled for an aircraft, not a held rifle (quad {flashQuad:0.0} m vs the 0.55 m 1P/3P one, light range {lightRange:0.0} m > 8)",
+                flashQuad > 1.5f && lightRange > 8f);   // BOTH conjuncts in the label: the range half failed silently on 2026-09-05 while the message only talked about the quad
             T.Check($"...and the report carries across a valley, not a room (MaxDistance {sndDist:0} m vs 45-70 for doors and impacts)",
                 sndDist > 300f);
             owner.QueueFree();

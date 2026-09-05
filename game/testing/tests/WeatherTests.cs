@@ -20,6 +20,11 @@ namespace UnturnedGodot.Testing
     public class WeatherDrivesRain : GameTest
     {
         public override string Name => "weather.drives_rain";
+        // Both rain assets fade in over 20 s. The default 15 s watchdog only ever held because the test's short weather
+        // windows (0.05-0.15 of a 120 s day = 6-18 s) made WeatherSim shrink the fades to fit; with storms 4x longer
+        // (master 2026-09-04 "rain storms should last much longer") the window clears 40 s and the fades run at their
+        // real 20 s, which is what the game shows -- so the test now waits for the real thing. Nightly 2026-09-05.
+        public override double TimeoutSimSeconds => 90;
         public override IEnumerable<Step> Run()
         {
             var dn = new DayNightCycle { DayLength = 120f, VisualsEnabled = false };
@@ -63,6 +68,7 @@ namespace UnturnedGodot.Testing
     public class WeatherLightningGating : GameTest
     {
         public override string Name => "weather.lightning_gating";
+        public override double TimeoutSimSeconds => 60;   // the 20 s fade-in at full length (see WeatherDrivesRain)
         public override IEnumerable<Step> Run()
         {
             var dn = new DayNightCycle { DayLength = 120f, VisualsEnabled = false };

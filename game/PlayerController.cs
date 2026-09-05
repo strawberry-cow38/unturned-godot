@@ -6173,6 +6173,8 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         float _sinceSprint = 99f;            // seconds since the stance was last SPRINT (PhysicsTick)
         const float SprintFireDelay = 0.4f;   // the moment after stopping a sprint before a shot is allowed
+        const float AirborneFireBlock = 0.1f;   // seconds off the floor (after having stood on one) before the trigger locks: a jump, not a kerb
+        float _airTime; bool _everGrounded;     // see the physics tick -- reset on every grounded tick
         public bool Fire()
         {
             if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
@@ -6184,7 +6186,12 @@ namespace UnturnedGodot
             // NO SHOOTING WHILE SPRINTING, nor for a beat after (master 2026-09-05): the gun comes back up from the
             // sprint carry first. On foot only -- a gunner's mount above and a driver's horn never sprint.
             if (_driving == null && _sinceSprint < SprintFireDelay) return false;
-            if (_driving == null && !IsOnFloor() && !IsSwimming) return false;   // and none in the AIR either (master 2026-09-05): feet on the ground to shoot
+            // ...and none in the AIR either (master 2026-09-05): feet on the ground to shoot. Gated on the AIR TIMER, not
+            // on IsOnFloor() alone: "has a floor under it right now" is false for a player who has never touched one
+            // (a test fixture spawned into a floorless world -- gun.inf_ammo and gun.swap_mid_reload both went dark on
+            // the raw check, nightly 2026-09-05) and flickers on stair edges; "left the floor and has been off it for a
+            // tenth of a second" is what a jump or a fall actually is.
+            if (_driving == null && _airTime > AirborneFireBlock && !IsSwimming) return false;
 
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || _climbing || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
@@ -6542,7 +6549,7 @@ namespace UnturnedGodot
             mat.SetShaderParameter("roll", GD.Randf() * 6.28318f);   // the star spins per shot, as the 1P one does
             var flash = new Node3D { Name = "NpcMuzzleFlash" };
             flash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(2.6f * scale, 2.6f * scale) }, MaterialOverride = mat });
-            flash.AddChild(new OmniLight3D { OmniRange = scale > 1f ? 12f * Mathf.Sqrt(scale) : 8f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = scale > 1f ? 5f : 1.5f, ShadowEnabled = false });   // the Hind's 18 m / 7.0 was tuned for a gun seen from a valley away; on the tank's own roof it strobed the whole hull yellow at 7 rounds a second. Now the on-foot muzzle light's 3.5, a little further
+            flash.AddChild(new OmniLight3D { OmniRange = 12f * Mathf.Sqrt(scale), LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = scale > 1f ? 5f : 1.5f, ShadowEnabled = false });   // 12 m keeps the mount's flash lighting its surroundings (vehicle.npc_heli_turret holds the range above 8 m -- master wanted heli gunfire that lights the world); the ENERGY is what strobed the tank's own hull, so that is the part cut   // the Hind's 18 m / 7.0 was tuned for a gun seen from a valley away; on the tank's own roof it strobed the whole hull yellow at 7 rounds a second. Now the on-foot muzzle light's 3.5, a little further
             host.AddChild(flash);
             flash.GlobalPosition = origin + dir.Normalized() * 0.35f * scale;   // just off the muzzle, not inside the barrel
             if (scale > 1f) host.AddChild(BlastSmoke(origin + dir.Normalized() * 0.6f, dir.Normalized(), 0.35f * scale, 12, 0.9f, new Color(0.55f, 0.52f, 0.46f)));   // a cannon also throws a gout of propellant smoke off the muzzle
@@ -8509,6 +8516,11 @@ namespace UnturnedGodot
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
+            // AIR TIMER for the shooting gate (see Fire): counts only after the player has stood on something once, so a
+            // body that has never had a floor -- a fixture in a floorless world, a spawn mid-drop before first contact --
+            // is not "airborne", it is simply unplaced.
+            if (IsOnFloor()) { _airTime = 0f; _everGrounded = true; }
+            else if (_everGrounded) _airTime += (float)delta;
             if (wasAirborne && IsOnFloor())
             {
                 CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
