@@ -1811,7 +1811,7 @@ namespace UnturnedGodot
             else _salvageTimer = 0f;
             // Repeated tool: drive the continuous-use ANIM off the LMB edge -- Start_Swing (loops) on press, Stop_Swing on release (source startSwing/stopSwing)
             bool wantTorch = IsRepeatedMelee && lmb;
-            if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(); _torchAnimOn = true; }
+            if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(sound: !IsRepeatedDamage); _torchAnimOn = true; }   // the chainsaw has its own sound (UpdateChainsaw); the torch loop is the blowtorch's
             else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
@@ -1837,9 +1837,37 @@ namespace UnturnedGodot
         public void DebugTickChainsaw(float dt, bool lmb) => UpdateChainsaw(dt, lmb);
         public Vector3 DebugSawShake => _lastSawShake;
 
+        // SOUND. Retail ships ONE chainsaw clip (items/melee/chainsaw/use, 0.76 s) and no AudioSource: while swinging,
+        // UseableMelee re-triggers `use` every 0.1 s at half volume, and the overlapping bursts are what a running saw
+        // sounds like there. Same here on the cut. While the saw is merely HELD it is still running (the idle shake
+        // above), so the same clip idles underneath as a low, slowed native loop -- retail's idle is silent; this is the
+        // one line to drop if it grates. Off disk (LoadWavLooped / GameAudio), never res:// -- content/ wavs are unimported.
+        AudioStreamPlayer3D _sawIdle; AudioStream _sawUse; float _sawSndT;
+        const float SawUseRetrigger = 0.1f;   // source UseableMelee: Time.realtimeSinceStartup - startedSwing > 0.1
         void UpdateChainsaw(float delta, bool lmb)
         {
-            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; return; }
+            if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; _sawSndT = 0f; if (_sawIdle != null && _sawIdle.Playing) _sawIdle.Stop(); return; }
+            if (_sawIdle == null)
+            {
+                var idle = Viewmodel.LoadWavLooped("res://content/audio/items/melee_chainsaw_use.wav");
+                if (idle != null) { _sawIdle = new AudioStreamPlayer3D { Stream = idle, VolumeDb = -14f, PitchScale = 0.8f, UnitSize = 5f, MaxDistance = 35f, Position = new Vector3(0f, 1.2f, 0f) }; AddChild(_sawIdle); }
+            }
+            if (_sawIdle != null)
+            {
+                if (!_sawIdle.Playing) _sawIdle.Play();
+                _sawIdle.VolumeDb = lmb ? -20f : -14f;   // ducks under the cutting bursts
+            }
+            if (lmb)
+            {
+                _sawSndT -= delta;
+                if (_sawSndT <= 0f)
+                {
+                    _sawSndT = SawUseRetrigger;
+                    _sawUse ??= GameAudio.Clip("items", "melee_chainsaw_use");
+                    if (_sawUse != null) GameAudio.PlayAt(GetTree()?.CurrentScene ?? this, _sawUse, GlobalPosition + Vector3.Up * 1.2f, -6f, 6f, 40f, 1f);   // retail: use @ 0.5 volume every 0.1 s
+                }
+            }
+            else _sawSndT = 0f;
             // SHAKE. Deliberately outside the lmb branch: strawberry's "shakes while on (while held)" means the saw
             // is running whenever it is out, so the idle tremor is a property of holding it, not of attacking.
             var amp = lmb ? SawCutShake : SawIdleShake;
@@ -5655,6 +5683,10 @@ namespace UnturnedGodot
             // thrown away while the key was down. Review 2026-08-16.
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
+            else if (_driving != null && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
+            {
+                if (_seatIndex == 0 && _driving.HasBiFoldDoor) _driving.ToggleDoor();   // the driver works the bus door (master: Ctrl in the driver's seat)
+            }
             else if (Keybinds.JustPressed(GameAction.Firemode, @event))
             {
                 // Gated on build mode the same way C already splits crouch-vs-cycle-structure: while the build
@@ -5701,7 +5733,8 @@ namespace UnturnedGodot
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer)
                 {
                     // WHAT you are aiming at now decides what F does, instead of one action for the whole car.
-                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
+                    if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.BiFold) _focusVehicle.ToggleDoor();   // the bus door: open / close it (master)
+                    else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Trunk) OpenVehicleTrunk(_focusVehicle);
                     else if (_focusAccessValid && _focusAccess.Kind == Vehicle.AccessKind.Hood) OpenVehicleHood(_focusVehicle);
                     else EnterVehicle(_focusVehicle, _focusAccessValid ? _focusAccess.Seat : -1);   // a door -> THAT seat; no zone -> the old first-free behaviour
                 }
@@ -7552,6 +7585,7 @@ namespace UnturnedGodot
             {
                 case Vehicle.AccessKind.Trunk: return $"[{key}] open trunk";
                 case Vehicle.AccessKind.Hood:  return $"[{key}] open hood";
+                case Vehicle.AccessKind.BiFold: return v.DoorOpen ? $"[{key}] close door" : $"[{key}] open door";
                 default:
                     int seat = _focusAccess.Seat;
                     string who = seat == 0 ? "driver" : $"seat {seat + 1}";
@@ -7580,7 +7614,7 @@ namespace UnturnedGodot
             while (_seatIndex < v.SeatCount && !v.SeatFree(_seatIndex)) _seatIndex++;
             if (_seatIndex >= v.SeatCount) { _driving = null; return; }   // every seat taken
             v.OccupiedSeats.Add(_seatIndex);
-            v.CycleDoor();   // the bus door swings for whoever boards
+            v.CycleDoor();   // the bus door swings for whoever boards, then folds shut (cosmetic)
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
             // car you climb into is however you left it. N / throttle / the speedo click are the ignition.

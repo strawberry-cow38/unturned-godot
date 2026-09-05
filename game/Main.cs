@@ -8336,7 +8336,7 @@ namespace UnturnedGodot
                         // UG_LAMPBREAK=headlight_l,taillight_r : shoot those lamps out first, so a render can show
                         // a dead lamp NEXT TO a lit one -- the only way to see that a break is per side and that a
                         // shot-out lens stays dark when the lights come on.
-                        if (!_lampFxDone && _veh != null)   // once, not every frame: this sits in the per-frame camera block
+                        if (!_lampFxDone && _veh != null && _frame >= (int.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMPBREAK_FRAME"), out var lbf) ? lbf : 0))   // once, not every frame: this sits in the per-frame camera block; UG_LAMPBREAK_FRAME delays it so a capture can catch the glass burst mid-air
                         {
                             _lampFxDone = true;
                             var lb = System.Environment.GetEnvironmentVariable("UG_LAMPBREAK");

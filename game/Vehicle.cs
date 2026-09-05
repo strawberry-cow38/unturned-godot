@@ -789,7 +789,8 @@ namespace UnturnedGodot
         public float FallMaxMps => _heliFallMax;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> SLEEPS once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         bool _asleep; float _wakeGrace;   // _asleep: WE put it to sleep (vs the engine, or never). _wakeGrace: seconds of guaranteed live physics after something woke it -- see the settle block
-        Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpenWanted; float _doorFoldDeg = 90f;   // bi-fold door (bus): fold 0..1, hold-open timer
+        Node3D _doorPivotA, _doorPivotB; float _doorT, _doorHold; bool _doorOpen; float _doorFoldDeg = 90f; AudioStreamPlayer3D _doorAudio;   // bi-fold door (bus): fold 0..1, auto-close timer, wanted state, swing sound
+        const float DoorHoldSeconds = 2.5f;   // boarding/leaving swings it open and it folds shut this much later (master 2026-09-05)
         float _driveIdle = 999f;   // seconds since anything last called Drive() on this car. UNATTENDED is a fact about the present, not about how the car was spawned -- see the settle block
         float _tankYawGain;   // TankYawGain scaled to THIS hull's mass (0 = unset -> fall back to the constant); see BuildByName
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
@@ -1279,7 +1280,7 @@ namespace UnturnedGodot
         // strawberry: "kill the lookat for the whole car, change it for a collider on each 'door'... pressing f
         // gets you in at that seat. add volumes for the hood and trunk too". The car's overall hull is kept --
         // it still owns collision and damage; this is only about what the LOOK RAY resolves to.
-        public enum AccessKind { Door, Hood, Trunk }
+        public enum AccessKind { Door, Hood, Trunk, BiFold }   // BiFold: the bus's folding passenger door -- Interact toggles it
         public readonly record struct AccessZone(AccessKind Kind, int Seat, Vector3 Center, Vector3 Size);
         public AccessZone[] AccessZones = System.Array.Empty<AccessZone>();
         // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
@@ -1362,6 +1363,14 @@ namespace UnturnedGodot
                     zones.Add(new AccessZone(s.RearEngine ? AccessKind.Hood : AccessKind.Trunk, -1,
                         new Vector3(boxCenter.X, boxCenter.Y + boxSize.Y * 0.25f, rear - trunkRun * 0.5f),
                         new Vector3(boxSize.X * 0.85f, CompartmentHeight, trunkRun * 0.8f)));
+            }
+            // THE BI-FOLD DOOR is its own target (master 2026-09-05 "interacting with the door should open/close it"): a box
+            // over the doorway, pushed a little outboard so a look from outside lands in it whether the leaves are shut
+            // (the ray stops on them) or open (the ray goes through into the cabin).
+            if (s.DoorZoneMin != s.DoorZoneMax)
+            {
+                var c = (s.DoorZoneMin + s.DoorZoneMax) * 0.5f; var sz = s.DoorZoneMax - s.DoorZoneMin;
+                zones.Add(new AccessZone(AccessKind.BiFold, -1, new Vector3(c.X + 0.15f, c.Y, c.Z), new Vector3(0.8f, sz.Y + 0.2f, sz.Z)));
             }
             return zones.ToArray();
         }
@@ -1724,7 +1733,7 @@ namespace UnturnedGodot
             public bool NoTrunk, RearEngine;
             public Vector3 DoorZoneMin, DoorZoneMax;   // BI-FOLD DOOR (bus): the body triangles inside this box become the door; split at DoorSplitZ into two leaves
             public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // hinge A on the panel's INNER face at the front jamb; (fold 0 = 90 degrees)
-            public float DoorHingeBX;   // hinge B (mullion) X: the panel's OUTER face (+ a hair), so leaf B folds back beside leaf A instead of through it   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
+            public float DoorHingeBX;   // hinge B (mullion) X: ON the panel's outer face (+0.5 mm), so the folded leaves stack TOUCHING -- 1 cm out here was a 2 cm gap in the open stack (master 2026-09-05)   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
             public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B
             public Vector3 DoorFloorCutMin, DoorFloorCutMax; public float DoorPocketY;   // cabin floor box cut out where the leaves swing, replaced by a pocket floor at DoorPocketY (the first step's level) + risers
             public Vector3 DoorRiserCutMin, DoorRiserCutMax;   // the old 2nd-step riser between the first step and the cabin floor: gone, the pocket continues the step
@@ -2162,7 +2171,7 @@ namespace UnturnedGodot
             // ...and SHOT OUT, not just switched off (strawberry 2026-09-03: "destroy headlights, tail lights, through the
             // shooting-them-out path when a car explodes") -- the same BreakLamp the bullet path uses, so the wreck's
             // lenses carry the smashed look and nothing can re-light them.
-            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li);
+            for (int li = 0; li < _lampNodes.Count; li++) BreakLamp(li, fx: false);   // the blast has its own effects; no four glass bursts on top
             // ...but killing the lamps here is NOT enough on its own, and that was the bug: an alarmed car's
             // blip loop below re-lights them every 0.5s and honks, on a burning wreck. Worse, once the hulk
             // settles it becomes a _husk and the per-frame sim early-returns for good -- so whatever the blip
@@ -2533,7 +2542,7 @@ namespace UnturnedGodot
             // The panel is modelled 10 cm wider than the 1 m doorway (Z -3.25..-2.25; its ends hid inside the jambs) and 10 cm deeper than
             // the first step (-0.125): trimmed to both, capped, so hinge A sits ON the front jamb and the open stack (leaves 0.5 m each)
             // lies flush against the inner side of the step-well wall at Z -3.25 instead of through it.
-            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.25f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
+            DoorHingeX = 1.293f, DoorHingeBX = 1.4185f, DoorHingeZ = -3.25f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
             DoorTrimZ0 = -3.25f, DoorTrimZ1 = -2.25f, DoorTrimY = -0.12f,
             // FLOOR (master 2026-09-05): the first step (outside, -0.125) extends seamlessly into the bus where the leaves swing --
             // the cabin floor (+0.125) is cut out over that patch (X 0.68..1.23 between the step-well walls) and the old 2nd-step riser
@@ -3845,11 +3854,23 @@ namespace UnturnedGodot
             if (GodotObject.IsInstanceValid(b)) b.CollisionLayer = solid ? HitMeshBit | (1u << 5) : 0u;
         }
 
-        public bool BreakGlass(int i)
+        public bool BreakGlass(int i, bool fx = true)
         {
             if ((uint)i >= (uint)_glassNodes.Count || _glassBroken[i]) return false;
             _glassBroken[i] = true;
-            if (GodotObject.IsInstanceValid(_glassNodes[i])) _glassNodes[i].Visible = false;
+            if (GodotObject.IsInstanceValid(_glassNodes[i]))
+            {
+                var g = _glassNodes[i];
+                if (fx)   // the same shard burst + crash a window pane makes (master 2026-09-05)
+                {
+                    var sz = g.GetAabb().Size; var c = (g.MaterialOverride as StandardMaterial3D)?.AlbedoColor ?? new Color(0.62f, 0.73f, 0.78f);
+                    var centre = GlassPaneCenter(i); var scene = GetTree()?.CurrentScene;
+                    GlassPane.SpawnShards(scene, centre, GlassPaneNormal(i), new Vector3(Mathf.Max(sz.X * 0.5f, 0.2f), Mathf.Max(sz.Y * 0.5f, 0.2f), Mathf.Max(sz.Z * 0.5f, 0.2f)),
+                                          new Color(Mathf.Lerp(c.R, 1f, 0.35f), Mathf.Lerp(c.G, 1f, 0.35f), Mathf.Lerp(c.B, 1f, 0.35f), 0.5f), 1.4f, 0.8f);   // more chips than a building pane, a touch smaller
+                    GlassPane.PlayBreakSound(scene, centre);
+                }
+                g.Visible = false;
+            }
             SetPaneSolid(i, false);   // a broken window is a hole you can shoot and climb through, not an invisible pane
             return true;
         }
@@ -3897,10 +3918,21 @@ namespace UnturnedGodot
         }
 
         /// <summary>Shoot a lamp out. No self-heal -- it stays dead until RepairLamp, same contract as glass.</summary>
-        public bool BreakLamp(int i)
+        public bool BreakLamp(int i, bool fx = true)
         {
             if ((uint)i >= (uint)_lampNodes.Count || _lampBroken[i]) return false;
             _lampBroken[i] = true;
+            if (fx && GodotObject.IsInstanceValid(_lampNodes[i]))   // a lens is glass too: a small burst in the lamp's own colour, out of its face (master 2026-09-05)
+            {
+                var n = _lampNodes[i]; var ab = n.GetAabb();
+                var centre = n.GlobalTransform * ab.GetCenter();
+                var outward = GlobalTransform.Basis * (_lampLabels[i].StartsWith("tail") ? Vector3.Back : Vector3.Forward);   // headlights face -Z, taillights +Z
+                var c = (n.MaterialOverride as StandardMaterial3D)?.AlbedoColor ?? new Color(0.94f, 0.89f, 0.73f);
+                var sz = ab.Size * 0.5f;
+                GlassPane.SpawnShards(GetTree()?.CurrentScene, centre, outward.Normalized(), new Vector3(Mathf.Max(sz.X, 0.06f), Mathf.Max(sz.Y, 0.06f), Mathf.Max(sz.Z, 0.06f)),
+                                      new Color(c.R, c.G, c.B, 0.5f), 1.5f, 0.6f);   // a fistful of small chips in the lamp's colour
+                GlassPane.PlayBreakSound(GetTree()?.CurrentScene, centre);
+            }
             ApplyLampState();
             return true;
         }
@@ -4128,7 +4160,8 @@ namespace UnturnedGodot
         /// <summary>Hang the door panel peeled out of the body as two leaves on two vertical hinges: leaf A on the front
         /// jamb, leaf B on the mullion between the two windows (a child of leaf A, so it folds back onto it like a
         /// jackknife). The meshes stay in BODY space and are offset back by their pivot, so at fold 0 nothing moves.
-        /// The two window panes ride their leaves. Opens on enter/exit (CycleDoor) and folds shut after a hold.</summary>
+        /// The two window panes ride their leaves. Interact on the door or the driver's door key toggles it; boarding/leaving
+        /// any seat swings it open and it folds shut a moment later (CycleDoor). Cosmetic only.</summary>
         static void BuildBiFoldDoor(Vehicle v, Spec s, ArrayMesh doorMesh, Material bodyMat)
         {
             // Two leaves out of one panel: cut at the mullion. CLOSE THE CUT (master: "close up the open ends on the mesh, that
@@ -4183,6 +4216,25 @@ namespace UnturnedGodot
                 v._doorPivotA.AddChild(v._doorPivotB);
             }
             v.AddChild(v._doorPivotA);
+            // The leaves BLOCK bullets, zombies and cars (layer 5) but NOT players (no HitMeshBit: the player masks that,
+            // not 5) -- master 2026-09-05 "remove player collision on just the door, and JUST for players so you can
+            // actually walk inside". Each box rides its leaf, so a shut door stops a round and an open one does not.
+            foreach (var (leaf, pivot, bodyOff) in new[] { (leafA, v._doorPivotA, -v._doorPivotA.Position),
+                                                             (leafB, v._doorPivotB, leafB != null ? new Vector3(-(s.DoorHingeBX != 0f ? s.DoorHingeBX : s.DoorHingeX), 0f, -s.DoorSplitZ) : Vector3.Zero) })
+            {
+                if (leaf == null || pivot == null) continue;
+                var ab = leaf.GetAabb();
+                var body = new StaticBody3D { Name = "DoorHit", CollisionLayer = 1u << 5, CollisionMask = 0, Position = bodyOff + ab.GetCenter() };
+                body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = ab.Size } });
+                pivot.AddChild(body);
+                v.AddCollisionExceptionWith(body);
+            }
+            var doorSnd = PlayerController.LoadWavOneShot("res://content/busdoor_open.wav", loop: false);   // CC0 (Jedo), picked by master; tinyclaw ripped it
+            if (doorSnd != null)
+            {
+                v._doorAudio = new AudioStreamPlayer3D { Stream = doorSnd, UnitSize = 6f, MaxDistance = 40f, VolumeDb = -2f, Position = (s.DoorZoneMin + s.DoorZoneMax) * 0.5f };
+                v.AddChild(v._doorAudio);
+            }
             // the windows in the door ride their leaf (they were built in body space under the vehicle: keep that offset)
             for (int i = 0; i < v._glassNodes.Count; i++)
             {
@@ -4193,6 +4245,7 @@ namespace UnturnedGodot
                 g.GetParent()?.RemoveChild(g);
                 pivot.AddChild(g);
                 g.Position = bodyOffset;
+                foreach (var ch in g.GetChildren()) if (ch is StaticBody3D gb) gb.CollisionLayer = 1u << 5;   // the door's panes: shootable, but players walk through (see DoorHit)
             }
             // FLOOR POCKET (master: "clip out a chunk of the floor in the bus, theres a step up that the door clips with"): the
             // leaves' bottom is well under the cabin floor, so cut the floor where they swing and put a lowered floor at the
@@ -4217,22 +4270,36 @@ namespace UnturnedGodot
                     if (nb != null) v._bodyMesh.Mesh = nb;
                 }
             }
-            if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") { v._doorOpenWanted = true; v._doorHold = 1e9f; }   // harness: hold it open for a render
+            if (System.Environment.GetEnvironmentVariable("UG_DOOROPEN") == "1") v._doorOpen = true;   // harness: open for a render
         }
 
-        /// <summary>Somebody got in or out: swing the door open, hold, fold shut.</summary>
+        /// <summary>This vehicle has the folding passenger door (the bus).</summary>
+        public bool HasBiFoldDoor => _doorPivotA != null;
+        /// <summary>The door's WANTED state: true from the moment it is told to open (it may still be swinging). Purely
+        /// cosmetic (master 2026-09-05): nothing gates boarding or leaving on it.</summary>
+        public bool DoorOpen => _doorOpen;
+        public float DoorFold => _doorT;
+        public void ToggleDoor() { _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close
+        /// <summary>Somebody got in or out: the door opens (if it is not already) and folds shut DoorHoldSeconds later.
+        /// Purely cosmetic -- nothing waits for it (master 2026-09-05).</summary>
         public void CycleDoor()
         {
             if (_doorPivotA == null) return;
-            _doorOpenWanted = true; _doorHold = 1.6f;
+            SetDoorOpen(true);
+            _doorHold = DoorHoldSeconds;
         }
-        public float DoorFold => _doorT;
+        public void SetDoorOpen(bool open)
+        {
+            if (_doorPivotA == null || _doorOpen == open) return;
+            _doorOpen = open;
+            if (_doorAudio != null && IsInstanceValid(_doorAudio)) _doorAudio.Play();   // same clip both ways (the leaves fold the same, just backwards)
+        }
 
         void UpdateDoor(float dt)
         {
-            if (_doorOpenWanted) { _doorHold -= dt; if (_doorHold <= 0f) _doorOpenWanted = false; }
-            float target = _doorOpenWanted ? 1f : 0f;
-            if (Mathf.Abs(_doorT - target) < 1e-4f) return;
+            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) SetDoorOpen(false); }
+            float target = _doorOpen ? 1f : 0f;
+            if (_doorT == target) return;
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
             float e = _doorT < 0.5f ? 2f * _doorT * _doorT : 1f - Mathf.Pow(-2f * _doorT + 2f, 2f) / 2f;   // ease in-out
             _doorPivotA.RotationDegrees = new Vector3(0f, -_doorFoldDeg * e, 0f);            // leaf A swings INTO the bus (its free edge goes -X)
@@ -5501,7 +5568,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     // shape is immutable and refcounted, so every car of a spec can share one.
                     if (!_triCache.TryGetValue(s.Body, out var tri))
                     {
-                        tri = bodyMesh.CreateTrimeshShape();
+                        tri = (v._bodyMesh?.Mesh ?? bodyMesh).CreateTrimeshShape();   // the RENDERED body (the bus's floor pocket is in it) so the player walks the same floor they see
                         // BackfaceCollision, because these bodies are NOT watertight and their winding is not
                         // consistent: 492 of the sedan's 795 edges are not shared by exactly two faces.
                         tri.BackfaceCollision = true;

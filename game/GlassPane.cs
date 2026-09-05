@@ -85,43 +85,51 @@ namespace UnturnedGodot
             var scene = GetTree()?.CurrentScene;
             Vector3 centre = GlobalPosition;
             Vector3 faceN = GlobalTransform.Basis.Z.Normalized();
-            if (scene != null && RubbleFx.TryGet(GlassEffectId, out var fx) && fx.Tex != null)
-            {
-                var fmat = new StandardMaterial3D
-                {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,   // flat glass colour (not lit-dark) so the shards read as glass
-                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    AlbedoColor = ShardTint(_hue),   // FLAT glass-hue shard at a clean UNIFORM 50% alpha (ShardTint a=0.5). No AlbedoTexture: the glass rubble sprite's soft alpha multiplied the 0.5 down to a faint, uneven shard -- master wanted "50% transp on the WHOLE particle" i.e. uniform across the quad. Colour still off the prop hue via AlbedoColor (master+tc reliable-multiply intent kept).
-                };
-                Vector3 halfExt = new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f);   // emit across the pane's whole face
-                var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
-                    Emitting = false, OneShot = true,   // fired below AFTER positioning. GlassPane.Shatter runs from TakeDamage INSIDE StepBullets (a 50Hz physics tick); Emitting=true in the ctor arms the one-shot at construction and it burns its cycle before the first _process -> fires EMPTY -> shards never appear (the pane still vanishes + marks broken, so it looks deliberate). Same bug + fix as ImpactFx.
-                    Amount = ParticleFx.Amount(Mathf.Clamp(Mathf.RoundToInt(fx.Count * 2f), 16, 40)),   // a pane throws more glass than a fragment
-                    Lifetime = Mathf.Max(1.2f, fx.LifeMax * 1.2f), Explosiveness = 0.9f, Randomness = 0.5f,
-                    Direction = faceN, Spread = 85f,   // fan out of the pane face
-                    InitialVelocityMin = fx.SpeedMin * 0.5f, InitialVelocityMax = fx.SpeedMax * 0.7f,
-                    Gravity = new Vector3(0f, -7f * fx.Gravity, 0f),
-                    ScaleAmountMin = fx.SizeMin * 0.45f * ParticleFx.SizeScale, ScaleAmountMax = fx.SizeMax * 0.55f * ParticleFx.SizeScale,
-                    AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -400f, AngularVelocityMax = 400f,
-                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
-                    Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
-                    // HUGE cull box -> the fast shards never frustum-cull the system (the flicker/derender bug); same
-                    // lesson as ImpactFx + DestructibleField.PlayBreakEffect.
-                    VisibilityAabb = new Aabb(new Vector3(-60f, -60f, -60f), new Vector3(120f, 120f, 120f)),
-                };
-                scene.AddChild(ps);
-                ps.GlobalPosition = centre;
-                ps.Emitting = true;   // THE FIX: arm the one-shot AFTER AddChild+position -> a clean emission cycle regardless of the spawning (physics) tick
-                var t = GetTree().CreateTimer(ps.Lifetime + 0.6f);
-                t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
-            }
+            SpawnShards(scene, centre, faceN, new Vector3(Mathf.Max(_half.X, 0.2f), Mathf.Max(_half.Y, 0.2f), 0.2f), ShardTint(_hue));
             PlayBreakSound(scene, centre);
             QueueFree();   // the glass is gone once it shatters
         }
 
+        /// <summary>The glass shard burst on its own -- a window pane here, a car window or a lamp lens in Vehicle
+        /// (BreakGlass/BreakLamp; master 2026-09-05 "give vehicle glass glass break particles as well as headlights and
+        /// tail lights"). `halfExt` = the emission box (world-aligned) the shards start across; `tint` = flat shard colour
+        /// (see ShardTint); `countScale` shrinks the burst for a small lens.</summary>
+        public static void SpawnShards(Node scene, Vector3 centre, Vector3 faceN, Vector3 halfExt, Color tint, float countScale = 1f, float sizeMul = 1f)
+        {
+            if (scene == null || !RubbleFx.TryGet(GlassEffectId, out var fx) || fx.Tex == null) return;
+            var fmat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,   // flat glass colour (not lit-dark) so the shards read as glass
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                BillboardKeepScale = true,   // WITHOUT this the Particles billboard normalises the instance basis and every shard is the 1 m quad -- ScaleAmount* did nothing (found on the jeep's headlight, 2026-09-05)
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                AlbedoColor = tint,   // FLAT glass-hue shard at a clean UNIFORM 50% alpha (ShardTint a=0.5). No AlbedoTexture: the glass rubble sprite's soft alpha multiplied the 0.5 down to nothing
+            };
+            var ps = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Emitting = false, OneShot = true,   // fired below AFTER positioning. GlassPane.Shatter runs from TakeDamage INSIDE StepBullets (a 50Hz physics tick); Emitting=true in the ctor armed a half-cycle
+                Amount = ParticleFx.Amount(Mathf.Clamp(Mathf.RoundToInt(fx.Count * 2f * countScale), 8, 40)),   // a pane throws more glass than a fragment
+                Lifetime = Mathf.Max(1.2f, fx.LifeMax * 1.2f), Explosiveness = 0.9f, Randomness = 0.5f,
+                Direction = faceN, Spread = 85f,   // fan out of the pane face
+                InitialVelocityMin = fx.SpeedMin * 0.5f, InitialVelocityMax = fx.SpeedMax * 0.7f,
+                Gravity = new Vector3(0f, -7f * fx.Gravity, 0f),
+                ScaleAmountMin = fx.SizeMin * 0.45f * ParticleFx.SizeScale * sizeMul, ScaleAmountMax = fx.SizeMax * 0.55f * ParticleFx.SizeScale * sizeMul,   // sizeMul: a car window / lamp lens throws small chips, not pane-sized sheets
+                AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -400f, AngularVelocityMax = 400f,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
+                // HUGE cull box -> the fast shards never frustum-cull the system (the flicker/derender bug); same
+                // lesson as ImpactFx + DestructibleField.PlayBreakEffect.
+                VisibilityAabb = new Aabb(new Vector3(-60f, -60f, -60f), new Vector3(120f, 120f, 120f)),
+            };
+            scene.AddChild(ps);
+            ps.GlobalPosition = centre;
+            ps.Emitting = true;   // THE FIX: arm the one-shot AFTER AddChild+position -> a clean emission cycle regardless of the spawning (physics) tick
+            if (System.Environment.GetEnvironmentVariable("UG_SHARDDBG") == "1") GD.Print($"[shards] size {fx.SizeMin}..{fx.SizeMax} x SizeScale {ParticleFx.SizeScale} x mul {sizeMul} -> scale {ps.ScaleAmountMin:0.000}..{ps.ScaleAmountMax:0.000} amount {ps.Amount} ext {halfExt}");
+            var t = scene.GetTree().CreateTimer(ps.Lifetime + 0.6f);
+            t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
+        }
+
         static AudioStream _snd; static bool _sndTried;
-        static void PlayBreakSound(Node scene, Vector3 pos)
+        public static void PlayBreakSound(Node scene, Vector3 pos)
         {
             if (scene == null) return;
             if (!_sndTried)
