@@ -23,8 +23,35 @@ float roof_y(vec2 xz) {
 
 varying float amul;
 
+// AXIS-LOCKED BILLBOARD. ParticleFlagAlignY points each streak's Y at its own velocity, which gets the LEAN right and
+// says nothing about which way the quad FACES: its normal stays wherever the particle basis happened to leave it, so
+// from a perpendicular heading you see a 1.4 cm quad edge-on ("the raindrops dont face the camera to the east and
+// west, so they are very thin" -- master 2026-09-05). A plain billboard would fix the facing and destroy the lean,
+// since it forces Y to the view's up. So spin the quad about its OWN long axis instead: Y is kept exactly as the
+// particle system set it, and X/Z are rebuilt so the face turns toward the camera. Lean preserved, width restored.
+// `cam` is passed IN rather than read from CAMERA_POSITION_WORLD: Godot exposes shader built-ins only inside the
+// entry points (vertex/fragment/light), never inside a user-defined function, and referencing one here fails the whole
+// shader with "Unknown identifier in expression" -- which costs the rain entirely, not just the billboard.
+mat4 face_camera(mat4 m, vec3 cam) {
+    vec3 origin = m[3].xyz;
+    vec3 ay = m[1].xyz;                       // long axis, velocity-aligned; length carries ScaleAmountMin/Max
+    float len = length(ay);
+    if (len < 1e-6) return m;
+    vec3 a = ay / len;
+    float wid = length(m[0].xyz);             // keep the authored 0.014 m width (and its per-particle scale)
+    vec3 r = cross(a, cam - origin);
+    float rl = length(r);
+    // Looking straight down the streak's own axis there is no unique facing -- the cross degenerates. Keep the
+    // original basis rather than normalising a zero vector, which would blow the quad up to NaN.
+    if (rl < 1e-5) return m;
+    r /= rl;
+    return mat4(vec4(r * wid, 0.0), vec4(ay, 0.0), vec4(cross(r, a), 0.0), vec4(origin, 1.0));
+}
+
 void vertex() {
-    vec3 wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // per-particle world position (particles are world-space, LocalCoords off)
+    mat4 bb = face_camera(MODEL_MATRIX, CAMERA_POSITION_WORLD);
+    MODELVIEW_MATRIX = VIEW_MATRIX * bb;
+    vec3 wpos = (bb * vec4(VERTEX, 1.0)).xyz;   // per-particle world position (particles are world-space, LocalCoords off)
     float shadow = 0.0;
     if (rain_canopy.w > 0.001)
         shadow = (1.0 - smoothstep(rain_canopy.z * 0.72, rain_canopy.z, distance(wpos.xz, rain_canopy.xy))) * rain_canopy.w;

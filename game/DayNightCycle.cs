@@ -469,7 +469,10 @@ void sky() {
                     // The night key is 0.05 = Godot's Environment DEFAULT: the "Sun shafts" row only seeded 0.01 when the density
                     // was <= 0, which it never was, so the SUPER-foggy night master loved was the untouched engine default,
                     // not 0.01 ("im on high. the vm fog is there but its nowhere near as intense as it was").
-                    const float NightVol = 0.035f;   // was 0.05 (the engine default master liked); "reduce the nighttime VM fog by like 30%" (strawberry 2026-09-04)
+                    // 0.05 (engine default) -> 0.035 ("reduce the nighttime VM fog by like 30%", strawberry 2026-09-04)
+                    // -> 0.024 ("tone down nighttime vm fog some more", strawberry 2026-09-05). Same 30% step as the
+                    // cut she already accepted, rather than a new guess at the size of "some more".
+                    const float NightVol = 0.024f;
                     float vol = elevation <= -12f ? NightVol                                                      // NIGHT
                               : elevation <= 0f ? Mathf.Lerp(NightVol, 0.010f, (elevation + 12f) / 12f)           // last twilight before the sun clears the horizon
                               : Mathf.Lerp(0.010f, 0.003f, Mathf.Clamp(elevation / 60f, 0f, 1f));                 // sun up: horizon 0.010 -> 0.003 from 60 deg

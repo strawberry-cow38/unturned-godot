@@ -51,7 +51,7 @@ namespace UnturnedGodot
             var quad = new QuadMesh { Size = new Vector2(0.014f, 0.62f) };   // a thin, tall streak
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/rain_streak.gdshader") };
             _mat.SetShaderParameter("tint", new Vector3(0.80f, 0.86f, 0.96f));
-            _mat.SetShaderParameter("alpha_base", 0.14f);   // = 0.14 * intensity, driven in _Process; the velocity-aligned world tilt comes from ParticleFlagAlignY below (not a billboard)
+            _mat.SetShaderParameter("alpha_base", 0.14f);   // = 0.14 * intensity, driven in _Process; the velocity-aligned world tilt comes from ParticleFlagAlignY below, and the shader then spins the quad about that axis to face the camera (rain_streak.gdshader face_camera)
             quad.Material = _mat;
             _p = new CpuParticles3D
             {
