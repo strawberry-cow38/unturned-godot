@@ -6366,7 +6366,7 @@ namespace UnturnedGodot
         // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
-        const float TracerBaseW = 0.065f;   // 5.56's tracer half-width; every other cartridge is this times GunDef.TracerScale
+        const float TracerBaseW = 0.032f;   // 5.56's tracer half-width (was 0.065 -- "and smaller", strawberry 2026-09-05); every other cartridge is this times GunDef.TracerScale
         sealed class Bullet { public bool Npc;   // fired by an AI, NOT by the local player: no viewmodel anchor, no hitmarker
             public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage, PlayerDamage;
             public float FalloffStart, FalloffEnd, FalloffMin = 1f;
@@ -6380,6 +6380,12 @@ namespace UnturnedGodot
                 if (m >= FalloffEnd) return FalloffMin;
                 return 1f + (FalloffMin - 1f) * ((m - FalloffStart) / (FalloffEnd - FalloffStart));
             } public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; public float TracerW = TracerBaseW;
+            /// <summary>The item this round LEAVES BEHIND where it stops, 0 for none. An arrow, a bolt or a nail is
+            /// a physical object that survives its own flight -- you shoot it, you walk over and take it back
+            /// (strawberry 2026-09-05 "when an arrow hits a target, it should stick into its target, and be
+            /// retrievable"). Carried on the ROUND for the same reason the warhead is: the answer must be the one
+            /// from the gun that FIRED it, not from whatever is in your hands when it lands.</summary>
+            public ushort StickItemId;
             // The warhead travels WITH the round, like every other per-shot property here. It used to be read off
             // the live `Gun` at impact instead, so the blast belonged to whatever was in the player's hands when
             // the round landed rather than to the gun that fired it: take a turret seat holding the rocket
@@ -6646,8 +6652,9 @@ namespace UnturnedGodot
         {
             var g = srcGun ?? Gun;
             var b = new Bullet { Npc = npc, Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, PlayerDamage = playerDamage,
-                                 FalloffStart = g?.FalloffStart ?? 0f, FalloffEnd = g?.FalloffEnd ?? 0f, FalloffMin = g?.FalloffMin ?? 1f, Cosmetic = NetFire != null && !npc, Tracer = (Suppressed && !npc) ? null : MakeTracer(),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
+                                 FalloffStart = g?.FalloffStart ?? 0f, FalloffEnd = g?.FalloffEnd ?? 0f, FalloffMin = g?.FalloffMin ?? 1f, Cosmetic = NetFire != null && !npc, Tracer = (Suppressed && !npc) ? null : MakeTracer(g?.CaliberName),   // a suppressed shot draws no streak; every tracer use site is already null-guarded
                                  TracerW = TracerBaseW * GunDef.TracerScale(g?.CaliberName),   // .22 thin, .50 BMG fat; buckshot deliberately tiny (each pellet is its own bullet, so a shot draws 8 of these)
+                                 StickItemId = StickAmmoFor(g),   // an arrow/bolt/nail is recoverable; a cartridge is not
                                  BlastRadius = g?.BlastRadius ?? 0f, BlastZombieDamage = g?.BlastZombieDamage ?? 0f,
                                  BlastPlayerDamage = g?.BlastPlayerDamage ?? 0f, BlastVehicleDamage = g?.BlastVehicleDamage ?? 0f };
             // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
@@ -6921,6 +6928,7 @@ namespace UnturnedGodot
                         if (--b.StepsLeft <= 0) RemoveBullet(i);
                         continue;
                     }
+                    StickProjectile(b, point, hit["normal"].AsVector3());   // an arrow/bolt/nail survives its flight
                     RemoveBullet(i);
                     continue;
                 }
@@ -7150,7 +7158,7 @@ namespace UnturnedGodot
 
         // The traveling tracer: a CROSSED QUAD (two perpendicular teardrop planes sharing the flight axis, so it reads solid
         // from ANY angle -- never edge-on flat) textured with the soft circle sprite, riding the bullet along its velocity.
-        MeshInstance3D MakeTracer()
+        MeshInstance3D MakeTracer(string caliberName = null)
         {
             if (!_tracerTexTried)
             {
@@ -7165,10 +7173,56 @@ namespace UnturnedGodot
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                AlbedoColor = new Color(1.9f, 0.85f, 0.2f),    // ORANGE HDR -> additive orange glow, blooms warm (R>G>>B keeps it orange, not white)
+                // Orange is BURNING PROPELLANT, so it is per-cartridge now: a bolt, an arrow or a nail has none
+                // and draws white (GunDef.TracerColor). Still HDR + additive, so it blooms either way.
+                AlbedoColor = MakeTracerColor(caliberName),
             };
             if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
             return new MeshInstance3D { Mesh = new ImmediateMesh(), MaterialOverride = mat };
+        }
+
+        /// <summary>The item an arrow/bolt/nail leaves where it lands, or 0 for a cartridge. Taken from the gun's
+        /// OWN magazine id, so it is whatever that weapon actually feeds -- no table of weapon-to-ammo to keep in
+        /// step with the .dat files, and a modded bow recovers its own arrows for free.</summary>
+        static ushort StickAmmoFor(GunDef g)
+        {
+            if (g == null || string.IsNullOrEmpty(g.CaliberName)) return 0;
+            if (!GunDef.UnpropelledCalibers.Contains(g.CaliberName.Trim().Trim('"'))) return 0;
+            if (g.MagazineId <= 0 || g.MagazineId > ushort.MaxValue) return 0;
+            // THE MAGAZINE MUST BE THE PROJECTILE. Unturned models an arrow as a one-round "magazine", so a bow's
+            // magazine id IS the arrow and recovering it is right. The NAILGUN's is a Nailgun Magazine holding many
+            // -- sticking that would hand back a full magazine for every nail fired. Capacity is the honest
+            // discriminator and it comes from the data, so nothing here needs a weapon list to keep in step.
+            var a = SDG.Unturned.Assets.find((ushort)g.MagazineId);
+            if (a == null || a.magCapacity > 1) return 0;
+            return (ushort)g.MagazineId;
+        }
+
+        /// <summary>Leave the projectile where it stopped, upright in the surface and pickup-able.
+        ///
+        /// It is FROZEN at the impact rather than dropped as loose physics: an arrow that lands and then topples
+        /// onto the floor has not stuck in anything. The body is the ordinary WorldItem, so F picks it up exactly
+        /// like any other dropped item -- "retrievable" needed no new pickup path.
+        ///
+        /// HONEST LIMIT: it sticks in the WORLD, at the point of impact, not to the thing it hit. Shoot a walking
+        /// zombie and the arrow stays where the zombie was, not in the zombie. Following a moving target means
+        /// parenting to its bone and travelling with the ragdoll, which is a bigger job than this one.</summary>
+        void StickProjectile(Bullet b, Vector3 point, Vector3 normal)
+        {
+            if (b.StickItemId == 0 || b.Cosmetic) return;   // Cosmetic = a client-side echo of a shot the server owns
+            var item = new SDG.Unturned.Item(b.StickItemId, 1, 100);
+            var wi = WorldItem.Spawn(GetTree().CurrentScene ?? (Node)this, item, point + normal * 0.05f);
+            if (wi == null) return;
+            var dir = b.Vel.LengthSquared() > 0.001f ? b.Vel.Normalized() : -normal;
+            if (Mathf.Abs(dir.Dot(Vector3.Up)) < 0.98f) wi.LookAt(point + dir, Vector3.Up);   // nose into the surface
+            wi.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
+            wi.Freeze = true;                                // stuck, not dropped -- see the note above
+        }
+
+        static Color MakeTracerColor(string caliberName)
+        {
+            var (r, g, b) = GunDef.TracerColor(caliberName);
+            return new Color(r, g, b);
         }
 
         // The tracer: a CROSSED QUAD (two perpendicular planes sharing the flight axis, so it reads solid from ANY angle --
@@ -7178,7 +7232,9 @@ namespace UnturnedGodot
         {
             if (b.Tracer == null || b.Tracer.Mesh is not ImmediateMesh im) return;
             im.ClearSurfaces();
-            const float MaxLen = 40f, tHead = 0.55f;   // teardrop: pointed tail (muzzle) -> round nose (bullet)
+            // 40 m of streak meant a rifle round drew a bar most of the way to what it hit; 10 reads as a round in
+            // flight rather than a laser (strawberry 2026-09-05 "much shorter ... and smaller").
+            const float MaxLen = 10f, tHead = 0.55f;   // teardrop: pointed tail (muzzle) -> round nose (bullet)
             float MaxW = b.TracerW;                    // per-CALIBER width (GunDef.TracerScale); was a flat 0.09 for every round
             Vector3 head = b.Pos;                                      // round fat nose = the bullet, leading
             Vector3 muzzle = b.HasAnchor ? b.MuzzleAnchor : b.Origin;

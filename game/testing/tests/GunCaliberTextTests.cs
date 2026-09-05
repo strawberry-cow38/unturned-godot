@@ -92,6 +92,20 @@ namespace UnturnedGodot.Testing
                     named + retailLeft > 30);
             T.Check($"every gun with a caliber names it in its description ({named} named{(retailLeft > 0 ? " -- " + firstBad : "")})",
                     retailLeft == 0);
+
+            // ---- THE RECOVERABLE-PROJECTILE DISCRIMINATOR (strawberry 2026-09-05: arrows stick and are
+            // retrievable). PlayerController.StickAmmoFor leaves the gun's MAGAZINE item at the impact, which is
+            // right only because Unturned models an arrow as a one-round magazine. The nailgun's magazine holds
+            // many nails, so the same rule would hand back a whole magazine per nail. Capacity is what separates
+            // them, so the capacities are pinned here -- if a re-rip ever gives an arrow a capacity above 1 the
+            // feature silently stops, and if it gives the nailgun magazine a capacity of 1 it silently starts
+            // duplicating magazines. Neither shows up anywhere else.
+            var arrow = SDG.Unturned.Assets.find(347);
+            T.Check($"an arrow is a ONE-round magazine, so it IS the projectile (cap {arrow?.magCapacity})",
+                    arrow != null && arrow.magCapacity == 1);
+            var nailMag = SDG.Unturned.Assets.find(1166);
+            T.Check($"the nailgun magazine holds many, so it is NOT recoverable per nail (cap {nailMag?.magCapacity})",
+                    nailMag != null && nailMag.magCapacity > 1);
         }
     }
 }

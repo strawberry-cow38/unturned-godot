@@ -268,6 +268,19 @@ namespace UnturnedGodot
         // A DICTIONARY rather than a switch so the test can ask what is mapped. With a switch, renaming a cartridge in
         // a .dat drops it into the default arm and every tracer silently reverts to 1.0 -- identical to a gun that is
         // genuinely 5.56, and invisible in play.
+        /// <summary>Tracer COLOUR by cartridge. A tracer is burning propellant, so the orange belongs to things
+        /// that have some: an arrow, a crossbow bolt and a nail are launched by a limb or a spring and glow at
+        /// nobody. strawberry 2026-09-05: "change the nailgun tracer to be white like the crossbow n stuff" -- and
+        /// the crossbow was orange too, so this makes the reference true rather than just the nailgun.
+        /// Still additive and HDR, so it reads as a bright streak, just a colourless one.</summary>
+        public static readonly System.Collections.Generic.HashSet<string> UnpropelledCalibers = new()
+        { "Arrow", "Bolt", "Nail" };
+
+        public static (float r, float g, float b) TracerColor(string caliberName)
+            => caliberName != null && UnpropelledCalibers.Contains(caliberName)
+                ? (1.5f, 1.5f, 1.5f)      // white HDR
+                : (1.9f, 0.85f, 0.2f);    // the propellant orange (R>G>>B keeps it orange, not white)
+
         public static float TracerScale(string caliberName)
             => caliberName != null && TracerScales.TryGetValue(caliberName, out var s) ? s : 1.00f;
 
