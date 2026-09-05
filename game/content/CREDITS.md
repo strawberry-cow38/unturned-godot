@@ -1,6 +1,6 @@
-# Credits & Attributions — weather audio
+# Credits & Attributions — shipped audio
 
-Third-party audio shipped under `game/content/` for the weather system, with licence, source, and how each
+Third-party audio shipped under `game/content/`, with licence, source, and how each
 file was modified. This is the SHIPPED ledger (it rides under `res://` and the in-game `credits` console command
 prints it verbatim). The canonical repo-root ledger `/CREDITS.md` mirrors this section and points back here.
 
@@ -16,8 +16,6 @@ Three distance-tiered thunder samples (near clap → distant rumble), picked by 
 All three were trimmed to the usable transient+tail and peak-normalised; `thunder.wav` additionally had ~0.5 s
 of leading digital silence cut so the boom lands on the scheduled flash-to-thunder delay.
 
-- **EwanPenman11** — "Turbo Spooling and Blow Off.WAV" — **CC0 1.0** — https://freesound.org/people/EwanPenman11/sounds/659544/ (2026-09-05)
-- **Ryding** — "Door on bus.wav" — **CC0 1.0** — https://freesound.org/people/Ryding/sounds/110135/ (2026-09-05)
 - **Kinoton** — "Thunder Clap And Rumble #9" — **CC0 1.0** — https://freesound.org/people/Kinoton/sounds/760216/ (2026-08-29)
 - **hifijohn** — "thunder" — **CC0 1.0** — https://freesound.org/people/hifijohn/sounds/242586/ (2026-08-29)
 - **klankbeeld** — "Deep thunder clap 03" — **CC BY 4.0** — https://freesound.org/people/klankbeeld/sounds/322210/ (2026-08-29)
@@ -45,3 +43,13 @@ the wood-deck take, pending master's canvas-vs-wood call.)
 - **rain_tarp.wav** ← **buzkill** — "Rain Wood Deck Furniture Nighttime Coastal" — **CC0 1.0** — https://freesound.org/s/824671/ (2026-08-30)
 - **rain_car.wav** ← **jankooiker** — "Rain from inside car" — **CC0 1.0** — https://freesound.org/s/237941/ (2026-08-30)
 - **rain_foliage.wav** ← **bone666138** — "Rain in Trees" — **CC0 1.0** — https://freesound.org/s/655311/ (2026-08-30)
+
+## Bus door → `busdoor_open.wav`
+
+A city-bus door opening — the pneumatic hiss and swing, for the bi-fold doors.
+
+- **Jedo** — "Bus doors open-close" — **CC0 1.0** — https://freesound.org/people/Jedo/sounds/396811/ (2026-09-05)
+  - **Modified:** one 1.70 s open cut from the 116 s session at 93.40 s, high-passed at 50 Hz, faded in/out
+    (15 ms / 120 ms), peak-normalised to −2.00 dBFS, mono 44.1 kHz 16-bit to match the other vehicle sounds.
+  - The cut deliberately ends before the latch clunk at 95.64 s: strawberry picked this window over a longer
+    one that included it (2026-09-05), so the file is the door opening only.

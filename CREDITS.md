@@ -74,6 +74,17 @@ verbatim); this entry is the canonical mirror so the two ledgers reference each 
   2 s-crossfaded loops and RMS-matched to −24 dBFS, with `rain_light` high-passed at 120 Hz first (its source is
   ~92% sub-250 Hz and reads as wind unfiltered).
 
+### `game/content/busdoor_open.wav`
+
+A city-bus door opening, for the bi-fold vehicle doors. Full licence, source URL and modification notes live in
+the shipped ledger `game/content/CREDITS.md`; this entry is the canonical mirror.
+
+- **Source:** freesound.org — "Bus doors open-close" by **Jedo** (#396811).
+- **Licence:** **CC0 1.0** (https://creativecommons.org/publicdomain/zero/1.0/). No attribution required;
+  recorded anyway so the provenance of anything shipped is answerable.
+- **Derivation:** a 1.70 s open cut from the 116 s session at 93.40 s, high-passed at 50 Hz, faded, and
+  peak-normalised to −2.00 dBFS.
+
 Note for anyone adding audio here: files dropped into `content/` have never been through the Godot editor's
 import step, so they have no `.import` sidecar and `GD.Load`/`res://` returns **null** for them — silently, with
 no error, which presents as "the sound is quiet". Load them off disk instead, the way everything else at runtime
