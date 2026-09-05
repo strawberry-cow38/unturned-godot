@@ -5794,7 +5794,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         // while she is PARKED, which is all the test exercises. If it fails under way, that is a
                         // different mechanism than the node type and wants the symptom named before another guess.
                         var tri = new StaticBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0 };
-                        tri.AddChild(new CollisionShape3D { Shape = region.CreateTrimeshShape() });
+                        // TWO-SIDED, or the deckhouse is scenery you walk through. CreateTrimeshShape() defaults
+                        // BackfaceCollision = FALSE, so the walls are single-sided surfaces: a body meeting a back
+                        // face passes straight through it. That is why "the superstructure has no collision"
+                        // survived a test that PASSES -- vehicle.ship_hull_1to1 asks with a RAY from outside, which
+                        // meets front faces and stops correctly, while a player walking the deck meets the other
+                        // side and does not. A ray proves the collider is QUERYABLE, not that it stops anything.
+                        // This codebase has fixed the same one-sidedness four times already, each with the reason
+                        // written down -- StoreShelf's shell, the terrain river surface, RoadField's tube, and the
+                        // vehicle glass panes ("a round from outside must stop on it"). The deckhouse was the one
+                        // trimesh that never got it.
+                        var shape = region.CreateTrimeshShape();
+                        shape.BackfaceCollision = true;
+                        tri.AddChild(new CollisionShape3D { Shape = shape });
                         v.AddChild(tri);
                         // AND EXEMPT THE HULL FROM ITS OWN DECKHOUSE. A static child is a SEPARATE body, not a
                         // shape on this one, and the vessel's mask scans the layer it sits on -- so she collides

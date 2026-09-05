@@ -1,9 +1,8 @@
-# Hand-cut to the aperture measured in ship_body.txt (frame reveals), NOT raytraced.
-# The traced pane was ~4 cm oversize on every edge (grid rounding) and the windshield sat 6.6 cm
-# behind the outer face, so it read as not matching its opening (master 2026-09-05).
+# Hand-cut to the aperture measured in ship_body.txt. RAKED: the screen leans out as it rises
+# (outer skin z 10.90 at the sill, 10.40 at the head) -- a flat pane on one z reads as vertical.
 g windshield
-v -7.380000 16.850000 10.390000
-v 7.380000 16.850000 10.390000
+v -7.380000 16.850000 10.890000
+v 7.380000 16.850000 10.890000
 v 7.380000 19.410000 10.390000
 v -7.380000 19.410000 10.390000
 f 1 2 3

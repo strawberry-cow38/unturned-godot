@@ -217,6 +217,19 @@ namespace UnturnedGodot.Testing
                 var wall = space.IntersectRay(q);
                 float wallZ = wall.Count > 0 ? wall["position"].AsVector3().Z - hull.GlobalPosition.Z : float.NaN;
                 GD.Print($"[HULL] deckhouse wall: inbound ray at y=17 stopped at z={wallZ:0.00} (model's aft face is 25.75)");
+                // ...AND FROM THE INSIDE, which is the direction that catches a one-sided trimesh. The check above
+                // rays inward, meets the walls' FRONT faces and passes whether or not BackfaceCollision is set --
+                // so it went on passing while the deckhouse stayed walk-through for anyone actually on the deck
+                // ("ship superstructure still has no collision", master 2026-09-05, twice, against a green test).
+                // A ray proves the collider is QUERYABLE. Only the far side proves it is SOLID.
+                q.From = hull.GlobalPosition + new Vector3(0f, 17f, 18f);   // inside the deckhouse
+                q.To   = hull.GlobalPosition + new Vector3(0f, 17f, 40f);   // ...heading out through its aft wall
+                var outb = space.IntersectRay(q);
+                float outZ = outb.Count > 0 ? outb["position"].AsVector3().Z - hull.GlobalPosition.Z : float.NaN;
+                GD.Print($"[HULL] deckhouse wall: OUTBOUND ray at y=17 stopped at z={outZ:0.00}");
+                T.Check($"...and SOLID from the inside, so the walls are two-sided (stopped at z={outZ:0.00})",
+                        !float.IsNaN(outZ) && outZ < 30f);
+
                 T.Check($"the deckhouse is SOLID to something coming at it from outside (stopped at z={wallZ:0.00}, model aft face 25.75)",
                         !float.IsNaN(wallZ) && wallZ > 24f && wallZ < 27f);
 
