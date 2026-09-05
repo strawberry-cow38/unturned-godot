@@ -1732,7 +1732,7 @@ namespace UnturnedGodot
             public bool NoTrunk, RearEngine;
             public Vector3 DoorZoneMin, DoorZoneMax;   // BI-FOLD DOOR (bus): the body triangles inside this box become the door; split at DoorSplitZ into two leaves
             public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // hinge A on the panel's INNER face at the front jamb; (fold 0 = 90 degrees)
-            public float DoorHingeBX;   // hinge B (mullion) X: the panel's OUTER face (+ a hair), so leaf B folds back beside leaf A instead of through it   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
+            public float DoorHingeBX;   // hinge B (mullion) X: ON the panel's outer face (+0.5 mm), so the folded leaves stack TOUCHING -- 1 cm out here was a 2 cm gap in the open stack (master 2026-09-05)   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
             public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B
             public Vector3 DoorFloorCutMin, DoorFloorCutMax; public float DoorPocketY;   // cabin floor box cut out where the leaves swing, replaced by a pocket floor at DoorPocketY (the first step's level) + risers
             public Vector3 DoorRiserCutMin, DoorRiserCutMax;   // the old 2nd-step riser between the first step and the cabin floor: gone, the pocket continues the step
@@ -2541,7 +2541,7 @@ namespace UnturnedGodot
             // The panel is modelled 10 cm wider than the 1 m doorway (Z -3.25..-2.25; its ends hid inside the jambs) and 10 cm deeper than
             // the first step (-0.125): trimmed to both, capped, so hinge A sits ON the front jamb and the open stack (leaves 0.5 m each)
             // lies flush against the inner side of the step-well wall at Z -3.25 instead of through it.
-            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.25f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
+            DoorHingeX = 1.293f, DoorHingeBX = 1.4185f, DoorHingeZ = -3.25f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
             DoorTrimZ0 = -3.25f, DoorTrimZ1 = -2.25f, DoorTrimY = -0.12f,
             // FLOOR (master 2026-09-05): the first step (outside, -0.125) extends seamlessly into the bus where the leaves swing --
             // the cabin floor (+0.125) is cut out over that patch (X 0.68..1.23 between the step-well walls) and the old 2nd-step riser
@@ -4176,24 +4176,6 @@ namespace UnturnedGodot
                     leaf.Tris.Clear(); leaf.Tris.AddRange(kept.Tris);
                     MeshCut.CapHull(leaf, cutBot, 1, Vector3.Down, inner.T, inner.C);
                 }
-            }
-            // SEAM TONGUE (master: "a very slight gap between the doors when they are closed"): the two leaves are separate
-            // meshes under separate transforms, so their shared edge never lands on the same sub-pixel and the seam sparkles.
-            // Leaf A grows a 4 mm tongue past the cut, recessed 0.6 mm inside every face, in the faces' own colours: any
-            // crack along the seam now shows door, not daylight. Hidden while shut; a 4 mm nub on A's end while open.
-            if (two)
-            {
-                float xmin = float.MaxValue, xmax = float.MinValue, ymax = float.MinValue;
-                foreach (var tr in setA.Tris) foreach (var q in new[] { tr.A, tr.B, tr.C }) { xmin = Mathf.Min(xmin, q.P.X); xmax = Mathf.Max(xmax, q.P.X); ymax = Mathf.Max(ymax, q.P.Y); }
-                var outerV = cut[0]; foreach (var c in cut) if (c.P.X > outerV.P.X) outerV = c;
-                const float R = 0.0006f, L = 0.004f;
-                float x0 = xmin + R, x1 = xmax - R, y0 = (trim ? s.DoorTrimY : -1e9f) + R, y1 = ymax - R, z0 = s.DoorSplitZ - 0.002f, z1 = s.DoorSplitZ + L;
-                if (!trim) { float ymin = float.MaxValue; foreach (var tr in setA.Tris) foreach (var q in new[] { tr.A, tr.B, tr.C }) ymin = Mathf.Min(ymin, q.P.Y); y0 = ymin + R; }
-                MeshCut.Quad(setA, new Vector3(x1, y0, z0), new Vector3(x1, y0, z1), new Vector3(x1, y1, z1), new Vector3(x1, y1, z0), Vector3.Right, outerV.T, outerV.C);   // outer face
-                MeshCut.Quad(setA, new Vector3(x0, y0, z0), new Vector3(x0, y1, z0), new Vector3(x0, y1, z1), new Vector3(x0, y0, z1), Vector3.Left, inner.T, inner.C);     // inner face
-                MeshCut.Quad(setA, new Vector3(x0, y1, z0), new Vector3(x1, y1, z0), new Vector3(x1, y1, z1), new Vector3(x0, y1, z1), Vector3.Up, outerV.T, outerV.C);      // top
-                MeshCut.Quad(setA, new Vector3(x0, y0, z0), new Vector3(x0, y0, z1), new Vector3(x1, y0, z1), new Vector3(x1, y0, z0), Vector3.Down, outerV.T, outerV.C);    // bottom
-                MeshCut.Quad(setA, new Vector3(x0, y0, z1), new Vector3(x0, y1, z1), new Vector3(x1, y1, z1), new Vector3(x1, y0, z1), Vector3.Back, inner.T, inner.C);     // tip
             }
             ArrayMesh leafA = two ? MeshCut.Commit(setA) : (trim ? MeshCut.Commit(door) : doorMesh), leafB = two ? MeshCut.Commit(setB) : null;
             v._doorFoldDeg = s.DoorFoldDeg > 0f ? s.DoorFoldDeg : 90f;
