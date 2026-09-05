@@ -8297,7 +8297,16 @@ namespace UnturnedGodot
                         var vt = _veh.GlobalTransform;
                         var fwd = -vt.Basis.Z; fwd.Y = 0f;
                         fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-                        if (System.Environment.GetEnvironmentVariable("UG_SIDE") == "1")   // diagnostic PURE side profile (collider vs mesh height — pair with UG_COLLVIS=1); UG_CAMDIST=N pulls it back + shifts along the body to frame a long rig
+                        var vcamEnv = System.Environment.GetEnvironmentVariable("UG_VCAM");   // "x,y,z;lx,ly,lz" VEHICLE-LOCAL camera + look-at (interior shots: the bus door)
+                        if (!string.IsNullOrEmpty(vcamEnv) && vcamEnv.Split(';') is { Length: 2 } vcp
+                            && vcp[0].Split(',') is { Length: 3 } a && vcp[1].Split(',') is { Length: 3 } b
+                            && float.TryParse(a[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ax) && float.TryParse(a[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ay) && float.TryParse(a[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var az)
+                            && float.TryParse(b[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var bx) && float.TryParse(b[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var by) && float.TryParse(b[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var bz))
+                        {
+                            _vehCam.GlobalPosition = vt * new Vector3(ax, ay, az);
+                            _vehCam.LookAt(vt * new Vector3(bx, by, bz), Vector3.Up);
+                        }
+                        else if (System.Environment.GetEnvironmentVariable("UG_SIDE") == "1")   // diagnostic PURE side profile (collider vs mesh height — pair with UG_COLLVIS=1); UG_CAMDIST=N pulls it back + shifts along the body to frame a long rig
                         {
                             var right = new Vector3(fwd.Z, 0f, -fwd.X);   // fwd rotated -90 about Y
                             float sd = 12f; var sde = System.Environment.GetEnvironmentVariable("UG_CAMDIST");

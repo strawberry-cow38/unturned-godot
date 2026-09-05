@@ -1726,7 +1726,9 @@ namespace UnturnedGodot
             public float DoorHingeX, DoorHingeZ, DoorSplitZ, DoorFoldDeg;   // hinge A on the panel's INNER face at the front jamb; (fold 0 = 90 degrees)
             public float DoorHingeBX;   // hinge B (mullion) X: the panel's OUTER face (+ a hair), so leaf B folds back beside leaf A instead of through it   // hinge A = front jamb (X = panel mid-thickness), hinge B = the split; fold angle of leaf A (B folds back twice that)
             public string DoorGlassA, DoorGlassB;   // glass pane labels that ride leaf A / leaf B
-            public Vector3 DoorFloorCutMin, DoorFloorCutMax; public float DoorPocketY;   // cabin floor box cut out where the leaves swing, replaced by a lowered pocket floor at DoorPocketY + risers   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
+            public Vector3 DoorFloorCutMin, DoorFloorCutMax; public float DoorPocketY;   // cabin floor box cut out where the leaves swing, replaced by a pocket floor at DoorPocketY (the first step's level) + risers
+            public Vector3 DoorRiserCutMin, DoorRiserCutMax;   // the old 2nd-step riser between the first step and the cabin floor: gone, the pocket continues the step
+            public float DoorTrimZ0, DoorTrimZ1, DoorTrimY;   // the panel is modelled wider than the doorway (its ends hide inside the jambs) and deeper than the step: trim it to the opening + the step top, cap the cuts   // NoTrunk: no boot access zone at all (bus, tractor); RearEngine: the engine bay is the REAR compartment (bus) -> rear hood zone, no front one (master)
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
@@ -2528,10 +2530,16 @@ namespace UnturnedGodot
             // inside the front-right doorway (X 1.293..1.418, Z -3.35..-2.15, Y -0.23..1.97, measured off bus_body.txt), two windows
             // split by the mullion at Z -2.75. Leaf A hinges at the front jamb, leaf B at the mullion; both windows ride their leaf.
             DoorZoneMin = new Vector3(1.28f, -0.25f, -3.36f), DoorZoneMax = new Vector3(1.43f, 1.99f, -2.14f),
-            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.35f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
-            // the door bottom (-0.23) sits 35 cm under the cabin floor (+0.125): the floor is cut where the leaves swing (the hinge's
-            // 0.6 m quarter-circle + the strip leaf B sweeps along the wall) and a pocket floor at the step-well level takes its place
-            DoorFloorCutMin = new Vector3(0.68f, 0.05f, -3.41f), DoorFloorCutMax = new Vector3(1.235f, 0.20f, -2.15f), DoorPocketY = -0.365f,   // 200 L tank (metric 1u=1mL; realistic bus)
+            // The panel is modelled 10 cm wider than the 1 m doorway (Z -3.25..-2.25; its ends hid inside the jambs) and 10 cm deeper than
+            // the first step (-0.125): trimmed to both, capped, so hinge A sits ON the front jamb and the open stack (leaves 0.5 m each)
+            // lies flush against the inner side of the step-well wall at Z -3.25 instead of through it.
+            DoorHingeX = 1.293f, DoorHingeBX = 1.428f, DoorHingeZ = -3.25f, DoorSplitZ = -2.75f, DoorFoldDeg = 90f, DoorGlassA = "r_front", DoorGlassB = "r_mid1",
+            DoorTrimZ0 = -3.25f, DoorTrimZ1 = -2.25f, DoorTrimY = -0.12f,
+            // FLOOR (master 2026-09-05): the first step (outside, -0.125) extends seamlessly into the bus where the leaves swing --
+            // the cabin floor (+0.125) is cut out over that patch (X 0.68..1.23 between the step-well walls) and the old 2nd-step riser
+            // at X 1.231 goes; a floor at the step's level + risers on the three inner sides take their place.
+            DoorFloorCutMin = new Vector3(0.68f, 0.05f, -3.25f), DoorFloorCutMax = new Vector3(1.229f, 0.1251f, -2.25f), DoorPocketY = -0.125f,
+            DoorRiserCutMin = new Vector3(1.229f, -0.13f, -3.25f), DoorRiserCutMax = new Vector3(1.235f, 0.1251f, -2.25f),   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -4127,16 +4135,41 @@ namespace UnturnedGodot
             // cutting left"): the panel is a hollow box, so the cut opens both leaves -- cap each with the convex hull of the
             // cut loop, coloured like the panel's inner face (one palette cell).
             var door = MeshCut.Read(doorMesh);
+            // TRIM to the doorway + the step top (the modelled panel overhangs both, hidden inside the jambs / the step slab).
+            var cutFront = new System.Collections.Generic.List<MeshCut.V>(); var cutRear = new System.Collections.Generic.List<MeshCut.V>();
+            bool trim = s.DoorTrimZ0 != s.DoorTrimZ1;
+            if (trim)
+            {
+                door = MeshCut.Split(door, 2, s.DoorTrimZ0, cutFront).above;
+                door = MeshCut.Split(door, 2, s.DoorTrimZ1, cutRear).below;
+            }
             var cut = new System.Collections.Generic.List<MeshCut.V>();
             var (setA, setB) = MeshCut.Split(door, 2, s.DoorSplitZ, cut);
             bool two = setA.Tris.Count > 0 && setB.Tris.Count > 0;
+            // CLOSE EVERY CUT (master: "close up the open ends on the mesh" / "both end faces are still open"): the panel is a
+            // hollow box, so every cut -- the mullion, both trimmed ends, the trimmed bottom -- opens it. Cap each with the
+            // convex hull of its cut loop, coloured like the panel's inner face (one palette cell).
+            var inner = cut.Count > 0 ? cut[0] : (cutFront.Count > 0 ? cutFront[0] : default);
+            foreach (var c in cut) if (c.P.X < inner.P.X) inner = c;
+            foreach (var c in cutFront) if (c.P.X < inner.P.X) inner = c;
             if (two && cut.Count >= 3)
             {
-                var inner = cut[0]; foreach (var c in cut) if (c.P.X < inner.P.X) inner = c;
                 MeshCut.CapHull(setA, cut, 2, Vector3.Back, inner.T, inner.C);      // leaf A's cut face looks +Z (at B)
                 MeshCut.CapHull(setB, cut, 2, Vector3.Forward, inner.T, inner.C);   // leaf B's looks -Z
             }
-            ArrayMesh leafA = two ? MeshCut.Commit(setA) : doorMesh, leafB = two ? MeshCut.Commit(setB) : null;
+            if (trim)
+            {
+                MeshCut.CapHull(two ? setA : door, cutFront, 2, Vector3.Forward, inner.T, inner.C);   // front end (on the jamb)
+                MeshCut.CapHull(two ? setB : door, cutRear, 2, Vector3.Back, inner.T, inner.C);       // rear end
+                foreach (var leaf in two ? new[] { setA, setB } : new[] { door })   // bottom: to the step top, capped underneath
+                {
+                    var cutBot = new System.Collections.Generic.List<MeshCut.V>();
+                    var kept = MeshCut.Split(leaf, 1, s.DoorTrimY, cutBot).above;
+                    leaf.Tris.Clear(); leaf.Tris.AddRange(kept.Tris);
+                    MeshCut.CapHull(leaf, cutBot, 1, Vector3.Down, inner.T, inner.C);
+                }
+            }
+            ArrayMesh leafA = two ? MeshCut.Commit(setA) : (trim ? MeshCut.Commit(door) : doorMesh), leafB = two ? MeshCut.Commit(setB) : null;
             v._doorFoldDeg = s.DoorFoldDeg > 0f ? s.DoorFoldDeg : 90f;
             v._doorPivotA = new Node3D { Name = "DoorHingeA", Position = new Vector3(s.DoorHingeX, 0f, s.DoorHingeZ) };
             v._doorPivotA.AddChild(new MeshInstance3D { Name = "DoorLeafA", Mesh = leafA, MaterialOverride = bodyMat, Position = -v._doorPivotA.Position });
@@ -4169,14 +4202,17 @@ namespace UnturnedGodot
                 var body = MeshCut.Read(v._bodyMesh.Mesh);
                 var dropped = new System.Collections.Generic.List<MeshCut.V>();
                 var kept = MeshCut.SubtractBox(body, new Aabb(s.DoorFloorCutMin, s.DoorFloorCutMax - s.DoorFloorCutMin), dropped);
+                if (s.DoorRiserCutMin != s.DoorRiserCutMax)   // the old 2nd-step riser: the pocket continues the first step right past it
+                    kept = MeshCut.SubtractBox(kept, new Aabb(s.DoorRiserCutMin, s.DoorRiserCutMax - s.DoorRiserCutMin), null);
                 if (dropped.Count > 0)
                 {
                     var f = dropped[0];   // the floor face's UV/colour (its palette cell) for the pocket
-                    float x0 = s.DoorFloorCutMin.X, x1 = s.DoorFloorCutMax.X, z0 = s.DoorFloorCutMin.Z, z1 = s.DoorFloorCutMax.Z, yF = f.P.Y, yP = s.DoorPocketY;
-                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yP, z1), new Vector3(x0, yP, z1), Vector3.Up, f.T, f.C);        // pocket floor
-                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x0, yP, z1), new Vector3(x0, yF, z1), new Vector3(x0, yF, z0), Vector3.Right, f.T, f.C);     // inner riser (looks into the pocket)
-                    MeshCut.Quad(kept, new Vector3(x0, yP, z1), new Vector3(x1, yP, z1), new Vector3(x1, yF, z1), new Vector3(x0, yF, z1), Vector3.Forward, f.T, f.C);   // rear riser
-                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yF, z0), new Vector3(x0, yF, z0), Vector3.Back, f.T, f.C);      // front riser
+                    float x0 = s.DoorFloorCutMin.X, x1 = s.DoorRiserCutMin != s.DoorRiserCutMax ? s.DoorRiserCutMax.X : s.DoorFloorCutMax.X;
+                    float z0 = s.DoorFloorCutMin.Z, z1 = s.DoorFloorCutMax.Z, yF = f.P.Y, yP = s.DoorPocketY;
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yP, z1), new Vector3(x0, yP, z1), Vector3.Up, f.T, f.C);        // pocket floor, seamless with the first step
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x0, yP, z1), new Vector3(x0, yF, z1), new Vector3(x0, yF, z0), Vector3.Right, f.T, f.C);     // inner riser (the new 2nd step)
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z1), new Vector3(x1, yP, z1), new Vector3(x1, yF, z1), new Vector3(x0, yF, z1), Vector3.Forward, f.T, f.C);   // rear side, under the step-well wall
+                    MeshCut.Quad(kept, new Vector3(x0, yP, z0), new Vector3(x1, yP, z0), new Vector3(x1, yF, z0), new Vector3(x0, yF, z0), Vector3.Back, f.T, f.C);      // front side
                     var nb = MeshCut.Commit(kept);
                     if (nb != null) v._bodyMesh.Mesh = nb;
                 }
@@ -5930,7 +5966,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 v._exhaust = MakeSmoke("veh_smoke_1.png", new Color(0.66f, 0.66f, 0.64f, 0.8f), 1.3f, 1.3f, 14, false, 0.14f, 0.34f);
                 v._exhaust.Direction = new Vector3(0f, 0.35f, 1f); v._exhaust.Spread = 16f; v._exhaust.Gravity = new Vector3(0f, 0.7f, 0f);   // out the back, drifting up
-                v._exhaust.Position = new Vector3(-(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies
+                v._exhaust.Position = new Vector3(+(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies   // RIGHT rear: the tailpipes are on the right now that the bodies are un-mirrored (master 2026-09-05 "exhaust emitters are on the opposite side")
                 v.AddChild(v._exhaust);
             }
             // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's
