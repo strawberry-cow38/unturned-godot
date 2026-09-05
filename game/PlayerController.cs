@@ -1960,7 +1960,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer) ClearHeldOptic();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -1989,7 +1989,7 @@ namespace UnturnedGodot
 
         /// <summary>The item id in the hands for the wire (v22 MoveInput.HeldItemId): the backing item of the held gun/melee/tool, 0 for fists or nothing.</summary>
         public ushort HeldItemIdForNet => _heldItem?.id ?? 0;
-        public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null
+        public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null || _heldOptic != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
                                      || (_heldMeleeName != null && _heldMeleeName != "fists");
 
@@ -2044,7 +2044,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1; _heldPage = -1;   // holding nothing -> no grid address to rebind to
@@ -2111,7 +2111,8 @@ namespace UnturnedGodot
             var tool = ToolDef.ById(asset.id);
             if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
-            if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }   // a fishing rod -> hold it, LMB casts (UseableFisher)
+            if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }
+            if (asset.type == EItemType.OPTIC) { EquipHeldOptic(asset, backing); return true; }   // binoculars -> raised at once, LMB cycles the zoom   // a fishing rod -> hold it, LMB casts (UseableFisher)
             return false;
         }
 
@@ -2121,7 +2122,7 @@ namespace UnturnedGodot
         public void EquipHeldFuelCan(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null; ClearHeldOptic();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFuelItem = backing;
@@ -2138,7 +2139,7 @@ namespace UnturnedGodot
         public void EquipHeldFisher(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();   // ClearDeployable tears down any prior rod/line before we set up the new one
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFisherItem = backing;
@@ -2150,6 +2151,42 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[fishing] holding {asset?.itemName} -- hold LMB to charge the cast, release to fling, LMB again on the bite to reel it in");
+        }
+
+        // ---- BINOCULARS (master 2026-09-05: "equipable, not a primary or secondary slot item. copy the scope viewport thing
+        // method. one magnified viewport, cut out for each lens. lmb cycles three zoom levels"). Item type OPTIC (333); retail
+        // Binoculars.dat Zoom 12 is the top level, RMB zoom + 1/zoom look sensitivity (UseableOptic). Here they are up the
+        // moment they are in the hands and LMB cycles the level. No viewmodel to see: the lenses fill the screen.
+        ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx;
+        static readonly float[] OpticZoomLevels = { 4f, 8f, 12f };
+        public bool HoldingOptic => _heldOptic != null;
+        public float OpticZoom => _bino?.Zoom ?? 1f;
+        public void EquipHeldOptic(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable(); ClearFisher(); ClearHeldOptic();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldFluidItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };   // bare arms underneath (hidden by the housing, but every other path expects a viewmodel)
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            _bino = new BinocularsView { Zoom = OpticZoomLevels[0] };
+            AddChild(_bino);
+            GD.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");
+        }
+        void ClearHeldOptic()
+        {
+            _heldOptic = null; _heldOpticItem = null;
+            if (_bino != null) { if (IsInstanceValid(_bino)) _bino.QueueFree(); _bino = null; }
+        }
+        void CycleOpticZoom()
+        {
+            if (_bino == null) return;
+            _opticZoomIdx = (_opticZoomIdx + 1) % OpticZoomLevels.Length;
+            _bino.Zoom = OpticZoomLevels[_opticZoomIdx];
+            PlaySelectorSwitchSound();   // the click a firemode switch makes -- a detent between zoom stops
         }
 
         // Tear down the rod + any deployed line/bobber. Called by every other equip path (so switching items ends the cast)
@@ -2386,7 +2423,7 @@ namespace UnturnedGodot
         public void EquipHeldFluidContainer(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; ClearHeldOptic();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFluidItem = backing;
@@ -2491,7 +2528,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && !HoldingDetonatorTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && _heldOptic == null && !HoldingWireTool && !HoldingHoseTool && !HoldingDetonatorTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -2503,6 +2540,7 @@ namespace UnturnedGodot
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
             if (_heldFuelItem != null) return item != null ? ReferenceEquals(_heldFuelItem, item) : asset.IsFuelContainer;   // a held gas can -> dropping it goes unarmed (master)
             if (_heldFluidItem != null) return item != null ? ReferenceEquals(_heldFluidItem, item) : asset.IsFluidContainer;   // a held fluid container (bottle/canteen)
+            if (_heldOpticItem != null) return item != null ? ReferenceEquals(_heldOpticItem, item) : asset.type == EItemType.OPTIC;   // binoculars in hand -> the menu offers Dequip
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
@@ -2571,7 +2609,7 @@ namespace UnturnedGodot
             _heldConsumable = asset;
             _heldConsumableMesh = meshName;   // remembered so consuming one can auto-equip another of the same type (master)
             _consumeTimer = 0f;
-            _melee = null; ClearDeployable();
+            _melee = null; ClearDeployable(); ClearHeldOptic();
             var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
             _consumeUseLen = an.UseLen > 0f ? an.UseLen : ConsumeUseTime;
             _viewmodel?.QueueFree();
@@ -2603,7 +2641,7 @@ namespace UnturnedGodot
                 Consume(_heldConsumable, eatenQuality);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null;             // one use per item: this one leaves the hand + is deleted (master)
+                _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null;             // one use per item: this one leaves the hand + is deleted (master) ClearHeldOptic();
                 int left;
                 if (NetConsume != null)
                 {
@@ -2656,7 +2694,7 @@ namespace UnturnedGodot
             SaveGunState();
             ClearFisher();   // this equip path sets _deployable directly (doesn't go through ClearDeployable) -> reel in the rod here
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -2687,7 +2725,7 @@ namespace UnturnedGodot
             SaveGunState();
             bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : HoldingWireTool;
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
@@ -5240,7 +5278,7 @@ namespace UnturnedGodot
             // you rather than deleting them (strawberry: "irons are their own item and can be installed across
             // weapons"). Only fills an UNSET slot, so it never overwrites what the player fitted.
             if (backingItem != null) AttachmentFit.SeedDefaults(backingItem, SDG.Unturned.Assets.find(backingItem.id)?.itemName);
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master ClearHeldOptic();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };
             AddChild(_viewmodel);
@@ -5551,6 +5589,7 @@ namespace UnturnedGodot
                     float aim = _viewmodel?.AimAlpha ?? 0f;
                     float sens = MouseSensitivity;
                     if (aim > 0f) { float mag = ScopeMag; sens *= Mathf.Lerp(1f, mag > 1f ? 1f / mag : AdsSensScale, aim); }
+                    if (_bino != null) sens /= Mathf.Max(1f, _bino.Zoom);   // binoculars: retail shouldUseZoomFactorForSensitivity -- the mouse turns 1/zoom as much
                     RotateY(Mathf.DegToRad(-mm.Relative.X * sens));
                     _pitchDeg = Mathf.Clamp(_pitchDeg + (ControlsOptions.InvertLookY ? mm.Relative.Y : -mm.Relative.Y) * sens, -89f, 89f);   // InvertLookY (Controls tab): off = mouse up -> look up
                     _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
@@ -5573,6 +5612,7 @@ namespace UnturnedGodot
                 // covered. Fire() already short-circuits to FireTurret for a turret seat. Review 2026-08-16.
                 if (_driving != null) { if (_seatIndex != 0 && _driving.HasTurret(_seatIndex)) Fire(); else _driving.Honk(); }
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
+                else if (_heldOptic != null) CycleOpticZoom();          // binoculars up: LMB steps the zoom 4x -> 8x -> 12x -> 4x (master)
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node

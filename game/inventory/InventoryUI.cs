@@ -647,6 +647,7 @@ void fragment() {
             else if (DeployableDef.ById(asset.id) != null) PlaceSelected();
             else if (ToolDef.ById(asset.id) != null) ToolSelected();
             else if (asset.type == EItemType.FISHER) FisherSelected();
+            else if (asset.type == EItemType.OPTIC) OpticSelected();
             else EquipSelected();
         }
 
@@ -1376,6 +1377,8 @@ void fragment() {
                     AddActionButton(panel, "Equip", new Vector2(228, by), ToolSelected);   // wire -> wiring mode, rope -> tow mode, any ToolDef -> its mode
                 else if (asset.type == EItemType.FISHER)
                     AddActionButton(panel, "Equip", new Vector2(228, by), FisherSelected);   // a fishing rod -> hold it, LMB casts (UseableFisher)
+                else if (asset.type == EItemType.OPTIC)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), OpticSelected);    // binoculars -> raise them, LMB cycles the zoom
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -1411,7 +1414,8 @@ void fragment() {
         public static bool HasHandAction(ItemAsset asset) =>
             asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
                 || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer
-                || asset.type == EItemType.FISHER);   // a rod is holdable (EquipHeldFisher); without this it has the equip code but NO menu option (the Rope bug)
+                || asset.type == EItemType.FISHER   // a rod is holdable (EquipHeldFisher); without this it has the equip code but NO menu option (the Rope bug)
+                || asset.type == EItemType.OPTIC);   // binoculars: holdable, not a weapon slot
 
         void EquipSelected()
         {
@@ -1520,6 +1524,19 @@ void fragment() {
 
         // Equip a fishing rod INTO the hands -> close the inventory so LMB casts. Routes through EquipItemAsset (the
         // unified dispatch that owns the EItemType.FISHER -> EquipHeldFisher branch), like the other hand actions.
+        void OpticSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || asset.type != EItemType.OPTIC) return;
+            Player?.EquipHeldOptic(asset, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory: you are looking through them now
+        }
+
         void FisherSelected()
         {
             var pg = Inv.items[_selPage];

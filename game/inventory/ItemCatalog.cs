@@ -577,6 +577,7 @@ namespace SDG.Unturned
             "Mask" => EItemType.MASK, "Backpack" => EItemType.BACKPACK, "Vest" => EItemType.VEST,
             "Glasses" => EItemType.GLASSES, "Supply" => EItemType.SUPPLY,
             "Fisher" => EItemType.FISHER,
+            "Optic" => EItemType.OPTIC,   // binoculars (333): held, LMB cycles zoom (PlayerController.EquipHeldOptic)
             _ => EItemType.GENERIC,
         };
 
