@@ -6040,6 +6040,7 @@ namespace UnturnedGodot
             // NO SHOOTING WHILE SPRINTING, nor for a beat after (master 2026-09-05): the gun comes back up from the
             // sprint carry first. On foot only -- a gunner's mount above and a driver's horn never sprint.
             if (_driving == null && _sinceSprint < SprintFireDelay) return false;
+            if (_driving == null && !IsOnFloor() && !IsSwimming) return false;   // and none in the AIR either (master 2026-09-05): feet on the ground to shoot
 
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
