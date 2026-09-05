@@ -16,6 +16,8 @@ Three distance-tiered thunder samples (near clap → distant rumble), picked by 
 All three were trimmed to the usable transient+tail and peak-normalised; `thunder.wav` additionally had ~0.5 s
 of leading digital silence cut so the boom lands on the scheduled flash-to-thunder delay.
 
+- **EwanPenman11** — "Turbo Spooling and Blow Off.WAV" — **CC0 1.0** — https://freesound.org/people/EwanPenman11/sounds/659544/ (2026-09-05)
+- **Ryding** — "Door on bus.wav" — **CC0 1.0** — https://freesound.org/people/Ryding/sounds/110135/ (2026-09-05)
 - **Kinoton** — "Thunder Clap And Rumble #9" — **CC0 1.0** — https://freesound.org/people/Kinoton/sounds/760216/ (2026-08-29)
 - **hifijohn** — "thunder" — **CC0 1.0** — https://freesound.org/people/hifijohn/sounds/242586/ (2026-08-29)
 - **klankbeeld** — "Deep thunder clap 03" — **CC BY 4.0** — https://freesound.org/people/klankbeeld/sounds/322210/ (2026-08-29)
