@@ -2180,7 +2180,7 @@ namespace UnturnedGodot
             {
                 var g = new Grenade { Thrower = _dtPlayer };
                 AddChild(g);
-                g.GlobalPosition = jeep.GlobalPosition + Vector3.Up * 0.6f;   // resting on the jeep; 2.5s fuse -> boom on the car
+                g.GlobalPosition = jeep.GlobalPosition + Vector3.Up * 0.6f;   // resting on the jeep; 3s fuse (Throwables.FuseSeconds, strawberry 2026-09-05 -- was 2.5) -> boom on the car
             }
         }
 

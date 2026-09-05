@@ -8873,7 +8873,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         // The gain it was turned on for: a down-ray over the cabin stops at the model's real roof, 2.160,
         // instead of 7 cm proud of it at 2.237.
         public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") != "0";
-        const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for
+        internal const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for. internal so a thrown grenade can include it in its bounce ray -- a car whose hull mesh moved it off bit0 is still something a grenade must not fall through.
 
         /// <summary>The layer the model-as-hitbox sits on, alongside bit 5.
         ///

@@ -38,7 +38,11 @@ namespace UnturnedGodot
         const float Friction = 0.55f;        // tangential loss per bounce -- it skids, then stops
         const float RestSpeed = 0.7f;        // below this after a bounce it is lying still
         const float Skin = 0.06f;            // hold this far off a surface so the next ray does not start inside it
-        const uint HitMask = (1u << 0) | (1u << 6);   // world/terrain/buildings + small props, as WorldItem rests on
+        // world/terrain/buildings + small props (what a dropped WorldItem rests on) + a VEHICLE chassis. The
+        // chassis bit is not optional cosmetics: Vehicle.SolidBit moves a car with a ripped hull mesh off bit0
+        // onto its own bit, so without it a grenade bounced off SOME cars and fell straight through the rest --
+        // and which is which depends on whether that model happened to be extracted.
+        static readonly uint HitMask = (1u << 0) | (1u << 6) | Vehicle.ChassisBit;
 
         MeshInstance3D _vis;
         bool _atRest;
