@@ -5753,9 +5753,9 @@ namespace UnturnedGodot
             // thrown away while the key was down. Review 2026-08-16.
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
-            else if (_driving != null && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
+            else if (_driving != null && _driving.HasBiFoldDoor && Keybinds.JustPressed(GameAction.VehicleDoor, @event))   // ONLY a vehicle with the folding door claims Ctrl here -- Ctrl is also the siren tap / lightbar hold further down (master: "i cant open the lightbar radial menu anymore")
             {
-                if (_seatIndex == 0 && _driving.HasBiFoldDoor) _driving.ToggleDoor();   // the driver works the bus door (master: Ctrl in the driver's seat)
+                if (_seatIndex == 0) _driving.ToggleDoor();   // the driver works the bus door (master: Ctrl in the driver's seat)
             }
             else if (Keybinds.JustPressed(GameAction.Firemode, @event))
             {
