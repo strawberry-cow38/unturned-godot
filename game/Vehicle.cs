@@ -1288,6 +1288,10 @@ namespace UnturnedGodot
         public enum AccessKind { Door, Hood, Trunk, BiFold }   // BiFold: the bus's folding passenger door -- Interact toggles it
         public readonly record struct AccessZone(AccessKind Kind, int Seat, Vector3 Center, Vector3 Size);
         public AccessZone[] AccessZones = System.Array.Empty<AccessZone>();
+        /// <summary>This vehicle is reached ONLY through its access zone (Spec.Helm). The look-focus drops the
+        /// vehicle entirely when the aim is not on it, instead of falling back to "the hull means the driver's
+        /// seat" -- which is the fallback that made all 67 m of ship one big enter button.</summary>
+        public bool AccessRequired;
         // What the focused player's look ray is currently pointing at on this hull, as a ready-made prompt line.
         // PlayerController owns the ray, so it writes this; the billboard below just draws it. Empty = no prompt.
         public string AccessHint = "";
@@ -1335,6 +1339,16 @@ namespace UnturnedGodot
         {
             var zones = new System.Collections.Generic.List<AccessZone>();
             float halfW = boxSize.X * 0.5f, halfL = boxSize.Z * 0.5f;
+
+            // A HELM REPLACES the door zones outright rather than joining them. Adding one alongside would change
+            // nothing: the per-seat door zone here is boxSize.X * 0.9 wide -- 18 m across on the ship -- and the
+            // resolver takes the nearest zone within reach, so the helm would never be the answer.
+            if (s.Helm.HasValue)
+            {
+                var (hc, hs) = s.Helm.Value;
+                zones.Add(new AccessZone(AccessKind.Door, 0, hc, hs));
+                return zones.ToArray();
+            }
 
             for (int i = 0; i < seats.Length; i++)
             {
@@ -1674,6 +1688,12 @@ namespace UnturnedGodot
                                       // voxels at a time instead of all of them at once. It is DITHER, and without
                                       // it the quantised buoyancy is a staircase the hull chatters up and down.
                                       // So the ripple stays and the residual motion is damped instead.
+            /// <summary>A single small volume that IS the vehicle's controls, in vehicle-local space. When set, it
+            /// is the ONLY way aboard: the per-seat door zones are not generated and a look anywhere else on the
+            /// hull does not offer the vehicle at all. For a 67 m ship, "walk up to any part of her and press E"
+            /// is not an interaction, it is a teleport with extra steps (strawberry 2026-09-05: "instead of the
+            /// whole ship being enterable, just a small block in the cabin that you interact with as the vehicle").</summary>
+            public (Vector3 center, Vector3 size)? Helm;
             public (Vector3 min, Vector3 max)? HullTrimesh;   // region given the model's ACTUAL geometry, on a STATIC
                                       // child body that rides along. Godot forbids a concave trimesh on a body that
                                       // moves -- it is static-only, and cow tools watched one drop a crane through
@@ -3060,7 +3080,13 @@ namespace UnturnedGodot
             // the stern at deck height -- strawberry asked for it "up to in the superstructure, looking down onto
             // the deck". The bridge is the top enclosed band, floor y=19.6, roof y=22, forward bulkhead z=10.4;
             // this sits on that floor at its forward end.
-            Seats = new[] { new Vector3(0f, 20f, 12f) },      // driver seat (index 0), on the bridge floor
+            // THE HELM BLOCK -- the only way to take the ship (strawberry 2026-09-05). It stands on the bridge
+            // floor at the forward windows, just ahead of the seat: the bridge floor measures y=19.5 in
+            // ship_body.txt (a plate at 19.41/19.50/19.61 -- deck, its underside and the trim), the forward
+            // bulkhead z=10.4, so a console 1.1 m tall at z=11.3 sits against the windows with the seat behind
+            // it. Deliberately NOT the size of the room: you walk up to a console, not into a trigger.
+            Helm = (new Vector3(0f, 20.05f, 11.3f), new Vector3(2.2f, 1.1f, 0.9f)),
+            Seats = new[] { new Vector3(0f, 20f, 12f) },      // driver seat (index 0), on the bridge floor (plate y=19.5)
             DriverEye = new Vector3(0f, 21.2f, 11f),          // eye 1.2 m up, just inside the forward windows: 10 m
                                                               // above the deck and looking down the full 45 m of it
         };
@@ -5339,6 +5365,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // plus a small generic rise, not the Jeep's absolute coordinate wearing this vehicle's name.
             v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : v.SeatLocals[0] + GenericSeatRise;
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
+            v.AccessRequired = s.Helm.HasValue;
             v._rearEngine = s.RearEngine;
             v.AccessBoxCenter = s.BoxCenter;   // the frame the zones were laid out in; a test needs it to know which way is 'outboard' of a given zone
 
@@ -5497,7 +5524,16 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         // Its own body, not a shape on the vehicle: the vehicle is a VehicleBody3D and a trimesh
                         // on it is exactly the unsupported case. A StaticBody3D child inherits the parent's
                         // transform, so it rides along for free.
-                        var tri = new StaticBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0 };
+                        // ANIMATABLE, NOT STATIC. A StaticBody3D is declared to the broadphase as a thing that does
+                        // not move; this one is a child of a 67 m hull that moves constantly, so its physics
+                        // representation lags the transform it is drawn at. That mismatch has BOTH signatures at
+                        // once -- you fall through the deckhouse where it is drawn, and you walk into it where it
+                        // used to be -- which is exactly what was reported: asked whether the superstructure was
+                        // invisible walls or walk-through, strawberry said "both". AnimatableBody3D is the same
+                        // static body with its physics state synced from the transform each tick, which is the
+                        // one thing this collider actually needs. (2026-09-05: "give the ship superstructure its
+                        // collision" -- the shape was always here, it was declared immovable.)
+                        var tri = new AnimatableBody3D { Name = "HullMesh", CollisionLayer = 1u << 0, CollisionMask = 0, SyncToPhysics = true };
                         tri.AddChild(new CollisionShape3D { Shape = region.CreateTrimeshShape() });
                         v.AddChild(tri);
                         // AND EXEMPT THE HULL FROM ITS OWN DECKHOUSE. A static child is a SEPARATE body, not a

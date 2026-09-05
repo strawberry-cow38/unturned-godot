@@ -713,6 +713,11 @@ namespace UnturnedGodot
             // DebugLookOrigin is the `from` the scan above actually traced with -- the SHOULDER in 3rd person,
             // which is NOT the camera. Re-deriving it from _cam here would test a different ray to the one that won.
             hitAccessValid = hitVeh != null && IsInstanceValid(hitVeh) && hitVeh.ResolveAccess(DebugLookOrigin, _lookEnd, out hitAccess);
+            // A HELM-ONLY VEHICLE IS NOT OFFERED AT ALL unless the aim is on its controls. Without this the ship
+            // still focuses off any plate of her hull and E still takes her, because an unresolved zone falls back
+            // to "the hull means the driver's seat" -- the fallback that makes 67 m of ship one enter button
+            // (strawberry 2026-09-05). Dropping the focus, rather than just the prompt, is what stops the key.
+            if (hitVeh != null && IsInstanceValid(hitVeh) && hitVeh.AccessRequired && !hitAccessValid) hitVeh = null;
             _focusAccess = hitAccess; _focusAccessValid = hitAccessValid;   // updated every frame: same car, different door
             if (hitVeh != _focusVehicle)
             {
