@@ -6027,6 +6027,8 @@ namespace UnturnedGodot
 
         // Hitscan: ray from the camera along its forward, masked to the zombie layer. Damage/range/firerate
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
+        float _sinceSprint = 99f;            // seconds since the stance was last SPRINT (PhysicsTick)
+        const float SprintFireDelay = 0.4f;   // the moment after stopping a sprint before a shot is allowed
         public bool Fire()
         {
             if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
@@ -6035,6 +6037,9 @@ namespace UnturnedGodot
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
             if (_driving != null && _seatIndex != 0 && _driving.HasTurret(_seatIndex))
                 return FireTurret();
+            // NO SHOOTING WHILE SPRINTING, nor for a beat after (master 2026-09-05): the gun comes back up from the
+            // sprint carry first. On foot only -- a gunner's mount above and a driver's horn never sprint.
+            if (_driving == null && _sinceSprint < SprintFireDelay) return false;
 
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
@@ -8072,7 +8077,8 @@ namespace UnturnedGodot
             bool zNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Prone);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Sprint);
             bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure
-            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance);   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
+            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance);
+            if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
             float forward, strafe;
