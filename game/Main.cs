@@ -8446,6 +8446,7 @@ namespace UnturnedGodot
                     for (int t = _ttLastPf + 1; t <= pf; t++)
                     {
                         if (t == 25) _dtPlayer.EnterVehicle(_ttVeh, ttSeat);
+                        if (t == 26 && System.Environment.GetEnvironmentVariable("UG_TANK3P") == "1") _dtPlayer.DebugSetFirstPerson(false);   // UG_TANK3P=1: third person, so the seated body is drawn for the outside camera
                         if (t == 40) _dtPlayer.DebugSelectTurret(ttWeapon);
                         if (System.Environment.GetEnvironmentVariable("UG_TANKHEADOUT") == "1" && (t == 60 || t == 200)) _dtPlayer.DebugToggleHeadOut();   // the gunner's Ctrl: lid opens at 60, closes at 200
                         if (System.Environment.GetEnvironmentVariable("UG_TANKZOOMCYCLE") == "1" && t == 150) _dtPlayer.CycleGunsightZoom();   // an RMB tap in the gunsight: 8x -> 12x
