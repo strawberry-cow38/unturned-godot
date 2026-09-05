@@ -126,7 +126,8 @@ namespace UnturnedGodot
                 float target = SeatFree(0) ? TankDriverHatchClosedDeg : 0f;
                 _driverHatchDeg = Mathf.MoveToward(_driverHatchDeg, target, rate);
                 _driverHatch.RotationDegrees = new Vector3(_driverHatchDeg, 0f, 0f);
-                _driverHatch.Position = TankDriverHatchHinge + Vector3.Up * (TankDriverHatchLift * (_driverHatchDeg / TankDriverHatchClosedDeg));   // rides up out of the recess as it closes (see TankDriverHatchLift)
+                float closing = _driverHatchDeg / TankDriverHatchClosedDeg;   // 0 open .. 1 closed
+                _driverHatch.Position = TankDriverHatchHinge + Vector3.Up * (TankDriverHatchLift * closing) + TankGlacisDown * (TankDriverHatchSlide * closing);   // rides up out of the recess and down the slope as it closes (TankDriverHatchLift / Slide)
             }
         }
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
@@ -3370,6 +3371,11 @@ namespace UnturnedGodot
         /// on the outside of the opening"). So the closing swing also lifts the hinge this much, and the plate lands ON the
         /// glacis over the opening, its rear edge flush at 1.96 and its front edge 2 cm proud at z -3.89.</summary>
         const float TankDriverHatchLift = 0.10f;
+        /// <summary>...and slides this far DOWN the glacis as it closes (master 2026-09-05 "down the slope some more"), so the
+        /// closed plate covers the front of the window opening (sill at z -4.09) rather than its middle. Along the glacis'
+        /// own direction, so it stays on the surface: the plate runs 0.5 m up from z -3.40, the slide carries it to -3.62..-4.08.</summary>
+        const float TankDriverHatchSlide = 0.22f;
+        static readonly Vector3 TankGlacisDown = new Vector3(0f, -0.447f, -0.894f);   // unit vector down the glacis toward the nose (it drops 0.5 m per 1 m forward)
         const float TankDriverHatchClosedDeg = -50f;   // about +X: the plate lies ON the glacis (its open pose is 23.6 deg above level, the glacis runs 26.6 deg below it); -40 left the front edge 8 cm proud -- master 2026-09-05 "the hatch doesnt fully close"
         /// <summary>Where the tank's seats SEE from. Driver: just outside the glacis at the window opening, clear of the raised
         /// visor's lip (the glacis passes y 1.69 at z -3.92). Gunner: the sight aperture on the mantlet face beside the gun (turret
