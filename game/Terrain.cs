@@ -65,6 +65,34 @@ float cnoise(vec2 p) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;
 }
 float cfbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * cnoise(p); p *= 2.03; a *= 0.5; } return s; }
+// Splash rings, VERBATIM from wet_surface.gdshader (the road props' shader). Copied rather than shared because
+// Godot has no shader include for a string-embedded shader -- but it must stay in step: terrain road and road
+// props meet at the kerb, and two subtly different ripple fields there is worse than none.
+float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
+float splashes(vec2 wxz, float t, float amt){
+    float acc = 0.0;
+    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;
+    for (int k = 0; k < 2; k++){
+        float sc = 1.6 + float(k) * 2.8;
+        vec2 g = wxz * sc + float(k) * 21.0;
+        vec2 base = floor(g);
+        for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+                vec2 id = base + vec2(float(dx), float(dy));
+                float seed = h21(id);
+                float tt = t * (0.65 + seed * 0.7) + seed;
+                float cyc = floor(tt);
+                float life = fract(tt);
+                vec2 q = id + cyc * 13.7;
+                vec2 center = id + vec2(h21(q + 1.3), h21(q + 7.7));
+                float rad = life * (0.16 + seed * 0.20);
+                float ring = smoothstep(0.05, 0.0, abs(length(g - center) - rad));
+                acc += ring * (1.0 - life) * step(gate, h21(q)) * (0.55 + seed * 0.45);
+            }
+        }
+    }
+    return acc;
+}
 float caustics(vec2 p, float t) {
     float a = cfbm(p + vec2(t, t * 0.4)), b = cfbm(p * 1.31 + vec2(-t * 0.7, t * 0.55) + 17.3);
     return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
@@ -73,15 +101,39 @@ void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
     vec2 tuv = wpos.xz / tileWorld;
-    // winner-take-all: dominant splat layer per pixel = hard-edged distinct regions. Per master (+ ref shots)
-    // this matches the real game look. Splat sampled bilinear so borders follow the smooth contour (not blocky).
+    // WEIGHTED BLEND (strawberry 2026-09-05 ""switch our terrain to blend instead of best wins""). This replaces a
+    // winner-take-all pick whose comment said the hard edges matched reference shots -- a deliberate call being
+    // deliberately reversed, not a bug being fixed.
+    //
+    // Weights are normalised so the sum is exactly 1: a splatmap texel does NOT reliably sum to 1 (bilinear
+    // filtering between texels of different totals guarantees it), and summing unnormalised weights would make
+    // the ground breathe brighter and darker across every blend seam.
+    //
+    // The `w > 0.004` skip is what keeps this affordable. A blend is 8 array fetches per pixel where the pick was
+    // 1, but a splat texel almost always has 1-2 layers actually present, so the branch drops most of them. The
+    // threshold is low enough that a layer is never visibly clipped as it fades in.
     float ws[8];
     ws[0] = w0.r; ws[1] = w0.g; ws[2] = w0.b; ws[3] = w0.a;
     ws[4] = w1.r; ws[5] = w1.g; ws[6] = w1.b; ws[7] = w1.a;
+    float wsum = 0.0;
+    for (int i = 0; i < 8; i++) wsum += ws[i];
+    wsum = max(wsum, 1e-4);
+    vec3 blended = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+        float w = ws[i] / wsum;
+        if (w > 0.004) blended += w * texture(albedos, vec3(tuv, float(i))).rgb;
+    }
+    ALBEDO = blended;
+    ROUGHNESS = 1.0;
+    // Layer 4 is Russia_Road_00, the PAVED road (layer 3 is gravel -- the older comment upstream calling 3 ""the road
+    // network"" predates the real albedo table below it). Carried out of the blend as a 0..1 weight so the wet block
+    // can treat a road pixel like the road PROPS do, and a road/grass boundary fades between the two behaviours
+    // instead of switching at a hard line -- which is the whole point of blending in the first place.
+    float roadw = ws[4] / wsum;
+    // `best` survives for the grass/dirt/stone rain gate below: with a blend there is no single dominant layer, so
+    // it now means ""which layer is MOST present here"" rather than ""the layer being drawn"".
     int best = 0; float bw = ws[0];
     for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
-    ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
-    ROUGHNESS = 1.0;
     // caustics on underwater terrain: a light web projected in world XZ, faded with depth (master 2026-08-17)
     float cdepth = sea_level - wpos.y;
     if (cdepth > 0.0) {
@@ -113,9 +165,21 @@ void fragment() {
         }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
         ALBEDO *= mix(1.0, 0.60, r_wet);                             // wet ground darkens
-        ROUGHNESS = mix(1.0, 0.72, r_wet);                           // DAMP, not mirror -- grass/dirt mustn't go wet-plastic glossy like asphalt
-        // NO splash impacts on terrain (master: gate impacts to solid PROPS, not terrain) -- terrain just soaks dark + damps.
-        SPECULAR = 0.5 + r_wet * 0.06;                               // subtle sheen only (no metallic -- terrain isn't metal)
+        // PAVED ROAD gets the road PROPS' treatment (strawberry 2026-09-05 ""make the concrete/road terrain material
+        // recieve reflections and water ripples""). This reverses the old ""NO splash impacts on terrain"" rule, which
+        // was right when terrain was one flat pick of grass-or-dirt and wrong once a road layer is drawn by it.
+        // Scaled by roadw, so a road edge fades into the surrounding dirt instead of ending at a hard line.
+        float road_wet = r_wet * roadw;
+        // Roughness lands between damp ground (0.72) and the road props' wet value (0.42) in proportion to how much
+        // road is under this pixel -- the SAME 0.42 cow tools tuned for the props, so asphalt reads identically
+        // whether it is a road prop or painted terrain, and reflections match across the kerb.
+        ROUGHNESS = mix(mix(1.0, 0.72, r_wet), mix(1.0, 0.42, r_wet), roadw);
+        if (rain_intensity > 0.0 && road_wet > 0.0) {
+            // ~800 ALU: gated on there being both rain AND road here, so grass and clear weather pay nothing.
+            float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * road_wet;
+            ALBEDO += sp * 0.18;                                     // impact_opacity from the prop shader -- subtle glints, not paint
+        }
+        SPECULAR = 0.5 + r_wet * 0.06 + road_wet * 0.06;             // no metallic -- wet asphalt is not chrome
     }
 }
 ";
