@@ -85,6 +85,16 @@ the shipped ledger `game/content/CREDITS.md`; this entry is the canonical mirror
 - **Derivation:** a 1.70 s open cut from the 116 s session at 93.40 s, high-passed at 50 Hz, faded, and
   peak-normalised to −2.00 dBFS.
 
+### `game/content/shiphorn.ogg`
+
+The container ship's horn. Full licence, source URL and modification notes live in the shipped ledger
+`game/content/CREDITS.md`; this entry is the canonical mirror.
+
+- **Source:** freesound.org — "Ocean Cruise Liner Ship" by **TiredHippo** (#317386).
+- **Licence:** **CC0 1.0** (https://creativecommons.org/publicdomain/zero/1.0/), verified on the sound's own page.
+- **Derivation:** one 4.10 s blast cut from a 21.8 s recording, high-passed at 30 Hz, peak-normalised to
+  −2.00 dBFS, encoded Ogg Vorbis q6.
+
 Note for anyone adding audio here: files dropped into `content/` have never been through the Godot editor's
 import step, so they have no `.import` sidecar and `GD.Load`/`res://` returns **null** for them — silently, with
 no error, which presents as "the sound is quiet". Load them off disk instead, the way everything else at runtime

@@ -53,3 +53,13 @@ A city-bus door opening — the pneumatic hiss and swing, for the bi-fold doors.
     (15 ms / 120 ms), peak-normalised to −2.00 dBFS, mono 44.1 kHz 16-bit to match the other vehicle sounds.
   - The cut deliberately ends before the latch clunk at 95.64 s: strawberry picked this window over a longer
     one that included it (2026-09-05), so the file is the door opening only.
+
+## Ship horn → `shiphorn.ogg`
+
+The container ship's horn, one blast. Picked by strawberry from seven CC0 candidates (2026-09-05).
+
+- **TiredHippo** — "Ocean Cruise Liner Ship" — **CC0 1.0** — https://freesound.org/people/TiredHippo/sounds/317386/ (2026-09-05)
+  - **Modified:** one 4.10 s blast cut from the 21.8 s recording at 1.10 s (it holds three), high-passed at
+    30 Hz only — a ship's horn IS its bass, and the 50 Hz used on the other vehicle sounds guts it — faded
+    20 ms / 250 ms, peak-normalised to −2.00 dBFS, mono 44.1 kHz, encoded to Ogg Vorbis q6 to match the other
+    horns (the loader is `ContentProvider.OggCached`, so a .wav here would silently fail to load).

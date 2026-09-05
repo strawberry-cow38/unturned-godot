@@ -1585,7 +1585,7 @@ namespace UnturnedGodot
         public bool EngineDead => EngineHealth <= 0f;
         float _carIgnitionLeft;   // seconds of ignition left before the drivetrain answers the throttle (strawberry 2026-09-04 "delay between starting the engine and the ability to start moving")
         public bool EngineStarting => _carIgnitionLeft > 0f;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
-        AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        AudioStreamPlayer3D _hornAudio; float _hornCd; float _hornCooldown = 0.5f;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         /// <summary>Is anyone close enough to set an alarm off? Set by the side that owns the cars and knows
         /// where every player is (VehicleNetSync on a server); null falls back to the local camera, which is
         /// what singleplayer has always used.</summary>
@@ -1766,6 +1766,10 @@ namespace UnturnedGodot
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
+            /// <summary>Horn falloff + re-trigger, for hulls a car's numbers do not describe. Zero = the car
+            /// defaults (90 m, 0.5 s). A ship's horn is heard across a harbour, and hers runs 4.1 s -- on the car
+            /// cooldown you could stack eight copies of it over itself before the first had finished.</summary>
+            public float HornRange, HornCooldown;
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
             public Vector3[] Seats;     // every seat, local, index 0 = DRIVER. Null = single-seat (SeatOf's driver spot only).
@@ -3074,6 +3078,10 @@ namespace UnturnedGodot
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.5f, MaxPitch = 0.95f, IdleVolume = 0.9f, MaxVolume = 1.0f,   // low ship-engine rumble
             Fuel = 5000f, Health = 4000f, Name = "Container Ship",
+            // Cooldown is the CLIP LENGTH (4.10 s, measured off the encoded file), not a feel number: below it the
+            // one-shot restarts over its own still-ringing tail. Range is the other half -- a car horn's 90 m on a
+            // 67 m hull is barely past her own bow.
+            Horn = "shiphorn.ogg", HornRange = 900f, HornCooldown = 4.1f,
             Wheels = new (float, float, float, bool)[0],   // NO wheels -- floats on buoyancy
             // THE HELM, actually in the bridge. Was (0,13,26): z=26 is aft of the superstructure's own back wall
             // (it ends at 25.75) and y=13 is two metres off the deck, so the "bridge" seat was a spot hanging off
@@ -6012,7 +6020,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
             {
                 var hogg = ContentProvider.OggCached(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"), loop: false);   // shared decoded stream (was a decode per vehicle)
-                v._hornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
+                v._hornCooldown = s.HornCooldown > 0f ? s.HornCooldown : 0.5f;
+                v._hornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = s.HornRange > 0f ? s.HornRange / 7.5f : 12f,
+                                                         MaxDistance = s.HornRange > 0f ? s.HornRange : 90f, VolumeDb = 4f };
                 v.AddChild(v._hornAudio);
             }
 
@@ -7587,7 +7597,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         {
             if (_hornCd > 0f || Battery <= 0f || _hornAudio == null || _alarmTimer > 0f) return;   // can't manually honk while the alarm's blaring (master)
             DoHorn();
-            _hornCd = 0.5f;
+            _hornCd = _hornCooldown;   // per-spec: long enough that a 4.1 s ship horn cannot stack on itself
         }
         void DoHorn()   // the actual honk: a pitch-varied one-shot (master: slight variation per honk) + a sound-bus hearing alert
         {
