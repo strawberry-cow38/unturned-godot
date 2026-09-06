@@ -9,7 +9,7 @@ namespace SDG.Unturned
 
     /// <summary>The four appliances that cook (strawberry 2026-09-05). Each is a rate, an accepted input
     /// rule and a style it stamps on what comes out.</summary>
-    public enum ECookerKind : byte { Oven = 0, Toaster = 1, Microwave = 2, Barbecue = 3 }
+    public enum ECookerKind : byte { Oven = 0, Toaster = 1, Microwave = 2, Barbecue = 3, Campfire = 4 }
 
     /// <summary>Cooking: the engine-free half, so every rule here is a value a test can assert rather than
     /// something you have to boot Godot to observe.
@@ -35,6 +35,7 @@ namespace SDG.Unturned
         {
             ECookerKind.Toaster => 8f,     // fast, and it only ever has bread in it
             ECookerKind.Microwave => 8f,   // fast, at the cost of what it does to the food
+            ECookerKind.Campfire => 2f,    // "slower than a bbq" -- ~50 s, the field option
             _ => 3.2f,                     // oven + barbecue: ~31 s from raw to Cooked
         };
 
@@ -43,7 +44,10 @@ namespace SDG.Unturned
         {
             ECookerKind.Microwave => ECookStyle.Microwaved,
             ECookerKind.Barbecue => ECookStyle.CharcoalGrilled,
-            _ => ECookStyle.Plain,          // an oven and a toaster leave no label (strawberry: "average (no label)")
+            // A CAMPFIRE leaves no label either: strawberry 2026-09-06 "no food buff". Read as the QUALITY flag
+            // being average, the same vocabulary as the bbq's "charcoal grilled food buff" and the microwave's
+            // "food quality debuff" -- so a campfire cooks food properly, it just earns no special word for it.
+            _ => ECookStyle.Plain,          // oven, toaster, campfire (strawberry: "average (no label)")
         };
 
         // ---------------------------------------------------------------- what goes in what
@@ -89,6 +93,37 @@ namespace SDG.Unturned
         /// thing that has to be unpicked when the spawn entry lands. PEI loot cannot carry it meanwhile because
         /// loot comes from the real Items.dat, which has never heard of item 9150.</summary>
         public const ushort CharcoalId = 9150;
+
+        /// <summary>Wood, for the campfire (strawberry 2026-09-06: "takes wood as fuel"). The three retail logs;
+        /// explicit like the other two sets rather than a name match, for the same reason -- the catalog also has
+        /// "Maplestrike" and a "Birch Door", and neither belongs in a fire.</summary>
+        static readonly HashSet<ushort> Woods = new()
+        {
+            37,   // Birch Log
+            39,   // Maple Log
+            41,   // Pine Log
+        };
+
+        public static bool IsWood(ushort id) => Woods.Contains(id);
+
+        /// <summary>What this appliance BURNS, or null if it needs no fuel. An oven, a toaster and a microwave
+        /// run on the mains and are not modelled as needing anything.</summary>
+        public static IReadOnlySet<ushort> FuelFor(ECookerKind k) => k switch
+        {
+            ECookerKind.Barbecue => Charcoals,
+            ECookerKind.Campfire => Woods,
+            _ => null,
+        };
+
+        /// <summary>How long one unit of that fuel burns. A log outlasts a briquette but the fire is slower, so a
+        /// campfire is not simply a worse barbecue -- it trades speed for fuel you can pick up off the ground.</summary>
+        public static float SecondsPerFuel(ECookerKind k) => k switch
+        {
+            ECookerKind.Campfire => 70f,
+            _ => 45f,
+        };
+
+        static readonly HashSet<ushort> Charcoals = new() { CharcoalId };
 
         public static bool IsBread(ushort id) => Breads.Contains(id);
         public static bool IsMetal(ushort id) => Metals.Contains(id);

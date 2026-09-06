@@ -26,7 +26,8 @@ namespace UnturnedGodot.Net
             public float Fuel;       // BARBECUE only: seconds of burn left in the charcoal currently loaded
         }
 
-        /// <summary>Seconds of cooking one charcoal gives a barbecue. A choice, not a ripped value.</summary>
+        // Burn time per unit of fuel now lives on Cooking.SecondsPerFuel, per appliance -- a log outlasts a
+        // briquette. Kept as a name here only because tests and callers referred to it.
         public const float SecondsPerCharcoal = 45f;
 
         readonly Dictionary<uint, Cooker> _cookers = new Dictionary<uint, Cooker>();
@@ -77,12 +78,15 @@ namespace UnturnedGodot.Net
                 if (!c.On) continue;
                 if (!_inventories.TryGetCrate(c.NetId, out var crate) || crate.Storage == null) continue;
 
-                // A BARBECUE burns charcoal and nothing else. No fuel -> it is a cold grill, so it switches
-                // itself off rather than sitting on pretending to cook.
-                if (c.Kind == ECookerKind.Barbecue)
+                // FUELLED APPLIANCES burn what they burn and nothing else -- a barbecue takes charcoal, a
+                // campfire takes wood. Out of fuel it is a cold grill, so it switches ITSELF off rather than
+                // sitting on pretending to cook. (An oven, toaster and microwave run on the mains: FuelFor
+                // returns null and this whole block is skipped.)
+                var fuel = Cooking.FuelFor(c.Kind);
+                if (fuel != null)
                 {
-                    if (c.Fuel <= 0f && !TryConsumeCharcoal(crate)) { c.On = false; continue; }
-                    if (c.Fuel <= 0f) c.Fuel = SecondsPerCharcoal;
+                    if (c.Fuel <= 0f && !TryConsumeFuel(crate, fuel)) { c.On = false; continue; }
+                    if (c.Fuel <= 0f) c.Fuel = Cooking.SecondsPerFuel(c.Kind);
                     c.Fuel -= dt;
                 }
 
@@ -135,14 +139,15 @@ namespace UnturnedGodot.Net
 
         static readonly List<uint> EmptyList = new List<uint>();
 
-        /// <summary>Spend one charcoal out of the grill's own grid. Returns false when there is none, which is
-        /// what turns a fuelless barbecue off.</summary>
-        static bool TryConsumeCharcoal(InventoryReplication.CrateEntry crate)
+        /// <summary>Spend one unit of fuel out of the appliance's own grid. Returns false when there is none,
+        /// which is what turns a fuelless grill or fire off. Any of the accepted ids will do -- a campfire does
+        /// not care whether the log is birch or pine.</summary>
+        static bool TryConsumeFuel(InventoryReplication.CrateEntry crate, IReadOnlySet<ushort> fuel)
         {
             for (byte i = 0; i < crate.Storage.getItemCount(); i++)
             {
                 var jar = crate.Storage.getItem(i);
-                if (jar?.item == null || jar.item.id != Cooking.CharcoalId) continue;
+                if (jar?.item == null || !fuel.Contains(jar.item.id)) continue;
                 if (jar.item.amount > 1) { jar.item.amount--; return true; }
                 crate.Storage.removeItem(i);
                 return true;

@@ -76,6 +76,40 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void a_campfire_is_the_slow_field_option_with_no_special_word()
+        {
+            // strawberry 2026-09-06: "takes wood as fuel. slower than a bbq. no food buff".
+            Assert.That(Cooking.RatePerSecond(ECookerKind.Campfire),
+                        Is.LessThan(Cooking.RatePerSecond(ECookerKind.Barbecue)), "slower than a bbq, explicitly");
+            Assert.That(Cooking.StyleOf(ECookerKind.Campfire), Is.EqualTo(ECookStyle.Plain), "no buff word of its own");
+            // ...and "no buff" is about the LABEL, not about cooking being pointless: food off a campfire is
+            // worth the same as food out of an oven. If that reading is wrong it is this line that changes.
+            Assert.That(Cooking.Nutrition(95, Cooking.StyleOf(ECookerKind.Campfire)),
+                        Is.EqualTo(Cooking.Nutrition(95, Cooking.StyleOf(ECookerKind.Oven))));
+
+            // WOOD, and only wood. The catalog also holds "Maplestrike" and birch/maple/pine DOORS, so this set
+            // is explicit for the same reason bread and metal are.
+            Assert.That(Cooking.IsWood(37), Is.True, "Birch Log");
+            Assert.That(Cooking.IsWood(39), Is.True, "Maple Log");
+            Assert.That(Cooking.IsWood(41), Is.True, "Pine Log");
+            Assert.That(Cooking.IsWood(Cooking.CharcoalId), Is.False, "charcoal is the BBQ's, not the fire's");
+        }
+
+        [Test]
+        public void each_appliance_burns_only_its_own_fuel()
+        {
+            var bbq = Cooking.FuelFor(ECookerKind.Barbecue);
+            var fire = Cooking.FuelFor(ECookerKind.Campfire);
+            Assert.That(bbq, Does.Contain(Cooking.CharcoalId));
+            Assert.That(bbq, Does.Not.Contain((ushort)37), "a bbq will not take a log -- 'only charcoal'");
+            Assert.That(fire, Does.Contain((ushort)37));
+            Assert.That(fire, Does.Not.Contain(Cooking.CharcoalId), "a campfire takes wood");
+            // The mains appliances need nothing, which is what makes the fuel block skippable for them.
+            foreach (var k in new[] { ECookerKind.Oven, ECookerKind.Toaster, ECookerKind.Microwave })
+                Assert.That(Cooking.FuelFor(k), Is.Null, $"{k} runs on the mains");
+        }
+
+        [Test]
         public void the_style_is_the_appliance_and_plain_carries_no_label()
         {
             Assert.That(Cooking.StyleOf(ECookerKind.Microwave), Is.EqualTo(ECookStyle.Microwaved));

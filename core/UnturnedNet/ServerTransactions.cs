@@ -433,7 +433,14 @@ namespace UnturnedGodot.Net
             // from a world fixture or a deployable. Empty, unlike a map crate -- nobody loots a fridge you
             // have just put down.
             if (_deployables.Schema.TryGet(cmd.DefId, out var pdef) && pdef.StorageWidth > 0 && pdef.StorageHeight > 0)
+            {
                 _inventories.ServerRegisterCrate(new NetId(e.NetIdValue), pdef.StorageWidth, pdef.StorageHeight, e.Pos);
+                // ...and if it cooks, it registers under the SAME NetId the crate uses, so the on/off command,
+                // the open event's cooker fields and the cook step all address it exactly as they address an
+                // oven. A placed campfire is a cooker that happens to have been carried there.
+                if (pdef.CookerKind != 255 && Cooking != null)
+                    Cooking.Register(e.NetIdValue, (ECookerKind)pdef.CookerKind);
+            }
             var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
         }
@@ -480,6 +487,11 @@ namespace UnturnedGodot.Net
                 }
             }
             _inventories.ServerRemoveCrate(netId, _tick());
+            // ...and it stops being a cooker. Without this a salvaged campfire leaves a live entry that steps
+            // every tick against a crate that no longer exists -- harmless today because Step skips a missing
+            // crate, but it is a registry that only ever grows, and the next thing keyed on "is this NetId a
+            // cooker" would answer yes for a fire somebody dismantled an hour ago.
+            Cooking?.Forget(netId);
         }
 
         void OnPickupDeployable(ushort sender, PickupDeployableCommand cmd)

@@ -52,6 +52,10 @@ namespace UnturnedGodot.Net
         /// the existing F-open path needs -- ServerOpenStorage is keyed by crate id and does not care
         /// whether that id came from a map fixture or a deployable.</summary>
         public byte StorageWidth, StorageHeight;
+        /// <summary>If this deployable COOKS, its ECookerKind; 255 = it does not. A def fact like the rest, so
+        /// both ends agree from the content hash and nothing new rides the wire. A placed one registers with
+        /// ServerCooking under the same NetId its crate uses.</summary>
+        public byte CookerKind = 255;
     }
 
     /// <summary>Instance-scoped def registry (no static state -- test isolation for free).</summary>

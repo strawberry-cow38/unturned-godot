@@ -22,6 +22,7 @@ namespace UnturnedNet.Tests
             // Registering them here rather than widening the shared fixture -- these two exist for cooking.
             Assets.add(new ItemAsset { id = 460, itemName = "Bread", size_x = 1, size_y = 1, type = EItemType.FOOD, useFood = 30 });
             Assets.add(new ItemAsset { id = Cooking.CharcoalId, itemName = "Charcoal", size_x = 1, size_y = 1, type = EItemType.SUPPLY });
+            Assets.add(new ItemAsset { id = 37, itemName = "Birch Log", size_x = 1, size_y = 2, type = EItemType.SUPPLY });
         }
 
         static (ServerCooking cook, InventoryReplication inv, InventoryReplication.CrateEntry crate) Rig(ECookerKind kind)
@@ -122,6 +123,26 @@ namespace UnturnedNet.Tests
             cook.Step(30f);
             Assert.That(Cooking.IsCooked(steak.cooked), Is.True, "with fuel it matches an oven");
             Assert.That(steak.cookStyle, Is.EqualTo((byte)ECookStyle.CharcoalGrilled), "and stamps its own label");
+        }
+
+        [Test]
+        public void a_campfire_burns_logs_and_refuses_charcoal()
+        {
+            var (cook, _, crate) = Rig(ECookerKind.Campfire);
+            var beans = new Item(13);
+            crate.Storage.tryAddItem(beans);
+            crate.Storage.tryAddItem(new Item(Cooking.CharcoalId));   // the WRONG fuel for this appliance
+            cook.SetOn(7, true);
+
+            cook.Step(1f);
+            Assert.That(beans.cooked, Is.Zero, "charcoal is not wood -- the fire never lights");
+            Assert.That(cook.TryGet(7, out var c1) && !c1.On, Is.True, "and it switches itself off");
+
+            crate.Storage.tryAddItem(new Item(37));   // Birch Log
+            cook.SetOn(7, true);
+            cook.Step(50f);
+            Assert.That(Cooking.IsCooked(beans.cooked), Is.True, $"a log lights it, got {beans.cooked}");
+            Assert.That(beans.cookStyle, Is.EqualTo((byte)ECookStyle.Plain), "no special word for a campfire");
         }
 
         [Test]
