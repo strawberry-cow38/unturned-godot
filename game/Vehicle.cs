@@ -95,7 +95,7 @@ namespace UnturnedGodot
         // can close: the visor is up while somebody sits in the driver's seat, the lid while the gunner has his head out.
         Node3D _turretHatch, _driverHatch; float _turretHatchDeg, _driverHatchDeg;   // current hinge angles (0 = as modelled = open)
         float _turretHatchT = 1f, _driverHatchT = 1f;   // swing phase 0 = closed .. 1 = open, run through the container door's easing (TankHatchSwing)
-        CollisionShape3D _turretCol, _barrelCol;        // the turret's and the barrel's collision, re-posed every physics tick to the pivots (see UpdateTurretCollision)
+        CollisionShape3D _turretCol, _barrelCol; StaticBody3D _turretHit;   // the turret's and the barrel's collision on their OWN static body (see UpdateTurretCollision), re-posed every physics tick to the pivots
         /// <summary>The gunner is standing in the open hatch (Ctrl toggles; PlayerController). Cleared when seat 1 empties.</summary>
         public bool GunnerHeadOut;
         public bool HasTurretHatch => _turretHatch != null;
@@ -142,8 +142,14 @@ namespace UnturnedGodot
                 _driverHatch.Position = TankDriverHatchHinge + Vector3.Up * (TankDriverHatchLift * closing) + TankGlacisDown * (TankDriverHatchSlide * closing);   // rides up out of the recess and down the slope as it closes (TankDriverHatchLift / Slide)
             }
         }
-        /// <summary>Re-pose the turret/barrel collision boxes from the pivots (they are direct children of the body, so they cannot
-        /// ride the pivots themselves). Turret frame = the yaw node's local transform; barrel frame = yaw x pitch.</summary>
+        /// <summary>Re-pose the turret/barrel collision boxes from the pivots. They live on TurretHit, a StaticBody3D child of the
+        /// tank (the HitMesh / GlassHit pattern: HitMeshBit + the look-ray layer, mask 0, excepted from the hull), NOT on the
+        /// VehicleBody3D itself. On the rigid body they were part of its dynamics: a shape moved every physics tick is a shape
+        /// re-added every tick, and the barrel box reached 4 m ahead of the hull at cannon height, so a nose-down pitch put it
+        /// into the ground -- the nightly's drivetrain run had the tank airborne 55 % of the time (was 34 %) and 4.6 m/s slower,
+        /// bisected to that commit (tinyclaw 2026-09-06). A static child carries no mass, throws nothing and is ignored by the
+        /// ground; players and bullets still hit it, which is what the collision was for. Turret frame = the yaw node's local
+        /// transform; barrel = yaw x pitch.</summary>
         void UpdateTurretCollision()
         {
             if (_turretCol == null || TurretPivot == null || _turretYaw == null || _turretPitch == null || _turretPitch.Length == 0 || _turretPitch[0] == null) return;
@@ -3436,7 +3442,7 @@ namespace UnturnedGodot
         /// <summary>The turret's and the barrel's collision (master 2026-09-06 "give collision to the turret/barrel/etc"): a box
         /// round the turret body (measured off tank_turret.txt minus the peeled lid/gun box: x +/-1.86, y 2.05..3.30, z -2.41..
         /// 1.86, turret frame) and one along the gun (tank_gun.txt: 0.25 m square, z -5.16..0.50, pitch frame). CollisionShape3D
-        /// must be a DIRECT child of the body, so they cannot hang on the pivots -- UpdateTurretCollision re-poses them from the
+        /// must be a DIRECT child of its body (TurretHit, a static child -- never the VehicleBody3D, see UpdateTurretCollision), so they cannot hang on the pivots -- UpdateTurretCollision re-poses them from the
         /// pivots' transforms every physics tick instead.</summary>
         static readonly Vector3 TankTurretColSize = new Vector3(3.72f, 1.25f, 4.27f), TankTurretColCenter = new Vector3(0f, 2.675f, -0.275f);
         static readonly Vector3 TankBarrelColSize = new Vector3(0.5f, 0.5f, 5.66f), TankBarrelColCenter = new Vector3(0f, 0f, -2.33f);
@@ -3553,9 +3559,12 @@ namespace UnturnedGodot
                 if (!mounted) v.AddChild(v.TurretPivot);
                 if (mounted && v._turretHatch != null)   // the turret and the gun COLLIDE (master 2026-09-06): direct children of the body, posed to the pivots each tick
                 {
+                    v._turretHit = new StaticBody3D { Name = "TurretHit", CollisionLayer = HitMeshBit | (1u << 5), CollisionMask = 0 };   // NOT on the rigid body: see UpdateTurretCollision
                     v._turretCol = new CollisionShape3D { Name = "TurretCol", Shape = new BoxShape3D { Size = TankTurretColSize } };
                     v._barrelCol = new CollisionShape3D { Name = "BarrelCol", Shape = new BoxShape3D { Size = TankBarrelColSize } };
-                    v.AddChild(v._turretCol); v.AddChild(v._barrelCol);
+                    v._turretHit.AddChild(v._turretCol); v._turretHit.AddChild(v._barrelCol);
+                    v.AddChild(v._turretHit);
+                    v.AddCollisionExceptionWith(v._turretHit);   // the hull must never collide with its own turret's hitbox (same as HitMesh)
                     v.UpdateTurretCollision();
                 }
                 // THE DRIVER'S VISOR, peeled off the hull and hinged at its rear edge: closed until somebody takes the seat
