@@ -1607,6 +1607,14 @@ namespace UnturnedGodot
                 System.Collections.Generic.List<(Vector3 pos, float yaw)> respawnPoints = null;   // the FULL regular-spawn list, pre-sampled to ground -> handed to the player so DEATH re-rolls a fresh random spawn (source LevelPlayers.getSpawn on every respawn)
                 {
                     var regs = LevelSpawns.PlayerSpawns(mapRoot);
+                    // A row at the ORIGIN is a placeholder, not a spawn (master 2026-09-06 "sometimes i get respawned at
+                    // 0,0"): PEI's spawn table is real coordinates hundreds of metres out, so 0,0 is an empty row rather
+                    // than somewhere anyone meant to stand. Dropped from BOTH the launch pick and the respawn pool -- they
+                    // read the same list, so filtering one and not the other would fix the first spawn and leave every
+                    // respawn after it able to land there. PlayerController.Respawn guards the same case again for the
+                    // paths that never come through here.
+                    int originRows = regs.RemoveAll(r => r.x * r.x + r.z * r.z < 4f);
+                    if (originRows > 0) GD.Print($"[world] dropped {originRows} spawn row(s) at the origin from the respawn pool");
                     if (regs.Count > 0)
                     {
                         var rng = new RandomNumberGenerator(); rng.Randomize();   // TRUE random spawn each launch -- was a fixed Seed = 7 (same point every load)

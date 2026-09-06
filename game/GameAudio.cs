@@ -222,12 +222,28 @@ namespace UnturnedGodot
             _fadeT = 0f; _fading = true; _fadeLen = Mathf.Max(0.05f, fade);
         }
         float _fadeLen = 2.5f;
-        /// <summary>A one-shot over the loop (the map outro / death sting); the loop keeps going underneath.</summary>
+        /// <summary>A one-shot over the loop (the map outro / death sting); the loop keeps going underneath.
+        ///
+        /// The player is HELD (it used to be a fire-and-forget local that only the Finished signal could ever reach), because
+        /// something has to be able to cut it: respawning inside the sting's own length left the death music playing over a
+        /// live player until it ran out (master 2026-09-06 "if you respawn too quickly, the death music keeps playing").
+        /// Starting a second sting also stops the first now -- dying twice inside one outro used to stack them.</summary>
         public void Sting(string name)
         {
             var s = GameAudio.Clip("music", name); if (s == null) return;
-            var p = new AudioStreamPlayer { Stream = s, VolumeDb = Mathf.LinearToDb(Mathf.Clamp(Volume, 0.0001f, 1f)) };
-            AddChild(p); p.Play(); p.Finished += () => { if (GodotObject.IsInstanceValid(p)) p.QueueFree(); };
+            StopSting(0f);
+            _sting = new AudioStreamPlayer { Stream = s, VolumeDb = Mathf.LinearToDb(Mathf.Clamp(Volume, 0.0001f, 1f)) };
+            var p = _sting;
+            AddChild(p); p.Play(); p.Finished += () => { if (_sting == p) _sting = null; if (GodotObject.IsInstanceValid(p)) p.QueueFree(); };
+        }
+        AudioStreamPlayer _sting; float _stingFadeT, _stingFadeLen;
+        /// <summary>Cut the death/outro sting -- on respawn, because a death sting over a living player is a bug you can hear.
+        /// A short fade rather than a hard Stop(): killing a sustained orchestral tail mid-sample clicks.</summary>
+        public void StopSting(float fade = 0.25f)
+        {
+            if (_sting == null || !GodotObject.IsInstanceValid(_sting)) { _sting = null; return; }
+            if (fade <= 0f) { var p0 = _sting; _sting = null; p0.Stop(); p0.QueueFree(); return; }
+            _stingFadeT = 0f; _stingFadeLen = fade;
         }
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
@@ -242,6 +258,14 @@ namespace UnturnedGodot
                 if (k >= 1f) { _fading = false; _b.Stop(); _b.Stream = null; }
             }
             else if (_a.Stream != null) _a.VolumeDb = target;   // live slider
+            if (_stingFadeLen > 0f && _sting != null && GodotObject.IsInstanceValid(_sting))
+            {
+                _stingFadeT += (float)delta;
+                float k = Mathf.Clamp(1f - _stingFadeT / _stingFadeLen, 0f, 1f);
+                _sting.VolumeDb = Mathf.LinearToDb(Mathf.Max(0.0001f, Volume * k));
+                if (k <= 0f) { var p = _sting; _sting = null; _stingFadeLen = 0f; p.Stop(); p.QueueFree(); }
+            }
+            else if (_stingFadeLen > 0f) { _stingFadeLen = 0f; _sting = null; }
         }
     }
 }

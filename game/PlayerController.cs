@@ -5403,6 +5403,7 @@ namespace UnturnedGodot
         void Respawn(bool reposition = true, bool forceRandomSpawn = false)
         {
             _dead = false;
+            if (!NetAvatar) MusicPlayer.Get(this)?.StopSting();   // the death sting dies with the death (master 2026-09-06: respawning fast left it playing over a live player)
             if (_deathScreen != null && IsInstanceValid(_deathScreen)) _deathScreen.HideDeath();   // also recaptures the mouse
             Health = MaxHealth;
             _netAdoptedHealth = MaxHealth;   // P3a: keep the adopted pin in sync with the fresh HP (the server's coarse Health is 100 on respawn too) so the next UpdateVitals doesn't yank it back down
@@ -5419,6 +5420,17 @@ namespace UnturnedGodot
                 Vector3 target = !wantRandom && Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _)
                     ? bedSpawn + Vector3.Up * 0.5f
                     : PickRandomSpawn();   // no claimed bed -> a fresh RANDOM map spawn (strawberry 2026-08-23), not the fixed initial point
+                // NEVER THE WORLD ORIGIN (master 2026-09-06 "sometimes i get respawned at 0,0"). A map's own spawn table can
+                // carry a placeholder row at 0,0 -- PEI's is a list of real coordinates with the occasional empty one -- and
+                // picking it drops you at the corner of the world with no ground under you. Guarded here as well as filtered
+                // at the source (WorldBuilder) because a bed claim registered before its transform lands at the origin too,
+                // and both arrive at this one line. Only fires when the map HAS a real spawn to fall back to, so a small test
+                // world that genuinely spawns near the origin is untouched.
+                if (target.LengthSquared() < 4f && Spawn.LengthSquared() >= 4f)
+                {
+                    GD.Print($"[respawn] refused an origin spawn ({target}) -- falling back to the map spawn {Spawn}");
+                    target = Spawn;
+                }
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
                 // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,
