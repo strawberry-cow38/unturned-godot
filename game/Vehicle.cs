@@ -4607,7 +4607,11 @@ namespace UnturnedGodot
         /// cosmetic (master 2026-09-05): nothing gates boarding or leaving on it.</summary>
         public bool DoorOpen => _doorOpen;
         public float DoorFold => _doorT;
-        public void ToggleDoor() { _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close
+        /// <summary>The leaves are still swinging toward the wanted state. While this is true every open/close command is
+        /// refused (strawberry 2026-09-06 "prevent door open/close commands when the door is mid-animation"): a toggle mid-swing
+        /// used to reverse the fold on the spot, so spamming the key made the door judder between half-states.</summary>
+        public bool DoorMoving => _doorPivotA != null && _doorT != (_doorOpen ? 1f : 0f);
+        public void ToggleDoor() { if (DoorMoving) return; _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close; mid-swing it is ignored
         /// <summary>Somebody got in or out: the door opens (if it is not already) and folds shut DoorHoldSeconds later.
         /// Purely cosmetic -- nothing waits for it (master 2026-09-05).</summary>
         public void CycleDoor()
@@ -4618,14 +4622,14 @@ namespace UnturnedGodot
         }
         public void SetDoorOpen(bool open)
         {
-            if (_doorPivotA == null || _doorOpen == open) return;
+            if (_doorPivotA == null || _doorOpen == open || DoorMoving) return;   // mid-swing: the command is dropped, the fold finishes what it started
             _doorOpen = open;
             if (_doorAudio != null && IsInstanceValid(_doorAudio)) _doorAudio.Play();   // same clip both ways (the leaves fold the same, just backwards)
         }
 
         void UpdateDoor(float dt)
         {
-            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) SetDoorOpen(false); }
+            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) { if (DoorMoving) _doorHold = 0.2f; else SetDoorOpen(false); } }   // the auto-close waits for a swing in progress instead of being dropped by the mid-swing guard
             float target = _doorOpen ? 1f : 0f;
             if (_doorT == target) return;
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
