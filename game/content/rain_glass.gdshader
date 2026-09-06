@@ -39,6 +39,7 @@ uniform float drop_scale = 70.0;                         // drop cells per metre
 uniform float drop_amount : hint_range(0.0, 1.0) = 1.0;  // coverage scale
 uniform float streak_amount : hint_range(0.0, 1.0) = 1.0;
 uniform float refract_strength = 0.020;                  // screen-UV shift through a drop
+uniform float max_distance = 22.0;                       // past this the pane is PLAIN GLASS again -- no drops, no runners, no screen-texture read (master 2026-09-06 "add a somewhat strict limit"): every pane in view ran the full effect at any range
 uniform int debug_view = 0;                              // harness (UG_GLASSDEBUGVIEW): 1 = frames, 2 = runner mask, 3 = drop mask
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
 
@@ -58,7 +59,13 @@ void vertex(){
     obj_pos = VERTEX;
     vec3 fn = length(NORMAL) > 0.5 ? normalize(NORMAL) : vec3(0.0, 0.0, 1.0);   // a rip with no normals must not NaN the frame
     vec3 n = length(pane_axis) > 0.5 ? normalize(pane_axis) : fn;               // THE BIG FACE decides the frame, not this fragment's
-    face_ok = step(0.75, abs(dot(fn, n)));                                      // an edge face (>~40 deg off) is not glass anyone sees water on
+    // face_ok is DEBUG ONLY. Gating the water on it dried every side window: the ripped glass meshes carry NO vertex
+    // normals (sedan_glass_*.txt have not one `vn`) and the loader does not generate any, so NORMAL is unusable and the
+    // fallback (0,0,1) matches a windscreen's axis and nothing else -- windscreen and rear glass stayed wet, both side
+    // windows went dry (master 2026-09-06 "theres no shader on side windows?"). The thin-edge problem the gate was for
+    // is already solved by building the frame from `pane_axis` instead of per fragment: the edges no longer have a
+    // "down" of their own, they just carry the face's water, which is what water on a real pane edge does anyway.
+    face_ok = step(0.75, abs(dot(fn, n)));
     // world DOWN / UP in object space: the rotation part of MODEL_MATRIX, transposed (a uniform scale normalises away)
     vec3 d = normalize(transpose(mat3(MODEL_MATRIX)) * vec3(0.0, -1.0, 0.0));
     up_obj = -d;
@@ -78,12 +85,16 @@ void vertex(){
 void fragment(){
     float rint = clamp(rain_intensity, 0.0, 1.0);
     float wet  = clamp(rain_wetness, 0.0, 1.0);
-    float open = (1.0 - clamp(covered, 0.0, 1.0)) * face_ok;   // sheltered, or a thin edge face -> dry
-    float amt = wet * open * drop_amount;                                    // water sitting on the glass
-    float run = rint * open * streak_amount * smoothstep(0.25, 0.6, tilt);   // runners need rain NOW and a slope to run down
-
+    float open = 1.0 - clamp(covered, 0.0, 1.0);   // under cover -> dry (see face_ok in vertex(): NOT a gate, the rips have no normals to gate on)
     float dist = length(VERTEX);                     // view-space position = distance to the eye
-    float detail = smoothstep(14.0, 5.0, dist);      // drops are millimetres: gone past a few metres, no shimmer
+    // RANGE GATE. Water on glass is a close-up effect -- millimetre drops and 5 mm runs are invisible at range, but the
+    // shader still cost a screen-texture read and two noise fields per pixel on every window in the scene. Beyond
+    // max_distance there is no water at all, so `cov` stays 0 and the whole refraction block below is skipped.
+    float range = 1.0 - smoothstep(max_distance * 0.75, max_distance, dist);
+    float detail = smoothstep(14.0, 5.0, dist) * range;   // drops are millimetres: gone past a few metres, no shimmer
+    float amt = wet * open * drop_amount * range;                                    // water sitting on the glass
+    float run = rint * open * streak_amount * range * smoothstep(0.25, 0.6, tilt);   // runners need rain NOW and a slope to run down
+
     vec2 su_n = length(su) > 1e-4 ? normalize(su) : vec2(1.0, 0.0);
     vec2 sv_n = length(sv) > 1e-4 ? normalize(sv) : vec2(0.0, -1.0);
 
