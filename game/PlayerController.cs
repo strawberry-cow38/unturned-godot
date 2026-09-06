@@ -4481,7 +4481,7 @@ namespace UnturnedGodot
         public void ExitPuppet(Vector3 exitPos)
         {
             _riding = null;
-            GlobalPosition = exitPos;
+            GlobalPosition = SafeSpot(exitPos, "puppet exit");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
@@ -5338,6 +5338,21 @@ namespace UnturnedGodot
         ///
         /// Swept with a ray rather than a terrain height sample -- PlayerController has no Terrain reference, and
         /// a ray also catches the floor you are standing on inside a building, which a heightmap lookup cannot.</summary>
+        /// <summary>Never place the player at the world ORIGIN (master 2026-09-06 "still getting 0,0,0 respawns. usually after
+        /// dying in a jet?"). Every seat-exit path builds its spot from the VEHICLE's transform, and a vehicle that has been
+        /// freed -- a wreck that despawned, a node torn down under a rider -- reads back as a zero transform through a stale
+        /// reference, so `v.GlobalPosition + basis.X * 2.4f + up` is (0, 1, 0): the corner of the world. That is a placement
+        /// bug wherever it comes from, so it is refused HERE, at the one gate all of them pass through, rather than trusted
+        /// to five call sites. Refuses only when the player is not already at the origin (so a legitimate origin spawn on a
+        /// small test map still works) and says which path tried it, because a silent teleport is what made this take three
+        /// goes to find.</summary>
+        Vector3 SafeSpot(Vector3 want, string why)
+        {
+            if (want.LengthSquared() >= 4f || GlobalPosition.LengthSquared() < 4f) return want;
+            GD.Print($"[place] refused an origin spot from {why} ({want}) -- staying at {GlobalPosition}");
+            return GlobalPosition;
+        }
+
         Vector3 ClampExitSpot(Vector3 spot)
         {
             var space = GetWorld3D()?.DirectSpaceState;
@@ -5354,6 +5369,7 @@ namespace UnturnedGodot
         {
             if (_driving == null && _riding == null) return;
             var v = _driving; _driving = null; _riding = null;
+            if (v != null && !IsInstanceValid(v)) v = null;   // dying as the vehicle is torn down: a stale wrapper's zero transform is how a jet death ended at 0,0,0
             // FREE THE SEAT. OccupiedSeats was only ever released by TrySwitchSeat and ExitVehicle, so dying in a
             // seat leaked it FOREVER: a single-seat vehicle (tractor, minicopter, skycrane, semi, tank) became
             // silently un-enterable for the rest of its life -- EnterVehicle's scan walks off the end, hits
@@ -5366,7 +5382,7 @@ namespace UnturnedGodot
             // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
             // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
             // thing you can do to yourself on purpose now.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f); }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "death eject"); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -5426,10 +5442,16 @@ namespace UnturnedGodot
                 // at the source (WorldBuilder) because a bed claim registered before its transform lands at the origin too,
                 // and both arrive at this one line. Only fires when the map HAS a real spawn to fall back to, so a small test
                 // world that genuinely spawns near the origin is untouched.
-                if (target.LengthSquared() < 4f && Spawn.LengthSquared() >= 4f)
+                if (target.LengthSquared() < 4f)
                 {
-                    GD.Print($"[respawn] refused an origin spawn ({target}) -- falling back to the map spawn {Spawn}");
-                    target = Spawn;
+                    // Walk the rest of the candidates rather than trusting one fallback: the map spawn can be the unset
+                    // default on a world that never assigned it, and then "fall back to Spawn" is a fall back to the origin.
+                    Vector3 alt = Spawn;
+                    if (alt.LengthSquared() < 4f && RespawnPoints != null)
+                        foreach (var rp in RespawnPoints) if (rp.pos.LengthSquared() >= 4f) { alt = rp.pos; break; }
+                    if (alt.LengthSquared() < 4f) alt = GlobalPosition;   // nothing real anywhere: stay where the corpse is, never teleport to the corner of the world
+                    GD.Print($"[respawn] refused an origin spawn ({target}) -- using {alt}");
+                    target = alt;
                 }
                 GlobalPosition = target;
                 // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
@@ -8384,6 +8406,7 @@ namespace UnturnedGodot
         void ExitVehicle()
         {
             var v = _driving; _driving = null;
+            if (v != null && !IsInstanceValid(v)) v = null;   // a freed vehicle has a live C# wrapper and a zero transform: touching it puts the player at the origin
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             v?.CycleDoor();
             if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
@@ -8392,7 +8415,7 @@ namespace UnturnedGodot
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f);
+            if (v != null) GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "vehicle exit");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
@@ -8408,11 +8431,12 @@ namespace UnturnedGodot
         public void ExitVehicleAt(Vector3 exitPos)
         {
             var v = _driving; _driving = null;
+            if (v != null && !IsInstanceValid(v)) v = null;   // see ExitVehicle: a freed vehicle reads back as a zero transform
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
             v?.CycleDoor();
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            GlobalPosition = exitPos;
+            GlobalPosition = SafeSpot(exitPos, "vehicle exit (net)");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;
@@ -8442,6 +8466,11 @@ namespace UnturnedGodot
 
         void DriveVehicle(float delta)
         {
+            // THE VEHICLE CAN BE GONE. Every line below dereferences it, and nothing here ever checked more than null --
+            // but a freed node leaves a non-null C# wrapper, so a despawned wreck or a torn-down node under a rider turned
+            // the next tick into either a zero transform (the player driven to the origin) or a throw that took the whole
+            // physics tick with it, every tick, for as long as the stale reference was held. Step out where we stand.
+            if (!IsInstanceValid(_driving)) { GD.Print("[vehicle] the vehicle we were in is gone -- stepping out in place"); _driving = null; ExitVehicleAt(GlobalPosition); return; }
             if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
             // PASSENGERS RIDE, THEY DO NOT STEER (strawberry 2026-08-16: "only F1 is the drivers seat"). Bail
             // before any input is read, so a passenger holding W is not merely ignored by the vehicle but never
