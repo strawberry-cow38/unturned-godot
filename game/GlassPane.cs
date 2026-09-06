@@ -34,20 +34,41 @@ namespace UnturnedGodot
             pane.Indestructible = indestructible;
             pane._half = new Vector3(size.X * 0.5f, size.Y * 0.5f, thickness * 0.5f);
             var box = new Vector3(size.X, size.Y, thickness);
-            pane.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = box }, MaterialOverride = GlassMat(pane._hue) });
+            pane._mesh = new MeshInstance3D { Mesh = new BoxMesh { Size = box }, MaterialOverride = GlassMat(pane._hue) };
+            pane.AddChild(pane._mesh);
             pane.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = box } });
             pane.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);   // a stray hit reads as a hard 'tink'; the shatter carries the real read
             return pane;
         }
 
-        // The see-through glass material (matches WorldBuilder.MatFor's Glass_ look: mostly transparent, glossy), tinted by `hue`.
-        static StandardMaterial3D GlassMat(Color hue) => new StandardMaterial3D
+        MeshInstance3D _mesh;
+        /// <summary>Rain-on-glass shelter for THIS pane (the shader's per-instance `covered`): true = no rain reaches it, so no
+        /// beads or runners. A pane cannot tell an exterior window from a window-shaped opening in an interior partition -- the
+        /// wall that spawned it can (WallSurface: 0.50 partition vs 0.70 exterior thickness, the editor's own convention), so
+        /// the wall sets it. Default false: a standalone pane in the open rains.</summary>
+        public bool Covered
         {
-            AlbedoColor = new Color(hue.R, hue.G, hue.B, 0.26f),
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            Metallic = 0f, Roughness = 0.06f,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-        };
+            set { if (_mesh != null && GodotObject.IsInstanceValid(_mesh)) _mesh.SetInstanceShaderParameter("covered", value ? 1f : 0f); }
+        }
+
+        // The see-through glass material (matches WorldBuilder.MatFor's Glass_ look: mostly transparent, glossy), tinted by `hue`
+        // -- now the RAIN GLASS shader (strawberry 2026-09-05): the same tinted glass, plus beads + runners while it rains.
+        static Material GlassMat(Color hue) => RainGlassMat(new Color(hue.R, hue.G, hue.B, 0.26f), 0f, 0.06f);
+
+        static Shader _rainGlass;
+        /// <summary>content/rain_glass.gdshader as a material: `tint` = the glass colour + alpha (what the StandardMaterial3D
+        /// AlbedoColor used to carry), metallic/roughness likewise. Shared by the window panes here and every vehicle's glass
+        /// (Vehicle.AddGlassOverlay), so a windscreen and a window bead + streak the same way in the same rain.</summary>
+        public static ShaderMaterial RainGlassMat(Color tint, float metallic, float roughness)
+        {
+            _rainGlass ??= GD.Load<Shader>("res://content/rain_glass.gdshader");
+            var m = new ShaderMaterial { Shader = _rainGlass };
+            m.SetShaderParameter("tint", tint);
+            m.SetShaderParameter("metallic", metallic);
+            m.SetShaderParameter("roughness", roughness);
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_GLASSDEBUGVIEW"), out var dbg) && dbg > 0) m.SetShaderParameter("debug_view", dbg);   // harness: false-colour the shader's inputs
+            return m;
+        }
 
         // The shard colour: the pane's glass hue lightened toward white, so broken glass reads bright.
         // shards TRANSLUCENT (master 2026-08-09): glass fragments should read see-through, not solid glass-coloured chips.

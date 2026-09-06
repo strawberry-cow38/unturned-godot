@@ -461,14 +461,20 @@ namespace UnturnedGodot
                 var o = Openings[want[k]];
                 float hp = o.GlassHp > 0f ? o.GlassHp : 1f;
                 var spec = (want[k], o.Width, o.Height, o.GlassTint, hp, o.GlassIndestructible);
+                // Rain-on-glass: a window-shaped opening in an INTERIOR partition (0.50 thick, WallOpenings.InteriorThickness) is
+                // indoors -- no rain beads on it. Exterior walls (0.70) rain. The thickness is the editor's own convention for
+                // which wall is which (tinyclaw), so it is the discriminator here; set on every rebuild, the slider can change it.
+                bool interior = Thickness < (WallOpenings.DefaultThickness + WallOpenings.InteriorThickness) * 0.5f;
                 if (k < _panes.Count && _paneSpec[k] == spec)
                 {
                     _panes[k].Position = new Vector3(o.U + o.Width * 0.5f, o.V + o.Height * 0.5f, 0f);
+                    _panes[k].Covered = interior;
                     continue;
                 }
                 var pane = GlassPane.Build(new Vector2(o.Width, o.Height),
                                            o.GlassTint != 0 ? TintFromRgb(o.GlassTint) : GlassPane.DefaultHue,
                                            hp, o.GlassIndestructible);
+                pane.Covered = interior;
                 // Resolve the opening at SHATTER time, not now: this closure outlives any number of Rebuilds,
                 // and an index captured today points at a different opening once one is deleted.
                 pane.OnShattered += () => MarkPaneBroken(pane);

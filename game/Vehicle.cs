@@ -68,6 +68,7 @@ namespace UnturnedGodot
         float _rotorRadius, _heliLiftCap = 1f, _groundEffect = 1f, _geApplied = 1f;   // cached once per StepHeli; _geApplied is the share the CAP let through
         MeshInstance3D _beaconMesh; OmniLight3D _beaconLight; StandardMaterial3D _beaconMat; float _beaconTimer;   // belly anti-collision flasher
         float _ignitionLeft, _ignitionLen;   // start-up gate: the rotor winds up THROUGH the clip, thrust waits for it
+        float _rainCoverPoll, _topLocalY; bool _rainCovered, _rainCoverWired;   // rain-on-glass: is this vehicle under cover? polled 2 Hz while it rains (RainCoverTick), pushed to the panes' `covered`
         bool _cabin;     // a closed passenger cell (roofed car / tracked hull / canopy / pod heli) -- see HasCabin
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
@@ -4606,7 +4607,11 @@ namespace UnturnedGodot
         /// cosmetic (master 2026-09-05): nothing gates boarding or leaving on it.</summary>
         public bool DoorOpen => _doorOpen;
         public float DoorFold => _doorT;
-        public void ToggleDoor() { _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close
+        /// <summary>The leaves are still swinging toward the wanted state. While this is true every open/close command is
+        /// refused (strawberry 2026-09-06 "prevent door open/close commands when the door is mid-animation"): a toggle mid-swing
+        /// used to reverse the fold on the spot, so spamming the key made the door judder between half-states.</summary>
+        public bool DoorMoving => _doorPivotA != null && _doorT != (_doorOpen ? 1f : 0f);
+        public void ToggleDoor() { if (DoorMoving) return; _doorHold = 0f; SetDoorOpen(!_doorOpen); }   // a deliberate toggle cancels any pending auto-close; mid-swing it is ignored
         /// <summary>Somebody got in or out: the door opens (if it is not already) and folds shut DoorHoldSeconds later.
         /// Purely cosmetic -- nothing waits for it (master 2026-09-05).</summary>
         public void CycleDoor()
@@ -4617,14 +4622,14 @@ namespace UnturnedGodot
         }
         public void SetDoorOpen(bool open)
         {
-            if (_doorPivotA == null || _doorOpen == open) return;
+            if (_doorPivotA == null || _doorOpen == open || DoorMoving) return;   // mid-swing: the command is dropped, the fold finishes what it started
             _doorOpen = open;
             if (_doorAudio != null && IsInstanceValid(_doorAudio)) _doorAudio.Play();   // same clip both ways (the leaves fold the same, just backwards)
         }
 
         void UpdateDoor(float dt)
         {
-            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) SetDoorOpen(false); }
+            if (_doorHold > 0f) { _doorHold -= dt; if (_doorHold <= 0f) { if (DoorMoving) _doorHold = 0.2f; else SetDoorOpen(false); } }   // the auto-close waits for a swing in progress instead of being dropped by the mid-swing guard
             float target = _doorOpen ? 1f : 0f;
             if (_doorT == target) return;
             _doorT = Mathf.MoveToward(_doorT, target, dt / 0.8f);   // 0.8 s swing either way
@@ -4802,18 +4807,16 @@ namespace UnturnedGodot
         {
             if (s.GlassMesh == null) return;
             bool dbg = System.Environment.GetEnvironmentVariable("UG_GLASSDEBUG") == "1";
-            var glassMat = new StandardMaterial3D
-            {
-                AlbedoColor = s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                Metallic = 0.35f, Roughness = 0.10f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            };
+            // RAIN GLASS (strawberry 2026-09-05): the same tinted, glossy, two-sided glass as before, through the shader that beads +
+            // streaks it while it rains -- shared with the building editor's GlassPane so a windscreen and a window agree.
+            var glassMat = GlassPane.RainGlassMat(s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
+                                                  metallic: 0.35f, roughness: 0.10f);
             string base_ = s.GlassMesh.EndsWith(".txt") ? s.GlassMesh[..^4] : s.GlassMesh;
             foreach (var label in GlassPaneLabels)
             {
                 var m = LoadOptionalObjQuiet($"{base_}_{label}.txt");
                 if (m == null) continue;
-                var mat = glassMat;
+                Material mat = glassMat;
                 if (dbg) mat = new StandardMaterial3D {
                     AlbedoColor = GlassDebugColors[v._glassNodes.Count % GlassDebugColors.Length],
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
@@ -4837,6 +4840,24 @@ namespace UnturnedGodot
         }
 
         static readonly System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D> _paneTriCache = new();
+
+        /// <summary>Is this vehicle under cover, for the rain-on-glass shader? Only the vehicle can answer -- the roof map
+        /// stores the topmost solid per XZ, and that is this vehicle's OWN roof above its own side windows. So: one up-ray from
+        /// just above the hull's highest box (ShelterProbe, the same rule the players' rain shelter uses), 2 Hz, only while it
+        /// rains, pushed to every pane as the per-instance `covered` when it changes. A car in a garage keeps dry glass; a car
+        /// in the open beads and streaks.</summary>
+        void RainCoverTick(double delta)
+        {
+            _rainCoverPoll -= (float)delta;
+            if (_rainCoverPoll > 0f) return;
+            _rainCoverPoll = 0.5f;
+            bool raining = (WeatherManager.Current?.RainIntensity ?? 0f) > 0.01f;
+            bool covered = raining && ShelterProbe.IsSheltered(GetWorld3D(), GlobalPosition + GlobalTransform.Basis.Y * (_topLocalY + 0.25f));
+            if (_rainCoverWired && covered == _rainCovered) return;
+            _rainCovered = covered; _rainCoverWired = true;
+            foreach (var g in _glassNodes)
+                if (GodotObject.IsInstanceValid(g)) g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);
+        }
 
         /// <summary>Give one glass pane a collider of its own, but ONLY with the mesh hitbox on.
         ///
@@ -4957,8 +4978,7 @@ namespace UnturnedGodot
         {
             var frameMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));   // black tube frame, skids, boom
             var bladeMat = SolidMat(new Color(0.10f, 0.10f, 0.11f));
-            var glassMat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.70f, 0.78f, 0.35f), Metallic = 0.3f, Roughness = 0.1f,
-                                                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var glassMat = GlassPane.RainGlassMat(new Color(0.55f, 0.70f, 0.78f, 0.35f), metallic: 0.3f, roughness: 0.1f);   // the pod canopy rains like every other pane
 
             void Part(string name, Mesh m, Vector3 pos, Material mat, Vector3 rotDeg = default, Node3D parent = null)
             {
@@ -5955,6 +5975,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             else v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
+            v._topLocalY = Mathf.Max(s.BoxCenter.Y + s.BoxSize.Y * 0.5f, roof.HasValue ? roof.Value.center.Y + roof.Value.size.Y * 0.5f : 0f);   // the highest point of the hull boxes: RainCoverTick casts up from just above it
             if (roof.HasValue)
             {
                 v.AddChild(new CollisionShape3D { Name = "RoofBox", Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
@@ -8949,6 +8970,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// repeat for every ship that spawns.</summary>
         public override void _Ready()
         {
+            if (_glassNodes.Count > 0) TickHub.Add(this, RainCoverTick, 2f);   // rain-on-glass cover poll (2 Hz, rays only while it rains)
             SetProcess(false); if (_water != WaterMode.Car) TickHub.AddProcess(this, HubProcess);   // PERF: boat-only wake tick, through the hub (3 boats x 500 fps of chain-walk was 15% of the bridge)
             base._Ready();
             GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it

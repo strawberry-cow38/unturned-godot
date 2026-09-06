@@ -8248,7 +8248,7 @@ namespace UnturnedGodot
             {
                 case Vehicle.AccessKind.Trunk: return $"[{key}] open trunk";
                 case Vehicle.AccessKind.Hood:  return $"[{key}] open hood";
-                case Vehicle.AccessKind.BiFold: return v.DoorOpen ? $"[{key}] close door" : $"[{key}] open door";
+                case Vehicle.AccessKind.BiFold: return v.DoorMoving ? (v.DoorOpen ? "door opening" : "door closing") : v.DoorOpen ? $"[{key}] close door" : $"[{key}] open door";   // no key offered mid-swing: the command would be refused (Vehicle.DoorMoving)
                 default:
                     int seat = _focusAccess.Seat;
                     string who = seat == 0 ? "driver" : $"seat {seat + 1}";
