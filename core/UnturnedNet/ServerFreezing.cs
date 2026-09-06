@@ -41,8 +41,12 @@ namespace UnturnedGodot.Net
                 bool powered = HasPower == null || HasPower(crate.NetIdValue);
                 if (crate.HasFreezer && powered && Sweep(crate.Freezer, Freezing.FreezePerSecond, dt)) Note(crate.OpenBy);
                 if (crate.HasFreezer && !powered && Sweep(crate.Freezer, -Freezing.ThawPerSecond, dt)) Note(crate.OpenBy);
-                // The fridge BODY never freezes -- it is the slow-spoil compartment, not the cold one.
-                if (Sweep(crate.Storage, -Freezing.ThawPerSecond, dt)) Note(crate.OpenBy);
+                // THE BODY: normally the slow-spoil half of a fridge, so it thaws. An ice box has no warm half
+                // -- the whole container is the freezer -- so its body freezes instead, on the same power gate
+                // as a compartment. Unpowered it thaws like anything else, which is what makes cutting the
+                // grid to a stocked freezer a real loss rather than a cosmetic one.
+                float bodyRate = crate.BodyFreezes && powered ? Freezing.FreezePerSecond : -Freezing.ThawPerSecond;
+                if (Sweep(crate.Storage, bodyRate, dt)) Note(crate.OpenBy);
             }
 
             // (2) WHAT PLAYERS ARE CARRYING. A frozen steak in a backpack thaws; that is the cost of taking it

@@ -4,6 +4,16 @@ However, bear in mind that at the moment it can lead to project crashes or insta
 So, unless you want to test the engine, set the "rendering/driver/threads/thread_model" project setting to 'Safe'.
      at: setup2 (main/main.cpp:3382)
 
-[L1] running 1 in-engine test(s), filter='vehicle.plane_dive'
-[TEST] vehicle.plane_dive                         | PASS | 0.50s (6 checks)
-[L1] passed=1 failed=0 duration=0.5s
+[L1] running 1 in-engine test(s), filter='tree.harvest'
+[items] loaded 1944 item assets from res://content/items_catalog.tsv
+[items] wired 57 guns for in-game equip (from content/*.dat + _gun.txt)
+[items] wired 34 extracted melee weapons for in-game equip
+[items] wired clothing armor for 218 items (fall + explosion whole-body multipliers)
+[items] wired clothing dims for 714 garments (195 with a storage grid)
+[items] wired consumable effects for 165 food/water/medical items
+[items] derived magazine data for 38 magazines from their guns
+[items] named the real cartridge in 45 gun descriptions
+[items] magazines.tsv: 16 magazines + 0 shells wired (hand-wired rows kept)
+[tree] felled #3
+[TEST] tree.harvest                               | PASS | 0.36s (5 checks)
+[L1] passed=1 failed=0 duration=0.4s

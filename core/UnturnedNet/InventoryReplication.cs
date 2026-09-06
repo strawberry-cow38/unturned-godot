@@ -479,6 +479,13 @@ namespace UnturnedGodot.Net
             /// <summary>Does this container keep food cold WITHOUT freezing it -- a powered fridge? Drives the
             /// slowed spoilage rate; the freezer compartment above is a separate, stronger thing.</summary>
             public bool Refrigerates;
+
+            /// <summary>THE WHOLE BOX IS THE FREEZER (master 2026-09-06: "turn the ice box into a smart
+            /// container that acts as a freezer"). A fridge has a small freezer compartment above a body that
+            /// merely chills -- an ice merchandiser has no warm half, so this freezes `Storage` itself rather
+            /// than adding a second grid. Distinct from HasFreezer for exactly that reason: one is a container
+            /// with a freezer IN it, this is a container that IS one.</summary>
+            public bool BodyFreezes;
         }
 
         /// <summary>Server-side crate interaction reach. SP opens at 2.5 m (OpenNearestCrate); the server
@@ -577,6 +584,14 @@ namespace UnturnedGodot.Net
 
         /// <summary>Give a registered crate a freezer compartment. Separate from ServerRegisterCrate because the
         /// side that knows a prop is a FRIDGE (a mesh name) is the game layer, not this one.</summary>
+        /// <summary>Make a whole container a freezer: everything in its main grid freezes rather than thaws.</summary>
+        public bool ServerMakeFreezerBody(uint crateId)
+        {
+            if (!_crates.TryGetValue(crateId, out var c)) return false;
+            c.BodyFreezes = true; c.Refrigerates = true;
+            return true;
+        }
+
         public bool ServerAddFreezer(uint crateId, byte width, byte height)
         {
             if (!_crates.TryGetValue(crateId, out var c) || width == 0 || height == 0) return false;

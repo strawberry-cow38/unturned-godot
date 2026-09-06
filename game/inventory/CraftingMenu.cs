@@ -56,7 +56,11 @@ namespace UnturnedGodot
         const int TILEQ = 52;
         sealed class QueueJob { public BlueprintDef Bp; public ItemAsset Out; public int Qty; public float TimeLeft; public List<(ushort id, int amt)> PerUnit; }
 
-        static float CraftTimeFor(BlueprintDef bp) => BASE_CRAFT_SECONDS;   // the per-recipe "crafting time variable" (all 1 s)
+        /// <summary>How long one unit of this recipe takes. Reads the recipe's own time when it declares one
+        /// (blueprints.tsv column 9) and falls back to the base otherwise -- so the 1875 archived retail rows,
+        /// which have 8 columns, keep behaving exactly as they did (master 2026-09-06: "add crafting times to
+        /// each log -> plank plank -> stick recipe").</summary>
+        static float CraftTimeFor(BlueprintDef bp) => bp != null && bp.Seconds > 0f ? bp.Seconds : BASE_CRAFT_SECONDS;
 
         // resolved once per Open(): every indexed recipe, its output asset, and its category bucket
         readonly List<BlueprintDef> _all = new();

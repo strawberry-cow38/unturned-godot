@@ -6232,7 +6232,21 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.O, Echo: false })
                 WorldItem.ShowLookSphere = !WorldItem.ShowLookSphere;               // O: toggle the look-END sphere visualizer (master)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.I, Echo: false })
-            { _showLookHulls = !_showLookHulls; if (_lookHullViz != null) _lookHullViz.Visible = _showLookHulls; }   // I: toggle the look-focus HULL wireframes for every vehicle (strawberry)
+            {
+                // I NOW SHOWS THE REAL COLLISION HITBOXES (master 2026-09-06: "change the I button to show a
+                // wireframe the new hitboxes of vehicles"), which is what you want the moment a vehicle grows
+                // new ones -- the tank's turret and barrel boxes landed today.
+                //
+                // It used to toggle the look-focus HULLS, which are a different set of volumes entirely: those
+                // are the interaction targets that decide what you are pointing AT, not what the world collides
+                // with. Two overlays that both draw wireframes round a car are very easy to confuse, and the one
+                // on the key was the one that answers the rarer question.
+                //
+                // The look hulls are not gone -- they keep their own state and their own draw, and the console's
+                // `hitbox` verb still gives finer control over this overlay (client/server/off) than a single
+                // key can. This just points the key at the more useful of the two.
+                GD.Print(HitboxDebugOverlay.Console("client", GetTree()));
+            }
             else if (Keybinds.Matches(GameAction.AttachMenu, @event) && @event is not InputEventKey { Echo: true })
             {
                 if (AttachMenu != null)   // AttachMenu (default T, hold): show the weapon-attachment menu while held, release to close

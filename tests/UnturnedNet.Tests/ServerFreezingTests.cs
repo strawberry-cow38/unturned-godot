@@ -145,6 +145,47 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void an_ice_box_freezes_its_whole_body_not_a_compartment()
+        {
+            // master 2026-09-06: "turn the ice box into a smart container that acts as a freezer". A fridge is a
+            // chilled body with a freezer compartment above it; an ice merchandiser has no warm half at all, so
+            // the distinction under test is that its MAIN grid freezes rather than thaws.
+            var inv = new InventoryReplication();
+            var crate = inv.ServerRegisterCrate(new NetId(21), 6, 4, new Vector3(0f, 0f, 0f));
+            Assert.That(inv.ServerMakeFreezerBody(21), Is.True);
+            var fz = new ServerFreezing(inv);
+
+            var steak = new Item(461);
+            crate.Storage.tryAddItem(steak);
+            for (int i = 0; i < 40; i++) fz.Step(0.5f);
+            Assert.That(steak.frozen, Is.GreaterThan(0), "the body of an ice box is the freezer");
+
+            // A PLAIN crate is the control -- same sweep, same item, and it must NOT freeze. Without this the
+            // check above passes if everything in the world freezes.
+            var plain = inv.ServerRegisterCrate(new NetId(22), 6, 4, new Vector3(5f, 0f, 0f));
+            var other = new Item(461);
+            plain.Storage.tryAddItem(other);
+            for (int i = 0; i < 40; i++) fz.Step(0.5f);
+            Assert.That(other.frozen, Is.Zero, "an ordinary crate is not cold");
+        }
+
+        [Test]
+        public void an_unpowered_ice_box_thaws_what_is_in_it()
+        {
+            // Cutting the grid to a stocked freezer has to be a real loss, not a cosmetic one -- the body falls
+            // back to thawing on the same gate a compartment uses.
+            var inv = new InventoryReplication();
+            var crate = inv.ServerRegisterCrate(new NetId(23), 6, 4, new Vector3(0f, 0f, 0f));
+            inv.ServerMakeFreezerBody(23);
+            var fz = new ServerFreezing(inv) { HasPower = _ => false };
+
+            var steak = new Item(461) { frozen = 90 };
+            crate.Storage.tryAddItem(steak);
+            for (int i = 0; i < 20; i++) fz.Step(0.5f);
+            Assert.That(steak.frozen, Is.LessThan(90), "no power, no cold -- even in a box that is nothing but a freezer");
+        }
+
+        [Test]
         public void nothing_that_is_not_food_ever_gets_a_frozen_value()
         {
             var (fz, _, crate) = Fridge();

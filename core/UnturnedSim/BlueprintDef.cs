@@ -20,6 +20,11 @@ namespace UnturnedGodot
         public string Skill;                    // e.g. "Craft" / "Repair" (blank = no skill requirement)
         public int SkillLevel;
         public readonly List<string> StationTags = new();   // RequiresNearbyCraftingTags GUIDs (blank = craft anywhere)
+        /// <summary>Seconds this recipe takes, from an optional 9th TSV column. 0 = unset, and the caller falls
+        /// back to its base time. Data rather than code because the time is a property OF THE RECIPE, and the
+        /// alternative is a switch in the crafting menu that has to be edited every time a row is added.
+        /// Retail's 1875 extracted rows have 8 columns and parse unchanged.</summary>
+        public float Seconds;
 
         public bool RequiresStation => StationTags.Count > 0;
         public bool RequiresSkill => !string.IsNullOrEmpty(Skill) && SkillLevel > 0;
@@ -108,6 +113,9 @@ namespace UnturnedGodot
             foreach (var s in c[5].Split('|')) { if (string.IsNullOrEmpty(s)) continue; var p = s.Split(':'); if (p.Length >= 3 && int.TryParse(p[1], out int a)) bp.Inputs.Add(new Ingredient { Guid = p[0], Amount = a, Consume = p[2] == "1" }); }
             foreach (var s in c[6].Split('|')) { if (string.IsNullOrEmpty(s)) continue; var p = s.Split(':'); if (p.Length >= 2 && int.TryParse(p[1], out int a)) bp.Outputs.Add(new Ingredient { Guid = p[0], Amount = a, Consume = true }); }
             foreach (var s in c[7].Split('|')) { if (!string.IsNullOrEmpty(s)) bp.StationTags.Add(s); }
+            if (c.Length > 8 && float.TryParse(c[8], System.Globalization.NumberStyles.Float,
+                                               System.Globalization.CultureInfo.InvariantCulture, out float secs) && secs > 0f)
+                bp.Seconds = secs;
             return bp;
         }
     }

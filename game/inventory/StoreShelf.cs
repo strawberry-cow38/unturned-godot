@@ -222,7 +222,7 @@ namespace UnturnedGodot
                 // empty emissive = no glow at all + a hunt in the wrong file (tinyclaw). SplitInterior tries u then
                 // v and takes whichever actually separates. parts[0] = interior, parts[1] = outer shell.
                 ArrayMesh shellMesh = mesh;
-                if (MeshName.StartsWith("Cooler") || MeshName.StartsWith("Fridge"))
+                if (IsChilled(MeshName))
                 {
                     var parts = SplitInterior(mesh);
                     if (parts != null)
@@ -273,7 +273,7 @@ namespace UnturnedGodot
                     _glow = new OmniLight3D
                     {
                         LightColor = glowCol.Value, OmniRange = 2.5f, LightEnergy = 1.2f, ShadowEnabled = false,
-                        Visible = false, Position = box.Position + (MeshName.StartsWith("Cooler") ? new Vector3(box.Size.X * 0.5f, box.Size.Y * 0.5f, box.Size.Z * 0.78f) : box.Size * 0.5f),   // cooler: middle-FRONT (near the glass) so shelf faces light evenly (master); fridge: centre
+                        Visible = false, Position = box.Position + (IsDisplayCooler(MeshName) ? new Vector3(box.Size.X * 0.5f, box.Size.Y * 0.5f, box.Size.Z * 0.78f) : box.Size * 0.5f),   // cooler: middle-FRONT (near the glass) so shelf faces light evenly (master); fridge: centre
                     };
                     AddChild(_glow);
                     // Cooler: the interior sub-mesh (split off the shell above) glows emissive while lit -- ONLY the
@@ -287,7 +287,7 @@ namespace UnturnedGodot
                         lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.8f;   // SHADED -> HDR/bloom; ~10% down (master); only the interior lights
                         _glowLitMat = lit;
                     }
-                    _glowAlways = MeshName.StartsWith("Cooler");   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
+                    _glowAlways = IsDisplayCooler(MeshName);   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
                     AddToGroup("glowcontainers");                  // DayNightCycle's power sweep calls RefreshGlow on a grid change
                     RefreshGlow();                                 // light a powered glass cooler immediately (a fridge stays dark until opened)
                 }
@@ -326,7 +326,7 @@ namespace UnturnedGodot
                 // The drink cooler's door is a glass door: the rip kept the FRAME (Cooler_0_Hinge_0_door.obj: outer x +-0.75,
                 // z 0..2.5, 0.125-wide bars, 0.2 thick about y=0.6) and dropped the glass material -- put the pane back in
                 // the opening with the vehicle window glass, swinging with the leaf (strawberry 2026-09-04).
-                if (MeshName.StartsWith("Cooler")) d.AddGlassPane(new Vector3(0f, 0.6f, 1.25f), new Vector2(1.25f, 2.25f), Vector3.Up);
+                if (IsDisplayCooler(MeshName)) d.AddGlassPane(new Vector3(0f, 0.6f, 1.25f), new Vector2(1.25f, 2.25f), Vector3.Up);   // a beach cool box has no glass front to put a pane in
                 // The leaf KEEPS its default solid look-focus layer (bit 6, set in ObjectDoor._Ready): the player
                 // can't walk through the doorway anymore AND a look-ray on the door front actually lands (before, the
                 // leaf was CollisionLayer=0 -> a walk-through hole + a dead look-zone, since the body mesh has a
@@ -367,11 +367,29 @@ namespace UnturnedGodot
                 && inner.Position.Z >= outer.Position.Z - e && inner.End.Z <= outer.End.Z + e;
         }
 
-        // Fridge -> warm interior bulb, Cooler -> cold blue; every other container kind -> no interior glow (null).
+        /// <summary>A GLASS-FRONT DISPLAY COOLER -- the lit drinks cabinet in a shop. NOT any prop whose mesh
+        /// name happens to begin with "Cooler".
+        ///
+        /// `MeshName.StartsWith("Cooler")` was the test in four places, and Cooler_Beach_0/1/2 are picnic cool
+        /// boxes: a 0.75 m lidded box you carry to the sand. They were inheriting a glass pane, a permanently
+        /// lit interior and refrigeration, because their name starts with the same six letters (master
+        /// 2026-09-06: "beach coolers ... acting as 'coolers' (the store fridges) ... remove the glow from
+        /// them"). Same shape as Maplestrike matching a wood-fuel rule on "Maple" -- a prefix is not a
+        /// category, and the fix is to name the category.</summary>
+        public static bool IsDisplayCooler(string mesh) =>
+            !string.IsNullOrEmpty(mesh) && mesh.StartsWith("Cooler") && !mesh.StartsWith("Cooler_Beach");
+
+        /// <summary>Does this prop refrigerate + light its interior at all? A shop fridge and a display cooler
+        /// do; a beach cool box is an insulated box with no power going to it.</summary>
+        public static bool IsChilled(string mesh) =>
+            !string.IsNullOrEmpty(mesh) && (IsDisplayCooler(mesh) || mesh.StartsWith("Fridge"));
+
+        // Fridge -> warm interior bulb, display cooler -> cold blue; every other container kind -- beach cool
+        // boxes included -> no interior glow (null).
         static Color? GlowColorFor(string mesh) =>
             string.IsNullOrEmpty(mesh) ? (Color?)null
           : mesh.StartsWith("Fridge") ? new Color(1.0f, 0.82f, 0.45f)   // warm interior bulb
-          : mesh.StartsWith("Cooler") ? new Color(0.45f, 0.72f, 1.0f)   // cold blue
+          : IsDisplayCooler(mesh) ? new Color(0.45f, 0.72f, 1.0f)       // cold blue
           : (Color?)null;
 
         public void SetDoorsOpen(bool open)

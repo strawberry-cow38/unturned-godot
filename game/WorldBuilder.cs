@@ -165,6 +165,13 @@ namespace UnturnedGodot
             ["dc1f98c3805c474193cb9b380d0c083c"] = ("Shelf_3", 21, false, "Shelf"),          // solid: no tier profile ripped for it, so loot sits inside
             ["437ea643805e43e399126f631aaf2a03"] = ("Cooler_1", 6, false, "Cooler"),
             ["0467a617f1194026bff310538f34dd05"] = ("Cooler_2", 6, false, "Cooler"),
+            // THE ICE BOX -- the upright merchandiser outside a shop (2.0 x 2.47 m). A container as of
+            // 2026-09-06 ("turn the ice box into a smart container that acts as a freezer"); ContainerNetSync
+            // marks it a body-freezer, so everything inside it freezes rather than merely keeping.
+            ["486dda0171c645f7a3855f3c46796380"] = ("Ice_Box_0", 6, false, "Freezer"),
+            // Beach cool boxes. Containers, but NOT the shop's glass-front display coolers -- see
+            // StoreShelf.IsDisplayCooler for why sharing the "Cooler" prefix was giving them a glass pane and
+            // a permanently lit interior.
             ["6d881d394b3746039805adbdbf2b33a4"] = ("Cooler_Beach_0", 6, false, "Cooler"),
             ["eec9aa3ae5a44c75b764a72327f0df85"] = ("Cooler_Beach_1", 6, false, "Cooler"),
             ["39ec99b8e13d4a259fafc7ba2d3abb2c"] = ("Cooler_Beach_2", 6, false, "Cooler"),

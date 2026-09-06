@@ -51,6 +51,11 @@ namespace UnturnedGodot
             ["Fridge_1"] = (4, 2),
         };
 
+        /// <summary>Props whose ENTIRE grid is a freezer, as opposed to a fridge with a compartment in it
+        /// (master 2026-09-06). An ice merchandiser has no warm half to model.</summary>
+        static readonly System.Collections.Generic.HashSet<string> BodyFreezers = new() { "Ice_Box_0" };
+        public static bool IsBodyFreezer(string mesh) => BodyFreezers.Contains(mesh ?? "");
+
         public static bool HasFreezer(string mesh, out byte w, out byte h)
         {
             if (Freezers.TryGetValue(mesh ?? "", out var d)) { w = d.w; h = d.h; return true; }
@@ -90,6 +95,8 @@ namespace UnturnedGodot
                 if (IsCooker(c.mesh, out var cookKind)) _server.Cooking.Register(id.Value, cookKind);   // an oven is a crate that also cooks
                 if (HasFreezer(c.mesh, out byte fw, out byte fh))
                     _server.Inventories.ServerAddFreezer(id.Value, fw, fh);   // ...and a fridge is one with a second, colder grid
+                if (IsBodyFreezer(c.mesh))
+                    _server.Inventories.ServerMakeFreezerBody(id.Value);      // ...and an ice box is one that is nothing BUT a cold grid
 
                 _tracked.Add(new Tracked { NetId = id.Value, Crate = crate, KindId = kindId, Sig = GridSig(crate.Storage) });
             }

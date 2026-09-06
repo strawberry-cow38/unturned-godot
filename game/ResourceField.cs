@@ -411,7 +411,10 @@ namespace UnturnedGodot
         /// <summary>How far a tree is dropped below its spawn point, per unit of instance Y-scale (strawberry).
         /// SCALED rather than flat because these spawns run from saplings to full canopy at the same baked offset: a
         /// fixed nudge that seats a big pine leaves a small one hovering.</summary>
-        internal const float TreeSink = 0.2f;
+        /// 0.5 since 2026-09-06 (master: "sink all tree foliage down on their placed positions by like 30cm").
+        /// Was 0.2; +0.3 is that request, and it stays SCALED so a sapling sinks proportionally rather than
+        /// burying itself while a full canopy still hovers.
+        internal const float TreeSink = 0.5f;
 
         internal static void SinkTrees(List<Transform3D> xf)
         {
@@ -601,7 +604,23 @@ namespace UnturnedGodot
                 if (m == null) break;
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
-                if (ContentProvider.LoadOk(img, ResDir + $"{TreeName}_{suffix}_{i}_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
+                if (ContentProvider.LoadOk(img, ResDir + $"{TreeName}_{suffix}_{i}_tex.png"))
+                {
+                    // LEAF CUTOUTS (master 2026-09-06: "theres no transparency on the leaves of felled trees").
+                    // The STANDING tree gets its alpha scissor from WorldBuilder.MatFor; the stump and the felled
+                    // debris are loaded here instead and this material never had one, so every leaf card on a
+                    // toppled tree rendered as an opaque rectangle -- the foliage was there, it was just square.
+                    // Same test and threshold as MatFor rather than a second opinion: >1% of texels carrying real
+                    // transparency means it is a cutout. Checked BEFORE mipmaps, because generating them rewrites
+                    // the image and the count would then be read off the wrong data.
+                    if (img.GetFormat() == Image.Format.Rgba8)
+                    {
+                        var data = img.GetData(); int tr = 0;
+                        for (int k = 3; k < data.Length; k += 4) if (data[k] < 200) tr++;
+                        if (tr > data.Length / 400) { mat.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mat.AlphaScissorThreshold = 0.5f; }
+                    }
+                    img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps;
+                }
                 parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
         }
