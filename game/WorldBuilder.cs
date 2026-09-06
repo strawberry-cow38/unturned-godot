@@ -1347,6 +1347,11 @@ namespace UnturnedGodot
                                                   rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
                     else
                         destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive, RagdollMeshesFor(name));
+                    // AFTER the Register calls above, not beside the SetMeta further up: SetDrops writes onto the
+                    // record Register creates, so calling it earlier silently no-ops and the prop drops nothing
+                    // with no error anywhere -- the feature would simply not exist. (It was written up there first.)
+                    if (DestructibleField.Drops.TryGetValue(p[0].ToLowerInvariant(), out var drop))
+                        destField.SetDrops(destIndex, drop.Item, drop.Min, drop.Max);   // a pole leaves logs, a wooden fence leaves planks
                 }
                 // EDITOR ONLY: wrap this object's mesh(es) + collider under one Node3D so the map editor can select /
                 // move / delete it with the exact same gizmo/marker/Save path as editor-placed props (EditorObjects

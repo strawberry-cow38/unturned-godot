@@ -38,6 +38,11 @@ namespace UnturnedGodot
             public int EffectId;              // Rubble_Effect id -> the retail break VFX
             public Mesh[] RagdollMeshes;      // retail Ragdoll pieces (content/objects/<name>_Ragdoll_N.obj) -- each becomes its own physics body on break
             public bool Alive = true;
+            // WHAT THIS PROP LEAVES BEHIND when it breaks (strawberry 2026-09-06: "make power poles drop a 0-2
+            // pine log items. make wooden fences drop 0-2 pine planks"). 0 = drops nothing, which is every prop
+            // that is not in the Drops table below.
+            public ushort DropItem;
+            public byte DropMin, DropMax;
             public System.Action<bool> OnAliveChanged;   // extra teardown/restore a prop needs beyond hiding meshes:
                                                         // a Street_Light_0 owns a SpotLight3D + glow cone that are NOT
                                                         // in Meshes (separate world-space node), so hiding meshes alone
@@ -64,6 +69,51 @@ namespace UnturnedGodot
         // and the server bitmap keeps it alive too, so the net-sync mirror skips it instead of churning.
         public bool IsAlive(int index) => index < 0 || index >= _recs.Length || _recs[index] == null || _recs[index].Alive;
         public float MaxHealth(int index) => index >= 0 && index < _recs.Length && _recs[index] != null ? _recs[index].MaxHealth : 0f;
+
+        /// <summary>Tag a built prop with the loot it leaves when broken. Separate from Register rather than a
+        /// tenth parameter on it: only a handful of props drop anything, and the two batched/unbatched Register
+        /// overloads would both have had to grow.</summary>
+        public void SetDrops(int index, ushort item, byte min, byte max)
+        {
+            if (index < 0 || index >= _recs.Length || _recs[index] == null) return;
+            _recs[index].DropItem = item; _recs[index].DropMin = min; _recs[index].DropMax = max;
+        }
+
+        public bool TryGetDrop(int index, out ushort item, out byte min, out byte max)
+        {
+            item = 0; min = 0; max = 0;
+            if (index < 0 || index >= _recs.Length || _recs[index] is not { DropItem: > 0 } r) return false;
+            item = r.DropItem; min = r.DropMin; max = r.DropMax;
+            return true;
+        }
+
+        /// <summary>Where a prop stands, for scattering its drops. Reads the same two representations SetAlive
+        /// does -- a node-backed prop's mesh transform, or a batched prop's recorded world transform.</summary>
+        public bool TryGetWorldPos(int index, out Vector3 pos)
+        {
+            pos = Vector3.Zero;
+            if (index < 0 || index >= _recs.Length || _recs[index] is not { } r) return false;
+            if (r.Meshes != null && r.Meshes.Length > 0 && r.Meshes[0] != null && GodotObject.IsInstanceValid(r.Meshes[0]))
+            { pos = r.Meshes[0].GlobalTransform.Origin; return true; }
+            if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) { pos = r.BatchXf.Origin; return true; }
+            return false;
+        }
+
+        /// <summary>WHAT A BROKEN PROP LEAVES, by object guid (strawberry 2026-09-06). Lives in code beside
+        /// HealthOverrides and for the same reason: rubble.txt is generated wholesale from the retail bundles by
+        /// tools/extract_rubble.py, so a hand-edit there survives exactly until someone re-extracts.
+        ///
+        /// Only props that ARE destructible can drop anything, which is why Fence_Wood_2/_3 are absent -- they
+        /// are not in rubble.txt at all, so they never break and an entry for them would be dead weight that
+        /// reads like a working rule. Fence_Wood_Broken_0 is the already-damaged fence model and still breaks,
+        /// so it pays out too.</summary>
+        public static readonly System.Collections.Generic.Dictionary<string, (ushort Item, byte Min, byte Max)> Drops = new()
+        {
+            ["bc4b9a034fe04c669285becc489d01a0"] = (41, 0, 2),   // Power_Line_0  -> 0-2 Pine Log
+            ["40921a1a3cd742f69cc25cc25b856572"] = (63, 0, 2),   // Fence_Wood_0  -> 0-2 Pine Plank
+            ["6123b0bb5c3a409bb38ad2c2abab8dbb"] = (63, 0, 2),   // Fence_Wood_1
+            ["113bcf43c0f0470b8fe47217bbbe55ad"] = (63, 0, 2),   // Fence_Wood_Broken_0
+        };
         public long ResetTicks(int index) => index >= 0 && index < _recs.Length && _recs[index] != null ? _recs[index].ResetTicks : 0L;
 
         void EnsureSize(int n) { if (n > _recs.Length) System.Array.Resize(ref _recs, n); }

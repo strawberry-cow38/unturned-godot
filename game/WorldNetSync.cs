@@ -267,8 +267,43 @@ namespace UnturnedGodot
             _appliedVersion = _server.Destructibles.Version;
             int n = Mathf.Min(_server.Destructibles.Count, _field.InstanceCount);
             for (int i = 0; i < n; i++)
-                if (_field.IsAlive(i) != _server.Destructibles.IsAlive(i))
-                    _field.SetAlive(i, _server.Destructibles.IsAlive(i));
+            {
+                bool now = _server.Destructibles.IsAlive(i);
+                if (_field.IsAlive(i) == now) continue;
+                // BREAKING (alive -> dead) is the only edge that pays out. A Rubble_Reset respawn is the same
+                // comparison in the other direction, and dropping there would turn every fence into a renewable
+                // plank farm for anyone willing to wait.
+                if (!now) DropLoot(i);
+                _field.SetAlive(i, now);
+            }
+        }
+
+        /// <summary>Scatter what a broken prop leaves (strawberry 2026-09-06: power poles drop 0-2 pine logs,
+        /// wooden fences 0-2 pine planks).
+        ///
+        /// SERVER-SIDE, through WorldItems.ServerSpawn, and that is the whole reason this lives here rather than
+        /// in DestructibleField.SetAlive next to the break visuals. SetAlive also runs when a JOINING client is
+        /// told which props were already broken before it arrived -- the same trap PlayBreakEffect documents for
+        /// the break VFX -- so dropping there would mint a fresh pile of loot on every join, per client, for
+        /// every fence anyone had ever knocked over. Here it fires once, on the server, on the real transition.
+        ///
+        /// The roll is 0-2 INCLUSIVE and genuinely allows zero: "0-2" is a chance of nothing, not a guarantee of
+        /// something, so a fence line is worth searching rather than worth farming.</summary>
+        void DropLoot(int index)
+        {
+            if (!_field.TryGetDrop(index, out ushort item, out byte min, out byte max)) return;
+            if (!_field.TryGetWorldPos(index, out Vector3 pos)) return;
+            // Deterministic in the index, so a re-broken prop after a reset does not re-roll into a jackpot and
+            // so the number is reproducible when someone asks why a pole gave nothing.
+            uint h = (uint)index * 2654435761u; h ^= h >> 15;
+            int count = min + (int)(h % (uint)Mathf.Max(1, max - min + 1));
+            for (int k = 0; k < count; k++)
+            {
+                uint hi = h + (uint)(k + 1) * 2246822519u; hi ^= hi >> 13;
+                float ang = (hi % 628u) / 100f, rad = 0.3f + ((hi >> 7) % 90u) / 100f;   // scattered, not stacked in one spot
+                var at = new UnityEngine.Vector3(pos.X + Mathf.Cos(ang) * rad, pos.Y + 0.6f, pos.Z + Mathf.Sin(ang) * rad);
+                _server.WorldItems.ServerSpawn(_server.Ids.Mint(), new SDG.Unturned.Item(item), at, _server.Session.CurrentTick);
+            }
         }
     }
 }

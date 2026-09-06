@@ -1835,12 +1835,16 @@ namespace UnturnedGodot
         // it SHAKES whenever it is in your hands (a chainsaw is running, not idle), harder while you are cutting,
         // and it lands normal melee damage on a repeat instead of a swing.
         //
-        // "at the same speed as the blowtorch" (strawberry) is why the interval is a shared constant rather than
-        // this weapon's own clip length: the blowtorch's continuous action has no discrete cadence to copy -- it
-        // repairs per frame -- so the only way for the two to be the SAME speed is for every Repeated tool to act
-        // on one rate. 0.45 s is the weak-swing fallback the normal melee path uses, so a chainsaw cuts at about
-        // the tempo a light weapon swings at.
-        const float RepeatedHitInterval = 0.45f;
+        // THE CHAINSAW'S CUT CADENCE. 0.225 s -- twice the old rate (strawberry 2026-09-06: "double the hit rate
+        // of a chainsaw").
+        //
+        // CORRECTING THE NOTE THAT USED TO SIT HERE: it said this was a SHARED constant, kept at the weak-swing
+        // 0.45 s so a chainsaw and a blowtorch would act "at the same speed". The blowtorch never read it. Its
+        // repair is per-frame and continuous (UpdateSalvage: `v.Repair(dmg * 3f * delta)`, ~30 HP/s), so there
+        // was never a second reader and this doubling cannot affect it. Worth stating plainly, because the old
+        // comment made this look like a change with a blast radius, and a wrong comment about coupling is how a
+        // safe edit gets avoided or an unsafe one gets waved through.
+        const float RepeatedHitInterval = 0.225f;
         static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
         static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
         float _sawHitCd;
@@ -1852,9 +1856,19 @@ namespace UnturnedGodot
 
         // SOUND. Retail ships ONE chainsaw clip (items/melee/chainsaw/use, 0.76 s) and no AudioSource: while swinging,
         // UseableMelee re-triggers `use` every 0.1 s at half volume, and the overlapping bursts are what a running saw
-        // sounds like there. Same here on the cut. While the saw is merely HELD it is still running (the idle shake
-        // above), so the same clip idles underneath as a low, slowed native loop -- retail's idle is silent; this is the
-        // one line to drop if it grates. Off disk (LoadWavLooped / GameAudio), never res:// -- content/ wavs are unimported.
+        // sounds like there. Same here on the cut.
+        //
+        // THE IDLE IS ITS OWN CLIP NOW (strawberry 2026-09-06: "change the chainsaw's idle sound to be continuous,
+        // but distinct from the sawing sound"). It used to be the SAME use clip looped at pitch 0.8, which is why
+        // it was neither: looping a cutting burst replays that burst's attack every 0.28 s, so it pulsed instead of
+        // droning, and it was recognisably the sawing sound because it WAS the sawing sound.
+        //
+        // melee_chainsaw_idle.wav is derived from the use clip by tools/make_chainsaw_idle.py -- take the sustained
+        // body (0.30-0.51 s, skipping the attack and the decay tail), hold its level constant so the chop flattens
+        // into an engine drone, low-pass it at 2.6 kHz so it sits duller than the bright cutting bursts, pitch it
+        // down, and crossfade the loop point. Measured rather than eyeballed, since I cannot hear it: RMS spread
+        // 0.51 against the source's 1.00 (flatter = more drone), and the loop seam is smaller than the clip's own
+        // 99th-percentile sample step, which is what says there is no click.
         AudioStreamPlayer3D _sawIdle; AudioStream _sawUse; float _sawSndT;
         const float SawUseRetrigger = 0.1f;   // source UseableMelee: Time.realtimeSinceStartup - startedSwing > 0.1
         void UpdateChainsaw(float delta, bool lmb)
@@ -1862,8 +1876,11 @@ namespace UnturnedGodot
             if (!IsRepeatedDamage) { _sawHitCd = 0f; _lastSawShake = Vector3.Zero; _sawSndT = 0f; if (_sawIdle != null && _sawIdle.Playing) _sawIdle.Stop(); return; }
             if (_sawIdle == null)
             {
-                var idle = Viewmodel.LoadWavLooped("res://content/audio/items/melee_chainsaw_use.wav");
-                if (idle != null) { _sawIdle = new AudioStreamPlayer3D { Stream = idle, VolumeDb = -14f, PitchScale = 0.8f, UnitSize = 5f, MaxDistance = 35f, Position = new Vector3(0f, 1.2f, 0f) }; AddChild(_sawIdle); }
+                // Falls back to the old use-clip loop if the derived idle is missing, so a stripped content dir is
+                // a worse-sounding saw rather than a silent one.
+                var idle = Viewmodel.LoadWavLooped("res://content/audio/items/melee_chainsaw_idle.wav")
+                        ?? Viewmodel.LoadWavLooped("res://content/audio/items/melee_chainsaw_use.wav");
+                if (idle != null) { _sawIdle = new AudioStreamPlayer3D { Stream = idle, VolumeDb = -13f, PitchScale = 1f, UnitSize = 5f, MaxDistance = 35f, Position = new Vector3(0f, 1.2f, 0f) }; AddChild(_sawIdle); }
             }
             if (_sawIdle != null)
             {
