@@ -46,6 +46,7 @@ uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
+uniform float splat_jitter = 0.75;                               // texels of world-noise warp on the splat lookup (see the boundary note in fragment); 0 = the raw texel lattice
 uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
 uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
 uniform float caustic_strength = 0.15;   // toned down 70% (master)
@@ -98,8 +99,17 @@ float caustics(vec2 p, float t) {
     return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
 }
 void fragment() {
-    vec4 w0 = texture(splat0, UV);
-    vec4 w1 = texture(splat1, UV);
+    // THE PAINT BOUNDARY IS NOT THE TEXEL GRID (master 2026-09-06 ""the terrain paints seem to have a similar issue
+    // sometimes""). The splatmap is one texel per metre and the layer is a WINNER-TAKE-ALL pick, so the edge between
+    // two paints lands exactly where the interpolated weights cross -- a chain of straight facets on the texel
+    // lattice, which reads as stair-stepping anywhere the painted line is not axis-aligned. Warping the LOOKUP by
+    // sub-texel world noise moves that crossing off the lattice: the same hard edge, wandering by a few tens of
+    // centimetres, which is what a real material boundary looks like. splat_jitter = 0 restores the lattice exactly.
+    vec2 sTexel = 1.0 / vec2(textureSize(splat0, 0));
+    vec2 sJit = (vec2(cnoise(wpos.xz * 1.9), cnoise(wpos.xz * 1.9 + 37.1)) - 0.5) * 2.0 * splat_jitter;
+    vec2 sUV = UV + sJit * sTexel;
+    vec4 w0 = texture(splat0, sUV);
+    vec4 w1 = texture(splat1, sUV);
     vec2 tuv = wpos.xz / tileWorld;
     // WINNER-TAKE-ALL again (strawberry 2026-09-06 ""revert the terrain materials thing back to winner takes all from
     // blend""): the dominant splat layer per pixel, hard-edged distinct regions -- the look the reference shots have.
@@ -137,12 +147,25 @@ void fragment() {
         float r_up = smoothstep(0.35, 0.75, wn.y);
         if (best == 2 || best == 0 || best == 7) r_up = 0.0;   // GRASS (+ forest floor) never takes the wet look or the rings (strawberry 2026-09-04) -- only sand/road/rock/dirt soak
         // ROOF MAP: ground under a roof / canopy / car stays dry (RainRoofMap; rect.z = 0 -> no map)
+        // SMOOTHED EDGE (master 2026-09-06 ""the rainmap seems really jagged on buildings placed on non-cardinals""):
+        // the four surrounding cells are tested separately and their 0/1 answers blended, so a roof that is not
+        // axis-aligned dries the ground along a diagonal instead of a staircase. Blending the HEIGHTS instead would
+        // invent mid-air roofs at every edge, which is why the single nearest read was there in the first place.
         if (rain_roof_rect.z > 0.0) {
             vec2 ruv = (wpos.xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
             if (ruv.x >= 0.0 && ruv.x <= 1.0 && ruv.y >= 0.0 && ruv.y <= 1.0) {
                 ivec2 rsz = textureSize(rain_roof, 0);
-                ivec2 rt = clamp(ivec2(ruv * vec2(rsz)), ivec2(0), rsz - ivec2(1));
-                if (wpos.y < texelFetch(rain_roof, rt, 0).r - 0.3) r_up = 0.0;   // nearest texel: no invented mid-air heights at roof edges
+                vec2 rt = ruv * vec2(rsz) - 0.5;
+                ivec2 rb = ivec2(floor(rt)); vec2 rf = fract(rt);
+                float under = 0.0;
+                for (int rj = 0; rj < 2; rj++) {
+                    for (int ri = 0; ri < 2; ri++) {
+                        ivec2 rc = clamp(rb + ivec2(ri, rj), ivec2(0), rsz - ivec2(1));
+                        float u = (wpos.y < texelFetch(rain_roof, rc, 0).r - 0.3) ? 1.0 : 0.0;
+                        under += u * mix(1.0 - rf.x, rf.x, float(ri)) * mix(1.0 - rf.y, rf.y, float(rj));
+                    }
+                }
+                r_up *= 1.0 - under;
             }
         }
         float r_wet = clamp(rain_wetness, 0.0, 1.0) * r_up;
