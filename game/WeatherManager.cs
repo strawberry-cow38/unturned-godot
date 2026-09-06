@@ -172,7 +172,11 @@ namespace UnturnedGodot
                 // on foot -- a jeep parked in a garage is still under the garage. This feeds the SAME scalar RainAudio's
                 // low-pass + trim already muffle by (and the roof map already kills the drops at a car roof), so a cabin
                 // and a building roof are one mechanism, not two that can disagree.
-                var seatVeh = PlayerRegistry.Nearest(cam.GlobalPosition)?.Driving;
+                // ...and only while the CAMERA is in the cabin. In 3rd person it sits outside the car in the rain, so
+                // muffling the world as if you were behind the glass is wrong (master 2026-09-06 "dont muffle rain sounds
+                // if in a vehicle and in 3p").
+                var seated = PlayerRegistry.Nearest(cam.GlobalPosition);
+                var seatVeh = seated != null && seated.IsFirstPersonView ? seated.Driving : null;
                 float cabin = seatVeh != null && seatVeh.HasCabin ? seatVeh.CabinOpenness : 1f;
                 _shelterTarget = cabin < 1f ? cabin : (ShelterProbe.IsSheltered(cam.GetWorld3D(), cam.GlobalPosition) ? 0f : 1f);
                 if (_shelterTarget != _lastShelterLog && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)

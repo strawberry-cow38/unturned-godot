@@ -4966,6 +4966,7 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Name = $"Glass_{label}", Mesh = m, MaterialOverride = mat,
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                 v.AddChild(mi);
+                mi.SetInstanceShaderParameter("pane_axis", GlassPane.DominantFaceAxis(m));   // rain-glass: the pane's biggest face, so the thin edges stay dry (master 2026-09-06)
                 v._glassNodes.Add(mi); v._glassLabels.Add(label);
                 AddPaneCollider(v, mi, $"{base_}_{label}.txt", m);
             }
@@ -4976,6 +4977,7 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Name = "Glass", Mesh = gm, MaterialOverride = glassMat,
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                 v.AddChild(mi);
+                mi.SetInstanceShaderParameter("pane_axis", GlassPane.DominantFaceAxis(gm));
                 v._glassNodes.Add(mi); v._glassLabels.Add("canopy");
             }
             v._glassBroken = new bool[v._glassNodes.Count];

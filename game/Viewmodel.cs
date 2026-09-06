@@ -79,6 +79,7 @@ namespace UnturnedGodot
         public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg) { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelKnown = depth > 0.05f; }
         public void ClearDrivingWheel() => _wheelKnown = false;
         Vector3 _wheelTargetCam;   // the wheel pivot in viewmodel-camera space, this frame
+        const float WheelHandsDrop = 0.09f;   // how far below the wheel pivot the driving hands sit (master 2026-09-06: they rode too high)
         bool WheelHandsCentre(out Vector3 handsLocal)
         {
             handsLocal = Vector3.Zero;
@@ -97,7 +98,7 @@ namespace UnturnedGodot
             if (_wheelKnown && _cam != null && WheelHandsCentre(out var hands))
             {
                 _wheelTargetCam = _cam.ProjectPosition(_wheelScreen + _vpMargin, _wheelDepth);   // same screen spot + depth as the real wheel
-                return _wheelTargetCam - hands;   // hands' midpoint ON the wheel pivot (rotation about it is applied after the sway pass)
+                return _wheelTargetCam - hands - new Vector3(0f, WheelHandsDrop, 0f);   // hands' midpoint ON the wheel pivot, dropped (master 2026-09-06 "lower the viewmodel of the 1p steering wheel hands")
             }
             return -(head + new Vector3(0f, 0.16f, -0.10f));   // same head-base -> eyes offset as PlayerController.SeatedEyeFromSkull
         }

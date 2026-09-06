@@ -1,60 +1,76 @@
-// RAIN ON GLASS (strawberry 2026-09-05 "make a rain on vehicle glass + building editor building glass window shader").
-// Vehicle windscreens / side glass and the building editor's GlassPane windows share this ONE material: the plain tinted
-// glass they used to be, plus -- while it rains -- water BEADS clinging to the pane and RUNNERS streaking down it.
+// RAIN ON GLASS (strawberry 2026-09-05 "make a rain on vehicle glass + building editor building glass window shader",
+// reworked 2026-09-06 to their notes). Vehicle windscreens / side glass and the building editor's GlassPane windows share
+// this ONE material: the plain tinted glass they used to be, plus -- while it rains -- water DROPS clinging to the pane
+// and RUNNERS sliding down it.
 //
-// Everything is computed in the pane's OWN space (object space), so the water sticks to a moving windscreen instead of
-// sliding over it. "Down" is WORLD down projected onto the pane: a raked windscreen (the ship's is 11 deg, a bus's is
-// upright) streaks along its own slope, and a flat sunroof only beads, because there is nothing to run down (a flat pane
-// has no down -- the vertex shader picks any in-plane axis rather than normalising ~0; tinyclaw).
+// TWO EFFECTS, TWO FRAMES (master 2026-09-06 "one for drops (follows the glass' direction) and one for the runners
+// (always vertical)"). They are separated by their coordinate frame, not by a second material: a second pass would be a
+// full extra transparent overdraw on every window in the game for a result the frames already give.
+//   DROPS   live in the PANE's own frame (across x down-the-slope). They follow the glass wherever it faces, and stick
+//           to it -- a moving windscreen carries its water rather than sliding out from under it.
+//   RUNNERS travel along WORLD HEIGHT (world up projected into the pane), so a run is always gravity-vertical no matter
+//           how the pane is raked or facing, which is what water actually does. Still object-space, so they ride the car.
 //
-// Each bead is a little lens: it shows the scene behind it BENT (screen texture, shifted radially, inverted like a real
-// drop), which is what makes water on glass read as water and not as grey speckle. Beads fade out past a few metres --
-// they are a centimetre wide and would only shimmer -- the runners carry the read from afar.
+// THE BIGGEST FACE IS THE ONLY WET ONE (master: "have both shaders consider the BIGGEST face of the glass, because with
+// side windows it was targetting the thin sides"). A pane is a solid with thickness: its edge faces carry their own
+// normals, and a frame built per-fragment made those thin sides their own little wet surface with its own "down". C#
+// measures the mesh's largest-area face once at build time and hands it here as `pane_axis` (object space); every frame
+// is built from THAT, and a fragment whose own normal is off it -- an edge -- stays dry.
+//
+// Each drop is a little lens: it shows the scene behind it BENT (screen texture, shifted radially, inverted like a real
+// drop) with a lit rim. Refraction alone is invisible against a flat grey sky; the rims are what read as water.
 //
 // SHELTER comes from the CPU, per instance (`covered`), NOT from the roof map: rain_roof stores the topmost solid at an
 // XZ, and a car's own roof is above its own side windows, a house's roof above its own windows -- gate glass on "anything
-// above" and no window anywhere is ever wet (tinyclaw's catch); gate on "cover well above" and a tall building's lower
-// windows dry while its upper ones bead. Only the owner knows what a pane belongs to: Vehicle.RainCoverTick casts up
-// from ABOVE its own roof and sets `covered` on its panes (a car in a garage dries, a car in the open beads); a building
-// window is exterior by definition and never sets it.
+// above" and no window anywhere is ever wet (tinyclaw's catch). Vehicle.RainCoverTick casts up from ABOVE its own roof
+// and sets `covered` on its panes; a building window is exterior by definition and never sets it.
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
 
-global uniform float rain_wetness;      // 0 dry .. 1 soaked: how much water sits on the glass (beads)
+global uniform float rain_wetness;      // 0 dry .. 1 soaked: how much water sits on the glass (drops)
 global uniform float rain_intensity;    // 0 .. 1: rain falling NOW -> runners
-instance uniform float covered : hint_range(0.0, 1.0) = 0.0;   // 1 = this pane's owner is under cover (set per MeshInstance3D by Vehicle.RainCoverTick)
+instance uniform float covered : hint_range(0.0, 1.0) = 0.0;   // 1 = this pane's owner is under cover (Vehicle.RainCoverTick)
+instance uniform vec3 pane_axis;        // the LARGEST face's normal, object space (GlassPane.DominantFaceAxis); zero = fall back to the fragment's own
 
 uniform vec4 tint : source_color = vec4(0.62, 0.73, 0.78, 0.26);   // the glass colour + see-through (the StandardMaterial3D.AlbedoColor it replaces)
 uniform float metallic : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.06;
-uniform float bead_scale = 40.0;                          // bead cells per metre of glass (2.5 cm cells, one drop each)
-uniform float bead_amount : hint_range(0.0, 1.0) = 1.0;  // coverage scale (1 = ~45 % of cells hold a drop in a downpour)
+uniform float drop_scale = 70.0;                         // drop cells per metre of glass (1.4 cm cells, one drop each)
+uniform float drop_amount : hint_range(0.0, 1.0) = 1.0;  // coverage scale
 uniform float streak_amount : hint_range(0.0, 1.0) = 1.0;
-uniform float refract_strength = 0.028;                  // screen-UV shift through a drop (~3 % of the frame at the rim)
-uniform int debug_view = 0;                              // harness only (UG_GLASSDEBUGVIEW): 1 = tilt (R) + down-coordinate stripes (G) + across (B); 2 = runner mask; 3 = bead mask
+uniform float refract_strength = 0.020;                  // screen-UV shift through a drop
+uniform int debug_view = 0;                              // harness (UG_GLASSDEBUGVIEW): 1 = frames, 2 = runner mask, 3 = drop mask
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
 
 varying vec3 obj_pos;
-varying vec3 pane_u;    // object space, ACROSS the pane
-varying vec3 pane_v;    // object space, DOWN the pane (world down projected onto it)
+varying vec3 pane_u;    // object space, ACROSS the pane      (drop frame)
+varying vec3 pane_v;    // object space, DOWN the pane        (drop frame)
+varying vec3 pane_h;    // object space, HORIZONTAL in-plane  (runner frame: across)
+varying vec3 up_obj;    // object space, world UP             (runner frame: travel)
 varying float tilt;     // 0 = flat .. 1 = vertical
-varying vec2 su;        // the pane's axes on SCREEN (view space xy), so a drop bends the scene radially whatever the pane's orientation
-varying vec2 sv;        //   (MODELVIEW_MATRIX is a VERTEX-stage built-in; computed here, normalised in the fragment)
+varying float face_ok;  // 1 on the big faces, 0 on the thin edges
+varying vec2 su;        // the drop frame's axes on SCREEN (MODELVIEW_MATRIX is vertex-stage only)
+varying vec2 sv;
 
 float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
 
 void vertex(){
     obj_pos = VERTEX;
-    vec3 n = length(NORMAL) > 0.5 ? normalize(NORMAL) : vec3(0.0, 0.0, 1.0);   // a rip with no normals must not NaN the frame
-    // world DOWN in object space: the rotation part of MODEL_MATRIX, transposed (a uniform scale normalises away)
+    vec3 fn = length(NORMAL) > 0.5 ? normalize(NORMAL) : vec3(0.0, 0.0, 1.0);   // a rip with no normals must not NaN the frame
+    vec3 n = length(pane_axis) > 0.5 ? normalize(pane_axis) : fn;               // THE BIG FACE decides the frame, not this fragment's
+    face_ok = step(0.75, abs(dot(fn, n)));                                      // an edge face (>~40 deg off) is not glass anyone sees water on
+    // world DOWN / UP in object space: the rotation part of MODEL_MATRIX, transposed (a uniform scale normalises away)
     vec3 d = normalize(transpose(mat3(MODEL_MATRIX)) * vec3(0.0, -1.0, 0.0));
-    vec3 dv = d - n * dot(d, n);           // down, projected onto the pane
+    up_obj = -d;
+    vec3 dv = d - n * dot(d, n);           // down, projected onto the pane -> the DROP frame's own slope
     float dl = length(dv);
     tilt = clamp(dl, 0.0, 1.0);
-    vec3 any_axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);   // GUARD: a flat pane has no down
+    vec3 any_axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);   // GUARD: a flat pane (sunroof) has no down
     any_axis = normalize(any_axis - n * dot(any_axis, n));
     pane_v = dl > 0.05 ? dv / dl : any_axis;
     pane_u = normalize(cross(n, pane_v));
+    vec3 h = cross(up_obj, n);             // in-plane and horizontal: the axis a vertical run is measured ACROSS
+    pane_h = length(h) > 0.05 ? normalize(h) : pane_u;
     su = (MODELVIEW_MATRIX * vec4(pane_u, 0.0)).xy;
     sv = (MODELVIEW_MATRIX * vec4(pane_v, 0.0)).xy;
 }
@@ -62,61 +78,69 @@ void vertex(){
 void fragment(){
     float rint = clamp(rain_intensity, 0.0, 1.0);
     float wet  = clamp(rain_wetness, 0.0, 1.0);
-    float open = 1.0 - clamp(covered, 0.0, 1.0);   // see SHELTER above
-    float amt = wet * open * bead_amount;                                              // water sitting on the glass
-    float run = rint * open * streak_amount * smoothstep(0.25, 0.6, tilt);             // runners need rain NOW and a slope
+    float open = (1.0 - clamp(covered, 0.0, 1.0)) * face_ok;   // sheltered, or a thin edge face -> dry
+    float amt = wet * open * drop_amount;                                    // water sitting on the glass
+    float run = rint * open * streak_amount * smoothstep(0.25, 0.6, tilt);   // runners need rain NOW and a slope to run down
 
-    vec2 g = vec2(dot(obj_pos, pane_u), dot(obj_pos, pane_v));   // metres across / DOWN the pane, stuck to it
-    float dist = length(VERTEX);                                  // view-space position = distance to the eye
-    float detail = smoothstep(14.0, 5.0, dist);                   // beads are ~1 cm: gone past a few metres, no shimmer
-    vec2 su_n = length(su) > 1e-4 ? normalize(su) : vec2(1.0, 0.0);   // screen-space pane axes (see the varyings)
+    float dist = length(VERTEX);                     // view-space position = distance to the eye
+    float detail = smoothstep(14.0, 5.0, dist);      // drops are millimetres: gone past a few metres, no shimmer
+    vec2 su_n = length(su) > 1e-4 ? normalize(su) : vec2(1.0, 0.0);
     vec2 sv_n = length(sv) > 1e-4 ? normalize(sv) : vec2(0.0, -1.0);
 
     vec2 off = vec2(0.0);   // screen-UV shift of the scene seen through the water
     float cov = 0.0;        // how much of this pixel is water
     float rim = 0.0;        // the bright ring at a drop's edge
 
-    // 1) BEADS: one jittered drop per cell, present when its seed falls under the coverage the wetness sets.
+    // 1) DROPS -- the PANE's frame, so they follow the glass. Each cell runs its OWN slow cycle: a drop appears, sits,
+    //    and fades, then the cell re-rolls a different drop somewhere else in it (master 2026-09-06 "have drops appear
+    //    and fade randomly"). Nothing is static, and no two cells are in step.
     if (amt > 0.001 && detail > 0.001) {
-        vec2 cellp = g * bead_scale;
+        vec2 g = vec2(dot(obj_pos, pane_u), dot(obj_pos, pane_v));
+        vec2 cellp = g * drop_scale;
         vec2 id = floor(cellp);
-        float seed = h21(id);
-        float present = step(1.0 - 0.38 * amt, seed);
-        vec2 c = id + 0.5 + (vec2(h21(id + 3.1), h21(id + 7.9)) - 0.5) * 0.4;    // centre, kept inside its cell
-        float rs = h21(id + 11.3);
-        float r = 0.10 + 0.16 * rs * rs + 0.12 * step(0.92, rs);                 // radius in cells: mostly small (~3 mm), a few fat ones (~1 cm)
-        vec2 dp = (cellp - c) / r;                                                // 0 centre .. 1 rim
+        float rate = 0.10 + 0.28 * h21(id + 5.1);          // this cell's cycles per second (~4-10 s a drop)
+        float tt = TIME * rate + h21(id + 2.7) * 9.0;      // ...and its own phase, so the field never pulses together
+        float cyc = floor(tt), life = fract(tt);
+        vec2 q = id + cyc * 17.3;                          // everything below re-rolls per cycle
+        float present = step(1.0 - 0.55 * amt, h21(q));
+        vec2 c = id + 0.5 + (vec2(h21(q + 3.1), h21(q + 7.9)) - 0.5) * 0.55;   // a different spot in the cell each time
+        float rs = h21(q + 11.3);
+        float r = 0.07 + 0.13 * rs * rs + 0.10 * step(0.94, rs);   // radius in cells: mostly ~1.5-3 mm, the odd fat one
+        float env = smoothstep(0.0, 0.10, life) * smoothstep(1.0, 0.72, life);   // swells in, holds, fades out
+        vec2 dp = (cellp - c) / r;                          // 0 centre .. 1 rim
         float d2 = dot(dp, dp);
-        float inside = present * detail * smoothstep(1.0, 0.78, d2);
-        off += -(dp.x * su_n + dp.y * sv_n) * refract_strength * inside;              // a lens: the view bends toward the rim, inverted
+        float inside = present * env * detail * smoothstep(1.0, 0.78, d2);
+        off += -(dp.x * su_n + dp.y * sv_n) * refract_strength * inside;   // a lens: the view bends toward the rim, inverted
         cov = max(cov, inside);
-        rim += present * detail * smoothstep(0.5, 0.85, d2) * smoothstep(1.0, 0.9, d2);
+        rim += present * env * detail * smoothstep(0.5, 0.85, d2) * smoothstep(1.0, 0.9, d2);
     }
 
-    // 2) RUNNERS: columns across the pane; each active column has a fat drop sliding DOWN it, trailing a thinning tail.
+    // 2) RUNNERS -- always VERTICAL (master). The travel coordinate is world HEIGHT projected into the pane, not distance
+    //    down the slope, so a raked windscreen and an upright side window run at the same gravity-true rate and read
+    //    vertical from any angle; the columns are spaced along the pane's HORIZONTAL axis for the same reason.
     if (run > 0.001) {
-        float cols = 9.0;
-        float cx = g.x * cols;
+        float gx = dot(obj_pos, pane_h);     // across, horizontal
+        float gy = dot(obj_pos, up_obj);     // world height
+        float cols = 14.0;                   // columns per metre (was 9 -- master: thinner)
+        float cx = gx * cols;
         float cid = floor(cx);
         float cs = h21(vec2(cid, 5.7));
-        float active = step(1.0 - 0.6 * run, cs);                 // more rain -> more columns running
+        float active = step(1.0 - 0.55 * run, cs);                // more rain -> more columns running
         float x0 = 0.5 + (cs - 0.5) * 0.5;                        // where in its column the runner lives
-        float w = 0.07 + 0.06 * h21(vec2(cid, 2.3));               // half-width in column units (~0.8 .. 1.4 cm)
+        float w = 0.045 + 0.035 * h21(vec2(cid, 2.3));            // half-width in column units (~3-6 mm)
         float dxs = (fract(cx) - x0) / w;
         float dx = abs(dxs);
-        float period = 1.2 + 1.5 * h21(vec2(cid, 9.1));            // metres of pane per pass
-        float speed = 0.35 + 0.45 * h21(vec2(cid, 4.4));           // m/s down the glass
-        float s = fract((TIME * speed + cs * period - g.y) / period);   // 0 at the head, growing UP the pane behind it
-        float body = active * (1.0 - smoothstep(0.0, 0.25 + 0.2 * cs, s));       // along the trail, fading up the pane behind the head
+        float period = 1.1 + 1.4 * h21(vec2(cid, 9.1));           // metres of fall per pass
+        float speed = 0.30 + 0.40 * h21(vec2(cid, 4.4));          // m/s, straight down
+        float s = fract((TIME * speed + cs * period + gy) / period);   // 0 at the head, growing UP behind it
+        float body = active * (1.0 - smoothstep(0.0, 0.22 + 0.18 * cs, s));
         float tail = body * (1.0 - smoothstep(0.6, 1.0, dx));
-        float headAmt = active * smoothstep(0.035, 0.0, s);
-        float head = headAmt * (1.0 - smoothstep(0.9, 1.7, dx));
+        float headAmt = active * smoothstep(0.030, 0.0, s);
+        float head = headAmt * (1.0 - smoothstep(0.9, 1.6, dx));
         float stk = max(tail * 0.7, head);
         off += -(dxs * 0.6 * su_n + 0.5 * sv_n) * refract_strength * stk;
         cov = max(cov, stk);
-        // Refraction alone is INVISIBLE against a flat sky (bending a uniform grey shows nothing -- the first render had
-        // runners in the mask and none on screen). What reads as a runner is its EDGES catching the light, same as the
-        // bead rims: a highlight down both sides of the trail and a ring round the head.
+        // the EDGES catch the light -- refraction alone is invisible against a flat sky, the rims are what read as water
         rim += body * smoothstep(0.35, 0.8, dx) * (1.0 - smoothstep(0.9, 1.15, dx)) * 0.7;
         rim += headAmt * smoothstep(0.8, 1.3, dx) * (1.0 - smoothstep(1.5, 1.9, dx));
     }
@@ -126,7 +150,7 @@ void fragment(){
     vec3 emit = vec3(0.0);
     if (cov > 0.002) {
         // The scene behind the drop, bent. It is ALREADY LIT (it is the rendered frame), so it goes out as EMISSION --
-        // through ALBEDO it would be lit a second time by the overcast sky and every drop came out a dark grey disc.
+        // through ALBEDO the overcast sky would light it a second time and every drop came out a dark grey disc.
         vec3 bg = textureLod(screen_tex, clamp(SCREEN_UV + off, vec2(0.001), vec2(0.999)), 0.0).rgb;
         float k = cov * 0.9;
         emit = bg * k;
@@ -134,7 +158,7 @@ void fragment(){
         alpha = mix(alpha, 0.95, cov);       // a drop is a solid lens, not tinted air
     }
     emit += rim * 0.20 * max(amt, run);      // glints along the drops' rims
-    if (debug_view == 1) { ALBEDO = vec3(0.0); EMISSION = vec3(tilt, fract(g.y * 4.0), fract(g.x * 4.0)); ALPHA = 1.0; }
+    if (debug_view == 1) { ALBEDO = vec3(0.0); EMISSION = vec3(face_ok, fract(dot(obj_pos, up_obj) * 4.0), fract(dot(obj_pos, pane_h) * 4.0)); ALPHA = 1.0; }
     else if (debug_view == 2) { ALBEDO = vec3(0.0); EMISSION = vec3(cov, run, 0.0); ALPHA = 1.0; }
     else if (debug_view == 3) { ALBEDO = vec3(0.0); EMISSION = vec3(cov, amt, detail); ALPHA = 1.0; }
     else { ALBEDO = col; EMISSION = emit; ALPHA = alpha; }

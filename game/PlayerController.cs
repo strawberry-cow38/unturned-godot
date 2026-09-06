@@ -6797,6 +6797,9 @@ namespace UnturnedGodot
         public bool HideViewmodelDebug;
         public void DebugToggleHeadOut() { if (_driving != null) _driving.GunnerHeadOut = !_driving.GunnerHeadOut; }   // harness: the gunner's Ctrl
         public void DebugSetFirstPerson(bool fp) => _fp = fp;   // harness: the K toggle, so an outside camera can see the seated body
+        /// <summary>Is the view INSIDE the head (1P) rather than the chase camera? The rain muffle asks: in 3rd person the
+        /// camera is outside the cabin, so muffling as if you were behind the glass is wrong (master 2026-09-06).</summary>
+        public bool IsFirstPersonView => _fp;
 
         // ---- THE TANK'S OPTICS (master 2026-09-05): "in first person, the driver should get a binocular overlay, that acts
         // as a periscope for outside. the turret gunner in 1st person, inside the turret gets an 8x scope reticle (but

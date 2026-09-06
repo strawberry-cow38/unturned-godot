@@ -36,6 +36,7 @@ namespace UnturnedGodot
             var box = new Vector3(size.X, size.Y, thickness);
             pane._mesh = new MeshInstance3D { Mesh = new BoxMesh { Size = box }, MaterialOverride = GlassMat(pane._hue) };
             pane.AddChild(pane._mesh);
+            pane._mesh.SetInstanceShaderParameter("pane_axis", DominantFaceAxis(pane._mesh.Mesh));   // the big face decides where the water runs (see DominantFaceAxis)
             pane.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = box } });
             pane.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);   // a stray hit reads as a hard 'tink'; the shatter carries the real read
             return pane;
@@ -59,6 +60,36 @@ namespace UnturnedGodot
         /// <summary>content/rain_glass.gdshader as a material: `tint` = the glass colour + alpha (what the StandardMaterial3D
         /// AlbedoColor used to carry), metallic/roughness likewise. Shared by the window panes here and every vehicle's glass
         /// (Vehicle.AddGlassOverlay), so a windscreen and a window bead + streak the same way in the same rain.</summary>
+        /// <summary>The normal of the mesh's LARGEST face, in object space -- what the rain-glass shader builds its frames
+        /// from. A pane is a solid with thickness, so its thin EDGE faces carry their own normals; a frame built from the
+        /// fragment's own normal made those edges a little wet surface of their own with their own "down", which is what
+        /// master saw on the side windows ("it was targetting the thin sides", 2026-09-06). Faces are bucketed by axis with
+        /// the two opposite big faces folded together (they are one pane, not two), and the biggest bucket wins.
+        /// Vector3.Zero (an empty or degenerate mesh) tells the shader to fall back to the per-fragment normal.</summary>
+        public static Vector3 DominantFaceAxis(Mesh m)
+        {
+            var f = m?.GetFaces();
+            if (f == null || f.Length < 3) return Vector3.Zero;
+            var buckets = new System.Collections.Generic.List<(Vector3 axis, float area)>();
+            for (int i = 0; i + 2 < f.Length; i += 3)
+            {
+                var cr = (f[i + 1] - f[i]).Cross(f[i + 2] - f[i]);
+                float len = cr.Length();
+                if (len < 1e-7f) continue;               // a degenerate triangle has no normal to vote with
+                var axis = cr / len;
+                int k = Mathf.Abs(axis.X) >= Mathf.Abs(axis.Y) && Mathf.Abs(axis.X) >= Mathf.Abs(axis.Z) ? 0
+                      : Mathf.Abs(axis.Y) >= Mathf.Abs(axis.Z) ? 1 : 2;
+                if (axis[k] < 0f) axis = -axis;          // fold +n and -n onto one axis: the front and back of a pane are the same face
+                bool merged = false;
+                for (int b = 0; b < buckets.Count; b++)
+                    if (buckets[b].axis.Dot(axis) > 0.985f) { buckets[b] = (buckets[b].axis, buckets[b].area + len * 0.5f); merged = true; break; }
+                if (!merged) buckets.Add((axis, len * 0.5f));
+            }
+            Vector3 best = Vector3.Zero; float bestArea = 0f;
+            foreach (var b in buckets) if (b.area > bestArea) { bestArea = b.area; best = b.axis; }
+            return best;
+        }
+
         public static ShaderMaterial RainGlassMat(Color tint, float metallic, float roughness)
         {
             _rainGlass ??= GD.Load<Shader>("res://content/rain_glass.gdshader");
