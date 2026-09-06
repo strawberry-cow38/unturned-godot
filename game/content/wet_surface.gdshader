@@ -3,6 +3,7 @@
 // the --raintest harness sets it directly). Master 2026-08-29: raindrop impact splashes + hard-surface wetness.
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
+#include "res://content/puddles.gdshaderinc"
 
 global uniform float rain_wetness;                       // 0 dry .. 1 soaked (surface darken/gloss)
 global uniform float rain_intensity;                     // 0 .. 1 -- drives the splash-impact density + brightness to MATCH the falling rain
@@ -45,6 +46,7 @@ uniform float dry_roughness = 0.85;
 uniform float splash_scale = 1.0;                        // world-space frequency of the ripple cells
 uniform float impact_amount : hint_range(0.0, 1.0) = 1.0;    // 0 = wetness only, NO splash impacts (terrain-like ground); 1 = full impacts (props). Master: gate impacts to solid props, not terrain.
 uniform float impact_opacity : hint_range(0.0, 1.0) = 0.18;  // splash brightness/opacity -- LOW so impacts read as subtle wet glints, not paint (master: more transparent; was a hard 0.38)
+uniform float puddle_amount : hint_range(0.0, 1.0) = 1.0;    // standing water on this surface (see puddles.gdshaderinc); 0 = never puddles
 
 varying vec3 world_pos;
 
@@ -94,8 +96,14 @@ void fragment(){
     float rough = mix(dry_roughness, 0.42, wet);           // wet = smoother, but DAMP not mirror (strawberry 2026-09-04: "turn down the reflections on wet surfaces by a lot"; was 0.10)
     float sp = 0.0;
     if (rint > 0.0 && impact_amount > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount;   // gate the ~800-ALU voronoi -- zero in clear weather OR on impact-disabled surfaces (terrain)
-    ALBEDO = alb + sp * impact_opacity;
-    ROUGHNESS = rough;
+    // PUDDLES: standing water where the ground is low, MORE reflective than the damp around it (master 2026-09-06
+    // "puddles of more reflective blobs on those surfaces"). The damp surface stays deliberately dull -- the contrast
+    // between the two is the whole effect -- and the impact rings ride harder on open water than on wet stone.
+    float pud = puddle_mask(world_pos.xz, clamp(rain_wetness, 0.0, 1.0) * sheltered, upness) * puddle_amount;
+    vec3 alb2 = mix(alb, alb * 0.62, pud);                 // water over it reads darker than the wet surface
+    float rough2 = mix(rough, 0.06, pud);                  // a puddle IS close to a mirror; the road around it is not
+    ALBEDO = alb2 + sp * impact_opacity * (1.0 + pud * 1.5);
+    ROUGHNESS = rough2;
     METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
-    SPECULAR = 0.5 + wet * 0.12;                           // a hint of sheen (was +0.45)
+    SPECULAR = mix(0.5 + wet * 0.12, 0.9, pud);            // a hint of sheen on damp ground; a real one on water
 }
