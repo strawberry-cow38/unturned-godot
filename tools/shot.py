@@ -61,7 +61,12 @@ SCENES = {
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),
     "navfull":  (["--navshot={OUT}"], {"UG_NAVFULL": "1"}, True, 300, "top-down island map of all 19 nav pockets"),
-    "pei":      (["--peidrive", "--shot={OUT}"], {}, True, 400, "PEI world, drivable"),
+    # 700, not 400. PEI is the heaviest scene here and 400 did not fit it: two attempts on 2026-09-06 died at
+    # 418 s and 420 s with "finalize can only be called from the render thread", which is the in-game watchdog
+    # killing the run mid-frame rather than any fault in the scene -- it failed identically with the effect
+    # under test switched OFF. cow tools shoots the same world in ~5-6 min via --peidrive with a 600 s wait, so
+    # the scene renders fine and the budget was simply under it; on a loaded box even 600 is tight.
+    "pei":      (["--peidrive", "--shot={OUT}"], {}, True, 700, "PEI world, drivable"),
     "editor":   (["--editor", "--shot={OUT}"], {}, True, 400, "map editor over PEI"),
     "editbuild":(["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings"}, True, 400, "the Buildings editor: a drawn building on the stage"),
     "editbake": (["--editor", "--shot={OUT}"], {"UG_EDITTOOL": "buildings", "UG_EDITBAKE": "1"}, True, 400,
