@@ -11,14 +11,28 @@ global uniform vec4 rain_canopy;              // xy = canopy centre XZ, z = radi
 global uniform sampler2D rain_roof;           // RainRoofMap: world Y of the topmost solid per cell (Rf, 64x64 over 64 m)
 global uniform vec4 rain_roof_rect;           // centre X, centre Z, half-size (z = 0 -> no map)
 
-// the height of whatever is topmost at this XZ (a roof, a canopy, a car, the ground); -1e9 outside the map
-float roof_y(vec2 xz) {
-    if (rain_roof_rect.z <= 0.0) return -1e9;
+// SHELTER, SMOOTHED (master 2026-09-06 "the rainmap seems really jagged on buildings placed on non-cardinals").
+// The map stores a HEIGHT per 0.5 m cell and one nearest read gives a hard yes/no, so a roof that is not axis-aligned
+// came out as a staircase along its edge. Blending the HEIGHTS is the trap the nearest read was chosen to avoid (it
+// invents mid-air roofs at every edge), so the four surrounding cells are each tested SEPARATELY and it is their 0/1
+// answers that get bilinearly blended. The edge then runs diagonally, over half a metre, instead of stepping.
+float roof_shelter(vec2 xz, float y, float margin) {
+    if (rain_roof_rect.z <= 0.0) return 0.0;
     vec2 uv = (xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return -1e9;
-    ivec2 sz = textureSize(rain_roof, 0);   // NEAREST texel on purpose: a bilinear read would invent mid-air heights at every roof edge
-    ivec2 t = clamp(ivec2(uv * vec2(sz)), ivec2(0), sz - ivec2(1));
-    return texelFetch(rain_roof, t, 0).r;   // world Y of the topmost solid at this XZ (-1e6 = nothing)
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    ivec2 sz = textureSize(rain_roof, 0);
+    vec2 t = uv * vec2(sz) - 0.5;
+    ivec2 b = ivec2(floor(t));
+    vec2 f = fract(t);
+    float acc = 0.0;
+    for (int j = 0; j < 2; j++) {
+        for (int i = 0; i < 2; i++) {
+            ivec2 c = clamp(b + ivec2(i, j), ivec2(0), sz - ivec2(1));
+            float under = (y < texelFetch(rain_roof, c, 0).r - margin) ? 1.0 : 0.0;
+            acc += under * mix(1.0 - f.x, f.x, float(i)) * mix(1.0 - f.y, f.y, float(j));
+        }
+    }
+    return acc;   // 0 = open sky .. 1 = fully under something
 }
 
 varying float amul;
@@ -58,7 +72,7 @@ void vertex() {
     // canopy hole + the lens distance-fade (so near drops don't read as fat bars -- matches the old PixelAlpha fade)
     amul = (1.0 - shadow) * smoothstep(1.5, 3.2, distance(wpos, CAMERA_POSITION_WORLD));
     // ROOF: a drop below the topmost surface at its XZ has fallen through something -- it is gone (master 2026-09-04)
-    if (wpos.y < roof_y(wpos.xz) - 0.15) amul = 0.0;
+    amul *= 1.0 - roof_shelter(wpos.xz, wpos.y, 0.15);   // fade a drop out ACROSS a roof edge instead of switching it off at a cell boundary
 }
 
 void fragment() {

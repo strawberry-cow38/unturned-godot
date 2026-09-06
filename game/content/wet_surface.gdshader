@@ -16,13 +16,28 @@ uniform bool use_vcol = false;                           // VertexColorUseAsAlbe
 uniform vec4 tint : source_color = vec4(1.0);            // StandardMaterial3D.AlbedoColor modulating the texture
 varying vec4 vcol;
 
-float roof_y(vec2 xz) {
-    if (rain_roof_rect.z <= 0.0) return -1e9;
+// SHELTER, SMOOTHED (master 2026-09-06 "the rainmap seems really jagged on buildings placed on non-cardinals").
+// The map stores a HEIGHT per 0.5 m cell and one nearest read gives a hard yes/no, so a roof that is not axis-aligned
+// came out as a staircase along its edge. Blending the HEIGHTS is the trap the nearest read was chosen to avoid (it
+// invents mid-air roofs at every edge), so the four surrounding cells are each tested SEPARATELY and it is their 0/1
+// answers that get bilinearly blended. The edge then runs diagonally, over half a metre, instead of stepping.
+float roof_shelter(vec2 xz, float y, float margin) {
+    if (rain_roof_rect.z <= 0.0) return 0.0;
     vec2 uv = (xz - rain_roof_rect.xy) / (2.0 * rain_roof_rect.z) + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return -1e9;
-    ivec2 sz = textureSize(rain_roof, 0);   // NEAREST texel on purpose: a bilinear read would invent mid-air heights at every roof edge
-    ivec2 t = clamp(ivec2(uv * vec2(sz)), ivec2(0), sz - ivec2(1));
-    return texelFetch(rain_roof, t, 0).r;   // world Y of the topmost solid at this XZ (-1e6 = nothing)
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    ivec2 sz = textureSize(rain_roof, 0);
+    vec2 t = uv * vec2(sz) - 0.5;
+    ivec2 b = ivec2(floor(t));
+    vec2 f = fract(t);
+    float acc = 0.0;
+    for (int j = 0; j < 2; j++) {
+        for (int i = 0; i < 2; i++) {
+            ivec2 c = clamp(b + ivec2(i, j), ivec2(0), sz - ivec2(1));
+            float under = (y < texelFetch(rain_roof, c, 0).r - margin) ? 1.0 : 0.0;
+            acc += under * mix(1.0 - f.x, f.x, float(i)) * mix(1.0 - f.y, f.y, float(j));
+        }
+    }
+    return acc;   // 0 = open sky .. 1 = fully under something
 }
 
 uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
@@ -70,7 +85,7 @@ void fragment(){
     // world normal -> upness is camera-independent (view-space NORMAL.y dried the surface on a steep look-down shot;
     // the terrain shader already transforms to world space -- match it here so harness/demo surfaces don't dry on tilt).
     float upness = smoothstep(0.45, 0.80, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y);
-    float sheltered = (world_pos.y < roof_y(world_pos.xz) - 0.3) ? 0.0 : 1.0;   // something is above this bit of surface -> it stays dry
+    float sheltered = 1.0 - roof_shelter(world_pos.xz, world_pos.y, 0.3);   // something above this bit of surface -> dry, and the edge of it is not a staircase
     float wet = clamp(rain_wetness, 0.0, 1.0) * upness * sheltered;
     float rint = clamp(rain_intensity, 0.0, 1.0) * sheltered;
     vec3 base = use_tex ? texture(albedo_tex, UV).rgb * tint.rgb : (use_nomip ? texture(albedo_tex_nomip, UV).rgb * tint.rgb : dry_albedo);
