@@ -163,8 +163,14 @@ namespace UnturnedGodot
             ["56e56fe3b9f24351aa37af59b4869584"] = ("Fridge_1", 6, false, "Fridge"),
             ["8242af6ef10e42ce9a2a31df1e0c2767"] = ("Wardrobe_1", 19, false, "Wardrobe"),
             ["dc1f98c3805c474193cb9b380d0c083c"] = ("Shelf_3", 21, false, "Shelf"),          // solid: no tier profile ripped for it, so loot sits inside
-            ["437ea643805e43e399126f631aaf2a03"] = ("Cooler_1", 6, false, "Cooler"),
-            ["0467a617f1194026bff310538f34dd05"] = ("Cooler_2", 6, false, "Cooler"),
+            // COOLER_1 AND COOLER_2 ARE NOT CONTAINERS -- they are the two halves of ONE water cooler
+            // (master 2026-09-06: "water coolers shouldnt be containers at all" / "cooler 1 and 2 are both part
+            // of the same prop"). Cooler_1 is the cabinet and Cooler_2 the bottle on top, which is why they
+            // measure 0.75 x 1.25 m and 0.66 x 0.80 m and why neither looks like the shop unit. Registering
+            // them made a water cooler into TWO separate lootable boxes standing inside each other.
+            // Dropping them from this map leaves the prop rendering exactly as before, just not openable --
+            // the map decides container-ness, not whether the object spawns.
+            // Cooler_0 (1.5 x 2.5 m) stays: that one really is the glass-front shop drinks cooler.
             // THE ICE BOX -- the upright merchandiser outside a shop (2.0 x 2.47 m). A container as of
             // 2026-09-06 ("turn the ice box into a smart container that acts as a freezer"); ContainerNetSync
             // marks it a body-freezer, so everything inside it freezes rather than merely keeping.
