@@ -119,6 +119,20 @@ namespace UnturnedGodot.Testing
         {
             Rigs.Ground(World);
 
+            // ISOLATE THE DRAG LAW FROM THE HEAVE REDIRECT (2026-09-06). This file infers the resisting force
+            // from net deceleration during a NOSE-DOWN run -- which is a descent, and HeaveRedirect adds a
+            // FORWARD force proportional to descent rate. Once that shipped enabled by default, the deceleration
+            // being measured was drag MINUS a push, and the inferred law came out steeper than quadratic
+            // (ratio 2.15 against a 1.71 prediction). The measurement was right about what it saw; it was no
+            // longer only seeing drag.
+            //
+            // Turning it off here is the same kind of control the file already applies when it holds attitude
+            // constant across the three windows "so only the speed differed" -- it is not a weakened assertion,
+            // it is the premise the assertion needs. The redirect's own behaviour is covered by
+            // vehicle.heli_energy_redirect, which asserts it two-sided.
+            float savedRedirect = Vehicle.HeaveRedirect;
+            Vehicle.HeaveRedirect = 0f;
+
             // ---- 1. EVERY AIRFRAME REACHES ITS OWN SPEC, AND STAYS INSIDE THE ENVELOPE.
             // Flown from high enough that 13 s of diving cannot reach the ground: a machine that lands reports
             // a flat speed near zero, which is indistinguishable from one that could never accelerate.
@@ -307,6 +321,8 @@ namespace UnturnedGodot.Testing
                 faDecel > 0.2f && latDecel > 0.2f);
             T.Check($"sliding SIDEWAYS drags harder than flying forward, by the designed ratio ({latDecel / faDecel:0.##}x against a designed {2.5f:0.##}x)",
                 latDecel > faDecel * 2.0f && latDecel < faDecel * 3.0f);
+
+            Vehicle.HeaveRedirect = savedRedirect;   // leave the default as the game ships it for whatever runs next
 
             yield break;
         }

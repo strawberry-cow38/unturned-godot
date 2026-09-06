@@ -61,6 +61,12 @@ namespace UnturnedGodot
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
         public Vector3 DebugTailHub => _tailHubCentre;
         public float DebugCollective => _inCollective;
+        /// <summary>The lift force the wing produced last tick, in g (force / (mass * 9.8)), as a WORLD vector.
+        /// Exposed because the plane had no tests at all and the two 2026-09-06 dive/inverted bugs are both
+        /// invisible from the outside for a while: a plane with a quarter of its lift still flies level, it just
+        /// cannot recover, and an inverted plane looks like it is diving rather than being pushed. Reading the
+        /// force directly is the difference between testing the defect and testing its eventual consequence.</summary>
+        public Vector3 DebugPlaneLiftG { get; private set; }
         public float DebugSlingLen => _slingLen;
         public Vector3 DebugSlingAnchorLocal => _slingAnchor;           // FORCE point (CoM axis)
         public Vector3 DebugSlingVisualAnchorLocal => _slingVisualAnchor;   // DRAW point (cable geometry uses this)
@@ -259,10 +265,13 @@ namespace UnturnedGodot
         /// Signs come out right without special-casing: nose-down tilts b.Y forward, so a descent pushes FORWARD;
         /// a nose-up flare tilts it aft, so flaring brakes; a descending bank pushes into the turn.
         ///
-        /// DEFAULT 0 -- OFF. This is a real feel change nobody has flown yet, so it ships inert and is opted into
-        /// with `heliphys redirect 1`. At 1.0 a Huey exits a 200 m dive at ~22 m/s instead of ~6, peaking near the
-        /// 1.25 MP envelope -- so anything above 1.0 needs a per-airframe envelope check before it goes further.</summary>
-        public static float HeaveRedirect = 0f;
+        /// DEFAULT 1.0 -- ON since 2026-09-06. It shipped inert at 0 with the note "a real feel change nobody has
+        /// flown yet, opted into with `heliphys redirect 1`" -- and then nobody ever opted in, so the fix sat
+        /// switched off for weeks until master reported the exact symptom it was built for a second time ("dive
+        /// maneuvers just plummet you"). A fix that ships disabled pending a trial nobody schedules is a fix that
+        /// does not exist. At 1.0 a Huey exits a 200 m dive at ~22 m/s instead of ~6, peaking near the 1.25 MP
+        /// envelope -- so anything ABOVE 1.0 still needs a per-airframe envelope check before it goes further.</summary>
+        public static float HeaveRedirect = 1f;
         /// <summary>How much draggier sideways than forwards. This is what replaces the old ForeAftBoost /
         /// LateralBoost pair, which multiplied THRUST to make leaning into a run build momentum ("increase the
         /// forward/back momentum when tilting forward/back") and lateral slip feel less eager than a drone.
@@ -6651,6 +6660,21 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         const float PlaneCl0 = 0.34f;              // lift coefficient at zero AoA (wing camber) -> needs a few deg nose-up to hold level, like a real trim
         const float PlaneClSlope = 0.09f;          // lift-curve slope per degree of AoA (up to the stall)
         const float PlaneClMax = 1.7f;             // clamp (== Cl0 + stall*slope): the peak just before the stall
+        /// <summary>Ceiling on the airspeed ratio feeding dynamic pressure, i.e. lift saturates at this multiple
+        /// of PlaneTargetSpeed. RAISED 1.3 -> 2.5 on 2026-09-06, and this is THE fix for "planes plummet after
+        /// gaining significant vertical downward speed, which should be transferred to horizontal glide".
+        ///
+        /// At 1.3 the otter's lift stopped growing at 20.8 m/s. A 60 m/s dive therefore had exactly the same lift
+        /// authority as a 21 m/s cruise -- so height bought speed, speed bought nothing, and the recovery you
+        /// were owed for the altitude you spent did not exist. Trading height for energy is the oldest move in
+        /// flying and it was a no-op.
+        ///
+        /// It does not touch cruise: the otter trims level around 16 m/s where the ratio is 1.0, well under
+        /// either cap. Everything this changes happens above 20.8 m/s, which is the dive.
+        ///
+        /// Still capped rather than left as raw v^2, because nothing else here bounds a fast jet's lift and an
+        /// uncapped square is how a plane leaves the map. UG_PLANELIFTCAP overrides it for tuning by feel.</summary>
+        const float PlaneLiftFracCap = 2.5f;
 
         /// <summary>The pilot's held flight controls. <paramref name="collective"/> is +1 while W is held, -1
         /// while S is held, 0 with neither.
@@ -7248,8 +7272,25 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             float throttle = _inCollective;
             ApplyCentralForce(-b.Z * (pThrust * throttle * spool) * Mass);
 
-            // AIRSPEED = forward component of velocity.
-            float airspeed = LinearVelocity.Dot(-b.Z);
+            // AIRSPEED, and there are TWO of them, which is the whole of the dive bug (master 2026-09-06:
+            // "planes seem to plummet out of the sky ... after gaining significant vertical downward speed,
+            // which should be transferred to horizontal glide, but isnt").
+            //
+            // `noseSpeed` is the component along the nose and is the right input for ANGLE OF ATTACK -- the angle
+            // between where the nose points and where the air is coming from.
+            //
+            // `trueAirspeed` is the magnitude of the relative wind, and it is the right input for DYNAMIC
+            // PRESSURE. A wing does not care which direction the air arrives from when deciding how much of it
+            // there is: q ~ |v|^2, and the direction is already accounted for, once, by the AoA term below.
+            //
+            // The shipped model used the nose component for BOTH, so a dive was aerodynamically invisible. Nose
+            // down at 60 m/s, the forward projection is a fraction of it, the model concluded there was almost no
+            // air over the wing, and produced almost no lift -- so pulling out did nothing and you rode it into
+            // the ground with the airspeed that should have saved you. Diving to trade height for speed is the
+            // most basic thing an aeroplane does and it was the one manoeuvre guaranteed to kill you.
+            float noseSpeed = LinearVelocity.Dot(-b.Z);
+            float trueAirspeed = LinearVelocity.Length();
+            float airspeed = noseSpeed;
 
             // ANGLE OF ATTACK: how far the nose sits ABOVE the oncoming airflow, in the pitch plane. A wing makes
             // lift from THIS, not from raw speed -- so level flight is the AoA where lift == weight (the plane is
@@ -7264,17 +7305,34 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             cl = Mathf.Clamp(cl, 0f, PlaneClMax);
             // Dynamic pressure ~ v^2 (a wing at twice the speed makes ~4x the lift); normalised so airspeed ==
             // target gives factor 1. No airspeed -> no lift -> sink, which forces the takeoff run.
-            float liftFrac = Mathf.Min(airspeed / pTarget, 1.3f); liftFrac *= liftFrac;
+            float pCap = float.TryParse(System.Environment.GetEnvironmentVariable("UG_PLANELIFTCAP"), out var _pc) ? _pc : PlaneLiftFracCap;
+            float liftFrac = Mathf.Min(trueAirspeed / pTarget, pCap); liftFrac *= liftFrac;
 
             // LIFT along BODY-UP: rolling tilts this vector so a banked wing carves the turn (bank-to-turn).
             // GROUND MODE (Ctrl) kills lift so the plane stays down to taxi.
             // BANK COMPENSATION: boost lift toward 1/cos(bank) so a hard bank keeps its VERTICAL component up
             // (master "if i bank sharply i lose height sooo fast") -- the automated back-pressure of a coordinated turn.
+            DebugPlaneLiftG = Vector3.Zero;
             if (!_planeGroundMode)
             {
-                float upDot = Mathf.Clamp(b.Y.Y, 0.2f, 1f);   // cos of the tilt from vertical (floored so an inverted attitude doesn't blow up)
-                float bankComp = Mathf.Lerp(1f, 1f / upDot, PlaneBankComp);
-                ApplyCentralForce(b.Y * (liftFrac * cl * pLift * bankComp) * Mass);
+                // BANK COMPENSATION, AND WHY IT MUST STOP AT KNIFE-EDGE (master 2026-09-06: "planes seem to
+                // plummet out of the sky when flying inverted").
+                //
+                // The floor of 0.2 was written to stop 1/upDot blowing up, and it did the opposite of protect.
+                // Inverted, b.Y.Y is NEGATIVE; clamping it to +0.2 turned the compensation into 1/0.2 = 5, and
+                // with PlaneBankComp 0.75 that is Lerp(1, 5, 0.75) = 4x lift -- applied along body-up, which
+                // when you are upside down points at the GROUND. Rolling inverted did not cost you lift, it
+                // bought you four gravities of downforce. That is the plummet, and it was the safety clamp.
+                //
+                // Compensation exists to hold altitude through a coordinated turn. Past knife-edge there is no
+                // altitude to hold and no coordinated turn to help: the pilot is deliberately upside down, and
+                // sustaining that is their job (push the nose toward the sky, i.e. negative AoA), not the
+                // model's. So it fades out as the wings pass vertical and is simply absent inverted.
+                float upDot = b.Y.Y;
+                float bankComp = upDot > 0.2f ? Mathf.Lerp(1f, 1f / upDot, PlaneBankComp) : 1f;
+                Vector3 liftAcc = b.Y * (liftFrac * cl * pLift * bankComp);
+                ApplyCentralForce(liftAcc * Mass);
+                DebugPlaneLiftG = liftAcc / 9.8f;
             }
 
             // DRAG: parasitic airflow drag (throttle -> a real top speed; dead engine -> glide) + the horizontal
