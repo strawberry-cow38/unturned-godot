@@ -218,6 +218,7 @@ namespace UnturnedGodot
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
                 Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
                 Player.NetCraft = index => Client.SendCraft(index);
+                Player.NetCraftCancel = slot => Client.SendCraftCancel(slot);
                 Player.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                     Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
                 // ADOPT (mirror ClientWorldSession:190-194): every owner-block echo re-adopts the SERVER grid

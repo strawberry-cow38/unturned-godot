@@ -133,6 +133,7 @@ namespace UnturnedGodot.Net
         /// BBCode, so a name is a place someone can put [img]https://attacker/x[/img].</summary>
         public const byte CommandSetProfile = 42;
         public const byte CommandSetCookerOn = 43;   // v28: the oven/toaster/microwave/bbq on-off button (strawberry 2026-09-05)
+        public const byte CommandCraftCancel = 44;   // v32: give up on a queued craft and take the ingredients back
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)

@@ -132,5 +132,75 @@ namespace UnturnedNet.Tests
             for (int i = 0; i < 200; i++) c.Step(0.02f);
             Assert.That(fired, Is.EqualTo(2), "...and finished");
         }
+
+        // ---- v32: cancelling one job -------------------------------------------------------------------
+
+        [Test]
+        public void cancelling_a_job_hands_back_exactly_what_it_took()
+        {
+            var (c, _, bag) = Rig(9f, logs: 1);
+            c.Enqueue(1, 0);
+            Assert.That(bag.getItemCount(8001), Is.Zero, "spent at enqueue");
+            Assert.That(c.Cancel(1, 0), Is.True);
+            Assert.That(bag.getItemCount(8001), Is.EqualTo(1), "the log comes back");
+            Assert.That(bag.getItemCount(8003), Is.EqualTo(1), "and the saw was never taken to begin with");
+            Assert.That(c.JobCount(1), Is.Zero);
+        }
+
+        [Test]
+        public void cancelling_takes_the_slot_asked_for_and_leaves_its_neighbours_running()
+        {
+            // Slot addressing is the whole reason this is not keyed on blueprint index: three of the same
+            // recipe are three DIFFERENT jobs, and "cancel a plank" would be ambiguous between them.
+            var (c, _, bag) = Rig(9f, logs: 3);
+            for (int i = 0; i < 3; i++) c.Enqueue(1, 0);
+            Assert.That(c.JobCount(1), Is.EqualTo(3));
+            Assert.That(c.Cancel(1, 1), Is.True, "the middle one");
+            Assert.That(c.JobCount(1), Is.EqualTo(2), "the other two keep going");
+            Assert.That(bag.getItemCount(8001), Is.EqualTo(1), "exactly ONE log refunded, not all three");
+        }
+
+        [Test]
+        public void a_slot_that_is_not_there_refunds_NOTHING()
+        {
+            // The race this exists for: the job finishes between the click and the packet, the queue shifts,
+            // and a clamped index would refund whichever job slid into that position -- printing materials on
+            // a cancel that should simply have missed. Rejecting is the only safe answer.
+            var (c, _, bag) = Rig(9f, logs: 1);
+            c.Enqueue(1, 0);
+            Assert.That(c.Cancel(1, 5), Is.False, "past the end");
+            Assert.That(c.Cancel(1, -1), Is.False, "before the start");
+            Assert.That(c.Cancel(99, 0), Is.False, "a player with no queue at all");
+            Assert.That(bag.getItemCount(8001), Is.Zero, "nothing was handed back");
+            Assert.That(c.JobCount(1), Is.EqualTo(1), "and nothing was dropped");
+        }
+
+        [Test]
+        public void a_cancelled_job_never_pays_out()
+        {
+            // The teeth: without the RemoveAt this would still refund AND still produce, which is the exact
+            // duplication the enqueue-time spend was built to prevent, arrived at from the other direction.
+            var (c, _, bag) = Rig(1f, logs: 1);
+            c.Enqueue(1, 0);
+            c.Cancel(1, 0);
+            for (int i = 0; i < 200; i++) c.Step(0.02f);
+            Assert.That(bag.getItemCount(8002), Is.Zero, "no plank was ever made");
+            Assert.That(bag.getItemCount(8001), Is.EqualTo(1), "and the log is still the only thing we have");
+        }
+
+        [Test]
+        public void the_owner_is_told_when_a_job_is_cancelled()
+        {
+            // The tile only leaves the client's queue when the server says so, so a silent cancel would look
+            // exactly like a click that did nothing -- which is the bug this whole command replaces.
+            var (c, _, _) = Rig(9f, logs: 1);
+            c.Enqueue(1, 0);
+            int fired = 0;
+            c.QueueChanged = _ => fired++;
+            c.Cancel(1, 0);
+            Assert.That(fired, Is.EqualTo(1));
+            c.Cancel(1, 0);
+            Assert.That(fired, Is.EqualTo(1), "a rejected cancel is not a change");
+        }
     }
 }

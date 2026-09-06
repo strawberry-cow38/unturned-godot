@@ -88,6 +88,23 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Cancel one queued craft job and refund it. Addressed by SLOT (the job's position in the
+    /// owner's server-side queue, oldest first) rather than by blueprint index, because a player who queued
+    /// three of the same recipe means a specific tile and not "one of these three" -- and because a blueprint
+    /// index would silently cancel the wrong unit the moment the first one finished between click and arrival.</summary>
+    public struct CraftCancelCommand
+    {
+        public byte Slot;
+        public void Write(NetPakWriter w) => w.WriteUInt8(Slot);
+        public static bool TryRead(NetPakReader r, out CraftCancelCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte slot)) return false;
+            cmd = new CraftCancelCommand { Slot = slot };
+            return true;
+        }
+    }
+
     public struct ConsumeCommand
     {
         public byte Page, X, Y;

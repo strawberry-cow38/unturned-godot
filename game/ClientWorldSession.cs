@@ -569,6 +569,7 @@ namespace UnturnedGodot
             shell.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
             shell.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
             shell.NetCraft = index => Client.SendCraft(index);
+            shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                 Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
             shell.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);

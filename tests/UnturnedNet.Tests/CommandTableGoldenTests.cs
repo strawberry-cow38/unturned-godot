@@ -51,6 +51,10 @@ namespace UnturnedNet.Tests
             // v28 (cooking): the appliance on/off button. Addressed by crate NetId, reach-checked and
             // validated against the registered-cooker set, so a forged id is a no-op rather than an oven.
             [43] = "CommandSetCookerOn",
+            // v32 (craft-cancel): the other half of v31's timed crafting. Ingredients are spent at enqueue and
+            // nothing but a disconnect gave them back, so this is the only way to abandon a job and be made
+            // whole. Addressed by queue SLOT, and an out-of-range slot is rejected rather than clamped.
+            [44] = "CommandCraftCancel",
         };
 
         static Dictionary<byte, string> Actual() =>

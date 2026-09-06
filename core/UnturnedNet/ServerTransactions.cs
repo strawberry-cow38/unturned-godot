@@ -15,6 +15,8 @@ namespace UnturnedGodot.Net
         public long GridMovesRejected;      // the server grid said no (illegal cell/overlap/out-of-bounds)
         public long CraftsApplied;
         public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
+        public long CraftCancelsApplied;
+        public long CraftCancelsRejected;   // no queue wired, or the slot finished before the packet landed
         public long ConsumesApplied;
         public long ConsumesRejected;
         public long AttachFitsApplied;
@@ -310,6 +312,10 @@ namespace UnturnedGodot.Net
             commands.Register<CraftCommand>(ReplicationIds.CommandCraft, CraftCommand.TryRead,
                 OnCraft,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.BlueprintIndex < Blueprints.Count);
+
+            commands.Register<CraftCancelCommand>(ReplicationIds.CommandCraftCancel, CraftCancelCommand.TryRead,
+                OnCraftCancel,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _));
 
             commands.Register<ConsumeCommand>(ReplicationIds.CommandConsume, ConsumeCommand.TryRead,
                 OnConsume,
@@ -1030,6 +1036,16 @@ namespace UnturnedGodot.Net
                 case EItemType.BACKPACK: inv.wearBackpack(item); break;
                 case EItemType.PANTS: inv.wearPants(item); break;
             }
+        }
+
+        // CANCEL a queued craft. There was no way to do this on the wire at all until now, which mattered more
+        // than it sounds: the client's queue tiles are clickable in MP too, and that click ran the SINGLE-PLAYER
+        // cancel path against a job whose PerUnit list is null (AdoptServerQueue cannot know what the server
+        // spent), so it threw inside the gui handler and the tile just sat there. The server kept crafting.
+        void OnCraftCancel(ushort sender, CraftCancelCommand cmd)
+        {
+            if (Crafting_ == null) { Diag.CraftCancelsRejected++; return; }
+            if (Crafting_.Cancel(sender, cmd.Slot)) Diag.CraftCancelsApplied++; else Diag.CraftCancelsRejected++;
         }
 
         void OnConsume(ushort sender, ConsumeCommand cmd)

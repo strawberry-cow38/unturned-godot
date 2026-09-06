@@ -657,10 +657,25 @@ void fragment() {
         }
 
         // cancel: hand the escrowed ingredients for the REMAINING units back to the bag, drop the job.
+        //
+        // MULTIPLAYER ASKS, IT DOES NOT ACT. A server-driven job has PerUnit == null -- AdoptServerQueue has no
+        // idea what the server actually spent -- so the local path below used to throw an NRE inside the gui
+        // handler on the first click and leave the tile sitting there while the server carried on crafting.
+        // Refunding locally instead would have been worse: the client would print the ingredients AND still get
+        // the product. Same discipline as TickQueue, which counts down but never produces.
         void Cancel(QueueJob job)
         {
+            if (_serverDriven)
+            {
+                int i = _queue.IndexOf(job);
+                if (i < 0 || Player?.NetCraftCancel == null) return;
+                // the display list is reversed against the server's (active = rightmost here, jobs[0] there)
+                int slot = _queue.Count - 1 - i;
+                if (slot >= 0 && slot <= byte.MaxValue) Player.NetCraftCancel((byte)slot);
+                return;   // the tile leaves when the server's next queue says so
+            }
             var inv = new Crafting.PlayerInvAdapter(Inv);
-            foreach (var (id, amt) in job.PerUnit) inv.Add(id, amt * job.Qty);
+            if (job.PerUnit != null) foreach (var (id, amt) in job.PerUnit) inv.Add(id, amt * job.Qty);
             _queue.Remove(job);
             if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }
         }
@@ -770,6 +785,9 @@ void fragment() {
         // RMB: promote a job to the START (rightmost = active) so it crafts next; give it a fresh timer.
         void MoveToStart(QueueJob job)
         {
+            // MP has no reorder command, and shuffling a display mirror would show a promotion the server never
+            // made -- reverted on its next queue update. Do nothing visible rather than lie about the order.
+            if (_serverDriven) return;
             if (!_queue.Remove(job)) return;
             job.TimeLeft = CraftTimeFor(job.Bp);
             _queue.Add(job);

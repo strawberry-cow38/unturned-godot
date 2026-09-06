@@ -118,6 +118,25 @@ namespace UnturnedGodot.Net
             if (changed != null) foreach (var o in changed) QueueChanged?.Invoke(o);
         }
 
+        /// <summary>Cancel ONE job and hand its ingredients back. Returns false when the slot does not exist,
+        /// which is the ordinary race rather than an error: the job the player clicked can finish between the
+        /// click and the packet, and refunding a neighbour because the index shifted would print materials.</summary>
+        public bool Cancel(ushort owner, int slot)
+        {
+            if (!_byOwner.TryGetValue(owner, out var list)) return false;
+            if (slot < 0 || slot >= list.Count) return false;
+            var job = list[slot];
+            list.RemoveAt(slot);
+            if (_inventories.TryGet(owner, out var entry))
+            {
+                var adapter = new Crafting.PlayerInvAdapter(entry.Inventory);
+                foreach (var (id, amt) in job.Spent) adapter.Add(id, amt);
+                _inventories.ServerMarkDirty(owner);
+            }
+            QueueChanged?.Invoke(owner);
+            return true;
+        }
+
         /// <summary>Give back everything a player still has in flight -- on disconnect, so leaving mid-craft
         /// does not eat the materials. Returns how many jobs were refunded.</summary>
         public int RefundAll(ushort owner)
