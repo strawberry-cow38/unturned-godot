@@ -224,7 +224,7 @@ namespace UnturnedGodot
         {
             if (inv == null) return true;    // no bag (the --attach viewmodel harness): nothing to consume, still fit it
             if (want == null) return false;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -251,7 +251,7 @@ namespace UnturnedGodot
             var inv = Player?.Inventory;
             if (inv == null) return true;    // no bag (the --attach viewmodel harness): nothing to consume, still fit it
             if (want == null) return false;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -265,7 +265,7 @@ namespace UnturnedGodot
         {
             var inv = Player?.Inventory;
             if (inv == null) return true;   // no bag (the --attach viewmodel harness): nothing to consume, still fit it
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;

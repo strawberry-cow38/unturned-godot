@@ -265,6 +265,24 @@ void fragment() {
         Button _cookBtn;
         Panel _cookFuelTrack, _cookFuelFill;
 
+        /// <summary>Does this screen point land on a live Button anywhere in the dashboard? If so the press is
+        /// that Button's and _Input must not consume it -- see the note at the call site.</summary>
+        bool PressLandsOnButton(Vector2 global) => _dash != null && IsInstanceValid(_dash) && HasButtonAt(_dash, global);
+
+        static bool HasButtonAt(Node n, Vector2 global)
+        {
+            if (n is Control c)
+            {
+                if (!c.Visible) return false;   // a hidden subtree cannot be clicked, and neither can its children
+                if (c is BaseButton b && !b.Disabled && b.MouseFilter != Control.MouseFilterEnum.Ignore
+                    && new Rect2(c.GlobalPosition, c.Size).HasPoint(global))
+                    return true;
+            }
+            foreach (var child in n.GetChildren())
+                if (HasButtonAt(child, global)) return true;
+            return false;
+        }
+
         /// <summary>Repaint just the switch label and the fuel bar from PlayerController's current values.
         /// Called on every CookerStateEvent; silently does nothing when the panel is not showing a cooker.</summary>
         public void RefreshCookerBar()
@@ -379,18 +397,24 @@ void fragment() {
         public override void _Input(InputEvent e)
         {
             if (!_open || Inv == null) return;
-            // THE NAVBAR'S BUTTONS ARE NOT MINE TO EAT. Godot runs _Input BEFORE gui_input, and the StartDrag
-            // branch below calls SetInputAsHandled() on EVERY left press anywhere in the dashboard -- so a click on
-            // an Inventory/Craft/Skills/Information tab was consumed here and the Button's Pressed never fired.
-            // The tabs were wired correctly the whole time (they route through PlayerController.ShowMenu); they were
-            // starved of the event. That is why they worked on the Craft/Skills/Information screens, which have no
-            // _Input of their own, and only looked broken from the inventory -- the screen you open first
-            // (strawberry 2026-09-06: "make the top bar inv, craft, skills, info buttons actually function").
+            // NO BUTTON IN THIS DASHBOARD GETS ITS CLICKS EATEN. Godot runs _Input BEFORE gui_input, and the
+            // StartDrag branch below calls SetInputAsHandled() on EVERY left press anywhere in the dashboard, so
+            // any Button living in here never receives Pressed at all. It has now caught three separate widgets:
+            // the paperdoll spin (see the comment further down), the navbar tabs, and the cooking on/off switch
+            // -- each reported as "X doesn't work", each wired perfectly correctly and simply starved.
             //
-            // This is the SECOND victim of that same unconditional swallow; the paperdoll-spin comment below
-            // records the first. Bailing out over the strip fixes the class rather than the instance: anything the
-            // navbar owns keeps its own input.
-            if (e is InputEventMouseButton nb && _navbar != null && _navbar.HasPoint(nb.GlobalPosition)) return;
+            // I FIXED THIS ONCE PER VICTIM AND THAT WAS THE MISTAKE. The first pass exempted the navbar's screen
+            // region, which fixed the tabs and left the cooker button -- ten lines away, same cause -- still dead
+            // (strawberry, an hour later: "the turn [cooker] on button isnt working"). So the rule is now about
+            // the KIND of thing under the cursor, not about a list of regions to remember to add to.
+            //
+            // Why Buttons specifically, and why a hit test rather than GuiGetHoveredControl(): the item tiles and
+            // quick-craft tiles are Panels that deliberately keep MouseFilter.Stop for their tooltips while being
+            // handled here in _Input, so "anything the GUI would hover" is the wrong test -- it would kill dragging
+            // and quick-craft outright. And hover state is only refreshed on mouse MOTION, so the click right after
+            // a Refresh() rebuild (exactly the ON -> OFF double-press on the cooker) can read a freed node or null.
+            // Walking the tree is deterministic and costs one pass over a few hundred nodes per click.
+            if (e is InputEventMouseButton pb && PressLandsOnButton(pb.GlobalPosition)) return;
             if (e is InputEventMouseButton wh && wh.Pressed && (wh.ButtonIndex == MouseButton.WheelUp || wh.ButtonIndex == MouseButton.WheelDown)
                 && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
             {
@@ -1064,7 +1088,7 @@ void fragment() {
 
         /// <summary>Turn the quick-move's "somewhere with room" into the explicit (page, x, y, rot) the wire
         /// needs. dest 255 = the first of my OWN pages with space, walked in the same order tryAddItem uses
-        /// (SLOTS..PAGES-2), so the routed result lands where the local path would have put it.
+        /// (SLOTS..OWNPAGES), so the routed result lands where the local path would have put it.
         ///
         /// Holster pages are skipped for a 255 search on purpose: tryAddItem does not auto-fill them either, and
         /// quick-moving a rifle should not silently holster it.</summary>
@@ -1079,7 +1103,7 @@ void fragment() {
                 page = dest;
                 return true;
             }
-            for (byte p = PlayerInventory.SLOTS; p < (byte)(PlayerInventory.PAGES - 2); p++)
+            for (byte p = PlayerInventory.SLOTS; p < PlayerInventory.OWNPAGES; p++)
             {
                 var pg = Inv.items[p];
                 if (pg != null && pg.tryFindSpace(jar.size_x, jar.size_y, out x, out y, out rot)) { page = p; return true; }
@@ -1364,6 +1388,10 @@ void fragment() {
             // "Burnt Beef" if you walked away.
             string shownName = Cooking.DisplayName(asset.itemName, asset.id, jar.item?.cooked ?? 0,
                                                    (ECookStyle)(jar.item?.cookStyle ?? 0), asset.type == EItemType.FOOD);
+            // FROZEN wins the name outright while it lasts. It is the state that decides whether you can eat the
+            // thing at all, so "Frozen Beef" is more use than "Charcoal Grilled Beef" on something you cannot
+            // currently put in your mouth -- and the cook label is still there underneath once it thaws.
+            if (Freezing.Label(jar.item?.frozen ?? 0) is string fz) shownName = $"{fz} {shownName}";
             var name = new Label { Text = shownName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
             name.AddThemeColorOverride("font_color", rar);
             name.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
@@ -2004,8 +2032,12 @@ void fragment() {
             // STORAGE + Nearby live in the right column when split, else continue down the single column
             Control aCol = split ? _areaCol : _clothingCol;
             float yA = split ? 0f : yC;
+            // FREEZER FIRST, so it sits ABOVE the fridge's own grid (strawberry 2026-09-06: "in fridges, add a
+            // second 'container' to the inventory ui above the fridge container"). It is sized 0x0 by the server
+            // for every container that has no freezer, and the loop already skips an empty non-AREA page, so a
+            // plain crate is completely unchanged -- no header, no gap, nothing.
             foreach (var (page, name) in new (byte, string)[] {
-                         (PlayerInventory.STORAGE, "Storage"), (PlayerInventory.AREA, "Nearby") })
+                         (PlayerInventory.FREEZER, "Freezer"), (PlayerInventory.STORAGE, "Storage"), (PlayerInventory.AREA, "Nearby") })
             {
                 var pg = Inv.items[page];
                 bool always = page == PlayerInventory.AREA;   // source: headers[AREA].IsVisible = true, always
@@ -2322,7 +2354,26 @@ void fragment() {
                 card.OffsetRight = -2; card.OffsetBottom = -2;             // 2 px inset from the corner
             }
 
-            if (asset?.type == EItemType.FOOD && jar.item != null && jar.item.preserved)   // a snowflake badge marks food actively preserved by a powered fridge
+            // FROZEN reads as a blue % chip in the TOP-LEFT -- deliberately the opposite corner from the
+            // freshness % in the bottom-right, because they are different numbers and stacking them in one
+            // corner is how a player learns to read neither. Shown only while actually frozen.
+            if (asset?.type == EItemType.FOOD && jar.item != null && jar.item.frozen > 0)
+            {
+                var fcol = new Color(0.55f, 0.83f, 1f);
+                var fbs = new StyleBoxFlat { BgColor = new Color(0.06f, 0.15f, 0.28f, 0.95f) };
+                fbs.SetCornerRadiusAll(3); fbs.BorderColor = fcol; fbs.SetBorderWidthAll(1);
+                fbs.ContentMarginLeft = 4; fbs.ContentMarginRight = 4; fbs.ContentMarginTop = 0; fbs.ContentMarginBottom = 0;
+                var flbl = new Label { Text = $"\u2744{jar.item.frozen}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                flbl.AddThemeColorOverride("font_color", fcol);
+                flbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
+                var fcard = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+                fcard.AddThemeStyleboxOverride("panel", fbs);
+                fcard.AddChild(flbl);
+                tile.AddChild(fcard);
+                fcard.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+            }
+
+            if (asset?.type == EItemType.FOOD && jar.item != null && jar.item.preserved && jar.item.frozen == 0)   // a snowflake badge marks food actively preserved by a powered fridge (suppressed while the frozen % is already saying it colder)
             {
                 var badge = new Panel { Position = new Vector2(2, 2), Size = new Vector2(21, 21), MouseFilter = Control.MouseFilterEnum.Ignore };
                 var bs = new StyleBoxFlat { BgColor = new Color(0.14f, 0.44f, 0.86f) };

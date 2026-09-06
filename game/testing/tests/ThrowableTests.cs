@@ -32,7 +32,7 @@ namespace UnturnedGodot.Testing
         static byte PageOf(PlayerInventory inv, ushort id, out byte gx, out byte gy)
         {
             gx = gy = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;

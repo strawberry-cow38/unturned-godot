@@ -149,6 +149,16 @@ namespace UnturnedGodot.Net
                     }
 
                     if (!Cooking.Accepts(c.Kind, asset)) continue;   // a toaster ignores everything that is not bread
+
+                    // THAW FIRST, THEN COOK (strawberry 2026-09-06: "cooking from 0-100% starts after the food
+                    // is thawed", and frozen "drops faster when being cooked"). The appliance spends this whole
+                    // tick on the ice and none of it on the cooking, so a frozen steak visibly does something in
+                    // the oven while its cooked % is still pinned at zero -- rather than looking broken.
+                    if (Freezing.IsFrozen(item))
+                    {
+                        Freezing.AdvanceCarried(item, -Freezing.CookingThawPerSecond, dt);
+                        continue;
+                    }
                     if (item.cooked >= Cooking.MaxCooked) continue;
 
                     item.cooked = Cooking.Advance(item.cooked, c.Kind, dt);

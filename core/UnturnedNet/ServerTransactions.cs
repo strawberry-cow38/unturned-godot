@@ -380,6 +380,7 @@ namespace UnturnedGodot.Net
                             CookerKind = isCooker ? (byte)ck.Kind : (byte)0,
                             CookerOn = isCooker && ck.On,
                             CookerFuel = isCooker ? ck.FuelFrac : (byte)0,   // v29: the bar opens at the right height
+                            FreezerWidth = crate.FreezerWidth, FreezerHeight = crate.FreezerHeight,   // v30: 0x0 = no freezer
                         };
                         _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
                         // ...and from here on this player is the one who hears the fuel burn down.
@@ -586,7 +587,7 @@ namespace UnturnedGodot.Net
         static Item FindFillableFuelCan(PlayerInventory inv, out float space)
         {
             space = 0f;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var page = inv.items[b];
                 for (byte i = 0; i < page.getItemCount(); i++)
@@ -1024,8 +1025,12 @@ namespace UnturnedGodot.Net
             var jar = index == byte.MaxValue ? null : page.getItem(index);
             var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
             if (asset == null || !asset.IsConsumable) { Diag.ConsumesRejected++; return; }
+            // "frozen food cannot be eaten until thawed" (strawberry 2026-09-06). Rejected HERE, before anything
+            // is spent or applied, because this is the side that owns the outcome -- the client's own gate below
+            // is only there to stop the eat animation from playing on something that will bounce.
+            if (Freezing.IsFrozen(jar.item)) { Diag.ConsumesRejected++; return; }
             // SPEND THE JAR WE JUST VALIDATED, not "some item with this id somewhere in the bag". This used to be
-            // `inv.removeItemAmount(asset.id, 1)`, which scans pages 0..PAGES-2 only -- so eating out of an OPEN
+            // `inv.removeItemAmount(asset.id, 1)`, which scans pages 0..OWNPAGES only -- so eating out of an OPEN
             // CRATE (page 7, which ServerOpenStorage really does populate with the crate grid) validated fine,
             // applied every health/food/water/energy effect, and removed NOTHING. Carry no beans of your own and
             // a crate full of them feeds you forever. Removing at the validated address also fixes the quieter

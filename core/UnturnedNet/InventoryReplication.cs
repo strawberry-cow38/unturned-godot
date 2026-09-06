@@ -347,11 +347,15 @@ namespace UnturnedGodot.Net
         public byte CookerKind;   // ECookerKind, meaningful only when IsCooker
         public bool CookerOn;
         public byte CookerFuel;   // v29: 0..255 of the CURRENT fuel item's burn, 0 when nothing is lit
+        public byte FreezerWidth, FreezerHeight;   // v30: 0x0 = this container has no freezer compartment
         public void Write(NetPakWriter w)
         {
             w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height);
             w.WriteBit(IsCooker);
             if (IsCooker) { w.WriteUInt8(CookerKind); w.WriteBit(CookerOn); w.WriteUInt8(CookerFuel); }
+            bool freezer = FreezerWidth > 0 && FreezerHeight > 0;
+            w.WriteBit(freezer);
+            if (freezer) { w.WriteUInt8(FreezerWidth); w.WriteUInt8(FreezerHeight); }
         }
         public static bool TryRead(NetPakReader r, out StorageOpenedEvent evt)
         {
@@ -360,7 +364,11 @@ namespace UnturnedGodot.Net
             if (!r.ReadBit(out bool isCooker)) return false;
             byte kind = 0; bool on = false; byte fuel = 0;
             if (isCooker) { if (!r.ReadUInt8(out kind)) return false; if (!r.ReadBit(out on)) return false; if (!r.ReadUInt8(out fuel)) return false; }
-            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on, CookerFuel = fuel };
+            byte fw = 0, fh = 0;
+            if (!r.ReadBit(out bool freezer)) return false;
+            if (freezer) { if (!r.ReadUInt8(out fw)) return false; if (!r.ReadUInt8(out fh)) return false; }
+            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on, CookerFuel = fuel,
+                                           FreezerWidth = fw, FreezerHeight = fh };
             return true;
         }
     }
@@ -459,6 +467,18 @@ namespace UnturnedGodot.Net
             public byte Width, Height;
             public Vector3 Pos;
             public ushort OpenBy;         // 0 = closed
+
+            /// <summary>A fridge's FREEZER compartment: a second, independent grid shown above the main one
+            /// (strawberry 2026-09-06: "in fridges, add a second 'container' to the inventory ui above the
+            /// fridge container"). Null on every container that is not a fridge, which is what the client reads
+            /// to decide whether to draw the second grid at all.</summary>
+            public Items Freezer;
+            public byte FreezerWidth, FreezerHeight;
+            public bool HasFreezer => Freezer != null && FreezerWidth > 0 && FreezerHeight > 0;
+
+            /// <summary>Does this container keep food cold WITHOUT freezing it -- a powered fridge? Drives the
+            /// slowed spoilage rate; the freezer compartment above is a separate, stronger thing.</summary>
+            public bool Refrigerates;
         }
 
         /// <summary>Server-side crate interaction reach. SP opens at 2.5 m (OpenNearestCrate); the server
@@ -478,6 +498,10 @@ namespace UnturnedGodot.Net
         public bool TryGet(ushort ownerPlayerId, out PlayerEntry entry) => _byOwner.TryGetValue(ownerPlayerId, out entry);
 
         public bool TryGetCrate(uint netId, out CrateEntry crate) => _crates.TryGetValue(netId, out crate);
+        /// <summary>Every registered container, for the systems that sweep all of them (freezing, spoilage).</summary>
+        public IEnumerable<CrateEntry> Crates => _crates.Values;
+        /// <summary>Every tracked player's entry, same reason.</summary>
+        public IEnumerable<PlayerEntry> Owners => _byOwner.Values;
 
         /// <summary>Shut anyone standing in this crate, which COPIES THEIR OPEN PAGE BACK into it. Split out
         /// from ServerRemoveCrate because the order matters and got it wrong once: closing is what makes
@@ -551,6 +575,18 @@ namespace UnturnedGodot.Net
             return c;
         }
 
+        /// <summary>Give a registered crate a freezer compartment. Separate from ServerRegisterCrate because the
+        /// side that knows a prop is a FRIDGE (a mesh name) is the game layer, not this one.</summary>
+        public bool ServerAddFreezer(uint crateId, byte width, byte height)
+        {
+            if (!_crates.TryGetValue(crateId, out var c) || width == 0 || height == 0) return false;
+            c.Freezer = new Items(PlayerInventory.FREEZER);
+            c.Freezer.loadSize(width, height);
+            c.FreezerWidth = width; c.FreezerHeight = height;
+            c.Refrigerates = true;
+            return true;
+        }
+
         /// <summary>Open arbitration (§3.7: one opener at a time, server-enforced). On success the crate
         /// grid is copied into the opener's STORAGE page -- the exact SP OpenNearestCrate mechanic.</summary>
         public bool ServerOpenStorage(ushort ownerPlayerId, uint crateId, Vector3 senderPos, long tick)
@@ -564,6 +600,10 @@ namespace UnturnedGodot.Net
             crate.OpenBy = ownerPlayerId;
             e.OpenCrateId = crateId;
             CopyPage(crate.Storage, e.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
+            // The freezer rides along as its own page, so both compartments are open at once and an item can be
+            // dragged straight from one to the other -- which is the entire interaction a freezer exists for.
+            if (crate.HasFreezer)
+                CopyPage(crate.Freezer, e.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
             e.Dirty = true;
             return true;
         }
@@ -575,11 +615,18 @@ namespace UnturnedGodot.Net
             if (_crates.TryGetValue(e.OpenCrateId, out var crate))
             {
                 CopyPage(e.Inventory.items[PlayerInventory.STORAGE], crate.Storage, crate.Width, crate.Height);
+                if (crate.HasFreezer)
+                    CopyPage(e.Inventory.items[PlayerInventory.FREEZER], crate.Freezer, crate.FreezerWidth, crate.FreezerHeight);
                 crate.OpenBy = 0;
             }
             var s = e.Inventory.items[PlayerInventory.STORAGE];
             s.clear();
             s.loadSize(0, 0);
+            // The freezer view is cleared unconditionally, not just when the crate had one: a player who opens a
+            // fridge and then a plain crate must not be left staring at the fridge's freezer contents.
+            var fz = e.Inventory.items[PlayerInventory.FREEZER];
+            fz.clear();
+            fz.loadSize(0, 0);
             e.OpenCrateId = 0;
             e.Dirty = true;
             return true;
@@ -724,6 +771,13 @@ namespace UnturnedGodot.Net
             bool cook = j.item != null && (j.item.cooked != 0 || j.item.cookStyle != 0);
             w.WriteBit(cook);
             if (cook) { w.WriteUInt8(j.item.cooked); w.WriteUInt8(j.item.cookStyle); }
+            // FROZEN (v30), gated on the same argument as cooking and an even smaller set: only food that has
+            // actually been in a freezer pays the byte, everything else pays the bit. SERVER-OWNED like `cooked`,
+            // and for a sharper reason -- frozen food never spoils, so a client that could assert it could
+            // preserve its stockpile for free.
+            bool froz = j.item != null && j.item.frozen != 0;
+            w.WriteBit(froz);
+            if (froz) w.WriteUInt8(j.item.frozen);
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -760,12 +814,15 @@ namespace UnturnedGodot.Net
             byte cooked = 0, cookStyle = 0;                                      // cooking -- symmetric with WriteJar's `cook` bit
             if (!r.ReadBit(out bool cook)) return false;
             if (cook) { if (!r.ReadUInt8(out cooked)) return false; if (!r.ReadUInt8(out cookStyle)) return false; }
+            byte frozen = 0;                                                     // freezing -- symmetric with WriteJar's `froz` bit
+            if (!r.ReadBit(out bool froz)) return false;
+            if (froz) { if (!r.ReadUInt8(out frozen)) return false; }
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
                                                    fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink,
                                                    gunSightId = sight, gunBarrelId = barrel, gunGripId = grip, gunTacticalId = tactical,
                                                    gunChambered = chambered, gunAttachSeeded = attachSeeded,
                                                    magLoadedRound = Assets.MagRoundFromId(magRoundId),
-                                                   cooked = cooked, cookStyle = cookStyle };
+                                                   cooked = cooked, cookStyle = cookStyle, frozen = frozen };
             // The chambered round's AMMO TYPE is re-derived from the loaded magazine rather than sent: it is a
             // string, this stack has no string primitive, and the mag id it comes from is already on the wire.
             // One case loses fidelity by doing it this way and it is worth naming: after a TACTICAL swap the

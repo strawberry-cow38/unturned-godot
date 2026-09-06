@@ -4,8 +4,10 @@ using SDG.Unturned;
 namespace UnturnedGodot
 {
     // Food spoilage (strawberry). A FOOD item's `quality` (0-100) IS its freshness/condition: it ticks down once per
-    // in-game day at a per-food-type rate (dairy/meat fast, canned/dried slow, root veg slowest). A `preserved` item (in a
-    // fridge -- stubbed) doesn't spoil. Below the sickness threshold, eating it costs you (wired in PlayerController.Consume).
+    // in-game day at a per-food-type rate (dairy/meat fast, canned/dried slow, root veg slowest). A `preserved` item (in
+    // a powered fridge) spoils much more slowly, and one frozen solid does not spoil at all -- both through
+    // Freezing.SpoilMultiplier, which is the single place that decision lives. Below the sickness threshold, eating it
+    // costs you (wired in PlayerController.Consume).
     // Non-food items are untouched. Rates are hand-tuned heuristics by item name -- easy to retune / move to a tsv later.
     public static class FoodSpoil
     {
@@ -61,10 +63,18 @@ namespace UnturnedGodot
             for (byte i = 0; i < page.getItemCount(); i++)
             {
                 var it = page.getItem(i)?.item; var a = it?.GetAsset();
-                if (a == null || a.type != EItemType.FOOD || it.preserved) continue;
-                float rate = PerDay(a);
+                if (a == null || a.type != EItemType.FOOD) continue;
+                // A FRIDGE NO LONGER STOPS TIME, A FREEZER DOES (strawberry 2026-09-06: "at 100% they NEVER
+                // spoil ... fridge'd items spoil at a much slower rate"). `preserved` used to mean "skip this
+                // item entirely"; it now means refrigerated, which is a heavy multiplier instead of a halt, and
+                // the hard stop moved to 100 % frozen where she put it.
+                float rate = PerDay(a) * Freezing.SpoilMultiplier(it.frozen, it.preserved);
                 if (rate <= 0f) continue;
                 int before = it.quality;
+                // KNOWN AND DELIBERATE: quality is an integer with no fractional carry, so a slow food in a
+                // fridge (canned beans, 2 %/day * 0.15 = 0.3) rounds to zero and keeps indefinitely. That is a
+                // reasonable outcome for tinned food and not worth an accumulator field on every Item -- but it
+                // is a rounding artifact rather than a designed rule, so it is written down rather than implied.
                 it.quality = (byte)Mathf.Max(0, it.quality - Mathf.RoundToInt(rate));
                 if (it.quality < before) n++;
             }
@@ -91,7 +101,9 @@ namespace UnturnedGodot
                     var it = c.Storage.getItem(i)?.item;
                     if (it != null && it.GetAsset()?.type == EItemType.FOOD) it.preserved = preserving;
                 }
-                if (!preserving) n += TickDayItems(c.Storage);
+                // Always swept now: a powered fridge SLOWS its contents rather than exempting them, so skipping
+                // the call would silently restore the old halt-behaviour through the back door.
+                n += TickDayItems(c.Storage);
             }
             return n;
         }

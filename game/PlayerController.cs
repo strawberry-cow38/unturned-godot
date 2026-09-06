@@ -2834,6 +2834,15 @@ namespace UnturnedGodot
         public void StartConsume()
         {
             if (_heldConsumable == null || _consumeTimer > 0f || _dead) return;
+            // FROZEN FOOD IS NOT FOOD YET. The server rejects it regardless (ServerTransactions.OnConsume); this
+            // stops the eat animation from playing out over a second and a half before nothing happens, which
+            // reads as a bug rather than as a rule.
+            var chk = Inventory?.peekItem(_heldConsumable.id);
+            if (Freezing.IsFrozen(chk))
+            {
+                FluidToast($"{_heldConsumable.itemName} is frozen solid  ({chk.frozen}%)");
+                return;
+            }
             _consumeTimer = _consumeUseLen;   // source-accurate: the length of THIS item's Use animation
             _viewmodel?.PlayConsumeUse();
             PlayConsumeSound(_heldConsumable.id);   // source playConsume: player.playSound(asset.use) at use start
@@ -4277,7 +4286,7 @@ namespace UnturnedGodot
         public bool RequestFitAttachment(SDG.Unturned.Item want)
         {
             if (NetFitAttachment == null || want == null || Inventory == null) return false;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = Inventory.items[b];
                 if (pg == null) continue;
@@ -4295,7 +4304,7 @@ namespace UnturnedGodot
         public bool RequestConsumeInstance(SDG.Unturned.Item want)
         {
             if (NetConsume == null || want == null || Inventory == null) return false;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = Inventory.items[b];
                 if (pg == null) continue;
@@ -4771,7 +4780,7 @@ namespace UnturnedGodot
         {
             if (Inventory == null || Gun == null) return null;
             (byte, byte, Item)? best = null; int bestAmmo = -1;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = Inventory.items[b];
                 for (byte i = 0; i < pg.getItemCount(); i++)
@@ -4861,7 +4870,7 @@ namespace UnturnedGodot
         {
             if (Inventory == null || Gun == null) return 0;
             int n = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = Inventory.items[b];
                 for (byte i = 0; i < pg.getItemCount(); i++)
@@ -4876,7 +4885,7 @@ namespace UnturnedGodot
         {
             if (Inventory == null || Gun == null || want <= 0) return 0;
             int taken = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && taken < want; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && taken < want; b++)
             {
                 var pg = Inventory.items[b];
                 for (int i = pg.getItemCount() - 1; i >= 0 && taken < want; i--)
@@ -4922,7 +4931,7 @@ namespace UnturnedGodot
         {
             if (mag == null || _reloading || _unloading || _dead || !UsesMagItem || Inventory == null || _magSwapAnimTimer > 0) return;   // cooldown: wait for any in-flight mag/rack/reload anim (master)
             bool removed = false;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && !removed; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && !removed; b++)
             { var pg = Inventory.items[b]; for (byte i = 0; i < pg.getItemCount(); i++) if (ReferenceEquals(pg.getItem(i)?.item, mag)) { pg.removeItem(i); removed = true; break; } }
             if (!removed) return;   // the exact mag vanished from under us -> do nothing
             bool chambered = HasChamber && Ammo > 0;
@@ -4976,7 +4985,7 @@ namespace UnturnedGodot
         {
             if (Inventory == null || id == 0) return 0;
             int n = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = Inventory.items[b];
                 for (byte i = 0; i < pg.getItemCount(); i++)

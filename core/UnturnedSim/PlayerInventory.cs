@@ -4,21 +4,32 @@ using System;
 //   0 PRIMARY  slot (a held weapon)      1 SECONDARY slot (sidearm)      -- pages < SLOTS are single-item holsters
 //   2 pockets  fixed 5x3 grid, always present (source: items[2].loadSize(5,3))
 //   3 BACKPACK 4 VEST 5 SHIRT 6 PANTS    -- grids sized by the worn bag (0x0 when nothing is worn)
-//   7 STORAGE  8 AREA                    -- external containers (not the player; left empty here)
-// tryAddItem walks pages SLOTS..PAGES-2 exactly like the source, so an item auto-lands in the first page with a
+//   7 STORAGE  8 AREA  9 FREEZER          -- external containers (not the player; left empty here)
+// tryAddItem walks pages SLOTS..OWNPAGES exactly like the source, so an item auto-lands in the first page with a
 // free slot. This is a plain model owned by PlayerController (the dashboard UI renders it).
 namespace SDG.Unturned
 {
     public class PlayerInventory
     {
         public static readonly byte SLOTS = 2;
-        public static readonly byte PAGES = 9;
+        public static readonly byte PAGES = 10;
         public static readonly byte BACKPACK = 3;
         public static readonly byte VEST = 4;
         public static readonly byte SHIRT = 5;
         public static readonly byte PANTS = 6;
         public static readonly byte STORAGE = 7;
         public static readonly byte AREA = 8;
+        public static readonly byte FREEZER = 9;   // a fridge's freezer compartment -- a SECOND external grid shown above the fridge one (strawberry 2026-09-06)
+
+        /// <summary>Exclusive upper bound of the pages the PLAYER carries (0..6: two holsters, pockets, and the
+        /// four clothing grids). Everything at or above it is an EXTERNAL container being viewed -- a crate, the
+        /// ground, a freezer -- and must never be swept by auto-add, ammo counts or crafting.
+        ///
+        /// This used to be spelled `PAGES - 2` in forty places, which silently meant "all but the last two". The
+        /// moment a tenth page was appended for the freezer, all forty would have started including STORAGE, and
+        /// the first symptom would have been items auto-landing inside whatever crate happened to be open. The
+        /// bound is a fact about the player, not about how many external views exist, so it says so.</summary>
+        public static readonly byte OWNPAGES = 7;
 
         public Items[] items { get; private set; }
 
@@ -152,7 +163,7 @@ namespace SDG.Unturned
         // auto-place an item in the first page that has room (pockets, then clothing), skipping the hand slots
         public bool tryAddItem(Item item)
         {
-            for (byte b = SLOTS; b < (byte)(PAGES - 2); b++)
+            for (byte b = SLOTS; b < OWNPAGES; b++)
                 if (items[b].tryAddItem(item))
                     return true;
             return false;
@@ -186,7 +197,12 @@ namespace SDG.Unturned
         // A stale comment naming a deliberate omission is a TODO addressed to whoever removes the reason.
         public bool TryDrag(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
         {
-            if (page0 >= (byte)(PAGES - 1) || page1 >= (byte)(PAGES - 1) || items[page0] == null || items[page1] == null) return false;
+            // AREA (the ground / "Nearby") is not a drag endpoint -- picking up and dropping route through their
+            // own paths. Named explicitly rather than as `>= PAGES - 1`, which happened to point at AREA only
+            // while AREA was last; appending FREEZER moved that arithmetic one page and would have inverted it,
+            // banning the freezer and permitting the ground.
+            if (page0 == AREA || page1 == AREA || page0 >= PAGES || page1 >= PAGES
+                || items[page0] == null || items[page1] == null) return false;
             byte index = items[page0].getIndex(x0, y0);
             if (index == byte.MaxValue) return false;
             ItemJar item = items[page0].getItem(index);
@@ -226,11 +242,11 @@ namespace SDG.Unturned
             return true;
         }
 
-        // total count of an item id across the player's own pages (0..PAGES-2), for HUD/ammo/craft checks later
+        // total count of an item id across the player's own pages (0..OWNPAGES), for HUD/ammo/craft checks later
         public int getItemCount(ushort id)
         {
             int n = 0;
-            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            for (byte b = 0; b < OWNPAGES; b++)
             {
                 var page = items[b];
                 for (byte i = 0; i < page.getItemCount(); i++)
@@ -249,7 +265,7 @@ namespace SDG.Unturned
         /// walking the grid once per field. peekItemQuality predates it and stays -- it has callers.</summary>
         public Item peekItem(ushort id)
         {
-            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            for (byte b = 0; b < OWNPAGES; b++)
             {
                 var page = items[b];
                 for (byte i = 0; i < page.getItemCount(); i++)
@@ -263,7 +279,7 @@ namespace SDG.Unturned
 
         public byte peekItemQuality(ushort id)
         {
-            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            for (byte b = 0; b < OWNPAGES; b++)
             {
                 var page = items[b];
                 for (byte i = 0; i < page.getItemCount(); i++)
@@ -278,7 +294,7 @@ namespace SDG.Unturned
         // consume up to `amount` of item id across the player's pages (crafting supply consumption); removes emptied jars
         public void removeItemAmount(ushort id, int amount)
         {
-            for (byte b = 0; b < (byte)(PAGES - 2) && amount > 0; b++)
+            for (byte b = 0; b < OWNPAGES && amount > 0; b++)
             {
                 var page = items[b];
                 byte i = 0;
@@ -301,7 +317,7 @@ namespace SDG.Unturned
         public void restoreQuality(ushort id, byte quality)
         {
             ItemJar best = null;
-            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            for (byte b = 0; b < OWNPAGES; b++)
             {
                 var page = items[b];
                 for (byte i = 0; i < page.getItemCount(); i++)

@@ -25,7 +25,7 @@ namespace UnturnedGodot.Testing
         {
             detail = "";
             byte page = 255, gx = 0, gy = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && page == 255; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && page == 255; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -60,7 +60,7 @@ namespace UnturnedGodot.Testing
 
         static Item FindItem(PlayerInventory inv, ushort id)
         {
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -72,7 +72,7 @@ namespace UnturnedGodot.Testing
         static int CountOf(PlayerInventory inv, ushort id)
         {
             int n = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;

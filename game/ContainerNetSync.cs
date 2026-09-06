@@ -38,6 +38,24 @@ namespace UnturnedGodot
         };
 
         public static bool IsCooker(string mesh, out ECookerKind kind) => Cookers.TryGetValue(mesh ?? "", out kind);
+
+        /// <summary>Which container props have a FREEZER compartment, and how big (strawberry 2026-09-06: "in
+        /// fridges, add a second 'container' to the inventory ui above the fridge container"). Same reason the
+        /// cooker table lives here: the mesh name is knowledge only this side has.
+        ///
+        /// Smaller than the fridge body on purpose -- a freezer you can fit your whole larder into removes the
+        /// choice the feature is made of, which is what to keep cold and what to risk.</summary>
+        static readonly Dictionary<string, (byte w, byte h)> Freezers = new()
+        {
+            ["Fridge_0"] = (4, 2),
+            ["Fridge_1"] = (4, 2),
+        };
+
+        public static bool HasFreezer(string mesh, out byte w, out byte h)
+        {
+            if (Freezers.TryGetValue(mesh ?? "", out var d)) { w = d.w; h = d.h; return true; }
+            w = h = 0; return false;
+        }
         readonly List<Tracked> _tracked = new();
 
         public ContainerNetSync(NetWorldServer server, Node host,
@@ -70,6 +88,8 @@ namespace UnturnedGodot
                 _server.Containers.ServerSetDisplay(id.Value, ProjectDisplay(crate.Storage, c.display, w), tick);
 
                 if (IsCooker(c.mesh, out var cookKind)) _server.Cooking.Register(id.Value, cookKind);   // an oven is a crate that also cooks
+                if (HasFreezer(c.mesh, out byte fw, out byte fh))
+                    _server.Inventories.ServerAddFreezer(id.Value, fw, fh);   // ...and a fridge is one with a second, colder grid
 
                 _tracked.Add(new Tracked { NetId = id.Value, Crate = crate, KindId = kindId, Sig = GridSig(crate.Storage) });
             }
@@ -88,6 +108,9 @@ namespace UnturnedGodot
             float cookDt = DivisorTicks / 50f;
             foreach (uint blown in _server.Cooking.Step(cookDt))
                 Detonated?.Invoke(blown);
+            // FREEZING, on the same beat and the same real-elapsed dt, for the same reason: a 2 Hz sweep of every
+            // container is cheap, and freezing is a "stand there and wait" timescale, not a per-frame one.
+            _server.Freezing.Step(cookDt);
             for (int i = 0; i < _tracked.Count; i++)
             {
                 var t = _tracked[i];

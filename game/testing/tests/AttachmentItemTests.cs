@@ -34,7 +34,7 @@ namespace UnturnedGodot.Testing
 
             // find where it landed
             byte page = 255, gx = 0, gy = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && page == 255; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && page == 255; b++)
             {
                 var pg = p.Inventory.items[b];
                 if (pg == null) continue;
@@ -99,7 +99,7 @@ namespace UnturnedGodot.Testing
             var bare = new PlayerInventory();
             bool bareAdd = bare.tryAddItem(new Item(5));
             byte barePage = 255;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && barePage == 255; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && barePage == 255; b++)
             {
                 var pg3 = bare.items[b];
                 if (pg3 == null) continue;

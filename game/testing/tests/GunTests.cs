@@ -36,7 +36,7 @@ namespace UnturnedGodot.Testing
             T.Check("empty reload has no chambered bonus (Ammo=30, not 31)", p.Ammo == 30);
 
             // empty the bag of mags -> reload must be blocked
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
             T.Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
 
             // masterkey: a BREAK-action double-barrel feeding from loose 20 Gauge Buckshot (item 381, stack 32), no +1
@@ -104,7 +104,7 @@ namespace UnturnedGodot.Testing
             T.Check($"rifle_birch loads from loose rounds (Ammo={p.Ammo}, cap 4)", p.Ammo > 0 && p.Ammo <= 4);
             T.Check($"reload consumed exactly the rounds loaded ({p.DebugCountShells()} left of 8)", p.DebugCountShells() == 8 - p.Ammo);
             // clean the loose 5.56 back out so the later eaglefire-rack check (getItemCount(5004)==1) starts from zero -- this method shares one bag
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 5004) pg.removeItem((byte)i); }
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 5004) pg.removeItem((byte)i); }
 
             // dupe guard (master): switching shell TYPES must not conjure rounds -- a loaded buckshot tube + slugs carried
             // must NOT turn the whole tube into slugs. the loaded type is one global (ShellAsset), so the fix ejects the

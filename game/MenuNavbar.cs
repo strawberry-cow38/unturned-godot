@@ -76,8 +76,5 @@ namespace UnturnedGodot
             }
         }
 
-        /// <summary>Is this screen point on the strip? InventoryUI._Input asks before it swallows a press --
-        /// see the comment at that call site for why the tabs were dead without it.</summary>
-        public bool HasPoint(Vector2 global) => new Rect2(GlobalPosition, new Vector2(Size.X, Height)).HasPoint(global);
     }
 }

@@ -24,7 +24,7 @@ namespace UnturnedGodot.Testing
         static int CountOf(PlayerInventory inv, ushort id)
         {
             int n = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -95,7 +95,7 @@ namespace UnturnedGodot.Testing
             // THE SERVER SPENT IT. This is the check that used to fail: no command existed, so the server grid
             // still held a full spare and the echo handed it straight back.
             int serverFull = 0, serverPartial = 0;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = sInv.Inventory.items[b];
                 for (byte i = 0; i < (pg?.getItemCount() ?? 0); i++)
@@ -113,7 +113,7 @@ namespace UnturnedGodot.Testing
             int clientCount = CountOf(sess.Shell.Inventory, magId);
             T.Check($"the player still owns exactly ONE magazine after reloading ({clientCount})", clientCount == 1);
             int amt = -1;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && amt < 0; b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES && amt < 0; b++)
             {
                 var pg = sess.Shell.Inventory.items[b];
                 for (byte i = 0; i < (pg?.getItemCount() ?? 0); i++)

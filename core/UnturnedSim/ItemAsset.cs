@@ -190,6 +190,14 @@ namespace SDG.Unturned
         // before it can wrap a forgotten roast back around to raw.
         public byte cooked;
         public byte cookStyle;   // ECookStyle: 0 plain (no label) / 1 microwaved / 2 charcoal grilled
+        /// <summary>0-100 % frozen (strawberry 2026-09-06: "frozen acts as a %"). Climbs in a freezer, falls
+        /// anywhere else, and falls faster in something that is trying to cook it. A frozen item cannot be eaten
+        /// and cannot start cooking; at 100 it never spoils at all.
+        ///
+        /// Deliberately NOT folded into `quality`, which is FRESHNESS and moves on its own clock -- a rock-solid
+        /// steak and a fresh one are the same freshness and completely different to eat. Two independent axes
+        /// need two fields, the same argument that gave `cooked` its own.</summary>
+        public byte frozen;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {

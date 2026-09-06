@@ -71,6 +71,7 @@ namespace UnturnedGodot.Net
         /// <summary>The cooking appliances (strawberry 2026-09-05). Server-owned: an oven left on keeps
         /// cooking with nobody near it, and `cooked` multiplies what a meal is worth.</summary>
         public readonly ServerCooking Cooking;
+        public readonly ServerFreezing Freezing;
 
         /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
         /// the game layer's PowerNet.GlobalPower -- on a joined client that global is not authoritative, which
@@ -114,6 +115,7 @@ namespace UnturnedGodot.Net
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Cooking = new ServerCooking(Inventories, () => Session.CurrentTick);
+            Freezing = new ServerFreezing(Inventories);
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
@@ -128,6 +130,9 @@ namespace UnturnedGodot.Net
             // A3 already made authoritative for the grid toggle -- deliberately NOT the client-side
             // PowerNet.GlobalPower, which a joined client must never read directly.
             Cooking.HasPower = (netId, watts) => MainsAreUp();
+            // A freezer only freezes while the fridge has power -- the same rule the old halt-the-spoilage
+            // fridge already ran on, so an unpowered fridge does not quietly become a better one.
+            Freezing.HasPower = netId => MainsAreUp();
             // THE FUEL BAR'S ONLY ROUTE (v29). Unicast to whoever has the appliance open and nobody else -- a
             // campfire burning in an empty forest changes state constantly and is worth exactly zero packets.
             // Sent on the reliable channel because these are transitions (lit / burned out / switched itself

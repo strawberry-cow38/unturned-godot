@@ -46,6 +46,10 @@ namespace UnturnedNet.Tests
             // keep cooking while no client is near it, and `cooked` multiplies what a meal is worth, so a
             // client allowed to assert it is a client allowed to print food.
             ["cooked"] = "ServerCooking.Step advances it on the crate's items each server tick",
+            ["frozen"] = "ServerFreezing.Step raises it in a powered freezer compartment and lowers it everywhere "
+                       + "else each server tick; ServerCooking.Step thaws it faster inside a running appliance. "
+                       + "Server-owned because food at 100% frozen never spoils -- a client that could write this "
+                       + "could make its whole stockpile immortal",
             ["cookStyle"] = "ServerCooking.Step stamps it when an item reaches the cooked band",
         };
 

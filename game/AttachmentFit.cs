@@ -69,7 +69,7 @@ namespace UnturnedGodot
         {
             var outp = new System.Collections.Generic.List<(ItemAsset, Item, byte, byte)>();
             if (inv == null) return outp;
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
@@ -88,7 +88,7 @@ namespace UnturnedGodot
         /// <summary>Every distinct attachment in the player's bag that fits `slot`, as (asset, count). Distinct by
         /// item id: carrying six identical magazines is one button that says x6, not six buttons.
         ///
-        /// Scans the same page range FindBestMag does -- PAGES-2 excludes the two clothing/area pages, so a sight
+        /// Scans the same page range FindBestMag does -- OWNPAGES excludes the external container pages, so a sight
         /// sewn into a shirt is not offered.</summary>
         public static System.Collections.Generic.List<(ItemAsset Asset, int Count)> InBag(
             PlayerInventory inv, string slot, int gunCaliber)
@@ -97,7 +97,7 @@ namespace UnturnedGodot
             if (inv == null) return outp;
             var seen = new System.Collections.Generic.Dictionary<ushort, int>();
             var order = new System.Collections.Generic.List<ushort>();
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
             {
                 var pg = inv.items[b];
                 if (pg == null) continue;
