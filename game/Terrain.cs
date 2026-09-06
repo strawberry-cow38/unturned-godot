@@ -42,6 +42,7 @@ namespace UnturnedGodot
         // Layer 5 (sand seabed) -> ocean blue until a real water plane exists.
         const string TERRAIN_SHADER = @"
 shader_type spatial;
+#include ""res://content/puddles.gdshaderinc""
 uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
@@ -179,12 +180,18 @@ void fragment() {
         // road is under this pixel -- the SAME 0.42 cow tools tuned for the props, so asphalt reads identically
         // whether it is a road prop or painted terrain, and reflections match across the kerb.
         ROUGHNESS = mix(mix(1.0, 0.72, r_wet), mix(1.0, 0.42, r_wet), roadw);
+        // PUDDLES on the ROAD LAYER only (master 2026-09-06: ""give road props, road splines (not trails) and road
+        // terrain materials a separate puddles shader""). Same field the road props and splines use -- one include,
+        // so a puddle that straddles a kerb is the same puddle on both sides rather than two that disagree.
+        float pud = puddle_mask(wpos.xz, r_wet, r_up) * roadw;
+        ALBEDO *= mix(1.0, 0.62, pud);          // standing water reads darker than the wet road around it
+        ROUGHNESS = mix(ROUGHNESS, 0.06, pud);  // ...and far more reflective, which is the whole point of it
         if (rain_intensity > 0.0 && road_wet > 0.0) {
             // ~800 ALU: gated on there being both rain AND road here, so grass and clear weather pay nothing.
             float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * road_wet;
             ALBEDO += sp * 0.18;                                     // impact_opacity from the prop shader -- subtle glints, not paint
         }
-        SPECULAR = 0.5 + r_wet * 0.06 + road_wet * 0.06;             // no metallic -- wet asphalt is not chrome
+        SPECULAR = mix(0.5 + r_wet * 0.06 + road_wet * 0.06, 0.9, pud);   // no metallic -- wet asphalt is not chrome, but a puddle is a mirror
     }
 }
 ";
