@@ -84,9 +84,10 @@ namespace SDG.Unturned
         /// its own additions (9101-9144 are the power/fluid parts). I nearly shipped `289` here from memory;
         /// 289 is a Blue Bedroll. Checked, not recalled.
         ///
-        /// KNOWN GAP: it has no world source yet. `give Charcoal` works and loot cannot carry it, because loot
-        /// comes from the real PEI Items.dat which has never heard of it. Whether it should be craftable from
-        /// the Birch/Maple/Pine logs (37/39/41) or dropped into a table is strawberry's call, not mine.</summary>
+        /// NO WORLD SOURCE, BY DECISION -- strawberry 2026-09-06: "spawn only later in spawn tables". So this
+        /// is `give Charcoal` until then, and deliberately NOT craftable: a blueprint invented now would be the
+        /// thing that has to be unpicked when the spawn entry lands. PEI loot cannot carry it meanwhile because
+        /// loot comes from the real Items.dat, which has never heard of item 9150.</summary>
         public const ushort CharcoalId = 9150;
 
         public static bool IsBread(ushort id) => Breads.Contains(id);
