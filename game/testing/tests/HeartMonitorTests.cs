@@ -159,13 +159,30 @@ namespace UnturnedGodot.Testing
             // Compared MODULO the period, because time_s is now a sawtooth rather than an ever-growing accumulator:
             // it is handed to the shader pre-wrapped so the beat cannot decay as the session lengthens. A plain
             // t1 > t0 test passes or fails on where in the cycle the sample happened to land.
+            // MEASURED AGAINST THE CLOCK THAT DRIVES IT, not against a tick count.
+            //
+            // This used to wait 25 ticks and require the advance to land in (0.05, 0.95 x period) -- i.e. it
+            // assumed 25 physics ticks is about half a 1 s period. But time_s comes from HeartMonitor's shared
+            // clock, which accumulates REAL frame delta. In the nightly's full L1 boot the frames are slower than
+            // in a one-test run, so the same 25 ticks carried 0.99 s of a 1 s period and the check failed --
+            // while the trace was animating perfectly. It passed in isolation at the very sha the sweep failed
+            // it, twice, which is what says instrument rather than product.
+            //
+            // So the expectation is now DERIVED from the clock: whatever real time actually elapsed, the shader's
+            // time_s must have moved by that much (mod the period). That still catches a still picture -- a dead
+            // _Process advances the clock and leaves time_s pinned, which fails immediately -- and it cannot be
+            // fooled by a slow or a fast frame.
             float per0 = hm.DebugPeriod;
             float t0 = (float)hm.DebugMaterial.GetShaderParameter("time_s");
+            double clock0 = HeartMonitor.DebugGlobalSeconds;
             yield return Ticks(25);
             float t1 = (float)hm.DebugMaterial.GetShaderParameter("time_s");
+            float elapsed = (float)(HeartMonitor.DebugGlobalSeconds - clock0);
             float adv = Mathf.PosMod(t1 - t0, per0);
-            T.Check($"the trace is animated, not a still ({t0:0.###} -> {t1:0.###}, advanced {adv:0.###}s of {per0:0.#})",
-                adv > 0.05f && adv < per0 * 0.95f);
+            float want = Mathf.PosMod(elapsed, per0);
+            T.Check($"the clock actually ran during the wait ({elapsed:0.###}s over 25 ticks)", elapsed > 0.01f);
+            T.Check($"the trace tracks the clock ({t0:0.###} -> {t1:0.###}, advanced {adv:0.###}s, clock says {want:0.###}s of {per0:0.#})",
+                Mathf.Abs(Mathf.PosMod(adv - want + per0 * 0.5f, per0) - per0 * 0.5f) < 0.05f);
             T.Check($"...and it never leaves its own period ({t1:0.###} in 0..{per0:0.#})", t1 >= 0f && t1 < per0);
 
             // ---- THE FLATLINE FLAG. Both halves: the shader is told, and the period changes with it.

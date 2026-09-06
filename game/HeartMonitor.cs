@@ -304,6 +304,12 @@ namespace UnturnedGodot
         static double _shared;
         static ulong _sharedFrame = ulong.MaxValue;
         internal static double GlobalSeconds => _shared;
+        /// <summary>The shared clock, for tests. The trace test used to infer elapsed time from a TICK COUNT
+        /// ("25 ticks is about half a 1 s period"), but this clock accumulates REAL frame delta -- so under a
+        /// full L1 boot, where frames are slower than in a one-test run, the same 25 ticks carried nearly a whole
+        /// period and the animation check failed while the product was fine. Exposed so the test compares the
+        /// shader against the clock actually driving it instead of against a wall-time guess.</summary>
+        public static double DebugGlobalSeconds => _shared;
         internal static void AdvanceShared(double delta)
         {
             ulong f = Engine.GetProcessFrames();

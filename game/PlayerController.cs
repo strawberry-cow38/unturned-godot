@@ -1845,6 +1845,12 @@ namespace UnturnedGodot
         // comment made this look like a change with a blast radius, and a wrong comment about coupling is how a
         // safe edit gets avoided or an unsafe one gets waved through.
         const float RepeatedHitInterval = 0.225f;
+        /// <summary>Test seam. The cadence was a private const, so ChainsawTests could only spell it as a frame
+        /// COUNT (16 frames of 0.016 s "is inside the 0.45 s interval") -- and halving the interval turned those
+        /// counts into assertions about a number that no longer existed. Exposed so the suite derives its frames
+        /// from the rule instead of restating it, which is the same failure the drivetrain probe spent seven
+        /// nights on: a fixed absolute in the test, invisible because the constant could not be read.</summary>
+        public static float RepeatedHitIntervalForTest => RepeatedHitInterval;
         static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
         static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
         float _sawHitCd;

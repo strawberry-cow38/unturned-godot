@@ -1,0 +1,4 @@
+== L1: in-engine tests (headless godot, one boot) ==
+[TEST] melee.chainsaw                             | PASS | 1.59s (13 checks)
+[SUITE] L1 in-engine | PASS | 1 passed
+[SUMMARY] TOTAL: 1 passed, 0 failed | ok | trx: .verify

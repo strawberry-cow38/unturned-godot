@@ -70,13 +70,19 @@ namespace UnturnedGodot.Testing
             p.DebugTickChainsaw(0.016f, true);
             T.Check($"the first pull cuts immediately ({hits})", hits == 1);
 
-            // Sixteen more frames at 60 Hz is ~0.26 s -- inside the 0.45 s interval, so a saw that damaged per
-            // frame would be at 17 hits here. This is the assertion that separates "wired" from "wired correctly".
-            for (int i = 0; i < 16; i++) p.DebugTickChainsaw(0.016f, true);
-            T.Check($"it does NOT hit every frame ({hits} after 17 frames of holding)", hits == 1);
+            // DERIVED FROM THE INTERVAL, not from a frame count that happens to sit inside it. These were
+            // hardcoded 16 and 14 frames chosen against a 0.45 s cadence; strawberry halved it to 0.225 s
+            // (2026-09-06) and both numbers silently became assertions about a rule that no longer exists --
+            // the first over-ran the interval and the saw legitimately cut twice. Deriving the counts means the
+            // next retune cannot rot them.
+            const float Dt = 0.016f;
+            float interval = PlayerController.RepeatedHitIntervalForTest;
+            int justUnder = Mathf.Max(1, Mathf.FloorToInt(interval / Dt) - 2);   // stay strictly inside the window
+            for (int i = 0; i < justUnder; i++) p.DebugTickChainsaw(Dt, true);
+            T.Check($"it does NOT hit every frame ({hits} after {justUnder + 1} frames inside a {interval:0.###}s interval)", hits == 1);
 
-            // Past the interval it cuts again.
-            for (int i = 0; i < 14; i++) p.DebugTickChainsaw(0.016f, true);
+            // Past the interval it cuts again. Four frames clear of the boundary either way.
+            for (int i = 0; i < 4; i++) p.DebugTickChainsaw(Dt, true);
             T.Check($"it cuts again past the interval ({hits})", hits == 2);
 
             T.Check("every cut is a WEAK hit -- a Repeated tool has no strong attack", !anyStrong);

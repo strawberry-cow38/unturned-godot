@@ -42,9 +42,17 @@ namespace UnturnedGodot.Testing
             T.Check("cheese lost 20 condition (100->80)", inv.items[2].getItem(0)?.item.quality == 80);
             T.Check("potato lost 5 condition (100->95)", inv.items[2].getItem(1)?.item.quality == 95);
             T.Check("the rock is untouched (non-food)", inv.items[2].getItem(2)?.item.quality == 100);
-            T.Check("preserved cheese does NOT spoil", frozen.quality == 100);
+            // A FRIDGE SLOWS, IT NO LONGER STOPS (strawberry 2026-09-06: "fridge'd items spoil at a much slower
+            // rate", with the hard stop moved to 100 % frozen). This used to assert `frozen.quality == 100` --
+            // the retired rule -- so it is rewritten to the new one rather than deleted, and it asserts the SHAPE
+            // (much slower than open air, but not zero) rather than the exact 97, so retuning the multiplier does
+            // not have to come back here.
+            int fridgeLost = 100 - frozen.quality;
+            int openLost = 100 - (inv.items[2].getItem(0)?.item.quality ?? 100);   // the same cheese, unrefrigerated
+            T.Check($"refrigerated cheese still spoils ({fridgeLost} lost)", fridgeLost > 0);
+            T.Check($"...but far slower than in the open ({fridgeLost} vs {openLost})", fridgeLost * 3 < openLost);
             T.Check("condition clamps at 0 (10 - 20 -> 0, not underflow)", lowCheese.quality == 0);
-            T.Check("TickDay counts only what actually spoiled (cheese+potato+lowCheese=3; preserved & rock skipped)", spoiled == 3);
+            T.Check($"TickDay counts everything that spoiled -- the refrigerated cheese now does too ({spoiled})", spoiled == 4);
 
             // ── retail eating formula (FoodSpoil.NutritionScale / MoldyInfection), ported byte-for-byte.
             T.Check("nutrition scales by condition/100", Mathf.Abs(FoodSpoil.NutritionScale(100) - 1f) < 1e-4f
@@ -158,7 +166,11 @@ namespace UnturnedGodot.Testing
             // TickDayCrates is AUTHORITATIVE: it reconciles each item's `preserved` to its crate's live power, then spoils.
             FoodSpoil.TickDayCrates(Tree);
             T.Check("steak in a plain crate spoils (100 -> 78, meat rate 22)", crate.Storage.getItem(0)?.item.quality == 78);
-            T.Check("steak in a powered fridge stays fresh (100)", fridge.Storage.getItem(0)?.item.quality == 100);
+            // Slowed, not halted (strawberry 2026-09-06). Asserted as an ordering against the plain crate in the
+            // same tick, so this survives a retune of the multiplier -- the claim is "a fridge is much better than
+            // a shelf and not as good as a freezer", which is the actual rule.
+            int fridgeQ = fridge.Storage.getItem(0)?.item.quality ?? 0;
+            T.Check($"steak in a powered fridge spoils SLOWLY ({fridgeQ}, crate is 78)", fridgeQ > 90 && fridgeQ < 100);
             T.Check("the powered fridge's steak is flagged cold (preserved)", fridge.Storage.getItem(0)?.item.preserved == true);
 
             gen.TogglePower();
@@ -168,7 +180,13 @@ namespace UnturnedGodot.Testing
 
             FoodSpoil.TickDayCrates(Tree);
             T.Check("its steak is no longer flagged cold", fridge.Storage.getItem(0)?.item.preserved == false);
-            T.Check("fridge food spoils once its power is cut (100 -> 78)", fridge.Storage.getItem(0)?.item.quality == 78);
+            // Full open-air rate once the power is gone. Measured as the DROP across this tick rather than an
+            // absolute 78, because the steak already lost a little while the fridge was running -- the old
+            // absolute expected a steak that had been perfectly preserved up to this point, which is exactly the
+            // rule that changed.
+            int afterCut = fridge.Storage.getItem(0)?.item.quality ?? 0;
+            T.Check($"an unpowered fridge spoils at the full rate ({fridgeQ} -> {afterCut}, meat rate 22)",
+                    fridgeQ - afterCut == 22);
 
             fridge.QueueFree(); crate.QueueFree(); gen.QueueFree();
             yield break;
