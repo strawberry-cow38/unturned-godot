@@ -4146,6 +4146,11 @@ namespace UnturnedGodot
 
         void BuildDeployTest()
         {
+            // UG_CHROMATIC=<intensity> over the golden scene. The lens pass mounts on the real PEI world path,
+            // but PEI renders take ~400 s and this one takes ~120 -- and looking at a purely visual change is
+            // not optional, so the harness hook exists to put it over a scene that will actually finish.
+            ChromaticAberration.DebugAttach(this);
+
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             var env = new Godot.Environment
             {
@@ -4987,6 +4992,18 @@ namespace UnturnedGodot
             // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
             // in-game. Null overlay -- the 3D rain replaced the 2D streaks. UG_WEATHER forces a perpetual state for
             // render-verifying (same knob as the daynight demo).
+            // THE LENS (2026-09-06). Mounted on the real world-build path rather than beside the player, because
+            // it is a property of the camera rather than of who is looking through it -- and because it must
+            // exist for the settings row to have something to drive. Off by default; GraphicsOptions decides.
+            if (ChromaticAberration.Current == null)
+            {
+                AddChild(new ChromaticAberration());
+                // UG_CHROMATIC=<intensity> forces it on for render verification -- this is a purely visual
+                // change, so it has to be lookable-at without clicking through a settings menu.
+                if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
+                { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
+                GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
+            }
             if (res.DayNight != null && WeatherManager.Current == null)
             {
                 var wm = WeatherManager.Attach(this, null, res.DayNight);

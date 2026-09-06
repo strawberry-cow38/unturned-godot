@@ -59,6 +59,10 @@ namespace UnturnedGodot
             Row(vbox, "Effect quality (next map)", () => GraphicsOptions.EffectQuality.ToString(), () => { GraphicsOptions.EffectQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.EffectQuality); GraphicsOptions.ApplyEffects(); });
             Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
+            // Chromatic aberration: retail has it, and it stopped being a dead row on 2026-09-06. Two rows --
+            // the switch and the strength -- because "how much" is the whole question with a stylistic filter.
+            Row(vbox, "Chromatic Aberration", () => GraphicsOptions.OnOff(GraphicsOptions.ChromaticAberration), () => { GraphicsOptions.ChromaticAberration = !GraphicsOptions.ChromaticAberration; GraphicsOptions.ApplyChromatic(); });
+            Row(vbox, "Aberration Strength", () => $"{GraphicsOptions.ChromaticAmount:0.00}", () => { GraphicsOptions.ChromaticAmount = GraphicsOptions.Next(GraphicsOptions.ChromaticOrder, GraphicsOptions.ChromaticAmount); GraphicsOptions.ApplyChromatic(); });
             Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Fog quality (restart)",   // volumetric froxel grid: Low 32 / Medium 48 (default) / High 64 -- boot-time, rides override.cfg like the render thread
                 () => GraphicsOptions.VolumetricFogLabel,
@@ -142,6 +146,10 @@ namespace UnturnedGodot
             Row(vbox, "Effect quality (next map)", () => GraphicsOptions.EffectQuality.ToString(), () => { GraphicsOptions.EffectQuality = GraphicsOptions.Next(GraphicsOptions.QualityOrder, GraphicsOptions.EffectQuality); GraphicsOptions.ApplyEffects(); });
             Row(vbox, "Ambient occlusion", () => GraphicsOptions.OnOff(GraphicsOptions.AmbientOcclusion), () => { GraphicsOptions.AmbientOcclusion = !GraphicsOptions.AmbientOcclusion; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Bloom", () => GraphicsOptions.OnOff(GraphicsOptions.Bloom), () => { GraphicsOptions.Bloom = !GraphicsOptions.Bloom; GraphicsOptions.ApplyEnvironment(ctx); });
+            // Chromatic aberration: retail has it, and it stopped being a dead row on 2026-09-06. Two rows --
+            // the switch and the strength -- because "how much" is the whole question with a stylistic filter.
+            Row(vbox, "Chromatic Aberration", () => GraphicsOptions.OnOff(GraphicsOptions.ChromaticAberration), () => { GraphicsOptions.ChromaticAberration = !GraphicsOptions.ChromaticAberration; GraphicsOptions.ApplyChromatic(); });
+            Row(vbox, "Aberration Strength", () => $"{GraphicsOptions.ChromaticAmount:0.00}", () => { GraphicsOptions.ChromaticAmount = GraphicsOptions.Next(GraphicsOptions.ChromaticOrder, GraphicsOptions.ChromaticAmount); GraphicsOptions.ApplyChromatic(); });
             Row(vbox, "Sun shafts", () => GraphicsOptions.OnOff(GraphicsOptions.SunShafts), () => { GraphicsOptions.SunShafts = !GraphicsOptions.SunShafts; GraphicsOptions.ApplyEnvironment(ctx); });
             Row(vbox, "Fog quality (restart)",   // volumetric froxel grid: Low 32 / Medium 48 (default) / High 64 -- boot-time, rides override.cfg like the render thread
                 () => GraphicsOptions.VolumetricFogLabel,

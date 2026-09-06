@@ -1,4 +1,4 @@
 == L1: in-engine tests (headless godot, one boot) ==
-[TEST] vehicle.heli_speed                         | PASS | 206.49s (47 checks)
+[TEST] vehicle.plane_dive                         | PASS | 0.50s (6 checks)
 [SUITE] L1 in-engine | PASS | 1 passed
 [SUMMARY] TOTAL: 1 passed, 0 failed | ok | trx: .verify

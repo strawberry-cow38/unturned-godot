@@ -56,9 +56,10 @@ namespace UnturnedGodot
 
         // ---- PORTED FROM RETAIL GraphicsSettingsData (strawberry 2026-09-04 "port more graphics options etc from the source") ----
         // Retail's list: FullscreenMode, UserInterfaceScale, TargetFrameRate, AmbientOcclusion, GrassDisplacement, Ragdolls, Wind, VSync,
-        // Bloom, EffectQuality, SunShafts, ScreenSpaceReflection, PlanarReflection, ScopeQuality, OutlineQuality (+ chromatic aberration,
-        // film grain, triplanar, nice-blend, debris/blast/puddle/glitter/clutter -- no Godot-side hook for those yet, so they are not
+        // Bloom, EffectQuality, SunShafts, ScreenSpaceReflection, PlanarReflection, ScopeQuality, OutlineQuality, CHROMATIC ABERRATION
+        // (+ film grain, triplanar, nice-blend, debris/blast/puddle/glitter/clutter -- no Godot-side hook for THOSE yet, so they are not
         // shown rather than shown as dead rows). Each one below maps onto a real switch in this codebase.
+        // Chromatic aberration moved off that held-back list on 2026-09-06: ChromaticAberration.cs is its hook.
         public enum GfxQuality { Off, Low, Medium, High, Ultra }
         public static readonly GfxQuality[] QualityOrder = { GfxQuality.Off, GfxQuality.Low, GfxQuality.Medium, GfxQuality.High, GfxQuality.Ultra };
         public static readonly GfxQuality[] QualityOrderNoOff = { GfxQuality.Low, GfxQuality.Medium, GfxQuality.High, GfxQuality.Ultra };
@@ -72,6 +73,13 @@ namespace UnturnedGodot
         public static bool VSync = false;
         public static bool AmbientOcclusion = false;
         public static bool Bloom = true;
+        /// <summary>Retail's chromatic aberration, now that there IS a Godot-side hook for it
+        /// (ChromaticAberration / content/chromatic.gdshader). Off by default: it is a look, not a fidelity
+        /// improvement, and turning a stylistic filter on for everyone without being asked is how a port
+        /// acquires a house style nobody chose.</summary>
+        public static bool ChromaticAberration = false;
+        public static readonly float[] ChromaticOrder = { 0.2f, 0.35f, 0.6f, 1.0f };   // subtle .. obvious
+        public static float ChromaticAmount = 0.35f;
         public static bool SunShafts = false;          // -> Godot volumetric fog (the nearest thing to retail's sun shafts)
         public static bool ScreenSpaceReflections = false;
         public static GfxQuality EffectQuality = GfxQuality.High;      // particle count + size (ParticleFx) -- takes effect on the next map load
@@ -114,6 +122,13 @@ namespace UnturnedGodot
             // density: Godot's default 0.05 is the night key; DayNightCycle drives it by sun elevation (night 0.05, horizon 0.010, noon 0.003)
         }
         public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
+        /// <summary>Push the lens settings onto the live pass. Static-to-static, then the node re-reads them.</summary>
+        public static void ApplyChromatic()
+        {
+            UnturnedGodot.ChromaticAberration.Enabled = ChromaticAberration;
+            UnturnedGodot.ChromaticAberration.Intensity = ChromaticAmount;
+            UnturnedGodot.ChromaticAberration.Current?.Apply();   // null before a world exists; the statics above still stick
+        }
         public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }
         public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
         public static string ShadowDistLabel(float d) => $"{d:0} m";
@@ -310,6 +325,7 @@ namespace UnturnedGodot
                 cfg.SetValue("graphics", "resolution_y", Resolution.Y);
                 cfg.SetValue("graphics", "fullscreen", (int)Fullscreen); cfg.SetValue("graphics", "ui_scale", UiScale); cfg.SetValue("graphics", "target_fps", TargetFps); cfg.SetValue("graphics", "vsync", VSync);
                 cfg.SetValue("graphics", "ambient_occlusion", AmbientOcclusion); cfg.SetValue("graphics", "bloom", Bloom); cfg.SetValue("graphics", "sun_shafts", SunShafts); cfg.SetValue("graphics", "ssr", ScreenSpaceReflections);
+                cfg.SetValue("graphics", "chromatic", ChromaticAberration); cfg.SetValue("graphics", "chromatic_amount", ChromaticAmount);
                 cfg.SetValue("graphics", "effect_quality", (int)EffectQuality); cfg.SetValue("graphics", "planar_reflection", (int)PlanarReflection); cfg.SetValue("graphics", "scope_quality", (int)ScopeQuality);
                 cfg.SetValue("graphics", "outline", Outline); cfg.SetValue("graphics", "grass_displacement", GrassDisplacement); cfg.SetValue("graphics", "wind", Wind); cfg.SetValue("graphics", "ragdolls", Ragdolls); cfg.SetValue("graphics", "well_shaft", WellShaft);
                 cfg.SetValue("controls", "mouse_sensitivity", ControlsOptions.MouseSensitivity);
@@ -339,6 +355,7 @@ namespace UnturnedGodot
                 TargetFps = Mathf.Clamp((int)cfg.GetValue("graphics", "target_fps", TargetFps), 0, 1000);
                 VSync = (bool)cfg.GetValue("graphics", "vsync", VSync);
                 AmbientOcclusion = (bool)cfg.GetValue("graphics", "ambient_occlusion", AmbientOcclusion); Bloom = (bool)cfg.GetValue("graphics", "bloom", Bloom);
+                ChromaticAberration = (bool)cfg.GetValue("graphics", "chromatic", ChromaticAberration); ChromaticAmount = (float)cfg.GetValue("graphics", "chromatic_amount", ChromaticAmount);
                 SunShafts = (bool)cfg.GetValue("graphics", "sun_shafts", SunShafts); ScreenSpaceReflections = (bool)cfg.GetValue("graphics", "ssr", ScreenSpaceReflections);
                 EffectQuality = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "effect_quality", (int)EffectQuality), 0, 4);
                 PlanarReflection = (GfxQuality)Mathf.Clamp((int)cfg.GetValue("graphics", "planar_reflection", (int)PlanarReflection), 0, 4);

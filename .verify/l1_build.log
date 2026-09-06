@@ -1,45 +1,6 @@
-/home/ec2-user/ug-mp-wt/game/EditorObjects.cs(127,21): warning CS0108: 'EditorObjects.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/EditorRoads.cs(60,21): warning CS0108: 'EditorRoads.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/RiggedCharacter.cs(489,34): warning CS0672: Member 'RiggedCharacter.TorsoPoseModifier._ProcessModification()' overrides obsolete member 'SkeletonModifier3D._ProcessModification()'. Add the Obsolete attribute to 'RiggedCharacter.TorsoPoseModifier._ProcessModification()'. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/TVDevice.cs(372,36): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/TVDevice.cs(752,17): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/ProcIsland.cs(581,25): warning CS0219: The variable 'Unit' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(129,280): warning CS0219: The variable 'navShot' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(131,18): warning CS0219: The variable 'zperf' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(132,18): warning CS0219: The variable 'zbody' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/RiggedCharacter.cs(833,13): warning CS0618: 'Skeleton3D.PhysicalBonesStartSimulation(Array<StringName>)' is obsolete: 'This method is deprecated.' [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/.godot/mono/temp/obj/Debug/Godot.SourceGenerators/Godot.SourceGenerators.ScriptMethodsGenerator/UnturnedGodot.RiggedCharacter.TorsoPoseModifier_ScriptMethods.generated.cs(38,13): warning CS0618: 'SkeletonModifier3D._ProcessModification()' is obsolete: 'Use 'Godot.SkeletonModifier3D._ProcessModificationWithDelta(double)' instead.' [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(3554,18): warning CS8321: The local function 'Eval' is declared but never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/testing/tests/ProcIslandTests.cs(643,21): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1839,30): warning CS0649: Field 'Vehicle.Spec.Buoys' is never assigned to, and will always have its default value null [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1988,28): warning CS0649: Field 'Vehicle.Spec.MainHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1885,48): warning CS0649: Field 'Vehicle.Spec.HullDecompose' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1987,39): warning CS0649: Field 'Vehicle.Spec.TailRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1987,26): warning CS0649: Field 'Vehicle.Spec.MainRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1988,40): warning CS0649: Field 'Vehicle.Spec.TailHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
 
 Build succeeded.
-
-/home/ec2-user/ug-mp-wt/game/EditorObjects.cs(127,21): warning CS0108: 'EditorObjects.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/EditorRoads.cs(60,21): warning CS0108: 'EditorRoads.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/RiggedCharacter.cs(489,34): warning CS0672: Member 'RiggedCharacter.TorsoPoseModifier._ProcessModification()' overrides obsolete member 'SkeletonModifier3D._ProcessModification()'. Add the Obsolete attribute to 'RiggedCharacter.TorsoPoseModifier._ProcessModification()'. [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/TVDevice.cs(372,36): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/TVDevice.cs(752,17): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/ProcIsland.cs(581,25): warning CS0219: The variable 'Unit' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(129,280): warning CS0219: The variable 'navShot' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(131,18): warning CS0219: The variable 'zperf' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(132,18): warning CS0219: The variable 'zbody' is assigned but its value is never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/RiggedCharacter.cs(833,13): warning CS0618: 'Skeleton3D.PhysicalBonesStartSimulation(Array<StringName>)' is obsolete: 'This method is deprecated.' [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/.godot/mono/temp/obj/Debug/Godot.SourceGenerators/Godot.SourceGenerators.ScriptMethodsGenerator/UnturnedGodot.RiggedCharacter.TorsoPoseModifier_ScriptMethods.generated.cs(38,13): warning CS0618: 'SkeletonModifier3D._ProcessModification()' is obsolete: 'Use 'Godot.SkeletonModifier3D._ProcessModificationWithDelta(double)' instead.' [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Main.cs(3554,18): warning CS8321: The local function 'Eval' is declared but never used [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/testing/tests/ProcIslandTests.cs(643,21): warning CS0162: Unreachable code detected [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1839,30): warning CS0649: Field 'Vehicle.Spec.Buoys' is never assigned to, and will always have its default value null [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1988,28): warning CS0649: Field 'Vehicle.Spec.MainHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1885,48): warning CS0649: Field 'Vehicle.Spec.HullDecompose' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1987,39): warning CS0649: Field 'Vehicle.Spec.TailRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1987,26): warning CS0649: Field 'Vehicle.Spec.MainRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-/home/ec2-user/ug-mp-wt/game/Vehicle.cs(1988,40): warning CS0649: Field 'Vehicle.Spec.TailHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-mp-wt/game/UnturnedGodot.csproj]
-    19 Warning(s)
+    0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:31.84
+Time Elapsed 00:00:06.48
