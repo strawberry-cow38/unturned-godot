@@ -259,6 +259,36 @@ void fragment() {
         /// and silently doing nothing is better than pretending. Inventory is the page you are already on.</summary>
         void OnTab(string label) { }   // tabs route through PlayerController.ShowMenu now (MenuNavbar)
 
+        // --- the cooker switch + its fuel bar, kept as fields so a burning log can move the bar without a
+        // full dashboard Refresh(). Rebuilding the whole grid 255 times per log would also drop any drag in
+        // progress, which is a real way to lose an item while watching a fire.
+        Button _cookBtn;
+        Panel _cookFuelTrack, _cookFuelFill;
+
+        /// <summary>Repaint just the switch label and the fuel bar from PlayerController's current values.
+        /// Called on every CookerStateEvent; silently does nothing when the panel is not showing a cooker.</summary>
+        public void RefreshCookerBar()
+        {
+            if (!_open || Player == null) return;
+            if (_cookBtn != null && IsInstanceValid(_cookBtn) && Player.OpenCookerKind is ECookerKind k)
+            {
+                _cookBtn.Text = Player.OpenCookerOn ? $"{k} \u2014 ON" : $"{k} \u2014 OFF";
+                _cookBtn.AddThemeColorOverride("font_color", Player.OpenCookerOn ? new Color(1f, 0.72f, 0.3f) : UITheme.TextDim);
+            }
+            PaintCookerBar();
+        }
+
+        void PaintCookerBar()
+        {
+            if (_cookFuelTrack == null || !IsInstanceValid(_cookFuelTrack) || _cookFuelFill == null || !IsInstanceValid(_cookFuelFill)) return;
+            float frac = Mathf.Clamp(Player?.OpenCookerFuel ?? 0f, 0f, 1f);
+            _cookFuelFill.Size = new Vector2(_cookFuelTrack.Size.X * frac, _cookFuelTrack.Size.Y);
+            _cookFuelFill.Visible = frac > 0f;
+            // Nothing lit reads as an empty track, not a hidden one: "no fuel" and "this appliance has no bar"
+            // must not look the same, or an unlit campfire is indistinguishable from an oven.
+            _cookFuelTrack.Visible = true;
+        }
+
         public void Toggle() { if (_open) Close(); else Open(); }
         // The Nearby/AREA refresh lives HERE, not at the call sites, because there are four ways to open the bag
         // (the G keybind via Toggle, OpenInventory, crate-open, and the replicated storage-open fact) and only
@@ -349,6 +379,18 @@ void fragment() {
         public override void _Input(InputEvent e)
         {
             if (!_open || Inv == null) return;
+            // THE NAVBAR'S BUTTONS ARE NOT MINE TO EAT. Godot runs _Input BEFORE gui_input, and the StartDrag
+            // branch below calls SetInputAsHandled() on EVERY left press anywhere in the dashboard -- so a click on
+            // an Inventory/Craft/Skills/Information tab was consumed here and the Button's Pressed never fired.
+            // The tabs were wired correctly the whole time (they route through PlayerController.ShowMenu); they were
+            // starved of the event. That is why they worked on the Craft/Skills/Information screens, which have no
+            // _Input of their own, and only looked broken from the inventory -- the screen you open first
+            // (strawberry 2026-09-06: "make the top bar inv, craft, skills, info buttons actually function").
+            //
+            // This is the SECOND victim of that same unconditional swallow; the paperdoll-spin comment below
+            // records the first. Bailing out over the strip fixes the class rather than the instance: anything the
+            // navbar owns keeps its own input.
+            if (e is InputEventMouseButton nb && _navbar != null && _navbar.HasPoint(nb.GlobalPosition)) return;
             if (e is InputEventMouseButton wh && wh.Pressed && (wh.ButtonIndex == MouseButton.WheelUp || wh.ButtonIndex == MouseButton.WheelDown)
                 && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
             {
@@ -1915,6 +1957,10 @@ void fragment() {
             foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
             foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
             foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
+            // The cooker widgets live in the column just freed. QueueFree is DEFERRED, so these references stay
+            // IsInstanceValid for the rest of this frame -- a bar update landing in that window would paint a
+            // node that is on its way out, and worse, one belonging to the container you just closed.
+            _cookBtn = null; _cookFuelTrack = null; _cookFuelFill = null;
             _drop.Clear(); _headerIcons.Clear();
             if (!_foldTestApplied && byte.TryParse(System.Environment.GetEnvironmentVariable("UG_INVFOLD"), out var _fp)) { _collapsed.Add(_fp); _foldTestApplied = true; }   // render harness: start with a page folded
 
@@ -1986,7 +2032,24 @@ void fragment() {
                     btn.AddThemeColorOverride("font_color", Player.OpenCookerOn ? new Color(1f, 0.72f, 0.3f) : UITheme.TextDim);
                     btn.Pressed += () => { Player.ToggleOpenCooker(); Refresh(); };   // repaint so the label flips on the same frame
                     aCol.AddChild(btn);
+                    _cookBtn = btn;
                     yA += 34f;
+
+                    // THE FUEL BAR (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before
+                    // its consumed"). Only for the appliances that burn something -- an oven on the mains has no
+                    // "before its consumed" to show, and an empty bar under it would read as a fault.
+                    if (Cooking.NeedsFuel(ck))
+                    {
+                        var track = new Panel { Position = new Vector2(0, yA), Size = new Vector2(colW, 10) };
+                        track.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Slot, 3));
+                        aCol.AddChild(track);
+                        var fill = new Panel { Position = Vector2.Zero, Size = new Vector2(0, 10) };
+                        fill.AddThemeStyleboxOverride("panel", UITheme.Box(new Color(1f, 0.55f, 0.15f), 3));
+                        track.AddChild(fill);
+                        _cookFuelTrack = track; _cookFuelFill = fill;
+                        PaintCookerBar();   // set the width from the CURRENT value rather than starting at zero
+                        yA += 14f;
+                    }
                 }
             }
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel

@@ -262,8 +262,10 @@ namespace UnturnedGodot
                 Shell.OnReplicatedStorageOpened(e.NetId);
                 // v28: the server says whether what you just opened cooks, so the inventory can draw the on/off
                 // button. The client never decides this for itself -- it would have to guess from a mesh name.
-                Shell.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn);
+                Shell.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
             };
+            // v29: the fuel bar, while you stand there watching it burn.
+            Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
             Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
             // SP/MP unify: the server's door/bed decisions land on the nodes. These are the ONLY thing that
             // moves a replicated door or repaints a bed -- the client never applied anything on send, so

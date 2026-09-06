@@ -34,6 +34,106 @@ namespace UnturnedNet.Tests
             return (cook, inv, crate);
         }
 
+        // ---- THE FUEL BAR (v29) -------------------------------------------------------------------------
+        // strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed". The bar's
+        // value is server-derived and reaches the client as its own event, so it is only as good as these.
+
+        static List<(uint id, bool on, byte fuel)> Recorded(ServerCooking cook)
+        {
+            var log = new List<(uint, bool, byte)>();
+            cook.StateChanged = (id, on, fuel) => log.Add((id, on, fuel));
+            return log;
+        }
+
+        [Test]
+        public void the_fuel_bar_starts_full_and_empties_as_it_burns()
+        {
+            var (cook, _, crate) = Rig(ECookerKind.Campfire);
+            crate.Storage.tryAddItem(new Item(37, 1));   // one Birch Log
+            cook.SetOn(7, true);
+
+            cook.Step(0.1f);   // lights it
+            Assert.That(cook.TryGet(7, out var c), Is.True);
+            Assert.That(c.FuelTotal, Is.GreaterThan(0f), "a lit log has a burn time to be a fraction OF");
+            Assert.That(c.FuelFrac, Is.GreaterThan(240), $"just lit should read nearly full, got {c.FuelFrac}");
+
+            cook.Step(c.FuelTotal * 0.5f);
+            Assert.That(c.FuelFrac, Is.InRange(100, 160), $"half burnt should read about half, got {c.FuelFrac}");
+
+            // Burn it well past the end. The bar must read EMPTY, not wrap or go negative -- Fuel goes negative
+            // by design (Step subtracts before it checks), so the fraction is where that has to be caught.
+            cook.Step(c.FuelTotal * 5f);
+            Assert.That(c.FuelFrac, Is.Zero, "nothing left to burn is an empty bar");
+        }
+
+        [Test]
+        public void a_campfire_that_burns_out_tells_the_opener_it_went_off()
+        {
+            // THE PATH THIS TEST EXISTS FOR. Running out of fuel sets On=false and takes an early `continue`,
+            // so a state push written at the bottom of the cooking loop would never fire for it -- the bar would
+            // sit at zero under a button still saying ON until the player closed and reopened the fire.
+            var (cook, _, crate) = Rig(ECookerKind.Campfire);
+            crate.Storage.tryAddItem(new Item(37, 1));
+            cook.SetOn(7, true);
+            cook.Step(0.1f);
+
+            var log = Recorded(cook);
+            cook.TryGet(7, out var c);
+            cook.Step(c.FuelTotal + 1f);   // burn the last of it, with nothing left to light
+            // Fuel is spent DOWN in this step and only tested at the top of the NEXT one, so the fire goes out
+            // one tick after it runs dry rather than within the tick that empties it. At 50 Hz that is 20 ms and
+            // nobody can see it; the test says so explicitly instead of quietly stepping twice.
+            cook.Step(0.02f);
+
+            Assert.That(c.On, Is.False, "an unfuelled fire is out");
+            Assert.That(log, Is.Not.Empty, "the opener has to hear about it");
+            Assert.That(log[log.Count - 1].on, Is.False, "...and the last thing it hears is that it went out");
+            Assert.That(log[log.Count - 1].fuel, Is.Zero);
+        }
+
+        [Test]
+        public void a_still_appliance_says_nothing_at_all()
+        {
+            // The rate limit, stated as the property that matters: an oven nobody is touching must not emit a
+            // message per tick. Without this the "only on change" logic can rot into "every step" and the only
+            // symptom is bandwidth, which no other test in this file can see.
+            var (cook, _, crate) = Rig(ECookerKind.Oven);
+            crate.Storage.tryAddItem(new Item(13));
+            cook.SetOn(7, true);
+            var log = Recorded(cook);
+            for (int i = 0; i < 200; i++) cook.Step(0.02f);
+            Assert.That(log, Is.Empty, $"a mains oven has no fuel bar to move, so it had nothing to say ({log.Count} sent)");
+
+            // ...and a burning one speaks, but nowhere near once per tick.
+            var (fire, _, fcrate) = Rig(ECookerKind.Campfire);
+            fcrate.Storage.tryAddItem(new Item(37, 1));
+            fire.SetOn(7, true);
+            fire.Step(0.1f);
+            var flog = Recorded(fire);
+            for (int i = 0; i < 200; i++) fire.Step(0.02f);
+            Assert.That(flog.Count, Is.LessThan(200), $"one message per tick is not a rate limit ({flog.Count})");
+        }
+
+        [Test]
+        public void lighting_the_next_log_refills_the_bar()
+        {
+            // Two logs: the bar must go back UP when the second catches, not stay flat at zero. This is the
+            // "before its consumed" part of the request -- each item gets its own countdown.
+            var (cook, _, crate) = Rig(ECookerKind.Campfire);
+            crate.Storage.tryAddItem(new Item(37, 2));
+            cook.SetOn(7, true);
+            cook.Step(0.1f);
+            cook.TryGet(7, out var c);
+            float total = c.FuelTotal;
+
+            cook.Step(total * 0.95f);
+            byte low = c.FuelFrac;
+            cook.Step(total * 0.1f);   // spends the rest of the first log (see the tick note above)
+            cook.Step(0.02f);          // ...and THIS is the tick that lights the second
+            Assert.That(c.On, Is.True, "there was another log, so the fire keeps going");
+            Assert.That(c.FuelFrac, Is.GreaterThan(low), $"the bar refills for the next piece ({low} -> {c.FuelFrac})");
+        }
+
         [Test]
         public void an_oven_that_is_off_cooks_nothing()
         {

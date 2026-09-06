@@ -87,26 +87,86 @@ namespace UnturnedSim.Tests
             Assert.That(Cooking.Nutrition(95, Cooking.StyleOf(ECookerKind.Campfire)),
                         Is.EqualTo(Cooking.Nutrition(95, Cooking.StyleOf(ECookerKind.Oven))));
 
-            // WOOD, and only wood. The catalog also holds "Maplestrike" and birch/maple/pine DOORS, so this set
-            // is explicit for the same reason bread and metal are.
-            Assert.That(Cooking.IsWood(37), Is.True, "Birch Log");
-            Assert.That(Cooking.IsWood(39), Is.True, "Maple Log");
-            Assert.That(Cooking.IsWood(41), Is.True, "Pine Log");
-            Assert.That(Cooking.IsWood(Cooking.CharcoalId), Is.False, "charcoal is the BBQ's, not the fire's");
+        }
+
+        static ItemAsset Wooden(ushort id, string name, byte w = 1, byte h = 1, EItemType t = EItemType.SUPPLY)
+            => new ItemAsset { id = id, itemName = name, size_x = w, size_y = h, type = t };
+
+        [Test]
+        public void anything_wooden_burns_and_the_name_traps_do_not()
+        {
+            // strawberry 2026-09-06: "wood as a fuel should be anything wooden. sticks, planks, deployables."
+            Assert.That(Cooking.IsWood(Wooden(37, "Birch Log", 2, 1)), Is.True);
+            Assert.That(Cooking.IsWood(Wooden(38, "Birch Stick")), Is.True);
+            Assert.That(Cooking.IsWood(Wooden(62, "Birch Plank", 1, 2)), Is.True);
+            Assert.That(Cooking.IsWood(Wooden(282, "Birch Door", 1, 2, EItemType.GENERIC)), Is.True, "deployables too");
+            Assert.That(Cooking.IsWood(Wooden(1064, "Large Birch Plate", 2, 2, EItemType.GENERIC)), Is.True);
+
+            // THE TRAPS, and they are why this is a whole-word test and not a Contains. All three are real
+            // catalog entries: a substring rule feeds a rifle and a hat into the fire.
+            Assert.That(Cooking.IsWood(Wooden(363, "Maplestrike", 4, 2, EItemType.GUN)), Is.False, "a RIFLE");
+            Assert.That(Cooking.IsWood(Wooden(364, "Maplestrike Iron Sights", 1, 1, EItemType.SIGHT)), Is.False);
+            Assert.That(Cooking.IsWood(Wooden(764, "Pineapple", 1, 1, EItemType.HAT)), Is.False, "a HAT");
+            // ...and the type gate catches anything wooden-NAMED that is food or gear.
+            Assert.That(Cooking.IsWood(Wooden(999, "Maple Syrup", 1, 1, EItemType.FOOD)), Is.False);
+        }
+
+        [Test]
+        public void burn_time_scales_with_species_and_with_size()
+        {
+            // "the three wood types have varying burn times, as well as the size of wooden fuel having
+            // different burn times". Hardwood outlasts softwood; footprint multiplies.
+            float pineStick = Cooking.BurnSecondsFor(Wooden(42, "Pine Stick"));
+            float birchStick = Cooking.BurnSecondsFor(Wooden(38, "Birch Stick"));
+            float mapleStick = Cooking.BurnSecondsFor(Wooden(40, "Maple Stick"));
+            Assert.That(pineStick, Is.LessThan(birchStick), "pine is the fast softwood");
+            Assert.That(mapleStick, Is.GreaterThan(birchStick), "maple is the dense one");
+
+            // Same species, bigger piece: a 2x2 plate is four cells against the stick's one.
+            float birchPlate = Cooking.BurnSecondsFor(Wooden(1064, "Large Birch Plate", 2, 2, EItemType.GENERIC));
+            Assert.That(birchPlate, Is.EqualTo(birchStick * 4f).Within(0.01f));
+
+            // A log (2x1) sits between them, which is the whole point of using the grid footprint: the
+            // ordering a player would guess from looking at the items is the ordering they get.
+            float birchLog = Cooking.BurnSecondsFor(Wooden(37, "Birch Log", 2, 1));
+            Assert.That(birchLog, Is.GreaterThan(birchStick).And.LessThan(birchPlate));
+
+            Assert.That(Cooking.BurnSecondsFor(Wooden(363, "Maplestrike", 4, 2, EItemType.GUN)), Is.Zero,
+                        "a rifle burns for no time at all, because it is not fuel");
+        }
+
+        [Test]
+        public void the_mains_appliances_declare_their_draw()
+        {
+            // strawberry 2026-09-06: "stove requires power io input, 2kw to cook/globalpower on. toaster
+            // requires 1000w. microwave 1.5kw"
+            Assert.That(Cooking.PowerWatts(ECookerKind.Oven), Is.EqualTo(2000f));
+            Assert.That(Cooking.PowerWatts(ECookerKind.Toaster), Is.EqualTo(1000f));
+            Assert.That(Cooking.PowerWatts(ECookerKind.Microwave), Is.EqualTo(1500f));
+            // The two families are exclusive: a thing either draws watts or it burns something you put in it.
+            foreach (var k in new[] { ECookerKind.Barbecue, ECookerKind.Campfire })
+            {
+                Assert.That(Cooking.NeedsPower(k), Is.False, $"{k} burns fuel");
+                Assert.That(Cooking.NeedsFuel(k), Is.True);
+            }
+            foreach (var k in new[] { ECookerKind.Oven, ECookerKind.Toaster, ECookerKind.Microwave })
+            {
+                Assert.That(Cooking.NeedsPower(k), Is.True);
+                Assert.That(Cooking.NeedsFuel(k), Is.False, $"{k} runs on the mains");
+            }
         }
 
         [Test]
         public void each_appliance_burns_only_its_own_fuel()
         {
-            var bbq = Cooking.FuelFor(ECookerKind.Barbecue);
-            var fire = Cooking.FuelFor(ECookerKind.Campfire);
-            Assert.That(bbq, Does.Contain(Cooking.CharcoalId));
-            Assert.That(bbq, Does.Not.Contain((ushort)37), "a bbq will not take a log -- 'only charcoal'");
-            Assert.That(fire, Does.Contain((ushort)37));
-            Assert.That(fire, Does.Not.Contain(Cooking.CharcoalId), "a campfire takes wood");
-            // The mains appliances need nothing, which is what makes the fuel block skippable for them.
+            var charcoal = Wooden(Cooking.CharcoalId, "Charcoal");
+            var log = Wooden(37, "Birch Log", 2, 1);
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, charcoal), Is.True);
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, log), Is.False, "'bbqs can only take charcoal'");
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Campfire, log), Is.True);
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Campfire, charcoal), Is.False, "a campfire takes wood");
             foreach (var k in new[] { ECookerKind.Oven, ECookerKind.Toaster, ECookerKind.Microwave })
-                Assert.That(Cooking.FuelFor(k), Is.Null, $"{k} runs on the mains");
+                Assert.That(Cooking.IsFuelFor(k, log), Is.False, $"{k} runs on the mains");
         }
 
         [Test]

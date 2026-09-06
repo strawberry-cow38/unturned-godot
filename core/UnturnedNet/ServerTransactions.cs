@@ -371,15 +371,19 @@ namespace UnturnedGodot.Net
                     if (_inventories.ServerOpenStorage(sender, cmd.NetId, pos, _tick())
                         && _inventories.TryGetCrate(cmd.NetId, out var crate))
                     {
-                        bool isCooker = Cooking != null && Cooking.TryGet(cmd.NetId, out var ck);
+                        ServerCooking.Cooker ck = null;
+                        bool isCooker = Cooking != null && Cooking.TryGet(cmd.NetId, out ck);
                         var evt = new StorageOpenedEvent
                         {
                             NetId = cmd.NetId, Width = crate.Width, Height = crate.Height,
                             IsCooker = isCooker,
-                            CookerKind = isCooker && Cooking.TryGet(cmd.NetId, out var ck2) ? (byte)ck2.Kind : (byte)0,
-                            CookerOn = isCooker && Cooking.TryGet(cmd.NetId, out var ck3) && ck3.On,
+                            CookerKind = isCooker ? (byte)ck.Kind : (byte)0,
+                            CookerOn = isCooker && ck.On,
+                            CookerFuel = isCooker ? ck.FuelFrac : (byte)0,   // v29: the bar opens at the right height
                         };
                         _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
+                        // ...and from here on this player is the one who hears the fuel burn down.
+                        if (isCooker) Cooking.ForceStateSync(cmd.NetId);
                     }
                 });
 

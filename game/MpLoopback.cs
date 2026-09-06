@@ -153,7 +153,18 @@ namespace UnturnedGodot
                 // ClientWorldSession) -- the host SENDS the open request (above) but must also RECEIVE the
                 // confirmation, else a replicated container's F-open sends but never opens the grid. Latched on
                 // the fact, never the request, so the dashboard mirrors the server's open arbitration.
-                Client.StorageOpened += e => { if (Player != null && IsInstanceValid(Player)) Player.OnReplicatedStorageOpened(e.NetId); };
+                // THIS HANDLER SAID IT MIRRORED ClientWorldSession AND DID NOT. It opened the dashboard but never
+                // passed on the cooker facts, so on the loopback host -- which is the SINGLEPLAYER path, since an
+                // oven has a NetId and therefore opens over the wire -- OpenCookerKind stayed null and the on/off
+                // button simply never drew. The button was only ever reachable from a real MP client session.
+                // Found 2026-09-06 while adding the fuel bar; "mirrors ClientWorldSession" was a comment, not a test.
+                Client.StorageOpened += e =>
+                {
+                    if (Player == null || !IsInstanceValid(Player)) return;
+                    Player.OnReplicatedStorageOpened(e.NetId);
+                    Player.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                };
+                Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 // B7 (SP/MP-unify): route the local player's skill-upgrade through the loopback server -- the
                 //     server's PlayerSkills.TryUpgrade is the cost/cap validator; the owner skills echo re-levels
                 //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.

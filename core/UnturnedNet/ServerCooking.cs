@@ -23,7 +23,14 @@ namespace UnturnedGodot.Net
             public uint NetId;
             public ECookerKind Kind;
             public bool On;
-            public float Fuel;       // BARBECUE only: seconds of burn left in the charcoal currently loaded
+            public float Fuel;       // seconds of burn left in the piece currently alight (fuelled appliances only)
+            public float FuelTotal;  // ...and how long that piece started with, so a progress bar has a denominator
+            public byte SentFuel;    // the last fraction pushed to the opener, so Step only speaks when the bar moves
+            public bool SentOn;      // ...and likewise the last on-bit, which the server can flip by itself
+
+            /// <summary>The bar's height, 0..255. Unfuelled appliances have no bar: an oven is on or it is not.</summary>
+            public byte FuelFrac => FuelTotal > 0f && Fuel > 0f
+                ? (byte)Mathf.Clamp(Mathf.RoundToInt(Fuel / FuelTotal * 255f), 0, 255) : (byte)0;
         }
 
         // Burn time per unit of fuel now lives on Cooking.SecondsPerFuel, per appliance -- a log outlasts a
@@ -38,6 +45,31 @@ namespace UnturnedGodot.Net
         /// class keeps owning the RULE and not the fireball -- and so an L0 test can assert that a can of beans
         /// sets it off without needing a combat system at all.</summary>
         public System.Action<Vector3, float, float> Detonate;
+
+        /// <summary>Can this appliance draw the watts it needs right now -- a wired power input, or the mains
+        /// being up? Injected because PowerNet is a GAME-layer thing and this is core: the same reason Detonate
+        /// is. Null (a bare test harness, or a host with no power sim) reads as powered, so cooking does not
+        /// silently stop in a fixture that has no grid to be on.</summary>
+        public System.Func<uint, float, bool> HasPower;
+
+        /// <summary>(netId, on, fuelFrac) whenever the OPENER's view would visibly change. Injected for the same
+        /// reason Detonate is -- this class owns when the bar moves, the host owns who to tell.
+        ///
+        /// It fires only on a real change, and "real" is measured in the units the bar is drawn in: a 255-step
+        /// fraction, so a 40-minute maple log speaks about 255 times over its whole burn rather than 50 times a
+        /// second. Nothing is sent for an appliance nobody has open -- checked by the caller, which is the side
+        /// that knows about openers.</summary>
+        public System.Action<uint, bool, byte> StateChanged;
+
+        /// <summary>Push the current state to the opener whether or not it changed -- for the moment a player
+        /// opens the panel, where "no change since the last tick" is the wrong test because this viewer has never
+        /// been told anything.</summary>
+        public void ForceStateSync(uint netId)
+        {
+            if (!_cookers.TryGetValue(netId, out var c)) return;
+            c.SentOn = c.On; c.SentFuel = c.FuelFrac;
+            StateChanged?.Invoke(netId, c.On, c.SentFuel);
+        }
 
         /// <summary>A microwave is a small box, not a grenade: it takes the kitchen, not the street.</summary>
         public const float MicrowaveBlastRadius = 3.5f;
@@ -65,6 +97,7 @@ namespace UnturnedGodot.Net
         {
             if (!_cookers.TryGetValue(netId, out var c)) return false;
             c.On = on;
+            NoteState(c);   // the switch is a visible change; do not make the opener wait for the next Step
             return true;
         }
 
@@ -75,6 +108,9 @@ namespace UnturnedGodot.Net
             List<uint> blew = null;
             foreach (var c in _cookers.Values)
             {
+                // Every path out of this body is a `continue`, so the fuel-bar push cannot live at the bottom of
+                // it -- the two most interesting transitions (ran out of fuel and switched itself off; lost mains
+                // power) are exactly the ones that take an early exit. It runs in its own pass below instead.
                 if (!c.On) continue;
                 if (!_inventories.TryGetCrate(c.NetId, out var crate) || crate.Storage == null) continue;
 
@@ -82,11 +118,15 @@ namespace UnturnedGodot.Net
                 // campfire takes wood. Out of fuel it is a cold grill, so it switches ITSELF off rather than
                 // sitting on pretending to cook. (An oven, toaster and microwave run on the mains: FuelFor
                 // returns null and this whole block is skipped.)
-                var fuel = Cooking.FuelFor(c.Kind);
-                if (fuel != null)
+                // A MAINS APPLIANCE needs its watts. Unlike running out of fuel this does NOT flip the switch
+                // off: a blackout should leave the oven still switched on and cooking again when the power comes
+                // back, the way a real one does -- and the way TVDevice/RadioDevice already treat the mains.
+                if (Cooking.NeedsPower(c.Kind) && HasPower != null && !HasPower(c.NetId, Cooking.PowerWatts(c.Kind)))
+                    continue;
+
+                if (Cooking.NeedsFuel(c.Kind))
                 {
-                    if (c.Fuel <= 0f && !TryConsumeFuel(crate, fuel)) { c.On = false; continue; }
-                    if (c.Fuel <= 0f) c.Fuel = Cooking.SecondsPerFuel(c.Kind);
+                    if (c.Fuel <= 0f && !TryLightNext(c, crate)) { c.On = false; continue; }
                     c.Fuel -= dt;
                 }
 
@@ -134,22 +174,41 @@ namespace UnturnedGodot.Net
                 // the hardest possible time to notice.
                 if (crate.OpenBy != 0) _inventories.ServerMarkDirty(crate.OpenBy);
             }
+            // THE BAR MOVES HERE, for every cooker and every exit path above. NoteState is a no-op unless the
+            // opener's view actually changed, so a shelf of idle appliances costs one comparison each.
+            foreach (var c in _cookers.Values) NoteState(c);
             return blew ?? EmptyList;
+        }
+
+        /// <summary>Tell the host if -- and only if -- this appliance now looks different to whoever has it open.
+        /// The comparison is against what was last SENT, not against the previous tick, so a fraction that drifts
+        /// slowly still produces exactly one message per visible step of the bar.</summary>
+        void NoteState(Cooker c)
+        {
+            byte frac = c.FuelFrac;
+            if (c.On == c.SentOn && frac == c.SentFuel) return;
+            c.SentOn = c.On; c.SentFuel = frac;
+            StateChanged?.Invoke(c.NetId, c.On, frac);
         }
 
         static readonly List<uint> EmptyList = new List<uint>();
 
-        /// <summary>Spend one unit of fuel out of the appliance's own grid. Returns false when there is none,
-        /// which is what turns a fuelless grill or fire off. Any of the accepted ids will do -- a campfire does
-        /// not care whether the log is birch or pine.</summary>
-        static bool TryConsumeFuel(InventoryReplication.CrateEntry crate, IReadOnlySet<ushort> fuel)
+        /// <summary>Light the next piece of fuel out of the appliance's own grid, and remember how long that
+        /// PARTICULAR piece burns -- a maple plate is not a pine stick. Returns false when there is nothing
+        /// burnable left, which is what turns a fuelless grill or fire off.</summary>
+        static bool TryLightNext(Cooker c, InventoryReplication.CrateEntry crate)
         {
             for (byte i = 0; i < crate.Storage.getItemCount(); i++)
             {
                 var jar = crate.Storage.getItem(i);
-                if (jar?.item == null || !fuel.Contains(jar.item.id)) continue;
-                if (jar.item.amount > 1) { jar.item.amount--; return true; }
-                crate.Storage.removeItem(i);
+                if (jar?.item == null) continue;
+                var asset = Assets.find(jar.item.id);
+                if (!Cooking.IsFuelFor(c.Kind, asset)) continue;
+                float secs = Cooking.BurnSecondsFor(asset);
+                if (secs <= 0f) continue;
+                if (jar.item.amount > 1) jar.item.amount--; else crate.Storage.removeItem(i);
+                c.Fuel = secs;
+                c.FuelTotal = secs;   // the denominator the progress bar divides by
                 return true;
             }
             return false;

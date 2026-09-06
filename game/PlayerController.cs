@@ -3681,7 +3681,7 @@ namespace UnturnedGodot
             {
                 // MP: the server saves the STORAGE page back into the crate and clears it; the owner
                 // echo empties the local view (no local copy-back -- the crate grid is the server's).
-                NetCloseStorage(); _openCrateNetId = 0; NoteOpenCooker(null, false);
+                NetCloseStorage(); _openCrateNetId = 0; NoteOpenCooker(null, false, 0);
                 return;
             }
             // GAP B1: a NON-replicated crate (_openCrateNetId==0 -- a look-opened / SP-local shelf that was
@@ -3734,8 +3734,23 @@ namespace UnturnedGodot
         public ECookerKind? OpenCookerKind { get; private set; }
         public bool OpenCookerOn { get; private set; }
         public uint OpenCookerNetId => _openCrateNetId;
+        /// <summary>0..1 of the fuel item currently burning in the open appliance; 0 when nothing is lit. Server
+        /// -fed (v29) -- the client cannot derive it, because the burning item has already left the grid.</summary>
+        public float OpenCookerFuel { get; private set; }
         /// <summary>Set by whoever opened the container -- it is the side that knows the prop's mesh name.</summary>
-        public void NoteOpenCooker(ECookerKind? kind, bool on) { OpenCookerKind = kind; OpenCookerOn = on; }
+        public void NoteOpenCooker(ECookerKind? kind, bool on, byte fuel = 0)
+        { OpenCookerKind = kind; OpenCookerOn = on; OpenCookerFuel = fuel / 255f; }
+
+        /// <summary>A live CookerStateEvent for the appliance this player has open. Ignored when it names a
+        /// different container -- a second oven burning across the room must not move THIS bar.</summary>
+        public void NoteCookerState(uint netId, bool on, byte fuel)
+        {
+            if (OpenCookerKind == null || netId != _openCrateNetId) return;
+            OpenCookerOn = on;
+            OpenCookerFuel = fuel / 255f;
+            _invUI?.RefreshCookerBar();   // a burning campfire with no food in it dirties nothing else, so the
+                                          // owner-echo repaint that carries cooking progress never fires here
+        }
         /// <summary>-> Client.SendSetCookerOn, or the SP loopback's server. Null when nothing is wired.</summary>
         public System.Action<uint, bool> NetSetCookerOn;
 

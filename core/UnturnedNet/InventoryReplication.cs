@@ -333,7 +333,9 @@ namespace UnturnedGodot.Net
         public static bool TryRead(NetPakReader r, out CloseStorageCommand cmd) { cmd = default; return true; }
     }
 
-    /// <summary>v28 gains IsCooker/CookerKind/CookerOn. The SERVER is the authority on whether a container
+    /// <summary>v28 gains IsCooker/CookerKind/CookerOn; v29 adds CookerFuel so the bar is already at the right
+    /// height on the frame the panel opens, instead of snapping there on the first EventCookerState tick.
+    /// The SERVER is the authority on whether a container
     /// cooks -- the client would otherwise have to guess from a mesh name it does not reliably have -- and the
     /// moment it needs to know is exactly when it opens the thing and has to decide whether to draw an on/off
     /// button under the grid.</summary>
@@ -344,20 +346,46 @@ namespace UnturnedGodot.Net
         public bool IsCooker;
         public byte CookerKind;   // ECookerKind, meaningful only when IsCooker
         public bool CookerOn;
+        public byte CookerFuel;   // v29: 0..255 of the CURRENT fuel item's burn, 0 when nothing is lit
         public void Write(NetPakWriter w)
         {
             w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height);
             w.WriteBit(IsCooker);
-            if (IsCooker) { w.WriteUInt8(CookerKind); w.WriteBit(CookerOn); }
+            if (IsCooker) { w.WriteUInt8(CookerKind); w.WriteBit(CookerOn); w.WriteUInt8(CookerFuel); }
         }
         public static bool TryRead(NetPakReader r, out StorageOpenedEvent evt)
         {
             evt = default;
             if (!r.ReadUInt32(out uint id) || !r.ReadUInt8(out byte width) || !r.ReadUInt8(out byte height)) return false;
             if (!r.ReadBit(out bool isCooker)) return false;
-            byte kind = 0; bool on = false;
-            if (isCooker) { if (!r.ReadUInt8(out kind)) return false; if (!r.ReadBit(out on)) return false; }
-            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on };
+            byte kind = 0; bool on = false; byte fuel = 0;
+            if (isCooker) { if (!r.ReadUInt8(out kind)) return false; if (!r.ReadBit(out on)) return false; if (!r.ReadUInt8(out fuel)) return false; }
+            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on, CookerFuel = fuel };
+            return true;
+        }
+    }
+
+    /// <summary>v29: how much of the burning fuel item is left, pushed to the ONE player who has the appliance
+    /// open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed").
+    ///
+    /// This could not ride the inventory delta, and the reason is the feature: the bar shows the item that is
+    /// ALREADY BURNING, and a lit log is gone from the grid -- ServerCooking consumes it the moment it catches.
+    /// There is no jar left whose fields could carry the countdown. So the value is a property of the appliance,
+    /// and it travels as one.
+    ///
+    /// `On` rides along because a campfire that runs out of wood switches itself off server-side, and without
+    /// the flag the button would keep saying ON under an empty bar until the player closed and reopened it.</summary>
+    public struct CookerStateEvent
+    {
+        public uint NetId;
+        public bool On;
+        public byte Fuel;   // 0..255 of the current fuel item's total burn; 0 = nothing lit
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(On); w.WriteUInt8(Fuel); }
+        public static bool TryRead(NetPakReader r, out CookerStateEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt32(out uint id) || !r.ReadBit(out bool on) || !r.ReadUInt8(out byte fuel)) return false;
+            evt = new CookerStateEvent { NetId = id, On = on, Fuel = fuel };
             return true;
         }
     }

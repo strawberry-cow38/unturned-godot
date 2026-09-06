@@ -3,20 +3,24 @@ using Godot;
 namespace UnturnedGodot
 {
     /// <summary>The ONE top tab strip every full-screen menu shows (Inventory / Craft / Skills / Information).
-    /// Same geometry everywhere -- screen-wide, MARGIN 12, 60 px tall, tabs at y 8, 8 px gaps, 64 px reserved at the right
-    /// for the X -- so switching tabs never shifts the bar (master 2026-09-03: "the top menu bar moves slightly, unify").
-    /// Key labels come from Keybinds LIVE (the strip used to hardcode G/Y/U/M while the binds were Tab/Y/J/M).</summary>
+    /// Same geometry everywhere -- screen-wide, MARGIN 12, 60 px tall, tabs at y 8, 8 px gaps -- so switching tabs
+    /// never shifts the bar (master 2026-09-03: "the top menu bar moves slightly, unify").
+    /// Key labels come from Keybinds LIVE (the strip used to hardcode G/Y/U/M while the binds were Tab/Y/J/M).
+    ///
+    /// NO CLOSE BUTTON (strawberry 2026-09-06: "remove the X from the top right of that bar too, reformatting the
+    /// top to fill the space"). The four tabs now divide the full width. Closing is ESC or the screen's own key --
+    /// both already worked and neither ran through the X, so nothing lost a way out; OnClose survives for those
+    /// callers, it just has no button of its own any more.</summary>
     public partial class MenuNavbar : Control
     {
         public enum Tab { Inventory, Craft, Skills, Information }
-        public const int Height = 60, Margin = 12, Gap = 8, CloseW = 64;
+        public const int Height = 60, Margin = 12, Gap = 8;
         static readonly (Tab tab, string label, GameAction action)[] Defs =
         {
             (Tab.Inventory, "Inventory", GameAction.Inventory), (Tab.Craft, "Craft", GameAction.Craft),
             (Tab.Skills, "Skills", GameAction.Skills), (Tab.Information, "Information", GameAction.Map),
         };
         readonly (Panel bg, Label lbl, Button hit)[] _tabs = new (Panel, Label, Button)[4];
-        Button _close;
         public System.Action<Tab> OnTab;
         public System.Action OnClose;
 
@@ -41,10 +45,6 @@ namespace UnturnedGodot
                 nb.AddChild(hit);
                 nb._tabs[i] = (bg, lbl, hit);
             }
-            nb._close = new Button { Text = "X", Flat = true, MouseFilter = MouseFilterEnum.Stop };
-            nb._close.AddThemeFontSizeOverride("font_size", 28);
-            nb._close.Pressed += () => nb.OnClose?.Invoke();
-            nb.AddChild(nb._close);
             nb.SetActive(active);
             nb.Resized += nb.Layout;
             nb.Layout();
@@ -65,7 +65,7 @@ namespace UnturnedGodot
         void Layout()
         {
             float w = Size.X > 0 ? Size.X : GetViewport().GetVisibleRect().Size.X;
-            float tabsW = w - Margin * 2 - CloseW;
+            float tabsW = w - Margin * 2;   // the X is gone; the tabs take the whole strip
             float tabW = (tabsW - Gap * (Defs.Length - 1)) / Defs.Length;
             for (int i = 0; i < Defs.Length; i++)
             {
@@ -74,7 +74,10 @@ namespace UnturnedGodot
                 _tabs[i].lbl.Position = p; _tabs[i].lbl.Size = sz;
                 _tabs[i].hit.Position = p; _tabs[i].hit.Size = sz;
             }
-            _close.Position = new Vector2(w - Margin - 48f, (Height - 36f) / 2f); _close.Size = new Vector2(48f, 36f);
         }
+
+        /// <summary>Is this screen point on the strip? InventoryUI._Input asks before it swallows a press --
+        /// see the comment at that call site for why the tabs were dead without it.</summary>
+        public bool HasPoint(Vector2 global) => new Rect2(GlobalPosition, new Vector2(Size.X, Height)).HasPoint(global);
     }
 }

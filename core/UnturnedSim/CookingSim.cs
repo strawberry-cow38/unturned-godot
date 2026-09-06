@@ -94,36 +94,91 @@ namespace SDG.Unturned
         /// loot comes from the real Items.dat, which has never heard of item 9150.</summary>
         public const ushort CharcoalId = 9150;
 
-        /// <summary>Wood, for the campfire (strawberry 2026-09-06: "takes wood as fuel"). The three retail logs;
-        /// explicit like the other two sets rather than a name match, for the same reason -- the catalog also has
-        /// "Maplestrike" and a "Birch Door", and neither belongs in a fire.</summary>
-        static readonly HashSet<ushort> Woods = new()
+        /// <summary>The three wood species, and how long each burns relative to the others. Hardwood outlasts
+        /// softwood: maple is the dense one, pine the resinous fast one, birch in between. strawberry
+        /// 2026-09-06: "the three wood types have varying burn times".</summary>
+        public static float SpeciesBurn(string name)
         {
-            37,   // Birch Log
-            39,   // Maple Log
-            41,   // Pine Log
+            if (name == null) return 0f;
+            if (HasWord(name, "Maple")) return 1.25f;
+            if (HasWord(name, "Birch")) return 1.0f;
+            if (HasWord(name, "Pine")) return 0.8f;
+            return 0f;
+        }
+
+        /// <summary>Whole-word match, and it is the whole reason this is not a Contains. The catalog holds
+        /// "Maplestrike" (a GUN), "Maplestrike Iron Sights" and "Pineapple" (a HAT) -- every one of them a
+        /// substring hit for a wood species, and none of them something you put in a fire.</summary>
+        static bool HasWord(string s, string word)
+        {
+            int i = s.IndexOf(word, System.StringComparison.OrdinalIgnoreCase);
+            while (i >= 0)
+            {
+                bool leftOk = i == 0 || !char.IsLetter(s[i - 1]);
+                int end = i + word.Length;
+                bool rightOk = end >= s.Length || !char.IsLetter(s[end]);
+                if (leftOk && rightOk) return true;
+                i = s.IndexOf(word, i + 1, System.StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        }
+
+        /// <summary>Is this anything wooden? strawberry 2026-09-06: "wood as a fuel should be anything wooden.
+        /// sticks, planks, deployables."
+        ///
+        /// A RULE rather than a frozen id list, unlike bread and metal, and the difference is what she asked
+        /// for: bread and metal are closed sets someone chose, while "anything wooden" is an open category --
+        /// the catalog already carries ~60 of them (logs, sticks, planks, barricades, doors, gates, hatches,
+        /// ladders, plates, frames, sidings, pipes, signs, shutters) and a list would go stale the day one is
+        /// added. Two conditions, and both are load-bearing: a whole-word species match (see HasWord for the
+        /// three items that make a substring wrong), AND a type of SUPPLY or GENERIC -- so a Maple DOOR burns
+        /// and a Maple-anything that is food, clothing or a weapon does not.</summary>
+        public static bool IsWood(ItemAsset a)
+            => a != null && SpeciesBurn(a.itemName) > 0f
+               && (a.type == EItemType.SUPPLY || a.type == EItemType.GENERIC);
+
+        /// <summary>How long one unit of this fuel burns, in seconds. Size counts (strawberry: "the size of
+        /// wooden fuel having different burn times") and the GRID FOOTPRINT is the measure -- it is already in
+        /// the catalog, it is what the player sees, and it means a 2x2 plate outlasts a 1x1 stick by exactly
+        /// the factor it looks like it should. Charcoal is a flat rate: briquettes are briquettes.</summary>
+        public static float BurnSecondsFor(ItemAsset a)
+        {
+            if (a == null) return 0f;
+            if (a.id == CharcoalId) return 45f;
+            float species = SpeciesBurn(a.itemName);
+            if (species <= 0f) return 0f;
+            int area = System.Math.Max(1, a.size_x * a.size_y);
+            return WoodBurnPerCell * species * area;
+        }
+
+        /// <summary>Seconds a 1x1 of the middle species (birch) burns. Everything else scales off it.</summary>
+        public const float WoodBurnPerCell = 20f;
+
+        /// <summary>What a MAINS appliance draws to run (strawberry 2026-09-06: "stove requires power io input,
+        /// 2kw to cook/globalpower on. toaster requires 1000w. microwave 1.5kw"). 0 = it burns fuel instead, so
+        /// the two families are exclusive: a thing either draws watts or it takes something you put in it.</summary>
+        public static float PowerWatts(ECookerKind k) => k switch
+        {
+            ECookerKind.Oven => 2000f,
+            ECookerKind.Toaster => 1000f,
+            ECookerKind.Microwave => 1500f,
+            _ => 0f,   // barbecue + campfire burn fuel
         };
 
-        public static bool IsWood(ushort id) => Woods.Contains(id);
+        public static bool NeedsPower(ECookerKind k) => PowerWatts(k) > 0f;
 
-        /// <summary>What this appliance BURNS, or null if it needs no fuel. An oven, a toaster and a microwave
-        /// run on the mains and are not modelled as needing anything.</summary>
-        public static IReadOnlySet<ushort> FuelFor(ECookerKind k) => k switch
+        /// <summary>Does this appliance burn fuel at all? An oven, a toaster and a microwave run on the mains
+        /// (see PowerWatts) and are not modelled as needing anything to put in them.</summary>
+        public static bool NeedsFuel(ECookerKind k) => k == ECookerKind.Barbecue || k == ECookerKind.Campfire;
+
+        /// <summary>Will this appliance burn this item? A barbecue takes charcoal and nothing else (strawberry:
+        /// "bbqs can only take charcoal as a fuel"); a campfire takes anything wooden.</summary>
+        public static bool IsFuelFor(ECookerKind k, ItemAsset a) => k switch
         {
-            ECookerKind.Barbecue => Charcoals,
-            ECookerKind.Campfire => Woods,
-            _ => null,
+            ECookerKind.Barbecue => a != null && a.id == CharcoalId,
+            ECookerKind.Campfire => IsWood(a),
+            _ => false,
         };
-
-        /// <summary>How long one unit of that fuel burns. A log outlasts a briquette but the fire is slower, so a
-        /// campfire is not simply a worse barbecue -- it trades speed for fuel you can pick up off the ground.</summary>
-        public static float SecondsPerFuel(ECookerKind k) => k switch
-        {
-            ECookerKind.Campfire => 70f,
-            _ => 45f,
-        };
-
-        static readonly HashSet<ushort> Charcoals = new() { CharcoalId };
 
         public static bool IsBread(ushort id) => Breads.Contains(id);
         public static bool IsMetal(ushort id) => Metals.Contains(id);
