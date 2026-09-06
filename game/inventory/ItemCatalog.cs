@@ -102,6 +102,7 @@ namespace SDG.Unturned
             WireClothingDims();
             WireConsumableStats();
             WireShotgunShells();
+            WireStackableWood();
             WireMagazinesFromTsv();   // every retail magazine the hand lists above did not cover -- so no gun reloads for free (master 2026-09-04)
             WireMagazines();
             WireFuelCans();
@@ -159,6 +160,27 @@ namespace SDG.Unturned
             void Cap(ushort id, float cap) { var a = Assets.find(id); if (a != null) a.fuelCapacity = cap; }
             Cap(28, 20000f); Cap(1440, 50000f);   // Portable 20 L, Industrial 50 L
             Cap(1114, 20000f); Cap(1115, 20000f); Cap(1116, 20000f);   // jerrycans 20 L
+        }
+
+        /// <summary>LOGS, PLANKS AND STICKS STACK (strawberry 2026-09-06: "make sticks, planks, logs stackable").
+        ///
+        /// The machinery already existed for shotgun shells -- Items.tryAddItem merges same-id items up to the
+        /// asset's stackSize -- so this is only the per-item cap, not a new mechanic.
+        ///
+        /// The caps are ordered by how bulky the piece is rather than set to one number: a stick is 1x1 and a log
+        /// is a 2x1 armful, so a stack of 12 logs in one slot would make the grid meaningless for the exact items
+        /// the fuel system is built around. Small pieces stack deeper.
+        ///
+        /// THE FUEL PATH ALREADY HANDLES STACKS and this does not change it: ServerCooking.TryLightNext takes ONE
+        /// off a stack (`amount--`, removing the jar only at the last one) and burns it for a single item's time,
+        /// so the progress bar counts down one log and the next one lights when it is spent -- which is what the
+        /// request describes. There is a test pinning it.</summary>
+        static void WireStackableWood()
+        {
+            void Wood(ushort id, int cap) { var a = Assets.find(id); if (a != null) a.stackSize = cap; }
+            foreach (ushort log in new ushort[] { 37, 39, 41 }) Wood(log, 4);      // Birch/Maple/Pine Log   (2x1)
+            foreach (ushort plank in new ushort[] { 61, 62, 63 }) Wood(plank, 6);  // Maple/Birch/Pine Plank (1x2)
+            foreach (ushort stick in new ushort[] { 38, 40, 42 }) Wood(stick, 8);  // Birch/Maple/Pine Stick (1x1)
         }
 
         // Real Unturned shotgun shells as stackable loose ammo (master: new ammo types, stack to 32 per slot). These items

@@ -135,6 +135,60 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void a_stack_of_logs_burns_one_at_a_time_and_shrinks_by_one_each_time()
+        {
+            // strawberry 2026-09-06: "make the fuel system work with this. the fuel burning bar counting for one
+            // item, when its up, remove it from the stack." Wood stacks now (ItemCatalog.WireStackableWood), so
+            // this pins the behaviour end to end rather than trusting that TryLightNext's `amount--` still means
+            // what it meant when nothing could stack.
+            var (cook, _, crate) = Rig(ECookerKind.Campfire);
+            var logs = new Item(37, 3);   // one jar, three logs in it
+            crate.Storage.tryAddItem(logs);
+            cook.SetOn(7, true);
+
+            cook.Step(0.1f);
+            Assert.That(cook.TryGet(7, out var c), Is.True);
+            float total = c.FuelTotal;
+            Assert.That(logs.amount, Is.EqualTo(2), "lighting one takes exactly one off the stack, not the jar");
+            Assert.That(c.FuelFrac, Is.GreaterThan(240), "and the bar is counting down that ONE log");
+
+            // Burn it out: the next log lights, the stack drops again, the bar refills.
+            cook.Step(total); cook.Step(0.02f);
+            Assert.That(logs.amount, Is.EqualTo(1), "the second log came off the stack");
+            Assert.That(c.On, Is.True);
+            Assert.That(c.FuelFrac, Is.GreaterThan(240), "the bar restarts for the new log");
+
+            // The LAST one leaves the jar empty, which has to remove it rather than leave an amount-0 ghost.
+            cook.Step(total); cook.Step(0.02f);
+            Assert.That(crate.Storage.getItemCount(), Is.Zero, "the emptied stack leaves the grid");
+            Assert.That(c.On, Is.True, "still burning the third log");
+
+            cook.Step(total); cook.Step(0.02f);
+            Assert.That(c.On, Is.False, "nothing left to light -> the fire goes out");
+        }
+
+        [Test]
+        public void a_stack_burns_for_its_whole_count_not_a_single_items_worth()
+        {
+            // The failure this guards is the plausible one: treat the JAR as the unit and a stack of three logs
+            // burns for one log's time, so stacking would quietly cost you two thirds of your firewood.
+            var (one, _, c1) = Rig(ECookerKind.Campfire);
+            c1.Storage.tryAddItem(new Item(37, 1));
+            one.SetOn(7, true);
+            int singleSteps = 0;
+            while (one.TryGet(7, out var a) && a.On && singleSteps < 4000) { one.Step(0.5f); singleSteps++; }
+
+            var (three, _, c3) = Rig(ECookerKind.Campfire);
+            c3.Storage.tryAddItem(new Item(37, 3));
+            three.SetOn(7, true);
+            int stackSteps = 0;
+            while (three.TryGet(7, out var b) && b.On && stackSteps < 12000) { three.Step(0.5f); stackSteps++; }
+
+            Assert.That(stackSteps, Is.EqualTo(singleSteps * 3).Within(4),
+                        $"three logs should last three times one ({stackSteps} vs {singleSteps})");
+        }
+
+        [Test]
         public void an_oven_that_is_off_cooks_nothing()
         {
             var (cook, _, crate) = Rig(ECookerKind.Oven);

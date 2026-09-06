@@ -62,11 +62,50 @@ namespace UnturnedGodot.Testing
             T.Check($"three more asks re-read the file zero times ({BlueprintRegistry.LoadCountForTests - reads})",
                     BlueprintRegistry.LoadCountForTests == reads);
 
-            // WHAT SHIPS: nothing, by request. This is the content half of the question, kept apart from the
-            // self-load half so that emptying or refilling the catalog can never again silently defang that one.
-            T.Check($"the shipped catalog is empty on purpose ({BlueprintRegistry.All.Count} rows)",
-                    BlueprintRegistry.All.Count == 0);
-            T.Check($"...so the crafting menu lists nothing ({idx.Count} recipes)", idx.Count == 0);
+            // WHAT SHIPS. The content half of the question, kept apart from the self-load half above so that
+            // emptying or refilling the catalog can never silently defang that one -- which is exactly what this
+            // block just went through: it asserted "empty on purpose" for a day, and then strawberry asked for
+            // the wood recipes (2026-09-06), so the assertion follows the requirement rather than being deleted.
+            var shipped = BlueprintRegistry.Index();
+            T.Check($"the shipped catalog holds the six wood recipes ({shipped.Count})", shipped.Count == 6);
+
+            // Every one of them: consumes exactly one wood input, needs the SAW without consuming it, yields 2.
+            int toolConsumed = 0, wrongYield = 0, noSaw = 0;
+            const string SawGuid = "fd6bee4579884ee9ad0b729baf423ab1";
+            foreach (var bp in shipped)
+            {
+                bool sawPresent = false;
+                foreach (var ing in bp.Inputs)
+                {
+                    if (!string.Equals(ing.Guid, SawGuid, System.StringComparison.OrdinalIgnoreCase)) continue;
+                    sawPresent = true;
+                    if (ing.Consume) toolConsumed++;   // "needs saw, NOT consumed"
+                }
+                if (!sawPresent) noSaw++;
+                if (bp.Outputs.Count != 1 || bp.Outputs[0].Amount != 2) wrongYield++;
+            }
+            T.Check($"every wood recipe needs the saw ({noSaw} without one)", noSaw == 0);
+            T.Check($"...and NONE of them eats it ({toolConsumed} would)", toolConsumed == 0);
+            T.Check($"...and each yields 2 ({wrongYield} wrong)", wrongYield == 0);
+
+            // SPECIES IS PRESERVED. A birch log must not saw into pine planks -- an easy transcription slip in a
+            // guid table, invisible in the menu (both say "Plank"), and only ever noticed by a confused player.
+            int crossSpecies = 0;
+            foreach (var bp in shipped)
+            {
+                var outAsset = Assets.findByGuid(bp.Outputs[0].Guid);
+                string species = null;
+                foreach (var w in new[] { "Birch", "Maple", "Pine" })
+                    if (outAsset != null && outAsset.itemName != null && outAsset.itemName.Contains(w)) species = w;
+                if (species == null) { crossSpecies++; continue; }
+                foreach (var ing in bp.Inputs)
+                {
+                    if (string.Equals(ing.Guid, SawGuid, System.StringComparison.OrdinalIgnoreCase)) continue;
+                    var inAsset = Assets.findByGuid(ing.Guid);
+                    if (inAsset?.itemName == null || !inAsset.itemName.Contains(species)) crossSpecies++;
+                }
+            }
+            T.Check($"a log saws into planks of its OWN species ({crossSpecies} crossed)", crossSpecies == 0);
 
             // The archived retail rows are still there and still parse -- "cleared the list" must not have meant
             // "lost the extract". The index/filter tests load this same file as their fixture.

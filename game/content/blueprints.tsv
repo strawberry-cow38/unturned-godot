@@ -1,7 +1,25 @@
-# THE SHIPPING RECIPE CATALOG, AND IT IS DELIBERATELY EMPTY.
-# strawberry 2026-09-06: "can you clear all the current crafting recipes we have in the crafting ui" /
-# "completely empty crafting list". The 1875 extracted retail rows are NOT deleted -- they live beside this
-# file as blueprints.retail.tsv, which the index/filter/search tests load explicitly as their fixture. So the
-# filter logic stays covered while the game ships nothing, and re-adding a recipe means appending a row here.
+# THE SHIPPING RECIPE CATALOG.
+# Emptied on strawberry's request 2026-09-06 ("completely empty crafting list"); these are the first
+# entries authored back into it, from the same day: "add recipes for crafting Logs -> planks and planks
+# -> sticks needs saw, not consumed".
+#
+# The 1875 extracted retail rows are NOT deleted -- they live beside this file as blueprints.retail.tsv,
+# which the index/filter/search tests load as their fixture. Re-adding a recipe means appending a row here.
+#
 # Format (tab-separated, 8 columns): owner  operation  name  skill  level  inputs  outputs  stations
+#   inputs  = guid:amount:consume|...   consume 0 = a TOOL: must be held, is NOT spent
+#   outputs = guid:amount|...           set EXPLICITLY here so the yield is 2, and so DoCraft actually
+#                                       grants something -- it only ever adds bp.Outputs, and every retail
+#                                       row leaves that column empty and implies the owner instead.
 # FromTsv skips any line with fewer than 8 tabs, which is why these comments cost nothing.
+#
+# The saw is item 141 (fd6bee...), "Construction tool for cutting lumber". NOT item 1704, which is also
+# called "Saw" but is the Epic holiday candy-cane chainsaw reskin -- requiring that would have put every
+# one of these recipes behind a seasonal drop.
+# Species is preserved end to end: a birch log yields birch planks, never pine.
+62	Craft			0	ccfd125a44cf487fbd3d471f15a854af:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	5a3c4302400e400b9b9486fbb5178eca:2	
+38	Craft			0	5a3c4302400e400b9b9486fbb5178eca:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	9c563bf14d4641a18873f338beaed128:2	
+61	Craft			0	94f9c6aa09c249dfbce4f195c0271b9c:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	e73a23b102f24520a32ec0b2afaa6157:2	
+40	Craft			0	e73a23b102f24520a32ec0b2afaa6157:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	46218740c256475b87dbc6a2e9a1fb19:2	
+63	Craft			0	86bf08032a5147f9871e362e40812771:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	719bfdf2c2dc4be6ad5be44d044583e4:2	
+42	Craft			0	719bfdf2c2dc4be6ad5be44d044583e4:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	55d9700ea53c477685458171932251f1:2	
