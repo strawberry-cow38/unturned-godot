@@ -3895,11 +3895,20 @@ namespace UnturnedGodot
                 // Vehicle_Damage 40), which is why the AI's added inaccuracy below is load-bearing rather than
                 // flavour -- an accurate one of these would delete a player instantly.
                 // ...and now NOT the same gun as the tank's roof M2 (master 2026-09-06 "the one in the hind should b a
-                // 12.7 yakb. completely separate weapons under the 'hmg' name"): the YakB-12.7, the Hind's real four-barrel
-                // chin gun, its own profile (content/yakb.dat: 12.7x108, its own spread and damage) and its own report.
-                // 4,000-5,000 rpm in life; the mount fires at most one round per physics tick, so 0.02 s = 3,000 rpm is the
-                // ceiling here, with the real 1,470-round drum.
-                GunId = "yakb", DisplayName = "HMG", Cycle = 0.02f, Belt = 1470,
+                // 12.7 yakb. completely separate weapons under the 'hmg' name"), and since the same day not the YakB
+                // either: "switch the hind gun to the 20mm autocannon variant of the irl hind's gun" -> "23mm".
+                //
+                // There is no 20 mm Hind. The autocannon variants are the Mi-24VP (23 mm GSh-23L, nose TURRET) and the
+                // Mi-24P (30 mm GSh-30-2, fixed to the fuselage side). The VP's gun is modelled here for two reasons:
+                // it is the nearer calibre, and it is the only one that still traverses -- the P's cannon does not move,
+                // so it would have meant deleting this mount rather than reprofiling it.
+                //
+                // CYCLE IS UNCHANGED AND THAT IS NOT AN OVERSIGHT. The mount fires at most one round per physics tick,
+                // so 0.02 s = 3,000 rpm is the engine's ceiling; the YakB's real 4,000-5,000 rpm was already clipped to
+                // it and the GSh-23L's 3,400-3,600 is clipped to the same number. The rate of fire is identical before
+                // and after this swap. What changes is the shell (175 g HEI vs ~48 g) and the belt -- the Mi-24VP's real
+                // 450 rounds against the YakB's 1,470 drum, which at the ceiling rate is 9 seconds of fire instead of 29.
+                GunId = "gsh23", DisplayName = "HMG", Cycle = 0.02f, Belt = 450,
             },
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and

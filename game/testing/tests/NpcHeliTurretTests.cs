@@ -45,8 +45,20 @@ namespace UnturnedGodot.Testing
 
             T.Check($"the Hind is armed and the fleet's other airframes are not (turrets {hind.Turrets.Length})",
                 ai.Armed && hind.Turrets.Length == 1);
-            T.Check($"...and it uses the YakB-12.7, not the Nykorev or the tank's M2 (gun '{hind.Turrets[0].GunId}')",   // master 2026-09-06: the Hind's chin gun is its own weapon (content/yakb.dat), the retail HMG.dat stays the tank's roof M2
-                hind.Turrets[0].GunId == "yakb");
+            T.Check($"...and it uses the GSh-23L, not the Nykorev, the tank's M2, or the old YakB (gun '{hind.Turrets[0].GunId}')",   // master 2026-09-06: the Hind's chin gun became the Mi-24VP's 23 mm autocannon (content/gsh23.dat); the retail HMG.dat stays the tank's roof M2
+                hind.Turrets[0].GunId == "gsh23");
+
+            // THE REPORT FILE HAS TO EXIST, and this is not padding. PlayerController resolves a mount's gunshot as
+            // `content/<gunId>_shoot.ogg` and falls back to nykorev_shoot.ogg when it is missing -- which is exactly
+            // the bug the gun split was made to fix ("before, BOTH mounts fell back to the same nykorev crack").
+            // Renaming a gun without shipping its report silently reintroduces it, and nothing else in the suite
+            // would notice: the id is right, the ballistics are right, and it just sounds like the wrong weapon.
+            // No exemptions: I first wrote this with `|| g == "tank_cannon"` as a hedge, then checked and found
+            // tank_cannon_shoot.ogg is right there. An exemption for a case that already passes is a hole that
+            // opens the day the file goes missing, and the check would still read green.
+            foreach (var g in new[] { "gsh23", "hmg", "tank_cannon" })
+                T.Check($"the {g} mount has its own report (content/{g}_shoot.ogg), so it cannot fall back to the Nykorev",
+                    Godot.FileAccess.FileExists($"res://content/{g}_shoot.ogg"));
 
             // ---- 1. AIM SIGNS, MEASURED. Point the mount at a series of known world points and read back where
             // the BARREL actually ends up. A derivation that is inverted in yaw or pitch still produces plausible

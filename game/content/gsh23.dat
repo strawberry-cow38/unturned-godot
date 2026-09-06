@@ -1,0 +1,101 @@
+// The Hind's GSh-23L twin-barrel 23 mm autocannon (port 2026-09-06, master: "switch the hind gun to the
+// 20mm autocannon variant of the irl hind's gun", then "23mm").
+//
+// THERE IS NO 20 MM HIND. The autocannon variants are the Mi-24VP with a 23 mm GSh-23L in the nose turret
+// and the Mi-24P with a 30 mm GSh-30-2 fixed to the fuselage side. The VP's gun is the one modelled here,
+// and not only because 23 is nearer 20: the VP keeps the gun in a MOVABLE nose turret, which is what this
+// mount already is. The P's cannon does not traverse at all, so picking it would have meant deleting the
+// turret rather than reprofiling it.
+//
+// Real figures: 23x115 mm, 3,400-3,600 rpm, 715 m/s muzzle, 450 rounds on the Mi-24VP.
+//
+// THE FIRE RATE DOES NOT CHANGE, and that is worth stating rather than hiding: the mount fires at most one
+// round per physics tick, so 0.02 s = 3,000 rpm is this engine's ceiling. The YakB (4,000-5,000 rpm) was
+// already capped there and so is this. What actually changes is the SHELL -- a 175 g high-explosive
+// incendiary against the YakB's ~48 g bullet -- and the magazine, which drops 1,470 -> 450. At the ceiling
+// rate that is 29 seconds of continuous fire down to 9.
+GUID 7c1f4e2a8b6d40559e3a1c7f2d8b6e41
+Type Gun
+Rarity Epic
+Useable Gun
+Slot Primary
+ID 9153
+
+Sight 1301
+Magazine 1395
+
+Ammo_Min 40
+Ammo_Max 50
+
+Auto
+
+// Kept on the mount-gun caliber family the M2 and the YakB already share. The mount feeds from its own
+// Belt rather than a magazine, so this never selects ammunition; splitting it would change nothing that
+// can be observed and would take this gun off the wiring both other mounts are proven on.
+Caliber 37
+
+Range 250
+Firerate 1
+Action Trigger
+
+// A 23 mm HEI shell against a .50-calibre bullet. Per round this beats the tank's M2 (75/35) on materiel
+// and sits just under it on flesh -- deliberately, because it arrives 5.5x more often. The belt is what
+// balances it: nine seconds of this, then the Hind is a helicopter with rockets and nothing else.
+Damage 115
+Player_Damage 33
+Player_Leg_Multiplier 0.6
+Player_Arm_Multiplier 0.6
+Player_Spine_Multiplier 0.8
+Player_Skull_Multiplier 1.1
+
+Zombie_Damage 75
+Zombie_Leg_Multiplier 0.3
+Zombie_Arm_Multiplier 0.3
+Zombie_Spine_Multiplier 0.6
+Zombie_Skull_Multiplier 1.1
+
+Animal_Damage 75
+Animal_Leg_Multiplier 0.6
+Animal_Spine_Multiplier 0.8
+Animal_Skull_Multiplier 1.1
+
+// This is the half that makes it an autocannon rather than a big machine gun: it takes apart what it hits.
+Barricade_Damage 10
+Structure_Damage 10
+Vehicle_Damage 16
+Resource_Damage 20
+Object_Damage 20
+
+Invulnerable
+
+// Twin-barrel Gast action, not a four-barrel gatling -- it groups tighter than the YakB's spray (2.2 deg),
+// and close to the retail mount gun's 1.43.
+Aim_In_Duration 0.3
+Spread_Aim 0.15
+Spread_Angle_Degrees 1.4
+
+// Heavier shell, heavier kick. The GSh-23L carries a muzzle brake in life for exactly this reason, which
+// is why it is not scaled by the full shell-mass ratio.
+Recoil_Min_X -0.16
+Recoil_Min_Y 0.45
+Recoil_Max_X 0.16
+Recoil_Max_Y 0.72
+
+Recover_X 0.5
+Recover_Y 0.5
+
+Muzzle 4
+
+Reload_Time 2
+Turret
+Caliber_Name "23x115mm"
+
+// 715 m/s at 50 ticks = 14.3 m per tick. SLOWER than the YakB's ~810 m/s (16.2) -- a bigger, heavier shell
+// leaves the barrel later, which is the one respect in which this gun is worse and the reason lead matters
+// more against a moving target. 140 steps keeps the ~2 km reach of the real gun.
+Ballistic_Travel 14.3
+Ballistic_Steps 140
+Bullet_Gravity_Multiplier 1.5
+Damage_Falloff_Start 300
+Damage_Falloff_End 700
+Damage_Falloff_Min 0.85
