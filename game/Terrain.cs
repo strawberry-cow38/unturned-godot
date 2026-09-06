@@ -101,39 +101,21 @@ void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
     vec2 tuv = wpos.xz / tileWorld;
-    // WEIGHTED BLEND (strawberry 2026-09-05 ""switch our terrain to blend instead of best wins""). This replaces a
-    // winner-take-all pick whose comment said the hard edges matched reference shots -- a deliberate call being
-    // deliberately reversed, not a bug being fixed.
-    //
-    // Weights are normalised so the sum is exactly 1: a splatmap texel does NOT reliably sum to 1 (bilinear
-    // filtering between texels of different totals guarantees it), and summing unnormalised weights would make
-    // the ground breathe brighter and darker across every blend seam.
-    //
-    // The `w > 0.004` skip is what keeps this affordable. A blend is 8 array fetches per pixel where the pick was
-    // 1, but a splat texel almost always has 1-2 layers actually present, so the branch drops most of them. The
-    // threshold is low enough that a layer is never visibly clipped as it fades in.
+    // WINNER-TAKE-ALL again (strawberry 2026-09-06 ""revert the terrain materials thing back to winner takes all from
+    // blend""): the dominant splat layer per pixel, hard-edged distinct regions -- the look the reference shots have.
+    // The weighted blend that stood here for a day (8421628e) is gone; the splat is still sampled bilinear so the
+    // borders follow the smooth contour rather than the texel grid. One albedo fetch per pixel, as before.
     float ws[8];
     ws[0] = w0.r; ws[1] = w0.g; ws[2] = w0.b; ws[3] = w0.a;
     ws[4] = w1.r; ws[5] = w1.g; ws[6] = w1.b; ws[7] = w1.a;
-    float wsum = 0.0;
-    for (int i = 0; i < 8; i++) wsum += ws[i];
-    wsum = max(wsum, 1e-4);
-    vec3 blended = vec3(0.0);
-    for (int i = 0; i < 8; i++) {
-        float w = ws[i] / wsum;
-        if (w > 0.004) blended += w * texture(albedos, vec3(tuv, float(i))).rgb;
-    }
-    ALBEDO = blended;
-    ROUGHNESS = 1.0;
-    // Layer 4 is Russia_Road_00, the PAVED road (layer 3 is gravel -- the older comment upstream calling 3 ""the road
-    // network"" predates the real albedo table below it). Carried out of the blend as a 0..1 weight so the wet block
-    // can treat a road pixel like the road PROPS do, and a road/grass boundary fades between the two behaviours
-    // instead of switching at a hard line -- which is the whole point of blending in the first place.
-    float roadw = ws[4] / wsum;
-    // `best` survives for the grass/dirt/stone rain gate below: with a blend there is no single dominant layer, so
-    // it now means ""which layer is MOST present here"" rather than ""the layer being drawn"".
     int best = 0; float bw = ws[0];
     for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
+    ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
+    ROUGHNESS = 1.0;
+    // Layer 4 is Russia_Road_00, the PAVED road (layer 3 is gravel). With a hard pick the road weight is 0 or 1: the wet
+    // block below keeps treating a road pixel like the road PROPS do (reflections + ripples, strawberry 2026-09-05); the
+    // road/dirt boundary is now the same hard line the albedo has.
+    float roadw = best == 4 ? 1.0 : 0.0;
     // caustics on underwater terrain: a light web projected in world XZ, faded with depth (master 2026-08-17)
     float cdepth = sea_level - wpos.y;
     if (cdepth > 0.0) {
