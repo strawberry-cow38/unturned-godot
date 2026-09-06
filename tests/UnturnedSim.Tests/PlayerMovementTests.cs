@@ -77,9 +77,12 @@ namespace UnturnedSim.Tests
                 if (pos.y > peak) peak = pos.y;
                 if (i > 0 && grounded) break; // landed
             }
-            // analytic apex JUMP^2/(2*GRAVITY) = 0.832; discrete Euler is near it.
-            Assert.That(peak, Is.GreaterThan(0.8f));
-            Assert.That(peak, Is.LessThan(0.95f));
+            // +15 cm (master 2026-09-06). The number to assert is the DISCRETE apex, not the analytic
+            // JUMP^2/(2*GRAVITY): the takeoff tick moves a full JUMP*dt before any gravity comes off, so this
+            // loop peaks ~7 cm above the closed form. It used to clear 0.903 m at JUMP=7.0; the band below is
+            // centred on 1.053 and is tight enough that going back to 7.0 fails it, which is the whole point
+            // of pinning a height rather than a range.
+            Assert.That(peak, Is.EqualTo(1.053f).Within(0.01f), "jump apex should be the old 0.903 m + 15 cm");
         }
 
         [Test]

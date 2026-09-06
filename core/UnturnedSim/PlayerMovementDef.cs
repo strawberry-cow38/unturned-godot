@@ -38,7 +38,14 @@ namespace SDG.Unturned
         public const float SPEED_CROUCH = 2.5f;
         public const float SPEED_PRONE = 1.5f;
 
-        public const float JUMP = 7.0f;                  // PlayerMovement.cs:59
+        // +15 cm on retail's 7.0 (master 2026-09-06 "boost the player jump height by like 15cm"). DERIVED,
+        // not nudged: the apex that matters is the DISCRETE one this sim actually produces, not v^2/2g. The
+        // closed form says 0.833 m; stepping the real loop (assign JUMP on the grounded tick, then subtract
+        // GRAVITY*dt and advance each tick after) lands at 0.903 m, because the takeoff tick moves a full
+        // JUMP*dt before any gravity is taken off. Solving that same loop for 1.053 m gives 7.582 at 50 Hz and
+        // 7.585 at 60 Hz -- so this one number is right at either tick rate, to under half a centimetre.
+        // The MP climb envelope is unaffected: PlayerAuthority.UpRate is 16 m/s, which this is nowhere near.
+        public const float JUMP = 7.583f;                // was PlayerMovement.cs:59's 7.0
         public const float GRAVITY = 9.81f * 3f;         // Physics.gravity.y (-9.81) applied *3, PlayerMovement.cs:1277
         public const float TERMINAL_VELOCITY = -100.0f;  // minVerticalVelocity, PlayerMovement.cs:1280
 
@@ -52,6 +59,19 @@ namespace SDG.Unturned
                 case EPlayerStance.SWIM:   return SPEED_SWIM;
                 case EPlayerStance.CLIMB:  return SPEED_CLIMB;
                 default:                   return SPEED_STAND;
+            }
+        }
+
+        /// <summary>Eye height above the feet, per stance. Lives here rather than in the shell because the
+        /// SERVER asks the same question when it decides whether a player's head is under water, and two
+        /// copies of these numbers would drown people on one machine and not the other.</summary>
+        public static float EyeHeightForStance(EPlayerStance stance)
+        {
+            switch (stance)
+            {
+                case EPlayerStance.CROUCH: return 1.2f;
+                case EPlayerStance.PRONE:  return 0.35f;
+                default:                   return 1.75f;
             }
         }
 

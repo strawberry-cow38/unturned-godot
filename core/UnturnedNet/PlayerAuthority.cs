@@ -165,7 +165,7 @@ namespace UnturnedGodot.Net
         /// without a rubber-band; the post-silence blink bound stays under even a slow car's Part A
         /// half-second bound).</summary>
         public const float HorizontalCeiling = HorizontalRate * 1f;               // 8.75 m
-        /// <summary>Vertical climb accrual: jump takeoff is 7 (PlayerMovementDef.JUMP), the binary
+        /// <summary>Vertical climb accrual: jump takeoff is 7.583 (PlayerMovementDef.JUMP), the binary
         /// StepUp pops +0.5 m in one tick, and sprinting the steepest walkable slope climbs ~10 m/s --
         /// 16 covers all sustained legit ascent with slack.</summary>
         public const float UpRate = 16f;
