@@ -6868,7 +6868,12 @@ namespace UnturnedGodot
                 _npcShotSnd[gunId ?? ""] = snd;
             }
             var host = GetParent();
-            if (snd != null && host != null)
+            // A gatling (the Hind's YakB, 50 rounds/s) would stack fifty report players a second; cap the REPORT at 25/s per gun
+            // (every other round) -- the ear reads the buzz, the tracers carry the rate. A slow gun never trips this.
+            ulong nowMs = Time.GetTicksMsec(); string sk = gunId ?? "";
+            bool report = !_npcShotLastMs.TryGetValue(sk, out var lastMs) || nowMs - lastMs >= 40;
+            if (report) _npcShotLastMs[sk] = nowMs;
+            if (snd != null && host != null && report)
             {
                 var ap = new AudioStreamPlayer3D { Stream = snd, UnitSize = 34f * scale, MaxDistance = 650f * scale, VolumeDb = 9f + (scale > 1f ? 3f : 0f) };
                 host.AddChild(ap);
@@ -6897,6 +6902,7 @@ namespace UnturnedGodot
             GetTree().CreateTimer(0.05).Timeout += () => { if (IsInstanceValid(flash)) flash.QueueFree(); };
         }
 
+        readonly System.Collections.Generic.Dictionary<string, ulong> _npcShotLastMs = new();   // per-gun last report time (the gatling cap above)
         static AudioStream NpcLoadOgg(string res)
         {
             string p = ProjectSettings.GlobalizePath(res);

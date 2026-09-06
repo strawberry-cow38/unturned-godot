@@ -3382,7 +3382,7 @@ namespace UnturnedGodot
                 // free HMG could be laid straight through his head (master 2026-09-06 "limit the HMG's angles to prevent shooting the
                 // turret gunner in the face"). The traverse stops 35 deg short of him on either side: -116 .. +170.
                 YawFree = false, YawMin = -116f, YawMax = 170f, PitchMin = -10f, PitchMax = 45f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun; +45 keeps the barrel root inside the box face
-                GunId = "hmg", DisplayName = "HMG", Cycle = 0.14f, Belt = 400,        // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
+                GunId = "hmg", DisplayName = "HMG", Cycle = 0.11f, Belt = 400,        // the M2 Browning's 450-600 rpm (master 2026-09-06 "more in line with the M2 browning"; retail HMG.dat's Firerate 7 = 428 rpm); a long belt, there is no reload path for a mount yet
             },
         };
         /// <summary>The roof gun's housing and barrel inside tank_turret.txt (turret frame), peeled by BuildTankExtras.
@@ -3894,7 +3894,12 @@ namespace UnturnedGodot
                 // Firerate 7, Spread_Angle_Degrees 1.43. Its HMG_50 magazine is EXPLOSIVE .50 (Player_Damage 30,
                 // Vehicle_Damage 40), which is why the AI's added inaccuracy below is load-bearing rather than
                 // flavour -- an accurate one of these would delete a player instantly.
-                GunId = "hmg",
+                // ...and now NOT the same gun as the tank's roof M2 (master 2026-09-06 "the one in the hind should b a
+                // 12.7 yakb. completely separate weapons under the 'hmg' name"): the YakB-12.7, the Hind's real four-barrel
+                // chin gun, its own profile (content/yakb.dat: 12.7x108, its own spread and damage) and its own report.
+                // 4,000-5,000 rpm in life; the mount fires at most one round per physics tick, so 0.02 s = 3,000 rpm is the
+                // ceiling here, with the real 1,470-round drum.
+                GunId = "yakb", DisplayName = "HMG", Cycle = 0.02f, Belt = 1470,
             },
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and

@@ -45,8 +45,8 @@ namespace UnturnedGodot.Testing
 
             T.Check($"the Hind is armed and the fleet's other airframes are not (turrets {hind.Turrets.Length})",
                 ai.Armed && hind.Turrets.Length == 1);
-            T.Check($"...and it uses the retail HMG, not the Nykorev (gun '{hind.Turrets[0].GunId}')",
-                hind.Turrets[0].GunId == "hmg");
+            T.Check($"...and it uses the YakB-12.7, not the Nykorev or the tank's M2 (gun '{hind.Turrets[0].GunId}')",   // master 2026-09-06: the Hind's chin gun is its own weapon (content/yakb.dat), the retail HMG.dat stays the tank's roof M2
+                hind.Turrets[0].GunId == "yakb");
 
             // ---- 1. AIM SIGNS, MEASURED. Point the mount at a series of known world points and read back where
             // the BARREL actually ends up. A derivation that is inverted in yaw or pitch still produces plausible
