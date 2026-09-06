@@ -76,9 +76,37 @@ namespace UnturnedGodot
         }
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        // The rain KEEPING UP with a fast camera (strawberry 2026-09-06 "when moving the 3p camera quickly, sometimes the rain
+        // doesnt keep up"). The drops live in WORLD space (LocalCoords false) and the emitter box is +-16 m round the camera, so
+        // the sky in front of a camera that has just whipped 20 m round the car (the 3P orbit) or is doing 30 m/s down a road is
+        // sky the box has not been over for long enough to fill: empty for the ~0.7 s a drop takes to fall to eye height.
+        // Two fixes, both cheap: the box LEADS the camera along its (smoothed) velocity, so at speed it is already ahead; and a
+        // big displacement in a short window RESTARTS the emitter, which re-runs the 1.6 s Preprocess at the new spot and
+        // fills the volume in one frame (rate-limited -- a restart re-rolls every drop, invisible mid-whip, a flicker if spammed).
+        Vector3 _lastCamPos, _camVel; bool _haveLast; float _restartCd; readonly System.Collections.Generic.Queue<(float t, Vector3 p)> _trail = new(); float _t;
+        const float LeadSeconds = 0.45f, MaxLead = 10f, JumpWindow = 0.25f, JumpMetres = 10f, RestartCooldown = 0.4f;
+
         public void HubProcess(double delta)
         {
-            if (Cam != null && IsInstanceValid(Cam)) GlobalPosition = Cam.GlobalPosition + new Vector3(0f, TopOffset, 0f);
+            if (Cam != null && IsInstanceValid(Cam))
+            {
+                float dt = (float)delta; _t += dt; if (_restartCd > 0f) _restartCd -= dt;
+                Vector3 cp = Cam.GlobalPosition;
+                if (_haveLast && dt > 0f)
+                {
+                    Vector3 v = (cp - _lastCamPos) / dt;
+                    if (v.LengthSquared() > 200f * 200f) { v = Vector3.Zero; _camVel = Vector3.Zero; }   // a teleport / map load is not a velocity
+                    _camVel = _camVel.Lerp(v, Mathf.Min(1f, dt / 0.6f));                                 // EMA, 0.6 s: a whip barely moves it, a road speed settles on it
+                }
+                _lastCamPos = cp; _haveLast = true;
+                Vector3 lead = _camVel * LeadSeconds; lead.Y = 0f;
+                if (lead.Length() > MaxLead) lead = lead.Normalized() * MaxLead;
+                GlobalPosition = cp + new Vector3(0f, TopOffset, 0f) + lead;
+                _trail.Enqueue((_t, cp));
+                while (_trail.Count > 0 && _t - _trail.Peek().t > JumpWindow) _trail.Dequeue();
+                if (_p != null && _p.Emitting && _restartCd <= 0f && _trail.Count > 1 && cp.DistanceTo(_trail.Peek().p) > JumpMetres)
+                { _p.Restart(); _restartCd = RestartCooldown; }   // Preprocess (1.6 s) refills the volume where the camera now is
+            }
             float i = Mathf.Clamp(Intensity, 0f, 1f);
             if (_mat != null && i != _lastAlphaI) { _lastAlphaI = i; _mat.SetShaderParameter("alpha_base", 0.14f * i); }   // fade the streaks with the rain intensity (only rewrite on change)
             if (_p != null) { bool on = i > 0.02f; if (_p.Emitting != on) _p.Emitting = on; }   // stop simulating when clear
