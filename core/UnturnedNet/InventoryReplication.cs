@@ -245,6 +245,25 @@ namespace UnturnedGodot.Net
 
     /// <summary>Set the autodrink flag on the item at (Page,X,Y). Id is identity, as in GunStateCommand: an
     /// address alone would let a command that arrives after a swap set the flag on whatever landed there.</summary>
+    /// <summary>Flip a cooking appliance on or off (strawberry 2026-09-05: "a new on/off button for
+    /// cooking"). Addressed by the appliance's crate NetId, which is what the player already has open --
+    /// and the server checks it IS a registered cooker, so a forged id for an arbitrary crate does nothing
+    /// rather than conjuring an oven.</summary>
+    public struct SetCookerOnCommand
+    {
+        public uint NetId;
+        public bool On;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(On); }
+        public static bool TryRead(NetPakReader r, out SetCookerOnCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint netId)) return false;
+            if (!r.ReadBit(out bool on)) return false;
+            cmd = new SetCookerOnCommand { NetId = netId, On = on };
+            return true;
+        }
+    }
+
     public struct SetAutoDrinkCommand
     {
         public byte Page, X, Y;
@@ -314,16 +333,59 @@ namespace UnturnedGodot.Net
         public static bool TryRead(NetPakReader r, out CloseStorageCommand cmd) { cmd = default; return true; }
     }
 
+    /// <summary>v28 gains IsCooker/CookerKind/CookerOn; v29 adds CookerFuel so the bar is already at the right
+    /// height on the frame the panel opens, instead of snapping there on the first EventCookerState tick.
+    /// The SERVER is the authority on whether a container
+    /// cooks -- the client would otherwise have to guess from a mesh name it does not reliably have -- and the
+    /// moment it needs to know is exactly when it opens the thing and has to decide whether to draw an on/off
+    /// button under the grid.</summary>
     public struct StorageOpenedEvent
     {
         public uint NetId;
         public byte Width, Height;
-        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height); }
+        public bool IsCooker;
+        public byte CookerKind;   // ECookerKind, meaningful only when IsCooker
+        public bool CookerOn;
+        public byte CookerFuel;   // v29: 0..255 of the CURRENT fuel item's burn, 0 when nothing is lit
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height);
+            w.WriteBit(IsCooker);
+            if (IsCooker) { w.WriteUInt8(CookerKind); w.WriteBit(CookerOn); w.WriteUInt8(CookerFuel); }
+        }
         public static bool TryRead(NetPakReader r, out StorageOpenedEvent evt)
         {
             evt = default;
             if (!r.ReadUInt32(out uint id) || !r.ReadUInt8(out byte width) || !r.ReadUInt8(out byte height)) return false;
-            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height };
+            if (!r.ReadBit(out bool isCooker)) return false;
+            byte kind = 0; bool on = false; byte fuel = 0;
+            if (isCooker) { if (!r.ReadUInt8(out kind)) return false; if (!r.ReadBit(out on)) return false; if (!r.ReadUInt8(out fuel)) return false; }
+            evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on, CookerFuel = fuel };
+            return true;
+        }
+    }
+
+    /// <summary>v29: how much of the burning fuel item is left, pushed to the ONE player who has the appliance
+    /// open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed").
+    ///
+    /// This could not ride the inventory delta, and the reason is the feature: the bar shows the item that is
+    /// ALREADY BURNING, and a lit log is gone from the grid -- ServerCooking consumes it the moment it catches.
+    /// There is no jar left whose fields could carry the countdown. So the value is a property of the appliance,
+    /// and it travels as one.
+    ///
+    /// `On` rides along because a campfire that runs out of wood switches itself off server-side, and without
+    /// the flag the button would keep saying ON under an empty bar until the player closed and reopened it.</summary>
+    public struct CookerStateEvent
+    {
+        public uint NetId;
+        public bool On;
+        public byte Fuel;   // 0..255 of the current fuel item's total burn; 0 = nothing lit
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(On); w.WriteUInt8(Fuel); }
+        public static bool TryRead(NetPakReader r, out CookerStateEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt32(out uint id) || !r.ReadBit(out bool on) || !r.ReadUInt8(out byte fuel)) return false;
+            evt = new CookerStateEvent { NetId = id, On = on, Fuel = fuel };
             return true;
         }
     }
@@ -649,6 +711,19 @@ namespace UnturnedGodot.Net
             // next drag. One byte, unconditional: gating it behind a bit would cost 9 bits for magazines to
             // save 8 for everything else, which is the wrong trade at one byte.
             w.WriteUInt8(Assets.MagRoundToId(j.item?.magLoadedRound));
+            // COOKING. Item.cooked / Item.cookStyle -- the fourth and fifth fields to be added to Item, and the
+            // first ones to join this schema in the SAME change that adds them rather than three features later.
+            // The two blocks above are the record of what happens otherwise: an owner echo rebuilds the jar
+            // without them, so a roast taken out of the oven and dragged one cell would come back raw and
+            // unlabelled, exactly as a fitted scope came back missing and a part-loaded magazine came back
+            // unlocked.
+            //
+            // GATED behind one bit, unlike magLoadedRound's unconditional byte, and the trade genuinely differs:
+            // a cartridge lock is one byte against magazines-only, while this is TWO bytes against a set that is
+            // even smaller (cooked FOOD, not all food). One bit for every bandage and bullet, 17 for a steak.
+            bool cook = j.item != null && (j.item.cooked != 0 || j.item.cookStyle != 0);
+            w.WriteBit(cook);
+            if (cook) { w.WriteUInt8(j.item.cooked); w.WriteUInt8(j.item.cookStyle); }
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -682,11 +757,15 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
             if (!r.ReadBit(out bool autoDrink)) return false;                    // autodrink toggle
             if (!r.ReadUInt8(out byte magRoundId)) return false;                 // magazine cartridge lock
+            byte cooked = 0, cookStyle = 0;                                      // cooking -- symmetric with WriteJar's `cook` bit
+            if (!r.ReadBit(out bool cook)) return false;
+            if (cook) { if (!r.ReadUInt8(out cooked)) return false; if (!r.ReadUInt8(out cookStyle)) return false; }
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
                                                    fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink,
                                                    gunSightId = sight, gunBarrelId = barrel, gunGripId = grip, gunTacticalId = tactical,
                                                    gunChambered = chambered, gunAttachSeeded = attachSeeded,
-                                                   magLoadedRound = Assets.MagRoundFromId(magRoundId) };
+                                                   magLoadedRound = Assets.MagRoundFromId(magRoundId),
+                                                   cooked = cooked, cookStyle = cookStyle };
             // The chambered round's AMMO TYPE is re-derived from the loaded magazine rather than sent: it is a
             // string, this stack has no string primitive, and the mag id it comes from is already on the wire.
             // One case loses fidelity by doing it this way and it is worth naming: after a TACTICAL swap the

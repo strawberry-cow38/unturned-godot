@@ -132,6 +132,7 @@ namespace UnturnedGodot.Net
         /// ProfileRules for the threat model -- the short version is that Godot's RichTextLabel renders
         /// BBCode, so a name is a place someone can put [img]https://attacker/x[/img].</summary>
         public const byte CommandSetProfile = 42;
+        public const byte CommandSetCookerOn = 43;   // v28: the oven/toaster/microwave/bbq on-off button (strawberry 2026-09-05)
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -172,7 +173,8 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerFired = 37;       // a gun WENT OFF: shooter, muzzle origin, direction, gun asset name. Nothing was broadcast on a shot at all before this, which is why another player's gunfire had no sound and drew no tracer on your screen (strawberry 2026-09-03 "network gun sounds, gun tracers"; the in-game report "I hear no gunshot sounds even when someone's shooting across the street from me"). Damage is NOT on this event -- the server already resolves that analytically and unicasts a hit confirm; this is purely what the shot LOOKS and SOUNDS like to everyone else.
         public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
-        public const byte EventPlayerMelee = 39;       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
+        public const byte EventPlayerMelee = 39;
+        public const byte EventCookerState = 40;       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }
 
     /// <summary>

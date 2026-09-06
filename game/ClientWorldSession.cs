@@ -256,7 +256,16 @@ namespace UnturnedGodot
             };
             // Phase 6/8 storage arbitration facts (sent only to the opener): the dashboard opens/latches on
             // the SERVER's say-so -- the crate grid itself rides the owner inventory echo (STORAGE page 7)
-            Client.StorageOpened += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageOpened(e.NetId); };
+            Client.StorageOpened += e =>
+            {
+                if (Shell == null || !IsInstanceValid(Shell)) return;
+                Shell.OnReplicatedStorageOpened(e.NetId);
+                // v28: the server says whether what you just opened cooks, so the inventory can draw the on/off
+                // button. The client never decides this for itself -- it would have to guess from a mesh name.
+                Shell.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+            };
+            // v29: the fuel bar, while you stand there watching it burn.
+            Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
             Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
             // SP/MP unify: the server's door/bed decisions land on the nodes. These are the ONLY thing that
             // moves a replicated door or repaints a bed -- the client never applied anything on send, so
@@ -536,6 +545,7 @@ namespace UnturnedGodot
             shell.NetFire = (muzzle, aim) => Client.SendFire(ToU(muzzle), ToU(aim));
             shell.NetMelee = (strong, yaw) => Client.SendMelee(strong, yaw);
             shell.NetGrenade = (origin, vel, itemId) => Client.SendGrenade(ToU(origin), ToU(vel), itemId);
+            shell.NetSetCookerOn = (netId, on) => Client.SendSetCookerOn(netId, on);   // the appliance on/off button
             shell.NetReload = () => Client.SendReload();
             // Phase 6 pickup: F on a focused WorldItemPuppet is a REQUEST -- "the client never pockets the
             // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only

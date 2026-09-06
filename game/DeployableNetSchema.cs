@@ -46,8 +46,12 @@ namespace UnturnedGodot
                     // server registers the authoritative crate at these dimensions and the client
                     // materializes the visible one at the same, so a literal in two places is a silent
                     // desync waiting for someone to change one of them.
-                    StorageWidth = def.IsStorage ? Refrigerator.GridW : (byte)0,
-                    StorageHeight = def.IsStorage ? Refrigerator.GridH : (byte)0,
+                    // The fridge keeps taking its dimensions from Refrigerator's own constants (a literal in two
+                    // places is a silent desync waiting for someone to change one). Anything else declares its
+                    // own grid on the def -- the campfire's 3x2.
+                    StorageWidth = def.IsStorage ? Refrigerator.GridW : def.StorageW,
+                    StorageHeight = def.IsStorage ? Refrigerator.GridH : def.StorageH,
+                    CookerKind = def.Cooker.HasValue ? (byte)def.Cooker.Value : (byte)255,
                 });
             }
         }

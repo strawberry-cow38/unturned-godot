@@ -245,6 +245,22 @@ namespace SDG.Unturned
         // Condition (quality 0-100) of the FIRST-found instance of `id` -- i.e. the exact one removeItemAmount(id,1)
         // will delete next, in the same page/index scan order. Used to score the moldy-food eating penalty against the
         // instance actually consumed (source eats player.equipment.quality). 100 if none found (treated as fresh).
+        /// <summary>The first matching item itself, so a caller can read more than one of its fields without
+        /// walking the grid once per field. peekItemQuality predates it and stays -- it has callers.</summary>
+        public Item peekItem(ushort id)
+        {
+            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            {
+                var page = items[b];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    if (jar?.item != null && jar.item.id == id) return jar.item;
+                }
+            }
+            return null;
+        }
+
         public byte peekItemQuality(ushort id)
         {
             for (byte b = 0; b < (byte)(PAGES - 2); b++)

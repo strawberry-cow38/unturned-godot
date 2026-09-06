@@ -11,6 +11,19 @@ namespace UnturnedGodot
         static readonly List<BlueprintDef> _all = new();
         public static IReadOnlyList<BlueprintDef> All => _all;
 
+        /// <summary>Has the catalog been read off disk yet? Separate from `_all.Count > 0` because THE SHIPPING
+        /// CATALOG IS NOW EMPTY (strawberry 2026-09-06: "completely empty crafting list"), and a count-based guard
+        /// cannot tell "never loaded" from "loaded, and it genuinely has no rows". That mattered twice over: it made
+        /// EnsureLoaded re-read the file on every single call, and it would have quietly gutted the regression test
+        /// below, whose whole job is to prove the self-load fires -- with an empty file its pass and its failure look
+        /// identical. The flag is what keeps that check honest.</summary>
+        public static bool Loaded { get; private set; }
+
+        /// <summary>How many times the catalog has actually been read off disk. Exposed so a test can assert the
+        /// guard PREVENTS re-reads, rather than merely that a read happened -- the old guard's failure was extra
+        /// reads, which no row count can see.</summary>
+        public static int LoadCountForTests { get; private set; }
+
         /// <summary>Load the catalog if nobody has yet.
         ///
         /// THIS IS THE FIX FOR A BUG THAT SHIPPED, and the shape of it matters. Load() was called from
@@ -25,16 +38,18 @@ namespace UnturnedGodot
         /// fourth path and forgetting. It is idempotent and costs one int comparison after the first call.</summary>
         /// <summary>Empty the catalog so a test can prove the self-load actually fires. Without this a test
         /// cannot distinguish "Index() loaded it" from "some earlier test in the same boot already had".</summary>
-        public static void ResetForTests() => _all.Clear();
+        public static void ResetForTests() { _all.Clear(); Loaded = false; }
 
         public static void EnsureLoaded()
         {
-            if (_all.Count == 0) Load();
+            if (!Loaded) Load();
         }
 
         public static int Load(string resPath = "res://content/blueprints.tsv")
         {
             _all.Clear();
+            Loaded = true;   // set even on a missing/empty file: the attempt is what EnsureLoaded must not repeat
+            LoadCountForTests++;
             string path = ProjectSettings.GlobalizePath(resPath);
             if (!System.IO.File.Exists(path)) { GD.PrintErr($"[bp] catalog missing: {path}"); return 0; }
             foreach (var line in System.IO.File.ReadAllLines(path))

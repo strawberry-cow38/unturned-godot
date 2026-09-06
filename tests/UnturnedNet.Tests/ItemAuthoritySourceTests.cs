@@ -42,6 +42,11 @@ namespace UnturnedNet.Tests
             ["fluidAmount"] = "server-owned fluid container contents",
             ["fluidQuality"] = "server-owned fluid container contents",
             ["magLoadedRound"] = "MagRules writes it during the server-side load/unload",
+            // Cooking. SERVER-owned for two specific reasons, not a general preference: an oven left on has to
+            // keep cooking while no client is near it, and `cooked` multiplies what a meal is worth, so a
+            // client allowed to assert it is a client allowed to print food.
+            ["cooked"] = "ServerCooking.Step advances it on the crate's items each server tick",
+            ["cookStyle"] = "ServerCooking.Step stamps it when an item reaches the cooked band",
         };
 
         /// <summary>Fields only the CLIENT can know, carried up by the named command. Verified below.</summary>

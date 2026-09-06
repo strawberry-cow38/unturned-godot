@@ -17,7 +17,14 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             ItemCatalog.RegisterAll();
-            if (BlueprintRegistry.All.Count == 0) BlueprintRegistry.Load();
+            // THE FIXTURE IS THE RETAIL EXTRACT, NOT WHAT SHIPS. The shipped catalog is empty by request
+            // (strawberry 2026-09-06: "completely empty crafting list"), and every check in this file --
+            // the subset filter, the unreachable-ingredient guarantee, recolour classification, search --
+            // needs recipes to have an opinion about. Run them against the 1875 archived rows so the LOGIC
+            // stays covered while the CONTENT is empty; those are separate claims and now have separate
+            // sources. craft.catalog_self_loads owns the "what ships" half.
+            BlueprintRegistry.ResetForTests();
+            BlueprintRegistry.Load("res://content/blueprints.retail.tsv");
             int total = BlueprintRegistry.All.Count;
             T.Check($"the blueprint catalog loaded ({total} rows)", total > 100);
 
@@ -119,6 +126,9 @@ namespace UnturnedGodot.Testing
                     !CraftingMenu.MatchesForTest(withNamedIngredient, "zzqqxx"));
             }
 
+            // Put the registry back the way a real session has it, so a later test in this boot cannot silently
+            // inherit 1875 retail rows and pass on a catalog the game does not ship.
+            BlueprintRegistry.ResetForTests();
             yield break;
         }
     }

@@ -52,11 +52,15 @@ namespace UnturnedGodot.Testing
             Crafting.DoCraft(repair, padapt);
             T.Check("PlayerInventory craft: scrap consumed, blowtorch kept", pinv.getItemCount(67) == 0 && pinv.getItemCount(76) == 1);
 
-            // blueprint REGISTRY: the pre-extracted catalog loads + lists craftables from a stocked inventory
-            int loaded = BlueprintRegistry.Load();
+            // blueprint REGISTRY: the catalog parser + "what can this bag make" logic, exercised against the
+            // ARCHIVED RETAIL EXTRACT rather than the shipped catalog. The shipped one is deliberately empty now
+            // (strawberry 2026-09-06), and pointing this at it would turn every assertion below into a tautology
+            // that passes because there is nothing to get wrong. The fixture keeps the logic covered.
+            int loaded = BlueprintRegistry.Load("res://content/blueprints.retail.tsv");
             T.Check($"blueprint registry loads (got {loaded})", loaded > 0);
             var stock = new Crafting.DictInv(); stock.Add(67, 50); stock.Add(76, 1);   // 50 Metal Scrap + Blowtorch
             T.Check("something is craftable from 50 scrap + blowtorch", BlueprintRegistry.Applicable(stock).Count > 0);
+            BlueprintRegistry.ResetForTests();   // never leave the retail rows loaded for whatever runs next
             yield break;
         }
     }

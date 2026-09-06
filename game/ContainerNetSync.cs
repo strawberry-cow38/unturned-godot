@@ -24,6 +24,20 @@ namespace UnturnedGodot
         readonly Node _host;
 
         struct Tracked { public uint NetId; public InventoryReplication.CrateEntry Crate; public ushort KindId; public ulong Sig; }
+
+        /// <summary>Which container props COOK, and as what (strawberry 2026-09-05). The mesh name is the key
+        /// because this is the only side that knows it -- the server sees a crate NetId and a grid, not an
+        /// Oven_0. Barbecue_0 and Barbecue_1 are two models of the same grill.</summary>
+        static readonly Dictionary<string, ECookerKind> Cookers = new()
+        {
+            ["Oven_0"] = ECookerKind.Oven,
+            ["Microwave_0"] = ECookerKind.Microwave,
+            ["Toaster_0"] = ECookerKind.Toaster,
+            ["Barbecue_0"] = ECookerKind.Barbecue,
+            ["Barbecue_1"] = ECookerKind.Barbecue,
+        };
+
+        public static bool IsCooker(string mesh, out ECookerKind kind) => Cookers.TryGetValue(mesh ?? "", out kind);
         readonly List<Tracked> _tracked = new();
 
         public ContainerNetSync(NetWorldServer server, Node host,
@@ -33,6 +47,10 @@ namespace UnturnedGodot
             _host = host;
             if (manifest != null) RegisterAll(manifest);
         }
+
+        /// <summary>A microwave with metal in it just went off. The game layer turns this into a real
+        /// explosion -- ServerCooking owns the RULE, not the fireball.</summary>
+        public event System.Action<uint> Detonated;
 
         void RegisterAll(List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> manifest)
         {
@@ -51,6 +69,8 @@ namespace UnturnedGodot
                 _server.Containers.ServerRegisterFixture(id, kindId, upos, c.yaw, w, h, tick);
                 _server.Containers.ServerSetDisplay(id.Value, ProjectDisplay(crate.Storage, c.display, w), tick);
 
+                if (IsCooker(c.mesh, out var cookKind)) _server.Cooking.Register(id.Value, cookKind);   // an oven is a crate that also cooks
+
                 _tracked.Add(new Tracked { NetId = id.Value, Crate = crate, KindId = kindId, Sig = GridSig(crate.Storage) });
             }
         }
@@ -59,6 +79,15 @@ namespace UnturnedGodot
         {
             long tick = _server.Session.CurrentTick;
             if (tick % DivisorTicks != 0) return;
+
+            // COOKING, on the same 2 Hz beat as the display digest. Cooking is slow by design (an oven takes
+            // ~31 s from raw to done) so it does not need a 50 Hz step, and the dt passed is the REAL elapsed
+            // sim time for this beat rather than one tick -- stepping DivisorTicks worth of food with one
+            // tick's dt would make every appliance 25x too slow, which reads as "cooking is broken" rather
+            // than as a rate bug.
+            float cookDt = DivisorTicks / 50f;
+            foreach (uint blown in _server.Cooking.Step(cookDt))
+                Detonated?.Invoke(blown);
             for (int i = 0; i < _tracked.Count; i++)
             {
                 var t = _tracked[i];

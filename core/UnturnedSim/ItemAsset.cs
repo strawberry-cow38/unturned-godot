@@ -176,6 +176,20 @@ namespace SDG.Unturned
         // magRound -- a STANAG body physically feeds 5.56 OR .300 BLK, so an empty STANAG mag takes either, then LOCKS
         // to whatever went in (no mixing until it's unloaded). null = empty / follow the asset default.
         public string magLoadedRound;
+        // COOKING (strawberry 2026-09-05: "give food a cooked %, increases from 0-100%, 90-100% cooked is
+        // Cooked. above 100% is burnt. as well as a quality, just a flag between average (no label),
+        // microwaved, charcoal grilled").
+        //
+        // `cooked` is DELIBERATELY NOT `quality`. quality is already FRESHNESS -- FoodSpoil ticks it down per
+        // in-game day and a fridge halts it -- so folding cooking into it would mean roasting a steak made it
+        // fresher and chilling it un-cooked it. Two axes, because they are two things.
+        //
+        // It is a byte that keeps counting PAST 100 rather than a clamped percentage plus a burnt flag,
+        // because "above 100% is burnt" makes the overshoot the actual state; a separate flag is a second
+        // source of truth that can disagree with the number beside it. Cooking.MaxCooked stops the count
+        // before it can wrap a forgotten roast back around to raw.
+        public byte cooked;
+        public byte cookStyle;   // ECookStyle: 0 plain (no label) / 1 microwaved / 2 charcoal grilled
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {

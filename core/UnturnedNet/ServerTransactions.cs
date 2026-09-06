@@ -143,6 +143,11 @@ namespace UnturnedGodot.Net
         readonly Action<byte[]> _broadcast;
         readonly Action<ushort, byte[]> _sendTo;
 
+        /// <summary>The cooking appliances. Settable rather than a constructor argument, the same shape
+        /// ServerCombat.ZombieHost uses: an optional collaborator that a bare transactional harness does not
+        /// need, on a constructor that already takes twelve things.</summary>
+        public ServerCooking Cooking;
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
@@ -311,6 +316,20 @@ namespace UnturnedGodot.Net
                                            && cmd.MagPage < PlayerInventory.PAGES
                                            && cmd.RoundPage < PlayerInventory.PAGES);
 
+            // THE ON/OFF BUTTON. Reach-checked exactly like opening the thing: the client can already only
+            // see a cooker it is standing at, and this makes the server agree rather than take its word.
+            // SetOn returns false for a NetId that is not a registered cooker, so a forged id for some other
+            // crate -- or for nothing at all -- is a no-op instead of creating an appliance.
+            commands.Register<SetCookerOnCommand>(ReplicationIds.CommandSetCookerOn, SetCookerOnCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (Cooking == null) return;
+                    if (!TryGetSenderPos(sender, out var pos)) return;
+                    if (!_inventories.TryGetCrate(cmd.NetId, out var crate)) return;
+                    if ((crate.Pos - pos).magnitude > InventoryReplication.StorageReach) return;
+                    Cooking.SetOn(cmd.NetId, cmd.On);
+                });
+
             commands.Register<SetAutoDrinkCommand>(ReplicationIds.CommandSetAutoDrink, SetAutoDrinkCommand.TryRead,
                 (sender, cmd) =>
                 {
@@ -352,8 +371,19 @@ namespace UnturnedGodot.Net
                     if (_inventories.ServerOpenStorage(sender, cmd.NetId, pos, _tick())
                         && _inventories.TryGetCrate(cmd.NetId, out var crate))
                     {
-                        var evt = new StorageOpenedEvent { NetId = cmd.NetId, Width = crate.Width, Height = crate.Height };
+                        ServerCooking.Cooker ck = null;
+                        bool isCooker = Cooking != null && Cooking.TryGet(cmd.NetId, out ck);
+                        var evt = new StorageOpenedEvent
+                        {
+                            NetId = cmd.NetId, Width = crate.Width, Height = crate.Height,
+                            IsCooker = isCooker,
+                            CookerKind = isCooker ? (byte)ck.Kind : (byte)0,
+                            CookerOn = isCooker && ck.On,
+                            CookerFuel = isCooker ? ck.FuelFrac : (byte)0,   // v29: the bar opens at the right height
+                        };
                         _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
+                        // ...and from here on this player is the one who hears the fuel burn down.
+                        if (isCooker) Cooking.ForceStateSync(cmd.NetId);
                     }
                 });
 
@@ -407,7 +437,14 @@ namespace UnturnedGodot.Net
             // from a world fixture or a deployable. Empty, unlike a map crate -- nobody loots a fridge you
             // have just put down.
             if (_deployables.Schema.TryGet(cmd.DefId, out var pdef) && pdef.StorageWidth > 0 && pdef.StorageHeight > 0)
+            {
                 _inventories.ServerRegisterCrate(new NetId(e.NetIdValue), pdef.StorageWidth, pdef.StorageHeight, e.Pos);
+                // ...and if it cooks, it registers under the SAME NetId the crate uses, so the on/off command,
+                // the open event's cooker fields and the cook step all address it exactly as they address an
+                // oven. A placed campfire is a cooker that happens to have been carried there.
+                if (pdef.CookerKind != 255 && Cooking != null)
+                    Cooking.Register(e.NetIdValue, (ECookerKind)pdef.CookerKind);
+            }
             var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
         }
@@ -454,6 +491,11 @@ namespace UnturnedGodot.Net
                 }
             }
             _inventories.ServerRemoveCrate(netId, _tick());
+            // ...and it stops being a cooker. Without this a salvaged campfire leaves a live entry that steps
+            // every tick against a crate that no longer exists -- harmless today because Step skips a missing
+            // crate, but it is a registry that only ever grows, and the next thing keyed on "is this NetId a
+            // cooker" would answer yes for a fire somebody dismantled an hour ago.
+            Cooking?.Forget(netId);
         }
 
         void OnPickupDeployable(ushort sender, PickupDeployableCommand cmd)

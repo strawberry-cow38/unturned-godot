@@ -93,6 +93,11 @@ namespace UnturnedGodot
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
                     node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
+                    // A container that is NOT the fridge (the campfire) keeps its Deployable body and gets the
+                    // grid as a child, so F-open finds it through the same "crates" group a map container uses
+                    // and the server already registered a crate under this very NetId when it was placed.
+                    if (def.StorageW > 0 && def.StorageH > 0)
+                        DeployableCrate.Attach(node, def.StorageW, def.StorageH, e.NetIdValue);
                     _nodes[e.NetIdValue] = node;
                 }
                 node.Health = e.Health;

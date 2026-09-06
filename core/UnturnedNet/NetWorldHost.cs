@@ -68,6 +68,21 @@ namespace UnturnedGodot.Net
         public readonly ServerPlayerAuthority PlayerHost;   // mp-clientauth-foot (v9): on-foot claims -> envelope -> ServerDrive adopt
         public readonly ServerCombat Combat;
         public readonly ServerTransactions Transactions;
+        /// <summary>The cooking appliances (strawberry 2026-09-05). Server-owned: an oven left on keeps
+        /// cooking with nobody near it, and `cooked` multiplies what a meal is worth.</summary>
+        public readonly ServerCooking Cooking;
+
+        /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
+        /// the game layer's PowerNet.GlobalPower -- on a joined client that global is not authoritative, which
+        /// is the rule A3 established for the grid toggle and the same one this has to follow.</summary>
+        bool MainsAreUp()
+        {
+            foreach (var e in Deployables.All)
+                if (Deployables.Schema.TryGet(e.DefId, out var d)
+                    && d.FixtureKind == FixtureKind.GridSource && e.ToggledOn) return true;
+            return false;
+        }
+
         public readonly SnapshotComposer Composer;
 
         public int SnapshotDivisorTicks = 2; // 25 Hz at the 50 Hz tick (MP_PLAN §2.5)
@@ -98,12 +113,31 @@ namespace UnturnedGodot.Net
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
+            Cooking = new ServerCooking(Inventories, () => Session.CurrentTick);
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals, Interactables);
+            Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
+            // A metal-in-the-microwave blast goes through the grenade path, so it damages and broadcasts
+            // identically rather than being a second explosion that drifts from the first one that gets tuned.
+            Cooking.Detonate = (pos, radius, dmg) => Combat.ServerDetonateAt(pos, radius, dmg, Session.CurrentTick);
+            // The mains, as the server sees them: any GridSource fixture switched on. This is the same source
+            // A3 already made authoritative for the grid toggle -- deliberately NOT the client-side
+            // PowerNet.GlobalPower, which a joined client must never read directly.
+            Cooking.HasPower = (netId, watts) => MainsAreUp();
+            // THE FUEL BAR'S ONLY ROUTE (v29). Unicast to whoever has the appliance open and nobody else -- a
+            // campfire burning in an empty forest changes state constantly and is worth exactly zero packets.
+            // Sent on the reliable channel because these are transitions (lit / burned out / switched itself
+            // off), not a stream you can resample: a dropped one leaves the bar stuck at the wrong height.
+            Cooking.StateChanged = (netId, on, fuel) =>
+            {
+                if (!Inventories.TryGetCrate(netId, out var crate) || crate.OpenBy == 0) return;
+                var evt = new CookerStateEvent { NetId = netId, On = on, Fuel = fuel };
+                SendEventTo(crate.OpenBy, NetMessagePak.Pack(ReplicationIds.EventCookerState, evt.Write));
+            };
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
@@ -570,6 +604,7 @@ namespace UnturnedGodot.Net
         public event System.Action<ItemPickupDeniedEvent> ItemPickupDenied;
         public event System.Action<ConsoleResultEvent> ConsoleResult;
         public event System.Action<StorageOpenedEvent> StorageOpened;
+        public event System.Action<CookerStateEvent> CookerState;   // v29: the open appliance's on-bit + fuel bar
         public event System.Action<StorageClosedEvent> StorageClosed;
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
@@ -664,6 +699,7 @@ namespace UnturnedGodot.Net
             Events.Register<ConsoleResultEvent>(ReplicationIds.EventConsoleResult, ConsoleResultEvent.TryRead, e => ConsoleResult?.Invoke(e));
             Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
+            Events.Register<CookerStateEvent>(ReplicationIds.EventCookerState, CookerStateEvent.TryRead, e => CookerState?.Invoke(e));
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
             Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
@@ -981,6 +1017,11 @@ namespace UnturnedGodot.Net
 
         public bool SendSetAutoDrink(byte page, byte x, byte y, ushort id, bool autoDrink)
             => SendCommand(ReplicationIds.CommandSetAutoDrink, new SetAutoDrinkCommand { Page = page, X = x, Y = y, Id = id, AutoDrink = autoDrink }.Write);
+
+        /// <summary>Flip a cooking appliance on or off (strawberry 2026-09-05). The server reach-checks it and
+        /// ignores a NetId that is not a registered cooker.</summary>
+        public void SendSetCookerOn(uint netId, bool on)
+            => SendCommand(ReplicationIds.CommandSetCookerOn, new SetCookerOnCommand { NetId = netId, On = on }.Write);
 
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);

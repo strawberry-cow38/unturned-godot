@@ -24,6 +24,13 @@ namespace UnturnedGodot
         public float EnergyMax, ChargeWatts;   // battery: stored-energy capacity (watt-SECONDS) + the IN charge rate (W)
         public bool IsWindTurbine;    // a wind turbine: output ramps with WindField wind x a height-above-sea multiplier; blades spin ~ wind
         public bool IsStorage;        // a placeable storage container with its own IPowerDevice consumer port (the fridge): spawns via FridgeDeploy, not a plain Deployable body
+        // A plain placeable container: a grid, no power port, no fridge machinery. IsStorage is the FRIDGE's
+        // route (FridgeDeploy -> Refrigerator, which brings a consumer port and preservation with it); this is
+        // for a deployable that just holds things -- the campfire. 0x0 = not a container.
+        public byte StorageW, StorageH;
+        /// <summary>If this deployable COOKS, which appliance it is (strawberry 2026-09-06: the campfire).
+        /// Requires StorageW/H, since a cooker cooks what is in its own grid.</summary>
+        public SDG.Unturned.ECookerKind? Cooker;
         public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
         public BarricadeMount Mount = BarricadeMount.Floor;   // which surface family this places on: Floor (ground, default) / Wall / Sticky. BarricadePlacer + Barricade read this so a barricade def carries its own mount rule.
         public WindowBarricadeStyle WindowStyle = WindowBarricadeStyle.Planks;   // Mount==Window only: which procedural panel WindowBarricadeMesh builds (planks / bars / plate)
@@ -450,6 +457,11 @@ namespace UnturnedGodot
         {
             Id = 362, Name = "Campfire", Model = "Campfire_0", PlaceSound = "metalplacement",
             Offset = 0f, Radius = 1.0f, Range = 6f, Health = 400f, Upright = true,
+            // A cooking fire you can put things on (strawberry 2026-09-06: "make it a smart storage container.
+            // takes wood as fuel. slower than a bbq. no food buff"). Small grid -- it is a ring of stones, not
+            // a kitchen -- and NOT IsStorage, which is the fridge's route and would drag a power port and food
+            // preservation along with it.
+            StorageW = 3, StorageH = 2, Cooker = SDG.Unturned.ECookerKind.Campfire,
             MeshEuler = new Vector3(-90f, 0f, 0f),   // the barricade.prefab mesh stands vertical the OTHER way -> tip flat (was +90 for the old item mesh; that pointed it DOWN)
             CraftingTags = new[] { "20f30322bbcc4b01a4f116d22b24c21a" }, CraftingRange = 4f,   // Heat (src has no explicit tag)
         };

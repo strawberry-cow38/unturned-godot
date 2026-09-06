@@ -331,13 +331,18 @@ namespace UnturnedGodot
         // is the eaten instance's CONDITION (0-100, source player.equipment.quality) -- FOOD/WATER items ride it as
         // freshness; source scales food+water restored by quality/100 and, below 50, infects you (moldy food penalty).
         // Non-condition items spawn at quality 100 -> full effect, no penalty (byte-identical to the old behaviour).
-        public void Consume(ItemAsset a, int quality = 100)
+        public void Consume(ItemAsset a, int quality = 100, byte cooked = 0, ECookStyle cookStyle = ECookStyle.Plain)
         {
             if (a == null) return;
             float qf = FoodSpoil.NutritionScale(quality);   // source: askEat/askDrink scale by player.equipment.quality / 100
+            // COOKING (strawberry 2026-09-05). A SECOND multiplier alongside freshness, deliberately: quality
+            // says how far gone it is, cooked says what was done to it, and a charcoal-grilled steak that has
+            // been in a bag for a week should be worth less than a fresh one. Raw is 1.0, so nothing that
+            // exists today gets quietly nerfed the day this lands -- cooking is a reward, not a new tax.
+            float cf = Cooking.Nutrition(cooked, cookStyle);
             if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth);
-            if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f * qf);
-            if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f * qf);
+            if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f * qf * cf);
+            if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f * qf * cf);
             if (a.useEnergy > 0) Stamina = Mathf.Min(1f, Stamina + a.useEnergy / 100f);   // askRest: energy drinks/bars restore stamina
             if (a.useVirus > 0) Infect(a.useVirus / 100f);   // askInfect: raises infection (IMMUNITY skill cuts it, via Infect)
             if (a.useDisinfectant > 0) Infection = Mathf.Max(0f, Infection - a.useDisinfectant / 100f);   // askDisinfect: antibiotics/vaccine lower infection
@@ -2843,8 +2848,9 @@ namespace UnturnedGodot
             if (_consumeTimer <= 0f && _heldConsumable != null)
             {
                 ushort id = _heldConsumable.id;
-                int eatenQuality = Inventory?.peekItemQuality(id) ?? 100;   // condition of the instance removeItemAmount will delete -> scores the moldy-food penalty against what's actually eaten
-                Consume(_heldConsumable, eatenQuality);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
+                var eaten = Inventory?.peekItem(id);                         // the instance removeItemAmount will delete
+                int eatenQuality = eaten?.quality ?? 100;                    // ...so the moldy penalty scores against what is actually eaten
+                Consume(_heldConsumable, eatenQuality, eaten?.cooked ?? 0, (ECookStyle)(eaten?.cookStyle ?? 0));   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
                 _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearHeldOptic(); ClearHeldThrowable();   // one use per item: this one leaves the hand + is deleted (master). THIRD site where ClearHeldOptic() was swallowed by this trailing // comment (cow tools spotted this one); harmless in practice because you cannot be holding an optic while eating, but a call that only LOOKS present is exactly what made the gun and melee sites wrong. A sweep of game/ + core/ for the same shape found no others.
@@ -3675,7 +3681,7 @@ namespace UnturnedGodot
             {
                 // MP: the server saves the STORAGE page back into the crate and clears it; the owner
                 // echo empties the local view (no local copy-back -- the crate grid is the server's).
-                NetCloseStorage(); _openCrateNetId = 0;
+                NetCloseStorage(); _openCrateNetId = 0; NoteOpenCooker(null, false, 0);
                 return;
             }
             // GAP B1: a NON-replicated crate (_openCrateNetId==0 -- a look-opened / SP-local shelf that was
@@ -3721,6 +3727,43 @@ namespace UnturnedGodot
         // MP storage state (wired only by ClientWorldSession): the crate the SERVER says we have open.
         // Latched on the StorageOpened fact -- never on the request -- so the dashboard mirrors arbitration.
         uint _openCrateNetId;
+
+        // ---- THE COOKING ON/OFF BUTTON (strawberry 2026-09-05) --------------------------------------------
+        // The open container's cooker identity, if it has one. Set alongside _openCrateNetId so the inventory
+        // can ask "is the thing I am showing an oven, and is it on?" without knowing anything about crates.
+        public ECookerKind? OpenCookerKind { get; private set; }
+        public bool OpenCookerOn { get; private set; }
+        public uint OpenCookerNetId => _openCrateNetId;
+        /// <summary>0..1 of the fuel item currently burning in the open appliance; 0 when nothing is lit. Server
+        /// -fed (v29) -- the client cannot derive it, because the burning item has already left the grid.</summary>
+        public float OpenCookerFuel { get; private set; }
+        /// <summary>Set by whoever opened the container -- it is the side that knows the prop's mesh name.</summary>
+        public void NoteOpenCooker(ECookerKind? kind, bool on, byte fuel = 0)
+        { OpenCookerKind = kind; OpenCookerOn = on; OpenCookerFuel = fuel / 255f; }
+
+        /// <summary>A live CookerStateEvent for the appliance this player has open. Ignored when it names a
+        /// different container -- a second oven burning across the room must not move THIS bar.</summary>
+        public void NoteCookerState(uint netId, bool on, byte fuel)
+        {
+            if (OpenCookerKind == null || netId != _openCrateNetId) return;
+            OpenCookerOn = on;
+            OpenCookerFuel = fuel / 255f;
+            _invUI?.RefreshCookerBar();   // a burning campfire with no food in it dirties nothing else, so the
+                                          // owner-echo repaint that carries cooking progress never fires here
+        }
+        /// <summary>-> Client.SendSetCookerOn, or the SP loopback's server. Null when nothing is wired.</summary>
+        public System.Action<uint, bool> NetSetCookerOn;
+
+        /// <summary>Flip the open appliance. Optimistic locally so the button responds on the frame you click
+        /// it; the server is the authority and its next echo corrects the button if it refused (out of reach,
+        /// not a cooker). The FOOD state is never predicted -- only this switch is.</summary>
+        public void ToggleOpenCooker()
+        {
+            if (OpenCookerKind == null || _openCrateNetId == 0) return;
+            OpenCookerOn = !OpenCookerOn;
+            NetSetCookerOn?.Invoke(_openCrateNetId, OpenCookerOn);
+            GD.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
+        }
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
 
         /// <summary>Is any UI up that wants the cursor? Asked before ANYTHING recaptures the mouse, because
