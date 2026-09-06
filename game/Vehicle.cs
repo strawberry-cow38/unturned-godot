@@ -79,6 +79,12 @@ namespace UnturnedGodot
         bool _tracked;   // TANK: tracked/differential drive -- Drive() branches on this to set per-TRACK torque instead of a steered-wheel angle
         const float TankWheelSlip = 1.0f;   // TANK: lateral wheel friction. Too LOW (0.5) and the yaw torque spins it in place instead of arcing forward (low grip = no forward bite either); too HIGH and turning drags to a crawl. Paired with the speed-faded yaw below. Tunable.
         const float TankComY = 0.1f;   // TANK: low centre of mass (anti-flip -- master "easily flipped"). Tunable.
+        /// <summary>Minimum static rollover threshold, in g, for a wheeled hull. 1.0 sits BELOW every measured
+        /// car in the fleet (roadster 1.38, sedan 1.41, van 1.37 -- all untouched) and above the quad's 0.64,
+        /// so this floor moves exactly one vehicle and leaves signed-off handling alone.</summary>
+        const float RollSsfFloor = 1.0f;
+        /// <summary>Test seam: this hull's measured static rollover threshold, in g (0 if not a wheeled hull).</summary>
+        public float RolloverThresholdForTest;
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
         static float MaxLatAccel => float.TryParse(System.Environment.GetEnvironmentVariable("UG_LATG"), out var _g) ? _g * 9.8f : 8.3f;   // ~0.85 g of cornering a car may ASK for; the steer angle is capped to it
         const float MinSteerDeg = 3.5f;   // never fade lock away entirely, however fast it is going
@@ -1000,6 +1006,9 @@ namespace UnturnedGodot
         // to tune the wrong constant.
         public int WheelsOnGroundForTest { get { int n = 0; if (_wNodes != null) foreach (var w in _wNodes) if (w.IsInContact()) n++; return n; } }
         public int WheelCountForTest => _wNodes?.Length ?? 0;
+        /// <summary>Test seam: wheel i's position in the vehicle's own frame (the rollover probe uses the sign
+        /// of X to pick a side, which is what "hit the left wheels with a kerb" means).</summary>
+        public Vector3 WheelLocalPosForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].Position : Vector3.Zero;
         public bool Tracked;   // set from the spec at build; the drivetrain probe's fleet-wide guards skip tracked hulls (they hop legitimately on their short stiff suspension)
         public float SpecSpeedMaxForTest => _specSpeedMax;   // L1: the un-buffed spec top speed the OLD model capped at
         public float RedlineRpmForTest => RedlineFrac * MaxRpm;                                   // L1: the shift/limit point, so a probe doesn't re-derive it
@@ -2131,6 +2140,93 @@ namespace UnturnedGodot
             else { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -35f; ps.AngularVelocityMax = 35f; }   // SMOKE (not fire): random per-puff rotation + slow tumble (master)
             return ps;
         }
+
+        // ---- ANTI-ROLL BARS ---------------------------------------------------------------------------
+        //
+        // Master 2026-09-06: "fix a lot of vehicles being really top heavy and easy to flip (roadster, quad,
+        // sedan, vans, etc)". The obvious reading is that the centre of mass is too high, and it is NOT: the
+        // wheeled CoM is already forced to mean(wheel.y) - 0.2, which on the roadster is 0.025 in body space,
+        // ~0.65 m over the contact patch against a 2.60 m track. That is a static rollover threshold near 2 g,
+        // and no tyre generates 2 g -- these cars cannot be tipped by cornering grip alone, so lowering the CoM
+        // again would have been tuning the one number that was already fine.
+        //
+        // What is actually missing is the OTHER half of a real car's roll model. Godot's VehicleBody3D springs
+        // each wheel INDEPENDENTLY -- there is no anti-roll bar anywhere in the engine -- so nothing whatsoever
+        // couples the left and right of an axle. Hit a kerb, clip a slope, land one side first, and the loaded
+        // side compresses alone, the body rolls, weight transfers, and there is no restoring term at all until
+        // the far wheels leave the ground, by which point it is over. That is the "tippy" everyone feels, and
+        // it is a missing mechanism rather than a mis-tuned constant.
+        //
+        // A bar is a SPRING between the two sides, proportional to the difference in suspension extension.
+        // Deliberately not a damper on roll RATE: that is the term with no safe middle -- too little does
+        // nothing, too much fights the suspension and goes unstable at 50 Hz, exactly as scaling the damping up
+        // did to the semi's hop. A displacement spring is bounded by construction.
+        //
+        // Scaled by the vehicle's own weight rather than a flat Newton figure, for the same reason suspMaxF is:
+        // one constant then means the same thing to a 400 kg quad and a 7800 kg semi. UG_ANTIROLL=0 restores
+        // the old uncoupled behaviour so the change is measurable A/B in ONE build (the UG_CARINERTIA seam).
+        const float AntiRollFraction = 0.55f;   // peak restoring force per axle, as a fraction of vehicle weight
+        static int _antiRollEnv = -1;
+        static bool AntiRollEnabled
+        {
+            get
+            {
+                if (_antiRollEnv < 0) _antiRollEnv = System.Environment.GetEnvironmentVariable("UG_ANTIROLL") == "0" ? 0 : 1;
+                return _antiRollEnv == 1;
+            }
+        }
+
+        /// <summary>Suspension EXTENSION under a wheel, 0 = fully compressed .. 1 = hanging free. Measured with
+        /// its own ray because Godot exposes no suspension length on VehicleWheel3D. A wheel with no ground
+        /// under it reads 1 (fully drooped), which is what makes a lifted inside wheel produce the strongest
+        /// restoring force on the axle -- the moment the bar is most needed.</summary>
+        float WheelExtension(VehicleWheel3D w)
+        {
+            float rest = Mathf.Max(0.01f, w.WheelRestLength);
+            var from = w.GlobalPosition;
+            var to = from - GlobalTransform.Basis.Y * (w.WheelRadius + rest + w.SuspensionTravel);
+            var q = PhysicsRayQueryParameters3D.Create(from, to, 1u << 0);
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = GetWorld3D()?.DirectSpaceState?.IntersectRay(q);
+            if (hit == null || hit.Count == 0) return 1f;
+            float d = from.DistanceTo((Vector3)hit["position"]);
+            return Mathf.Clamp((d - w.WheelRadius) / rest, 0f, 1f);
+        }
+
+        void StepAntiRoll()
+        {
+            if (!AntiRollEnabled || _heli || _plane || _exploded || _husk) return;
+            if (_wNodes == null || _wNodes.Length < 2) return;
+            if (Freeze || Sleeping || _asleep || _parked) return;   // parked scenery has no roll to resist
+
+            var up = GlobalTransform.Basis.Y;
+            var com = ToGlobal(CenterOfMass);
+            // Pair wheels into AXLES by their local z, then by opposite sign of x. Done per call rather than
+            // cached because a spec's wheel list is short and this keeps six-wheelers working with no table.
+            for (int i = 0; i < _wNodes.Length; i++)
+            {
+                var li = _wNodes[i];
+                if (li == null || li.Position.X >= 0f) continue;          // walk the LEFT wheels; each finds its partner
+                for (int j = 0; j < _wNodes.Length; j++)
+                {
+                    var rj = _wNodes[j];
+                    if (rj == null || rj.Position.X <= 0f) continue;      // ...on the right
+                    if (Mathf.Abs(rj.Position.Z - li.Position.Z) > 0.35f) continue;   // same axle
+                    bool cl = li.IsInContact(), cr = rj.IsInContact();
+                    if (!cl && !cr) break;                                // axle in the air: a bar has nothing to push against
+                    float f = (WheelExtension(li) - WheelExtension(rj)) * AntiRollFraction * Mass * 9.8f * 0.5f;
+                    // The MORE extended side is pulled DOWN and the more compressed side pushed UP, which is a
+                    // pure roll couple: equal and opposite, so it adds no net vertical force and cannot pump the
+                    // car off the ground the way a one-sided push would.
+                    if (cl) ApplyForce(up * -f, li.GlobalPosition - com);
+                    if (cr) ApplyForce(up *  f, rj.GlobalPosition - com);
+                    break;                                                // one partner per left wheel
+                }
+            }
+        }
+
+        /// <summary>Test seam: the anti-roll extension reading for wheel i (probes assert the bar is armed).</summary>
+        public float WheelExtensionForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? WheelExtension(_wNodes[i]) : -1f;
 
         // Ground material under a wheel (raycast down from the wheel to read the collider's "surf" tag). Drives the
         // per-wheel dust tint + gate. Untagged ground defaults to grass (PEI terrain).
@@ -6310,6 +6406,45 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
 
+            // A HULL THAT CANNOT SURVIVE ITS OWN CORNER GETS ITS CENTRE OF MASS DROPPED.
+            //
+            // The static rollover threshold is half-track over CoM height, in GRAVITIES: corner harder than
+            // that and the inside wheels leave the ground no matter what the suspension does. MEASURED across
+            // the fleet: roadster 1.38 g, sedan 1.41, van 1.37 -- and the QUAD 0.64, less than half of any of
+            // them, off a 1.0 m track carrying its mass 0.78 m up. That is the "top heavy" master reported
+            // (2026-09-06), and it is the quad's geometry rather than anything the anti-roll bars can reach:
+            // measured at 89 deg of roll in a full-lock turn with the bars already on and working.
+            //
+            // A FLOOR, not a rescale. An earlier pass here capped grip by the same threshold and it was wrong
+            // twice over -- it changed handling on the roadster, sedan and van, whose feel was signed off and
+            // whose thresholds were never the problem, and it did not fix the quad anyway (it went from 88.7
+            // deg to fully inverted, because grip was never the mechanism). This touches ONE number on the ONE
+            // hull that is below the floor, and every vehicle already above it is byte-identical.
+            //
+            // Dropping the CoM under the axle line is the same deliberate trick TankComY is (a tall hull on
+            // high wheels is tippy otherwise); this just derives how far from the geometry instead of guessing.
+            if (!s.Tracked && !s.Plane && !s.Heli && s.Wheels.Length > 0 && v._wNodes != null)
+            {
+                float halfTrack = 0f;
+                foreach (var wl in s.Wheels) halfTrack = Mathf.Max(halfTrack, Mathf.Abs(wl.x));
+                float groundY = float.MaxValue;
+                for (int i = 0; i < v._wNodes.Length && i < s.Wheels.Length; i++)
+                    if (v._wNodes[i] != null)
+                        groundY = Mathf.Min(groundY, s.Wheels[i].y - v._wNodes[i].WheelRestLength - v._wNodes[i].WheelRadius);
+                float comH = comY - groundY;
+                if (halfTrack > 0.01f && comH > 0.05f)
+                {
+                    float ssf = halfTrack / comH;
+                    if (ssf < RollSsfFloor)
+                    {
+                        comY = groundY + halfTrack / RollSsfFloor;   // exactly the floor, not lower
+                        v.CenterOfMass = new Vector3(0f, comY, 0f);
+                        ssf = RollSsfFloor;
+                    }
+                    v.RolloverThresholdForTest = ssf;
+                }
+            }
+
             // INERTIA IS PINNED TO THE HULL BOX for anything with a convex decomposition, because otherwise
             // HANDLING IS A FUNCTION OF THE COLLISION MESH. Godot derives a body's inertia tensor from its
             // collision shapes whenever Inertia is left at zero, and the centre of mass is already Custom here --
@@ -8629,6 +8764,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 yawK = Mathf.Min(yawK, 1.2f * Inertia.Y / Mathf.Max((float)delta, 0.0001f));
                 ApplyTorque(new Vector3(0f, (tTarget - AngularVelocity.Y) * yawK, 0f));
             }
+            StepAntiRoll();   // anti-roll bars: the thing that actually stops a car tipping (master 2026-09-06 "really top heavy and easy to flip")
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
