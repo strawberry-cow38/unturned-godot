@@ -49,7 +49,12 @@ namespace UnturnedGodot
         /// the wall sets it. Default false: a standalone pane in the open rains.</summary>
         public bool Covered
         {
-            set { if (_mesh != null && GodotObject.IsInstanceValid(_mesh)) _mesh.SetInstanceShaderParameter("covered", value ? 1f : 0f); }
+            set
+            {
+                if (_mesh == null || !GodotObject.IsInstanceValid(_mesh)) return;
+                _mesh.SetInstanceShaderParameter("covered", value ? 1f : 0f);   // drops (this material)
+                if (_mesh.MaterialOverride is ShaderMaterial gm && gm.NextPass is ShaderMaterial gr) gr.SetShaderParameter("covered", value ? 1f : 0f);   // runners (next_pass: plain uniform, see the shader)
+            }
         }
 
         // The see-through glass material (matches WorldBuilder.MatFor's Glass_ look: mostly transparent, glossy), tinted by `hue`
@@ -102,7 +107,14 @@ namespace UnturnedGodot
             // "runners and drops should be two separate shaders. runners follow the world, drops shouldnt").
             // They anchor to the WORLD while the drops in this pass stick to the pane, which is a difference one
             // material could not express -- so it costs a pass, deliberately, and only on glass.
-            m.NextPass = new ShaderMaterial { Shader = _rainRunners };
+            var runners = new ShaderMaterial { Shader = _rainRunners };
+            // UG_RUNNERS=0 turns the runner pass off without a rebuild -- the pair of renders it makes possible is the
+            // only way to PROVE the pass is drawing: a still frame of a parked car cannot show a moving rivulet, but
+            // an image diff between runners-on and runners-off can (and did).
+            var runEnv = System.Environment.GetEnvironmentVariable("UG_RUNNERS");
+            if (runEnv == "0") runners.SetShaderParameter("streak_amount", 0f);
+            else if (runEnv == "1" || runEnv == "2") runners.SetShaderParameter("debug_paint", float.Parse(runEnv));   // 1 = mask in red, 2 = the whole pass in magenta
+            m.NextPass = runners;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_GLASSDEBUGVIEW"), out var dbg) && dbg > 0) m.SetShaderParameter("debug_view", dbg);   // harness: false-colour the shader's inputs
             return m;
         }

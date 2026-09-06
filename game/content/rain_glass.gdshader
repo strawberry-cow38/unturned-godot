@@ -90,28 +90,37 @@ void fragment(){
     float cov = 0.0;        // how much of this pixel is water
     float rim = 0.0;        // the bright ring at a drop's edge
 
-    // 1) DROPS -- the PANE's frame, so they follow the glass. Each cell runs its OWN slow cycle: a drop appears, sits,
-    //    and fades, then the cell re-rolls a different drop somewhere else in it (master 2026-09-06 "have drops appear
-    //    and fade randomly"). Nothing is static, and no two cells are in step.
+    // 1) DROPS -- a SCATTERED field, not a lattice. One drop per cell on a regular grid is visible AS a grid the
+    //    moment coverage is high ("the shader tiles in a really obvious way across the glass pane", master
+    //    2026-09-06), so each cell's drop is jittered anywhere inside it and the 3x3 neighbourhood is scanned:
+    //    drops overlap cell boundaries freely and no row or column lines up. Each cell still runs its own slow
+    //    cycle -- a drop swells in, sits, fades, and the cell re-rolls a different one somewhere else.
     if (amt > 0.001 && detail > 0.001) {
         vec2 g = vec2(dot(obj_pos, pane_u), dot(obj_pos, pane_v));
         vec2 cellp = g * drop_scale;
-        vec2 id = floor(cellp);
-        float rate = 0.10 + 0.28 * h21(id + 5.1);          // this cell's cycles per second (~4-10 s a drop)
-        float tt = TIME * rate + h21(id + 2.7) * 9.0;      // ...and its own phase, so the field never pulses together
-        float cyc = floor(tt), life = fract(tt);
-        vec2 q = id + cyc * 17.3;                          // everything below re-rolls per cycle
-        float present = step(1.0 - 0.55 * amt, h21(q));
-        vec2 c = id + 0.5 + (vec2(h21(q + 3.1), h21(q + 7.9)) - 0.5) * 0.55;   // a different spot in the cell each time
-        float rs = h21(q + 11.3);
-        float r = 0.07 + 0.13 * rs * rs + 0.10 * step(0.94, rs);   // radius in cells: mostly ~1.5-3 mm, the odd fat one
-        float env = smoothstep(0.0, 0.10, life) * smoothstep(1.0, 0.72, life);   // swells in, holds, fades out
-        vec2 dp = (cellp - c) / r;                          // 0 centre .. 1 rim
-        float d2 = dot(dp, dp);
-        float inside = present * env * detail * smoothstep(1.0, 0.78, d2);
-        off += -(dp.x * su_n + dp.y * sv_n) * refract_strength * inside;   // a lens: the view bends toward the rim, inverted
-        cov = max(cov, inside);
-        rim += present * env * detail * smoothstep(0.5, 0.85, d2) * smoothstep(1.0, 0.9, d2);
+        vec2 base = floor(cellp);
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                vec2 id = base + vec2(float(dx), float(dy));
+                float rate = 0.10 + 0.28 * h21(id + 5.1);          // this cell's cycles per second (~4-10 s a drop)
+                float tt = TIME * rate + h21(id + 2.7) * 9.0;      // ...and its own phase, so the field never pulses together
+                float cyc = floor(tt), life = fract(tt);
+                vec2 q = id + cyc * 17.3;                          // everything below re-rolls per cycle
+                float present = step(1.0 - 0.55 * amt, h21(q));
+                if (present < 0.5) continue;
+                vec2 c = id + vec2(h21(q + 3.1), h21(q + 7.9));    // ANYWHERE in the cell -- this is what breaks the lattice
+                float rs = h21(q + 11.3);
+                float r = 0.07 + 0.13 * rs * rs + 0.10 * step(0.94, rs);   // radius in cells: mostly ~1.5-3 mm, the odd fat one
+                float env = smoothstep(0.0, 0.10, life) * smoothstep(1.0, 0.72, life);   // swells in, holds, fades out
+                vec2 dp = (cellp - c) / r;
+                float d2 = dot(dp, dp);
+                if (d2 > 1.2) continue;                            // this drop does not reach the pixel
+                float inside = env * detail * smoothstep(1.0, 0.78, d2);
+                off += -(dp.x * su_n + dp.y * sv_n) * refract_strength * inside;   // a lens: the view bends toward the rim, inverted
+                cov = max(cov, inside);
+                rim += env * detail * smoothstep(0.5, 0.85, d2) * smoothstep(1.0, 0.9, d2);
+            }
+        }
     }
 
     vec3 col = tint.rgb;

@@ -5006,7 +5006,14 @@ namespace UnturnedGodot
             if (_rainCoverWired && covered == _rainCovered) return;
             _rainCovered = covered; _rainCoverWired = true;
             foreach (var g in _glassNodes)
-                if (GodotObject.IsInstanceValid(g)) g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);
+            {
+                if (!GodotObject.IsInstanceValid(g)) continue;
+                g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);   // the DROP pass reads it per instance...
+                // ...and the RUNNER pass (next_pass) reads a plain uniform, because instance parameters are addressed by
+                // slot per shader and a next_pass shader has its own table: aimed at the first pass, they land somewhere
+                // else in the second. Read there as "covered", every runner switches off and looks like a dead effect.
+                if (g.MaterialOverride is ShaderMaterial gm && gm.NextPass is ShaderMaterial gr) gr.SetShaderParameter("covered", covered ? 1f : 0f);
+            }
         }
 
         /// <summary>Give one glass pane a collider of its own, but ONLY with the mesh hitbox on.
