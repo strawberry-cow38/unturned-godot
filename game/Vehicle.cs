@@ -8632,10 +8632,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
-            if ((Freeze || Sleeping) && _deadTimer < 0f && !_alarmed)   // a held (frozen wreck / sleeping car) off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
+            // IDLE SCENERY ONLY, AND BY RADIUS. This skip is for parked cars that are doing nothing; it used to include
+            // `cam.IsPositionBehind(...)`, so ANY held vehicle behind the camera stopped ticking -- and with it its bi-fold
+            // door mid-swing and its lightbar flash, which is what master saw ("the door open/close only occurs when the
+            // door is on screen ... lightbars seem to have the same issue ... give them a radius instead of LOS cull").
+            // The behind-camera test is gone; distance alone decides. A vehicle that is actually DOING something -- alarm,
+            // siren/lightbar lit, a door part-way through its swing or holding open -- is never idle scenery and always ticks.
+            bool busyOffscreen = _alarmed || _sirenOn || _doorHold > 0f || (_doorPivotA != null && _doorT != (_doorOpen ? 1f : 0f));
+            if ((Freeze || Sleeping) && _deadTimer < 0f && !busyOffscreen)
             {
                 var cam = GetViewport().GetCamera3D();
-                if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 90000f)) return;
+                if (cam != null && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > IdleCullRadius * IdleCullRadius) return;
             }
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             _driveIdle += (float)delta;   // Drive() zeroes this; a car nobody is steering climbs away from zero
@@ -9133,6 +9140,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         //     publishes it; back to 0.97.
         // The gain it was turned on for: a down-ray over the cabin stops at the model's real roof, 2.160,
         // instead of 7 cm proud of it at 2.237.
+        const float IdleCullRadius = 300f;   // how far an IDLE parked car keeps ticking (see the skip in PhysicsTick). Radius only -- no view test.
         public static bool MeshHitbox => System.Environment.GetEnvironmentVariable("UG_MESHHITBOX") != "0";
         internal const uint ChassisBit = 1u << 13;   // free; bits 0-12 are all spoken for. internal so a thrown grenade can include it in its bounce ray -- a car whose hull mesh moved it off bit0 is still something a grenade must not fall through.
 
