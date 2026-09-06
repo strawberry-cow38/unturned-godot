@@ -3,13 +3,12 @@
 // this ONE material: the plain tinted glass they used to be, plus -- while it rains -- water DROPS clinging to the pane
 // and RUNNERS sliding down it.
 //
-// TWO EFFECTS, TWO FRAMES (master 2026-09-06 "one for drops (follows the glass' direction) and one for the runners
-// (always vertical)"). They are separated by their coordinate frame, not by a second material: a second pass would be a
-// full extra transparent overdraw on every window in the game for a result the frames already give.
-//   DROPS   live in the PANE's own frame (across x down-the-slope). They follow the glass wherever it faces, and stick
-//           to it -- a moving windscreen carries its water rather than sliding out from under it.
-//   RUNNERS travel along WORLD HEIGHT (world up projected into the pane), so a run is always gravity-vertical no matter
-//           how the pane is raked or facing, which is what water actually does. Still object-space, so they ride the car.
+// DROPS ONLY. The runners are their own shader now, rain_glass_runners.gdshader, run as this material's next_pass
+// (master 2026-09-06: "runners and drops should be two separate shaders. runners follow the world, drops shouldnt").
+// The split is not cosmetic -- the two anchor to different things, which is the whole point:
+//   DROPS (here) live in the PANE's own frame. They follow the glass wherever it faces and STICK to it, so a moving
+//         windscreen carries its water instead of sliding out from under it.
+//   RUNNERS (next_pass) are anchored to the WORLD: a run holds its place as the car drives past it.
 //
 // THE BIGGEST FACE IS THE ONLY WET ONE (master: "have both shaders consider the BIGGEST face of the glass, because with
 // side windows it was targetting the thin sides"). A pane is a solid with thickness: its edge faces carry their own
@@ -37,7 +36,6 @@ uniform float metallic : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.06;
 uniform float drop_scale = 70.0;                         // drop cells per metre of glass (1.4 cm cells, one drop each)
 uniform float drop_amount : hint_range(0.0, 1.0) = 1.0;  // coverage scale
-uniform float streak_amount : hint_range(0.0, 1.0) = 1.0;
 uniform float refract_strength = 0.020;                  // screen-UV shift through a drop
 uniform float max_distance = 22.0;                       // past this the pane is PLAIN GLASS again -- no drops, no runners, no screen-texture read (master 2026-09-06 "add a somewhat strict limit"): every pane in view ran the full effect at any range
 uniform int debug_view = 0;                              // harness (UG_GLASSDEBUGVIEW): 1 = frames, 2 = runner mask, 3 = drop mask
@@ -46,9 +44,6 @@ uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
 varying vec3 obj_pos;
 varying vec3 pane_u;    // object space, ACROSS the pane      (drop frame)
 varying vec3 pane_v;    // object space, DOWN the pane        (drop frame)
-varying vec3 pane_h;    // object space, HORIZONTAL in-plane  (runner frame: across)
-varying vec3 up_obj;    // object space, world UP             (runner frame: travel)
-varying float tilt;     // 0 = flat .. 1 = vertical
 varying float face_ok;  // 1 on the big faces, 0 on the thin edges
 varying vec2 su;        // the drop frame's axes on SCREEN (MODELVIEW_MATRIX is vertex-stage only)
 varying vec2 sv;
@@ -59,25 +54,19 @@ void vertex(){
     obj_pos = VERTEX;
     vec3 fn = length(NORMAL) > 0.5 ? normalize(NORMAL) : vec3(0.0, 0.0, 1.0);   // a rip with no normals must not NaN the frame
     vec3 n = length(pane_axis) > 0.5 ? normalize(pane_axis) : fn;               // THE BIG FACE decides the frame, not this fragment's
-    // face_ok is DEBUG ONLY. Gating the water on it dried every side window: the ripped glass meshes carry NO vertex
-    // normals (sedan_glass_*.txt have not one `vn`) and the loader does not generate any, so NORMAL is unusable and the
-    // fallback (0,0,1) matches a windscreen's axis and nothing else -- windscreen and rear glass stayed wet, both side
-    // windows went dry (master 2026-09-06 "theres no shader on side windows?"). The thin-edge problem the gate was for
-    // is already solved by building the frame from `pane_axis` instead of per fragment: the edges no longer have a
-    // "down" of their own, they just carry the face's water, which is what water on a real pane edge does anyway.
+    // face_ok is DEBUG ONLY -- see the note in the fragment stage: the ripped glass has no vertex normals to gate on.
     face_ok = step(0.75, abs(dot(fn, n)));
-    // world DOWN / UP in object space: the rotation part of MODEL_MATRIX, transposed (a uniform scale normalises away)
-    vec3 d = normalize(transpose(mat3(MODEL_MATRIX)) * vec3(0.0, -1.0, 0.0));
-    up_obj = -d;
-    vec3 dv = d - n * dot(d, n);           // down, projected onto the pane -> the DROP frame's own slope
-    float dl = length(dv);
-    tilt = clamp(dl, 0.0, 1.0);
-    vec3 any_axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);   // GUARD: a flat pane (sunroof) has no down
-    any_axis = normalize(any_axis - n * dot(any_axis, n));
-    pane_v = dl > 0.05 ? dv / dl : any_axis;
+    // THE GRID IS WELDED TO THE MESH (master 2026-09-06: "when my car bounces around, the whole rain glass shader shifts
+    // around, as if its not part of the glass"). It used to build this frame from WORLD DOWN projected into the pane --
+    // which re-derives the pattern's axes from the vehicle's ORIENTATION every frame, so a pitch or a roll rotated the
+    // whole drop field inside the glass and the water appeared to swim across it, worst exactly while bouncing. Both
+    // axes now come from the pane's own normal and a fixed OBJECT-space reference: nothing here touches MODEL_MATRIX,
+    // so a drop cannot move relative to the glass whatever the car does. Gravity belongs to the runners, and they are
+    // their own pass now (rain_glass_runners.gdshader) precisely because they DO need the world.
+    vec3 ref = abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);   // any object-space axis not parallel to n
+    vec3 v = ref - n * dot(ref, n);
+    pane_v = length(v) > 1e-4 ? normalize(v) : normalize(abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) - n * n.x : vec3(0.0, 0.0, 1.0) - n * n.z);
     pane_u = normalize(cross(n, pane_v));
-    vec3 h = cross(up_obj, n);             // in-plane and horizontal: the axis a vertical run is measured ACROSS
-    pane_h = length(h) > 0.05 ? normalize(h) : pane_u;
     su = (MODELVIEW_MATRIX * vec4(pane_u, 0.0)).xy;
     sv = (MODELVIEW_MATRIX * vec4(pane_v, 0.0)).xy;
 }
@@ -93,7 +82,6 @@ void fragment(){
     float range = 1.0 - smoothstep(max_distance * 0.75, max_distance, dist);
     float detail = smoothstep(14.0, 5.0, dist) * range;   // drops are millimetres: gone past a few metres, no shimmer
     float amt = wet * open * drop_amount * range;                                    // water sitting on the glass
-    float run = rint * open * streak_amount * range * smoothstep(0.25, 0.6, tilt);   // runners need rain NOW and a slope to run down
 
     vec2 su_n = length(su) > 1e-4 ? normalize(su) : vec2(1.0, 0.0);
     vec2 sv_n = length(sv) > 1e-4 ? normalize(sv) : vec2(0.0, -1.0);
@@ -126,36 +114,6 @@ void fragment(){
         rim += present * env * detail * smoothstep(0.5, 0.85, d2) * smoothstep(1.0, 0.9, d2);
     }
 
-    // 2) RUNNERS -- always VERTICAL (master). The travel coordinate is world HEIGHT projected into the pane, not distance
-    //    down the slope, so a raked windscreen and an upright side window run at the same gravity-true rate and read
-    //    vertical from any angle; the columns are spaced along the pane's HORIZONTAL axis for the same reason.
-    if (run > 0.001) {
-        float gx = dot(obj_pos, pane_h);     // across, horizontal
-        float gy = dot(obj_pos, up_obj);     // world height
-        float cols = 14.0;                   // columns per metre (was 9 -- master: thinner)
-        float cx = gx * cols;
-        float cid = floor(cx);
-        float cs = h21(vec2(cid, 5.7));
-        float active = step(1.0 - 0.55 * run, cs);                // more rain -> more columns running
-        float x0 = 0.5 + (cs - 0.5) * 0.5;                        // where in its column the runner lives
-        float w = 0.045 + 0.035 * h21(vec2(cid, 2.3));            // half-width in column units (~3-6 mm)
-        float dxs = (fract(cx) - x0) / w;
-        float dx = abs(dxs);
-        float period = 1.1 + 1.4 * h21(vec2(cid, 9.1));           // metres of fall per pass
-        float speed = 0.30 + 0.40 * h21(vec2(cid, 4.4));          // m/s, straight down
-        float s = fract((TIME * speed + cs * period + gy) / period);   // 0 at the head, growing UP behind it
-        float body = active * (1.0 - smoothstep(0.0, 0.22 + 0.18 * cs, s));
-        float tail = body * (1.0 - smoothstep(0.6, 1.0, dx));
-        float headAmt = active * smoothstep(0.030, 0.0, s);
-        float head = headAmt * (1.0 - smoothstep(0.9, 1.6, dx));
-        float stk = max(tail * 0.7, head);
-        off += -(dxs * 0.6 * su_n + 0.5 * sv_n) * refract_strength * stk;
-        cov = max(cov, stk);
-        // the EDGES catch the light -- refraction alone is invisible against a flat sky, the rims are what read as water
-        rim += body * smoothstep(0.35, 0.8, dx) * (1.0 - smoothstep(0.9, 1.15, dx)) * 0.7;
-        rim += headAmt * smoothstep(0.8, 1.3, dx) * (1.0 - smoothstep(1.5, 1.9, dx));
-    }
-
     vec3 col = tint.rgb;
     float alpha = tint.a;
     vec3 emit = vec3(0.0);
@@ -168,9 +126,9 @@ void fragment(){
         col = mix(col, vec3(0.0), k);        // the tint stays only where there is no water
         alpha = mix(alpha, 0.95, cov);       // a drop is a solid lens, not tinted air
     }
-    emit += rim * 0.20 * max(amt, run);      // glints along the drops' rims
-    if (debug_view == 1) { ALBEDO = vec3(0.0); EMISSION = vec3(face_ok, fract(dot(obj_pos, up_obj) * 4.0), fract(dot(obj_pos, pane_h) * 4.0)); ALPHA = 1.0; }
-    else if (debug_view == 2) { ALBEDO = vec3(0.0); EMISSION = vec3(cov, run, 0.0); ALPHA = 1.0; }
+    emit += rim * 0.20 * amt;      // glints along the drops' rims
+    if (debug_view == 1) { ALBEDO = vec3(0.0); EMISSION = vec3(face_ok, fract(dot(obj_pos, pane_v) * 4.0), fract(dot(obj_pos, pane_u) * 4.0)); ALPHA = 1.0; }
+    else if (debug_view == 2) { ALBEDO = vec3(0.0); EMISSION = vec3(cov, rint, 0.0); ALPHA = 1.0; }
     else if (debug_view == 3) { ALBEDO = vec3(0.0); EMISSION = vec3(cov, amt, detail); ALPHA = 1.0; }
     else { ALBEDO = col; EMISSION = emit; ALPHA = alpha; }
     METALLIC = metallic;

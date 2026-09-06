@@ -56,7 +56,7 @@ namespace UnturnedGodot
         // -- now the RAIN GLASS shader (strawberry 2026-09-05): the same tinted glass, plus beads + runners while it rains.
         static Material GlassMat(Color hue) => RainGlassMat(new Color(hue.R, hue.G, hue.B, 0.26f), 0f, 0.06f);
 
-        static Shader _rainGlass;
+        static Shader _rainGlass, _rainRunners;
         /// <summary>content/rain_glass.gdshader as a material: `tint` = the glass colour + alpha (what the StandardMaterial3D
         /// AlbedoColor used to carry), metallic/roughness likewise. Shared by the window panes here and every vehicle's glass
         /// (Vehicle.AddGlassOverlay), so a windscreen and a window bead + streak the same way in the same rain.</summary>
@@ -93,10 +93,16 @@ namespace UnturnedGodot
         public static ShaderMaterial RainGlassMat(Color tint, float metallic, float roughness)
         {
             _rainGlass ??= GD.Load<Shader>("res://content/rain_glass.gdshader");
+            _rainRunners ??= GD.Load<Shader>("res://content/rain_glass_runners.gdshader");
             var m = new ShaderMaterial { Shader = _rainGlass };
             m.SetShaderParameter("tint", tint);
             m.SetShaderParameter("metallic", metallic);
             m.SetShaderParameter("roughness", roughness);
+            // THE RUNNERS ARE THEIR OWN SHADER, run as a second pass over the same glass (master 2026-09-06:
+            // "runners and drops should be two separate shaders. runners follow the world, drops shouldnt").
+            // They anchor to the WORLD while the drops in this pass stick to the pane, which is a difference one
+            // material could not express -- so it costs a pass, deliberately, and only on glass.
+            m.NextPass = new ShaderMaterial { Shader = _rainRunners };
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_GLASSDEBUGVIEW"), out var dbg) && dbg > 0) m.SetShaderParameter("debug_view", dbg);   // harness: false-colour the shader's inputs
             return m;
         }
