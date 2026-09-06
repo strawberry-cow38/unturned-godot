@@ -5817,7 +5817,11 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
+                // Ctrl's RELEASE must pass too (strawberry 2026-09-06 "tapping ctrl in a lightbar vehicle should toggle on/off wail, instead
+                // of bringing up the menu"): the siren handler decides tap-vs-hold on the release, and this list only let PRESSES through,
+                // so _ctrlHolding never cleared and every tap became a hold 220 ms later -- the radial, never the wail.
+                bool ctrlRelease = @event is InputEventKey { Pressed: false, Keycode: Key.Ctrl };
+                bool allowedKey = ctrlRelease || @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
                     || (Keybinds.HotbarSlot(@event) is int hk && _driving != null && hk <= _driving.TurretSlotCount(_seatIndex)));   // + the 1..N keys while seated at a MOUNT (they pick the weapon; this list ate them, so nobody could switch to the HMG -- master 2026-09-05). Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
@@ -8569,11 +8573,15 @@ namespace UnturnedGodot
             if (skel == null) return fallback;
             if (_skullBone < 0) { _skullBone = skel.FindBone("Skull"); if (_skullBone < 0) return fallback; }
             var head = skel.GetBoneGlobalPose(_skullBone).Origin;
-            if (head.LengthSquared() < 0.01f) return fallback;   // rest not applied yet
-            return seatBodyLocal + head + SeatedEyeFromSkull;
+            if (head.LengthSquared() < 0.01f) return fallback + SeatedEyeRaise;   // rest not applied yet
+            return seatBodyLocal + head + SeatedEyeFromSkull + SeatedEyeRaise;
         }
         int _skullBone = -1;
         static readonly Vector3 SeatedEyeFromSkull = new Vector3(0f, 0.16f, -0.10f);   // head base -> eyes: up + forward (rig faces -Z like the vehicle)
+        // EVERY 1P seat sits higher (strawberry 2026-09-06 "move all 1p seating camera positions up more"): applied on top of the
+        // skull-tracked eye AND the per-vehicle fallbacks, so driver, passengers and riders all rise together. The optic seats
+        // (SeatEyeOverride: tank visor / gunsight / cupola) are pinned to their optics and deliberately not raised.
+        static readonly Vector3 SeatedEyeRaise = new Vector3(0f, 0.15f, 0f);
 
         /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
         /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
