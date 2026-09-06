@@ -8484,8 +8484,13 @@ namespace UnturnedGodot
                     }
                     else
                     {
-                    float throttle = (!_chain && _frame > 30) ? 1f : 0f;   // --chain: stay parked so the blast reaches the neighbours
-                    float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
+                    // UG_VSTATIC=1: DON'T drive. The showcase exists to film a vehicle moving, but half of what gets
+                    // asked about is geometry that has to hold still to be looked at -- a window's edge against its
+                    // pillar, a seat, a hatch. Driving off is the difference between aiming a camera at a part and
+                    // chasing it (master 2026-09-06: "then make a harness that can?").
+                    bool vstatic = System.Environment.GetEnvironmentVariable("UG_VSTATIC") == "1";
+                    float throttle = (!_chain && !vstatic && _frame > 30) ? 1f : 0f;   // --chain: stay parked so the blast reaches the neighbours
+                    float steer = vstatic ? 0f : (_frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f));
                     _veh.Drive(throttle, steer, false);
                     }
                     if (_chain && _frame == 20) _veh.TakeDamage(9999f);   // detonate _veh -> ~4 s later it blows -> chains to the car + horde
