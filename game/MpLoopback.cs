@@ -165,6 +165,7 @@ namespace UnturnedGodot
                     Player.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
                 };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
+                Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };
                 // B7 (SP/MP-unify): route the local player's skill-upgrade through the loopback server -- the
                 //     server's PlayerSkills.TryUpgrade is the cost/cap validator; the owner skills echo re-levels
                 //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.

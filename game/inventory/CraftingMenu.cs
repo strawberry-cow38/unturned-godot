@@ -249,10 +249,44 @@ void fragment() {
             _detailBox.CustomMinimumSize = new Vector2(detW - 32f, ph - top - 44f);
         }
 
+        /// <summary>MP: adopt the SERVER's craft queue (v31 EventCraftQueue). The local queue is a display
+        /// mirror here and nothing else -- it must not tick, produce, or spend, because the server already did
+        /// all three. Without this the MP client showed an empty queue through an entire timed craft, so an 8 s
+        /// recipe read as a command that vanished.</summary>
+        public void AdoptServerQueue((ushort bp, float left, float of)[] jobs)
+        {
+            _serverDriven = true;
+            _queue.Clear();
+            if (jobs != null)
+            {
+                // Reversed: the server sends oldest-first (jobs[0] is the one running), and this list draws the
+                // ACTIVE job rightmost. Getting this backwards would count down the wrong tile.
+                for (int i = jobs.Length - 1; i >= 0; i--)
+                {
+                    var (bpIdx, left, of) = jobs[i];
+                    if (bpIdx >= BlueprintRegistry.All.Count) continue;
+                    var bp = BlueprintRegistry.All[bpIdx];
+                    _queue.Add(new QueueJob { Bp = bp, Out = OutAsset(bp), Qty = 1, TimeLeft = left, PerUnit = null });
+                }
+            }
+            if (_open) { RebuildQueue(); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); }
+        }
+        bool _serverDriven;
+
         // the queue runs even while the menu is closed (a job you started keeps cooking in the background).
         void TickQueue(float dt)
         {
             if (_queue.Count == 0 || Inv == null) return;
+            if (_serverDriven)
+            {
+                // Count the displayed job down locally between server updates so the bar moves smoothly, but
+                // never PRODUCE -- the server owns the payout and will send a fresh queue when it happens.
+                // Producing here would hand out a second copy of everything the server already granted.
+                var live = _queue[_queue.Count - 1];
+                live.TimeLeft = Mathf.Max(0f, live.TimeLeft - dt);
+                if (_open) RebuildQueue();
+                return;
+            }
             var job = _queue[_queue.Count - 1];   // RIGHTMOST = active
             job.TimeLeft -= dt;
             if (job.TimeLeft <= 0f)

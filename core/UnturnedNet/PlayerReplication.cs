@@ -174,7 +174,8 @@ namespace UnturnedGodot.Net
         public const byte EventAvatarData = 36;        // the bytes behind an avatar hash, sent once per (peer, hash) on the reliable channel -- the snapshot carries only the hash, because a PNG per player per tick is not a snapshot
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
         public const byte EventPlayerMelee = 39;
-        public const byte EventCookerState = 40;       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
+        public const byte EventCookerState = 40;
+        public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }
 
     /// <summary>

@@ -383,6 +383,44 @@ namespace UnturnedGodot.Net
     ///
     /// `On` rides along because a campfire that runs out of wood switches itself off server-side, and without
     /// the flag the button would keep saying ON under an empty bar until the player closed and reopened it.</summary>
+    /// <summary>v31: the owner's pending craft jobs, newest last. Capped at 8 on the wire -- a queue longer
+    /// than that is not readable on screen anyway, and the count is sent unclamped so the UI can say "+3 more"
+    /// rather than silently lying about how much is pending.</summary>
+    public struct CraftQueueEvent
+    {
+        public const int MaxSent = 8;
+        public byte Total;                       // real length, which may exceed what follows
+        public (ushort Bp, float Left, float Of)[] Jobs;
+        public void Write(NetPakWriter w)
+        {
+            var jobs = Jobs ?? System.Array.Empty<(ushort, float, float)>();
+            byte n = (byte)System.Math.Min(jobs.Length, MaxSent);
+            w.WriteUInt8(Total); w.WriteUInt8(n);
+            for (int i = 0; i < n; i++)
+            {
+                w.WriteUInt16(jobs[i].Bp);
+                w.WriteClampedFloat(jobs[i].Left, 12, 3);   // seconds at 1/8 s -- finer than the bar can show, so it never steps
+                w.WriteClampedFloat(jobs[i].Of, 12, 3);
+            }
+        }
+        public static bool TryRead(NetPakReader r, out CraftQueueEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt8(out byte total) || !r.ReadUInt8(out byte n)) return false;
+            if (n > MaxSent) return false;
+            var jobs = new (ushort, float, float)[n];
+            for (int i = 0; i < n; i++)
+            {
+                if (!r.ReadUInt16(out ushort bp)) return false;
+                if (!r.ReadClampedFloat(12, 3, out float left)) return false;
+                if (!r.ReadClampedFloat(12, 3, out float of)) return false;
+                jobs[i] = (bp, left, of);
+            }
+            evt = new CraftQueueEvent { Total = total, Jobs = jobs };
+            return true;
+        }
+    }
+
     public struct CookerStateEvent
     {
         public uint NetId;

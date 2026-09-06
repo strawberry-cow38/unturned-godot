@@ -18,7 +18,10 @@ namespace UnturnedGodot
             void Add(ushort id, int amount);
         }
 
-        static ushort Resolve(string guid) => Assets.findByGuid(guid)?.id ?? (ushort)0;
+        /// <summary>Blueprint guid -> item id, 0 when this port does not ship the item. Public since
+        /// 2026-09-06: ServerCrafting spends and pays out through the same resolution the validator uses, and
+        /// a second copy of this line is a second place for the two to disagree.</summary>
+        public static ushort Resolve(string guid) => Assets.findByGuid(guid)?.id ?? (ushort)0;
 
         // Does the player meet a blueprint's SKILL requirement? Source EBlueprintSkill (Craft/Cook/Repair) maps to the
         // Support skills CRAFTING/COOKING/ENGINEER; the player's level must be >= Skill_Level. No requirement / no skills = true.

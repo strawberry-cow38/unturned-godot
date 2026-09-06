@@ -72,6 +72,7 @@ namespace UnturnedGodot.Net
         /// cooking with nobody near it, and `cooked` multiplies what a meal is worth.</summary>
         public readonly ServerCooking Cooking;
         public readonly ServerFreezing Freezing;
+        public readonly ServerCrafting CraftQueue;
 
         /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
         /// the game layer's PowerNet.GlobalPower -- on a joined client that global is not authoritative, which
@@ -116,6 +117,7 @@ namespace UnturnedGodot.Net
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Cooking = new ServerCooking(Inventories, () => Session.CurrentTick);
             Freezing = new ServerFreezing(Inventories);
+            CraftQueue = new ServerCrafting(Inventories);
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
@@ -123,6 +125,21 @@ namespace UnturnedGodot.Net
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals, Interactables);
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
+            Transactions.Crafting_ = CraftQueue;
+            // The queue indexes the same catalog the command validates against -- one list, so an index cannot
+            // mean two different recipes on the two sides of the same tick.
+            CraftQueue.BlueprintsSource = () => Transactions.Blueprints;
+            // A craft in flight is invisible to the MP client otherwise: it skips its own queue when NetCraft is
+            // wired, so without this an 8 s recipe looks like a command that did nothing.
+            CraftQueue.QueueChanged = owner =>
+            {
+                var jobs = CraftQueue.Jobs(owner);
+                int n = System.Math.Min(jobs.Count, CraftQueueEvent.MaxSent);
+                var arr = new (ushort, float, float)[n];
+                for (int i = 0; i < n; i++) arr[i] = (jobs[i].BlueprintIndex, jobs[i].SecondsLeft, jobs[i].SecondsTotal);
+                var evt = new CraftQueueEvent { Total = (byte)System.Math.Min(jobs.Count, 255), Jobs = arr };
+                SendEventTo(owner, NetMessagePak.Pack(ReplicationIds.EventCraftQueue, evt.Write));
+            };
             // A metal-in-the-microwave blast goes through the grenade path, so it damages and broadcasts
             // identically rather than being a second explosion that drifts from the first one that gets tuned.
             Cooking.Detonate = (pos, radius, dmg) => Combat.ServerDetonateAt(pos, radius, dmg, Session.CurrentTick);
@@ -317,6 +334,11 @@ namespace UnturnedGodot.Net
                 Profiles.ServerRemove(peer.PlayerId);
                 Profiles.ServerForgetPeer(peer.PlayerId);   // player ids are RECYCLED: a new peer must not inherit "already has these pictures"
                 Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
+                // REFUND BEFORE THE INVENTORY GOES. Ingredients are spent at enqueue, so a player who leaves
+                // mid-craft has already paid for a product they will never receive -- and the refund has to
+                // land while their inventory still exists to receive it. Order matters here, not style.
+                CraftQueue.RefundAll(peer.PlayerId);
+                CraftQueue.Forget(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
@@ -405,6 +427,9 @@ namespace UnturnedGodot.Net
             // tick rather than the next one.
             Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
             Combat.Step(Session.CurrentTick);
+            // TIMED CRAFTING, before the dirty stamp below -- a job that finishes this tick writes into the
+            // inventory, and stamping first would leave that write waiting a whole tick for its baseline.
+            CraftQueue.Step((float)SimClock.FixedDelta);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
             if (NetLog.Enabled) LogRollupIfDue();
@@ -610,6 +635,7 @@ namespace UnturnedGodot.Net
         public event System.Action<ConsoleResultEvent> ConsoleResult;
         public event System.Action<StorageOpenedEvent> StorageOpened;
         public event System.Action<CookerStateEvent> CookerState;   // v29: the open appliance's on-bit + fuel bar
+        public event System.Action<CraftQueueEvent> CraftQueue_;    // v31: the owner's pending craft jobs
         public event System.Action<StorageClosedEvent> StorageClosed;
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
@@ -705,6 +731,7 @@ namespace UnturnedGodot.Net
             Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
             Events.Register<CookerStateEvent>(ReplicationIds.EventCookerState, CookerStateEvent.TryRead, e => CookerState?.Invoke(e));
+            Events.Register<CraftQueueEvent>(ReplicationIds.EventCraftQueue, CraftQueueEvent.TryRead, e => CraftQueue_?.Invoke(e));
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
             Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));

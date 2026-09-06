@@ -266,6 +266,7 @@ namespace UnturnedGodot
             };
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
+                Client.CraftQueue_ += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteServerCraftQueue(e.Jobs); };
             Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
             // SP/MP unify: the server's door/bed decisions land on the nodes. These are the ONLY thing that
             // moves a replicated door or repaints a bed -- the client never applied anything on send, so

@@ -4188,6 +4188,9 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
+        /// <summary>v31: the server's craft queue landed -- hand it to the menu to display. The menu owns the
+        /// distinction between its own queue and a mirrored one; this is only the route.</summary>
+        public void NoteServerCraftQueue((ushort bp, float left, float of)[] jobs) => _craftMenu?.AdoptServerQueue(jobs);
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
         public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)

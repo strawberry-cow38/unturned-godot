@@ -109,6 +109,11 @@ namespace UnturnedGodot.Net
         /// after this object); null (bare L0 harnesses without vehicles) = never seated.</summary>
         public Func<ushort, bool> IsSeated;
 
+        /// <summary>The server-side craft queue. Null on a host that has not wired one, in which case OnCraft
+        /// falls back to crafting instantly -- named with a trailing underscore only because `Crafting` is the
+        /// static rules class this file already leans on, and shadowing it would be worse.</summary>
+        public ServerCrafting Crafting_;
+
         /// <summary>The blueprint catalog the Craft command indexes into. The HOST supplies it (game:
         /// BlueprintRegistry.All; tests: fixtures); both sides must load the same list -- guaranteed by the
         /// same content-hash handshake that guarantees item defs match.</summary>
@@ -779,6 +784,16 @@ namespace UnturnedGodot.Net
             if (bp.RequiresStation || bp.Operation != "Craft") { Diag.CraftsRejected++; return; }
             _skills.TryGet(sender, out var skillsEntry);
             if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return; }
+            // TIMED NOW (master 2026-09-06: "add crafting timed jobs to the server"). This used to be a
+            // straight DoCraft in the same tick, which meant the per-recipe times were enforced by the SP
+            // client and ignored by the authoritative side. ServerCrafting takes the ingredients up front and
+            // pays out when the clock runs down; the instant path stays only as the fallback for a host that
+            // never wired a queue, so a bare test harness still crafts.
+            if (Crafting_ != null)
+            {
+                if (Crafting_.Enqueue(sender, cmd.BlueprintIndex)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
+                return;
+            }
             var adapter = new Crafting.PlayerInvAdapter(SenderInventory(sender));
             if (Crafting.DoCraft(bp, adapter)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
         }
