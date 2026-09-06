@@ -455,9 +455,10 @@ namespace UnturnedGodot
             // default SP/loopback keeps its LOCAL vitals byte-identical.
             if (ConsumeDeployables)
             {
+                Server.HasWater = Terrain.HasWater; Server.SeaLevelY = Terrain.SeaLevelY;   // the server owns oxygen; core cannot see water
                 Server.Vitals.SurvivalDrain = PlayerController.SurvivalDrain;
                 if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
-                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection);
+                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen);
             }
 
             // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model). B5:

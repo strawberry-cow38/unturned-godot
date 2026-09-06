@@ -74,9 +74,13 @@ namespace UnturnedGodot
         // of the two cameras' FOV difference -- and slide the arms so the MIDPOINT of the two hand bones sits on it, then turn the
         // whole arm pair about that point with the wheel. No pose can miss the wheel this way; a vehicle without a wheel model
         // falls back to the skull-on-camera slide.
-        Vector2 _wheelScreen; float _wheelDepth, _wheelSteerDeg; Vector3 _wheelAxisCam; bool _wheelKnown;
+        Vector2 _wheelScreen; float _wheelDepth, _wheelSteerDeg; Vector3 _wheelAxisCam, _wheelCamLocal; bool _wheelKnown, _wheelInFront;
         int _vmLHand = -1, _vmRHand = -1;
-        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg) { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelKnown = depth > 0.05f; }
+        /// <summary>camLocal = the wheel pivot in CAMERA space, valid whether or not it is in front of you;
+        /// inFront says which. The pair matters because looking over your shoulder puts the wheel BEHIND the
+        /// camera, where a screen position does not exist -- see DrivingArmsPos.</summary>
+        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg, Vector3 camLocal, bool inFront)
+        { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelCamLocal = camLocal; _wheelInFront = inFront; _wheelKnown = true; }
         public void ClearDrivingWheel() => _wheelKnown = false;
         Vector3 _wheelTargetCam;   // the wheel pivot in viewmodel-camera space, this frame
         const float WheelHandsDrop = 0.09f;   // how far below the wheel pivot the driving hands sit (master 2026-09-06: they rode too high)
@@ -97,7 +101,22 @@ namespace UnturnedGodot
             if (head.LengthSquared() < 0.01f) return _armsPos;
             if (_wheelKnown && _cam != null && WheelHandsCentre(out var hands))
             {
-                _wheelTargetCam = _cam.ProjectPosition(_wheelScreen + _vpMargin, _wheelDepth);   // same screen spot + depth as the real wheel
+                // THE HANDS STAY ON THE WHEEL EVEN WHEN THE WHEEL IS BEHIND YOU (master 2026-09-06: "stay locked
+                // onto their positions, no matter the look angle, so when looking behind you, the arms dont
+                // suddenly snap back into your view").
+                //
+                // The pin used to switch OFF the moment the wheel left the front of the camera, and the fallback
+                // it dropped to is skull-relative -- placed off the viewmodel camera itself. So looking over your
+                // shoulder did not leave the arms behind, it re-centred them in front of your face. The snap was
+                // the fallback, not the pin.
+                //
+                // In front, the screen-position reprojection stays: it is what keeps the hands aligned with the
+                // real wheel across the two cameras' different FOVs. Behind, a screen position does not exist to
+                // reproject -- so use the wheel's true camera-space spot, which puts the arms behind the
+                // viewmodel camera and off-screen, which is exactly where a wheel behind you should be.
+                _wheelTargetCam = _wheelInFront
+                    ? _cam.ProjectPosition(_wheelScreen + _vpMargin, _wheelDepth)   // same screen spot + depth as the real wheel
+                    : _wheelCamLocal;
                 return _wheelTargetCam - hands - new Vector3(0f, WheelHandsDrop, 0f);   // hands' midpoint ON the wheel pivot, dropped (master 2026-09-06 "lower the viewmodel of the 1p steering wheel hands")
             }
             return -(head + new Vector3(0f, 0.16f, -0.10f));   // same head-base -> eyes offset as PlayerController.SeatedEyeFromSkull

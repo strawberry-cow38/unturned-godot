@@ -43,7 +43,7 @@ namespace UnturnedGodot.Net
 
             // dirty-detection cache: the last QUANTIZED wire values, so an idle/unchanged block costs no
             // owner-block delta (a full-stamina, non-sprinting, uninfected player stamps nothing).
-            float _qF = -1f, _qW = -1f, _qS = -1f, _qI = -1f;
+            float _qF = -1f, _qW = -1f, _qS = -1f, _qI = -1f, _qO = -1f;
             bool _qBl, _qBr, _hasQ;
 
             /// <summary>Bump LastChangedTick only when the QUANTIZED value actually changes. Mirrors the
@@ -51,9 +51,13 @@ namespace UnturnedGodot.Net
             /// acked baseline).</summary>
             public void StampIfChanged(long tick)
             {
-                float f = Q(Sim.Food), w = Q(Sim.Water), s = Q(Sim.Stamina), inf = Q(Sim.Infection);
-                if (_hasQ && f == _qF && w == _qW && s == _qS && inf == _qI && Bleeding == _qBl && Broken == _qBr) return;
-                _qF = f; _qW = w; _qS = s; _qI = inf; _qBl = Bleeding; _qBr = Broken; _hasQ = true;
+                // OXYGEN IS IN HERE, and it is the field most likely to be the ONLY one moving: a diving player
+                // whose food/water/stamina are all pinned changes nothing else, so leaving breath out of this
+                // comparison would mean the delta never goes dirty and the bar never moves on an MP client. The
+                // wire would have been perfect and the value would still never have arrived.
+                float f = Q(Sim.Food), w = Q(Sim.Water), s = Q(Sim.Stamina), inf = Q(Sim.Infection), ox = Q(Sim.Oxygen);
+                if (_hasQ && f == _qF && w == _qW && s == _qS && inf == _qI && ox == _qO && Bleeding == _qBl && Broken == _qBr) return;
+                _qF = f; _qW = w; _qS = s; _qI = inf; _qO = ox; _qBl = Bleeding; _qBr = Broken; _hasQ = true;
                 LastChangedTick = tick + 1;
             }
         }
@@ -93,6 +97,11 @@ namespace UnturnedGodot.Net
         /// VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's Combat.Step.
         /// HP is re-seeded from the single authority, the sim steps, and the delta is routed OUT (never a
         /// direct HealthExact write for DAMAGE). Deterministic order (sorted owners, no RNG).</summary>
+        /// <summary>(playerId) -> is that player's HEAD under water. Supplied by the game layer, which owns the
+        /// terrain and the sea level; core cannot see either. Null = nobody drowns, which is the right default
+        /// for a harness with no world.</summary>
+        public Func<ushort, bool> SubmergedOf;
+
         public void ServerStep(long tick, float dt)
         {
             if (_byOwner.Count == 0) return;
@@ -108,8 +117,17 @@ namespace UnturnedGodot.Net
                 e.Sim.Health = hpBefore;
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
-                e.Sim.Step(sprinting, SurvivalDrain, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain
+                bool submerged = SubmergedOf != null && SubmergedOf(pid);
+                e.Sim.Step(sprinting, submerged, SurvivalDrain, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain
                 float delta = e.Sim.Health - hpBefore;
+                // DROWNING IS NOT A SURVIVAL-TOGGLE MECHANIC. The block below gates HP routing on SurvivalDrain
+                // because hunger/thirst ship off; breath does not, so its share of the delta is routed here and
+                // subtracted back out before that gate sees it.
+                if (e.Sim.LastDrownDamage > 0f)
+                {
+                    DamageSink?.Invoke(pid, e.Sim.LastDrownDamage);
+                    delta += e.Sim.LastDrownDamage;
+                }
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation
                 // is discarded -- next tick re-seeds from the authority.
@@ -157,6 +175,7 @@ namespace UnturnedGodot.Net
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Water), VitalsBits);
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Stamina), VitalsBits);
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Infection), VitalsBits);
+            w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Oxygen), VitalsBits);   // v33: server-owned, like every other vital -- a client that could assert its own breath could not drown
             w.WriteBit(e.Bleeding);
             w.WriteBit(e.Broken);
         }
@@ -170,6 +189,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float water)) return;
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float stamina)) return;
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float infection)) return;
+            if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float oxygen)) return;   // v33
             if (!r.ReadBit(out bool bleeding)) return;
             if (!r.ReadBit(out bool broken)) return;
             if (!_byOwner.TryGetValue(owner, out var e))
@@ -177,7 +197,7 @@ namespace UnturnedGodot.Net
                 e = new VitalsEntry { OwnerPlayerId = owner };
                 _byOwner[owner] = e;
             }
-            e.Sim.Food = food; e.Sim.Water = water; e.Sim.Stamina = stamina; e.Sim.Infection = infection;
+            e.Sim.Food = food; e.Sim.Water = water; e.Sim.Stamina = stamina; e.Sim.Infection = infection; e.Sim.Oxygen = oxygen;
             e.Bleeding = bleeding; e.Broken = broken;
         }
 
@@ -206,6 +226,7 @@ namespace UnturnedGodot.Net
             h = NetHash.MixFloat(h, Q(e.Sim.Water));      // client stores the round-trip, Q is idempotent on it),
             h = NetHash.MixFloat(h, Q(e.Sim.Stamina));    // so StateHashFor == the owner replica's StateHash exactly.
             h = NetHash.MixFloat(h, Q(e.Sim.Infection));
+            h = NetHash.MixFloat(h, Q(e.Sim.Oxygen));     // v33: rides the hash, or breath could diverge invisibly
             h = NetHash.MixByte(h, e.Bleeding ? (byte)1 : (byte)0);
             h = NetHash.MixByte(h, e.Broken ? (byte)1 : (byte)0);
             return h;

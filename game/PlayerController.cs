@@ -323,6 +323,7 @@ namespace UnturnedGodot
         public float Stamina { get => _vitals.Stamina; set => _vitals.Stamina = value; }
         public float Food { get => _vitals.Food; set => _vitals.Food = value; }
         public float Water { get => _vitals.Water; set => _vitals.Water = value; }
+        public float Oxygen { get => _vitals.Oxygen; set => _vitals.Oxygen = value; }
         public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
@@ -3943,13 +3944,18 @@ namespace UnturnedGodot
         /// adopted Stamina to gate sprint, and the server derives `sprinting` from the adopted stance (a few
         /// ticks of lag, like HP adoption). Bleeding/Broken ride the wire but the server has no source yet, so
         /// they are NOT clobbered here (they'd only ever wipe a locally-meaningful flag to false).</summary>
-        public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection)
+        public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection, float oxygen)
         {
             NetFineVitalsAdopted = true;
             Food = Mathf.Clamp(food, 0f, 1f);
             Water = Mathf.Clamp(water, 0f, 1f);
             Stamina = Mathf.Clamp(stamina, 0f, 1f);
             Infection = Mathf.Clamp(infection, 0f, 1f);
+            // OXYGEN HAS TO BE ADOPTED HERE OR IT NEVER ARRIVES. This method is the SOLE writer of the fine
+            // vitals on an MP client -- UpdateVitals early-returns on NetFineVitalsAdopted before the local sim
+            // runs -- so a field the server serialises perfectly and this signature omits sits at its
+            // constructor default forever, and the bar reads full while you drown.
+            Oxygen = Mathf.Clamp(oxygen, 0f, 1f);
         }
 
         // Server-owned death/respawn while adopting: the shell renders the SP death corpse/cam + respawn
@@ -5498,7 +5504,7 @@ namespace UnturnedGodot
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
@@ -7993,8 +7999,14 @@ namespace UnturnedGodot
                     var wheelW = vt * _driving.SteerPivotLocal;
                     var camInv = _cam.GlobalTransform.AffineInverse();
                     var wl = camInv * wheelW;
-                    if (wl.Z < -0.05f) _viewmodel.SetDrivingWheel(_cam.UnprojectPosition(wheelW), -wl.Z, (camInv.Basis * (vt.Basis * _driving.SteerAxisLocal)).Normalized(), _driving.SteerAngleDegrees);
-                    else _viewmodel.ClearDrivingWheel();
+                    // The pin is fed EVERY frame now, including while the wheel is behind the camera. It used to
+                    // be cleared there, which handed the arms to the skull-relative fallback and snapped them
+                    // back in front of your face the instant you looked over your shoulder (master 2026-09-06).
+                    // UnprojectPosition is only meaningful in front, so it is only computed there.
+                    bool inFront = wl.Z < -0.05f;
+                    _viewmodel.SetDrivingWheel(inFront ? _cam.UnprojectPosition(wheelW) : Vector2.Zero, -wl.Z,
+                                               (camInv.Basis * (vt.Basis * _driving.SteerAxisLocal)).Normalized(),
+                                               _driving.SteerAngleDegrees, wl, inFront);
                 }
                 else _viewmodel.ClearDrivingWheel();
                 _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug && !TankOpticsActive);   // no arms over a periscope or a gunsight   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
@@ -8907,10 +8919,9 @@ namespace UnturnedGodot
             bool zNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Prone);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Sprint);
             bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure
-            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance);
-            if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
-            if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
-
+            // The axes are read BEFORE the stance step now: the submerged-ladder gate below needs to know
+            // whether the player is actively climbing OUT of the water, and this block is pure input with no
+            // dependency on the stance it used to sit under.
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
             else if (UiInputBlocked) { forward = 0f; strafe = 0f; }   // menu open -> don't walk through it
@@ -8919,6 +8930,10 @@ namespace UnturnedGodot
                 forward = (Keybinds.Pressed(GameAction.MoveForward) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveBack) ? 1f : 0f);
                 strafe  = (Keybinds.Pressed(GameAction.MoveRight) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveLeft) ? 1f : 0f);
             }
+            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance, forward);
+            if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
+            if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
+
             bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
@@ -9023,6 +9038,11 @@ namespace UnturnedGodot
         public bool EyesUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.75f < Terrain.SeaLevelY;
         /// <summary>The feet probe is under -> in the shallows: wading blocks crouch/prone (PlayerStance _inShallows).</summary>
         bool FeetUnderwater => Terrain.IsPointUnderwater(GlobalPosition.Y);
+        /// <summary>Is the player's HEAD under water -- the question breath actually asks. Deliberately NOT
+        /// BodyUnderwater (the +1.25 m chest probe that starts the swim stance) and deliberately not "is
+        /// swimming": treading water at the surface has your face in the air, and must not drain a breath.
+        /// The eye sits above the chest probe, so you always enter SWIM before you ever start losing air.</summary>
+        public bool HeadUnderwater => Terrain.HasWater && GlobalPosition.Y + EyeHeight < Terrain.SeaLevelY;
         /// <summary>Currently in the SWIM stance (deep enough that the body probe is submerged).</summary>
         public bool IsSwimming => _move.Stance == EPlayerStance.SWIM;
 
@@ -9085,7 +9105,7 @@ namespace UnturnedGodot
             return space.IntersectShape(_leanQ, 1).Count == 0;
         }
 
-        internal float EyeHeight => Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
+        internal float EyeHeight => PlayerMovementDef.EyeHeightForStance(Stance);   // ONE table, shared with the server (see PlayerMovementDef)
         float _eyeHeight = 1.6f;   // the lerped one; EyeHeight is the target
 
         /// <summary>Where the player is actually looking FROM -- source's `player.look.aim.position`. Under the lean
@@ -9330,7 +9350,9 @@ namespace UnturnedGodot
             return clear;
         }
 
-        void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
+        /// <summary>climbInput = this tick's forward axis, so the submerged-ladder gate can tell "climbing out"
+        /// from "floating next to a ladder". Ladder.ClimbVelocity reads the same axis, so +1 is UP either way.</summary>
+        void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance, float climbInput = 0f)
         {
             // ADS WITHHOLDS THE SPRINT STANCE (strawberry: "make ads-ing and sprinting states mutually exclusive").
             // Source does not cancel the aim when you press sprint -- PlayerStance.cs:701 folds
@@ -9347,14 +9369,30 @@ namespace UnturnedGodot
             // stance (NetHoldPose), so only a locally-simulated shell decides here.
             if (!NetAvatar && BodyUnderwater)
             {
-                LadderDetach();
-                _move.Stance = EPlayerStance.SWIM;   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
+                // A LADDER IS AN EXIT, NOT AN UNDERWATER LIFT (master 2026-09-06: "it should be possible to
+                // climb a ladder out of water, but not climb the ladder *under* the water").
+                //
+                // 2026-09-05 made water outrank the ladder outright, which fixed "the ladder state is
+                // overwriting the swimming state" and broke the way out: BodyUnderwater is true until the feet
+                // are within 1.25 m of the surface, so someone treading water at the foot of a ladder could
+                // never grab it. Both readings are right, and the axis that separates them is INTENT.
+                //
+                // Hold forward at a ladder and you attach and go up. Anything else -- idle, backing off, or
+                // pressing down -- lets go and swims, so the rungs are never something you hang from below the
+                // surface and never something you can descend into the water on. Ladder.ClimbVelocity is fed
+                // the same axis, so a gate of "> 0" is exactly "the climb this tick would be upward".
+                if (climbInput > LadderExitInput && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
+                else { LadderDetach(); _move.Stance = EPlayerStance.SWIM; }   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
             }
             else if (!NetAvatar && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
             else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
                 _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
+
+        /// <summary>How much forward input counts as "climbing out" while submerged. Above a dead zone so a
+        /// drifting stick cannot pin a swimmer to a ladder, well under the 1.0 a held key gives.</summary>
+        const float LadderExitInput = 0.1f;
 
         PhysicsShapeQueryParameters3D _ladderFitQ;
         // ARE WE ALREADY ON THE LADDER? Tracked HERE and not read off _move.Stance, which cannot answer it:

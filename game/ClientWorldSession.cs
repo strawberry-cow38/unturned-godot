@@ -357,7 +357,7 @@ namespace UnturnedGodot
             // too -- mirror the SystemVitals(13) owner block into the shell each tick (the AdoptReplicatedVitals
             // analogue), so the HUD bars read server truth and the local PlayerVitalsSim.Step fine mutation is skipped.
             if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
-                Shell.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection);
+                Shell.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen);
             // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
             // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
             // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz

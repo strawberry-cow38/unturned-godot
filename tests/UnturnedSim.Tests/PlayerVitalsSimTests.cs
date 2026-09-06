@@ -95,5 +95,70 @@ namespace UnturnedSim.Tests
             Assert.That(v.Food, Is.EqualTo(1f - 0.0050f * 0.8f).Within(1e-4f), "SURVIVAL slows hunger");
             Assert.That(v.Health, Is.EqualTo(50f + 2f * 2f).Within(1e-3f), "VITALITY doubles regen");
         }
+
+        // ---- oxygen (master 2026-09-06: "depletes when underwater") ------------------------------------
+
+        static PlayerVitalsSim Fresh() => new PlayerVitalsSim { Health = 100f };
+        static void Dive(PlayerVitalsSim v, float seconds, bool submerged = true)
+        {
+            var m = PlayerVitalsSim.Multipliers.None;
+            for (int i = 0; i < (int)(seconds / Dt); i++) v.Step(false, submerged, false, Dt, in m);
+        }
+
+        [Test]
+        public void oxygen_drains_only_while_the_head_is_under()
+        {
+            var v = Fresh();
+            Dive(v, 10f);
+            Assert.That(v.Oxygen, Is.EqualTo(1f - 10f / PlayerVitalsSim.OxygenSeconds).Within(1e-3f));
+            var dry = Fresh();
+            Dive(dry, 10f, submerged: false);
+            Assert.That(dry.Oxygen, Is.EqualTo(1f), "a full breath above water stays full");
+        }
+
+        [Test]
+        public void surfacing_refills_far_faster_than_diving_empties()
+        {
+            var v = Fresh();
+            Dive(v, 15f);
+            float half = v.Oxygen;
+            Assert.That(half, Is.LessThan(0.6f));
+            Dive(v, PlayerVitalsSim.OxygenRefillSeconds + 1f, submerged: false);
+            Assert.That(v.Oxygen, Is.EqualTo(1f).Within(1e-4f), "a surfacing player gets their air back in a gulp");
+        }
+
+        [Test]
+        public void nothing_hurts_until_the_air_is_actually_gone()
+        {
+            // The teeth: if drowning were keyed on "submerged" rather than "out of air", this fails immediately.
+            var v = Fresh();
+            Dive(v, PlayerVitalsSim.OxygenSeconds - 1f);
+            Assert.That(v.Health, Is.EqualTo(100f), "still holding your breath");
+            Assert.That(v.LastDrownDamage, Is.Zero);
+            Dive(v, 3f);
+            Assert.That(v.Oxygen, Is.Zero);
+            Assert.That(v.Health, Is.LessThan(100f), "...and then the water starts taking health");
+            Assert.That(v.LastDrownDamage, Is.GreaterThan(0f), "reported separately for the server's damage routing");
+        }
+
+        [Test]
+        public void drowning_is_not_gated_behind_the_hunger_toggle()
+        {
+            // survivalDrain: false throughout -- hunger ships OFF, and breath must not ship off with it.
+            var v = Fresh();
+            Dive(v, PlayerVitalsSim.OxygenSeconds + 5f);
+            Assert.That(v.Health, Is.LessThan(100f), "you drown whether or not hunger is switched on");
+        }
+
+        [Test]
+        public void a_drowning_player_does_not_regenerate_out_of_it()
+        {
+            // Fed and hydrated and below max HP is exactly the regen branch's condition, so without the
+            // LastDrownDamage guard the two would fight and a well-fed diver would tread water at ~constant HP.
+            var v = new PlayerVitalsSim { Health = 50f, Food = 1f, Water = 1f, Oxygen = 0f };
+            float before = v.Health;
+            Dive(v, 2f);
+            Assert.That(v.Health, Is.LessThan(before), "drowning outranks being well fed");
+        }
     }
 }

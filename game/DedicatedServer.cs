@@ -96,6 +96,9 @@ namespace UnturnedGodot
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
                 activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
+            // Hand the server the sea so it can own oxygen (it validates positions already; it just could not
+            // see water). Read once here rather than per tick -- SeaLevelY does not move during a session.
+            Server.HasWater = Terrain.HasWater; Server.SeaLevelY = Terrain.SeaLevelY;
             Server.Vitals.SurvivalDrain = SurvivalDrain;   // B5: default false = the coarse-HP path is byte-untouched (no starvation, no passive regen)
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");

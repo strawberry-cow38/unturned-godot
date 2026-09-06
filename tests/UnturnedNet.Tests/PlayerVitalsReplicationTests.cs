@@ -32,6 +32,32 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void oxygen_alone_is_enough_to_make_the_block_dirty()
+        {
+            // THE POINT OF THIS TEST is the dirty gate, not the wire. A diving player has food, water and
+            // stamina all pinned -- oxygen is the ONLY field moving -- so if StampIfChanged does not compare
+            // it, LastChangedTick never bumps, the delta is never composed, and the bar never moves on the
+            // client while the serialiser is provably perfect. Hunger stays OFF here precisely so nothing
+            // else can drag the block dirty and hide that.
+            var h = new TransactionalHarness(9077).Connected("a");
+            var a = h.Clients[0];
+            h.Server.Vitals.SurvivalDrain = false;
+            h.Server.Vitals.SubmergedOf = _ => true;   // head under, whatever the harness world looks like
+
+            h.Step(120);
+
+            Assert.That(a.Vitals.TryGet(a.PlayerId, out var mine), Is.True);
+            Assert.That(mine.Sim.Oxygen, Is.LessThan(1f),
+                        $"the owner replica received the breath drain (oxygen {mine.Sim.Oxygen:0.000}, seed={h.Net.Seed})");
+            Assert.That(mine.Sim.Food, Is.EqualTo(1f).Within(1e-4f), "...with nothing else moving to carry it");
+
+            h.Server.Vitals.SubmergedOf = null;   // surface, let the last block land, then demand exact parity
+            h.Step(300);
+            Assert.That(a.Vitals.StateHash(), Is.EqualTo(h.Server.Vitals.StateHashFor(a.PlayerId)),
+                        "oxygen rides the StateHash too -- breath must not be able to diverge invisibly");
+        }
+
+        [Test]
         public void fine_vitals_replicate_to_owner_only()
         {
             var h = new TransactionalHarness(9070).Connected("a", "b");

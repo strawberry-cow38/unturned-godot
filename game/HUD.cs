@@ -133,6 +133,7 @@ namespace UnturnedGodot
             AddVital(lifeBox, 1, "hud_food.png",    CO, () => Player != null ? Player.Food    : 1f);
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
+            AddVital(lifeBox, 4, "hud_oxygen.png",  CB, () => Player != null ? Player.Oxygen  : 1f);   // BOTTOM of the list (master 2026-09-06); blue, like water
             AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? 1f - Player.Infection : 1f, null);   // INFECTION meter: ALWAYS shown, starts FULL (healthy), depletes as infection rises (master)
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown

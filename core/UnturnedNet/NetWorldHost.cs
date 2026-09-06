@@ -21,6 +21,12 @@ namespace UnturnedGodot.Net
     public sealed class NetWorldServer
     {
         public readonly NetServerSession Session;
+
+        /// <summary>The sea, as the two numbers core needs to decide whether a head is under it. Set by the
+        /// game layer at world build (it owns Terrain); left false/0 a headless harness simply never drowns
+        /// anyone, which is the correct behaviour for a world with no water in it.</summary>
+        public bool HasWater;
+        public float SeaLevelY;
         public readonly CommandRegistry Commands = new CommandRegistry();
         public readonly NetIdMinter Ids = new NetIdMinter();
         public readonly PlayerReplication Players = new PlayerReplication();
@@ -228,6 +234,12 @@ namespace UnturnedGodot.Net
             // for the MP shell, or the held MoveInput for a loopback/demo walker) -- no second body. HP-delta
             // routing runs only while SurvivalDrain is on (default OFF = SP byte-identical coarse-HP path).
             Vitals.IsAlive = pid => CombatState.IsAlive(pid);
+            // BREATH. The server owns oxygen like every other vital, so it has to answer "is this head under
+            // water" itself -- off the same adopted position it already validates, and the same per-stance eye
+            // table the shell uses. Core has no terrain, so the game layer hands down the two numbers that
+            // describe the sea and nothing more.
+            Vitals.SubmergedOf = pid => HasWater && PlayerHost.TryGetDrivenState(pid, out var ds)
+                && ds.Pos.y + PlayerMovementDef.EyeHeightForStance(ds.Stance) < SeaLevelY;
             Vitals.SprintingOf = pid =>
                 PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance == EPlayerStance.SPRINT
                 : Players.TryGetHeldInput(pid, out var mi) && mi.Stance == EPlayerStance.SPRINT;
