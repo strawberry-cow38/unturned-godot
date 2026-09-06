@@ -113,19 +113,39 @@ namespace SDG.Unturned
         public static bool IsCooked(byte cooked) => cooked >= CookedFrom && cooked <= CookedTo;
         public static bool IsBurnt(byte cooked) => cooked >= BurntFrom;
 
-        /// <summary>What the inventory shows in front of the item's name. Empty for raw AND for plain-cooked
-        /// food, because strawberry asked for "average (no label)" -- a label on everything is a label on
-        /// nothing.</summary>
+        /// <summary>Items whose cooked form has its OWN name rather than a prefix. Cooked bread is toast
+        /// (strawberry 2026-09-06: "cooked bread -> toast") -- "Cooked Bread" is a description of toast, not
+        /// the word for it. A table rather than a special case so the next one is an entry, and deliberately
+        /// only applied to a PLAIN cook: a microwaved slice is microwaved bread, not microwaved toast.</summary>
+        static readonly Dictionary<ushort, string> CookedNames = new()
+        {
+            [460] = "Toast",   // Bread
+        };
+
+        /// <summary>The word in front of the item's name. strawberry 2026-09-06: "just raw/uncooked, cooked:
+        /// cooked quality and burnt" -- so the STATE always shows on food, while the QUALITY still adds nothing
+        /// of its own when it is average (her original "average (no label)"). Cooked + average reads "Cooked";
+        /// cooked + microwaved reads "Microwaved", which is the quality doing the talking.</summary>
         public static string Label(byte cooked, ECookStyle style)
         {
             if (IsBurnt(cooked)) return "Burnt";
-            if (!IsCooked(cooked)) return "";
+            if (!IsCooked(cooked)) return "Raw";
             return style switch
             {
                 ECookStyle.Microwaved => "Microwaved",
                 ECookStyle.CharcoalGrilled => "Charcoal Grilled",
                 _ => "Cooked",
             };
+        }
+
+        /// <summary>The full name to show for a food item in its current state. Non-food never gets a state
+        /// word -- "Raw Bandage" is nonsense and would put a label on the 1900 items this will never touch.</summary>
+        public static string DisplayName(string itemName, ushort id, byte cooked, ECookStyle style, bool isFood)
+        {
+            if (!isFood) return itemName;
+            if (IsCooked(cooked) && style == ECookStyle.Plain && CookedNames.TryGetValue(id, out var own)) return own;
+            string label = Label(cooked, style);
+            return label.Length > 0 ? $"{label} {itemName}" : itemName;
         }
 
         /// <summary>Advance one item by `dt` seconds in this appliance. Returns the new cooked value; the

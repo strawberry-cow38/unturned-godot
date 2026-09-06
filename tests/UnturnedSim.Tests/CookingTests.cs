@@ -83,14 +83,42 @@ namespace UnturnedSim.Tests
             Assert.That(Cooking.StyleOf(ECookerKind.Oven), Is.EqualTo(ECookStyle.Plain));
             Assert.That(Cooking.StyleOf(ECookerKind.Toaster), Is.EqualTo(ECookStyle.Plain));
 
-            // "average (no label)" -- raw food and plainly-cooked food both show nothing. A label on
-            // everything is a label on nothing.
-            Assert.That(Cooking.Label(0, ECookStyle.Plain), Is.Empty, "raw shows nothing");
+            // strawberry 2026-09-06: "just raw/uncooked, cooked:cooked quality and burnt". The STATE always
+            // shows on food; the QUALITY is what varies the cooked word, and average still contributes no word
+            // of its own -- "Cooked" IS the average case.
+            Assert.That(Cooking.Label(0, ECookStyle.Plain), Is.EqualTo("Raw"));
             Assert.That(Cooking.Label(95, ECookStyle.Plain), Is.EqualTo("Cooked"));
             Assert.That(Cooking.Label(95, ECookStyle.Microwaved), Is.EqualTo("Microwaved"));
             Assert.That(Cooking.Label(95, ECookStyle.CharcoalGrilled), Is.EqualTo("Charcoal Grilled"));
             Assert.That(Cooking.Label(140, ECookStyle.CharcoalGrilled), Is.EqualTo("Burnt"),
                         "burnt outranks the style -- charcoal grilled charcoal is still charcoal");
+        }
+
+        [Test]
+        public void cooked_bread_is_toast_and_nothing_else_is_renamed()
+        {
+            // strawberry 2026-09-06: "cooked bread -> toast". A whole new NAME, not a prefix -- "Cooked Bread"
+            // is a description of toast rather than the word for it.
+            Assert.That(Cooking.DisplayName("Bread", 460, 95, ECookStyle.Plain, isFood: true), Is.EqualTo("Toast"));
+            Assert.That(Cooking.DisplayName("Bread", 460, 0, ECookStyle.Plain, isFood: true), Is.EqualTo("Raw Bread"));
+            Assert.That(Cooking.DisplayName("Bread", 460, 140, ECookStyle.Plain, isFood: true), Is.EqualTo("Burnt Bread"),
+                        "burnt bread is burnt bread, not burnt toast");
+            // Only a PLAIN cook earns the name: a slice out of a microwave is microwaved bread, and calling it
+            // "Microwaved Toast" would be the rename fighting the quality label instead of yielding to it.
+            Assert.That(Cooking.DisplayName("Bread", 460, 95, ECookStyle.Microwaved, isFood: true),
+                        Is.EqualTo("Microwaved Bread"));
+            // Nothing else has an override, so everything else takes the prefix.
+            Assert.That(Cooking.DisplayName("Canned Beans", 13, 95, ECookStyle.Plain, isFood: true),
+                        Is.EqualTo("Cooked Canned Beans"));
+        }
+
+        [Test]
+        public void a_non_food_item_never_gets_a_state_word()
+        {
+            // "Raw Bandage" is nonsense, and without this the state word lands on all ~1900 items in the
+            // catalog the moment the label became unconditional for raw.
+            Assert.That(Cooking.DisplayName("Bandage", 95, 0, ECookStyle.Plain, isFood: false), Is.EqualTo("Bandage"));
+            Assert.That(Cooking.DisplayName("Metal Scrap", 67, 0, ECookStyle.Plain, isFood: false), Is.EqualTo("Metal Scrap"));
         }
 
         [Test]

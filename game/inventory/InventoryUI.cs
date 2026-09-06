@@ -1320,17 +1320,16 @@ void fragment() {
             // what "average (no label)" asks for -- a label on every steak is a label on nothing. So the name
             // reads "Bread" raw, "Cooked Bread" out of a toaster, "Charcoal Grilled Beef" off a grill, and
             // "Burnt Beef" if you walked away.
-            string cookLabel = Cooking.Label(jar.item?.cooked ?? 0, (ECookStyle)(jar.item?.cookStyle ?? 0));
-            var name = new Label { Text = cookLabel.Length > 0 ? $"{cookLabel} {asset.itemName}" : asset.itemName,
-                                   Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
+            string shownName = Cooking.DisplayName(asset.itemName, asset.id, jar.item?.cooked ?? 0,
+                                                   (ECookStyle)(jar.item?.cookStyle ?? 0), asset.type == EItemType.FOOD);
+            var name = new Label { Text = shownName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
             name.AddThemeColorOverride("font_color", rar);
             name.AddThemeFontSizeOverride("font_size", UITheme.FontTitle);
             panel.AddChild(name);
-            // The raw number too, not just the band: "83% cooked" tells you to put it back in, where a bare
-            // "raw" does not say whether that means five more seconds or thirty. Only shown once something has
-            // actually started cooking, so nothing changes for the 1900 items this will never apply to.
-            string cookInfo = (jar.item?.cooked ?? 0) > 0 ? $"  ·  {jar.item.cooked}% cooked" : "";
-            var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}{cookInfo}",
+            // NO PERCENTAGE (strawberry 2026-09-06: "dont show the %, just raw/uncooked, cooked:cooked quality
+            // and burnt"). The state word on the name line is the whole readout -- a number invites you to
+            // stand and watch a progress bar, which is not what a stove is for.
+            var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}",
                                    Position = new Vector2(228, 46), Size = new Vector2(258, 20) };
             info.AddThemeColorOverride("font_color", rar.Lerp(UITheme.TextDim, 0.5f));
             info.AddThemeFontSizeOverride("font_size", UITheme.FontLabel);
