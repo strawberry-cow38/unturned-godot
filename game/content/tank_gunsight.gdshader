@@ -11,7 +11,11 @@ void fragment() {
     if (r >= 1.0) { COLOR = vec4(0.0, 0.0, 0.0, 1.0); }
     else {
         vec4 t = texture(reticle, p * 0.5 + 0.5);
+        // The png's transparent texels are pure WHITE (255,255,255,0), so the bilinear filter bleeds white into every
+        // mark's edge -- a white crust round the reticle (master 2026-09-06). Weight the colour by its own alpha: the
+        // marks are black, so their edges go dark instead of chalky.
+        vec3 mark = t.rgb * t.a;
         float rim = smoothstep(0.975, 1.0, r);   // a soft housing edge
-        COLOR = vec4(t.rgb * (1.0 - rim), max(t.a, rim));
+        COLOR = vec4(mark * (1.0 - rim), max(t.a, rim));
     }
 }

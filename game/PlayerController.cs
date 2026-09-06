@@ -5916,8 +5916,12 @@ namespace UnturnedGodot
                     // the camera facing forward again and the turret pinned at -120 deg, firing 120 deg away from
                     // the crosshair (TryTurretFire deliberately shoots along the barrel, not the look ray).
                     // Recovering needed ~240 deg of mouse travel before the gun moved at all. Review 2026-08-16.
-                    _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * MouseSensitivity, -180f, 180f);
-                    _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
+                    // Through the gunsight the view is magnified 4-12x but the mouse was still moving it at 1x, so a nudge
+                    // swept the whole eyepiece (master 2026-09-06 "the turret gunner's scope sensitivity is wayyy too high").
+                    // Same rule as a scoped rifle's ADS: sensitivity falls as 1/zoom.
+                    float rideSens = MouseSensitivity * (GunsightActive ? 1f / GunsightZooms[_gunsightZoomIdx] : 1f);
+                    _rideLookYaw = Mathf.Wrap(_rideLookYaw - mm.Relative.X * rideSens, -180f, 180f);
+                    _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * rideSens, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
 
                     // RETAIL SEATED LOOK LIMITS (PlayerLook.clampYaw / clampPitch), read from the source rather
                     // than guessed. Retail stores pitch as 0..180 with 90 level and clamps a seated player to
@@ -6795,7 +6799,11 @@ namespace UnturnedGodot
             var t = OperatedTurret;
             if (t == null) return;   // no mount in the selected slot right now (the gunner has them): keep the SELECTION, it comes back with the mounts -- resetting it here handed the driver the cannon after they had picked the HMG
             if (!t.CrosshairAim) { _driving.AimTurret(_seatIndex, _rideLookYaw, _rideLookPitch, 0f, _turretSlot); HeldFireTick(); return; }
-            bool hold = !t.HoldToAim || _seatIndex != 0 || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));   // the GUNNER lays continuously (the sight IS the crosshair, RMB is his zoom); only the driver holds RMB
+            // The DRIVER lays the gun continuously too while nobody sits in the gunner's seat -- the mounts are theirs then
+            // (TurretIndexFor's fallback), and holding RMB to earn every shot was the rule from when a gunner might take
+            // over mid-lay (master 2026-09-06 "allow the driver to shoot without aiming as long as they are the one in control").
+            bool driverInControl = _seatIndex == 0 && t.DriverFallback && _driving.SeatFree(t.Seat);
+            bool hold = !t.HoldToAim || _seatIndex != 0 || driverInControl || DebugCannonAim || (!NetAvatar && !UiInputBlocked && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim));   // the GUNNER lays continuously (the sight IS the crosshair, RMB is his zoom); only the driver holds RMB
             if (!hold) return;
             _cannonAimPoint = DebugCannonAim ? DebugCannonAimPoint : CrosshairPoint();
             _cannonAiming = true;

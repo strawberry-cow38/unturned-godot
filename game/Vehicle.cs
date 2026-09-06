@@ -94,6 +94,8 @@ namespace UnturnedGodot
         // and the driver's visor lifted over his window. Peeled out of their meshes by BuildTankExtras and hinged, so they
         // can close: the visor is up while somebody sits in the driver's seat, the lid while the gunner has his head out.
         Node3D _turretHatch, _driverHatch; float _turretHatchDeg, _driverHatchDeg;   // current hinge angles (0 = as modelled = open)
+        float _turretHatchT = 1f, _driverHatchT = 1f;   // swing phase 0 = closed .. 1 = open, run through the container door's easing (TankHatchSwing)
+        CollisionShape3D _turretCol, _barrelCol;        // the turret's and the barrel's collision, re-posed every physics tick to the pivots (see UpdateTurretCollision)
         /// <summary>The gunner is standing in the open hatch (Ctrl toggles; PlayerController). Cleared when seat 1 empties.</summary>
         public bool GunnerHeadOut;
         public bool HasTurretHatch => _turretHatch != null;
@@ -115,22 +117,39 @@ namespace UnturnedGodot
         void UpdateHatches(float dt)
         {
             if (SeatFree(1)) GunnerHeadOut = false;
-            float rate = 120f * dt;
             _gunnerRise = Mathf.MoveToward(_gunnerRise, GunnerHeadOut && !SeatFree(1) ? 1f : 0f, 3f * dt);   // the gunner stands up / drops down over a third of a second
+            // WHICH WAY (master 2026-09-06): a hatch is OPEN while nobody is inside and stays open after they leave; it shuts when
+            // someone is buttoned up behind it -- the visor while the driver's seat is taken, the lid while the gunner sits with
+            // his head in. Both swing with the container door's easing over TankHatchSwingSeconds, not a constant rate.
+            float step = dt / TankHatchSwingSeconds;
             if (_turretHatch != null)
             {
-                float target = GunnerHeadOut && !SeatFree(1) ? 0f : TankTopHatchClosedDeg;
-                _turretHatchDeg = Mathf.MoveToward(_turretHatchDeg, target, rate);
+                bool open = SeatFree(1) || GunnerHeadOut;
+                _turretHatchT = Mathf.MoveToward(_turretHatchT, open ? 1f : 0f, step);
+                float k = TankHatchSwing(_turretHatchT, open); if (!open) k = Mathf.Clamp(k, 0f, 1f);   // the clip's overshoot may swing PAST open (harmless), never past shut (the roof)
+                _turretHatchDeg = Mathf.Lerp(TankTopHatchClosedDeg, 0f, k);
                 _turretHatch.RotationDegrees = new Vector3(_turretHatchDeg, 0f, 0f);
             }
             if (_driverHatch != null)
             {
-                float target = SeatFree(0) ? TankDriverHatchClosedDeg : 0f;
-                _driverHatchDeg = Mathf.MoveToward(_driverHatchDeg, target, rate);
+                bool open = SeatFree(0);
+                _driverHatchT = Mathf.MoveToward(_driverHatchT, open ? 1f : 0f, step);
+                float k = TankHatchSwing(_driverHatchT, open); if (!open) k = Mathf.Clamp(k, 0f, 1f);   // past open is fine, past shut is inside the glacis
+                float openness = Mathf.Clamp(k, 0f, 1f);   // the lift/slide below must not overshoot with the curve
+                _driverHatchDeg = Mathf.Lerp(TankDriverHatchClosedDeg, 0f, k);
                 _driverHatch.RotationDegrees = new Vector3(_driverHatchDeg, 0f, 0f);
-                float closing = _driverHatchDeg / TankDriverHatchClosedDeg;   // 0 open .. 1 closed
+                float closing = 1f - openness;   // 0 open .. 1 closed
                 _driverHatch.Position = TankDriverHatchHinge + Vector3.Up * (TankDriverHatchLift * closing) + TankGlacisDown * (TankDriverHatchSlide * closing);   // rides up out of the recess and down the slope as it closes (TankDriverHatchLift / Slide)
             }
+        }
+        /// <summary>Re-pose the turret/barrel collision boxes from the pivots (they are direct children of the body, so they cannot
+        /// ride the pivots themselves). Turret frame = the yaw node's local transform; barrel frame = yaw x pitch.</summary>
+        void UpdateTurretCollision()
+        {
+            if (_turretCol == null || TurretPivot == null || _turretYaw == null || _turretPitch == null || _turretPitch.Length == 0 || _turretPitch[0] == null) return;
+            var yaw = _turretYaw[0] != null ? _turretYaw[0].Transform : TurretPivot.Transform;
+            _turretCol.Transform = yaw * new Transform3D(Basis.Identity, TankTurretColCenter);
+            _barrelCol.Transform = yaw * _turretPitch[0].Transform * new Transform3D(Basis.Identity, TankBarrelColCenter);
         }
         MeshInstance3D _bladesMesh, _discMesh, _tailBladesMesh, _tailDiscMesh;   // the two drawn states per rotor
         const float DiscSwapSpool = 0.35f;   // RETIRED: the blur-plate swap threshold. Kept as the record of what the
@@ -1363,7 +1382,12 @@ namespace UnturnedGodot
         {
             var t = Turrets[i];
             float y = t.YawFree ? Mathf.Wrap(yawDeg, -180f, 180f) : Mathf.Clamp(yawDeg, t.YawMin, t.YawMax);
-            float p = Mathf.Clamp(pitchDeg, t.PitchMin, t.PitchMax);
+            // Over the ENGINE DECK the gun cannot dip quite as far: the main gun's depression is trimmed 5 % while the turret
+            // faces the rear 90 deg (master 2026-09-06 "reduce the amount the turret can look down by like 5% when facing the
+            // rear 90 degrees of turret rotation"). Only the ring's own mount (the cannon); a mount riding it (the HMG) is not.
+            float pitchMin = t.PitchMin;
+            if (i == 0 && _turretHatch != null && Mathf.Abs(Mathf.Wrap(y, -180f, 180f)) >= 135f) pitchMin *= RearArcDepressionScale;
+            float p = Mathf.Clamp(pitchDeg, pitchMin, t.PitchMax);
             if (delta > 0f)
             {
                 if (t.YawRate > 0f && _turretYaw[i] != null)
@@ -2514,7 +2538,7 @@ namespace UnturnedGodot
             ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
-            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(-0.471f, 2.348f, 1.421f) },   // tank: driver from the root Seats; the GUNNER is the turret's Seats/Seat_1 -- Yaw (0,0,-0.85) + Seats (0,2.8,2.0) + Seat_1 (-0.471,-0.452,-2.571), Z-negated. The root's own Seat_1 is a (0,0,0) placeholder and had the gunner sitting in the hull floor.
+            ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.44f, 2.0f, 1.45f) },   // gunner: the hatch shaft under the turret's top hatch (TankGunnerSeatDown + the yaw pivot's 0.85), where SeatBodyLocal actually sits him -- the extracted Seat_1 (-0.471, 2.348, 1.421) put the door/entry spot a metre off (master 2026-09-06 "move the turret gunners get-into-seat position to the actual spot in the turret they sit")   // tank: driver from the root Seats; the GUNNER is the turret's Seats/Seat_1 -- Yaw (0,0,-0.85) + Seats (0,2.8,2.0) + Seat_1 (-0.471,-0.452,-2.571), Z-negated. The root's own Seat_1 is a (0,0,0) placeholder and had the gunner sitting in the hull floor.
             // OTTER was never actually in this table (the comment above describing its Z-negation fix documented a
             // finding that never got wired in) -- it fell through to SeatOf's jeep-shaped default, a car seat height
             // inside a floatplane cockpit. Verbatim retail Seat_0/Seat_1 (tools/vehicle_seats.json): tandem, both X=0.
@@ -3354,7 +3378,10 @@ namespace UnturnedGodot
                 YawMesh = null, PitchMesh = null,                // the meshes come out of tank_turret.txt (TankMgBox / TankMgBarrel zones), not from files
                 Pivot = new Vector3(-0.62f, 3.75f, -1.30f),      // turret-frame: the box's centre in plan, at the barrel's axis height
                 Muzzle = new Vector3(-0.14f, 0f, -2.40f),        // the barrel tip (-0.76, 3.75, -3.70) relative to that pivot
-                YawFree = true, PitchMin = -10f, PitchMax = 45f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun; +45 keeps the barrel root inside the box face
+                // NOT a free ring any more: the gunner's hatch is 1.06 m right / 1.9 m behind the gun (yaw -151 deg from forward), and a
+                // free HMG could be laid straight through his head (master 2026-09-06 "limit the HMG's angles to prevent shooting the
+                // turret gunner in the face"). The traverse stops 35 deg short of him on either side: -116 .. +170.
+                YawFree = false, YawMin = -116f, YawMax = 170f, PitchMin = -10f, PitchMax = 45f, YawRate = 0f, PitchRate = 0f,   // snaps to the crosshair like a held gun; +45 keeps the barrel root inside the box face
                 GunId = "hmg", DisplayName = "HMG", Cycle = 0.14f, Belt = 400,        // HMG.dat Firerate 7 ticks at 50 Hz; a long belt, there is no reload path for a mount yet
             },
         };
@@ -3369,8 +3396,14 @@ namespace UnturnedGodot
         /// tris sit wholly inside this zone; the roof and the shaft below the opening (x -0.2..1.08, z -0.14..1.33, down to
         /// y 2.40 -- the opening master could not see because the LOD1 turret mesh was drawn over it) straddle and stay.</summary>
         static readonly (Vector3 min, Vector3 max) TankTopHatch = (new Vector3(-0.25f, 3.20f, 1.05f), new Vector3(1.12f, 4.80f, 1.65f));
-        static readonly Vector3 TankTopHatchHinge = new Vector3(0.44f, 3.44f, 1.33f);   // turret frame: ROOF level at the opening's rear edge. The plate's own foot is 0.2 m above the roof (its hinge wedge reaches down to 3.26), and hinging there left the closed lid floating 0.2 m over the hole (master: "the hatch doesnt fully close")
-        const float TankTopHatchClosedDeg = -97f;   // about +X: forward and down; with the roof-level hinge the 0.25 m plate lies along the roof (foot end 6 cm sunk, far end 4 cm proud)
+        // The lid is a 0.25 m thick HEXAGONAL plate (12 verts), the same hexagon as the roof hole (rear point (0.44, 1.33), sides x
+        // -0.197/1.077 at z 0.226 and 0.962, front point (0.44, -0.142)), modelled standing in the hole's rear notch and leaning back
+        // 10 deg. Closing it is a -100 deg swing about THIS point (solved 2026-09-06 from the plate's own vertices): every one of its
+        // twelve corners lands on the hole's outline, its underside on the roof (y 3.438), its top 0.25 above -- master 2026-09-06
+        // "the top hatch isnt perfectly aligned with the holes its meant to cover" (the old roof-edge hinge + -97 left it 0.18 m
+        // rearward, 5 cm proud at one end and 20 cm sunk at the other).
+        static readonly Vector3 TankTopHatchHinge = new Vector3(0.44f, 3.465f, 1.156f);   // turret frame: ROOF level at the opening's rear edge. The plate's own foot is 0.2 m above the roof (its hinge wedge reaches down to 3.26), and hinging there left the closed lid floating 0.2 m over the hole (master: "the hatch doesnt fully close")
+        const float TankTopHatchClosedDeg = -100f;   // about +X: forward and down; the plate's 10 deg lean-back plus a right angle = flat on the roof (see TankTopHatchHinge)
         /// <summary>The driver's VISOR on the glacis: a 1.7 m plate (x +/-0.85) over the window opening (x +/-0.75, y 1.61..1.94,
         /// z -4.09..-3.17), modelled lifted -- its front edge at y 2.04..2.09 (z -3.88) stands 0.35 m off the glacis and its
         /// rear edge (y 1.86..1.90, z -3.40) sits on it, so the rear edge is the hinge. 10 tris, none straddling.</summary>
@@ -3399,9 +3432,71 @@ namespace UnturnedGodot
         /// floor y 2.40), low enough buttoned up that the head stays under the roof, and risen TankGunnerRise with the lid open
         /// so the torso stands out of the hatch (master: "should be in that little carved hole ... they should pop up/down").</summary>
         static readonly Vector3 TankGunnerSeatDown = new Vector3(0.44f, 2.0f, 0.60f);   // 2.15 left the crown of the seated head poking through the closed lid
+        const float RearArcDepressionScale = 0.95f;   // main gun depression over the rear 90 deg of traverse (see SetTurretAngles)
+        /// <summary>The turret's and the barrel's collision (master 2026-09-06 "give collision to the turret/barrel/etc"): a box
+        /// round the turret body (measured off tank_turret.txt minus the peeled lid/gun box: x +/-1.86, y 2.05..3.30, z -2.41..
+        /// 1.86, turret frame) and one along the gun (tank_gun.txt: 0.25 m square, z -5.16..0.50, pitch frame). CollisionShape3D
+        /// must be a DIRECT child of the body, so they cannot hang on the pivots -- UpdateTurretCollision re-poses them from the
+        /// pivots' transforms every physics tick instead.</summary>
+        static readonly Vector3 TankTurretColSize = new Vector3(3.72f, 1.25f, 4.27f), TankTurretColCenter = new Vector3(0f, 2.675f, -0.275f);
+        static readonly Vector3 TankBarrelColSize = new Vector3(0.5f, 0.5f, 5.66f), TankBarrelColCenter = new Vector3(0f, 0f, -2.33f);
+        /// <summary>The container door's swing, borrowed for both hatches (master 2026-09-06 "animate it with the same swing-open
+        /// animation as some smart containers"): the retail Fridge_0 door clip's easing (door_curves, via WorldBuilder.LoadDoorCurve),
+        /// its own overshoot and settle, over the same 0.8 s. Null (no curve on disk) falls back to a smoothstep, like ObjectDoor.</summary>
+        static System.Collections.Generic.List<Vector2> _hatchOpenCurve, _hatchCloseCurve; static bool _hatchCurvesLoaded;
+        const float TankHatchSwingSeconds = 0.8f;
+        static float TankHatchSwing(float phase, bool opening)
+        {
+            if (!_hatchCurvesLoaded)
+            {
+                _hatchCurvesLoaded = true;
+                string dir = ProjectSettings.GlobalizePath("res://content/objects/");   // the curves live beside the prop catalog (content/objects/door_curves/)
+                _hatchOpenCurve = WorldBuilder.LoadDoorCurve(dir, "Fridge_0", "open");
+                _hatchCloseCurve = WorldBuilder.LoadDoorCurve(dir, "Fridge_0", "close");
+            }
+            var curve = opening ? _hatchOpenCurve : _hatchCloseCurve;
+            float at = opening ? phase : 1f - phase;   // the close curve runs from "just started closing" (phase 1) to shut (phase 0), like ObjectDoor.SampleEasing
+            float frac;
+            if (curve == null || curve.Count == 0) frac = at * at * (3f - 2f * at);
+            else if (at <= curve[0].X) frac = curve[0].Y;
+            else if (at >= curve[^1].X) frac = curve[^1].Y;
+            else
+            {
+                frac = curve[^1].Y;
+                for (int k = 0; k < curve.Count - 1; k++)
+                    if (at >= curve[k].X && at <= curve[k + 1].X) { float span = curve[k + 1].X - curve[k].X; frac = Mathf.Lerp(curve[k].Y, curve[k + 1].Y, span > 1e-6f ? (at - curve[k].X) / span : 0f); break; }
+            }
+            return frac;   // BOTH curves' Y is how OPEN the door is (open: 0 -> 1, close: 1 -> 0 -- Fridge_0_close.txt starts at 1.0), so it is the openness as-is; it may overshoot a hair
+        }
         const float TankGunnerRise = 0.7f;
         float _gunnerRise;   // 0 = down, 1 = up; eased in UpdateHatches
         public static Vehicle BuildTank(int variant = 0) => Build(_tank, variant, "tank");
+
+        /// <summary>A quad (a-b-c-d) wound BOTH ways, carrying the UV + vertex colour of the nearest vertex of <paramref name="src"/>
+        /// to each corner so it paints like the mesh it patches (the body shader reads them for the palette).</summary>
+        static ArrayMesh CapFace(Mesh src, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            if (src == null || src.GetSurfaceCount() == 0) return null;
+            var arrays = src.SurfaceGetArrays(0);
+            var verts = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var uvV = arrays[(int)Mesh.ArrayType.TexUV]; var colV = arrays[(int)Mesh.ArrayType.Color];
+            var uvs = uvV.VariantType != Variant.Type.Nil ? uvV.AsVector2Array() : null;
+            var cols = colV.VariantType != Variant.Type.Nil ? colV.AsColorArray() : null;
+            (Vector2 uv, Color col) Nearest(Vector3 p)
+            {
+                int best = 0; float bd = float.MaxValue;
+                for (int i = 0; i < verts.Length; i++) { float dd = verts[i].DistanceSquaredTo(p); if (dd < bd) { bd = dd; best = i; } }
+                return (uvs != null && best < uvs.Length ? uvs[best] : Vector2.Zero, cols != null && best < cols.Length ? cols[best] : Colors.White);
+            }
+            var st = new SurfaceTool(); st.Begin(Mesh.PrimitiveType.Triangles);
+            Vector3 n = (b - a).Cross(d - a).Normalized();
+            void Tri(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 nn)
+            {
+                foreach (var p in new[] { p0, p1, p2 }) { var (uv, col) = Nearest(p); st.SetNormal(nn); st.SetUV(uv); st.SetColor(col); st.AddVertex(p); }
+            }
+            Tri(a, b, c, n); Tri(a, c, d, n); Tri(a, c, b, -n); Tri(a, d, c, -n);
+            return st.Commit();
+        }
 
         /// <summary>Tank-only meshes on top of the shared Build (hull/wheels/seats/collision): the palette-painted
         /// crawler treads (a static overlay on the hull), the rotating turret on its yaw pivot, and the elevating
@@ -3448,14 +3543,21 @@ namespace UnturnedGodot
                     // THE TOP HATCH LID, hinged at its bottom edge; it starts closed (nobody aboard) and UpdateHatches swings it
                     if (lid != null)
                     {
-                        v._turretHatch = new Node3D { Name = "TurretHatch", Position = TankTopHatchHinge, RotationDegrees = new Vector3(TankTopHatchClosedDeg, 0f, 0f) };
-                        v._turretHatchDeg = TankTopHatchClosedDeg;
+                        v._turretHatch = new Node3D { Name = "TurretHatch", Position = TankTopHatchHinge };   // as modelled = OPEN: nobody aboard (master 2026-09-06 "keep the top hatch open if unoccupied")
+                        v._turretHatchDeg = 0f; v._turretHatchT = 1f;
                         v._turretHatch.AddChild(new MeshInstance3D { Name = "tank_top_hatch", Mesh = lid, MaterialOverride = bodyMat, Position = -TankTopHatchHinge });
                         v.TurretPivot.AddChild(v._turretHatch);
                     }
                     GD.Print($"[tank] turret peeled: gun box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, lid {(lid != null ? "ok" : "MISSING")}, rest {(rest != null ? "ok" : "MISSING")}");
                 }
                 if (!mounted) v.AddChild(v.TurretPivot);
+                if (mounted && v._turretHatch != null)   // the turret and the gun COLLIDE (master 2026-09-06): direct children of the body, posed to the pivots each tick
+                {
+                    v._turretCol = new CollisionShape3D { Name = "TurretCol", Shape = new BoxShape3D { Size = TankTurretColSize } };
+                    v._barrelCol = new CollisionShape3D { Name = "BarrelCol", Shape = new BoxShape3D { Size = TankBarrelColSize } };
+                    v.AddChild(v._turretCol); v.AddChild(v._barrelCol);
+                    v.UpdateTurretCollision();
+                }
                 // THE DRIVER'S VISOR, peeled off the hull and hinged at its rear edge: closed until somebody takes the seat
                 // (master 2026-09-05 "i want the front hatch hinged, open/closed" -- reinstated after a mis-aimed revert).
                 if (mounted && v._bodyMesh != null && s.Body == "tank_hull.txt")
@@ -3464,9 +3566,17 @@ namespace UnturnedGodot
                     if (hullRest != null && visor != null)
                     {
                         v._bodyMesh.Mesh = hullRest;
-                        v._driverHatch = new Node3D { Name = "DriverHatch", Position = TankDriverHatchHinge, RotationDegrees = new Vector3(TankDriverHatchClosedDeg, 0f, 0f) };
-                        v._driverHatchDeg = TankDriverHatchClosedDeg;
-                        v._driverHatch.AddChild(new MeshInstance3D { Name = "tank_driver_hatch", Mesh = visor, MaterialOverride = bodyMat, Position = -TankDriverHatchHinge });
+                        v._driverHatch = new Node3D { Name = "DriverHatch", Position = TankDriverHatchHinge };   // as modelled = OPEN: the seat is empty (master 2026-09-06 "closed when theres someone inside, and open when unoccupied")
+                        v._driverHatchDeg = 0f; v._driverHatchT = 1f;
+                        // The plate is 2 % longer down its slope (master 2026-09-06 "extend the bottom of the front hatch by like 2%"): scaled about the
+                        // hinge (this child's origin), in the plate's own plane (Y/Z), so the hinge edge stays put and the free edge reaches 1 cm further.
+                        v._driverHatch.AddChild(new MeshInstance3D { Name = "tank_driver_hatch", Mesh = visor, MaterialOverride = bodyMat, Position = -TankDriverHatchHinge, Scale = new Vector3(1f, 1.02f, 1.02f) });
+                        // THE MISSING FACE (master 2026-09-06 "the top face (where the hatch used to connect to the tank body) is missing a
+                        // face"): the plate is 5 faces / 10 tris -- top, underside, both sides and the front lip; the modeller never closed
+                        // the HINGE end because the hull hid it. Swung shut, that end is the top of the plate and you looked into the slab.
+                        // Cap it with the plate's own rear-edge corners (both windings, so cull mode cannot hide it), its own UV/paint.
+                        var cap = CapFace(visor, new Vector3(-0.849f, 1.903f, -3.390f), new Vector3(0.849f, 1.903f, -3.390f), new Vector3(0.849f, 1.856f, -3.408f), new Vector3(-0.849f, 1.856f, -3.408f));
+                        if (cap != null) v._driverHatch.AddChild(new MeshInstance3D { Name = "tank_driver_hatch_cap", Mesh = cap, MaterialOverride = bodyMat, Position = -TankDriverHatchHinge, Scale = new Vector3(1f, 1.02f, 1.02f) });
                         v.AddChild(v._driverHatch);
                     }
                     else GD.Print("[tank] driver visor NOT peeled (zone matched nothing)");
@@ -8431,6 +8541,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             _driveIdle += (float)delta;   // Drive() zeroes this; a car nobody is steering climbs away from zero
             if (_doorPivotA != null) UpdateDoor((float)delta);
             if (_turretHatch != null || _driverHatch != null) UpdateHatches((float)delta);
+            if (_turretCol != null) UpdateTurretCollision();
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
