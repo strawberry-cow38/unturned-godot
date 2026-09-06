@@ -8089,7 +8089,7 @@ namespace UnturnedGodot
             { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
             if (_peiPlayable && _pdPlayer != null && _worldReady && int.TryParse(System.Environment.GetEnvironmentVariable("UG_ENTERCAR"), out var ecf) && ++_enterCarT == ecf)   // UG_ENTERCAR=N: N ticks after the world is up, spawn a sedan ahead + take the driver's seat (the in-vehicle rain muffle check, rainshot.ps1)
             {
-                var car = Vehicle.BuildByName("sedan");
+                var car = Vehicle.BuildByName(System.Environment.GetEnvironmentVariable("UG_ENTERCARV") ?? "sedan");   // UG_ENTERCARV=bus|quad|...: which cab to sit in (the 1P wheel-hand check)
                 var fwd = -_pdPlayer.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
                 _pdPlayer.GetParent()?.AddChild(car);
                 car.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 5f + Vector3.Up * 1.0f;

@@ -2742,6 +2742,12 @@ namespace UnturnedGodot
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
             NoTrunk = true, RearEngine = true,   // no boot; the engine bay is the back (master 2026-09-04)
+            // The bus loaded bus_steer.txt as a plain part and declared no axis, so the pivot branch never ran: the wheel
+            // did not turn and, more visibly, the 1P driving hands had nothing to lock onto (master 2026-09-06 "the bus
+            // (and quad?) dont have 1p vm hand 'lock' positions"). Retail's own Steer node, read out of the prefab
+            // (tools/steerdump): (-0.800, +0.891, +3.458) with the same tilted column every car in the fleet uses --
+            // Z negated into the port's frame, which the sedan's existing pair verifies exactly (prefab +1.417 -> -1.416).
+            SteerPivot = new Vector3(-0.80f, 0.891f, -3.458f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             // FUNCTIONAL BI-FOLD DOOR (master 2026-09-04 "give the bus a functional bi-fold door"): the door panel is the 12.5 cm box
             // inside the front-right doorway (X 1.293..1.418, Z -3.35..-2.15, Y -0.23..1.97, measured off bus_body.txt), two windows
             // split by the mullion at Z -2.75. Leaf A hinges at the front jamb, leaf B at the mullion; both windows ride their leaf.
@@ -6426,6 +6432,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 var seatMesh = ContentProvider.ParseObj($"res://content/{s.SeatModelFile}");
                 var mi = new MeshInstance3D { Mesh = seatMesh, MaterialOverride = SolidMat(new Color(0.22f, 0.22f, 0.24f)), Position = s.SeatModel - seatMesh.GetAabb().GetCenter() };
                 mi.SetMeta("no_outline", true); v.AddChild(mi);
+            }
+            // A DECLARED PIVOT IS ENOUGH. Both paths that build the steer pivot need a MESH -- a part named *_steer or an
+            // explicit SteerModel -- so a spec that names its pivot but has no wheel model got none, and with it no 1P
+            // hand lock (PlayerController.UpdateBody gates on HasSteerWheel). The hands are pinned to a POINT, not to a
+            // model, so the point alone is worth having: an empty pivot here costs one Node3D and makes the lock work
+            // for anything that knows where its wheel is.
+            if (v._steerPivot == null && s.SteerPivot != Vector3.Zero && s.SteerAxis != Vector3.Zero)
+            {
+                v._steerPivot = new Node3D { Name = "SteerPivot", Position = s.SteerPivot };
+                v._steerAxis = s.SteerAxis.Normalized();
+                v.AddChild(v._steerPivot);
             }
             if (s.SteerModel != null && s.SteerAxis != Vector3.Zero)   // steering wheel: the REAL ripped wheel mesh, re-centred on the steer pivot so it turns 1:1 with the wheels about SteerAxis
             {
