@@ -4,9 +4,11 @@ g rear
 # SIMPLIFIED by tools/simplify_glass_panes.py -- outline only (see its docstring).
 # RE-RAKED by tools/add_sedan_dash.py to the C-PILLAR, measured off sedan_glass_r_rear's trailing
 # edge (that door pane is cut to this same pillar). Pivoted about the pane's centre: angle only.
-v -1.014036 1.093874 1.673991
-v 1.015964 1.093874 1.673991
-v 1.015964 1.884039 1.227376
-v -1.014036 1.884039 1.227376
+# RE-RAKED by tools/add_sedan_dash.py to the C-PILLAR, measured off sedan_glass_r_rear's trailing
+# edge (that door pane is cut to this same pillar). Pivoted about the pane's centre: angle only.
+v -1.014036 1.093874 1.705160
+v 1.015964 1.093874 1.705160
+v 1.015964 1.884039 1.258545
+v -1.014036 1.884039 1.258545
 f 1 2 3
 f 1 3 4

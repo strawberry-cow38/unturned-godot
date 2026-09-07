@@ -271,10 +271,26 @@ def rerake_rear_glass():
     if len(gv) < 4: return None, "rear pane is not a quad"
     yLo, yHi = min(v[1] for v in gv), max(v[1] for v in gv)
     zLo, zHi = min(v[2] for v in gv), max(v[2] for v in gv)
-    if abs((zLo - zHi) / (yHi - yLo) - slope) < 5e-3: return None, "rear glass  already on the C-pillar's angle"
-    midZ = (zLo + zHi) / 2.0
+    # (the guard is below, once the target mid-z is known -- comparing against the RULE, not a frozen number)
+    # ...and OUT a little (master: "lil further out and we are DONE"). Out, on a rear screen, is REARWARD -- away
+    # from the cabin, toward the body's outer surface -- which is +z on this model. An eighth of the C-pillar's
+    # depth, the same ruler the windscreen's nudges used, measured off the pillar rather than picked.
+    #
+    # ⚠ THE TARGET IS ABSOLUTE, taken off the PILLAR -- not the pane's current mid plus an offset. Written the
+    # relative way it re-applies the nudge on every run: the second run moved the pane another 31 mm out, and a
+    # third would have moved it again. A tool whose output depends on how many times it has been run is worse
+    # than one that refuses, because nothing about the mesh says which run you are looking at.
+    V, VT, F = load(BODY)
+    innerX = 0.981
+    foot = [v[2] for v in V if abs(v[1] - 1.125) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] > 0.9]
+    pz = [v[2] for v in V if abs(v[1] - 1.875) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] > 0.9]
+    if not foot or len(pz) < 2: return None, "rear glass  no C-pillar found to measure against"
+    depth = max(pz) - min(pz)
+    midZ = min(foot) + depth * 0.125          # the pillar's foot is where the pane's mid-height sat originally
     half = -slope * (yHi - yLo) / 2.0                    # slope is negative: the pane leans FORWARD going up
     botZ, topZ = midZ + half, midZ - half
+    if abs((zLo - zHi) / (yHi - yLo) - slope) < 5e-3 and abs((zLo + zHi) / 2.0 - midZ) < 5e-3:
+        return None, "rear glass  already raked and out"
     xs = sorted({round(v[0], 6) for v in gv})
     head = [l.rstrip("\n") for l in io.open(REAR, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
     head.append("# RE-RAKED by tools/add_sedan_dash.py to the C-PILLAR, measured off sedan_glass_r_rear's trailing")
