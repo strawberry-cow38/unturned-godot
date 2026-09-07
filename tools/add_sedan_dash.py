@@ -245,6 +245,73 @@ def rerake_glass(g):
         seamY, botZ, topY, topZ, slope, depth * 0.0625)
 
 
+def add_steering_column():
+    """Give the steering wheel a COLUMN, so it is attached to the dash instead of hanging in the cabin.
+
+    master 2026-09-07: "steering wheek floating in front of dash instead of attached." It is floating because the
+    ripped mesh is a bare DISC -- 142 verts, symmetric in x, no shaft. Nothing was lost when the wheel moved; there
+    was never anything joining it to anything.
+
+    The shaft runs from the wheel's centre along its OWN rotation axis (SteerAxis, which is what the wheel spins
+    about) forward to the dash fascia. Aligned with that axis on purpose: a column built along any other line would
+    sweep a cone when the wheel turns. Octagonal rather than square for the same reason -- a square section visibly
+    spins, an octagon at this size does not.
+    """
+    src = io.open(STEER, encoding="utf-8").read().splitlines()
+    if any(l.startswith("# COLUMN") for l in src): return None, "column      already present"
+    V = [[float(x) for x in l.split()[1:4]] for l in src if l.startswith("v ")]
+    nV = len(V)
+    nT = sum(1 for l in src if l.startswith("vt "))
+    nN = sum(1 for l in src if l.startswith("vn "))
+    if not (nV == nT == nN): return None, "steer mesh v/vt/vn counts differ -- not the 1:1 layout this expects"
+
+    cx = (min(v[0] for v in V) + max(v[0] for v in V)) / 2.0
+    cy = (min(v[1] for v in V) + max(v[1] for v in V)) / 2.0
+    cz = (min(v[2] for v in V) + max(v[2] for v in V)) / 2.0
+    ax = (0.0, -0.259, -0.966)                           # SteerAxis, reversed: forward and slightly down
+
+    # Reach the dash fascia -- the panel this is supposed to be bolted to -- rather than a fixed length.
+    bV, bVT, bF = load(BODY)
+    g = geometry(bV)
+    seamY, seamZ, screenZ, innerX, outerX = g
+    fascia = screenZ + (outerX - innerX) / 2.0
+    t = (fascia - cz) / ax[2]
+    if t <= 0: return None, "column      wheel is already at or behind the fascia"
+    ex, ey, ez = cx + ax[0] * t, cy + ax[1] * t, cz + ax[2] * t
+
+    # An octagonal section around the axis. The axis is in the YZ plane, so X and (axis x X) span the section.
+    import math
+    r = 0.035
+    u = (1.0, 0.0, 0.0)
+    w = (ax[1] * u[2] - ax[2] * u[1], ax[2] * u[0] - ax[0] * u[2], ax[0] * u[1] - ax[1] * u[0])
+    wl = math.sqrt(sum(c * c for c in w)); w = tuple(c / wl for c in w)
+
+    uv = "vt 0.500000 0.500000"                          # flat: the wheel is a solid colour, no texture to line up
+    out = ["# COLUMN added by tools/add_sedan_dash.py -- the rip is a bare disc with no shaft (master: 'floating')."]
+    ring = []
+    for end in ((cx, cy, cz), (ex, ey, ez)):
+        for k in range(8):
+            a = 2.0 * math.pi * k / 8.0
+            ring.append(tuple(end[i] + r * (math.cos(a) * u[i] + math.sin(a) * w[i]) for i in range(3)))
+    for pnt in ring: out.append("v %.6f %.6f %.6f" % pnt)
+    for _ in ring: out.append(uv)
+    for k in range(16):
+        base = ring[k]
+        cen = (cx, cy, cz) if k < 8 else (ex, ey, ez)
+        d = [base[i] - cen[i] for i in range(3)]
+        dl = math.sqrt(sum(c * c for c in d)) or 1.0
+        out.append("vn %.6f %.6f %.6f" % tuple(c / dl for c in d))
+    b = nV + 1
+    for k in range(8):
+        k2 = (k + 1) % 8
+        a1, a2, b1, b2 = b + k, b + k2, b + 8 + k, b + 8 + k2
+        for tri in ((a1, b1, b2), (a1, b2, a2)):
+            out.append("f " + " ".join("%d/%d/%d" % (i, i, i) for i in tri))
+    io.open(STEER, "a", encoding="utf-8").write("\n".join(out) + "\n")
+    return [], "column      wheel centre (%.3f, %.3f, %.3f) -> fascia z %.3f, %.3f long, r %.3f" % (
+        cx, cy, cz, fascia, t, r)
+
+
 def rerake_rear_glass():
     """Rake the REAR screen to the C-pillar, the same way the windscreen was raked to the A-pillar (master: "fix
     da angle of it").
@@ -349,7 +416,7 @@ def main():
         if lines: append(BODY, lines); did = True
     V, VT, F = load(BODY)
     g = geometry(V)
-    for fn in (move_wheel, lambda: rerake_glass(g), rerake_rear_glass, lambda: center_side_glass(g)):
+    for fn in (move_wheel, add_steering_column, lambda: rerake_glass(g), rerake_rear_glass, lambda: center_side_glass(g)):
         lines, msg = fn()
         print("  " + msg)
         if lines is not None: did = True
