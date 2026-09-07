@@ -21,6 +21,7 @@ namespace UnturnedGodot
         RainRoofMap _roofMap;
         int _roofCheckTicks;   // the top-down roof heightmap around the player (per-drop roof occlusion)   // worldspace 3D rain -- supersedes the 2D overlay streaks
         RainAudio _rainAudio;   // layered rain soundscape (Rain bus, shelter low-pass)
+        AmbienceAudio _ambience; // day/night ambient beds (Ambience bus), ducked under rain
         RainMaterialAudio _rainMatAudio;   // positional rain-on-material: nearest car/tree/... emits its own rain sound within a radius
         AudioStreamPlayer[] _thunderPool;   // a few plain players on Master (NOT SoundBus -> never lures zombies) so overlapping claps don't cut each other
         AudioStream[] _thunderStreams;      // varied freesound samples: [0]=medium clap, [1]=sharp close crack, [2]=deep distant rumble
@@ -109,6 +110,10 @@ namespace UnturnedGodot
             AddChild(_rain3d);
             _rainAudio = new RainAudio();
             AddChild(_rainAudio);
+            // The day/night ambient beds live here rather than in their own owner: they are ducked by the weather
+            // (retail's customWeatherVolumeMultiplier) and this is where rint is already known. See AmbienceAudio.
+            _ambience = new AmbienceAudio();
+            AddChild(_ambience);
             _rainMatAudio = new RainMaterialAudio();
             AddChild(_rainMatAudio);
 
@@ -249,6 +254,7 @@ namespace UnturnedGodot
             // same lever as hard as concrete (master: muffle too strong). So cap its reach: a tree only ever takes Shelter
             // to 0.7 (a slight top-off), a solid roof still all the way to 0 (full muffle). Two knobs, tunable apart. (tinyclaw)
             if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = Mathf.Min(shelter, Mathf.Lerp(1f, 0.7f, 1f - (_rainMatAudio?.CanopyShelter ?? 1f))); }
+            if (_ambience != null) _ambience.WeatherDuck = rint;   // birds go quiet in a downpour (retail ducks day/night by the same factor)
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {

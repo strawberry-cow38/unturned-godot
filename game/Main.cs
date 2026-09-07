@@ -39,6 +39,7 @@ namespace UnturnedGodot
             FoliageField.MapDir = folder == "PEI" ? "foliage" : "foliage_" + key.ToLower();   // grass/pebbles baked per map
             ResourceField.MapDir = folder == "PEI" ? "resources" : "resources_" + key.ToLower();   // trees/rocks baked per map
             Terrain.MapDir = folder == "PEI" ? "terrain" : "terrain_" + key.ToLower();   // splat layer albedos baked per map
+            AmbienceAudio.MapKey = key.ToLower();   // day/night ambient beds are per map (retail: Maps/<Map>/Environment/Ambience.unity3d)
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
