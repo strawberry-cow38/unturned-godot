@@ -26,6 +26,11 @@ namespace UnturnedGodot
             _globalsRegistered = true;
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
+            // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
+            // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
+            // in, im talking minutes"). WeatherManager integrates it.
+            RenderingServer.GlobalShaderParameterAdd("rain_puddle", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
             // ROOF MAP (RainRoofMap): the topmost-surface heightmap around the player; rect.z = 0 means "no map" (every shader skips)
             var blank = Image.CreateEmpty(1, 1, false, Image.Format.Rf); blank.Fill(new Color(RainRoofMap.NoHit, 0f, 0f, 1f));   // nothing above anything
@@ -42,6 +47,7 @@ namespace UnturnedGodot
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
+            RenderingServer.GlobalShaderParameterSet("rain_puddle", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f));
         }
 

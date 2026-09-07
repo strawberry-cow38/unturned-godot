@@ -152,6 +152,8 @@ namespace UnturnedGodot
         ///
         /// Polled on a timer because a raycast per frame per viewer is exactly the "million rebuilds each
         /// frame" cost strawberry_cow warned about, and shelter changes at walking pace.</summary>
+        float _puddleLevel, _lastPuddle = -1f;                     // standing water, integrated (see HubProcess)
+        const float PuddleFillSeconds = 150f, PuddleDrainSeconds = 420f;   // ~2.5 min to fill in steady rain, ~7 min to dry out
         float _shelter = 1f, _shelterPoll;
         const float ShelterPollSeconds = 0.15f;
         const float ShelterFadeSeconds = 0.35f;
@@ -211,6 +213,14 @@ namespace UnturnedGodot
             else if (_roofMap != null) _roofMap.Follow = wcam;
             if (_roofMap != null && System.Environment.GetEnvironmentVariable("UG_ROOFCHECK") == "1" && ++_roofCheckTicks % 90 == 80)   // self-check against fresh rays (harness only)
                 _roofMap.DebugCheck(GetViewport().World3D.DirectSpaceState);
+            // PUDDLES LAG THE RAIN. rain_wetness is the surface soaking, which follows the weather closely; standing
+            // water does not -- it takes a few minutes of rain to gather and a good while longer to drain away, so it is
+            // its own slowly-integrated level (master 2026-09-06 "im talking minutes"). Driven off the same scaled dt as
+            // the rest of the weather, so a sped-up day fills and dries puddles at the same rate the clouds move.
+            float pTarget = rint > 0.02f ? Mathf.Min(1f, rint * 1.3f) : 0f;   // heavier rain -> deeper standing water, capped
+            float pRate = pTarget > _puddleLevel ? 1f / PuddleFillSeconds : 1f / PuddleDrainSeconds;
+            _puddleLevel = Mathf.MoveToward(_puddleLevel, pTarget, pRate * dt);
+            if (Mathf.Abs(_puddleLevel - _lastPuddle) > 0.002f) { _lastPuddle = _puddleLevel; RenderingServer.GlobalShaderParameterSet("rain_puddle", _puddleLevel); }
             if (rint != _lastRint)   // push only on change -- else a fresh StringName per literal every frame forever, even in clear weather (tinyclaw)
             {
                 _lastRint = rint;

@@ -7,6 +7,7 @@ render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
 
 global uniform float rain_wetness;                       // 0 dry .. 1 soaked (surface darken/gloss)
 global uniform float rain_intensity;                     // 0 .. 1 -- drives the splash-impact density + brightness to MATCH the falling rain
+global uniform float rain_puddle;                        // 0 .. 1 standing water, minutes behind the rain (WeatherManager)
 global uniform sampler2D rain_roof;                      // RainRoofMap (see rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
 uniform sampler2D albedo_tex : source_color, filter_nearest_mipmap, repeat_enable;   // ROADS (master 2026-09-04 "not seeing the ripple impacts on the road"): the textured surface variant
@@ -46,7 +47,10 @@ uniform float dry_roughness = 0.85;
 uniform float splash_scale = 1.0;                        // world-space frequency of the ripple cells
 uniform float impact_amount : hint_range(0.0, 1.0) = 1.0;    // 0 = wetness only, NO splash impacts (terrain-like ground); 1 = full impacts (props). Master: gate impacts to solid props, not terrain.
 uniform float impact_opacity : hint_range(0.0, 1.0) = 0.18;  // splash brightness/opacity -- LOW so impacts read as subtle wet glints, not paint (master: more transparent; was a hard 0.38)
-uniform float puddle_amount : hint_range(0.0, 1.0) = 1.0;    // standing water on this surface (see puddles.gdshaderinc); 0 = never puddles
+uniform float puddle_amount : hint_range(0.0, 1.0) = 0.0;    // standing water on this surface (see puddles.gdshaderinc). DEFAULT OFF: only roads
+                                                             // and the big dock opt in (master 2026-09-06 "ONLY have puddles on Road, road spline,
+                                                             // road material, the large dock prop. NOT on all props")
+uniform float puddle_max_distance = 60.0;                    // past this there is no water at all -- and no noise field evaluated for it
 
 varying vec3 world_pos;
 
@@ -94,15 +98,17 @@ void fragment(){
     if (use_vcol) base *= vcol.rgb;
     vec3 alb = base * mix(1.0, 0.58, wet);                  // wet darkens the surface
     float rough = mix(dry_roughness, 0.42, wet);           // wet = smoother, but DAMP not mirror (strawberry 2026-09-04: "turn down the reflections on wet surfaces by a lot"; was 0.10)
+    // PUDDLES first: the impact rings are gated behind them (master 2026-09-06 "gate water ripple impacts behind being
+    // on a puddle"), so a ring only ever lands on standing water -- which is where you actually see one.
+    float prange = 1.0 - smoothstep(puddle_max_distance * 0.7, puddle_max_distance, length(VERTEX));
+    float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0) * sheltered, upness, prange) * puddle_amount;
     float sp = 0.0;
-    if (rint > 0.0 && impact_amount > 0.0) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount;   // gate the ~800-ALU voronoi -- zero in clear weather OR on impact-disabled surfaces (terrain)
-    // PUDDLES: standing water where the ground is low, MORE reflective than the damp around it (master 2026-09-06
-    // "puddles of more reflective blobs on those surfaces"). The damp surface stays deliberately dull -- the contrast
-    // between the two is the whole effect -- and the impact rings ride harder on open water than on wet stone.
-    float pud = puddle_mask(world_pos.xz, clamp(rain_wetness, 0.0, 1.0) * sheltered, upness) * puddle_amount;
+    if (rint > 0.0 && impact_amount > 0.0 && pud > 0.01) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount * pud;   // gate the ~800-ALU voronoi -- zero in clear weather, off a puddle, or on impact-disabled surfaces (terrain)
+    // Standing water: MORE reflective than the damp around it (master: "puddles of more reflective blobs"). The damp
+    // surface stays deliberately dull -- the contrast between the two is the whole effect.
     vec3 alb2 = mix(alb, alb * 0.62, pud);                 // water over it reads darker than the wet surface
     float rough2 = mix(rough, 0.06, pud);                  // a puddle IS close to a mirror; the road around it is not
-    ALBEDO = alb2 + sp * impact_opacity * (1.0 + pud * 1.5);
+    ALBEDO = alb2 + sp * impact_opacity * 2.5;
     ROUGHNESS = rough2;
     METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
     SPECULAR = mix(0.5 + wet * 0.12, 0.9, pud);            // a hint of sheen on damp ground; a real one on water

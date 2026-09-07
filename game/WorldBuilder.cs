@@ -448,7 +448,11 @@ namespace UnturnedGodot
 
             var shapeCache = new System.Collections.Generic.Dictionary<string, Shape3D>();   // one collider per unique prop mesh, shared across instances -- Shape3D not ConcavePolygonShape3D: ladders get a BoxShape3D instead of a trimesh (see below)
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
-            Material WetMatFor(string nm) => WetSurface.Wrap(MatFor(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
+            // WHICH PROPS POOL WATER (master 2026-09-06: "ONLY have puddles on Road, road spline, road material, the
+            // large dock prop. NOT on all props"). The road pieces placed as objects, and Dock_1 -- the big 37x41 m
+            // platform, not Dock_0, which is a 2.5 m jetty. Everything else still gets the wet sheen and nothing more.
+            static bool PuddleProp(string nm) => nm.StartsWith("Road_") || nm.StartsWith("Block_Road") || nm == "Dock_1";
+            Material WetMatFor(string nm) => WetSurface.Wrap(MatFor(nm), PuddleProp(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;

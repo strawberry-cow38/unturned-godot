@@ -27,6 +27,38 @@ uniform bool reflection_debug = false;              // UG_REFLDEBUG: paint the r
 uniform float reflection_strength = 1.0;            // UG_REFLSTR: scale the reflection's blend-in for tuning
 
 varying vec3 v_wpos;     // world position of the displaced surface
+// RAIN ON OPEN WATER (master 2026-09-06 "add rain ripple impacts to water surface"). The same expanding rings the
+// roads and puddles show, on the sea -- rain does not stop at the shoreline, and a lake in a downpour that stays
+// glassy is the one surface in the scene that looks wrong. Kept CHEAP and near-field: the field is only evaluated
+// while it is actually raining and within rain_ring_distance, so a calm day and the far horizon cost nothing.
+global uniform float rain_intensity;
+uniform float rain_ring_distance = 70.0;
+uniform float rain_ring_strength : hint_range(0.0, 2.0) = 0.9;
+float wr_h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
+// Voronoi-ish scatter of expanding rings, the same shape wet_surface uses so water and wet road ring alike.
+float wr_rings(vec2 wxz, float t, float amt){
+    float acc = 0.0;
+    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;
+    for (int k = 0; k < 2; k++){
+        float sc = 1.6 + float(k) * 2.8;
+        vec2 g = wxz * sc + float(k) * 21.0;
+        vec2 base = floor(g);
+        for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+                vec2 id = base + vec2(float(dx), float(dy));
+                float seed = wr_h21(id);
+                float tt = t * (0.65 + seed * 0.7) + seed;
+                float cyc = floor(tt), life = fract(tt);
+                vec2 q = id + cyc * 13.7;
+                vec2 centre = id + vec2(wr_h21(q + 1.3), wr_h21(q + 7.7));
+                float rad = life * (0.16 + seed * 0.20);
+                float ring = smoothstep(0.05, 0.0, abs(length(g - centre) - rad));
+                acc += ring * (1.0 - life) * step(gate, wr_h21(q)) * (0.55 + seed * 0.45);
+            }
+        }
+    }
+    return acc;
+}
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated), so the surface doesn't read as blocks/squares or SNAP as it scrolls.
@@ -137,10 +169,17 @@ void fragment() {
     vec3 water_col = mix(base, refl_src, clamp(fres * reflectivity * reflection_strength, 0.0, 1.0));
     a = mix(a, 1.0, fres * reflectivity * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
 
-    ALBEDO = mix(water_col, foam_color.rgb, foam);
+    // rain rings: a bright dimple where each drop lands, and a rougher patch around it so the reflection breaks up
+    float rint_w = clamp(rain_intensity, 0.0, 1.0);
+    float ring = 0.0;
+    if (rint_w > 0.02) {
+        float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
+        if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
+    }
+    ALBEDO = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.12);
     ALPHA = mix(a, 1.0, foam);
     float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
-    ROUGHNESS = mix(rough_base, 0.9, foam);
+    ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
     SPECULAR = 0.5;
     METALLIC = 0.0;
     // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment

@@ -14,16 +14,19 @@ namespace UnturnedGodot
         public static bool Enabled = System.Environment.GetEnvironmentVariable("UG_WETPROPS") != "0";
         const string BaseMeta = "wet_base";
         static Shader _shader;
-        static readonly Dictionary<ulong, ShaderMaterial> _cache = new();   // one wet material per base material (props share materials by name)
+        static readonly Dictionary<(ulong, bool), ShaderMaterial> _cache = new();   // one wet material per (base material, puddles) -- props share materials by name, and the same material can serve a road prop and a wall
 
         public static bool Eligible(StandardMaterial3D m) =>
             m != null && m.Transparency == BaseMaterial3D.TransparencyEnum.Disabled && !m.EmissionEnabled && m.AlbedoColor.A >= 0.999f;
 
-        public static Material Wrap(StandardMaterial3D m)
+        /// <summary>`puddles` opts this prop into standing water. OFF for everything by default: master 2026-09-06
+        /// asked for puddles "ONLY on Road, road spline, road material, the large dock prop. NOT on all props", and the
+        /// wet wrapper is on every roof, crate and kerb in the world.</summary>
+        public static Material Wrap(StandardMaterial3D m, bool puddles = false)
         {
             if (!Enabled || !Eligible(m)) return m;
-            ulong id = m.GetInstanceId();
-            if (_cache.TryGetValue(id, out var have)) return have;
+            var key = (m.GetInstanceId(), puddles);
+            if (_cache.TryGetValue(key, out var have)) return have;
             RainSystem3D.EnsureGlobals();   // the shader links the rain globals -- they must exist before it compiles
             _shader ??= GD.Load<Shader>("res://content/wet_surface.gdshader");
             var sm = new ShaderMaterial { Shader = _shader };
@@ -39,8 +42,9 @@ namespace UnturnedGodot
             sm.SetShaderParameter("dry_roughness", m.Roughness);
             sm.SetShaderParameter("impact_amount", 1.0f);
             sm.SetShaderParameter("splash_scale", 1.0f);
+            sm.SetShaderParameter("puddle_amount", puddles ? 1.0f : 0.0f);
             sm.SetMeta(BaseMeta, m);
-            _cache[id] = sm;
+            _cache[key] = sm;
             return sm;
         }
 
