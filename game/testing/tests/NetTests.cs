@@ -2258,6 +2258,104 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // SEVERAL PEOPLE IN ONE CONTAINER AT ONCE (v36) -- master 2026-09-07: "allow multiple people to move, grab,
+    // add items to the containers at the same time. as well as the container door open/close state."
+    //
+    // TEETH, and they are aimed at the OLD MODEL specifically. Open used to copy the crate grid into the opener's
+    // STORAGE page and close copy it back, so (1) the second player was refused outright, and (2) if the refusal
+    // were simply deleted, the last player to close would overwrite the whole grid with their own stale snapshot
+    // of it -- silently undoing everything the other did. So the assertions are: B's edit reaches A's page OVER
+    // THE WIRE while both stand in it, A's edit survives B closing, and the door bit is the viewer set.
+    //
+    // A is a real client (its page changes are echoed over the wire). B is a second SERVER-SIDE player, driven
+    // through the same server calls its commands would reach after validation -- the wire half of open/move is
+    // already covered by net.shell_open_storage, and what is new here is entirely the ownership model.
+    public class NetSharedContainer : GameTest
+    {
+        public override string Name => "net.shared_container";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260907);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "looterA" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
+            if (sess.Shell == null) { world.Sim.Sim.Remove(pump); yield break; }
+            yield return Ticks(10);
+
+            long tick = ded.Server.Session.CurrentTick;
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            var pos = ToU(sess.Shell.GlobalPosition + fwd * 2f);
+            // ONE NetId for the crate AND its fixture, exactly as ContainerNetSync mints them -- the door bit
+            // lives on the fixture and the contents on the crate, and they are the same container.
+            var id = ded.Server.Ids.Mint();
+            var crate = ded.Server.Inventories.ServerRegisterCrate(id, 5, 4, pos);
+            crate.Storage.tryAddItem(new Item(13));
+            crate.Storage.tryAddItem(new Item(13));
+            ded.Server.Containers.ServerRegisterFixture(id, 0, pos, 0f, 5, 4, tick);
+            T.Check("the container starts shut", ded.Server.Containers.TryGet(id.Value, out var fx) && !fx.DoorsOpen);
+
+            // A opens it for real, over the wire
+            T.Check("A's open request fired", sess.Shell.RequestOpenStorage(id.Value));
+            var pageA = sess.Shell.Inventory.items[PlayerInventory.STORAGE];
+            yield return Until(() => pageA.width == 5 && pageA.getItemCount() == 2, 5);
+            T.Check("(a) A sees both items in its STORAGE page", pageA.getItemCount() == 2);
+            T.Check("(b) the door swung open for everybody",
+                    ded.Server.Containers.TryGet(id.Value, out var fx2) && fx2.DoorsOpen);
+
+            // B walks up to the SAME container and opens it -- this used to be refused outright
+            const ushort bId = 4242;
+            var bEntry = ded.Server.Inventories.ServerAdd(bId, ded.Server.Session.CurrentTick);
+            T.Check("(c) a SECOND player was allowed into the same container",
+                    ded.Server.Inventories.ServerOpenStorage(bId, id.Value, pos, ded.Server.Session.CurrentTick));
+            var pageB = bEntry.Inventory.items[PlayerInventory.STORAGE];
+            T.Check("(d) B got its own view of the same grid", pageB.width == 5 && pageB.getItemCount() == 2);
+            T.Check("(e) both are in the viewer set", crate.Viewers.Count == 2);
+
+            // B takes one out. A is standing in the same container and must SEE it go.
+            bEntry.Inventory.items[PlayerInventory.STORAGE].removeItem(0);
+            T.Check("(f) B's edit went straight into the crate", crate.Storage.getItemCount() == 1);
+            yield return Until(() => pageA.getItemCount() == 1, 5);
+            T.Check("(g) ...and reached A's page OVER THE WIRE", pageA.getItemCount() == 1);
+
+            // A takes the other one out, then B closes. Under the old copy-back, B's close would have written
+            // B's snapshot (1 item) back over the crate and RESURRECTED the can A had just taken.
+            var last = pageA.getItem(0);
+            T.Check("A's crate->bag move fired", sess.Shell.RequestMoveItem(PlayerInventory.STORAGE, last.x, last.y, 2, 0, 0, 0));
+            yield return Until(() => crate.Storage.getItemCount() == 0, 5);
+            T.Check("(h) the crate is empty", crate.Storage.getItemCount() == 0);
+            ded.Server.Inventories.ServerCloseStorage(bId, ded.Server.Session.CurrentTick);
+            yield return Ticks(5);
+            T.Check("(i) B closing did NOT resurrect what A took", crate.Storage.getItemCount() == 0);
+            T.Check("(j) the door is still open -- A is still in there",
+                    ded.Server.Containers.TryGet(id.Value, out var fx3) && fx3.DoorsOpen && crate.Viewers.Count == 1);
+
+            sess.Shell.DebugCloseCrate();
+            yield return Until(() => !crate.IsOpen, 5);
+            T.Check("(k) last one out shuts the door",
+                    !crate.IsOpen && ded.Server.Containers.TryGet(id.Value, out var fx4) && !fx4.DoorsOpen);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // F ON AN ITEM SITTING ON A SHELF (v34). The smart shelves draw their contents as real models you can look
     // at and grab, and that grab used to be a purely LOCAL edit at BOTH ends of the transfer -- the client
     // removed the jar from its own StoreShelf.Storage and added it to its own bag, while in multiplayer the
@@ -2326,7 +2424,7 @@ namespace UnturnedGodot.Testing
             yield return Until(() => shelf.Storage.getItemCount() == 0, 5);
             T.Check("(a) the server took it OFF the shelf", shelf.Storage.getItemCount() == 0);
             T.Check("(b) ...and put it in the taker's own bag", BagHas(sInv, 13));
-            T.Check("(c) the container was never OPENED -- a grab is not an open", shelf.OpenBy == 0);
+            T.Check("(c) the container was never OPENED -- a grab is not an open", !shelf.IsOpen);
             T.Check("(d) the taker's STORAGE page stayed empty (no dashboard hijack)",
                     sess.Shell.Inventory.items[PlayerInventory.STORAGE].width == 0);
 
@@ -2395,8 +2493,8 @@ namespace UnturnedGodot.Testing
 
             T.Check("the open request fired through the NetOpenStorage seam",
                     sess.Shell.RequestOpenStorage(crate.NetIdValue));
-            yield return Until(() => crate.OpenBy == sess.Client.PlayerId, 5);
-            T.Check("(a) the server granted the open (arbitration latch)", crate.OpenBy == sess.Client.PlayerId);
+            yield return Until(() => crate.Viewers.Contains(sess.Client.PlayerId), 5);
+            T.Check("(a) the server put this player in the crate's viewer set", crate.Viewers.Contains(sess.Client.PlayerId));
             var storagePage = sess.Shell.Inventory.items[PlayerInventory.STORAGE];
             yield return Until(() => storagePage.width == 5 && storagePage.getItemCount() == 1, 5);
             T.Check("(b) the CRATE grid echoed into the shell's STORAGE page", storagePage.width == 5 && storagePage.getItemCount() == 1);
@@ -2415,11 +2513,14 @@ namespace UnturnedGodot.Testing
             byte pi = pocket.getIndex(fx, fy);
             T.Check("(d) the server moved it out of the crate into the bag", pi != byte.MaxValue && pocket.getItem(pi).item?.id == 13);
 
-            // close via the ESC/Tab path: the server saves the (now-empty) view back + frees the crate
+            // v36: the crate is authoritative at every instant, so the bean left its grid on the MOVE, not on
+            // the close -- assert that BEFORE closing, which is the assertion the old copy-back could not make.
+            T.Check("(e) the crate grid was already current before any close", crate.Storage.getItemCount() == 0);
+
+            // close via the ESC/Tab path: the server drops this player from the viewer set + clears their view
             sess.Shell.DebugCloseCrate();
-            yield return Until(() => crate.OpenBy == 0, 5);
-            T.Check("(e) the server closed + freed the crate", crate.OpenBy == 0);
-            T.Check("(f) the crate grid saved back empty (the bean left it)", crate.Storage.getItemCount() == 0);
+            yield return Until(() => !crate.IsOpen, 5);
+            T.Check("(f) the server closed + freed the crate", !crate.IsOpen && crate.Viewers.Count == 0);
             yield return Until(() => storagePage.width == 0, 5);
             T.Check("(g) the STORAGE page cleared on the echo", storagePage.width == 0);
 

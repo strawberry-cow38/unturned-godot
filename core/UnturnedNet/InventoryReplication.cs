@@ -540,7 +540,12 @@ namespace UnturnedGodot.Net
             public Items Storage;
             public byte Width, Height;
             public Vector3 Pos;
-            public ushort OpenBy;         // 0 = closed
+            /// <summary>EVERYONE with this container open (master 2026-09-07: "allow multiple people to move,
+            /// grab, add items to the containers at the same time"). Was a single `OpenBy` ushort with
+            /// server-side arbitration -- one opener at a time (§3.7) -- so the second player to reach a fridge
+            /// was simply refused. Order is open-order; it is a handful of players, so a list beats a set.</summary>
+            public readonly List<ushort> Viewers = new List<ushort>();
+            public bool IsOpen => Viewers.Count > 0;
 
             /// <summary>A fridge's FREEZER compartment: a second, independent grid shown above the main one
             /// (strawberry 2026-09-06: "in fridges, add a second 'container' to the inventory ui above the
@@ -584,12 +589,13 @@ namespace UnturnedGodot.Net
         /// <summary>Every tracked player's entry, same reason.</summary>
         public IEnumerable<PlayerEntry> Owners => _byOwner.Values;
 
-        /// <summary>Shut anyone standing in this crate, which COPIES THEIR OPEN PAGE BACK into it. Split out
-        /// from ServerRemoveCrate because the order matters and got it wrong once: closing is what makes
-        /// crate.Storage current, so a caller that wants to read the contents (to tip them on the floor) has
-        /// to close first, and a caller that removes the crate first makes the copy-back a no-op --
-        /// ServerCloseStorage looks the crate up by id and silently skips the copy when it is gone. That is
-        /// every item the player had just dragged into the fridge, lost without a trace.</summary>
+        /// <summary>Shut everyone standing in this crate. Kept split out from ServerRemoveCrate, but the reason
+        /// it exists has WEAKENED, deliberately: closing used to be what made crate.Storage current (it copied
+        /// the opener's page back), so removing the crate first turned that copy into a silent no-op and lost
+        /// everything the player had just dragged in. Edits are written through as they happen now, so the
+        /// crate is current whether or not anyone closes -- but a caller that wants to read the contents should
+        /// still close first, because a viewer left holding a page for a crate that no longer exists has a
+        /// dashboard open onto nothing.</summary>
         public void ServerCloseCrateViewers(uint netId, long tick)
         {
             // _byOwner is not structurally modified by ServerCloseStorage (it clears a field on the entry),
@@ -615,7 +621,16 @@ namespace UnturnedGodot.Net
             for (byte p = 0; p < PlayerInventory.PAGES; p++)
             {
                 // any grid mutation marks the owner dirty -- the same onStateUpdated dirtiness SP's UI keys on
-                e.Inventory.items[p].onStateUpdated += () => e.Dirty = true;
+                byte pg = p;
+                e.Inventory.items[p].onStateUpdated += () =>
+                {
+                    e.Dirty = true;
+                    // ...and an edit to one of the two CONTAINER VIEW pages is an edit to the container itself.
+                    // Hooked here rather than at each command handler on purpose: ten handlers can reach page 7
+                    // (move, drop, wear, reload-swap, mag-load, consume...) and the one that gets forgotten is
+                    // the one that silently edits a private copy nobody else ever sees.
+                    if (pg == PlayerInventory.STORAGE || pg == PlayerInventory.FREEZER) ServerPushView(e, pg);
+                };
             }
             _byOwner[ownerPlayerId] = e;
             return e;
@@ -642,6 +657,74 @@ namespace UnturnedGodot.Net
 
         /// <summary>Stamp this tick onto every entry the last dispatch round dirtied. Call once per server
         /// tick, after command dispatch, so the delta baseline math sees a real tick number.</summary>
+        /// <summary>Re-entrancy guard for the view sync below. A projection INTO a viewer's page fires that
+        /// page's onStateUpdated once per item added, and without this the first of those reads back as "that
+        /// viewer just edited the container" -- pushing a HALF-REBUILT page into the crate. `clear()` is
+        /// deliberately silent, so the first add would publish a ONE-ITEM crate. That is the whole container
+        /// deleted, on every open, for everyone.</summary>
+        bool _viewSyncing;
+
+        /// <summary>Raised when a container goes from nobody-looking to somebody-looking or back. The game layer
+        /// turns it into the DOOR: a fridge whose door swings only on the opener's screen is a fridge that looks
+        /// shut to the person standing next to it (master 2026-09-07). Core owns WHO has it open; it does not
+        /// know a door exists.</summary>
+        public System.Action<uint, bool> CrateOpenChanged;
+
+        /// <summary>One viewer's page just changed, so THAT PAGE is the edit: it becomes the crate's contents,
+        /// and every other viewer is repainted from it.
+        ///
+        /// ⚠ IMMEDIATE, not batched to end-of-tick, and that is the correctness of the whole feature. Commands
+        /// dispatch one at a time, so writing through here means the NEXT player's drag is validated against a
+        /// page that already contains the previous player's edit. Deferring the reconcile to the tick boundary
+        /// would have two players each editing a stale private copy and one of them silently winning -- which
+        /// for a container is not a lost move, it is a duplicated or destroyed item.
+        ///
+        /// The copy re-seats the SAME Item references rather than cloning (see the CopyPage note in
+        /// ServerCooking): a steak being cooked in an oven two players are both watching stays ONE object.</summary>
+        void ServerPushView(PlayerEntry e, byte page)
+        {
+            if (_viewSyncing || e == null || e.OpenCrateId == 0) return;
+            if (!_crates.TryGetValue(e.OpenCrateId, out var crate)) return;
+            bool freezer = page == PlayerInventory.FREEZER;
+            if (freezer && !crate.HasFreezer) return;
+            if (!freezer && page != PlayerInventory.STORAGE) return;
+            _viewSyncing = true;
+            try
+            {
+                var mine = e.Inventory.items[page];
+                byte w = freezer ? crate.FreezerWidth : crate.Width;
+                byte h = freezer ? crate.FreezerHeight : crate.Height;
+                if (mine.width != w || mine.height != h) return;   // mid open/close resize -- not an edit
+                CopyPage(mine, freezer ? crate.Freezer : crate.Storage, w, h);
+                foreach (var pid in crate.Viewers)
+                {
+                    if (pid == e.OwnerPlayerId || !_byOwner.TryGetValue(pid, out var other)) continue;
+                    CopyPage(freezer ? crate.Freezer : crate.Storage, other.Inventory.items[page], w, h);
+                    other.Dirty = true;
+                }
+            }
+            finally { _viewSyncing = false; }
+        }
+
+        /// <summary>Repaint every viewer of this crate from the crate itself -- for a change made to the GRID
+        /// directly rather than through somebody's page (a shelf grab, a server-side spawn).</summary>
+        void ServerRepaintViewers(CrateEntry crate)
+        {
+            if (crate == null || crate.Viewers.Count == 0) return;
+            _viewSyncing = true;
+            try
+            {
+                foreach (var pid in crate.Viewers)
+                {
+                    if (!_byOwner.TryGetValue(pid, out var v)) continue;
+                    CopyPage(crate.Storage, v.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
+                    if (crate.HasFreezer) CopyPage(crate.Freezer, v.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+                    v.Dirty = true;
+                }
+            }
+            finally { _viewSyncing = false; }
+        }
+
         public void ServerCommitDirty(long tick)
         {
             foreach (var e in _byOwner.Values)
@@ -682,18 +765,32 @@ namespace UnturnedGodot.Net
         {
             if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return false;
             if (!_crates.TryGetValue(crateId, out var crate)) return false;
-            if (crate.OpenBy != 0 && crate.OpenBy != ownerPlayerId) return false;   // someone else has it open
+            // NO EXCLUSIVITY ANY MORE (master 2026-09-07: several people in one container at once). This used
+            // to refuse when crate.OpenBy named somebody else, which was the honest answer while open COPIED the
+            // grid out and close COPIED it back: two players editing private copies and both copying back is
+            // last-writer-wins over a whole grid, i.e. duplicated and destroyed items, not a lost drag. What
+            // makes sharing safe is that the copy-back is GONE -- the crate is authoritative at every instant
+            // and each viewer's page is a view that is rewritten the moment anyone changes anything.
             if ((crate.Pos - senderPos).magnitude > StorageReach) return false;
-            if (e.OpenCrateId != 0 && e.OpenCrateId != crateId) ServerCloseStorage(ownerPlayerId, tick);   // implicit close-then-open
+            if (e.OpenCrateId != 0 && e.OpenCrateId != crateId) ServerCloseStorage(ownerPlayerId, tick);   // one container at a time, per player
 
-            crate.OpenBy = ownerPlayerId;
+            bool wasOpen = crate.IsOpen;
+            if (!crate.Viewers.Contains(ownerPlayerId)) crate.Viewers.Add(ownerPlayerId);
             e.OpenCrateId = crateId;
-            CopyPage(crate.Storage, e.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
-            // The freezer rides along as its own page, so both compartments are open at once and an item can be
-            // dragged straight from one to the other -- which is the entire interaction a freezer exists for.
-            if (crate.HasFreezer)
-                CopyPage(crate.Freezer, e.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+            // GUARDED: these copies fire onStateUpdated per item, which would otherwise read back as this player
+            // editing the container and push a half-built page into it. See ServerPushView.
+            _viewSyncing = true;
+            try
+            {
+                CopyPage(crate.Storage, e.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
+                // The freezer rides along as its own page, so both compartments are open at once and an item can be
+                // dragged straight from one to the other -- which is the entire interaction a freezer exists for.
+                if (crate.HasFreezer)
+                    CopyPage(crate.Freezer, e.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+            }
+            finally { _viewSyncing = false; }
             e.Dirty = true;
+            if (!wasOpen) CrateOpenChanged?.Invoke(crateId, true);   // first one in swings the door for everybody
             return true;
         }
 
@@ -712,7 +809,9 @@ namespace UnturnedGodot.Net
         {
             if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return false;
             if (!_crates.TryGetValue(crateId, out var crate) || crate.Storage == null) return false;
-            if (crate.OpenBy != 0 && crate.OpenBy != ownerPlayerId) return false;   // someone is editing a copy of this grid
+            // Used to refuse while somebody else had it open, because that player was editing a COPY that would
+            // be written back over this. There is no copy any more -- viewers are repainted from the crate the
+            // moment it changes -- so a grab off the shelf is fine with a crowd around it.
             if ((crate.Pos - senderPos).magnitude > StorageReach) return false;
             for (byte i = 0; i < crate.Storage.getItemCount(); i++)
             {
@@ -726,6 +825,7 @@ namespace UnturnedGodot.Net
                 // The taker's own bag AND the container's display digest both have to move: the first rides the
                 // owner echo from this flag, the second is re-projected by ContainerNetSync off the changed grid.
                 e.Dirty = true;
+                ServerRepaintViewers(crate);   // ...and anyone standing IN the container watches it leave the grid
                 return true;
             }
             return false;   // nothing in that cell -- a stale click, not a licence to take the neighbour
@@ -735,13 +835,22 @@ namespace UnturnedGodot.Net
         public bool ServerCloseStorage(ushort ownerPlayerId, long tick)
         {
             if (!_byOwner.TryGetValue(ownerPlayerId, out var e) || e.OpenCrateId == 0) return false;
-            if (_crates.TryGetValue(e.OpenCrateId, out var crate))
+            uint closedId = e.OpenCrateId;
+            if (_crates.TryGetValue(closedId, out var crate))
             {
-                CopyPage(e.Inventory.items[PlayerInventory.STORAGE], crate.Storage, crate.Width, crate.Height);
-                if (crate.HasFreezer)
-                    CopyPage(e.Inventory.items[PlayerInventory.FREEZER], crate.Freezer, crate.FreezerWidth, crate.FreezerHeight);
-                crate.OpenBy = 0;
+                // ⚠ NO COPY-BACK. It used to save this player's page into the crate here, which is what made a
+                // second viewer impossible: the last person to close would overwrite the whole grid with their
+                // own snapshot of it, undoing everything anyone else did while they stood there. Every edit is
+                // now written through the instant it happens (ServerPushView), so by the time anybody closes,
+                // the crate has been current for a while and there is nothing left to save.
+                crate.Viewers.Remove(ownerPlayerId);
             }
+            // ⚠ DROP THE LATCH BEFORE TEARING THE VIEW DOWN. Once you have left the viewer set your page is no
+            // longer a view of anything, and the teardown below must not read back as you emptying the container.
+            // It happens to be safe as written -- clear() is silent and loadSize(0,0) then has nothing to
+            // announce -- but that is a property of two other functions, not of this one, and ServerPushView's
+            // dimension guard is the only other thing standing between a close and a wiped container.
+            e.OpenCrateId = 0;
             var s = e.Inventory.items[PlayerInventory.STORAGE];
             s.clear();
             s.loadSize(0, 0);
@@ -750,7 +859,7 @@ namespace UnturnedGodot.Net
             var fz = e.Inventory.items[PlayerInventory.FREEZER];
             fz.clear();
             fz.loadSize(0, 0);
-            e.OpenCrateId = 0;
+            if (crate != null && !crate.IsOpen) CrateOpenChanged?.Invoke(closedId, false);   // last one out shuts the door
             e.Dirty = true;
             return true;
         }

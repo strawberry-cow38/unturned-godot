@@ -162,10 +162,14 @@ namespace UnturnedGodot.Net
             // off), not a stream you can resample: a dropped one leaves the bar stuck at the wrong height.
             Cooking.StateChanged = (netId, on, fuel) =>
             {
-                if (!Inventories.TryGetCrate(netId, out var crate) || crate.OpenBy == 0) return;
+                if (!Inventories.TryGetCrate(netId, out var crate) || !crate.IsOpen) return;
                 var evt = new CookerStateEvent { NetId = netId, On = on, Fuel = fuel };
-                SendEventTo(crate.OpenBy, NetMessagePak.Pack(ReplicationIds.EventCookerState, evt.Write));
+                var pak = NetMessagePak.Pack(ReplicationIds.EventCookerState, evt.Write);
+                foreach (var viewer in crate.Viewers) SendEventTo(viewer, pak);   // two people watching one oven both get the bar
             };
+            // A container's DOOR is its viewer set, published. Core's inventory layer knows who has what open
+            // and knows nothing about doors; the container system carries the bit and the client swings the leaf.
+            Inventories.CrateOpenChanged = (netId, open) => Containers.ServerSetDoorsOpen(netId, open, Session.CurrentTick);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);

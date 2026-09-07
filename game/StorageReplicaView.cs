@@ -19,7 +19,7 @@ namespace UnturnedGodot
         public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public NetWorldClient Client;
 
-        struct Entry { public StoreShelf Node; public ulong DisplaySig; }
+        struct Entry { public StoreShelf Node; public ulong DisplaySig; public bool DoorsOpen; }
         readonly Dictionary<uint, Entry> _nodes = new();
 
         public int NodeCount => _nodes.Count;
@@ -49,7 +49,7 @@ namespace UnturnedGodot
                                                 e.YawDegrees, kind.Display, kind.Label, renderMesh: true, serverOwned: true);
                     node.NetId = e.NetIdValue;             // the shell's F-open request addresses the server entity by this (B9)
                     node.ResetPhysicsInterpolation();      // don't smear from (0,0,0) to the placement (the WorldItem.Spawn lesson)
-                    entry = new Entry { Node = node, DisplaySig = ulong.MaxValue };   // MaxValue forces the first ApplyDisplay
+                    entry = new Entry { Node = node, DisplaySig = ulong.MaxValue, DoorsOpen = false };   // MaxValue forces the first ApplyDisplay
                     _nodes[e.NetIdValue] = entry;
                 }
                 ulong sig = DisplaySig(e.Display);
@@ -57,6 +57,16 @@ namespace UnturnedGodot
                 {
                     entry.Node.ApplyDisplay(e.Display);
                     entry.DisplaySig = sig;
+                    _nodes[e.NetIdValue] = entry;
+                }
+                // ...and the DOOR, which is just "is anyone in it" published (v36). Compared rather than pushed
+                // every tick because SetDoorsOpen re-triggers the leaf's swing bookkeeping, and a joiner walking
+                // up to an already-open fridge must see it OPEN rather than watch it swing on arrival -- the
+                // first pass through here has DoorsOpen=false against a server true, so it swings once, now.
+                if (e.DoorsOpen != entry.DoorsOpen)
+                {
+                    entry.Node.SetDoorsOpen(e.DoorsOpen);
+                    entry.DoorsOpen = e.DoorsOpen;
                     _nodes[e.NetIdValue] = entry;
                 }
             }

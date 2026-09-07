@@ -182,7 +182,7 @@ namespace UnturnedGodot.Net
                 // the crate alias one object per jar. If anyone ever "hardens" CopyPage into a deep copy,
                 // cooking silently stops working for exactly as long as a player is watching it -- which is
                 // the hardest possible time to notice.
-                if (crate.OpenBy != 0) _inventories.ServerMarkDirty(crate.OpenBy);
+                foreach (var viewer in crate.Viewers) _inventories.ServerMarkDirty(viewer);   // everyone watching the oven, not just the first one in
             }
             // THE BAR MOVES HERE, for every cooker and every exit path above. NoteState is a no-op unless the
             // opener's view actually changed, so a shelf of idle appliances costs one comparison each.

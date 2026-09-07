@@ -31,6 +31,8 @@ namespace UnturnedGodot.Net
         {
             List<ushort> touched = null;
             void Note(ushort owner) { if (owner != 0) (touched ??= new List<ushort>()).Add(owner); }
+            // Several people can stand in one container now, so "tell the opener" is "tell all of them".
+            void NoteAll(List<ushort> viewers) { foreach (var v in viewers) Note(v); }
 
             // (1) CONTAINERS. A freezer compartment freezes what is in it; a fridge body and every plain crate
             // thaw. Note that a crate the player has OPEN is aliased into their page by CopyPage (same Item
@@ -39,14 +41,14 @@ namespace UnturnedGodot.Net
             foreach (var crate in _inventories.Crates)
             {
                 bool powered = HasPower == null || HasPower(crate.NetIdValue);
-                if (crate.HasFreezer && powered && Sweep(crate.Freezer, Freezing.FreezePerSecond, dt)) Note(crate.OpenBy);
-                if (crate.HasFreezer && !powered && Sweep(crate.Freezer, -Freezing.ThawPerSecond, dt)) Note(crate.OpenBy);
+                if (crate.HasFreezer && powered && Sweep(crate.Freezer, Freezing.FreezePerSecond, dt)) NoteAll(crate.Viewers);
+                if (crate.HasFreezer && !powered && Sweep(crate.Freezer, -Freezing.ThawPerSecond, dt)) NoteAll(crate.Viewers);
                 // THE BODY: normally the slow-spoil half of a fridge, so it thaws. An ice box has no warm half
                 // -- the whole container is the freezer -- so its body freezes instead, on the same power gate
                 // as a compartment. Unpowered it thaws like anything else, which is what makes cutting the
                 // grid to a stocked freezer a real loss rather than a cosmetic one.
                 float bodyRate = crate.BodyFreezes && powered ? Freezing.FreezePerSecond : -Freezing.ThawPerSecond;
-                if (Sweep(crate.Storage, bodyRate, dt)) Note(crate.OpenBy);
+                if (Sweep(crate.Storage, bodyRate, dt)) NoteAll(crate.Viewers);
             }
 
             // (2) WHAT PLAYERS ARE CARRYING. A frozen steak in a backpack thaws; that is the cost of taking it

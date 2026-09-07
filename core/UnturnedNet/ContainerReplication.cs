@@ -41,6 +41,13 @@ namespace UnturnedGodot.Net
             public byte Width;        // crate grid dims -> the client node's storage page
             public byte Height;
             public ContainerDisplayCell[] Display = System.Array.Empty<ContainerDisplayCell>();
+            /// <summary>Is anybody standing in this container -- i.e. should its door be SWUNG OPEN on every
+            /// screen (master 2026-09-07: "as well as the container door open/close state"). The door was
+            /// cosmetic and purely local: StoreShelf.SetDoorsOpen ran on the opener's machine only, so a fridge
+            /// somebody was looting looked shut to the player standing next to them, and a door left open by a
+            /// player who walked away never shut for anyone. Derived, never asserted by a client: it is exactly
+            /// "the crate's viewer set is not empty", which only the server knows.</summary>
+            public bool DoorsOpen;
             public long LastChangedTick;
         }
 
@@ -86,6 +93,16 @@ namespace UnturnedGodot.Net
         {
             if (!TryGet(netId, out var e)) return;
             e.Display = display ?? System.Array.Empty<ContainerDisplayCell>();
+            e.LastChangedTick = Stamp(tick);
+        }
+
+        /// <summary>Swing this container's door for everyone. Driven off InventoryReplication's viewer set via
+        /// the CrateOpenChanged seam, not polled: a door that takes up to half a second to move (the display
+        /// digest's 2 Hz beat) reads as the game ignoring you.</summary>
+        public void ServerSetDoorsOpen(uint netId, bool open, long tick)
+        {
+            if (!TryGet(netId, out var e) || e.DoorsOpen == open) return;
+            e.DoorsOpen = open;
             e.LastChangedTick = Stamp(tick);
         }
 
@@ -166,6 +183,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.Pos.x); h = NetHash.MixFloat(h, e.Pos.y); h = NetHash.MixFloat(h, e.Pos.z);
                 h = NetHash.MixFloat(h, e.YawDegrees);
                 h = NetHash.MixByte(h, e.Width); h = NetHash.MixByte(h, e.Height);
+                h = NetHash.MixByte(h, e.DoorsOpen ? (byte)1 : (byte)0);
                 h = NetHash.MixUInt32(h, (uint)e.Display.Length);
                 foreach (var d in e.Display) { h = NetHash.MixByte(h, d.Cell); h = NetHash.MixUInt32(h, d.ItemId); h = NetHash.MixByte(h, d.Rot); }
             }
@@ -180,6 +198,7 @@ namespace UnturnedGodot.Net
             w.WriteDegrees(e.YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(e.Width);
             w.WriteUInt8(e.Height);
+            w.WriteBit(e.DoorsOpen);                // v36: somebody has it open -> its door is swung, on every screen
             w.WriteUInt8((byte)e.Display.Length);   // a shelf's visible tiers are few (<= 255 cells)
             foreach (var d in e.Display) { w.WriteUInt8(d.Cell); w.WriteUInt16(d.ItemId); w.WriteUInt8(d.Rot); }
         }
@@ -193,6 +212,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte width)) return false;
             if (!r.ReadUInt8(out byte height)) return false;
+            if (!r.ReadBit(out bool doorsOpen)) return false;
             if (!r.ReadUInt8(out byte dcount)) return false;
             var display = new ContainerDisplayCell[dcount];
             for (int i = 0; i < dcount; i++)
@@ -202,7 +222,7 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt8(out byte rot)) return false;
                 display[i] = new ContainerDisplayCell { Cell = cell, ItemId = itemId, Rot = rot };
             }
-            e = new ContainerEntity { NetIdValue = id, KindId = kindId, Pos = pos, YawDegrees = yaw, Width = width, Height = height, Display = display };
+            e = new ContainerEntity { NetIdValue = id, KindId = kindId, Pos = pos, YawDegrees = yaw, Width = width, Height = height, DoorsOpen = doorsOpen, Display = display };
             return true;
         }
 

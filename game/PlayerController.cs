@@ -3775,7 +3775,13 @@ namespace UnturnedGodot
         {
             if (crate == null) return false;
             if (crate is StoreShelf shelf) crate = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is on
-            _openDoorShelf = crate as StoreShelf; _openDoorShelf?.SetDoorsOpen(true);   // a doored container (fridge/wardrobe/counter): swing its leaf open the instant you interact -- BEFORE the replicated early-return so it fires in SP + MP alike (local cosmetic)
+            // A doored container swings its leaf when you interact. ⚠ For a REPLICATED container the door is
+            // SERVER-DRIVEN now (v36): it is open while ANYONE is in it, so swinging it locally would shut it
+            // under the first player to walk away while somebody else is still looting -- and the replica view,
+            // seeing the server still saying open, would have nothing to correct. A non-replicated (SP-direct)
+            // container has no publisher and keeps the local swing.
+            _openDoorShelf = crate.NetId == 0 ? crate as StoreShelf : null;
+            _openDoorShelf?.SetDoorsOpen(true);
             // B9: a REPLICATED container (server-owned, NetId != 0) opens over the WIRE -- its local grid is only a
             // display mirror; the server holds the authoritative contents (StorageOpened + the owner echo carry them
             // into STORAGE page 7, and OnReplicatedStorageOpened opens the dashboard on the fact, never on the send).
