@@ -34,9 +34,9 @@ REARDOOR = "game/content/sedan_glass_r_rear.txt"  # cut to the C-pillar: its TRA
 SPEC = "game/Vehicle.cs"
 EPS = 1e-3
 
-# Where the wheel has to move to. Back, so it sits BEHIND the new dash face (toward the driver) instead of buried
-# inside it; and up, so its top half clears the dash rather than peeping over by 16 cm.
-WHEEL_DZ = 0.60
+# How far UP the wheel goes, so its top half clears the dash rather than peeping over by 16 cm. The BACKWARD move
+# is not a constant -- it is derived so the hub lands ON the dash fascia (master 2026-09-07: "no pole. the hub
+# should touch the dash"), which means it follows the fascia if that ever moves again.
 WHEEL_DY = 0.20
 
 
@@ -135,12 +135,19 @@ def move_wheel():
     back behind the dash and up, so it reads as a wheel rather than a rim peeping over a ledge."""
     src = io.open(STEER, encoding="utf-8").read().splitlines()
     zs = [float(l.split()[3]) for l in src if l.startswith("v ")]
-    if max(zs) > -1.0: return None, "wheel       already moved"
+    if max(zs) > -1.05: return None, "wheel       already moved"
+    # THE HUB LANDS ON THE FASCIA. Master asked for the hub to touch the dash rather than for a column to bridge
+    # a gap -- so the backward move is however far it takes to put the disc's CENTRE on that panel, not a number.
+    bV, bVT, bF = load(BODY)
+    bseamY, bseamZ, bscreenZ, binnerX, bouterX = geometry(bV)
+    fascia = bscreenZ + (bouterX - binnerX) / 2.0
+    hubZ = (min(zs) + max(zs)) / 2.0
+    dz = fascia - hubZ
     out = []
     for l in src:
         if l.startswith("v "):
             p = l.split()
-            out.append("v %s %.6f %.6f" % (p[1], float(p[2]) + WHEEL_DY, float(p[3]) + WHEEL_DZ))
+            out.append("v %s %.6f %.6f" % (p[1], float(p[2]) + WHEEL_DY, float(p[3]) + dz))
         else: out.append(l)
     io.open(STEER, "w", encoding="utf-8").write("\n".join(out) + "\n")
 
@@ -160,9 +167,9 @@ def move_wheel():
     m = pat.search(s, lo, hi if hi > lo else len(s))
     if not m: return None, "wheel mesh moved but the sedan's SteerPivot line was not found -- FIX Vehicle.cs BY HAND"
     new = "%sSteerPivot = new Vector3(%sf, %.3ff, %.3ff), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steer centroid + disc normal (PCA); moved with the mesh when the dash went in" % (
-        m.group(1), m.group(2), float(m.group(3)) + WHEEL_DY, float(m.group(4)) + WHEEL_DZ)
+        m.group(1), m.group(2), float(m.group(3)) + WHEEL_DY, float(m.group(4)) + dz)
     io.open(SPEC, "w", encoding="utf-8").write(s[:m.start()] + new + s[m.end():])
-    return [], "wheel       +%.2f y, +%.2f z  (mesh AND SteerPivot -- the disc keeps its own centre)" % (WHEEL_DY, WHEEL_DZ)
+    return [], "wheel       +%.2f y, %+.3f z -> hub ON the fascia at z %.3f (mesh AND SteerPivot)" % (WHEEL_DY, dz, fascia)
 
 
 def rerake_glass(g):
@@ -243,73 +250,6 @@ def rerake_glass(g):
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
     return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (door-pane chord), %.3f back from the front face" % (
         seamY, botZ, topY, topZ, slope, depth * 0.0625)
-
-
-def add_steering_column():
-    """Give the steering wheel a COLUMN, so it is attached to the dash instead of hanging in the cabin.
-
-    master 2026-09-07: "steering wheek floating in front of dash instead of attached." It is floating because the
-    ripped mesh is a bare DISC -- 142 verts, symmetric in x, no shaft. Nothing was lost when the wheel moved; there
-    was never anything joining it to anything.
-
-    The shaft runs from the wheel's centre along its OWN rotation axis (SteerAxis, which is what the wheel spins
-    about) forward to the dash fascia. Aligned with that axis on purpose: a column built along any other line would
-    sweep a cone when the wheel turns. Octagonal rather than square for the same reason -- a square section visibly
-    spins, an octagon at this size does not.
-    """
-    src = io.open(STEER, encoding="utf-8").read().splitlines()
-    if any(l.startswith("# COLUMN") for l in src): return None, "column      already present"
-    V = [[float(x) for x in l.split()[1:4]] for l in src if l.startswith("v ")]
-    nV = len(V)
-    nT = sum(1 for l in src if l.startswith("vt "))
-    nN = sum(1 for l in src if l.startswith("vn "))
-    if not (nV == nT == nN): return None, "steer mesh v/vt/vn counts differ -- not the 1:1 layout this expects"
-
-    cx = (min(v[0] for v in V) + max(v[0] for v in V)) / 2.0
-    cy = (min(v[1] for v in V) + max(v[1] for v in V)) / 2.0
-    cz = (min(v[2] for v in V) + max(v[2] for v in V)) / 2.0
-    ax = (0.0, -0.259, -0.966)                           # SteerAxis, reversed: forward and slightly down
-
-    # Reach the dash fascia -- the panel this is supposed to be bolted to -- rather than a fixed length.
-    bV, bVT, bF = load(BODY)
-    g = geometry(bV)
-    seamY, seamZ, screenZ, innerX, outerX = g
-    fascia = screenZ + (outerX - innerX) / 2.0
-    t = (fascia - cz) / ax[2]
-    if t <= 0: return None, "column      wheel is already at or behind the fascia"
-    ex, ey, ez = cx + ax[0] * t, cy + ax[1] * t, cz + ax[2] * t
-
-    # An octagonal section around the axis. The axis is in the YZ plane, so X and (axis x X) span the section.
-    import math
-    r = 0.035
-    u = (1.0, 0.0, 0.0)
-    w = (ax[1] * u[2] - ax[2] * u[1], ax[2] * u[0] - ax[0] * u[2], ax[0] * u[1] - ax[1] * u[0])
-    wl = math.sqrt(sum(c * c for c in w)); w = tuple(c / wl for c in w)
-
-    uv = "vt 0.500000 0.500000"                          # flat: the wheel is a solid colour, no texture to line up
-    out = ["# COLUMN added by tools/add_sedan_dash.py -- the rip is a bare disc with no shaft (master: 'floating')."]
-    ring = []
-    for end in ((cx, cy, cz), (ex, ey, ez)):
-        for k in range(8):
-            a = 2.0 * math.pi * k / 8.0
-            ring.append(tuple(end[i] + r * (math.cos(a) * u[i] + math.sin(a) * w[i]) for i in range(3)))
-    for pnt in ring: out.append("v %.6f %.6f %.6f" % pnt)
-    for _ in ring: out.append(uv)
-    for k in range(16):
-        base = ring[k]
-        cen = (cx, cy, cz) if k < 8 else (ex, ey, ez)
-        d = [base[i] - cen[i] for i in range(3)]
-        dl = math.sqrt(sum(c * c for c in d)) or 1.0
-        out.append("vn %.6f %.6f %.6f" % tuple(c / dl for c in d))
-    b = nV + 1
-    for k in range(8):
-        k2 = (k + 1) % 8
-        a1, a2, b1, b2 = b + k, b + k2, b + 8 + k, b + 8 + k2
-        for tri in ((a1, b1, b2), (a1, b2, a2)):
-            out.append("f " + " ".join("%d/%d/%d" % (i, i, i) for i in tri))
-    io.open(STEER, "a", encoding="utf-8").write("\n".join(out) + "\n")
-    return [], "column      wheel centre (%.3f, %.3f, %.3f) -> fascia z %.3f, %.3f long, r %.3f" % (
-        cx, cy, cz, fascia, t, r)
 
 
 def rerake_rear_glass():
@@ -416,7 +356,7 @@ def main():
         if lines: append(BODY, lines); did = True
     V, VT, F = load(BODY)
     g = geometry(V)
-    for fn in (move_wheel, add_steering_column, lambda: rerake_glass(g), rerake_rear_glass, lambda: center_side_glass(g)):
+    for fn in (move_wheel, lambda: rerake_glass(g), rerake_rear_glass, lambda: center_side_glass(g)):
         lines, msg = fn()
         print("  " + msg)
         if lines is not None: did = True
