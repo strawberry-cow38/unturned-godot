@@ -46,9 +46,12 @@ def aperture(V):
     seam = max((k for k, ix in cowl.items() if len({round(V[i][0], 3) for i in ix}) >= 2), key=lambda k: (k[0], -k[1]))
     seamY, seamZ = seam
     innerX = max(abs(V[i][0]) for i in cowl[seam])
-    behind = sorted({round(v[2], 3) for v in V if abs(v[1] - seamY) < EPS and round(v[2], 3) > seamZ + EPS})
-    if not behind: sys.exit("no vertex behind the cowl seam -- not the mesh this tool was written for")
-    baseZ = behind[0]
+    # ⚠ THE OPENING'S BOTTOM EDGE IS THE COWL SEAM, not the next line behind it. At the beltline the inner skin
+    # carries TWO z values -- the cowl seam at -1.461 and the top of the cabin's SIDE WALL at -1.123 -- and
+    # NOTHING spans the band between them, so the hole runs forward all the way to the cowl. Fitting the pane to
+    # -1.123 (which I did first) is fitting it to the side wall: it comes out at 12 degrees from vertical, which
+    # is what master saw as "straight vertical". The real opening is 33.7 degrees, a normal windscreen rake.
+    baseZ = seamZ
     tops = [v for v in V if abs(abs(v[0]) - innerX) < EPS and v[1] > seamY + 0.5 and v[2] < -0.9]
     if not tops: sys.exit("no header found above the windscreen base")
     topY = min(v[1] for v in tops)
@@ -60,8 +63,12 @@ def fit_windscreen():
     V = verts(BODY)
     seamY, baseZ, topY, topZ, innerX = aperture(V)
     gv = verts(GLASS)
+    # Compare ALL FOUR corners, not three. The first guard checked the two heights and the top z and skipped the
+    # BOTTOM -- so when the bottom edge moved from the side wall to the cowl seam it declared the pane already
+    # correct and changed nothing, which reads as the fix having been applied.
     if (abs(min(v[1] for v in gv) - seamY) < EPS and abs(max(v[1] for v in gv) - topY) < EPS
-            and abs(max(v[2] for v in gv) - topZ) < EPS): return "windscreen  already flush in the opening"
+            and abs(max(v[2] for v in gv) - topZ) < EPS
+            and abs(min(v[2] for v in gv) - baseZ) < EPS): return "windscreen  already flush in the opening"
     xs = sorted({round(v[0], 6) for v in gv})
     out = head(GLASS)
     out.append("# FITTED FLUSH by tools/fit_sedan_glass.py: the pane spans the body's windscreen APERTURE -- cowl")

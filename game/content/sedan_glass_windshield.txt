@@ -4,8 +4,10 @@ g windshield
 # SIMPLIFIED by tools/simplify_glass_panes.py -- outline only (see its docstring).
 # FITTED FLUSH by tools/fit_sedan_glass.py: the pane spans the body's windscreen APERTURE -- cowl
 # edge to header edge -- rather than following any one edge of the wedge-shaped A-pillar.
-v -1.014036 1.125000 -1.123000
-v 1.015964 1.125000 -1.123000
+# FITTED FLUSH by tools/fit_sedan_glass.py: the pane spans the body's windscreen APERTURE -- cowl
+# edge to header edge -- rather than following any one edge of the wedge-shaped A-pillar.
+v -1.014036 1.125000 -1.461000
+v 1.015964 1.125000 -1.461000
 v 1.015964 1.875000 -0.961167
 v -1.014036 1.875000 -0.961167
 f 1 2 3
