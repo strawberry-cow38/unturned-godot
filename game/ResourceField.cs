@@ -548,6 +548,7 @@ namespace UnturnedGodot
         }
 
         Node3D _stump;
+        StaticBody3D _stumpBody;
 
         // Retail stumpGameObject: the stump meshes stay where the tree stood until it regrows.
         void SpawnStump()
@@ -556,6 +557,49 @@ namespace UnturnedGodot
             AddChild(_stump);
             LoadParts(_stump, "stump");
             _stump.GlobalTransform = TreeXf;
+            SpawnStumpCollider();
+        }
+
+        /// <summary>A felled tree leaves something you can walk into (master 2026-09-07: "give tree stumps
+        /// collision"). Felling sets the TRUNK body's layer to 0 -- correct, an 8 m cylinder must not keep
+        /// blocking a tree that is lying on the ground -- and SpawnStump only ever added meshes, so the stump
+        /// was scenery you walked through.
+        ///
+        /// It is the trunk's own base, so it collides where the trunk did. Measured, not guessed:
+        /// Pine_0_1.obj (the standing trunk) and Pine_0_stump_0.obj share a halfwidth of 1.28 and a base of
+        /// -1.20 -- the stump mesh IS the bottom 2.8 m of the trunk. So it reuses the trunk's 0.5 * sr radius
+        /// (deliberately slimmer than the mesh, see the note where the trunk body is built) and the trunk's
+        /// own -1.5 base, and only the TOP comes from the stump.
+        ///
+        /// That top is read off the loaded mesh rather than hardcoded. Every stump asset in the map today tops
+        /// at exactly +1.60, but reading the AABB means a species whose stump is a different height gets a
+        /// collider that fits it instead of one that fits the pines.
+        ///
+        /// A SEPARATE body, and a child of the trunk (which is orthonormal), NOT of _stump: _stump carries the
+        /// instance's full transform including a non-uniform scale, and Jolt silently drops non-uniformly
+        /// scaled shapes -- the same trap the trunk body is orthonormalised to avoid.</summary>
+        const float StumpBaseLocal = -1.5f;    // the standing trunk collider's own base
+        const float StumpTopFallback = 1.6f;   // every *_stump_0.obj in the map tops here; used only if none loaded
+        void SpawnStumpCollider()
+        {
+            Vector3 sc = TreeXf.Basis.Scale;
+            float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
+            if (sr <= 0.001f || sh <= 0.001f) return;
+
+            float top = 0f;
+            foreach (Node n in _stump.GetChildren())
+                if (n is MeshInstance3D mi && mi.Mesh != null) top = Mathf.Max(top, mi.Mesh.GetAabb().End.Y);
+            if (top <= 0.01f) top = StumpTopFallback;   // no mesh loaded (missing asset) -> the measured height
+
+            float h = (top - StumpBaseLocal) * sh;
+            _stumpBody = new StaticBody3D { CollisionLayer = 1u << 0, Name = "StumpCollider" };
+            _stumpBody.AddChild(new CollisionShape3D {
+                Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = h },
+                Position = new Vector3(0f, (top + StumpBaseLocal) * 0.5f * sh, 0f) });
+            AddChild(_stumpBody);
+            _stumpBody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);   // it is a tree: wood footsteps
+            _stumpBody.AddToGroup(ColliderBudget.Group);   // streamed like the trunk it replaces, not budget-free
+            if (HasMeta(ColliderBudget.RadiusMeta)) _stumpBody.SetMeta(ColliderBudget.RadiusMeta, GetMeta(ColliderBudget.RadiusMeta));
         }
 
         // Retail debrisGameObject: the felled tree topples in the chop direction, then is cleaned up. Retail uses a
@@ -625,10 +669,15 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Test seam: regrow NOW rather than after the reset timer, so a test can prove the stump's
+        /// collider leaves with the stump instead of outliving it as an invisible wall at the tree's foot.</summary>
+        public void DebugRegrowNow() => Regrow();
+
         void Regrow()
         {
             if (!IsInstanceValid(this)) return;
             if (IsInstanceValid(_stump)) _stump.QueueFree();   // the stump goes when the tree comes back
+            if (IsInstanceValid(_stumpBody)) _stumpBody.QueueFree();   // ...and stops blocking with it, or a regrown tree keeps a ghost stump
             Health = _maxHealth;
             Felled = false;
             Field?.SetAlive(Index, true);   // restores the MultiMesh slot + the trunk's collision layer
