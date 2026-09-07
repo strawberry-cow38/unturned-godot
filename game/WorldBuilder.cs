@@ -1301,16 +1301,21 @@ namespace UnturnedGodot
                     }
                 }
                 // SITTABLE FURNITURE (master 2026-09-07: "wire up sitting on couches, chairs, benches, etc").
-                // Same shape as the door branch above and gated the same way -- Playable only, because a seat
-                // has no NetId and no server-side occupancy, so on a dedicated server two players would sit in
-                // the same chair and neither would see it. Anchors come from seats.txt in the prop's own raw
-                // obj space, so `new Transform3D(basis, gpos)` places them exactly as it places a door's pivot.
+                // Same shape as the door branch above, but built in EVERY mode rather than Playable only.
+                // That is the wire-v35 requirement, not tidiness: the dedicated server needs each seat's
+                // position to reach-check a sit command, and it needs them in the SAME world-build order as
+                // every client, because that order IS the seat's NetId (InteractableNetSync assigns it, the
+                // same trick doors and beds use). A mode that skipped seats would renumber every seat after
+                // it and silently sit people in the wrong chairs.
+                //
+                // Anchors come from seats.txt in the prop's own raw obj space, so `new Transform3D(basis,
+                // gpos)` places them exactly as it places a door's pivot.
                 //
                 // A prop carries a LIST of these (a couch two, a picnic table eight) and they are tagged onto
                 // the prop's single body collider below as an array, so looking anywhere at the prop finds the
                 // seat NEAREST the point you aimed at rather than a fixed one.
                 System.Collections.Generic.List<PropSeat> propSeats = null;
-                if (mode == WorldMode.Playable && seatCatalog.TryGetValue(name, out var seatDefs))
+                if (seatCatalog.TryGetValue(name, out var seatDefs))
                 {
                     propSeats = new System.Collections.Generic.List<PropSeat>(seatDefs.Count);
                     foreach (var sd in seatDefs)
@@ -1404,10 +1409,15 @@ namespace UnturnedGodot
                             foreach (var ps in propSeats) sarr.Add(ps);
                             body.SetMeta(PropSeat.HitMeta, sarr);
                             // The whole-prop outline is the affordance -- built once and shared, since every seat
-                            // on this prop lights the same chair. Hidden until a seat is the look target.
-                            var seatGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));   // MakeOutline already starts hidden
-                            root.AddChild(seatGlow);
-                            foreach (var ps in propSeats) ps.BodyOutline = seatGlow;
+                            // on this prop lights the same chair. Hidden until a seat is the look target. Not
+                            // built on a DEDICATED server: nobody is looking at anything there, and it is a
+                            // whole duplicate mesh per chair.
+                            if (mode != WorldMode.Dedicated)
+                            {
+                                var seatGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));   // MakeOutline already starts hidden
+                                root.AddChild(seatGlow);
+                                foreach (var ps in propSeats) ps.BodyOutline = seatGlow;
+                            }
                         }
                     }
                 }

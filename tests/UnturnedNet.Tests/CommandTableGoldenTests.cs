@@ -55,6 +55,11 @@ namespace UnturnedNet.Tests
             // nothing but a disconnect gave them back, so this is the only way to abandon a job and be made
             // whole. Addressed by queue SLOT, and an out-of-range slot is rejected rather than clamped.
             [44] = "CommandCraftCancel",
+            [45] = "CommandTakeFromStorage",
+
+            // v35: sitting on furniture. 45 was claimed by shelf-take in the same hour, so this took 46 --
+            // ids are append-only and the collision was resolved by MOVING, never by sharing a byte.
+            [46] = "CommandSitSeat",
         };
 
         static Dictionary<byte, string> Actual() =>

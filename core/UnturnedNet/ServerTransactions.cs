@@ -279,6 +279,17 @@ namespace UnturnedGodot.Net
                     OnClaimBed,
                     validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                             && _interactables.CanClaimBed(cmd.NetId, pos, sender));
+
+                // v35: sitting on furniture. NetId 0 is STAND and needs no reach check -- you can always get
+                // out of a chair, and requiring reach to leave one would strand a player whose seat was
+                // removed under them. Anything else is a real seat and takes the same reach + occupancy test
+                // an enter-vehicle does, because two clients each deciding they took the same chair is the
+                // failure CommandEnterVehicle's occupancy check exists to stop.
+                commands.Register<SitSeatCommand>(ReplicationIds.CommandSitSeat, SitSeatCommand.TryRead,
+                    OnSitSeat,
+                    validate: (sender, cmd) => cmd.NetId == 0
+                                            || (TryGetSenderPos(sender, out var pos)
+                                                && _interactables.CanSit(cmd.NetId, pos, sender)));
             }
 
             commands.Register<MoveItemCommand>(ReplicationIds.CommandMoveItem, MoveItemCommand.TryRead,
@@ -679,6 +690,32 @@ namespace UnturnedGodot.Net
                     new BedClaimedEvent { NetId = released, Owner = 0 }.Write));
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventBedClaimed,
                 new BedClaimedEvent { NetId = cmd.NetId, Owner = sender }.Write));
+        }
+
+        void OnSitSeat(ushort sender, SitSeatCommand cmd)
+        {
+            if (cmd.NetId == 0)
+            {
+                // Standing up. Silent when they were not sitting: an event saying a seat nobody was in came
+                // free would make every client repaint a chair for nothing, and would let a client spam it.
+                if (_interactables.Stand(sender, out uint freed) && freed != 0)
+                {
+                    _players.ServerRefreshStance(sender, _tick?.Invoke() ?? 0L);   // the pose belongs to whoever changed the seat, not to the next drive tick
+                    _broadcast(NetMessagePak.Pack(ReplicationIds.EventSeatOccupied,
+                        new SeatOccupiedEvent { NetId = freed, Occupant = 0 }.Write));
+                }
+                return;
+            }
+            if (!_interactables.Sit(cmd.NetId, sender, out uint released)) return;
+            _players.ServerRefreshStance(sender, _tick?.Invoke() ?? 0L);
+            // Moving straight from one chair to another: say the old one came free FIRST, so no client ever
+            // sees this player in two seats at once. Same ordering as the bed re-claim above, and for the
+            // same reason.
+            if (released != 0)
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventSeatOccupied,
+                    new SeatOccupiedEvent { NetId = released, Occupant = 0 }.Write));
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventSeatOccupied,
+                new SeatOccupiedEvent { NetId = cmd.NetId, Occupant = sender }.Write));
         }
 
         void OnDropItem(ushort sender, DropItemCommand cmd)

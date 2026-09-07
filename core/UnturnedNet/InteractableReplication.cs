@@ -57,6 +57,22 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Sit on a piece of furniture, or stand up. NetId 0 means STAND -- one command rather than
+    /// two, because sitting and standing are the same question ("which seat am I in, if any") and a client
+    /// that could send them independently could sit in two chairs by never sending the stand.</summary>
+    public struct SitSeatCommand
+    {
+        public uint NetId;   // 0 = stand up
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); }
+        public static bool TryRead(NetPakReader r, out SitSeatCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            cmd = new SitSeatCommand { NetId = id };
+            return true;
+        }
+    }
+
     // ---- events (server -> client, ReliableOrdered facts) ----
 
     /// <summary>A door's full observable state, not just the swing. Locking used to be invisible to
@@ -95,6 +111,23 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>A seat's occupant changed. Broadcast rather than unicast: the point of it is that OTHER
+    /// players see the chair fill, and see it before the next snapshot rather than a tick later.</summary>
+    public struct SeatOccupiedEvent
+    {
+        public uint NetId;
+        public ushort Occupant;   // player id; 0 = the seat came free
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt16(Occupant); }
+        public static bool TryRead(NetPakReader r, out SeatOccupiedEvent e)
+        {
+            e = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadUInt16(out ushort who)) return false;
+            e = new SeatOccupiedEvent { NetId = id, Occupant = who };
+            return true;
+        }
+    }
+
     /// <summary>
     /// The server's authoritative door and bed state, engine-free.
     ///
@@ -114,6 +147,19 @@ namespace UnturnedGodot.Net
             public Vector3 Pos;
             public DoorLogic.DoorState State;
         }
+
+        /// <summary>A place to sit: where it is, and who is in it (0 = free). Position is here for the
+        /// SAME reason a door's is -- the reach check is the server's business, and a client naming a chair
+        /// across the map is refused whatever it believes.</summary>
+        public struct ServerSeat
+        {
+            public uint NetId;
+            public Vector3 Pos;
+            public ushort Occupant;
+        }
+
+        readonly Dictionary<uint, ServerSeat> _seats = new Dictionary<uint, ServerSeat>();
+        readonly Dictionary<ushort, uint> _seatByPlayer = new Dictionary<ushort, uint>();   // the reverse index, so standing up and disconnecting are O(1) and cannot miss a seat
 
         readonly Dictionary<uint, ServerDoor> _doors = new Dictionary<uint, ServerDoor>();
         readonly Dictionary<uint, int> _bedIdByNet = new Dictionary<uint, int>();
@@ -219,6 +265,90 @@ namespace UnturnedGodot.Net
             }
         }
 
+        // ---- seats ----
+
+        public int SeatCount => _seats.Count;
+
+        public void RegisterSeat(uint netId, Vector3 pos)
+        {
+            if (netId == 0) return;   // 0 is the STAND sentinel on the wire and can never name a real seat
+            if (_seats.TryGetValue(netId, out var had)) { had.Pos = pos; _seats[netId] = had; return; }   // re-register keeps the occupant: a world rebuild must not tip people out of their chairs
+            _seats[netId] = new ServerSeat { NetId = netId, Pos = pos, Occupant = 0 };
+            Stamp();
+        }
+
+        public void RemoveSeat(uint netId)
+        {
+            if (!_seats.TryGetValue(netId, out var s)) return;
+            if (s.Occupant != 0) _seatByPlayer.Remove(s.Occupant);
+            _seats.Remove(netId);
+            Stamp();
+        }
+
+        /// <summary>Every seat as (netId, occupant), NetId-ordered so the wire bytes and the state hash do
+        /// not depend on dictionary iteration order.</summary>
+        public IEnumerable<KeyValuePair<uint, ushort>> SeatOccupants
+        {
+            get
+            {
+                var ids = new List<uint>(_seats.Keys);
+                ids.Sort();
+                foreach (var id in ids) yield return new KeyValuePair<uint, ushort>(id, _seats[id].Occupant);
+            }
+        }
+
+        public ushort SeatOccupant(uint netId) => _seats.TryGetValue(netId, out var s) ? s.Occupant : (ushort)0;
+        public bool IsSeated(ushort player) => _seatByPlayer.ContainsKey(player);
+        public bool TryGetSeatOf(ushort player, out uint netId) => _seatByPlayer.TryGetValue(player, out netId);
+
+        /// <summary>May this player take this seat from where they are standing? A seat they are ALREADY in
+        /// is refused rather than accepted as a no-op -- an accepted no-op would broadcast an event saying
+        /// nothing changed, and the client would render a re-sit.</summary>
+        public bool CanSit(uint netId, Vector3 senderPos, ushort player)
+        {
+            if (player == 0) return false;
+            if (!_seats.TryGetValue(netId, out var s)) return false;
+            if (s.Occupant != 0) return false;
+            if ((s.Pos - senderPos).magnitude > InteractReach) return false;
+            return true;
+        }
+
+        /// <summary>Take a validated seat. Standing up from whatever they were in first, and reporting it,
+        /// so moving straight from one chair to another cannot leave the first one occupied by a ghost --
+        /// the leak that vehicle seats had before EjectFromVehicleOnDeath.</summary>
+        public bool Sit(uint netId, ushort player, out uint releasedNetId)
+        {
+            releasedNetId = 0;
+            if (!_seats.TryGetValue(netId, out var s) || s.Occupant != 0 || player == 0) return false;
+            if (_seatByPlayer.TryGetValue(player, out uint previous) && previous != netId)
+            {
+                Stand(player, out releasedNetId);
+            }
+            s.Occupant = player;
+            _seats[netId] = s;
+            _seatByPlayer[player] = netId;
+            Stamp();
+            return true;
+        }
+
+        /// <summary>Get this player out of whatever seat they are in. Returns false when they were in none,
+        /// so a caller can tell "stood up" from "was never sitting" and not broadcast an event for the
+        /// second. Safe to call for a player who has left -- which is why OnPlayerLeft can just call it.</summary>
+        public bool Stand(ushort player, out uint freedNetId)
+        {
+            freedNetId = 0;
+            if (!_seatByPlayer.TryGetValue(player, out uint netId)) return false;
+            _seatByPlayer.Remove(player);
+            if (_seats.TryGetValue(netId, out var s) && s.Occupant == player)
+            {
+                s.Occupant = 0;
+                _seats[netId] = s;
+            }
+            freedNetId = netId;
+            Stamp();
+            return true;
+        }
+
         public bool TryGetDoor(uint netId, out ServerDoor door) => _doors.TryGetValue(netId, out door);
         public bool IsDoorOpen(uint netId) => _doors.TryGetValue(netId, out var d) && d.State.IsOpen;
         public bool IsDoorLocked(uint netId) => _doors.TryGetValue(netId, out var d) && d.State.Locked;
@@ -283,9 +413,16 @@ namespace UnturnedGodot.Net
         /// <summary>Where this player respawns. False = no bed, use the map spawn.</summary>
         public bool TryGetSpawn(ulong player, out Vector3 pos, out float yaw) => _beds.TryGetSpawn(player, out pos, out yaw);
 
-        /// <summary>A player disconnected or was removed -- their claim stays (a bed persists through a
-        /// logout, same as the rest of a base), so nothing to do here beyond documenting the choice.</summary>
-        public void OnPlayerLeft(ulong player) { /* claims persist deliberately */ }
+        /// <summary>A player disconnected or was removed. Their BED claim stays -- a bed persists through a
+        /// logout, same as the rest of a base -- but their SEAT does not: a chair held by someone who is no
+        /// longer connected is a chair nobody can ever use again, and unlike a bed there is nothing to
+        /// preserve. Returns the freed seat (0 = none) so the caller can broadcast it; a seat that goes free
+        /// silently leaves every other client drawing an empty chair as occupied.</summary>
+        public uint OnPlayerLeft(ulong player)
+        {
+            Stand((ushort)player, out uint freed);
+            return freed;   // bed claims persist deliberately
+        }
     }
 
     /// <summary>
@@ -311,6 +448,7 @@ namespace UnturnedGodot.Net
 
         readonly Dictionary<uint, DoorView> _doors = new Dictionary<uint, DoorView>();
         readonly Dictionary<uint, ushort> _bedOwners = new Dictionary<uint, ushort>();
+        readonly Dictionary<uint, ushort> _seatOccupants = new Dictionary<uint, ushort>();
 
         public struct DoorView { public bool Open, Locked; }
 
@@ -321,6 +459,9 @@ namespace UnturnedGodot.Net
         public int BedCount => _bedOwners.Count;
         public bool TryGetDoor(uint netId, out DoorView view) => _doors.TryGetValue(netId, out view);
         public ushort BedOwner(uint netId) => _bedOwners.TryGetValue(netId, out var o) ? o : (ushort)0;
+        public int SeatCount => _seatOccupants.Count;
+        public ushort SeatOccupant(uint netId) => _seatOccupants.TryGetValue(netId, out var o) ? o : (ushort)0;
+        public IEnumerable<KeyValuePair<uint, ushort>> ReplicaSeats => _seatOccupants;
         public IEnumerable<KeyValuePair<uint, DoorView>> ReplicaDoors => _doors;
         public IEnumerable<KeyValuePair<uint, ushort>> ReplicaBeds => _bedOwners;
 
@@ -338,7 +479,7 @@ namespace UnturnedGodot.Net
 
         void WriteTable(NetPakWriter w)
         {
-            if (Source == null) { w.WriteUInt16(0); w.WriteUInt16(0); return; }
+            if (Source == null) { w.WriteUInt16(0); w.WriteUInt16(0); w.WriteUInt16(0); return; }
             var doors = new List<ServerInteractables.ServerDoor>(Source.Doors);
             w.WriteUInt16((ushort)doors.Count);
             foreach (var d in doors)
@@ -353,6 +494,16 @@ namespace UnturnedGodot.Net
             {
                 w.WriteUInt32(b.Key);
                 w.WriteUInt16((ushort)b.Value);   // player ids are ushort on the wire; 0 = unclaimed
+            }
+            // v35: seats ride the same table for the same reason doors and beds do -- a client that joins
+            // after someone sat down has missed the event, and would otherwise draw them standing in a chair
+            // AND offer the chair as free. The whole table resends on any change, per the note above.
+            var seats = new List<KeyValuePair<uint, ushort>>(Source.SeatOccupants);
+            w.WriteUInt16((ushort)seats.Count);
+            foreach (var st in seats)
+            {
+                w.WriteUInt32(st.Key);
+                w.WriteUInt16(st.Value);   // 0 = free
             }
         }
 
@@ -382,6 +533,14 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt16(out ushort owner)) return;
                 _bedOwners[netId] = owner;
             }
+            if (!r.ReadUInt16(out ushort seatCount)) return;
+            _seatOccupants.Clear();   // authoritative and complete: REPLACES, so a removed seat disappears
+            for (int i = 0; i < seatCount; i++)
+            {
+                if (!r.ReadUInt32(out uint netId)) return;
+                if (!r.ReadUInt16(out ushort who)) return;
+                _seatOccupants[netId] = who;
+            }
             Version++;
         }
 
@@ -394,6 +553,8 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixUInt32(h, d.NetId ^ (d.State.IsOpen ? 0x1u : 0u) ^ (d.State.Locked ? 0x2u : 0u));
                 foreach (var b in Source.BedOwners)
                     h = NetHash.MixUInt32(h, b.Key ^ ((uint)b.Value << 8));
+                foreach (var st in Source.SeatOccupants)
+                    h = NetHash.MixUInt32(h, st.Key ^ ((uint)st.Value << 16));   // <<16, not <<8: a bed and a seat sharing a NetId space must not hash alike
                 return h;
             }
             var doorIds = new List<uint>(_doors.Keys); doorIds.Sort();
@@ -402,6 +563,9 @@ namespace UnturnedGodot.Net
             var bedIds = new List<uint>(_bedOwners.Keys); bedIds.Sort();
             foreach (var id in bedIds)
                 h = NetHash.MixUInt32(h, id ^ ((uint)_bedOwners[id] << 8));
+            var seatIds = new List<uint>(_seatOccupants.Keys); seatIds.Sort();
+            foreach (var id in seatIds)
+                h = NetHash.MixUInt32(h, id ^ ((uint)_seatOccupants[id] << 16));
             return h;
         }
     }

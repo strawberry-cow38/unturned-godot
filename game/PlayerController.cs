@@ -4321,6 +4321,7 @@ namespace UnturnedGodot
         public System.Action<uint> NetToggleDoor;                    // door NetId -> Client.SendToggleDoor
         public System.Action<uint, bool> NetSetDoorLocked;           // (door NetId, locked) -> Client.SendSetDoorLocked
         public System.Action<uint> NetClaimBed;                      // bed NetId -> Client.SendClaimBed
+        public System.Action<uint> NetSitSeat;                       // seat NetId (0 = stand) -> Client.SendSitSeat
 
         VehiclePuppet NearestPuppet()
         {
@@ -5519,6 +5520,32 @@ namespace UnturnedGodot
         //
         // WHY THE COLLIDER GOES OFF. Exactly as for a vehicle: the capsule would otherwise fight the prop's
         // own trimesh at cushion height and squeeze the player out sideways.
+        /// <summary>The server's answer to a sit or a stand (SeatOccupiedEvent), applied to THIS shell.
+        ///
+        /// Called for every seat change, including other players' -- which is deliberate: the occupancy has
+        /// to land on the local PropSeat table or the chair someone else just took would still read as free
+        /// and F would offer it. Only the entry naming US moves the local player.
+        ///
+        /// `me` is this shell's own player id; 0 means the event is not about anybody here (a seat coming
+        /// free), which still has to clear the occupant.</summary>
+        public void ApplySeatOccupied(uint netId, ushort occupant, ushort me)
+        {
+            if (!PropSeat.TryGetByNetId(netId, out var seat)) return;
+            if (occupant == 0)
+            {
+                // Freed. If it was OURS, get out of it locally too -- the server may have stood us up for a
+                // reason we do not know about (it removed the prop, or we timed out and came back), and a
+                // client that ignored that would sit in a chair the server says is empty.
+                bool wasMine = _sitting == seat;
+                seat.NetOccupant = 0;
+                if (seat.Occupant == this) seat.Occupant = null;
+                if (wasMine) StandUpLocal();
+                return;
+            }
+            seat.NetOccupant = occupant;
+            if (occupant == me) SitDownLocal(seat);
+        }
+
         /// <summary>Test seam for NearestFreeSeat. The picking rule is the one thing here that a player
         /// cannot see going wrong -- an occupied or far seat quietly wins and you end up somewhere odd -- and
         /// it is unreachable otherwise, since the real call site is inside the look raycast.</summary>
@@ -5542,6 +5569,20 @@ namespace UnturnedGodot
         {
             if (seat == null || !IsInstanceValid(seat) || !seat.Free || _dead) return;
             if (_driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null) return;   // already sitting on something that moves
+            // MP: ASK, do not sit. The seat may have been taken between the look and the packet, and a client
+            // that sat optimistically would have to be yanked back out of a chair someone else is already in
+            // -- which is worse than a frame of delay. SeatOccupied comes back and ApplySeatOccupied does it.
+            // Null in SP/loopback, so the direct path below is byte-identical to before v35.
+            if (seat.NetId != 0 && NetSitSeat != null) { NetSitSeat(seat.NetId); return; }
+            SitDownLocal(seat);
+        }
+
+        /// <summary>Actually sit -- no send, no eligibility test. Split out of SitDown so the MP path can
+        /// apply the server's ANSWER without re-asking, which is the loop that would otherwise form: the
+        /// event arrives, calls SitDown, which sends another command, which produces another event.</summary>
+        void SitDownLocal(PropSeat seat)
+        {
+            if (seat == null || !IsInstanceValid(seat)) return;
             _sitting = seat;
             seat.Occupant = this;
             if (_focusSeat != null && IsInstanceValid(_focusSeat)) { _focusSeat.SetLookFocused(false); _focusSeat = null; }   // drop the look-outline once you are in it
@@ -5561,6 +5602,19 @@ namespace UnturnedGodot
         /// here rather than each remembering to check), and it always restores the collider -- a player left
         /// with a disabled capsule falls through the world, which is much worse than a chair that stays busy.</summary>
         public void StandUp()
+        {
+            // MP: tell the server first, and unconditionally -- even if the local view already thinks we are
+            // out of the chair. A stand that is never sent leaves the seat held forever on the server, which
+            // is the one failure here nobody can recover from in-game.
+            if (NetSitSeat != null && _sitting != null && IsInstanceValid(_sitting) && _sitting.NetId != 0) NetSitSeat(0);
+            StandUpLocal();
+        }
+
+        /// <summary>Actually get up -- no send. Split for the same reason SitDownLocal is, and it is the one
+        /// the server's answer calls. Deliberately does the collider restore even when there was no seat: a
+        /// disabled capsule is the failure that drops a player through the world, so it is repaired on every
+        /// path out rather than only on the one that had a chair.</summary>
+        void StandUpLocal()
         {
             var seat = _sitting; _sitting = null;
             if (seat != null && IsInstanceValid(seat))

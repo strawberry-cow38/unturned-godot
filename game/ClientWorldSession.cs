@@ -281,6 +281,14 @@ namespace UnturnedGodot
             // the channel is ordered, so applying each event as it lands is enough -- no need for this
             // client to keep its own who-owns-what index to work out what was freed.
             Client.BedClaimed += e => { if (Bed.TryGetByNetId(e.NetId, out var b)) b.ApplyReplicatedClaim(e.Owner); };
+            // v35: seat occupancy. Applied for EVERY seat change, not just our own -- a chair someone else
+            // took has to stop reading as free here or F would offer it. Only the entry naming us moves this
+            // shell, which is what ApplySeatOccupied's `me` argument decides.
+            Client.SeatOccupied += e =>
+            {
+                if (Shell != null && IsInstanceValid(Shell)) Shell.ApplySeatOccupied(e.NetId, e.Occupant, Client.PlayerId);
+                else if (PropSeat.TryGetByNetId(e.NetId, out var s2)) s2.NetOccupant = e.Occupant;   // pre-spawn: still keep the table right
+            };
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -597,6 +605,7 @@ namespace UnturnedGodot
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);
             shell.NetSetDoorLocked = (netId, locked) => Client.SendSetDoorLocked(netId, locked);
             shell.NetClaimBed = netId => Client.SendClaimBed(netId);
+            shell.NetSitSeat = netId => Client.SendSitSeat(netId);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
             // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))

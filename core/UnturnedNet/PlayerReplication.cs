@@ -150,7 +150,9 @@ namespace UnturnedGodot.Net
         /// already exist: that sequence needs the STORAGE page echo to land before the move can be addressed,
         /// so it is a three-message state machine that leaves the container LOCKED OPEN against every other
         /// player if any step is dropped. Grabbing one item is one atomic thing and should cost one message.</summary>
-        public const byte CommandTakeFromStorage = 45;   // v32: give up on a queued craft and take the ingredients back
+        public const byte CommandTakeFromStorage = 45;   // v34 (see the doc above; the old one-liner here described CommandCraftCancel and was left behind by a copy-paste)
+
+        public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -193,6 +195,7 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
         public const byte EventPlayerMelee = 39;
         public const byte EventCookerState = 40;
+        public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }
 
@@ -241,6 +244,14 @@ namespace UnturnedGodot.Net
                 }
             }
         }
+
+        /// <summary>Wire stance code for a player sat on FURNITURE. It is not reachable through MoveInput --
+        /// that field is two bits wide and all four are spent -- and that is the right shape, not a limitation
+        /// worked around: the SERVER decides you are sitting, because the server is the side that granted you
+        /// the seat. A client able to assert this could pose itself seated in mid-air, and every other client
+        /// would draw it. The entity snapshot's stance is a full byte, so carrying a fifth value costs nothing
+        /// and changes no framing.</summary>
+        public const byte WireStanceSitting = 4;
 
         /// <summary>Encode an on-foot stance into buttons bits 1-2. Only the four wire stances exist;
         /// anything else (DRIVING/SITTING never send MoveInput anyway) degrades to STAND.</summary>
@@ -458,6 +469,30 @@ namespace UnturnedGodot.Net
         /// the latest received input keeps applying every tick until replaced (single loss costs nothing).
         /// Externally-driven entities (ServerDrive) are skipped -- their shell already stepped the real
         /// sim-core + physics this tick.</summary>
+        /// <summary>Is this player sat on a piece of furniture? Wired by the host to its seat table; null in
+        /// a harness, where nobody is. Same shape and the same reason as Vitals.SubmergedOf: core owns the
+        /// wire and the stance byte, the game layer owns what a chair is. Read in BOTH drive paths below,
+        /// because a listen-server's local player goes through ServerDrive and a demo walker through
+        /// ServerStep -- overriding only one is how a feature works for everyone except the host.</summary>
+        public System.Func<ushort, bool> SeatedOf;
+
+        /// <summary>Re-publish one player's stance right now. Called when the SEAT TABLE changes rather than
+        /// waiting for a drive tick, because the two drive paths both skip somebody: ServerStep ignores an
+        /// entity that is externally driven or has no input, and ServerDrive only runs for one that is
+        /// streaming a transform. A player sat perfectly still in a chair is exactly the case that falls
+        /// between them, and "the chair fills a tick late, or never on a quiet server" is not a thing to
+        /// leave to luck. Marks the entity changed so the snapshot actually carries it.</summary>
+        public void ServerRefreshStance(ushort ownerPlayerId, long tick)
+        {
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            byte want = e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3) : e.Stance;
+            if (SeatedOf != null && SeatedOf(ownerPlayerId)) want = MoveInput.WireStanceSitting;
+            else if (want == MoveInput.WireStanceSitting) want = 0;   // stood up with no input stream to fall back on -> STAND, not stuck sitting
+            if (want == e.Stance) return;
+            e.Stance = want;
+            e.LastChangedTick = tick;
+        }
+
         public void ServerStep(long tick, float dt)
         {
             foreach (uint id in SortedIds())
@@ -469,6 +504,7 @@ namespace UnturnedGodot.Net
                 var newPos = IntegrateFlat(e.Sim, in input, e.Pos, dt);
                 float newYaw = NetQuantization.QuantizeDegrees(input.YawDegrees, NetQuantization.YawBits);
                 byte newStance = (byte)((input.Buttons >> 1) & 0x3);   // v18: MoveInput stance bits (StanceShift 1, mask 0b11)
+                if (SeatedOf != null && SeatedOf(e.OwnerPlayerId)) newStance = MoveInput.WireStanceSitting;   // v35: the seat table outranks the input -- the server granted the chair, so the server says you are in it
                 bool changed = newPos != e.Pos || newYaw != e.YawDegrees || input.Seq != e.LastProcessedInputSeq || newStance != e.Stance;
                 e.Pos = newPos;
                 e.YawDegrees = newYaw;
@@ -509,6 +545,7 @@ namespace UnturnedGodot.Net
             // v18: the owner-authority transform stream carries no stance, but the owner's MoveInput stream still flows
             // (ServerQueueInput -> CurrentInput), so read the stance from there.
             byte newStance = e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3) : e.Stance;
+            if (SeatedOf != null && SeatedOf(ownerPlayerId)) newStance = MoveInput.WireStanceSitting;   // v35: see ServerStep -- the seat table wins over whatever the input stream last said
             bool changed = newPos != e.Pos || newYaw != e.YawDegrees || lastProcessedInputSeq != e.LastProcessedInputSeq || newStance != e.Stance;
             e.Pos = newPos;
             e.YawDegrees = newYaw;

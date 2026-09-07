@@ -17,10 +17,11 @@ namespace UnturnedGodot
     /// SEAT ANCHORS ARE MEASURED, not authored: tools/extract_seats.py finds the up-facing plane in the
     /// 0.40..0.95 m band and splits it into islands. See seats.txt.
     ///
-    /// SINGLEPLAYER ONLY, deliberately and like the prop doors above it (WorldBuilder's door branch is gated
-    /// the same way): a seat has no NetId, no replication and no server-side occupancy, so on a dedicated
-    /// server two players would sit in the same chair and neither would see the other do it. Spawned only in
-    /// WorldMode.Playable, so that state cannot exist rather than existing and being wrong.</summary>
+    /// MULTIPLAYER (wire v35): a seat carries a NetId assigned in world-build order by InteractableNetSync,
+    /// the same trick doors and beds use -- every peer runs the identical WorldBuilder, so the nth seat is
+    /// the nth seat everywhere and no id has to be minted or sent. The SERVER owns who is in which chair
+    /// (ServerInteractables), because two clients each deciding they took the same seat is exactly the
+    /// "multiple people can't get in a car" failure the vehicle occupancy check exists to stop.</summary>
     public partial class PropSeat : Node3D
     {
         /// <summary>Meta key on the PROP's body collider, holding a Godot Array of the PropSeats it carries.
@@ -28,11 +29,56 @@ namespace UnturnedGodot
         /// get should be the one you are looking at.</summary>
         public static readonly StringName HitMeta = "propseat";
 
+        /// <summary>Replication id, 0 in singleplayer. Assigned by InteractableNetSync from world-build
+        /// order. Held in a lookup so an arriving SeatOccupiedEvent can find the node without a tree walk --
+        /// and registered on ENTERING the tree rather than only in _Ready, because _Ready fires once and a
+        /// re-parented seat would otherwise deregister on exit and never come back (the same shape Door and
+        /// Bed both needed).</summary>
+        public uint NetId
+        {
+            get => _netId;
+            set
+            {
+                if (_netId != 0) _byNetId.Remove(_netId);
+                _netId = value;
+                if (value != 0) _byNetId[value] = this;
+            }
+        }
+        uint _netId;
+
+        static readonly System.Collections.Generic.Dictionary<uint, PropSeat> _byNetId
+            = new System.Collections.Generic.Dictionary<uint, PropSeat>();
+
+        public static bool TryGetByNetId(uint netId, out PropSeat seat)
+        {
+            if (_byNetId.TryGetValue(netId, out seat) && IsInstanceValid(seat)) return true;
+            _byNetId.Remove(netId);   // the node died without clearing its id
+            seat = null;
+            return false;
+        }
+
+        /// <summary>Drop every id. Called between world builds, or a second map's seat 1 collides with the
+        /// first map's and an event lands on a freed node.</summary>
+        public static void ResetNetIds() => _byNetId.Clear();
+
+        public override void _EnterTree() { if (_netId != 0) _byNetId[_netId] = this; }
+        public override void _ExitTree()
+        {
+            if (_netId != 0 && _byNetId.TryGetValue(_netId, out var held) && held == this) _byNetId.Remove(_netId);
+        }
+
         /// <summary>Who is sitting here, or null. A plain reference rather than a bool: the seat has to be
         /// released when its occupant dies or is teleported away, and "is it me" is the question the F key
         /// asks.</summary>
         public Node3D Occupant;
-        public bool Free => Occupant == null || !IsInstanceValid(Occupant);
+
+        /// <summary>The player id sitting here according to the SERVER, or 0. Separate from Occupant because
+        /// a remote sitter has no local node to point at -- we know a chair is busy without owning whoever is
+        /// in it -- and conflating the two would either hide remote occupancy or make Occupant lie about what
+        /// it holds. Set only from SeatOccupiedEvent / the snapshot table; always 0 in singleplayer.</summary>
+        public ushort NetOccupant;
+
+        public bool Free => (Occupant == null || !IsInstanceValid(Occupant)) && NetOccupant == 0;
 
         /// <summary>Where the sitter goes: origin at the seat surface, -Z along the facing (Godot's forward),
         /// Y up. Built once at spawn from the placement basis, since a world prop never moves.</summary>

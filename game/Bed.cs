@@ -170,6 +170,7 @@ namespace UnturnedGodot
             _nextId = 1;
             _byNetId.Clear();     // a new world's server ids must not resolve to the old world's nodes
             Door.ResetNetIds();   // doors have no claim table of their own to hang this off
+            PropSeat.ResetNetIds();   // ...nor do seats, and a stale seat 1 would take an arriving occupancy event meant for the new world's chair
         }
 
         /// <summary>Tests share one static table; this keeps one case from inheriting another's claims.</summary>

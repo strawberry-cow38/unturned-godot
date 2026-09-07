@@ -145,6 +145,167 @@ namespace UnturnedNet.Tests
                         "...and still open to the owner");
         }
 
+        // ---- seats (v35): sitting on furniture ----
+        //
+        // The rules are the vehicle's, one chair at a time, and the reason is the same: two clients each
+        // deciding they took the same seat is the "multiple people can't get in a car, and so when they
+        // tried it actually just like disappeared" report. Everything below goes out as a real datagram --
+        // nothing calls the server's Sit/Stand directly, or these would prove only that the methods work.
+
+        const uint SeatId = 701, OtherSeatId = 702;
+
+        static TransactionalHarness SeatHarness(out NetWorldClient alice, out NetWorldClient bob)
+        {
+            var h = new TransactionalHarness(seed: 77).Connected("alice", "bob");
+            alice = h.Clients[0];
+            bob = h.Clients[1];
+            h.Server.Interactables.RegisterSeat(SeatId, Vector3.zero);
+            h.Server.Interactables.RegisterSeat(OtherSeatId, new Vector3(1f, 0f, 0f));
+            PutPlayerAt(h, alice, Vector3.zero);
+            PutPlayerAt(h, bob, Vector3.zero);
+            return h;
+        }
+
+        [Test]
+        public void Sitting_Down_Tells_Everyone_Else_The_Chair_Is_Taken()
+        {
+            var h = SeatHarness(out var alice, out var bob);
+            SeatOccupiedEvent? atBob = null;
+            bob.SeatOccupied += e => atBob = e;
+
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => atBob.HasValue), Is.True, "the fact reaches the OTHER player, not just the sitter");
+            Assert.That(atBob.Value.NetId, Is.EqualTo(SeatId));
+            Assert.That(atBob.Value.Occupant, Is.EqualTo(alice.PlayerId));
+            Assert.That(h.Server.Interactables.SeatOccupant(SeatId), Is.EqualTo(alice.PlayerId));
+        }
+
+        [Test]
+        public void Two_People_Cannot_Sit_In_The_Same_Chair()
+        {
+            var h = SeatHarness(out var alice, out var bob);
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == alice.PlayerId), Is.True);
+
+            bob.SendSitSeat(SeatId);
+            h.Step(40);
+            Assert.That(h.Server.Interactables.SeatOccupant(SeatId), Is.EqualTo(alice.PlayerId),
+                        "the second sitter is REFUSED, not seated on top -- and alice is still the one in it");
+            Assert.That(h.Server.Interactables.IsSeated(bob.PlayerId), Is.False, "...and bob is not silently seated somewhere else");
+        }
+
+        [Test]
+        public void Standing_Up_Frees_The_Chair_For_The_Next_Person()
+        {
+            var h = SeatHarness(out var alice, out var bob);
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == alice.PlayerId), Is.True);
+
+            alice.SendSitSeat(0);   // 0 = stand
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == 0), Is.True);
+
+            bob.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == bob.PlayerId), Is.True,
+                        "a vacated chair is really free, not merely marked so");
+        }
+
+        [Test]
+        public void Moving_To_Another_Chair_Frees_The_First_One_And_Says_So_First()
+        {
+            // Same contract as the bed re-claim, and for the same reason: nobody may ever observe one player
+            // in two seats, so the release is named BEFORE the claim on an ordered channel.
+            var h = SeatHarness(out var alice, out _);
+            var seen = new List<SeatOccupiedEvent>();
+            alice.SeatOccupied += e => seen.Add(e);
+
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => seen.Count >= 1), Is.True);
+            alice.SendSitSeat(OtherSeatId);
+            Assert.That(h.StepUntil(() => seen.Count >= 3), Is.True, "release + claim");
+
+            Assert.That(seen[1].NetId, Is.EqualTo(SeatId), "the vacated seat is named first");
+            Assert.That(seen[1].Occupant, Is.Zero);
+            Assert.That(seen[2].NetId, Is.EqualTo(OtherSeatId));
+            Assert.That(seen[2].Occupant, Is.EqualTo(alice.PlayerId));
+            Assert.That(h.Server.Interactables.SeatOccupant(SeatId), Is.Zero);
+        }
+
+        [Test]
+        public void A_Chair_Across_The_Map_Is_Refused()
+        {
+            var h = SeatHarness(out var alice, out _);
+            PutPlayerAt(h, alice, new Vector3(200f, 0f, 0f));
+            alice.SendSitSeat(SeatId);
+            h.Step(40);
+            Assert.That(h.Server.Interactables.SeatOccupant(SeatId), Is.Zero,
+                        "reach is the server's business -- a client naming a distant chair does not get it");
+        }
+
+        [Test]
+        public void You_Can_Always_Get_Out_Of_A_Chair_Even_From_Out_Of_Reach()
+        {
+            // Standing carries NO reach check on purpose. If it did, a player whose seat was removed or who
+            // was teleported would be stuck sitting forever with no way to send a stand the server accepts --
+            // and being stuck is worse than any exploit "standing up from far away" buys.
+            var h = SeatHarness(out var alice, out _);
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == alice.PlayerId), Is.True);
+
+            PutPlayerAt(h, alice, new Vector3(500f, 0f, 0f));
+            alice.SendSitSeat(0);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == 0), Is.True,
+                        "the stand is accepted from anywhere");
+        }
+
+        [Test]
+        public void A_Seated_Player_Reads_As_SITTING_On_The_Wire_So_Puppets_Can_Pose()
+        {
+            // THE VISUAL HALF. It needs no field of its own: the entity's stance byte has been a full byte
+            // since v18 while only four codes were ever spelled, so the seat table writes a fifth. Checked on
+            // the CLIENT's replica rather than on the server's entity -- the question is what another
+            // player's machine renders, and only the replica can answer that.
+            var h = SeatHarness(out var alice, out var bob);
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() =>
+                bob.Players.TryGetByOwner(alice.PlayerId, out var e) && e.Stance == MoveInput.WireStanceSitting),
+                Is.True, "bob's copy of alice carries the SITTING stance");
+
+            alice.SendSitSeat(0);
+            Assert.That(h.StepUntil(() =>
+                bob.Players.TryGetByOwner(alice.PlayerId, out var e) && e.Stance != MoveInput.WireStanceSitting),
+                Is.True, "...and stops carrying it the moment she stands, or she sits in mid-air forever");
+        }
+
+        [Test]
+        public void The_Snapshot_Carries_Occupancy_So_A_Late_Joiner_Is_Not_Wrong()
+        {
+            // The events are the low-latency path and a joiner has missed all of them. Without the table in
+            // the block, a client connecting after someone sat down would draw them standing in a chair AND
+            // offer that chair as free -- the exact bug the door/bed table exists to prevent.
+            var h = SeatHarness(out var alice, out var bob);
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => bob.InteractableState.SeatOccupant(SeatId) == alice.PlayerId), Is.True,
+                        "the seat table on the snapshot plane names the occupant, not just the event");
+        }
+
+        [Test]
+        public void Disconnecting_Gives_The_Chair_Back()
+        {
+            // Unlike a bed claim, which survives a logout deliberately: a chair held by someone no longer
+            // connected is a chair nobody can ever use again, and there is nothing in it worth keeping.
+            var h = SeatHarness(out var alice, out var bob);
+            SeatOccupiedEvent? freed = null;
+            alice.SendSitSeat(SeatId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == alice.PlayerId), Is.True);
+            bob.SeatOccupied += e => { if (e.NetId == SeatId && e.Occupant == 0) freed = e; };
+
+            alice.Disconnect();
+            Assert.That(h.StepUntil(() => h.Server.Interactables.SeatOccupant(SeatId) == 0, 600), Is.True,
+                        "the server lets go of the seat");
+            Assert.That(h.StepUntil(() => freed.HasValue, 600), Is.True,
+                        "...and SAYS so -- a silent release leaves every other client drawing an empty chair as taken");
+        }
+
         // ---- beds ----
 
         [Test]

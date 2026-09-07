@@ -133,11 +133,21 @@ namespace UnturnedGodot
                     1 => SDG.Unturned.EPlayerStance.SPRINT,
                     2 => SDG.Unturned.EPlayerStance.CROUCH,
                     3 => SDG.Unturned.EPlayerStance.PRONE,
+                    4 => SDG.Unturned.EPlayerStance.SITTING,   // v35: sat on furniture -- the server sets this off its seat table, no client can assert it
                     _ => SDG.Unturned.EPlayerStance.STAND,
                 };
+                // v35: sat on a chair, not in a car. The wire stance is the whole signal -- the puppet's
+                // POSITION already puts it on the seat, because a seated player is frozen there and their
+                // transform stream says so, and the yaw already faces the way the seat does. So there is
+                // nothing to look up: no seat NetId on the player entity, no lookup table, and a puppet
+                // renders right even on a client that has not finished registering its seats.
+                bool sitFurniture = e.Stance == UnturnedGodot.Net.MoveInput.WireStanceSitting;
                 // Match the local shell's capsule for this stance, so crawling under something you could crawl
                 // under alone still works when someone is standing there.
-                bool seated = _seated.Contains(e.OwnerPlayerId);
+                // Sitting on furniture counts as seated for everything below -- the hull, the footsteps, the
+                // stride reset. The reasons are identical to the vehicle's: the capsule is inside the chair
+                // mesh, and a man in an armchair does not take steps.
+                bool seated = sitFurniture || _seated.Contains(e.OwnerPlayerId);
                 if (IsInstanceValid(av.HullShape))
                 {
                     float hh = SDG.Unturned.PlayerMovementDef.HeightForStance(stance);
@@ -188,7 +198,10 @@ namespace UnturnedGodot
                         GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(psurf)), av.Body.GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
                     av.Grounded = grounded;
                 }
-                av.Body.SetLocomotion(av.Speed, stance);
+                // A seated puppet is POSED, not walked. SetLocomotion with SITTING would fall through to its
+                // default and play the idle stand, which is what a chair full of standing men looked like.
+                if (sitFurniture) av.Body.PlayLoop(av.Body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
+                else av.Body.SetLocomotion(av.Speed, stance);
                 av.Body.Tick(delta);
                 if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
                 {

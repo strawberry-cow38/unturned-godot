@@ -32,6 +32,10 @@ namespace UnturnedGodot
         // the authoritative table, kept its claim (a raided base went on respawning its owner) and never
         // reached the client retire sweep. Found by the callerless sweep -- RemoveBed's only caller was a test.
         readonly List<(uint NetId, Bed Node)> _beds = new List<(uint, Bed)>();
+        // v35: seats number in their OWN sequence, like doors and beds -- the command is typed, so seat 1
+        // and door 1 can never be confused. Tracked beside the node for the same reason the others are: the
+        // id is what deregisters it, and by then the node may be gone.
+        readonly List<(uint NetId, PropSeat Node)> _seats = new List<(uint, PropSeat)>();
 
         /// <summary>Ids start at 1: 0 is the "not replicated, this is a singleplayer node" sentinel every
         /// other node in this codebase uses, and a door with NetId 0 must never be routable.</summary>
@@ -46,6 +50,7 @@ namespace UnturnedGodot
 
         public int DoorCount => _doors.Count;
         public int BedCount => _beds.Count;
+        public int SeatCount => _seats.Count;
 
         /// <summary>Server-side barricade damage along a bullet/melee segment (ServerCombat's
         /// DamageBarricadeAlong seam). Returns true if it hit a door or bed.
@@ -73,7 +78,7 @@ namespace UnturnedGodot
 
         void RegisterWorld(Node root)
         {
-            uint doorId = FirstId, bedId = FirstId;
+            uint doorId = FirstId, bedId = FirstId, seatId = FirstId;
             foreach (var node in Walk(root))
             {
                 if (node is Door d)
@@ -90,8 +95,19 @@ namespace UnturnedGodot
                     var p = b.GlobalPosition;
                     _server.Interactables.RegisterBed(b.NetId, new UVector3(p.X, p.Y, p.Z), b.RotationDegrees.Y);
                 }
+                else if (node is PropSeat ps)
+                {
+                    // The registered position is the seat ANCHOR, not the node's own transform, so the reach
+                    // check measures to the cushion the player is asking to sit on. They are the same today --
+                    // Spawn puts the node on the anchor -- and asking for the anchor keeps them the same if
+                    // that ever stops being true.
+                    ps.NetId = seatId++;
+                    _seats.Add((ps.NetId, ps));
+                    var p = ps.Anchor.Origin;
+                    _server.Interactables.RegisterSeat(ps.NetId, new UVector3(p.X, p.Y, p.Z));
+                }
             }
-            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) as server-authoritative");
+            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {_seats.Count} seat(s) as server-authoritative");
         }
 
         void SeedDeadzones(DeadzoneField field)

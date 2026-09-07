@@ -257,6 +257,11 @@ namespace UnturnedGodot.Net
                            : Players.TryGetHeldInput(pid, out var mi) ? mi.Stance : EPlayerStance.STAND;
                 return pe.Pos.y + PlayerMovementDef.EyeHeightForStance(stance) < SeaLevelY;
             };
+            // v35: the snapshot's stance byte says SITTING for anyone in a chair, so every other client can
+            // pose their puppet. Wired here, off the seat table, rather than read from the input stream --
+            // MoveInput's stance is two bits and full, and more to the point the server is the side that
+            // granted the seat, so it is the side that gets to say you are in it.
+            Players.SeatedOf = pid => Interactables.IsSeated(pid);
             Vitals.SprintingOf = pid =>
                 PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance == EPlayerStance.SPRINT
                 : Players.TryGetHeldInput(pid, out var mi) && mi.Stance == EPlayerStance.SPRINT;
@@ -376,7 +381,14 @@ namespace UnturnedGodot.Net
                 WorldItems.ForgetClient(peer.PlayerId);
                 Containers.ForgetClient(peer.PlayerId);   // review #8: the two NEW relevancy-filtered systems must clear per-client state on disconnect too, like Zombies/WorldItems
                 Deadzones.OnPlayerLeft(peer.PlayerId);    // accrued exposure does not survive the peer (a recycled playerId must not inherit it)
-                Interactables.OnPlayerLeft(peer.PlayerId);
+                // v35: this also frees whatever CHAIR they were in, and returns it. Broadcast, or every other
+                // client goes on drawing an empty seat as occupied and nobody can ever sit there again --
+                // the same leak vehicle seats had before EjectFromVehicleOnDeath released OccupiedSeats.
+                uint freedSeat = Interactables.OnPlayerLeft(peer.PlayerId);
+                if (freedSeat != 0) Players.ServerRefreshStance(peer.PlayerId, Session.CurrentTick);   // before ServerRemove below drops the entity; harmless if it is already gone
+                if (freedSeat != 0)
+                    BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventSeatOccupied,
+                        new SeatOccupiedEvent { NetId = freedSeat, Occupant = 0 }.Write));
                 Animals.ForgetClient(peer.PlayerId);
             };
         }
@@ -692,6 +704,9 @@ namespace UnturnedGodot.Net
         // because a door that swings back a moment later is worse than one that opens a moment late.
         public event System.Action<DoorStateEvent> DoorStateChanged;
         public event System.Action<BedClaimedEvent> BedClaimed;
+        /// <summary>A furniture seat's occupant changed (0 = freed). The game side moves the player or the
+        /// puppet; core only carries the fact.</summary>
+        public event System.Action<SeatOccupiedEvent> SeatOccupied;
 
         /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
         /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
@@ -792,6 +807,10 @@ namespace UnturnedGodot.Net
                 e => DoorStateChanged?.Invoke(e));
             Events.Register<BedClaimedEvent>(ReplicationIds.EventBedClaimed, BedClaimedEvent.TryRead,
                 e => BedClaimed?.Invoke(e));
+            // v35: same shape for seats -- the game side owns the PropSeat nodes, so the fact goes straight
+            // out. The snapshot's seat table is the join answer; this is the low-latency path.
+            Events.Register<SeatOccupiedEvent>(ReplicationIds.EventSeatOccupied, SeatOccupiedEvent.TryRead,
+                e => SeatOccupied?.Invoke(e));
             // Avatar bytes. ClientAcceptAvatar RE-VALIDATES the header and RECOMPUTES the hash rather than
             // believing either: this is the last point before something hands the bytes to an image decoder,
             // and a client that trusts whatever a server sends is a client a hostile server owns.
@@ -1122,6 +1141,13 @@ namespace UnturnedGodot.Net
 
         public bool SendClaimBed(uint netId)
             => SendCommand(ReplicationIds.CommandClaimBed, new ClaimBedCommand { NetId = netId }.Write);
+
+        /// <summary>Ask to sit in a seat, or (netId 0) to stand up. The client does NOT sit locally on the
+        /// strength of having sent this: the answer is EventSeatOccupied, because the seat may have been
+        /// taken between the ask and the arrival, and a client that sat optimistically would have to be
+        /// yanked back out of a chair someone else is already in.</summary>
+        public bool SendSitSeat(uint netId)
+            => SendCommand(ReplicationIds.CommandSitSeat, new SitSeatCommand { NetId = netId }.Write);
 
         // ---- Phase 8 crop commands (§3.7): both transactional, ReliableOrdered ----
 

@@ -145,6 +145,20 @@ namespace UnturnedGodot
                 _knownBeds.Add(kv.Key);
                 if (Bed.TryGetByNetId(kv.Key, out var b)) b.ApplyReplicatedClaim(kv.Value);
             }
+            // v35: seat occupancy. The JOIN answer -- a client that connected after someone sat down has
+            // missed the event and would otherwise offer an occupied chair as free.
+            //
+            // No retirement sweep for seats, unlike doors and beds, and that is a decision rather than an
+            // omission: a seat cannot be destroyed. It is built from map data every peer runs identically,
+            // so a seat missing from the table means the server has not registered it YET, and QueueFreeing
+            // on that would delete good chairs over a startup race -- the exact failure the _knownDoors note
+            // above describes. If furniture ever becomes breakable this needs the same treatment doors got.
+            foreach (var kv in Client.InteractableState.ReplicaSeats)
+                if (PropSeat.TryGetByNetId(kv.Key, out var seat))
+                {
+                    seat.NetOccupant = kv.Value;
+                    if (kv.Value == 0 && seat.Occupant != null && !GodotObject.IsInstanceValid(seat.Occupant)) seat.Occupant = null;
+                }
             RetireMissing();
         }
 
@@ -190,11 +204,15 @@ namespace UnturnedGodot
         {
             var root = WorldRoot ?? GetParent();
             if (root == null) return;
-            uint doorId = InteractableNetSync.FirstId, bedId = InteractableNetSync.FirstId;
+            uint doorId = InteractableNetSync.FirstId, bedId = InteractableNetSync.FirstId, seatId = InteractableNetSync.FirstId;
+            // The SAME walk order and the SAME three counters as InteractableNetSync.RegisterWorld. That is
+            // the whole id scheme: nothing is transmitted, so if these two ever diverge every id after the
+            // divergence points at a different object on each machine and people sit in each other's chairs.
             foreach (var n in Walk(root))
             {
                 if (n is Door d) d.NetId = doorId++;
                 else if (n is Bed b) b.NetId = bedId++;
+                else if (n is PropSeat ps) ps.NetId = seatId++;
             }
         }
 
