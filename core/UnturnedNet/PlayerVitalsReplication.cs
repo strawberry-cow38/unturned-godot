@@ -120,14 +120,6 @@ namespace UnturnedGodot.Net
                 bool submerged = SubmergedOf != null && SubmergedOf(pid);
                 e.Sim.Step(sprinting, submerged, SurvivalDrain, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain
                 float delta = e.Sim.Health - hpBefore;
-                // DROWNING IS NOT A SURVIVAL-TOGGLE MECHANIC. The block below gates HP routing on SurvivalDrain
-                // because hunger/thirst ship off; breath does not, so its share of the delta is routed here and
-                // subtracted back out before that gate sees it.
-                if (e.Sim.LastDrownDamage > 0f)
-                {
-                    DamageSink?.Invoke(pid, e.Sim.LastDrownDamage);
-                    delta += e.Sim.LastDrownDamage;
-                }
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation
                 // is discarded -- next tick re-seeds from the authority.

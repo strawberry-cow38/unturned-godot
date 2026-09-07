@@ -31,8 +31,6 @@ namespace UnturnedNet.Tests
             ["MaxHealth"] = "constant per player; not per-tick state",
             // Purely local pacing for the stamina regen hold; re-derived on whichever side is stepping.
             ["StaminaRegenDelay"] = "local regen pacing, re-derived by whoever steps the sim",
-            // An OUTPUT of the last Step, consumed by ServerStep to route drowning damage. Not state.
-            ["LastDrownDamage"] = "per-step output for damage routing, not replicated state",
         };
 
         static IEnumerable<FieldInfo> VitalFields() =>
