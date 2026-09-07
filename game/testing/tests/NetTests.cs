@@ -2338,7 +2338,17 @@ namespace UnturnedGodot.Testing
             // A takes the other one out, then B closes. Under the old copy-back, B's close would have written
             // B's snapshot (1 item) back over the crate and RESURRECTED the can A had just taken.
             var last = pageA.getItem(0);
-            T.Check("A's crate->bag move fired", sess.Shell.RequestMoveItem(PlayerInventory.STORAGE, last.x, last.y, 2, 0, 0, 0));
+            // ⚠ FIND A FREE POCKET CELL. Hardcoding (0,0) is what made this test red: SeedServerKit fills the
+            // pockets, TryDrag refuses a move onto an occupied cell, the can never leaves the crate, and the
+            // "crate is empty" wait below can never satisfy -- a real failure of the TEST, not of the feature.
+            ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var aInv);
+            var pocket = aInv.Inventory.items[2];
+            byte px = 255, py = 255;
+            for (byte y = 0; y < pocket.height && px == 255; y++)
+                for (byte x = 0; x < pocket.width && px == 255; x++)
+                    if (pocket.checkSpaceEmpty(x, y, 1, 1, 0)) { px = x; py = y; }
+            T.Check("found a free pockets cell for the take", px != 255);
+            T.Check("A's crate->bag move fired", sess.Shell.RequestMoveItem(PlayerInventory.STORAGE, last.x, last.y, 2, px, py, 0));
             yield return Until(() => crate.Storage.getItemCount() == 0, 5);
             T.Check("(h) the crate is empty", crate.Storage.getItemCount() == 0);
             ded.Server.Inventories.ServerCloseStorage(bId, ded.Server.Session.CurrentTick);
