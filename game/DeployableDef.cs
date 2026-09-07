@@ -152,18 +152,31 @@ namespace UnturnedGodot
             // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot). The light reaches
             // further than the shaft is drawn on purpose, or the air itself looks like it ends.
             //
-            // The SHAFT is 7 m, not the car's 14, and that is the one number that cannot be copied across. A headlight
+            // The SHAFTS are 7 m, not the car's 14, and that is the one number that cannot be copied across. A headlight
             // sits low and throws FLAT down a road, so 14 m of cone hangs in the air the whole way. This fixture is
             // 1.5 m up and aimed ~15 deg DOWN, so its axis reaches the floor at about 5.6 m -- drawn at 14 m, two
             // thirds of the cone is UNDERGROUND and what is left above the surface is a huge flat sheet, not a beam.
             // 7 m ends the shaft just past where the light lands, and the gradient has it transparent by then anyway.
             // BeamHalf 0.62 spans BOTH lamp heads (they sit at +-0.48), so one shaft leaves the whole housing rather
             // than a thin core floating between the lenses.
+            // TWO LIGHTS, ONE PER HEAD, and one shaft each (master 2026-09-07: "is it two spotlights? one for each
+            // head? two faux beams too?" -> "it should be 2 lights not 3").
+            //
+            // The src prefab's two POINT bulbs are GONE, not converted. They were a separate near-field glow sitting
+            // just in front of the lenses, which is what made the count three; with a real spot now throwing out of
+            // each head the glow is doing nothing the throw does not already do, and master asked for two.
+            //
+            // Each shaft is drawn per head rather than merged into one volume the way HeadlightBeam does. That merge
+            // exists because a car's lamps sit ~1.5 m apart with dark grille between them, so two crossing cones make
+            // a distinct lens-shaped wedge in the middle of the bonnet ("weird overlap"). These heads are 0.96 m
+            // apart throwing 6.5 m wide cones -- near enough concentric that the overlap has no separate silhouette
+            // to read as an artefact, and the brighter core where they cross is what two lamps pointed the same way
+            // actually do.
             Lights = new[] {
-                new DeployLight { Spot = true, Pos = new Vector3(-0.48f, -0.416f, -1.351f), Dir = SpotBeamDir, Range = 4f, AngleDeg = 62f, AngleAtten = 0.6f, Energy = 2.4f, Color = LampWarm },
-                new DeployLight { Spot = true, Pos = new Vector3( 0.48f, -0.416f, -1.351f), Dir = SpotBeamDir, Range = 4f, AngleDeg = 62f, AngleAtten = 0.6f, Energy = 2.4f, Color = LampWarm },
-                new DeployLight { Spot = true, Pos = new Vector3(0f, -0.427f, -1.472f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.62f },
+                new DeployLight { Spot = true, Pos = new Vector3(-0.48f, -0.427f, -1.427f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
+                                  Beam = true, BeamLength = 7f, BeamHalf = 0.34f },
+                new DeployLight { Spot = true, Pos = new Vector3( 0.48f, -0.427f, -1.427f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
+                                  Beam = true, BeamLength = 7f, BeamHalf = 0.34f },
             },
         };
 
