@@ -271,6 +271,33 @@ namespace UnturnedGodot
                            "The equip path should have refused this; something built a Viewmodel directly.");
             return _extraVisuals.TryGetValue("eaglefire", out var ef) ? ef : default;
         }
+        // THE RAW SIGHT HOOK per gun (content/guns_sighthook.tsv col 1), which is the rail an attachment bolts to --
+        // NOT sights.tsv's SightPos, which is that hook with the gun's OWN IRON SIGHT model offset already composed in.
+        // Mounting a red dot at the iron's composed spot applies the iron's offset to a mesh that is not the iron, and
+        // the optic sits wrong by however much the two differ (master 2026-09-07: "the whole SCOPE is sunk into the
+        // guns' model partially"). Retail parents an attachment to this hook at local position ZERO and lets the
+        // attachment's own model offset do the rest.
+        static System.Collections.Generic.Dictionary<string, Vector3> _sightHooks;
+        static System.Collections.Generic.Dictionary<string, Vector3> LoadSightHooks()
+        {
+            var d = new System.Collections.Generic.Dictionary<string, Vector3>();
+            string path = ProjectSettings.GlobalizePath("res://content/guns_sighthook.tsv");
+            if (!System.IO.File.Exists(path)) return d;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var c = line.Split('\t');
+                if (c.Length < 2 || c[1].Trim().Length == 0) continue;
+                d[c[0]] = V3(c[1]);
+            }
+            return d;
+        }
+        /// <summary>The offset an ATTACHMENT's own mesh needs on top of the hook. Every reflex/scope .txt is exported in
+        /// its Model_0-local frame, and the eaglefire is the gun all of them were placed and signed off against -- its
+        /// hook plus this lands them correctly, which is what made those four guns (eaglefire, maplestrike, honeybadger,
+        /// swissgewehr, the ones sharing that iron sight) the only ones that looked right. Measured, not chosen:
+        /// eaglefire SightPos (0, 0.1312, -0.118) - its hook (0, -0.2398, -0.1386).</summary>
+        static readonly Vector3 AttachModel0 = new(0f, 0.3710f, 0.0206f);
+
         static System.Collections.Generic.Dictionary<string, GunVisual> LoadExtraVisuals()
         {
             var d = new System.Collections.Generic.Dictionary<string, GunVisual>();
@@ -324,7 +351,7 @@ namespace UnturnedGodot
         static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
         SubViewport _scopeVp; Camera3D _scopeCam; MeshInstance3D _scopeLens; Node3D _scopeCamAnchor; Godot.Environment _scopeEnv; DayNightCycle _dnc; bool _isScope, _scopeWasOn;   // PiP scope: lens ON the gun model (rides recoil); 2nd cam renders the world zoomed from the scope's OBJECTIVE end (LINEAR env so the lens isn't double-tonemapped by _vp)
-        MeshInstance3D _scopeHost; Vector3 _ironAimPos;   // ADS aim hook: irons use _ironAimPos; a scope moves it to the scope's own `Aim` node (Attachments.cs:590 -- retail aligns the SIGHT model's Aim, so ADS looks THROUGH the scope, not the irons)
+        MeshInstance3D _scopeHost; Vector3 _ironAimPos; Vector3? _sightHook;   // ADS aim hook: irons use _ironAimPos; a scope moves it to the scope's own `Aim` node (Attachments.cs:590 -- retail aligns the SIGHT model's Aim, so ADS looks THROUGH the scope, not the irons)
         CanvasLayer _ladderLayer; ScopeLadder2D _ladder; bool _scopeHasLadder;   // range ladder (100/200/300m) shown ADS'd with a numbered-ladder scope (8x/7x/16x); text = the global Units setting
         const float ScopeZeroDist = 100f;   // (b) zeroing range (m): scope cam converges onto the bullet ray here, so the reticle = point of impact at 100m + drifts slightly past. Miss at range R = |objective-eye| * |1 - R/Z| ~ 0.1m@50m, 0@100, 0.2m@200 (torso-tight at 4x; tinyclaw)
 
@@ -543,6 +570,8 @@ namespace UnturnedGodot
                     var sightCol = gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f);
                     _sightColor = sightCol; _defaultSightTxt = gv.Sight; _gunTxt = gv.Gun;   // remembered so a re-fitted iron sight (SetSlotMesh) restores this colour, not the red-dot default; _gunTxt gates gun-specific tuning
                     _defaultSightPos = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f);   // the sight mount (all optics mount here)
+                    _sightHooks ??= LoadSightHooks();
+                    _sightHook = gv.Gun != null && _sightHooks.TryGetValue(gv.Gun.Replace("_gun.txt", ""), out var _hk) ? _hk : (Vector3?)null;   // the rail an ATTACHMENT bolts to (see LoadSightHooks)
                     _defaultAimHook = gv.AimHook;   // the ADS aim (all optics aim down this eye point)
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
@@ -1101,9 +1130,16 @@ namespace UnturnedGodot
                 // this, detach+re-attach of iron sights went jet-black -- they carry no texture, just a flat _Color, and
                 // fell through to the 0.06 body colour meant for red-dots.
                 bool _isIron = txtName == _defaultSightTxt || txtName.Contains("iron_sights");
+                // AN ATTACHMENT MOUNTS ON THE RAIL, the gun's own IRONS keep the composed spot. SightPos is
+                // hook + THIS gun's iron offset, which is exactly right for re-fitting that iron sight and wrong for
+                // anything else -- it applies one mesh's offset to a different mesh. Predicted error across the roster
+                // was a 1.6 cm median and 4 cm worst vertically, and the only guns with zero error were the four
+                // sharing the eaglefire's iron sight. Confirmed in a render: maplestrike (one of the four) seats on the
+                // rail with a clean gap, nightraider had its lower housing swallowed by the receiver.
+                // Falls back to SightPos when a gun has no hook row, i.e. exactly the old behaviour.
+                m.Position = (!_isIron && _sightHook.HasValue) ? _sightHook.Value + AttachModel0 : _defaultSightPos;
                 Color _bodyCol = _isSc ? _sc.Col : (_isIron ? _sightColor : new Color(0.06f, 0.065f, 0.075f));
                 m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
-                m.Position = _defaultSightPos;   // mount at the gun's SightPos (iron/scope/red-dot all share this)
                 if (_sight != null) _sight.Position = _defaultAimHook;   // ADS aim at the gun's eye point (iron/scope/red-dot all share this; a red dot just adds a reticle billboard, no aim override)
                 if (_isSc)
                 {
