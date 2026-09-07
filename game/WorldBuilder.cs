@@ -829,7 +829,8 @@ namespace UnturnedGodot
                     && Mathf.Abs(Mathf.Wrap(ex, 0f, 360f) - 270f) < 0.5f && Mathf.Abs(Mathf.Wrap(ez, -180f, 180f)) < 0.5f
                     && DeployableDef.PropFixture(name) is DeployableDef lampDef)
                 {
-                    Deployable.Spawn(root, lampDef, gpos, 180f - ey);
+                    var lampBody = Deployable.Spawn(root, lampDef, gpos, 180f - ey);
+                    if (lampBody != null) lampBody.WorldScenery = true;   // the server never registered it: no NetId, so no pickup to offer
                     return;
                 }
                 // Draw distance comes from RETAIL now, per prop, instead of one flat 320m for a book and a harbor

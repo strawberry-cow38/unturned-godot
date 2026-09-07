@@ -1631,7 +1631,11 @@ namespace UnturnedGodot
             if (_fHeldDeploy == null) return;
             bool fHeld = Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Interact);
             if (!fHeld || !IsInstanceValid(_fHeldDeploy) || _fHeldDeploy != _focusDeployable
-                || _fHeldDeploy.IsWreck || _fHeldDeploy.OnFire || _dead || _driving != null)
+                || _fHeldDeploy.IsWreck || _fHeldDeploy.OnFire || _dead || _driving != null
+                // ...or it is world scenery the server does not own. Cancelled HERE rather than refused at the end,
+                // because a progress bar that fills to 100% and then declines is the worst of both: it promises,
+                // waits, and reneges (master 2026-09-07). PickupDeployable keeps its own guard as the backstop.
+                || (_fHeldDeploy.WorldScenery && _fHeldDeploy.NetId == 0 && NetPickupDeployable != null))
             {   // released, looked away, or it can't be picked up -> cancel the hold
                 if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
                 _fHeldDeploy = null; _deployPickupTimer = 0f;

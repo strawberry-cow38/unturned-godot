@@ -172,6 +172,11 @@ namespace UnturnedGodot
 
         bool _lookFocused;
         public float PickupProgress;   // 0 = idle; >0 = the hold-F pickup fraction (PlayerController drives it, the billboard shows "Picking up... X%")
+        /// <summary>Spawned as part of the WORLD rather than placed by a player, so the server never registered it
+        /// and there is no NetId to address a pickup to. It is not pocketable, and must not ADVERTISE that it is:
+        /// offering a hold-F that fills to 100% and then silently declines is worse than not offering it (master
+        /// 2026-09-07: "reach 100% pickup and then dont get picked up"). Cleared if it ever gains a NetId.</summary>
+        public bool WorldScenery;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
         InfoBillboard _info;
         static readonly Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // same neutral tint as vehicles (no per-deployable rarity yet)
@@ -837,7 +842,14 @@ namespace UnturnedGodot
                 string prompt;
                 if (PickupProgress > 0.01f) prompt = $"Picking up... {Mathf.Clamp((int)(PickupProgress * 100f), 0, 99)}%";
                 else if (OnFire) prompt = "";
-                else prompt = ((Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")} · " : "") + $"Hold [{Keybinds.Get(GameAction.Interact).Label}]: pick up";
+                else
+                {
+                    string toggle = (Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")}" : "";
+                    // World scenery has no pickup to offer -- see WorldScenery. A fixture that can still be switched
+                    // keeps its toggle; one that cannot is simply not interactive and says nothing.
+                    string pick = WorldScenery && NetId == 0 ? "" : $"Hold [{Keybinds.Get(GameAction.Interact).Label}]: pick up";
+                    prompt = toggle.Length > 0 && pick.Length > 0 ? $"{toggle} · {pick}" : toggle + pick;
+                }
                 _info.SetPrompt(prompt, OutlineColor);
             }
         }
