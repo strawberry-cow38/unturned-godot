@@ -187,7 +187,7 @@ void fragment() {
         float prange = 1.0 - smoothstep(42.0, 60.0, length((VIEW_MATRIX * vec4(wpos, 1.0)).xyz));   // no water drawn far away
         float pud = puddle_mask(wpos.xz, clamp(rain_puddle, 0.0, 1.0), r_up, prange) * roadw;   // `level` stays the BARE global: it gates the branch puddle_mask's fwidth() sits behind, and r_up varies within a quad (it is already the upness argument anyway)
         ALBEDO *= mix(1.0, 0.62, pud);          // standing water reads darker than the wet road around it
-        ROUGHNESS = mix(ROUGHNESS, 0.06, pud);  // ...and far more reflective, which is the whole point of it
+        ROUGHNESS = mix(ROUGHNESS, 0.13, pud);  // ...and more reflective, which is the whole point of it -- but 0.06 was mirror-flat (master 2026-09-07 ""slightly less reflective"")
         if (rain_intensity > 0.0 && pud > 0.01) {
             // ~800 ALU, and now gated on STANDING WATER as well as rain (master 2026-09-06 ""gate water ripple impacts
             // behind being on a puddle""): a ring only lands where there is a puddle to ring, which is also where one
@@ -195,7 +195,7 @@ void fragment() {
             float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * pud;
             ALBEDO += sp * 0.45;                                     // brighter than before because it only shows on water now
         }
-        SPECULAR = mix(0.5 + r_wet * 0.06 + road_wet * 0.06, 0.9, pud);   // no metallic -- wet asphalt is not chrome, but a puddle is a mirror
+        SPECULAR = mix(0.5 + r_wet * 0.06 + road_wet * 0.06, 0.78, pud);   // no metallic -- wet asphalt is not chrome, and neither is a puddle
     }
 }
 ";

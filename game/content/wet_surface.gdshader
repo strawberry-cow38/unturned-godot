@@ -110,9 +110,9 @@ void fragment(){
     // Standing water: MORE reflective than the damp around it (master: "puddles of more reflective blobs"). The damp
     // surface stays deliberately dull -- the contrast between the two is the whole effect.
     vec3 alb2 = mix(alb, alb * 0.62, pud);                 // water over it reads darker than the wet surface
-    float rough2 = mix(rough, 0.06, pud);                  // a puddle IS close to a mirror; the road around it is not
+    float rough2 = mix(rough, 0.13, pud);                  // a puddle is REFLECTIVE, not a mirror -- 0.06 was chrome (master 2026-09-07 "make puddles slightly less reflective")
     ALBEDO = alb2 + sp * impact_opacity * 2.5;
     ROUGHNESS = rough2;
     METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
-    SPECULAR = mix(0.5 + wet * 0.12, 0.9, pud);            // a hint of sheen on damp ground; a real one on water
+    SPECULAR = mix(0.5 + wet * 0.12, 0.78, pud);           // a hint of sheen on damp ground; a real one on water, but standing water is not polished metal
 }
