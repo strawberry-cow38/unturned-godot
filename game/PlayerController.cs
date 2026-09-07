@@ -3247,6 +3247,7 @@ namespace UnturnedGodot
         AudioStreamPlayer _selectorAudio;
         AudioStreamPlayer _wearAudio;   // the clothing wear one-shot (see PlayClothingWearSound)
         bool _adoptedWornOnce;   // the first replicated inventory is the LOAD, not somebody getting dressed
+        AudioStreamPlayer _visionAudio;   // the goggles' power-up / power-down one-shot
         // ---- HANDHELD FLASHLIGHT (source: ItemMeleeAsset "Light" + UseableMelee) -------------------------------
         //
         // The torch is a MELEE item in retail, not a gun attachment: flashlight.dat is `Type Melee / Useable Melee /
@@ -3310,7 +3311,30 @@ namespace UnturnedGodot
         {
             if (!WearingNightvision) return;
             _nightVisionOn = !_nightVisionOn;
-            PlaySelectorSwitchSound();   // the same click the headlamp and the handheld make
+            PlayVisionToggleSound(_nightVisionOn);   // goggles power up / power down, not the fire-selector click
+        }
+
+        /// <summary>Goggles switching on and off (master 2026-09-07: "extract the NVG toggle sounds from the source").
+        ///
+        /// ⚠ RETAIL HAS NO NIGHTVISION TOGGLE SOUND. I went looking for one to extract and there is nothing to
+        /// extract: ItemGlassesAsset carries nightvisionColor and nightvisionFogIntensity and no audio field at all,
+        /// PlayerEquipment's vision switch plays nothing, and the only Sounds/*.mp3 the whole assembly names are Hit,
+        /// Sleeve, Stun, Timer and Zipper. So this is NOT a rip of "the" sound, because that sound does not exist.
+        ///
+        /// What it IS: `general_target_on_beep` / `general_target_off_beep`, a real retail ON/OFF PAIR already in the
+        /// audio rip. A matched pair of electronic beeps is the right shape for a device powering up and down, and
+        /// using two clips means on and off are audibly different -- which the old code could not manage, since it
+        /// played the fire-selector click both ways.
+        ///
+        /// The HEADLAMP deliberately keeps the mechanical click: it is a lamp with a switch, not an electronic
+        /// device booting, and a boot-up beep for a torch would be worse than what it has.</summary>
+        void PlayVisionToggleSound(bool on)
+        {
+            var stream = LoadWavOneShot($"res://content/audio/misc/general_target_{(on ? "on" : "off")}_beep.wav");
+            if (stream == null) { PlaySelectorSwitchSound(); return; }   // clip missing -> the old click rather than silence
+            if (_visionAudio == null || !IsInstanceValid(_visionAudio)) { _visionAudio = new AudioStreamPlayer(); AddChild(_visionAudio); }
+            _visionAudio.Stream = stream;
+            _visionAudio.Play();
         }
         /// <summary>Per frame: the goggles' view follows the switch AND the slot -- taking them off kills the view, and the
         /// switch stays where it was so putting them back on brings it straight back.</summary>
