@@ -9092,7 +9092,16 @@ namespace UnturnedGodot
         // EVERY 1P seat sits higher (strawberry 2026-09-06 "move all 1p seating camera positions up more"): applied on top of the
         // skull-tracked eye AND the per-vehicle fallbacks, so driver, passengers and riders all rise together. The optic seats
         // (SeatEyeOverride: tank visor / gunsight / cupola) are pinned to their optics and deliberately not raised.
-        static readonly Vector3 SeatedEyeRaise = new Vector3(0f, 0.15f, 0f);
+        // UG_EYERAISE=<metres> overrides the seated-eye lift for a render sweep, so "is it too low" can be
+        // answered by looking at three heights instead of argued from one number.
+        // ⚠ DECLARED BEFORE SeatedEyeRaise ON PURPOSE. C# initialises static fields in DECLARATION ORDER, so with
+        // this below it the Vector3 captured 0 and every "sweep" rendered the same picture at raise 0 -- which
+        // looks exactly like the knob having no effect.
+        static readonly float EyeRaiseY =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_EYERAISE"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out var _er) ? _er : 0.15f;
+        static readonly Vector3 SeatedEyeRaise = new Vector3(0f, EyeRaiseY, 0f);
 
         /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
         /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
