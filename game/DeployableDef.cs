@@ -110,6 +110,11 @@ namespace UnturnedGodot
         // 1.3 for a soft edge). Beam/BeamLength/BeamHalf draw the VISIBLE shaft -- see Deployable.BeamShaft.
         public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; public float BeamHalfV; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
+        // A REAL FIXTURE instead of a bare Light3D. Non-Generic hands the lamp to LampLight, which already knows how
+        // to carve the emitting sub-mesh off each of these housings (the shade's 181-grey texel, the desk head's
+        // opening face) so the fixture itself reads lit -- an OmniLight alone lights the room and leaves the lamp
+        // looking off. Re-deriving that here would be a second, worse copy of work master and tinyclaw already tuned.
+        public LampLight.Kind LampKind = LampLight.Kind.Generic;
         static readonly Color LampWarm = new Color(0.9706f, 0.9612f, 0.835f);   // src Lamp m_Color (warm white)
         // The spotlight's aim, in the FLAT authored frame -- nearly straight down here, which the +90 X stand-up
         // turns into forward-and-slightly-down in the world. Shared by all three of its lamps so the bulbs and the
@@ -537,6 +542,55 @@ namespace UnturnedGodot
             },
         };
 
+
+        // THE TWO ROOM LAMPS (master 2026-09-07: "making the desk lamp and standing lamps deployable with power io.
+        // change the world props to be the deployable"). Both are REAL retail barricade items, and both are Build
+        // SPOT -- the same InteractableSpot family as the Spotlight and the Cage light, so once again the lit/wired
+        // behaviour is machinery we already have. Unlike the cage light these are FLOOR mounts: SPOT is not in the
+        // wall list at UseableBarricade.cs:1393, it goes through the ground branch at :805 (normal.y >= 0.01).
+        //
+        // MESH: the WORLD PROPS themselves, Lamp_0 and Lamp_1 out of content/objects -- not the item prefabs' own
+        // models. That is the point of "change the world props to be the deployable": one lamp, one mesh, and a lamp
+        // you find in a house is the same object as one you place. The item prefabs disagree with the props anyway
+        // (lamp_desk's prefab puts its bulb at y=0.186 with the head leaning on +Y, while Lamp_0.obj's head leans on
+        // +X), so following the item mesh would have moved the bulb outside the housing the map actually draws.
+        //
+        // MeshEuler 180 about X on both: these are OBJECT props, authored +Z UP with the base at z=0, while barricade
+        // meshes are authored +Z DOWN (StandBasis's +90 X puts flat -Z up -- the Spotlight's heads sit at z=-1.353).
+        // 180 about X then the +90 stand-up = 270 about X total, which IS the prop convention (ex=270).
+        //
+        // The LIGHT is LampLight's, not a DeployLight: it carves the glowing part off the housing per kind, which is
+        // the difference between a lamp that is lit and a room that is lit. Src for reference -- Lamp's Spots/Lamp is
+        // a point light, intensity 1.370351, range 16; Lamp_Desk's is intensity 1.2, range 9, and LampLight already
+        // runs the desk bulb at half energy for the same reason.
+
+        // src Lamp_Desk.dat: id 1918, Useable Barricade, Build Spot, 1x2x0.4, Health 200, Range 4, Radius 0.2, Offset 0.4.
+        public static readonly DeployableDef DeskLamp = new()
+        {
+            Id = 1918, Name = "Desk Lamp", Model = "Lamp_0", PlaceSound = "metalplacement",
+            Size = new Vector3(1f, 2f, 0.4f), Offset = 0.4f, Radius = 0.2f, Range = 4f, Health = 200f, ShatterOnDeath = true,
+            MeshEuler = new Vector3(180f, 0f, 0f),
+            LampKind = LampLight.Kind.DeskBulb,
+            Ports = new[] {   // power IN + passthrough, so a row of desk lamps chains off one feed. Low on the -X side
+                              // of the base (flat +Z is world DOWN after the stand-up) -- the cable leaves at the foot.
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.13f, 0f, -0.03f), Watts = 40f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.13f, 0f, -0.03f), Watts = 0f },
+            },
+        };
+
+        // src Lamp.dat: id 1255, Useable Barricade, Build Spot, 2x2x0.6, Health 300, Range 4, Radius 0.5, Offset 1.
+        public static readonly DeployableDef StandingLamp = new()
+        {
+            Id = 1255, Name = "Lamp", Model = "Lamp_1", PlaceSound = "metalplacement",
+            Size = new Vector3(2f, 2f, 0.6f), Offset = 1f, Radius = 0.5f, Range = 4f, Health = 300f, ShatterOnDeath = true,
+            MeshEuler = new Vector3(180f, 0f, 0f),
+            LampKind = LampLight.Kind.FloorShade,
+            Ports = new[] {   // on the base disc (radius 0.309), at ankle height
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.26f, 0f, -0.07f), Watts = 60f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.26f, 0f, -0.07f), Watts = 0f },
+            },
+        };
+
         // CRAFTING STATIONS (strawberry): placed barricades that grant crafting tags within CraftingRange + LOS.
         // Real world meshes ripped by tools/extract_station_meshes.py (LOD0, like Generator_0); the tag GUIDs +
         // ranges are from the src barricade .dat (PlaceableProvidesCraftingTags + Range). Campfire has no explicit
@@ -570,10 +624,21 @@ namespace UnturnedGodot
         public static readonly DeployableDef SewingTable   = Station(1924, "Sewing Table",   "SewingTable_0",   4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
         public static readonly DeployableDef SpinningWheel = Station(1922, "Spinning Wheel", "SpinningWheel_0", 4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Cagelight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Cagelight, DeskLamp, StandingLamp, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
             DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate };
+        /// <summary>The deployable a WORLD PROP of this name IS, or null for an ordinary prop (master 2026-09-07:
+        /// "change the world props to be the deployable"). Derived from the defs themselves -- Model plus a real
+        /// LampKind -- rather than a second name list beside LampLight.KindFor, which is the table that would drift.
+        /// Callers gate on LampLight.KindFor first, so this scan does not run for every prop in the map.</summary>
+        public static DeployableDef PropFixture(string propName)
+        {
+            foreach (var d in All)
+                if (d.LampKind != LampLight.Kind.Generic && d.Model == propName) return d;
+            return null;
+        }
+
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -583,6 +648,8 @@ namespace UnturnedGodot
             458 => Generator,
             459 => Spotlight,
             1222 => Cagelight,
+            1918 => DeskLamp,
+            1255 => StandingLamp,
             1916 => Workbench,
             362 => Campfire,
             1250 => OvenElectric,

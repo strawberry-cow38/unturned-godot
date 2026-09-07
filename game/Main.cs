@@ -4240,6 +4240,11 @@ namespace UnturnedGodot
             // a beam at all needs the lights turned off. Glow on, because the shaft's whole look is HDR bloom around
             // a thin additive volume; without it the cone reads as flat grey paint.
             bool spotNight = System.Environment.GetEnvironmentVariable("UG_SPOTNIGHT") == "1";
+            // UG_LAMPDEPLOY=1: the two ROOM LAMPS as deployables. Chained on purpose -- generator -> desk lamp's
+            // CONSUMER, then the desk lamp's PASSTHROUGH -> the standing lamp -- so one frame shows both that they
+            // light off a wire and that the passthrough really carries the feed on. Night, for the obvious reason.
+            bool lampDeploy = System.Environment.GetEnvironmentVariable("UG_LAMPDEPLOY") == "1";
+            spotNight |= lampDeploy;
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -4318,10 +4323,36 @@ namespace UnturnedGodot
             var look = new Vector3(0f, 0.7f, 2f);                 // tracked look-at target so UG_CAMYAW can orbit around it
             cam.Position = new Vector3(0f, 3.2f, 11f);
             cam.LookAt(look, Vector3.Up);
-            if (spotNight)   // broadside to the beam: the fixture at 2.6 throws along -Z, so stand off to +X and look
-            {                // ACROSS it. Down the axis you see a bright disc and learn nothing about the cone.
+            if (spotNight && !lampDeploy)   // broadside to the beam: the fixture at 2.6 throws along -Z, so stand off
+            {                                // to +X and look ACROSS it. Down the axis you see a bright disc.
                 look = new Vector3(2.6f, 0.8f, -3.4f);
                 cam.Position = new Vector3(11.5f, 2.9f, 1.2f);
+                cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
+            }
+            if (lampDeploy)
+            {
+                var lampGen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-3.4f, 0f, 0f), 20f);
+                var desk = Deployable.Spawn(this, DeployableDef.DeskLamp, new Vector3(-0.9f, 0f, 0f), 25f);
+                var floorLamp = Deployable.Spawn(this, DeployableDef.StandingLamp, new Vector3(1.5f, 0f, 0f), 0f);
+                var genOut = lampGen.Ports.Count > 0 ? lampGen.Ports[0] : null;
+                var deskIn = desk.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                var deskThru = desk.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+                var floorIn = floorLamp.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                if (genOut != null && deskIn != null && deskThru != null && floorIn != null)
+                {
+                    var w1 = new Wire(); AddChild(w1);
+                    w1.Source = genOut; w1.Consumer = deskIn; w1.AddToGroup("wires");
+                    w1.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, new Vector3(-2.2f, 0.25f, 0.35f), deskIn.GlobalPosition }, valid: true);
+                    var w2 = new Wire(); AddChild(w2);
+                    w2.Source = deskThru; w2.Consumer = floorIn; w2.AddToGroup("wires");
+                    w2.SetPoints(new System.Collections.Generic.List<Vector3> { deskThru.GlobalPosition, new Vector3(0.3f, 0.2f, 0.3f), floorIn.GlobalPosition }, valid: true);
+                    lampGen.TogglePower();
+                    PowerNet.Recompute(GetTree());
+                    GD.Print($"[LAMPTEST] gen={lampGen.IsPowered} desk.recv={deskIn.Live:0}w powered={deskIn.Powered} thru={deskThru.Live:0}w floor.recv={floorIn.Live:0}w powered={floorIn.Powered}");
+                }
+                else GD.Print($"[LAMPTEST] MISSING PORTS gen={lampGen.Ports.Count} desk={desk.Ports.Count} floor={floorLamp.Ports.Count}");
+                look = new Vector3(0.2f, 1.0f, 0f);
+                cam.Position = new Vector3(1.4f, 2.2f, 6.4f);
                 cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
             }
 

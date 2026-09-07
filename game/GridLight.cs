@@ -42,13 +42,19 @@ namespace UnturnedGodot
         protected virtual void PostRefresh() { }               // StreetLight folds in its motes here
         protected virtual void PrimeFlicker() { }              // StreetLight keeps its motes emitting through a flicker
 
+        /// <summary>Does the MUNICIPAL MAINS drive this fixture? A lamp owned by a Deployable does not join the
+        /// DayNightCycle sweep and does not seed itself from PowerNet.MainsLive: its power comes from its own
+        /// consumer port. With both writing _powered the next mains edge silently overrides whatever the wire said,
+        /// and an unwired lamp on a live grid would light itself for free.</summary>
+        public bool GridFed = true;
+
         public override void _Ready()
         {
-            AddToGroup(LightGroup);
+            if (GridFed) AddToGroup(LightGroup);
             BuildVisual();
             var dn = GetTree().GetFirstNodeInGroup("daynight") as DayNightCycle;
             _night = dn == null || DayNightCycle.IsNightTime(dn.Time);   // no cycle in this mode -> default "night"
-            _powered = PowerNet.MainsLive;                               // municipal grid feed (default on)
+            _powered = GridFed && PowerNet.MainsLive;                    // municipal grid feed (default on); a wired lamp starts DARK
             Refresh();
             SetProcess(false);   // idle fixtures do NOT tick every frame -- _Process runs ONLY while a transition flickers
         }

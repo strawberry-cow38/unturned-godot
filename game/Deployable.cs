@@ -131,6 +131,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
         readonly System.Collections.Generic.List<StandardMaterial3D> _lampBeamMat = new();   // the visible shaft's material, or null for a lamp that draws none -- indices match _lamps
+        LampLight _fixtureLamp;   // room lamps (desk / standing): the real fixture, which glows its own housing. Driven by THIS deployable's consumer, not the mains -- see DeployableDef.LampKind
         ConnectionPort _consumerPort, _outputPort;
         public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
 
@@ -316,6 +317,17 @@ namespace UnturnedGodot
             if (def.Fuel > 0f && !def.IsBattery)   // a fuel generator gets a fluid FUEL hose input -> plumb a fuel line to it instead of hand-carrying cans (strawberry)
                 d.AddChild(FluidFuelInlet.Make(d));
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
+            if (def.LampKind != LampLight.Kind.Generic && d._mesh != null && d._mesh.Mesh != null)
+            {
+                // AFTER the body is in the tree, because LampLight is TopLevel and resolves its emitter position off
+                // the fixture's GLOBAL transform (ComputeLightLocal) the moment it enters -- built any earlier it
+                // anchors the bulb to wherever the deployable had not been placed yet.
+                var lampAb = d._mesh.Mesh.GetAabb();
+                d._fixtureLamp = LampLight.Make(d._mesh.GlobalTransform * lampAb.GetCenter(), d._mesh, def.LampKind);
+                d._fixtureLamp.GridFed = false;   // this lamp is on a WIRE now; the mains sweep must not also write its power
+                d.AddChild(d._fixtureLamp);
+                d._fixtureLamp.SetPowered(false);   // starts dark: nothing is plugged in yet
+            }
             if (d.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole power net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             return d;
@@ -767,6 +779,14 @@ namespace UnturnedGodot
             // only when wired AND receiving >= its usage). The lamp rides a 0..1 ENVELOPE that ramps up/down with power;
             // while the envelope is mid-ramp -- i.e. the source is spinning up or winding down -- the lamp FLICKERS
             // (strawberry). Steady state is full brightness. Runs every frame (not just focused).
+            if (_fixtureLamp != null && IsInstanceValid(_fixtureLamp))
+            {
+                // A room lamp has no warm-up envelope and no flicker of its own: LampLight owns the reaction delay and
+                // the transition stutter, and SetPowered(animate) is the hook it exposes for exactly this. Feeding it
+                // the raw port state keeps ONE implementation of "how a lamp comes on" in the codebase.
+                bool lit = !OnFire && _consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered;
+                _fixtureLamp.SetPowered(lit, animate: true);
+            }
             if (_lamps.Count > 0)
             {
                 bool energized = !OnFire && _consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered;

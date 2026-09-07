@@ -815,6 +815,23 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
+                // ROOM LAMPS ARE THE DEPLOYABLE (master 2026-09-07: "change the world props to be the deployable").
+                // A desk or standing lamp standing in a house is the SAME object as one a player puts down -- same
+                // mesh, same health, same power ports -- instead of a static prop with a light bolted onto it. Spawn
+                // it and stop: everything below this line builds the static version.
+                //
+                // yaw = 180-ey is the prop rotation's own yaw term, and the rest of the prop basis is reproduced by
+                // the def: StandBasis's +90 about X times MeshEuler's 180 is 270, which IS the ex=270 these are
+                // placed at. A lamp placed TILTED (ex != 270, ez != 0) cannot be expressed by a yaw alone, so it
+                // stays a plain prop rather than being silently stood upright.
+                // Dedicated skips it for the same reason it skips the LampLight below -- no visual layer there.
+                if (mode != WorldMode.Dedicated && LampLight.KindFor(name) is LampLight.Kind.DeskBulb or LampLight.Kind.FloorShade
+                    && Mathf.Abs(Mathf.Wrap(ex, 0f, 360f) - 270f) < 0.5f && Mathf.Abs(Mathf.Wrap(ez, -180f, 180f)) < 0.5f
+                    && DeployableDef.PropFixture(name) is DeployableDef lampDef)
+                {
+                    Deployable.Spawn(root, lampDef, gpos, 180f - ey);
+                    return;
+                }
                 // Draw distance comes from RETAIL now, per prop, instead of one flat 320m for a book and a harbor
                 // alike: the tighter of its render-layer cull (LARGE 512 / MEDIUM 256 / SMALL 64 at default draw
                 // distance) and its Unity LODGroup threshold. See LodTable. A GUID missing from the table keeps the
