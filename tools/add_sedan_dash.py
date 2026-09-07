@@ -218,10 +218,11 @@ def rerake_glass(g):
     if top[1] - startY < EPS: return None, "door pane's leading edge has no rise"
     slope = (top[2] - zmin) / (top[1] - startY)
 
-    # POSITION: a QUARTER of the pillar's depth back from its FRONT face (master: front face, then "move back
-    # slightly"). Half a depth is the centre line and a full one is the rear face, so a quarter is the smallest
-    # step that is still a fraction of the same ruler rather than a number picked out of the air.
-    shift = -depth * 0.75                                # negative = forward, from the rear face
+    # POSITION: an EIGHTH of the pillar's depth back from its FRONT face -- master asked for it "between the last
+    # and most recent values", and those two were the front face itself (70c20c31) and a quarter back (56ffcbdc),
+    # so halfway between them is an eighth. Still a fraction of the same ruler: 0 = front face, 1/2 = centre
+    # line, 1 = rear face.
+    shift = -depth * 0.875                               # negative = forward, measured from the rear face
     botZ = screenZ + shift
     topZ = botZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
@@ -240,7 +241,44 @@ def rerake_glass(g):
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
     return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (door-pane chord), %.3f back from the front face" % (
-        seamY, botZ, topY, topZ, slope, depth * 0.25)
+        seamY, botZ, topY, topZ, slope, depth * 0.125)
+
+
+def center_side_glass(g):
+    """Sit the side panes in the MIDDLE of the door wall instead of flush with its outer skin (master: "center
+    horizontally the side windows in their frames too").
+
+    Same idea as the windscreen, one axis over: the body wall is 0.25 thick here (inner skin at 0.981, outer at
+    1.231) and the panes were at 1.227 -- hard against the outside, so from inside the car the whole thickness of
+    the door sat inboard of the glass. The midpoint leaves equal frame either side.
+
+    The wall is measured off the BODY in the window band rather than assumed, so a body whose sides are a
+    different thickness still gets its own answer."""
+    V, VT, F = load(BODY)
+    seamY, seamZ, screenZ, innerX, outerX = g
+    band = sorted({round(abs(v[0]), 3) for v in V if seamY - EPS <= v[1] <= 1.95 and -1.5 <= v[2] <= 1.5})
+    if len(band) < 2: return None, "side glass  no door wall found to centre in"
+    mid = (band[0] + band[-1]) / 2.0
+    done, moved = [], 0
+    for label in ("l_front", "l_rear", "r_front", "r_rear"):
+        path = "game/content/sedan_glass_%s.txt" % label
+        try: src = io.open(path, encoding="utf-8").read().splitlines()
+        except FileNotFoundError: continue
+        xs = {round(abs(float(l.split()[1])), 3) for l in src if l.startswith("v ")}
+        if len(xs) != 1: continue                     # not a flat side pane -- leave it alone
+        if abs(xs.pop() - mid) < EPS: done.append(label); continue
+        out = []
+        for l in src:
+            if l.startswith("v "):
+                q = l.split()
+                x = float(q[1])
+                out.append("v %.6f %s %s" % (mid if x > 0 else -mid, q[2], q[3]))
+            else: out.append(l)
+        io.open(path, "w", encoding="utf-8").write("\n".join(out) + "\n")
+        moved += 1
+    if not moved: return None, "side glass  already centred in the door wall"
+    return [], "side glass  %d panes -> |x| %.3f (door wall %.3f..%.3f, was flush at the outer skin)" % (
+        moved, mid, band[0], band[-1])
 
 
 def main():
@@ -252,7 +290,7 @@ def main():
         if lines: append(BODY, lines); did = True
     V, VT, F = load(BODY)
     g = geometry(V)
-    for fn in (move_wheel, lambda: rerake_glass(g)):
+    for fn in (move_wheel, lambda: rerake_glass(g), lambda: center_side_glass(g)):
         lines, msg = fn()
         print("  " + msg)
         if lines is not None: did = True
