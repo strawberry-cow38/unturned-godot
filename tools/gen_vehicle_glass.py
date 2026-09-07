@@ -20,6 +20,12 @@ slab, so the windows are gaps BETWEEN geometry, not holes IN a surface. A bounda
               apertures -- a rectangle that loses both shapes, and whose corners clip the A-pillar
               because a z-ray threads past a slanted pillar where the raked pane cannot.
 
+⚠ FOLLOW A RUN WITH tools/simplify_glass_panes.py. The row trace below emits one QUAD PER ROW, which is how a
+pane follows a slanted pillar -- and also how a four-cornered side window ends up 54 triangles (strawberry
+2026-09-07: "why are the glass panes on cars a billion tris? they should be TWO lol"). The shape is entirely in
+the pane's outline; the row seams are interior edges of a flat sheet. That tool hulls them away, 4334 triangles
+to 274 across the fleet, and re-running this without it puts them all back.
+
 Usage: python3 tools/gen_vehicle_glass.py <body.txt> <out_base.txt>
 Writes <out_base>_<label>.txt per pane: windshield, rear, l_front, r_front, l_rear, r_rear.
 """
