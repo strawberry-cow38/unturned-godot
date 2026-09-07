@@ -3183,7 +3183,7 @@ namespace UnturnedGodot
             : (Gun?.Damage ?? 34f);
         public float DebugShotDamage => ShotDamage();   // test hook -- the SAME call the fire path makes, not a copy
 
-        public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
+        public int DebugPellets() => PelletsPerShot;   // test: rays per shot (shotgun = the loaded ammo's pellets)
         /// <summary>Open the crafting index. Called by the inventory navbar's Craft tab and by Y.</summary>
         public void OpenCrafting()
         {
@@ -4872,6 +4872,26 @@ namespace UnturnedGodot
         // untouched -- this only decides IF the gun feeds loose at all.
         bool FeedsLooseRounds => Gun != null && SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.isAmmo == true;
         bool UsesShells => Gun != null && Gun.Caliber > 0 && FeedsLooseRounds && ShellAsset != null;
+
+        /// <summary>Rays fired per shot. THE LOADED AMMO DECIDES, not the gun and not its Action.
+        ///
+        /// It used to read the shell for a loose-fed gun and otherwise fall back to the GUN's own Pellets, which no
+        /// retail gun .dat actually declares -- Pellets lives on the magazine asset. So every magazine-fed shotgun
+        /// silently fired a single bullet. The Devil's Bane is the case master hit (2026-09-07 "wire the devil's
+        /// bane to be an actual shotgun"): an AA-12 with a 21-round box of buckshot, firing one slug-sized ray.
+        ///
+        /// Falls back to the gun's DECLARED magazine when none is loaded, so a round already in the chamber still
+        /// throws a pattern after the mag has been pulled -- that round came out of a buckshot magazine.</summary>
+        int PelletsPerShot
+        {
+            get
+            {
+                if (UsesShells && ShellAsset != null) return Mathf.Max(1, ShellAsset.pellets);
+                int magId = _loadedMagId > 0 ? _loadedMagId : (Gun?.MagazineId ?? 0);
+                if (magId > 0 && SDG.Unturned.Assets.find((ushort)magId) is SDG.Unturned.ItemAsset m && m.pellets > 1) return m.pellets;
+                return Mathf.Max(1, Gun?.Pellets ?? 1);
+            }
+        }
         // Shotgun ammo-TYPE selection (buckshot vs slug). A gauge can carry several loose-shell types (12ga: buckshot
         // 113 + slug 5000, same caliber 8); the player picks one via the R-hold radial or the attachment menu's
         // Magazine slot. Keyed by caliber so all guns of that gauge share the choice. 0 = unset -> the default
@@ -5646,7 +5666,7 @@ namespace UnturnedGodot
                       : System.Array.IndexOf(modes, FireMode.Auto) >= 0 ? FireMode.Auto
                       : modes[0];
             _burstLeft = 0;
-            GD.Print($"[gun] {Gun.Id}: dmg={Gun.Damage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
+            GD.Print($"[gun] {Gun.Id}: dmg={Gun.Damage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={PelletsPerShot} feed={(UsesShells ? "shells" : UsesMagItem ? "mag" : "none")} mode={_firemode}");
         }
 
         public string HeldGunName => _gunName;
@@ -6674,7 +6694,7 @@ namespace UnturnedGodot
                 // cone unconditionally, and the pattern is added by ApplyRecoil), and 2573cde5 removed BLOOM --
                 // not the accuracy floor -- when it added learnable patterns. Review 2026-08-16.
             }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
-            int pellets = UsesShells && ShellAsset != null ? Mathf.Max(1, ShellAsset.pellets) : Mathf.Max(1, Gun?.Pellets ?? 1);   // shotgun buckshot: pellets come from the LOADED shell (source ItemMagazineAsset.pellets) -- 12ga=6, 20ga=8
+            int pellets = PelletsPerShot;   // shotgun buckshot: the LOADED AMMO decides, loose shell or magazine alike
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
             int steps = Gun?.BallisticSteps ?? 20;
             float gravity = -9.81f * (Gun?.GravityMultiplier ?? 4f);

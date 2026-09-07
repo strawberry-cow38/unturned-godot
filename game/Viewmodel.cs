@@ -1143,13 +1143,29 @@ namespace UnturnedGodot
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
                     if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
                     m.AddChild(new MeshInstance3D { Name = "Reticle", Mesh = new QuadMesh { Size = new Vector2(_rd.Size, _rd.Size) }, MaterialOverride = _retMat, Position = _rd.Pos, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
-                    // ADS through the optic's OWN aim (gun-local composed aim), so the eye tucks behind the sight instead of
-                    // aligning to the gun's iron eye-point -- which parked the gun at the wrong height/angle in the sight
-                    // picture (master: gun pose wrong on the holos). Restored to iron on swap by HideScopePiP.
-                    // ⚠ _rd.Aim is EAGLEFIRE-TUNED (composed from its Sight hook) -- gate to the eaglefire so red-dots on OTHER
-                    // guns keep their working per-gun iron aim (the default set above) instead of regressing. TODO generalise:
-                    // compose port(SightHook + sightModel0 + sightAim) per gun (needs the per-gun Sight hook, e.g. guns_sighthook.tsv).
-                    if (_sight != null && _gunTxt != null && _gunTxt.Contains("eaglefire")) _sight.Position = _rd.Aim;
+                    // ADS THROUGH THE OPTIC, ON EVERY GUN (master 2026-09-07: "fix every single gun's kobra, red dot,
+                    // holo sight aim points. the center of each of these sights should be the exact center of the screen
+                    // on every gun"). This used to be gated to the eaglefire, because _rd.Aim was one hand-measured
+                    // gun-local point and putting another gun's eye there aimed it at empty air. Every other gun kept
+                    // its IRON eye-point, so the reticle sat wherever the irons happened to look -- off-centre by
+                    // whatever that gun's optic mount differs from the eaglefire's.
+                    //
+                    // The rule the eaglefire numbers were measured FROM generalises with no per-gun data at all: the eye
+                    // has to sit on the SAME OPTICAL AXIS as the reticle. In this frame X is lateral and Z is vertical,
+                    // so the eye shares BOTH with the reticle and differs only in Y, which is depth along the barrel --
+                    // the eye relief behind the glass, a property of the sight and not of the gun. The reticle is a child
+                    // of the optic at _rd.Pos and the optic mounts at m.Position, so the reticle's gun-local point is
+                    // just the sum, and the aim is that point pushed back by the sight's own relief.
+                    //
+                    // Checked against the three hand-tuned eaglefire values it replaces: this reproduces all of them to
+                    // within 0.4 mm (red_dot/kobra Z -0.1835 vs -0.1831, halo -0.1993 vs -0.1990), which is the rounding
+                    // in the original measurement. So the gun it was tuned on does not move, and the rest come into line.
+                    // Restored to iron on swap by HideScopePiP.
+                    if (_sight != null)
+                    {
+                        Vector3 _ret = m.Position + _rd.Pos;   // the reticle, gun-local
+                        _sight.Position = new Vector3(_ret.X, _rd.Aim.Y, _ret.Z);
+                    }
                 }
             }
             m.Visible = true;
@@ -1163,10 +1179,11 @@ namespace UnturnedGodot
         // negates Z). In this sight-local frame Z is VERTICAL, Y is fore-aft/depth: the reticle billboard's Y only sets
         // apparent size; the Aim's Y (-0.30/-0.32) is the eye relief behind the glass. Size = dot size. Glow = RED.
         static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, Vector3 Aim, float Size, Color Glow)> RedDotCal = new()
-        {   // Pos = reticle on the optical axis (rel the mount node). Aim = the ADS eye-point, GUN-LOCAL port =
-            // port(SightHook + sight Model_0 + sight Aim) -- the composed aim so ADS looks THROUGH the optic (source-
-            // accurate, same as extract_gun_sights.py real_aims / the scopes). NOTE: eaglefire-tuned (uses the eaglefire
-            // Sight hook 0,-0.2398,-0.1386); iron aim is 0,-0.4688,-0.2098, these tuck the eye ~0.05 higher + 0.03 forward.
+        {   // Pos = reticle on the optical axis (rel the mount node). Aim: ONLY ITS Y IS READ NOW -- the eye relief
+            // behind the glass, which belongs to the SIGHT and is the same on every gun. Its X and Z were the eaglefire's
+            // optical axis (composed from that gun's Sight hook 0,-0.2398,-0.1386) and are now derived per gun from where
+            // the optic actually mounts, so a kobra centres on a vonya exactly as it does on an eaglefire. They are kept
+            // here as the measured reference the Y came from, and because they document what the composed aim looked like.
             { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.014f, new Color(1f, 0f, 0f)) },
             { "red_halo_sight.txt",  (new Vector3(0f, -0.2970f, -0.0813f), new Vector3(0f, -0.4576f, -0.1990f), 0.016f, new Color(1f, 0f, 0f)) },
             { "red_kobra_sight.txt", (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.02f,  new Color(1f, 0f, 0f)) },
