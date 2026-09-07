@@ -483,6 +483,11 @@ namespace UnturnedGodot
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var doorCatalog = LoadDoorCatalog(dir);   // openable prop doors (MVP: Fridge_0) -- tools/extract_doors.py doors.txt
             var seatCatalog = LoadSeatCatalog(dir);   // sittable furniture -- tools/extract_seats.py seats.txt
+            // BEFORE the placement loop, not beside Bed.ResetForNewWorld further down. That reset sits late
+            // because beds are SPAWNED after it; this index is FILLED by the loop below, so clearing it there
+            // would empty it every build and no metal roof would ever be heard -- a total failure with no
+            // symptom but silence.
+            RainSurfaces.Clear();
             // SIDE-ROAD SIGNALS (strawberry: "add a per prop flag for 'side road'"). Which road a mast is on cannot be
             // derived at runtime -- an independent per-prop timer has no junction to ask -- so it is data, keyed by
             // placement position like the rest of content/objects/. Absent file = every signal flashes amber, which is
@@ -1325,6 +1330,11 @@ namespace UnturnedGodot
                         propSeats.Add(ps);
                     }
                 }
+                // RAIN-AUDIBLE SURFACES. Recorded here because this is the one place the asset NAME and the
+                // world POSITION are both in hand -- the name never reaches the node, and the prop body is on
+                // collision 6|8 rather than bit0, so RainMaterialAudio's sphere query could never find these.
+                if (RainSurfaces.IsMetalRoof(name)) RainSurfaces.Add(gpos, tarp: false);
+                else if (RainSurfaces.IsTarp(name)) RainSurfaces.Add(gpos, tarp: true);
                 // Road/rail connection points, if this prop has any (see PropConnectors). Registered from the
                 // SAME basis+position the mesh is placed with, so a rotated tile's snap points rotate with it.
                 PropConnectors.Register(name, new Transform3D(basis, gpos));
