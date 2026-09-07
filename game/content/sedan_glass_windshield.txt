@@ -13,8 +13,12 @@ g windshield
 # RE-RAKED by tools/add_sedan_dash.py onto the A-PILLAR'S MIDLINE -- halfway between its front and
 # rear faces, so the pane is bonded INTO the frame rather than lying against the back of it.
 # Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.
-v -1.014036 1.125000 -1.123000
-v 1.015964 1.125000 -1.123000
+# RE-RAKED by tools/add_sedan_dash.py: the A-PILLAR'S REAR-EDGE ANGLE, slid forward to pass through
+# the middle of the pillar. Angle and position are separate -- taking the angle off the midline
+# instead flattens the screen, because a wedge's midline is shallower than either of its faces.
+# Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.
+v -1.014036 1.125000 -1.248004
+v 1.015964 1.125000 -1.248004
 v 1.015964 1.875000 -0.836164
 v -1.014036 1.875000 -0.836164
 f 1 2 3
