@@ -172,8 +172,8 @@ namespace UnturnedNet.Tests
 
             Assert.That(h.Server.WorldItems.Count - groundBefore, Is.EqualTo(1), "only the beans dropped -- the crate's log and plank did not");
             Assert.That(h.Server.WorldItems.All.Any(e => e.ItemId == TransactionalFixtures.LogId || e.ItemId == TransactionalFixtures.PlankId), Is.False);
-            Assert.That(crate.Storage.getItemCount(), Is.EqualTo(2), "the crate still holds both (the view was saved back on close)");
-            Assert.That(crate.OpenBy, Is.EqualTo(0), "the corpse released the crate lock");
+            Assert.That(crate.Storage.getItemCount(), Is.EqualTo(2), "the crate still holds both (v36: it was never not holding them -- the crate is authoritative, the dead player's page was only a view)");
+            Assert.That(crate.IsOpen, Is.False, "the corpse left the viewer set");
             Assert.That(h.Server.Inventories.TryGet(victim.PlayerId, out var after) && after.OpenCrateId == 0, Is.True, "the victim no longer has it open");
             // ...so the witness can open it -- the lock really was released, not just the field cleared
             h.Server.Players.ServerTeleport(witness.PlayerId, crateAt, h.Server.Session.CurrentTick);

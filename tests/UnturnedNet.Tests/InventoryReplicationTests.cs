@@ -294,7 +294,7 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void storage_crate_arbitration_and_transfer()
+        public void storage_crate_sharing_and_transfer()
         {
             var h = new TransactionalHarness(9089).Connected("a", "b");
             var a = h.Clients[0];
@@ -314,20 +314,32 @@ namespace UnturnedNet.Tests
                         $"open loaded the crate into the owner's STORAGE page (seed={h.Net.Seed})");
             OwnerParity(h, a);
 
+            // v36 INVERTS THIS. It used to assert "one opener at a time -- B was refused while A holds it open",
+            // which was the honest answer while open COPIED the grid out and close COPIED it back: two players
+            // editing private copies and both writing back is last-writer-wins over a whole grid. The copy-back
+            // is gone and the crate is authoritative at every instant, so B is admitted (master 2026-09-07).
             bool bOpened = false;
             b.StorageOpened += e => bOpened = true;
             b.SendOpenStorage(crateId);
-            h.Step(20);
-            Assert.That(bOpened, Is.False, "one opener at a time -- B was refused while A holds it open");
-            Assert.That(crate.OpenBy, Is.EqualTo(a.PlayerId));
+            Assert.That(h.StepUntil(() => bOpened), Is.True, $"B was let into the container A is already in (seed={h.Net.Seed})");
+            Assert.That(crate.Viewers, Does.Contain(a.PlayerId));
+            Assert.That(crate.Viewers, Does.Contain(b.PlayerId), "both are viewers at once");
+            Assert.That(b.Inventories.TryGet(b.PlayerId, out var bMine)
+                        && bMine.Inventory.items[PlayerInventory.STORAGE].getItemCount() == 1, Is.True,
+                        "B got its own view of the same grid");
 
             a.SendMoveItem(PlayerInventory.STORAGE, 0, 0, 2, 0, 0, 0);   // crate -> pockets
+            // THE ITEM LEAVES ON THE MOVE, NOT ON THE CLOSE -- the assertion the old copy-back could not make,
+            // and the one that catches a regression back to it.
+            Assert.That(h.StepUntil(() => crate.Storage.getItemCount() == 0), Is.True,
+                        $"the crate was current the instant A moved the item out (seed={h.Net.Seed})");
             bool aClosed = false;
             a.StorageClosed += e => aClosed = true;
             a.SendCloseStorage();
             Assert.That(h.StepUntil(() => aClosed), Is.True, $"close acked (seed={h.Net.Seed})");
-            Assert.That(crate.Storage.getItemCount(), Is.EqualTo(0), "the taken item saved OUT of the crate");
-            Assert.That(crate.OpenBy, Is.EqualTo(0), "arbitration released");
+            Assert.That(crate.Storage.getItemCount(), Is.EqualTo(0), "and A leaving did not put it back");
+            Assert.That(crate.Viewers, Does.Not.Contain(a.PlayerId), "A left the viewer set");
+            Assert.That(crate.IsOpen, Is.True, "...but B is still standing in it, so the container is still open");
             h.Server.Inventories.TryGet(a.PlayerId, out var sInv);
             Assert.That(sInv.Inventory.getItemCount(TransactionalFixtures.ScrapId), Is.EqualTo(1), "item kept");
             Assert.That(sInv.Inventory.items[PlayerInventory.STORAGE].width, Is.EqualTo((byte)0), "view cleared");
