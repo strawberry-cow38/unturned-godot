@@ -182,8 +182,16 @@ def rerake_glass(g):
     tops = [v for v in V if abs(abs(v[0]) - innerX) < EPS and v[1] > seamY + 0.5 and v[2] < -0.9]
     if not tops: return None, "no A-pillar top found on the inner skin"
     topY = min(v[1] for v in tops)                       # the header, i.e. how tall the aperture is
-    roof = max((v for v in V if v[2] < -0.7 and abs(abs(v[0]) - innerX) < EPS), key=lambda v: v[1])
-    slope = (roof[2] - screenZ) / (roof[1] - seamY)      # the OUTSIDE line: beltline -> roof leading edge
+    # THE PILLAR'S SLOPE IS ITS REAR EDGE, and the mesh already contains an independent measurement of it: the
+    # FRONT DOOR GLASS is cut to the pillar, and sedan_glass_r_front's leading edge runs (1.2166, -1.1248) ->
+    # (1.8166, -0.7948) -- slope 0.550. That is the diagonal you read as "the A-pillar" on a side profile, and
+    # it is what the generator measured off this same body. The two lines I tried before are the wrong edges of
+    # the same wedge: the aperture's front edge (0.216) is where the glass BUTTS IN, and the beltline-to-roof
+    # silhouette (0.324) is the OUTER skin's leading corner. Both are shallower than the pillar reads, which is
+    # why master kept seeing the screen as standing up.
+    rearTop = max((v[2] for v in V if abs(v[1] - topY) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] < -0.5), default=None)
+    if rearTop is None: return None, "no pillar rear edge at the header height"
+    slope = (rearTop - screenZ) / (topY - seamY)
     topZ = screenZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
     gy = max(v[1] for v in gv) - min(v[1] for v in gv)
@@ -191,14 +199,14 @@ def rerake_glass(g):
         return None, "glass       already on the pillar's outside slant"
     xs = sorted({round(v[0], 6) for v in gv})
     head = [l.rstrip("\n") for l in io.open(GLASS, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
-    head.append("# RE-RAKED by tools/add_sedan_dash.py to the A-pillar's OUTSIDE slant (beltline -> roof leading edge),")
-    head.append("# which is steeper than the aperture's own front edge -- see the tool for why those differ.")
+    head.append("# RE-RAKED by tools/add_sedan_dash.py to the A-PILLAR'S REAR EDGE -- the diagonal the pillar reads as,")
+    head.append("# corroborated by sedan_glass_r_front, whose leading edge is cut to that same pillar at slope 0.550.")
     head.append("# Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.")
     for x, y, z in ((xs[0], seamY, screenZ), (xs[-1], seamY, screenZ), (xs[-1], topY, topZ), (xs[0], topY, topZ)):
         head.append("v %.6f %.6f %.6f" % (x, y, z))
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
-    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's OUTSIDE line" % (
+    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's REAR edge" % (
         seamY, screenZ, topY, topZ, slope)
 
 
