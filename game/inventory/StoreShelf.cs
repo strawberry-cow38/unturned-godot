@@ -463,6 +463,9 @@ namespace UnturnedGodot
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
         public float DebugDoorSwing() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugSwing : -1f;
+        /// <summary>Where the first leaf actually sits right now, in prop space -- lets a test assert the OPEN
+        /// pose and not just that the swing counter reached 1. See ObjectDoor.DebugLeafAabb.</summary>
+        public Aabb DebugDoorLeafAabb() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugLeafAabb : new Aabb();
         public void TickDoorsForTest(double delta)
         {
             foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta);

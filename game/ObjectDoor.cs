@@ -407,6 +407,26 @@ namespace UnturnedGodot
 
         // --- test/debug seams ---
         public float DebugSwing => _swing;
+
+        /// <summary>The leaf's CURRENT AABB in this door's local (prop) space -- where the lid actually IS at
+        /// the swing it is at, measured off the live node rather than re-derived from the catalog numbers.
+        ///
+        /// Every other check on a hinge is about the CLOSED pose, and an AABB cannot see which way a leaf
+        /// swings: flip the sign of the angle and the closed pose is untouched while the lid sweeps down
+        /// through the body instead of up off it. Reading the open pose back and comparing it to the pose the
+        /// prop was MODELLED in closes that, and it is a round trip -- split the lid out, fold it shut, swing
+        /// it open, and it has to land back where the artist put it.</summary>
+        public Aabb DebugLeafAabb
+        {
+            get
+            {
+                if (_pivot == null) return new Aabb();
+                foreach (var c in _pivot.GetChildren())
+                    if (c is MeshInstance3D mi && mi.Mesh == _leafMesh)
+                        return _pivot.Transform * (mi.Transform * mi.Mesh.GetAabb());
+                return new Aabb();
+            }
+        }
         public float DebugSampleEasing(float swing) => SampleEasing(swing);
         public bool DebugHasAudio => _audio != null;   // test: the catalog's sound field resolved to a WAV that actually parsed
     }
