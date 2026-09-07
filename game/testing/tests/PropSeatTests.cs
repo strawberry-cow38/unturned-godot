@@ -120,6 +120,17 @@ namespace UnturnedGodot.Testing
             T.Check($"...and does not drift or fall ({(p.GlobalPosition - was).Length():0.000} m over a second)",
                     (p.GlobalPosition - was).Length() < 0.01f);
 
+            // THE SEAT HOLDS AGAINST ANYTHING THAT MOVES YOU. This is the regression for master's report
+            // ("chairs are sitting you down where you interacted with them"): the position was written ONCE
+            // at SitDown, and the render interpolation ran a frame later and lerped the player back to where
+            // they had been standing. Any test that only sits and looks passes against that bug -- including
+            // the ones above -- because the thing that moved them was a different subsystem a frame later.
+            // So this displaces the player the way that bug did and requires the seat to take them back.
+            p.GlobalPosition = was + new Vector3(3f, 0f, 3f);
+            yield return Ticks(2);
+            T.Check($"a seated player DRAGGED off the chair is put back ({p.GlobalPosition.DistanceTo(was):0.000} m off)",
+                    p.GlobalPosition.DistanceTo(was) < 0.01f);
+
             // An occupied seat is not offered to anyone else.
             T.Check("an occupied seat is not free", !seat.Free);
             var other = made[1];

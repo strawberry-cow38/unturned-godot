@@ -5571,6 +5571,13 @@ namespace UnturnedGodot
             return best;
         }
 
+        /// <summary>Where a sitter's ORIGIN goes for this seat. One definition, used by both the sit and the
+        /// per-tick re-assert, so the two can never disagree about where the chair is: sat up the origin drops
+        /// a hip-height below the cushion (the pelvis lands on it); lying down the body pivots instead, so the
+        /// feet -- and the origin -- stay on the mattress.</summary>
+        static Vector3 SeatStandPosition(PropSeat seat)
+            => seat.Recline ? seat.Anchor.Origin : seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+
         public void SitDown(PropSeat seat)
         {
             if (seat == null || !IsInstanceValid(seat) || !seat.Free || _dead) return;
@@ -5596,8 +5603,14 @@ namespace UnturnedGodot
             // the standing 1.6 for free; laid down, the whole body pivots to horizontal, so the feet stay at
             // the anchor and the EYE has to be moved up the bed to where the head now is. That is the one
             // place a bed costs a line the chair did not.
-            GlobalPosition = seat.Recline ? seat.Anchor.Origin
-                                          : seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+            GlobalPosition = SeatStandPosition(seat);
+            // KILL THE INTERPOLATION AT THE TELEPORT. This is the actual fix for "chairs sit you down where
+            // you interacted with them": sitting happens in an input handler, and _Process can run before the
+            // next PhysicsTick clears this flag -- one frame of lerping between two STANDING positions, after
+            // which nothing ever wrote the seat position again. Clearing it here is the same move as Godot's
+            // ResetPhysicsInterpolation (cow tools' suggestion, translated: that call resets the ENGINE's
+            // interpolation and this codebase rolls its own in _Process, so the flag is the thing to reset).
+            _interpReady = false;
             Rotation = new Vector3(0f, seat.Anchor.Basis.GetEuler().Y, 0f);   // face the way the seat faces -- yaw only
             Velocity = Vector3.Zero;
             // Retail's own enum value for this. Set on _move (Stance is a read-only view of it), and it STICKS:
@@ -8020,7 +8033,7 @@ namespace UnturnedGodot
         {
             GrassDisplacers.EnsureGlobals();   // idempotent; grass materials already did this at build -- belt-and-suspenders (+ owns DispImg/DispTex)
             // TARGET = the player's interpolated visual position when the render-interp is active, else GlobalPosition.
-            var pTarget = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)
+            var pTarget = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null && !IsSeatedOnProp)
                 ? _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction())
                 : GlobalPosition;
             // GRASS'S OWN INTERP (master 2026-08-25 "does it need its own interp?"): the loopback path can still feed a
@@ -8134,7 +8147,12 @@ namespace UnturnedGodot
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             if ((_grassT += delta) >= 1.0 / 60.0) { UpdateGrassDisplacement(_grassT); _grassT = 0; }   // PERF: 60 Hz -- the lerp takes the accumulated delta, the bend is identical
-            if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
+            // ...and NOT while sat on furniture, which is the same exclusion for the same reason and whose
+            // absence was the "chairs sit you down where you interacted with them" report (master 2026-09-07).
+            // SitDown wrote the seat position exactly once, from an input handler; _Process then ran before
+            // the next PhysicsTick could clear _interpReady, lerped between the two positions the player had
+            // while STANDING, and put them back. Nothing wrote the seat position again, so it stayed wrong.
+            if (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null && !IsSeatedOnProp)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
@@ -9175,7 +9193,16 @@ namespace UnturnedGodot
             // turned the collider off, so there is no gravity to fall under and no input to integrate -- but
             // LastMoveInput/LastJumpInput are still cleared, because those are POLLED and would otherwise hold
             // whatever they had when you sat down and read out as a player walking on the spot.
-            if (IsSeatedOnProp) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; Velocity = Vector3.Zero; return; }
+            if (IsSeatedOnProp)
+            {
+                _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; Velocity = Vector3.Zero;
+                // RE-ASSERTED every tick, not written once at SitDown. The exclusion above fixes the render
+                // interp specifically; this makes the seat hold against ANYTHING that moves the player while
+                // they are in it, which is the property actually wanted -- and it is cheap, because a chair
+                // does not move so the value is a constant.
+                GlobalPosition = SeatStandPosition(_sitting);
+                return;
+            }
             if (_interpReady && !_dead)
             {
                 // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual lerp)...
