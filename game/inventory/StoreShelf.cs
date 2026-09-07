@@ -24,7 +24,6 @@ namespace UnturnedGodot
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
         OmniLight3D _glow;                                 // dim bulb: the light that spills out onto the floor when lit
-        MeshInstance3D _bodyMi; Mesh _bodyOpenMesh, _bodyClosedMesh;   // two-state body (cardboard boxes): open/closed is a mesh swap, not a hinge
         MeshInstance3D _glowInteriorMi;                    // COOLER only: the INTERIOR sub-mesh (split off the outer shell on the palette u-axis); its material swaps to emissive while lit so ONLY the interior glows (tinyclaw)
         Material _glowOffMat, _glowLitMat;                 // cooler body: normal vs emissive-lit material
         bool _glowAlways;                                  // glass-front display cooler -> lit whenever powered even when closed; opaque fridge -> only when open
@@ -235,14 +234,6 @@ namespace UnturnedGodot
                 }
                 var mi = new MeshInstance3D { Mesh = shellMesh, MaterialOverride = ShelfMat(), Basis = _upright };
                 AddChild(mi);
-                // TWO-STATE BODY (master 2026-09-07: cardboard boxes as "smart" storage that "switch between the
-                // open/closed state when opening and closing"). A box has no door leaf to swing -- its lid IS its
-                // flaps, part of the body -- so the open/close is a MESH SWAP rather than a hinge. Opt-in purely by
-                // a file existing: <MeshName>_closed.obj next to the body. Anything without one is unaffected.
-                _bodyMi = mi;
-                _bodyOpenMesh = shellMesh;
-                _bodyClosedMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/") + MeshName + "_closed.obj");
-                if (_bodyClosedMesh != null) mi.Mesh = _bodyClosedMesh;   // a box found in the world starts shut
                 mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
                 // CreateTrimeshCollision() defaults backface_collision = false, so the shell is ONE-SIDED: a body
                 // shoved into the shelf (a vehicle pushing the player against it) tunnels through instead of being
@@ -404,11 +395,6 @@ namespace UnturnedGodot
         public void SetDoorsOpen(bool open)
         {
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
-            // ...and a two-state BODY swaps mesh instead of swinging (see where _bodyClosedMesh is loaded). The
-            // collider is left on the OPEN mesh deliberately: it is the larger of the two, so a closed box is a
-            // touch generous to walk into rather than something you can clip a shoulder through.
-            if (_bodyClosedMesh != null && _bodyMi != null && IsInstanceValid(_bodyMi))
-                _bodyMi.Mesh = open ? _bodyOpenMesh : _bodyClosedMesh;
             _doorsOpen = open;
             RefreshGlow();
         }
@@ -427,6 +413,11 @@ namespace UnturnedGodot
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
         public float DebugDoorSwing() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugSwing : -1f;
         public void TickDoorsForTest(double delta) { foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta); }
+        /// <summary>Stop the leaves animating so a settled PART-WAY pose survives to the screenshot. Ticking by hand
+        /// only pre-advances the swing: the engine keeps calling _PhysicsProcess for the frames between the tick loop
+        /// and the shot, which finishes it -- so every "mid-swing" still came out fully open and matched the open
+        /// frame to within 0.06% of pixels.</summary>
+        public void FreezeDoorsForTest() { foreach (var d in _doors) if (IsInstanceValid(d)) d.SetPhysicsProcess(false); }
 
         public override void _Ready()
         {
