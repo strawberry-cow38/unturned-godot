@@ -4,12 +4,14 @@
 // rain outside the occluded area still exists"). Rain intensity is baked into `alpha_base` by the CPU each frame.
 shader_type spatial;
 render_mode unshaded, blend_mix, cull_disabled, shadows_disabled;
+#include "res://content/swell.gdshaderinc"   // the SAME surface height water.gdshader displaces its vertices by
 
 uniform vec3 tint : source_color = vec3(0.80, 0.86, 0.96);
 uniform float alpha_base = 0.14;              // CPU writes 0.14 * rain intensity (fades the whole field with the weather)
 global uniform vec4 rain_canopy;              // xy = canopy centre XZ, z = radius (m), w = occlusion strength (0 = no canopy)
 global uniform sampler2D rain_roof;           // RainRoofMap: world Y of the topmost solid per cell (Rf, 64x64 over 64 m)
 global uniform vec4 rain_roof_rect;           // centre X, centre Z, half-size (z = 0 -> no map)
+global uniform float rain_sea_level;          // world Y of the water plane; RainSystem3D.NoSea (-1e5) on a map with no water
 
 // SHELTER, SMOOTHED (master 2026-09-06 "the rainmap seems really jagged on buildings placed on non-cardinals").
 // The map stores a HEIGHT per 0.5 m cell and one nearest read gives a hard yes/no, so a roof that is not axis-aligned
@@ -73,6 +75,13 @@ void vertex() {
     amul = (1.0 - shadow) * smoothstep(1.5, 3.2, distance(wpos, CAMERA_POSITION_WORLD));
     // ROOF: a drop below the topmost surface at its XZ has fallen through something -- it is gone (master 2026-09-04)
     amul *= 1.0 - roof_shelter(wpos.xz, wpos.y, 0.15);   // fade a drop out ACROSS a roof edge instead of switching it off at a cell boundary
+    // WATER: a drop that reaches the surface has landed (master 2026-09-07: "the water level should kill raindrops
+    // falling below it, so they dont fall underwater"). The fade is 12 cm deep rather than a hard cut, and because
+    // this is per-VERTEX on a 0.62 m streak it costs nothing extra to look right: a streak crossing the surface has
+    // its lower end faded and its upper end intact, so the drop reads as going INTO the water rather than blinking
+    // out above it. The ring it leaves is water.gdshader's business.
+    float surf = rain_sea_level + (rain_sea_level > -1000.0 ? swell_offset(wpos.xz, TIME) : 0.0);   // the wave under THIS drop, not the mean plane
+    amul *= smoothstep(surf - 0.12, surf + 0.02, wpos.y);
 }
 
 void fragment() {
