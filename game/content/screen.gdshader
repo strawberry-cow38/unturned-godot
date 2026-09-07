@@ -48,55 +48,62 @@ vec3 prog_testcard(vec2 uv) {
     return texture(pattern_tex, vec2(uv.x, uv.y * pattern_frac + roll_offset)).rgb;
 }
 
-// ---- analogue snow. Quantised in BOTH space and time: a full-resolution per-pixel hash reads as a flat grey haze
-// at any distance, and an unquantised time makes it shimmer at the render rate rather than at a broadcast one.
 // ---- ANALOGUE SNOW. Two flavours, because a colour set and a black-and-white set do not show the same snow: a
-// colour tube's demodulator turns amplifier noise into COLOURED speckle, a mono tube has only luma. strawberry asked
-// for both, and for them to stop looking like blobs.
+// colour tube's demodulator turns amplifier noise into COLOURED speckle, a mono tube has only luma.
 //
-// The blobbiness came from the old version's second, very coarse 5x4 band drifting across the field -- that IS a field
-// of slow blobs, and no amount of fine noise underneath hides it. It is gone.
+// ONE SCREEN PIXEL per grain (master 2026-09-07: "change the tv static on the tvs to be actual 1px static noise
+// across the whole thing"). It used to be a 64x48 cell grid over the screen's UVs with a per-row horizontal shear.
+// That grid was chosen so the grain would survive being averaged down at a distance -- a fine field of noise falls
+// to a flat grey haze once the GPU shrinks it (measured then: 96x72 uniform noise reached 0.066 stdev at 24 px on
+// screen). The cost is that up close it does not read as static at all; it reads as a grid of blocks, because that
+// is exactly what it is. That is the trade being reversed here, knowingly: close up it is now real snow, and far
+// away it will average toward grey, which is also what a real set across a room does.
 //
-// The tension it existed to solve is real though: fine noise viewed from across a room averages out to a flat grey
-// field (measured this morning: 96x72 uniform noise fell to 0.066 stdev at 24 px on screen). The fix is not coarser
-// cells, it is a HARDER distribution -- a cell is lit or it is dark, black-to-white, rather than a smooth ramp
-// through the greys. Bimodal noise starts with roughly four times the variance, so it still has grain left after the
-// GPU averages it down. Block-averaged, 64x48 bimodal beats the old 34x26 at every size that matters:
+// So the grain is the SCREEN PIXEL itself, hashed off FRAGCOORD -- one pixel wherever the set happens to sit on
+// screen, rather than one pixel only at whatever distance made 64x48 line up. The UVs are not consulted at all,
+// which is why the row shear went with the grid: shearing per-pixel noise sideways produces per-pixel noise.
 //
-//     screen px      old 34x26     new 64x48
-//        200           0.236         0.378
-//        100           0.223         0.332
-//         60           0.209         0.292
-//         24           0.153         0.150
+// THE LEVELS ARE UNCHANGED, deliberately. Lit-or-dark with a little variation inside each, rather than a smooth
+// ramp through the greys -- that is what keeps contrast in it, and a ramp is what the version before the grid had.
+// Keeping the distribution also keeps the mean at 0.415, so TVDevice.MeanLuma (which decides how hard a screen of
+// snow lights the room, and is a measured constant, not a guess) is still describing the thing being drawn.
 //
-// ...and the per-ROW horizontal jitter is what makes it read as a signal rather than as a dither: a CRT paints in
-// horizontal scan lines, so real snow shears sideways line by line instead of twinkling in place.
-float snow_cell(vec2 uv, out vec2 cell) {
-    const float rows = 48.0, cols = 64.0;
-    float row = floor(uv.y * rows);
-    float t = floor(time_s * 20.0);
-    float rjit = hash11(row * 3.7 + t * 1.3);          // each scan line samples from a different place in the field
-    float cx = floor((uv.x + rjit) * cols);
-    cell = vec2(cx, row);
-    return hash21(cell + t * 9.17 + seed);
+// The HASH had to change with it. hash21 goes through sin() of a dot product; FRAGCOORD plus a frame counter that
+// only ever grows makes that argument large enough for float32 sin to stop being meaningful after the game has
+// been up a while, and the field would band or freeze. This is a fract-based mix instead (no sin), with the frame
+// counter wrapped so it stays in a range floats represent exactly.
+float hash13(vec3 p3) {
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
-float snow_level(vec2 cell, float v, float chan) {
-    // Lit or dark, with a little variation within each so it is not two flat tones.
+// 20 Hz, the same broadcast-ish rate the cell version ran at: an unquantised time shimmers at the render rate,
+// which reads as sparkle rather than as a signal. Wrapped at 65536 frames (~55 min) purely to bound the hash input.
+float snow_frame() { return mod(floor(time_s * 20.0), 65536.0); }
+
+// One channel of snow at this screen pixel. `chan` separates the colour channels; `seed` separates two sets that
+// happen to be showing snow at once (largely redundant now that different sets occupy different pixels, but it
+// costs nothing and the shader should not depend on that being true).
+//
+// FRAGCOORD is PASSED IN rather than read here: Godot forbids a built-in inside a user-defined function, and the
+// failure is a shader compile error, i.e. every screen in the world goes blank. So fragment() reads it and threads
+// it down through prog_static/prog_static_mono.
+float snow_px(vec2 fc, float chan) {
+    vec2 px = floor(fc);
+    float t = snow_frame();
+    float v   = hash13(vec3(px, t * 3.0 + chan * 101.0 + seed * 1013.0));
     float lit = step(0.5, v);
-    float hi = 0.62 + 0.38 * hash21(cell * 1.7 + chan + floor(time_s * 20.0));
-    float lo = 0.04 * hash21(cell * 2.3 + chan);
+    float hi  = 0.62 + 0.38 * hash13(vec3(px + 17.0, t * 7.0 + chan * 53.0 + seed * 601.0));
+    float lo  = 0.04 * hash13(vec3(px + 41.0, chan * 91.0 + seed * 307.0));
     return mix(lo, hi, lit);
 }
 
 // Colour set: the three channels get INDEPENDENT noise, which is what puts the coloured confetti in analogue snow.
 // Pulled part-way back toward luma, because fully independent channels read as rainbow static rather than as a
 // television that has lost its signal.
-vec3 prog_static(vec2 uv) {
-    vec2 cell; float v = snow_cell(uv, cell);
-    vec3 c = vec3(snow_level(cell, v, 0.0),
-                  snow_level(cell, hash21(cell * 3.1 + seed), 1.0),
-                  snow_level(cell, hash21(cell * 5.7 + seed), 2.0));
+vec3 prog_static(vec2 fc) {
+    vec3 c = vec3(snow_px(fc, 0.0), snow_px(fc, 1.0), snow_px(fc, 2.0));
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     return mix(vec3(l), c, 0.45);
 }
@@ -104,9 +111,8 @@ vec3 prog_static(vec2 uv) {
 // Black-and-white set: one luma channel, no colour to demodulate. Its own program rather than a desaturate of the
 // above -- desaturating colour snow gives a DIFFERENT grain than a mono tube actually shows, because the three
 // channels average toward mid-grey and the contrast collapses.
-vec3 prog_static_mono(vec2 uv) {
-    vec2 cell; float v = snow_cell(uv, cell);
-    return vec3(snow_level(cell, v, 0.0));
+vec3 prog_static_mono(vec2 fc) {
+    return vec3(snow_px(fc, 0.0));
 }
 
 // ---- the bouncing blob. Triangle waves on each axis ARE a perfect reflection off the walls, so the corners fall out
@@ -242,13 +248,14 @@ vec3 prog_bars(vec2 uv) {
 void fragment() {
     vec2 uv = UV;
     vec3 c;
+    vec2 fc = FRAGCOORD.xy;   // read HERE: a built-in is illegal inside a user function (see snow_px)
     if (program == 0) c = prog_testcard(uv);
-    else if (program == 1) c = prog_static(uv);
+    else if (program == 1) c = prog_static(fc);
     else if (program == 2) c = prog_dvd(uv);
     else if (program == 4) c = prog_cursor(uv);
     else if (program == 5) c = prog_scroll(uv);
     else if (program == 6) c = prog_bars(uv);
-    else if (program == 7) c = prog_static_mono(uv);
+    else if (program == 7) c = prog_static_mono(fc);
     else c = vec3(1.0);                      // 3 Colour: the flat colour rides `tint`
 
     // THE BLACK IS THE GLASS (strawberry: "change the black color for all screen types on all channels to not be
