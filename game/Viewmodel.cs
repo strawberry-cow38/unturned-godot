@@ -660,7 +660,15 @@ namespace UnturnedGodot
                     // core.masterbundle, converted (x,y,z)->(-x,y,-z). Mounted as Attachments.cs does
                     // (Instantiate(magazineAsset.magazine) at the Magazine hook, localPos 0 / identity); the mesh sits
                     // on the item root so its origin = MagazineHook(0,0.0166,-0.0238) -> port (0,0.0166,0.0238).
-                    var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+                    // THE MAGAZINE'S OWN TEXTURE (master 2026-09-07: "did u get the materials/colors/textures too?" --
+                    // no, the first pass was meshes and hooks only, and every magazine rendered with the near-black
+                    // below). magazine.prefab's material carries a _MainTex, and unlike the GUN albedos these are real
+                    // painted textures rather than Unturned's white=paintable/black=metal mask: measured across all 36,
+                    // near-black and near-white are both ~0% everywhere, so they can be used raw with no bake. Three
+                    // magazines genuinely have no _MainTex (nailgun_20, rocket_1, yuri_64) and keep the flat colour.
+                    // Nearest filtering like every other ripped texture here -- several are tiny (16x8, even 2x1) and
+                    // are effectively colour swatches the UVs point into; bilinear would smear them.
+                    var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     // PER GUN, from the table -- mesh AND hook. The old code had one hardcoded hook and read gv.Mag,
                     // which only two rows in guns_visual.tsv ever set (both to the eaglefire's), so 55 guns carried no
                     // magazine at all and the two that did shared one mesh at one position. gv.Mag stays as an
@@ -681,7 +689,11 @@ namespace UnturnedGodot
                     _magFile ??= gv.Mag;
                     var magMesh = _magFile != null ? ContentProvider.ParseObj($"res://content/{_magFile}") : null;
                     if (magMesh != null)
+                    {
+                        var _magTex = _magFile.EndsWith(".txt") ? LoadTex($"res://content/{_magFile[..^4]}_albedo.png") : null;
+                        if (_magTex != null) { magMat.AlbedoTexture = _magTex; magMat.AlbedoColor = Colors.White; }   // the colour lives in the texture; the dark tint would only mute it
                         mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = _magPos });
+                    }
 
                     // Real Military Suppressor (Barrel attachment) — barrel.prefab Model_0 from core.masterbundle, converted
                     // (x,y,z)->(-x,y,-z). HIDDEN by default (guns ship with no barrel); the T menu toggles it, and when on it

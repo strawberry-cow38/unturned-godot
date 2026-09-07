@@ -1,6 +1,7 @@
 # Hand-cut to the aperture measured in ship_body.txt. RAKED: the screen leans out as it rises
 # (outer skin z 10.90 at the sill, 10.40 at the head) -- a flat pane on one z reads as vertical.
 g windshield
+# SIMPLIFIED by tools/simplify_glass_panes.py -- outline only (see its docstring).
 v -7.380000 16.850000 10.890000
 v 7.380000 16.850000 10.890000
 v 7.380000 19.410000 10.390000
