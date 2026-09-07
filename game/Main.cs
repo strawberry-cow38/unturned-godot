@@ -1963,43 +1963,6 @@ namespace UnturnedGodot
             AddChild(_veh);
             NightVision.DebugAttach(this);   // UG_NIGHTVISION=military|civilian: the goggles' pass over the night jeep + its lights
 
-            // UG_VLINES="x1,y1,z1,x2,y2,z2,r,g,b; ..." draws bright unshaded bars between VEHICLE-LOCAL points.
-            // For arguing about an EDGE. A slope you can only quote as a number is a slope the other person has to
-            // take on trust, and on a wedge-shaped A-pillar there are three candidate edges within 25 cm of each
-            // other -- so master asked to see which line was meant rather than read another decimal (2026-09-07).
-            string vlines = System.Environment.GetEnvironmentVariable("UG_VLINES");
-            if (!string.IsNullOrEmpty(vlines))
-            {
-                var ciL = System.Globalization.CultureInfo.InvariantCulture;
-                foreach (var seg in vlines.Split(';', System.StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var q = seg.Split(',');
-                    if (q.Length < 9) continue;
-                    float P(int i) => float.Parse(q[i].Trim(), ciL);
-                    var a = new Vector3(P(0), P(1), P(2));
-                    var b = new Vector3(P(3), P(4), P(5));
-                    var mid = (a + b) * 0.5f;
-                    float len = a.DistanceTo(b);
-                    var bar = new MeshInstance3D
-                    {
-                        Mesh = new BoxMesh { Size = new Vector3(0.03f, len, 0.03f) },
-                        MaterialOverride = new StandardMaterial3D
-                        {
-                            AlbedoColor = new Color(P(6), P(7), P(8)),
-                            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                            NoDepthTest = true,   // an edge INSIDE the bodywork still has to be visible
-                        },
-                    };
-                    // Stand the box's +Y along the segment.
-                    var dir = (b - a).Normalized();
-                    var axis = Vector3.Up.Cross(dir);
-                    bar.Transform = new Transform3D(
-                        axis.LengthSquared() < 1e-8f ? Basis.Identity : new Basis(axis.Normalized(), Vector3.Up.AngleTo(dir)),
-                        mid);
-                    _veh.AddChild(bar);
-                }
-            }
-
             // UG_VEHOCCUPANT=1 (+ UG_SEATIDX=N, default 0): drop a rigged body into a seat so a --vehicle= showcase
             // actually shows where a body sits, not just the empty shell -- SeatBodyLocal is the exact placement
             // PlayerController uses to seat a real driver/passenger (strawberry 2026-09-03: "theres still a lot of

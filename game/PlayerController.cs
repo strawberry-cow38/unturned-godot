@@ -9011,14 +9011,6 @@ namespace UnturnedGodot
             var eyeFallback = _seatIndex == 0 ? _driving.DriverEyeLocal
                                               : _driving.SeatLocal(_seatIndex) + new Vector3(0f, PassengerEyeRise, 0f);
             var eye = SeatedEyeLocal(_driving.SeatBodyLocal(_seatIndex), eyeFallback);   // the seated model's own eyes (per seat), not a per-vehicle hand number
-            // UG_EYEDBG=1: print the seated driving eye ONCE, in vehicle-local space. The 1P driving camera is not
-            // DriverEyeLocal -- that is only the pre-pose fallback -- so the number that actually matters is not
-            // written down anywhere and cannot be read off a render.
-            if (!_eyeDbgDone && System.Environment.GetEnvironmentVariable("UG_EYEDBG") == "1")
-            {
-                _eyeDbgDone = true;
-                GD.Print($"[eye] seatBody={_driving.SeatBodyLocal(_seatIndex)} eye={eye} fallback={eyeFallback} raise={SeatedEyeRaise}");
-            }
             eye += DriverPeekOffset();
             if (_driving.SeatEyeOverride(_seatIndex, out var opticEye)) eye = opticEye;   // a tank seat sees through its optic (visor window / mantlet sight / open cupola), not from its head
             if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
@@ -9087,21 +9079,11 @@ namespace UnturnedGodot
             return seatBodyLocal + head + SeatedEyeFromSkull + SeatedEyeRaise;
         }
         int _skullBone = -1;
-        bool _eyeDbgDone;   // UG_EYEDBG: one line, not one per frame
         static readonly Vector3 SeatedEyeFromSkull = new Vector3(0f, 0.16f, -0.10f);   // head base -> eyes: up + forward (rig faces -Z like the vehicle)
         // EVERY 1P seat sits higher (strawberry 2026-09-06 "move all 1p seating camera positions up more"): applied on top of the
         // skull-tracked eye AND the per-vehicle fallbacks, so driver, passengers and riders all rise together. The optic seats
         // (SeatEyeOverride: tank visor / gunsight / cupola) are pinned to their optics and deliberately not raised.
-        // UG_EYERAISE=<metres> overrides the seated-eye lift for a render sweep, so "is it too low" can be
-        // answered by looking at three heights instead of argued from one number.
-        // ⚠ DECLARED BEFORE SeatedEyeRaise ON PURPOSE. C# initialises static fields in DECLARATION ORDER, so with
-        // this below it the Vector3 captured 0 and every "sweep" rendered the same picture at raise 0 -- which
-        // looks exactly like the knob having no effect.
-        static readonly float EyeRaiseY =
-            float.TryParse(System.Environment.GetEnvironmentVariable("UG_EYERAISE"),
-                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out var _er) ? _er : 0.15f;
-        static readonly Vector3 SeatedEyeRaise = new Vector3(0f, EyeRaiseY, 0f);
+        static readonly Vector3 SeatedEyeRaise = new Vector3(0f, 0.15f, 0f);
 
         /// <summary>Chase-cam collision (strawberry 2026-09-03 "give the 3p vehicle camera collision with terrain, props etc."):
         /// one ray from the look target out to the wanted eye against WORLD + PROPS (layers 0 + 6). Vehicles (layer 5) and
