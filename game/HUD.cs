@@ -27,6 +27,7 @@ namespace UnturnedGodot
         static readonly Color CB = new Color(10f / 51f, 0.59607846f, 40f / 51f);
         static readonly Color CY = new Color(44f / 51f, 0.7058824f, 0.07450981f);
         static readonly Color CG = new Color(0.24f, 0.71f, 0.29f);   // Palette COLOR_G (virus / infection)
+        static readonly Color CC = new Color(0.25f, 0.85f, 0.90f);   // cyan (oxygen) -- the palette note above already reserved it, and water owns CB
 
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 
@@ -123,18 +124,20 @@ namespace UnturnedGodot
             var lifeBox = new Control();
             lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = 0.2f; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
             lifeBox.OffsetLeft = 24f; lifeBox.OffsetRight = 24f;   // left padding off the screen edge (master 2026-08-26)
-            lifeBox.OffsetTop = -(TopPad + 5f * RowH) - 36f; lifeBox.OffsetBottom = -42f;   // 5 rows, lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26)
+            lifeBox.OffsetTop = -(TopPad + 6f * RowH) - 36f; lifeBox.OffsetBottom = -42f;   // 6 rows since oxygen joined (was 5), lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26)
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             vitalsRoot.AddChild(lifeBox);   // layer-12 root -> the vitals render OVER the inventory
             _playerOnly.Add(lifeBox);
 
-            // top-down: health, food, water, stamina (the always-visible vitals; virus/oxygen are situational)
+            // top-down: health, food, water, stamina, infection, oxygen. OXYGEN IS LAST, and row 4 was already
+            // TAKEN by the infection meter -- putting oxygen there drew the two on top of each other (master
+            // 2026-09-06: "the oxygen bar is overlapping the infection bar, should be below it").
             AddVital(lifeBox, 0, "hud_health.png",  CR, () => Player != null ? Player.Health / Mathf.Max(1f, Player.MaxHealth) : 1f);
             AddVital(lifeBox, 1, "hud_food.png",    CO, () => Player != null ? Player.Food    : 1f);
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
-            AddVital(lifeBox, 4, "hud_oxygen.png",  CB, () => Player != null ? Player.Oxygen  : 1f);   // BOTTOM of the list (master 2026-09-06); blue, like water
             AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? 1f - Player.Infection : 1f, null);   // INFECTION meter: ALWAYS shown, starts FULL (healthy), depletes as infection rises (master)
+            AddVital(lifeBox, 5, "hud_oxygen.png",  CC, () => Player != null ? Player.Oxygen  : 1f);   // BOTTOM of the list, BELOW infection (master 2026-09-06)
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
