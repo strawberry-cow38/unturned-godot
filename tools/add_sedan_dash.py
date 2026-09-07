@@ -189,9 +189,15 @@ def rerake_glass(g):
     # the same wedge: the aperture's front edge (0.216) is where the glass BUTTS IN, and the beltline-to-roof
     # silhouette (0.324) is the OUTER skin's leading corner. Both are shallower than the pillar reads, which is
     # why master kept seeing the screen as standing up.
-    rearTop = max((v[2] for v in V if abs(v[1] - topY) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] < -0.5), default=None)
-    if rearTop is None: return None, "no pillar rear edge at the header height"
-    slope = (rearTop - screenZ) / (topY - seamY)
+    # ...and the glass sits on the pillar's MIDLINE, not on either face (master: "center that glass in the middle
+    # of the a frame, as in bring it forward to the front of the car"). Laying it on the rear edge put the whole
+    # 25 cm of pillar in FRONT of the glass, so the screen looked set back into the car instead of bonded into the
+    # frame. The wedge has zero depth at the beltline, so the midline starts at the same point and only diverges
+    # as the pillar thickens: bottom -1.123, top halfway between the front (-0.961) and rear (-0.711) faces.
+    zs = [v[2] for v in V if abs(v[1] - topY) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] < -0.5]
+    if not zs: return None, "no pillar faces at the header height"
+    midTop = (min(zs) + max(zs)) / 2.0
+    slope = (midTop - screenZ) / (topY - seamY)
     topZ = screenZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
     gy = max(v[1] for v in gv) - min(v[1] for v in gv)
@@ -199,14 +205,14 @@ def rerake_glass(g):
         return None, "glass       already on the pillar's outside slant"
     xs = sorted({round(v[0], 6) for v in gv})
     head = [l.rstrip("\n") for l in io.open(GLASS, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
-    head.append("# RE-RAKED by tools/add_sedan_dash.py to the A-PILLAR'S REAR EDGE -- the diagonal the pillar reads as,")
-    head.append("# corroborated by sedan_glass_r_front, whose leading edge is cut to that same pillar at slope 0.550.")
+    head.append("# RE-RAKED by tools/add_sedan_dash.py onto the A-PILLAR'S MIDLINE -- halfway between its front and")
+    head.append("# rear faces, so the pane is bonded INTO the frame rather than lying against the back of it.")
     head.append("# Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.")
     for x, y, z in ((xs[0], seamY, screenZ), (xs[-1], seamY, screenZ), (xs[-1], topY, topZ), (xs[0], topY, topZ)):
         head.append("v %.6f %.6f %.6f" % (x, y, z))
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
-    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's REAR edge" % (
+    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's MIDLINE" % (
         seamY, screenZ, topY, topZ, slope)
 
 
