@@ -4205,15 +4205,26 @@ namespace UnturnedGodot
             ChromaticAberration.DebugAttach(this);
 
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
+            // UG_SPOTNIGHT=1: the same stage at NIGHT. A light shaft is invisible under a 1.0-energy ambient and a
+            // 1.3 sun -- the additive cone adds a couple of percent to a frame that is already white -- so looking at
+            // a beam at all needs the lights turned off. Glow on, because the shaft's whole look is HDR bloom around
+            // a thin additive volume; without it the cone reads as flat grey paint.
+            bool spotNight = System.Environment.GetEnvironmentVariable("UG_SPOTNIGHT") == "1";
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                BackgroundColor = spotNight ? new Color(0.025f, 0.03f, 0.045f) : new Color(0.30f, 0.34f, 0.42f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+                AmbientLightColor = spotNight ? new Color(0.16f, 0.18f, 0.24f) : new Color(0.72f, 0.72f, 0.75f),
+                AmbientLightEnergy = spotNight ? 0.10f : 1.0f,
             };
+            if (spotNight)
+            {
+                env.GlowEnabled = true; env.GlowIntensity = 0.7f; env.GlowStrength = 1.0f; env.GlowBloom = 0.10f;
+                env.GlowHdrThreshold = 0.9f; env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive;
+            }
             AddChild(new WorldEnvironment { Environment = env });
-            var dirLight = new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true };
+            var dirLight = new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = spotNight ? 0.04f : 1.3f, ShadowEnabled = true };
             AddChild(dirLight);
             AddChild(new MeshInstance3D
             {
@@ -4264,9 +4275,12 @@ namespace UnturnedGodot
                         GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
                     }
                 }
-                // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
-                Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
-                Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
+                if (!spotNight)   // the night shot is about the BEAM: a glowing red ghost parked in front of the
+                {                 // fixture is the brightest thing in a dark frame and hides the thing being judged
+                    // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
+                    Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
+                    Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
+                }
             }
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
@@ -4274,6 +4288,12 @@ namespace UnturnedGodot
             var look = new Vector3(0f, 0.7f, 2f);                 // tracked look-at target so UG_CAMYAW can orbit around it
             cam.Position = new Vector3(0f, 3.2f, 11f);
             cam.LookAt(look, Vector3.Up);
+            if (spotNight)   // broadside to the beam: the fixture at 2.6 throws along -Z, so stand off to +X and look
+            {                // ACROSS it. Down the axis you see a bright disc and learn nothing about the cone.
+                look = new Vector3(2.6f, 0.8f, -3.4f);
+                cam.Position = new Vector3(11.5f, 2.9f, 1.2f);
+                cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
+            }
 
             // UG_SPLITTERS=1: showcase the three power splitters (2/3/4-way) in a row with all port arrows on -- verify
             // the gray box stands up, the orange input (back) + fanned cyan outputs (front) read. UG_SPLITBACK=1 = the

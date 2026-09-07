@@ -53,9 +53,70 @@ namespace UnturnedGodot
         public bool IsPowered => Def == null ? (!OnFire && _powerLevel > 0.02f) : Def.IsBattery ? (Energy > 0f && !OnFire) : Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f) : (!OnFire && _powerLevel > 0.02f);   // battery: charged; wind turbine: wind present; generator: engine spun up (_powerLevel); a FIRE kills output instantly -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
+        // THE VISIBLE SHAFT in front of a spotlight (master 2026-09-07: "with a similar light cone as car headlights
+        // alr have"). Same recipe as Vehicle.BuildHeadlightBeam -- a lofted volume, additive and unshaded so it reads
+        // as light in the air rather than a surface, brightest at the lens and gone by the far end.
+        //
+        // Built as a CHILD OF THE LAMP, which is what keeps the drawn shaft and the lit cone honest: the lamp already
+        // carries the aim (Basis.LookingAt(Dir)) and the on/off, so the shaft inherits both for free and there is no
+        // second copy of the direction to fall out of step. The only fixup needed is the axis -- StreetLight.BeamMesh
+        // lofts along -Y and a Godot spot throws along -Z, so rotate +90 about X (which sends -Y to -Z).
+        static MeshInstance3D BeamShaft(in DeployableDef.DeployLight ld, out StandardMaterial3D mat)
+        {
+            mat = null;
+            float len = ld.BeamLength > 0f ? ld.BeamLength : ld.Range;
+            float half = ld.BeamHalf > 0f ? ld.BeamHalf : 0.3f;
+            // The shaft ends exactly as wide as the light it is drawing: the spot's own half-angle over its own
+            // length. Deriving it means retuning SpotAngle cannot leave a cone of air that misses the lit ground.
+            float baseR = len * Mathf.Tan(Mathf.DegToRad(Mathf.Clamp(ld.AngleDeg, 1f, 80f)));
+            var mesh = StreetLight.BeamMesh(len, half, half, baseR);
+            if (mesh == null) return null;
+            mat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(ld.Color.R, ld.Color.G, ld.Color.B, BeamAlpha),
+                AlbedoTexture = ThrowGradient(),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // walking INTO the beam must not show a hole (the streetlight case)
+                DisableReceiveShadows = true,
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                TextureRepeat = false,   // linear sampling wraps v=0 into the far end otherwise -- the phantom bright band (StreetLight)
+            };
+            return new MeshInstance3D
+            {
+                Name = "SpotBeam", Mesh = mesh, MaterialOverride = mat,
+                Basis = new Basis(Vector3.Right, Mathf.Pi * 0.5f),   // mesh -Y -> lamp -Z
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                VisibilityRangeEnd = BeamCull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+            };
+        }
+
+        public static float BeamAlpha = 0.020f;   // matched to Vehicle.BeamAlpha -- the density the night tuning was built against
+        public static float BeamCull  = 90f;      // a close-range detail; retire it well before the object itself
+
+        // BeamMesh writes v = t * 0.5 (its own comment explains why: CylinderMesh reserves the top half of UV space
+        // for its caps, and the shipped shaft was authored against that mapping), so only the BOTTOM half of this
+        // texture is ever sampled, and v=0 is the LENS end. StreetLight.ConeGradient is faint-at-the-lamp ->
+        // dense-at-the-base, which is right for light pooling on a pavement and backwards for a throw: a headlight is
+        // brightest at the lens and gone by the end. So this is its own ramp. The unused top half falls out at 0,
+        // which is also the safe value for a stray sample.
+        static ImageTexture ThrowGradient()
+        {
+            int n = 64;
+            var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
+            for (int y = 0; y < n; y++)
+            {
+                float t = Mathf.Clamp((float)y / (n - 1) * 2f, 0f, 1f);   // v in 0..0.5 -> 0..1 of the throw
+                img.SetPixel(0, y, new Color(1f, 1f, 1f, Mathf.Pow(1f - t, 1.7f)));
+            }
+            return ImageTexture.CreateFromImage(img);
+        }
+
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
+        readonly System.Collections.Generic.List<StandardMaterial3D> _lampBeamMat = new();   // the visible shaft's material, or null for a lamp that draws none -- indices match _lamps
         ConnectionPort _consumerPort, _outputPort;
         public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
 
@@ -197,9 +258,11 @@ namespace UnturnedGodot
             foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
             {
                 Light3D lamp;
+                StandardMaterial3D beamMat = null;
                 if (ldef.Spot)
                 {
                     var s = new SpotLight3D { SpotRange = ldef.Range, SpotAngle = ldef.AngleDeg };
+                    if (ldef.AngleAtten > 0f) s.SpotAngleAttenuation = ldef.AngleAtten;   // soft rim (the car headlights run 1.3); 0 = leave the engine default
                     s.Basis = Basis.LookingAt(ldef.Dir, Vector3.Back);   // -Z (Godot spot forward) points along the src beam dir (flat frame)
                     lamp = s;
                 }
@@ -207,7 +270,12 @@ namespace UnturnedGodot
                 lamp.Position = ldef.Pos; lamp.LightColor = ldef.Color; lamp.LightEnergy = 0f; lamp.Visible = false;
                 lamp.AddToGroup("dynlight");   // the lit beam spills onto the FP gun (light-scan), like the fire light
                 d.AddChild(lamp);
-                d._lamps.Add(lamp); d._lampBase.Add(ldef.Energy);
+                if (ldef.Beam)   // the visible shaft rides the lamp, so it is aimed and shown/hidden by it and cannot drift
+                {
+                    var shaft = BeamShaft(ldef, out beamMat);
+                    if (shaft != null) lamp.AddChild(shaft);
+                }
+                d._lamps.Add(lamp); d._lampBase.Add(ldef.Energy); d._lampBeamMat.Add(beamMat);
             }
             d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
 
@@ -705,6 +773,14 @@ namespace UnturnedGodot
                     {
                         if (_lamps[i].Visible != vis) _lamps[i].Visible = vis;
                         _lamps[i].LightEnergy = _lampBase[i] * disp;
+                        // the shaft is a child, so it is already shown/hidden with the lamp -- but a mesh has no
+                        // LightEnergy, so its density has to be driven by hand or it would blaze at full while the
+                        // lamp is still stuttering up (the same reason ApplyHeadlightMotes exists on the car).
+                        if (i < _lampBeamMat.Count && _lampBeamMat[i] is StandardMaterial3D bm)
+                        {
+                            var bc = bm.AlbedoColor;
+                            bm.AlbedoColor = new Color(bc.R, bc.G, bc.B, BeamAlpha * disp);
+                        }
                     }
                 if (DbgFlicker) GD.Print($"[FLICK] lvl={_lampLevel:0.00} disp={disp:0.00} vis={vis}");
             }

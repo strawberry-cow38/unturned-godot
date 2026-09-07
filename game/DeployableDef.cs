@@ -106,9 +106,15 @@ namespace UnturnedGodot
         // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
         //     toggled on when isWired && isPowered). Pos/Dir are in the flat authored frame (stand up with the model);
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
-        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; }
+        // AngleAtten = Godot SpotAngleAttenuation (0 leaves the engine default, a hard rim; the car headlights run
+        // 1.3 for a soft edge). Beam/BeamLength/BeamHalf draw the VISIBLE shaft -- see Deployable.BeamShaft.
+        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
         static readonly Color LampWarm = new Color(0.9706f, 0.9612f, 0.835f);   // src Lamp m_Color (warm white)
+        // The spotlight's aim, in the FLAT authored frame -- nearly straight down here, which the +90 X stand-up
+        // turns into forward-and-slightly-down in the world. Shared by all three of its lamps so the bulbs and the
+        // throw cannot drift apart, and so the visible shaft is aimed by the same number that aims the light.
+        static readonly Vector3 SpotBeamDir = new Vector3(0f, -0.966f, 0.259f);
 
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
         public static readonly DeployableDef Generator = new()
@@ -132,12 +138,32 @@ namespace UnturnedGodot
                 new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.13f, 0f, 0.65f), Watts = 250f },
                 new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.13f, 0f, 0.65f), Watts = 0f },
             },
-            // src barricade.prefab "Spots": two point lamps (bulb glow) + a spot beam. Positions/dir from the prefab,
-            // z-negated into our rip frame; the spot's src full angle 60 -> Godot half-angle 30.
+            // src barricade.prefab "Spots": two point lamps (bulb glow) + a spot beam, positions/dir from the prefab
+            // and z-negated into our rip frame.
+            //
+            // ALL THREE ARE SPOTS NOW (master 2026-09-07: "make the spotlight's lights actual SPOTLIGHTS. with a
+            // similar light cone as car headlights alr have"). The src bulbs are POINT lamps, which is why a lit
+            // spotlight used to glow out of the back of its own housing and up its pillar -- a floodlight that lights
+            // the wall behind it does not read as a spotlight from any angle. They keep their short 4 m reach and
+            // their position; they are just aimed down the barrel now, wide and soft, so they stay the near-field
+            // glow at the lenses instead of an omnidirectional halo.
+            //
+            // The THROW is matched to a car headlight, which is the reference master pointed at: SpotRange 45,
+            // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot). The light reaches
+            // further than the shaft is drawn on purpose, or the air itself looks like it ends.
+            //
+            // The SHAFT is 7 m, not the car's 14, and that is the one number that cannot be copied across. A headlight
+            // sits low and throws FLAT down a road, so 14 m of cone hangs in the air the whole way. This fixture is
+            // 1.5 m up and aimed ~15 deg DOWN, so its axis reaches the floor at about 5.6 m -- drawn at 14 m, two
+            // thirds of the cone is UNDERGROUND and what is left above the surface is a huge flat sheet, not a beam.
+            // 7 m ends the shaft just past where the light lands, and the gradient has it transparent by then anyway.
+            // BeamHalf 0.62 spans BOTH lamp heads (they sit at +-0.48), so one shaft leaves the whole housing rather
+            // than a thin core floating between the lenses.
             Lights = new[] {
-                new DeployLight { Spot = false, Pos = new Vector3(-0.48f, -0.416f, -1.351f), Range = 4f, Energy = 2.4f, Color = LampWarm },
-                new DeployLight { Spot = false, Pos = new Vector3( 0.48f, -0.416f, -1.351f), Range = 4f, Energy = 2.4f, Color = LampWarm },
-                new DeployLight { Spot = true, Pos = new Vector3(0f, -0.427f, -1.472f), Dir = new Vector3(0f, -0.966f, 0.259f), Range = 30f, AngleDeg = 30f, Energy = 4f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3(-0.48f, -0.416f, -1.351f), Dir = SpotBeamDir, Range = 4f, AngleDeg = 62f, AngleAtten = 0.6f, Energy = 2.4f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3( 0.48f, -0.416f, -1.351f), Dir = SpotBeamDir, Range = 4f, AngleDeg = 62f, AngleAtten = 0.6f, Energy = 2.4f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3(0f, -0.427f, -1.472f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
+                                  Beam = true, BeamLength = 7f, BeamHalf = 0.62f },
             },
         };
 
