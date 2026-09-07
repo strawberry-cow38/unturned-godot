@@ -34,13 +34,14 @@ varying vec3 v_wpos;     // world position of the displaced surface
 global uniform float rain_intensity;
 uniform float rain_ring_distance = 70.0;
 uniform float rain_ring_strength : hint_range(0.0, 2.0) = 0.9;
+uniform float ring_normal_gain = 2.5;   // how hard a ring tilts the surface (see the NORMAL tweak at the end of fragment)
 float wr_h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
 // Voronoi-ish scatter of expanding rings, the same shape wet_surface uses so water and wet road ring alike.
 float wr_rings(vec2 wxz, float t, float amt){
     float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;
+    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.35;   // fraction of cells striking at once; heavy rain should look busy
     for (int k = 0; k < 2; k++){
-        float sc = 1.6 + float(k) * 2.8;
+        float sc = 0.9 + float(k) * 2.0;   // cells ~1.1 m and ~0.34 m across. The first pass used 1.6/4.4 -- rings ~20 cm and ~8 cm, which on open water from standing height were specks (the render showed them drawing and unreadable)
         vec2 g = wxz * sc + float(k) * 21.0;
         vec2 base = floor(g);
         for (int dy = -1; dy <= 1; dy++){
@@ -176,10 +177,19 @@ void fragment() {
         float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
         if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
     }
-    ALBEDO = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.12);
+    ALBEDO = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
     ALPHA = mix(a, 1.0, foam);
     float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
     ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
+    // ...and TILT the surface where a ring passes. A brightness ring alone is a decal painted on flat water -- it
+    // does not catch the sky differently, so it stays a faint smudge however bright it is. The screen-space
+    // gradient of the ring is the direction the little wave is leaning, which is enough to make it break the
+    // reflection like real disturbed water. (Gated on ring itself, so the distance cutoff's own branch -- where
+    // ring is zero either side -- never feeds this a garbage derivative.)
+    if (ring > 0.002) {
+        vec2 rg = clamp(vec2(dFdx(ring), dFdy(ring)) * ring_normal_gain, vec2(-0.6), vec2(0.6));
+        NORMAL = normalize(NORMAL + vec3(rg, 0.0));
+    }
     SPECULAR = 0.5;
     METALLIC = 0.0;
     // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment
