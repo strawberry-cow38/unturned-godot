@@ -90,7 +90,7 @@ namespace UnturnedGodot
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
         PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
-        bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
+        bool _peiPlayable; bool _pdTpDone;   // UG_TP=1: drop to the chase camera once the world is up   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
         // landmarks (Lighthouse_0, the Alberton Dock/Harbor) and capture each -> verify the landmark cull extension
@@ -8126,6 +8126,13 @@ namespace UnturnedGodot
             // ground shot -- UG_SPAWNAT already aims the body along the road, and this is the one axis it cannot set.
             if (_peiPlayable && _pdPlayer != null && _worldReady && float.TryParse(System.Environment.GetEnvironmentVariable("UG_PDPITCH"), out float _pdp))
                 _pdPlayer.DebugSetPitch(_pdp);
+            // UG_TP=1 outside a vehicle too. It used to be set only inside the UG_ENTERCAR block, so "third person"
+            // silently did nothing unless you also spawned a car -- which is why a held-item shot kept coming back
+            // first-person with the barrel across the corner of frame. Any harness that wants to SEE what the player
+            // is holding needs the chase camera, and a magazine hanging under a receiver is invisible from the
+            // viewmodel camera, which looks straight down the barrel.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_pdTpDone && System.Environment.GetEnvironmentVariable("UG_TP") == "1")
+            { _pdTpDone = true; _pdPlayer.DebugSetFirstPerson(false); }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
             if (_rigDir != null)
             {
