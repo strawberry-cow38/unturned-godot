@@ -202,7 +202,11 @@ def rerake_glass(g):
     zs = [v[2] for v in V if abs(v[1] - topY) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] < -0.5]
     if not zs: return None, "no pillar faces at the header height"
     slope = (max(zs) - screenZ) / (topY - seamY)         # the REAR edge: the pillar's own angle
-    shift = (min(zs) + max(zs)) / 2.0 - max(zs)          # ...slid forward to the pillar's centre (negative = forward)
+    # ...slid forward onto the pillar's FRONT face (master: "fwd more"). Half a pillar-depth put it on the centre
+    # line; a full one puts it on the front face, which is the last landmark there is -- past this the pane is
+    # forward of the pillar altogether and no longer in the frame. Its base lands at -1.373, still on the dash
+    # top (which runs -1.461..-0.998), so the screen still meets the cowl rather than hanging off the front of it.
+    shift = min(zs) - max(zs)                            # negative = forward
     botZ = screenZ + shift
     topZ = botZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
