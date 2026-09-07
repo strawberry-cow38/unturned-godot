@@ -192,6 +192,17 @@ namespace SDG.Unturned
             void Shell(ushort id, int caliber, int pellets, float damage = 0f) { var a = Assets.find(id); if (a != null) { a.magCaliber = caliber; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; a.damageOverride = damage; } }
             Shell(113, 8, 9);    // 12 Gauge Buckshot (Bluntforce / Quadbarrel / Determinator) -- 6 pellets (retail Shells_8.dat)
             Shell(381, 16, 18);   // 20 Gauge Buckshot (Masterkey / Sawed-Off) -- 8 pellets (retail Shells_2.dat)
+            // ONE BASE PER GAUGE, magazine-fed shotguns included (master 2026-09-07: "they are all 12gauge and
+            // should share a base"). Five guns are chambered in 12 Gauge -- bluntforce, determinator and quadbarrel
+            // off loose shells (113), the Devil's Bane off a 21-round box and the Vonya off a 7-round box -- and they
+            // all already carry the same per-pellet Damage 12. They now throw the same PATTERN too, instead of the
+            // boxes each pulling their own retail number (both 6) while the loose shells threw the port's 9.
+            //
+            // Sets pellets ONLY: these are magazines, not loose ammo, so nothing here touches isAmmo/stackSize (that
+            // would flip their guns to shell-fed) and the capacity is left to DeriveMagazinesFromGuns below.
+            void BuckshotMag(ushort id, int pellets) { var a = Assets.find(id); if (a != null) { a.pellets = pellets; a.ammoType ??= "Buckshot"; } }
+            BuckshotMag(1485, 9);   // Devil's Bane 21-round box (AA-12)
+            BuckshotMag(1368, 9);   // Vonya 7-round box (Saiga-12)
             // Slugs (strawberry): green single-projectile rounds. Same caliber as their buckshot sibling so they feed
             // the SAME shotguns, but pellets=1 -- one solid slug, not a spread (each pellet is its own bullet doing the
             // gun's full shot damage, so a slug = one concentrated hit vs buckshot's 6-8). New items 5000/5001, defined
@@ -442,7 +453,6 @@ namespace SDG.Unturned
             string path = ProjectSettings.GlobalizePath("res://content/magazines.tsv");
             if (!System.IO.File.Exists(path)) return;
             int wired = 0, shells = 0;
-            var pelletMags = new System.Collections.Generic.List<string>();
             foreach (var line in System.IO.File.ReadAllLines(path))
             {
                 var c = line.Split('\t');
@@ -452,13 +462,12 @@ namespace SDG.Unturned
                 int.TryParse(c[2], out int cap);
                 int cal = 0; var cals = c[3].Split(','); if (cals.Length > 0) int.TryParse(cals[0], out cal);
                 int.TryParse(c[4], out int pellets);
-                // PELLETS ARE APPLIED FIRST AND UNCONDITIONALLY, before the already-wired bail below. They are AMMO
-                // data, not feed data, and NOBODY else in the catalog has them: the hand Mag() list does not take a
-                // pellet count, and DeriveMagazinesFromGuns fills a magazine's capacity from its GUN's Ammo_Max --
-                // a gun .dat carries no Pellets key at all. Derive runs BEFORE this pass, so every magazine it
-                // touched arrived here with magCapacity already set and got skipped wholesale, pellets and all.
-                // That is why a magazine-fed shotgun fired a single ray: not a missing number, a skipped row.
-                if (pellets > 1 && a.pellets <= 1) { a.pellets = pellets; pelletMags.Add($"{id}x{pellets}"); }
+                // NO PELLETS FROM THIS TABLE. Taking every magazine's retail Pellets looked principled and armed three
+                // MACHINE GUNS: the retail nykorev (a PKM) and dragonfang belts declare 3, the fury minigun 4, so each
+                // of them started firing that many rays per trigger pull. Master 2026-09-07: "ignore the source on
+                // this. the nyk is an lmg." A pellet count is a SHOTGUN fact, and the shotguns get theirs from the
+                // per-gauge base in WireShotgunShells -- one number for all five 12-gauge guns -- not from whatever
+                // number happens to sit in a belt-fed LMG's magazine row.
                 if (a.magCapacity > 0 || a.isAmmo) continue;               // capacity/feed already authored -> keep
                 if (cap <= 0 || cal <= 0) continue;
                 // LOOSE SHELL vs MAGAZINE: retail's Delete_Empty says it, and Pellets does NOT.
@@ -467,12 +476,14 @@ namespace SDG.Unturned
                 // loose shells. The first half is true; the second is not. Delete_Empty is the flag for ammo that
                 // CEASES TO EXIST once spent -- a loose shell you push into a tube -- and it is the actual thing that
                 // separates the two. Five reusable magazines carry pellets and no Delete_Empty (Bane_21 21rd,
-                // Vonya_7 7rd, Nykorev_200, Dragonfang_150, Fury_250), and every one of them was being turned into a
-                // stack of 32 loose rounds: the gun lost its magazine entirely. Master found it on the Devil's Bane
-                // (2026-09-07: "taking mags, not loose shells") -- it is an AA-12, a box-fed automatic shotgun.
+                // Vonya_7 7rd, Nykorev_200, Dragonfang_150, Fury_250), and the old rule called every one of them a
+                // stack of 32 loose rounds.
                 //
-                // Pellets are carried onto BOTH kinds now. They describe the AMMO, not the feed, which is the whole
-                // point: a magazine full of buckshot is still buckshot.
+                // ⚠ THIS CHANGES NOTHING TODAY, and the honest reason is worth writing down rather than letting the
+                // rename read as a fix: all five are wired by DeriveMagazinesFromGuns first and bail out above before
+                // they ever reach this branch, so the wrong rule was never actually reached for them. It is corrected
+                // because it is wrong on its face and would fire the moment a pellet-carrying magazine belongs to a
+                // gun the port has not extracted a _gun.txt for.
                 bool deleteEmpty = c.Length > 9 && c[9].Trim() == "1";
                 if (deleteEmpty) { a.magCaliber = cal; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; shells++; }
                 else
@@ -482,9 +493,7 @@ namespace SDG.Unturned
                     wired++;
                 }
             }
-            // Name the pellet-carrying MAGAZINES: a magazine-fed shotgun is invisible in any other log line, and
-            // "it fired one ray" is what that looks like from the outside (Devil's Bane, 2026-09-07).
-            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept); buckshot mags: {(pelletMags.Count > 0 ? string.Join(", ", pelletMags) : "none")}");
+            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept)");
         }
 
         static void WireConsumableStats()
