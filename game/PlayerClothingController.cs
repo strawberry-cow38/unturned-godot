@@ -65,6 +65,36 @@ namespace UnturnedGodot
         public void Refresh()
         {
             ApplyShirt(); ApplyPants(); ApplyHat(); ApplyVest(); ApplyMask(); ApplyGlasses(); ApplyBackpack();
+            _painted = WornSignature();   // whoever called this, the visual now matches the state
+        }
+
+        // ---- SELF-CORRECTING VISUAL -------------------------------------------------------------------------
+        // The on-body clothing used to repaint only when something REMEMBERED to call Refresh(), and the
+        // server-owned path repaints only when AdoptReplicatedInventory's own change-detection fires. Any wear
+        // that slipped past that left the body showing the previous outfit until an unrelated event happened to
+        // trigger a repaint -- which is exactly the shape of master's report (2026-09-07): "sometimes i need to
+        // 'refresh' my inventory for clothing to apply (move an item in my inv)". Moving an item is not a fix for
+        // anything; it is just the next thing that caused a repaint.
+        //
+        // Reconciling against the worn slots each tick removes the whole class rather than the one path that was
+        // caught: the visual cannot disagree with the state for longer than a frame, whoever changed it and
+        // whether or not they called anything. Refresh() itself is idempotent, so this only ever costs the hash
+        // below -- seven null checks, no allocation, no work at all while the outfit is unchanged.
+        ulong _painted = ulong.MaxValue;   // deliberately not 0: an empty outfit must still paint once
+        ulong WornSignature()
+        {
+            ulong h = 1469598103934665603UL;   // FNV-1a over the seven worn ids
+            void Mix(Item it) { h = (h ^ (ulong)(it?.id ?? 0)) * 1099511628211UL; }
+            Mix(_inv.wornShirt); Mix(_inv.wornPants); Mix(_inv.wornHat); Mix(_inv.wornVest);
+            Mix(_inv.wornMask); Mix(_inv.wornGlasses); Mix(_inv.wornBackpack);
+            return h;
+        }
+
+        /// <summary>Repaint if the worn slots have moved since the last paint. Cheap enough to call every frame.</summary>
+        public void ReconcileTick()
+        {
+            if (_inv == null) return;
+            if (WornSignature() != _painted) Refresh();
         }
 
         // ---- per-slot visual apply (reads the worn item -> paints textures / attaches or detaches the gear mesh) ----

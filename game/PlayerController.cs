@@ -1829,6 +1829,7 @@ namespace UnturnedGodot
             UpdateOptic();
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
+            _clothing?.ReconcileTick();   // repaint the body if a worn slot moved without anything calling Refresh (master 2026-09-07: clothing needing an inventory poke to apply)
         }
 
         // ---- CHAINSAW -------------------------------------------------------------------------------------------
