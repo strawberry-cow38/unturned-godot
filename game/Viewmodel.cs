@@ -1136,9 +1136,13 @@ namespace UnturnedGodot
                         BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                         TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-                        NoDepthTest = true,   // a reflex reticle is a projected overlay -> always draws on top. The HALO's
-                        // Model_0 bakes an opaque combiner-glass plate at the optical center; without this it sits between the
-                        // eye and the reticle and occludes it (renders as a BLACK disc). red_dot/kobra are open rings (no-op there).
+                        // NoDepthTest is OFF. It was added because the halo's Model_0 baked an opaque combiner-glass plate
+                        // at the optical centre that occluded the reticle (a BLACK disc) -- but 290f26b0 DELETED that plate
+                        // from all three meshes, so the thing it defeated no longer exists. Checked, not assumed: none of
+                        // red_dot/red_halo/red_kobra has a single face left within 3 cm of the optical axis. Leaving it on
+                        // cost the opposite bug -- the billboard drew over the sight's own FRAME from every angle, which is
+                        // what master reported ("its rendering on top of the scope's frame when it shouldnt"). With depth
+                        // testing back on, the housing occludes the dot off-axis and nothing occludes it on-axis.
                     };
                     string _rp = ProjectSettings.GlobalizePath($"res://content/{_retName}");
                     if (System.IO.File.Exists(_rp)) { var _ri = ContentProvider.LoadImage(_rp); if (_ri != null) { var _rt = ImageTexture.CreateFromImage(_ri); _retMat.AlbedoTexture = _rt; _retMat.EmissionTexture = _rt; } }
@@ -1163,8 +1167,14 @@ namespace UnturnedGodot
                     // Restored to iron on swap by HideScopePiP.
                     if (_sight != null)
                     {
-                        Vector3 _ret = m.Position + _rd.Pos;   // the reticle, gun-local
-                        _sight.Position = new Vector3(_ret.X, _rd.Aim.Y, _ret.Z);
+                        // ⚠ RELIEF, NOT AN ABSOLUTE DEPTH. The first cut of this wrote _rd.Aim.Y straight in, which is
+                        // the eaglefire's gun-local eye depth -- so on a gun whose optic mounts at a different height the
+                        // eye ended up the wrong distance behind the glass, by up to 16 cm (augewehr: 0.20 of relief
+                        // instead of 0.36, i.e. the camera shoved forward into the optic body). Master saw exactly that
+                        // and described it as "the scope is being pushed down into the gun model". The comment above
+                        // already said relief is a property of the SIGHT; the code just did not do what it said.
+                        Vector3 _ret = m.Position + _rd.Pos;                                  // the reticle, gun-local
+                        _sight.Position = new Vector3(_ret.X, _ret.Y + _rd.Relief, _ret.Z);   // eye on its axis, its own relief behind it
                     }
                 }
             }
@@ -1178,15 +1188,15 @@ namespace UnturnedGodot
         // at Model_0-local (0,*,+0.07203) for Pos and (0, Y,+0.072) for Aim (measured, tools/reddot_axis_probe.py; export_mesh
         // negates Z). In this sight-local frame Z is VERTICAL, Y is fore-aft/depth: the reticle billboard's Y only sets
         // apparent size; the Aim's Y (-0.30/-0.32) is the eye relief behind the glass. Size = dot size. Glow = RED.
-        static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, Vector3 Aim, float Size, Color Glow)> RedDotCal = new()
+        static readonly System.Collections.Generic.Dictionary<string, (Vector3 Pos, Vector3 Aim, float Relief, float Size, Color Glow)> RedDotCal = new()
         {   // Pos = reticle on the optical axis (rel the mount node). Aim: ONLY ITS Y IS READ NOW -- the eye relief
             // behind the glass, which belongs to the SIGHT and is the same on every gun. Its X and Z were the eaglefire's
             // optical axis (composed from that gun's Sight hook 0,-0.2398,-0.1386) and are now derived per gun from where
             // the optic actually mounts, so a kobra centres on a vonya exactly as it does on an eaglefire. They are kept
             // here as the measured reference the Y came from, and because they document what the composed aim looked like.
-            { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.014f, new Color(1f, 0f, 0f)) },
-            { "red_halo_sight.txt",  (new Vector3(0f, -0.2970f, -0.0813f), new Vector3(0f, -0.4576f, -0.1990f), 0.016f, new Color(1f, 0f, 0f)) },
-            { "red_kobra_sight.txt", (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), 0.02f,  new Color(1f, 0f, 0f)) },
+            { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), -0.3611f, 0.014f, new Color(1f, 0f, 0f)) },
+            { "red_halo_sight.txt",  (new Vector3(0f, -0.2970f, -0.0813f), new Vector3(0f, -0.4576f, -0.1990f), -0.2918f, 0.016f, new Color(1f, 0f, 0f)) },
+            { "red_kobra_sight.txt", (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), -0.3611f, 0.02f,  new Color(1f, 0f, 0f)) },
         };
 
         // ---- Generalized PiP scope (master: real zoom-THROUGH the attachment scopes, not the cheap fov-drop) ----
