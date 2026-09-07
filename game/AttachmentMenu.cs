@@ -199,7 +199,15 @@ namespace UnturnedGodot
                     HUD.Alert("Take the old one off first");
                     return false;
                 }
-                if (!Player.RequestFitAttachment(clicked)) return false;   // server spends it; the echo removes it locally
+                if (!Player.RequestFitAttachment(clicked))
+                {
+                    // THE ONLY SILENT FAILURE ON THIS PATH, and it is the one that cost an evening: the scan is by
+                    // reference, so a ring built before an owner echo can no longer find what it is holding. The
+                    // rebuild above is the fix; this is the confession if one ever slips through again. A click that
+                    // does nothing and says nothing is indistinguishable from a broken button.
+                    HUD.Alert("Inventory changed — try that again");
+                    return false;
+                }
                 AttachmentFit.SetInstalledId(Player.HeldItemForTest, slot, newId);
                 return true;
             }
@@ -503,6 +511,21 @@ namespace UnturnedGodot
             }
             LayoutRings();   // every ring tracks its own slot as the gun sways
         }
+
+        /// <summary>The owner-inventory echo just replaced every Item object in the grid, so every quick-attach
+        /// button in the ring is holding a reference to an object that is no longer in any page. Rebuild against
+        /// the live ones.
+        ///
+        /// Each button captures its INSTANCE, not its id, and deliberately so -- two magazines of the same id hold
+        /// different round counts, and consuming "any one of that id" would let you click the full one and get the
+        /// empty one. The cost is that the capture is only valid until the next echo, and nothing rebuilt the ring
+        /// on one: the click then found no reference match, RequestFitAttachment returned false, and the lambda
+        /// returned before the mesh, the sound and the alert. A scope that simply would not fit, silently, until
+        /// you moved the gun out of its slot and back -- which forced a rebuild (master 2026-09-07).
+        ///
+        /// Called from the same place RebindHeldRefs repairs the held item, because it is the same hazard: see
+        /// PlayerController.RebindHeldRefs.</summary>
+        public void OnInventoryObjectsReplaced() { if (Visible) Refresh(); }
 
         public void Open()  { if (Visible) return; Visible = true;  VM?.EnterAttachView(); Refresh(); }
         public void Close() { if (!Visible) return; ClearRings(); Visible = false; VM?.ExitAttachView(); }

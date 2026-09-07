@@ -3979,6 +3979,7 @@ namespace UnturnedGodot
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
             RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
+            AttachMenu?.OnInventoryObjectsReplaced();   // ...and an OPEN attach ring, whose buttons captured those same old objects
             if (wornChanged) _clothing?.Refresh();   // a server-side wear (auto-worn pickup) repaints the body like a local one does
             if (_adoptedWornOnce && _newlyWorn != null) PlayClothingWearSound(_newlyWorn.GetAsset());   // ...and sounds like one
             _adoptedWornOnce = true;
