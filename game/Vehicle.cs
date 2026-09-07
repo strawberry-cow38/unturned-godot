@@ -990,7 +990,13 @@ namespace UnturnedGodot
         public int GearCount => _gears != null ? _gears.Length : 0;
         public float PeakTorque => _peakTorque;
         /// <summary>How much of the commanded drive force the tyres could NOT put down, 0..1. 0 = full grip;
-        /// climbing toward 1 = the wheels are spinning. Read by the HUD/audio/effects and by L1.</summary>
+        /// climbing toward 1 = the wheels are spinning.
+        ///
+        /// READ BY L1 AND BY NOTHING ELSE -- the claim that the HUD, audio and effects consume it was never
+        /// true (grep it). That matters more now that loose ground makes a road car spin in earnest: the force
+        /// is clamped BEFORE it reaches the wheel, so Godot's wheel never over-rotates, engine rpm is derived
+        /// from `GetRpm()` of a wheel that is still tracking the road, and wheelspin is therefore completely
+        /// silent and invisible. The car just does not go. Sound and a tyre-smoke cue are the follow-up.</summary>
         public float WheelSlip => _wheelSlip;
         float _wheelSlip;
         /// <summary>Tyre-to-ground friction coefficient. Physical values: ~1.0 dry tarmac, ~0.6-0.7 loose dirt,
@@ -999,6 +1005,120 @@ namespace UnturnedGodot
         /// through the current ratio already differs.</summary>
         float _tyreMu = 1.0f;
         bool _water0Boat;   // pure boat -> no wheels worth limiting
+
+        // ---- GROUND UNDER THE TYRES. The port had none: grip was one number for the whole world, so a
+        // hatchback on wet grass had exactly the traction of a hatchback on tarmac, and every hull in the
+        // fleet climbed a 45 degree slope at walking-to-jogging pace with the wheelspin meter at 0.01
+        // (measured on a ramp probe before any of this; the table is in OffRoadGripTests' header, and the
+        // sedan was the FASTEST of them). That is why "make these four 4wd" could not be
+        // answered by setting a flag: there was no surface on which a 4x4 could be better than a sedan.
+        //
+        // MULTIPLIES the tyre mu, so ROAD IS THE 1.0 REFERENCE and on-road driving is bit-identical to what
+        // shipped. The ratios are the accident-reconstruction drag factors for a rubber tyre, normalised to
+        // dry asphalt (~0.9): gravel/dirt ~0.65 -> 0.72, dry grass ~0.5 -> 0.55, loose sand ~0.35 -> 0.39.
+        // Real numbers about real tyres, not a feel dial -- what IS a design choice is OffRoadRecovery below.
+        //
+        // Concrete covers road, rock, buildings and every unlabelled collider, which is the conservative
+        // default: an unknown floor grips like tarmac and nothing changes on it.
+        public const float GripConcrete = 1.0f, GripDirt = 0.72f, GripGrass = 0.55f, GripSand = 0.39f;
+        /// <summary>How much of the loose-ground loss knobby tyres take back. 0 = a road car, eats all of it;
+        /// 1 = surface-proof. At 0.65 an off-roader on grass sits at 0.84, between a road car's 0.55 and
+        /// tarmac's 1.00 -- it still notices the ground, it just is not stopped by it.
+        ///
+        /// Recovering a FRACTION of the loss rather than a fixed amount is the part that is not arbitrary: the
+        /// absolute gain then grows with how bad the ground is (0.18 on dirt, 0.29 on grass, 0.40 on sand),
+        /// which is how tyres actually differ -- an all-terrain is marginally better on gravel and the
+        /// difference between stuck and not on sand.</summary>
+        public const float OffRoadRecovery = 0.65f;
+        const float SurfSampleSec = 0.1f;   // 1 splat texel is 1 m; at top speed that is ~2 m between samples, and a raycast per car per tick is what the 88-parked-car perf note exists about
+        bool _offRoad;                      // spec: knobby tyres (see Spec.OffRoad)
+        float _surfaceGrip = 1f, _surfSampleT;
+        /// <summary>Grip multiplier of the ground under this vehicle right now, 1.0 on road. Read by L1.</summary>
+        public float SurfaceGrip => _surfaceGrip;
+        /// <summary>The grip factor for a surface AND a set of tyres. Static and pure so a test can assert the
+        /// table without standing a vehicle on terrain.</summary>
+        public static float GripFor(PlayerController.Surf surf, bool offRoad)
+        {
+            float k = surf switch
+            {
+                PlayerController.Surf.Dirt => GripDirt,
+                PlayerController.Surf.Grass => GripGrass,
+                PlayerController.Surf.Sand => GripSand,
+                _ => GripConcrete,   // concrete/metal/wood/water: a hard or unlabelled floor is the reference
+            };
+            return offRoad ? Mathf.Lerp(k, 1f, OffRoadRecovery) : k;
+        }
+        /// <summary>Does THIS wheel get drive? strawberry 2026-09-07: "nerf all vehicles to be non 4wd unless
+        /// one of the ones we mentioned."
+        ///
+        /// Every non-trailer used to drive every wheel -- the sedan was as much a 4x4 as the humvee, which is
+        /// the finding that started this whole wave. Now only the OffRoad hulls (quad, off-roader, jeep,
+        /// humvee), tracked hulls and aircraft do; everything else drives its NON-STEERED wheels.
+        ///
+        /// "Non-steered" rather than a new per-spec axle field, because the layout is already in the data and
+        /// is unambiguous for every hull in the fleet: each one is exactly two steered wheels up front and the
+        /// rest behind. So a car becomes 4x2, the semi and the Ural 6x4, the APC 8x6 -- which is how those
+        /// vehicles are really configured, and it comes out of the spec rather than out of twenty new numbers.
+        ///
+        /// THE TRACTION CLAMP NEEDED NO CHANGE AT ALL, and exactly one other thing did. `_peakTorque` is TOTAL
+        /// engine torque and ThrottleForcePerWheel divides it by `_nTraction`, so halving the driven wheels
+        /// doubles what each one asks for -- provided the engine is still sized by the WHEEL count. It was
+        /// sized by the driven count, which would have quietly halved every 2wd hull's power along with its
+        /// grip and dragged top speed, gearing and the solved drag along; see nPowered at the sizing line.
+        ///
+        /// With that fixed the clamp does the rest untouched: it is `mu * SurfaceGrip * Mass * g / onGround`,
+        /// load per wheel ON THE GROUND rather than per DRIVEN wheel, so a 4x2 gets half the total traction of
+        /// a 4x4 of the same mass out of arithmetic that was already there. It spins where the 4x4 hooks up,
+        /// and it spins twice as easily again on grass.
+        ///
+        /// One guard, and it earns its place: a hull with NO non-steered wheel (or none at all) would come out
+        /// with zero driven wheels, which is not a 2wd car, it is a car with no engine -- ThrottleForcePerWheel
+        /// returns the flat fallback and the traction clamp switches off entirely. Nothing in the fleet is
+        /// shaped that way today; the fallback is there so that adding one is a handling change and not a
+        /// silently dead drivetrain.</summary>
+        static bool DrivesWheel(in Spec s, int i)
+        {
+            if (s.Kingpin != Vector3.Zero) return false;   // a TRAILER's wheels are passive rollers -- traction on a towed body resists the pull
+            if (s.OffRoad || s.Tracked || s.Plane || s.Heli) return true;
+            bool anyDriven = false;
+            for (int k = 0; k < s.Wheels.Length; k++) if (!s.Wheels[k].Item4) { anyDriven = true; break; }
+            return !anyDriven || !s.Wheels[i].Item4;
+        }
+        static int TractionWheels(in Spec s)
+        {
+            if (s.Wheels == null) return 0;
+            int n = 0;
+            for (int i = 0; i < s.Wheels.Length; i++) if (DrivesWheel(s, i)) n++;
+            return n;
+        }
+
+        /// <summary>Resample the ground and push the grip factor at the wheels. Wheeled hulls only -- a TANK's
+        /// tracks are already a 1.6 mu over a contact patch the length of the hull, and teaching them to care
+        /// about grass would be undoing the thing that makes them tracks. Planes and helicopters have their own
+        /// undercarriage rules, and a car on a tow rope is deliberately free-rolling.</summary>
+        void UpdateSurfaceGrip(float delta)
+        {
+            if (_tracked || _plane || _heli || _water0Boat || _wNodes == null || _towSavedSlip != null) return;
+            // A PARKED car does not need to know what it is parked on, and this is a raycast: 88 of them at
+            // 10 Hz is the same shape as the dispatch cost the TickHub exists to have removed.
+            if (!EngineOn && LinearVelocity.LengthSquared() < 0.25f) { _surfSampleT = 0f; return; }
+            if ((_surfSampleT -= delta) > 0f) return;
+            _surfSampleT = SurfSampleSec;
+            // The ray starts at the body origin, which sits ~0.5-1 m over the contact patch on every hull here,
+            // so the span is widened rather than the origin guessed at. A miss (airborne, over a hole) HOLDS the
+            // last surface instead of snapping to 1.0: a car mid-jump has no ground to grip, and re-reading it
+            // as tarmac would hand it full traction exactly where it has none.
+            if (!PlayerController.TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var surf, 0.2f, 2.5f)) return;
+            _surfaceGrip = GripFor(surf, _offRoad);
+            // LATERAL grip moves with it, or a sedan that cannot accelerate on grass still corners on it as if
+            // it were railed. Written THROUGH ApplyTirePhysics rather than onto the wheels: WheelFrictionSlip
+            // already has three other owners (a popped tyre, a retracted undercarriage, a car on a tow rope), and
+            // a further writer setting it directly would silently repair a shot-out tyre. ApplyTirePhysics is the
+            // one that composes with the popped flag; the other two are excluded above, because both of them
+            // mean "this wheel is not driving". Re-applied every sample rather than on change, so anything that
+            // does stomp the field heals within 0.1 s instead of staying wrong until the ground does.
+            for (int i = 0; i < _wNodes.Length; i++) ApplyTirePhysics(i);
+        }
         public float WheelbaseForTest => _wheelbase;   // L1: needed to compute the Ackermann yaw a steer angle COMMANDS, so a probe can see oversteer
         // L1: how many wheels are actually touching the ground, and how many there are. A heavy multi-axle
         // hull that falls short of its drag equilibrium is usually not short of POWER -- it is airborne and
@@ -1006,6 +1126,10 @@ namespace UnturnedGodot
         // to tune the wrong constant.
         public int WheelsOnGroundForTest { get { int n = 0; if (_wNodes != null) foreach (var w in _wNodes) if (w.IsInContact()) n++; return n; } }
         public int WheelCountForTest => _wNodes?.Length ?? 0;
+        /// <summary>How many of them the engine actually drives. L1: the 2wd/4wd split is a per-spec rule with
+        /// no other visible symptom, so a new vehicle added to the fleet silently gets whatever DrivesWheel
+        /// says and nobody finds out until it will not climb anything.</summary>
+        public int TractionWheelsForTest { get { int n = 0; if (_wNodes != null) foreach (var w in _wNodes) if (w != null && w.UseAsTraction) n++; return n; } }
         /// <summary>Test seam: wheel i's position in the vehicle's own frame (the rollover probe uses the sign
         /// of X to pick a side, which is what "hit the left wheels with a kerb" means).</summary>
         public Vector3 WheelLocalPosForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? _wNodes[i].Position : Vector3.Zero;
@@ -1080,7 +1204,7 @@ namespace UnturnedGodot
         /// ForwardSpeedPct all read the same field and stay consistent for free.</summary>
         static void SetupDrivetrain(Vehicle v, Spec s)
         {
-            v._nTraction = s.Kingpin == Vector3.Zero ? s.Wheels.Length : 0;   // a trailer's wheels are passive rollers
+            v._nTraction = TractionWheels(s);   // ONE rule, shared with the wheel loop's UseAsTraction -- a count that disagrees with the wheels divides the torque by the wrong number
             if (s.Heli || s.Plane || v._nTraction <= 0 || s.Engine <= 0f || s.SpeedMax <= 0f || s.WheelRadius <= 0f) return;
             v._speedMax = s.SpeedMax * TopSpeedBuff;
             // NEGATIVE ALWAYS. Reverse speed is stored as a negative number and BOTH readers compare against
@@ -1128,7 +1252,7 @@ namespace UnturnedGodot
             float ratioTop = RedlineFrac * MaxRpm / wheelRpmTop;                 // ...geared to sit at the redline there
             // GEAR SPREAD, and it is the lever that keeps coastdown sane after a power raise.
             //
-            // Launch force is engineForce * nTraction * LaunchBoost -- ratio1 CANCELS out of it, because
+            // Launch force is engineForce * nPowered * LaunchBoost -- ratio1 CANCELS out of it, because
             // peakTorque is defined relative to ratio1 two lines below. Force at the TOP of the box is
             // proportional to LaunchBoost / spread, and _dragK is solved from that force. So raising
             // LaunchBoost to 4.0 quadrupled the drag needed to cap top speed, and vehicle.drivetrain caught
@@ -1171,12 +1295,22 @@ namespace UnturnedGodot
             for (int i = 0; i < n; i++) g[i] = ratio1 * Mathf.Pow(ratioTop / ratio1, i / (float)(n - 1));
             v._gears = g;
             v._reverseGear = ratio1 * 0.9f;
-            v._peakTorque = v._engineForce * v._nTraction * LaunchBoost * r / ratio1;
+            // THE ENGINE IS SIZED BY THE WHEEL COUNT, NOT THE DRIVEN COUNT, and that distinction is the whole
+            // difference between a 2wd car and a car with half an engine. `_peakTorque` is TOTAL engine torque
+            // -- ThrottleForcePerWheel divides it by _nTraction and the wheels multiply it back -- so sizing it
+            // off _nTraction would have taken half the POWER off every 2wd hull the moment it lost half its
+            // driven wheels, moving top speed, gearing and the solved drag with it. A real Golf has the same
+            // engine as a hypothetical 4wd Golf; what it does not have is four contact patches to put it
+            // through. Keeping the engine whole and letting the per-wheel traction clamp do the work is what
+            // makes this a GRIP nerf, which is what 2wd actually is.
+            int nPowered = s.Kingpin == Vector3.Zero ? s.Wheels.Length : 0;
+            v._peakTorque = v._engineForce * nPowered * LaunchBoost * r / ratio1;
             v._water0Boat = s.Water == WaterMode.Boat;
             // Tracks lay down a far larger contact patch than tyres, so they hook up where a wheel would spin.
             // Everything else takes the tyre default; a per-spec override is the obvious next dial if one
             // vehicle needs to feel different, but inventing 20 hand-picked numbers now would be taste, not data.
             v._tyreMu = s.Tracked ? 1.6f : 1.0f;
+            v._offRoad = s.OffRoad;   // knobby tyres: keeps most of its grip once the tarmac runs out (Spec.OffRoad)
             float rpmTop = wheelRpmTop * ratioTop;
             float fTop = v._peakTorque * TorqueFrac((rpmTop - IdleRpm) / (MaxRpm - IdleRpm)) * RevLimit(rpmTop) * ratioTop / r;
             v._rollK = RollingCrr * v.Mass * 9.8f;
@@ -2023,6 +2157,22 @@ namespace UnturnedGodot
             public string GunMesh;                   // palette-painted cannon, baked centred on the pitch pivot
             public Vector3 GunPitchPivot;            // gun elevates about local X here (root space)
             public Vector3 Muzzle;                   // cannon muzzle (root space) -> shell spawn for the weapon system
+
+            /// <summary>Knobby tyres: this hull keeps most of its grip on loose ground. strawberry
+            /// 2026-09-07: "give quad, offroader, jeep, humvee, 4wd".
+            ///
+            /// It is NOT a differential flag, and that is the whole finding behind it. Every non-trailer in
+            /// this game already drives all of its wheels (`UseAsTraction = s.Kingpin == Vector3.Zero`), on
+            /// one shared `_tyreMu` of 1.0 and one shared WheelFrictionSlip of 6.0 -- the sedan's drivetrain
+            /// is the humvee's. Measured before touching anything (a ramp probe; the full table is in
+            /// OffRoadGripTests' header): the jeep drags itself up a 45 degree slope at 5.1 m/s with the
+            /// wheelspin meter reading 0.01, and the SEDAN does it faster. There was nothing to
+            /// switch on, because there was no terrain a 4x4 could be better ON.
+            ///
+            /// So the pair had to be built together: ground got a grip factor (Vehicle.SurfaceGrip) and this
+            /// says how much of that loss the tyres claw back. On road it is inert by construction -- road IS
+            /// the 1.0 reference -- so nothing about tarmac driving moves for any vehicle.</summary>
+            public bool OffRoad;
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -2721,6 +2871,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Fuel = 60_000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",   // 60 L tank (metric 1u=1mL; realistic, was the x2500 5,000,000)
+            OffRoad = true,   // knobby tyres: keeps most of its grip once the tarmac runs out (strawberry 2026-09-07 "give quad, offroader, jeep, humvee, 4wd")
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source prefab Taillights (rear, Z negated)
             SteerPivot = new Vector3(-0.464f, 1.018f, -0.922f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steering wheel centroid + disc normal (PCA)
@@ -2838,6 +2989,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
             Fuel = 15_000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",   // 15 L tank (metric 1u=1mL; realistic ATV)
+            OffRoad = true,   // knobby tyres: keeps most of its grip once the tarmac runs out (strawberry 2026-09-07 "give quad, offroader, jeep, humvee, 4wd")
             SteerPivot = new Vector3(0f, 1.00f, -0.32f), SteerAxis = new Vector3(0f, 1f, 0f),   // handlebars: pivot at the prefab Steer node, yaw around vertical
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
@@ -2957,6 +3109,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 95_000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",   // 95 L tank (metric 1u=1mL; realistic military humvee)
+            OffRoad = true,   // knobby tyres: keeps most of its grip once the tarmac runs out (strawberry 2026-09-07 "give quad, offroader, jeep, humvee, 4wd")
             SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
             TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.548f), new Vector3(0.979f, 0.738f, 2.548f) },
             SteerPivot = new Vector3(-0.464f, 0.94f, -1.27f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -3154,6 +3307,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 80_000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",   // 80 L (metric 1u=1mL)
+            OffRoad = true,   // knobby tyres: keeps most of its grip once the tarmac runs out (strawberry 2026-09-07 "give quad, offroader, jeep, humvee, 4wd")
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source Taillights (Z negated)
             SteerPivot = new Vector3(-0.465f, 1.022f, -0.923f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // source Steer node centroid + disc normal
@@ -4657,12 +4811,12 @@ namespace UnturnedGodot
             if (w == null || !GodotObject.IsInstanceValid(w)) return;
             if (_tirePopped[i])
             {
-                w.WheelFrictionSlip = _tireFricRef[i] * 0.35f;   // bare steel on tarmac: it still bites, it just slides
+                w.WheelFrictionSlip = _tireFricRef[i] * 0.35f * _surfaceGrip;   // bare steel on tarmac: it still bites, it just slides -- and less again on loose ground
                 w.WheelRadius = _tireRadRef[i] * 0.78f;          // riding on the rim -> that corner drops
             }
             else
             {
-                w.WheelFrictionSlip = _tireFricRef[i];
+                w.WheelFrictionSlip = _tireFricRef[i] * _surfaceGrip;
                 w.WheelRadius = _tireRadRef[i];
             }
         }
@@ -6349,7 +6503,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 float wscale = wr / s.WheelRadius;                                   // scale the shared wheel mesh to match
                 var w = new VehicleWheel3D
                 {
-                    Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = s.Kingpin == Vector3.Zero,   // a TRAILER's wheels are passive rollers, NOT traction -- traction wheels on a towed body resist the pull
+                    Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = DrivesWheel(s, i),   // 2wd unless it is one of the OffRoad hulls / tracked / an aircraft; trailers drive nothing (see DrivesWheel)
                     WheelRadius = wr, WheelRestLength = s.Tracked ? 0.15f : 0.25f, SuspensionTravel = s.Tracked ? 0.20f : 0.25f,   // tank: shorter suspension so the tracks sit ON the ground + a stiffer, less-bouncy ride
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
@@ -7737,10 +7891,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // through the current ratio, so first gear asks for several times what fifth does against the same
             // limit. Spins in 1st, grips in 5th, because that is what the arithmetic says.
             //
-            // Load is weight / wheels ON THE GROUND. No longitudinal-transfer term, deliberately: every wheel
-            // on these vehicles is a drive wheel (UseAsTraction is set for all of them unless it is a trailer),
-            // so transfer moves load BETWEEN driven wheels and the total available traction does not change.
-            // Adding a transfer term here would be arithmetic that changes nothing.
+            // Load is weight / wheels ON THE GROUND -- per wheel touching, NOT per DRIVEN wheel, which is why
+            // 2wd falls out of this line without touching it: two driven wheels each clamped at mu*W/4 is half
+            // the traction of four, out of arithmetic that was already here.
+            //
+            // NO LONGITUDINAL-TRANSFER TERM, and the reason it was free has EXPIRED. It used to be that every
+            // wheel was driven, so transfer moved load between driven wheels and changed no total. Now that a
+            // road car drives one axle, squat under acceleration genuinely does move load ONTO it, so this
+            // model is PESSIMISTIC for a 2wd launch by roughly the transfer fraction -- a real rear-drive car
+            // hooks up better off the line than this says. Left as it is on purpose rather than silently: it
+            // errs toward more wheelspin, which is the direction the change was asked for, and adding transfer
+            // is a separate measurable step rather than a constant folded in beside a nerf.
             _wheelSlip = 0f;
             if (_peakTorque > 0f && _nTraction > 0 && !_water0Boat)
             {
@@ -7750,7 +7911,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 {
                     // Both sides are NEWTONS. Writing this against Mass alone (kg) is the unit slip I already
                     // made once today on this same model, and it read as a plausible 3.5x grip figure.
-                    float gripPerWheel = _tyreMu * (Mass * _gravityMag / onGround);
+                    // _surfaceGrip is 1.0 on road and on every unlabelled floor, so this line is unchanged
+                    // arithmetic everywhere the old model was ever measured.
+                    float gripPerWheel = _tyreMu * _surfaceGrip * (Mass * _gravityMag / onGround);
                     float demanded = Mathf.Abs(eng);
                     if (demanded > gripPerWheel && demanded > 0.01f)
                     {
@@ -8780,6 +8943,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
+            UpdateSurfaceGrip((float)delta);   // what is under the tyres right now -> the traction clamp + lateral grip (bails for tracks/wings/tow)
             if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
             if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze && !Sleeping)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.

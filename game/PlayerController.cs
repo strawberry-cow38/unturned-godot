@@ -4138,12 +4138,17 @@ namespace UnturnedGodot
         /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
         /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
         /// -- one rule, so a floor that sounds like metal underfoot cannot sound like concrete to everyone else.</summary>
-        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf)
+        /// <param name="up">How far above <paramref name="pos"/> the probe ray starts.</param>
+        /// <param name="down">How far below it the ray ends. The defaults are a foot-height span; a VEHICLE
+        /// asks from its body origin, which sits most of a metre above its contact patch, so it widens the
+        /// span rather than duplicating this rule with a ray of its own -- one surface authority, or a floor
+        /// that sounds like metal underfoot grips like grass.</param>
+        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf, float up = 0.3f, float down = 0.6f)
         {
             surf = Surf.Concrete;
             if (Terrain.HasWater && pos.Y < Terrain.SeaLevelY + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it
             var space = ctx?.GetWorld3D()?.DirectSpaceState; if (space == null) return false;
-            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * 0.3f, pos + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
+            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * up, pos + Vector3.Down * down, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
             var hit = space.IntersectRay(q);
             if (hit.Count == 0) return false;
             if (hit["collider"].As<GodotObject>() is Node n)
