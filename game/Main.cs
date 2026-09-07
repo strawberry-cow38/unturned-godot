@@ -3836,8 +3836,26 @@ namespace UnturnedGodot
             Vector3 lookAt = bodyCenterWorld + Vector3.Up * (r * 0.15f);
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
             AddChild(cam);
-            cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
+            // UG_CONTAINER_ORBIT=<yawDeg>,<pitchDeg>,<distMul> puts the eye on an orbit instead of the default
+            // straight-on door view. That default assumes a TALL prop with a front door; a cardboard box is short
+            // and wide and its flaps open UPWARD, so from eye height they are slivers and the shut, half-open and
+            // open frames all look the same. A raised three-quarter view is what shows the swing.
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            string orbit = System.Environment.GetEnvironmentVariable("UG_CONTAINER_ORBIT");
+            if (!string.IsNullOrEmpty(orbit))
+            {
+                var q = orbit.Split(',');
+                float yaw = float.Parse(q[0], ci);
+                float pitch = q.Length > 1 ? float.Parse(q[1], ci) : 25f;
+                float dm = q.Length > 2 ? float.Parse(q[2], ci) : 1f;
+                var eye = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * outward;
+                var right = eye.Cross(Vector3.Up).Normalized();
+                eye = (new Basis(right, Mathf.DegToRad(pitch)) * eye).Normalized();   // +pitch raises the eye
+                cam.Position = lookAt + eye * ((r * 1.6f + 2.0f) * dm);
+            }
+            else cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
             cam.LookAt(lookAt, Vector3.Up);
+            GD.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
         }
 
         // --containertest[=NAME]: spawn the doored prop (Fridge_0/Wardrobe_0/Counter_0..) as a REAL StoreShelf
@@ -3865,7 +3883,18 @@ namespace UnturnedGodot
             // door-spawn path, so what renders here is exactly what the world spawns.
             var shelf = StoreShelf.Spawn(this, Vector3.Zero, name, 0, 0f, false, name, true, true);
             bool open = System.Environment.GetEnvironmentVariable("UG_CONTAINER_OPEN") == "1";
-            if (open) { shelf.SetDoorsOpen(true); for (int i = 0; i < 40; i++) shelf.TickDoorsForTest(1.0 / 60.0); }   // settle the swing headlessly so a --shot (not just a movie) catches the open pose
+            // UG_CONTAINER_SETTLE=<seconds> stops the headless settle PART-WAY (default 0.667 s = past the 0.4667 s
+            // swing, i.e. fully open). A still at either end of a swing cannot show which way it went -- shut and
+            // open both look right on a leaf hinged backwards -- so the mid-swing frame is the one that proves it.
+            double settle = 40.0 / 60.0;
+            var settleEnv = System.Environment.GetEnvironmentVariable("UG_CONTAINER_SETTLE");
+            if (!string.IsNullOrEmpty(settleEnv)) double.TryParse(settleEnv, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out settle);
+            if (open)
+            {
+                shelf.SetDoorsOpen(true);
+                for (double t = 0; t < settle - 1e-9; t += 1.0 / 60.0) shelf.TickDoorsForTest(1.0 / 60.0);
+                shelf.FreezeDoorsForTest();   // ...and HOLD it there, or the engine finishes the swing before the shot
+            }
             GD.Print($"[CONTAINERTEST] {name} hasDoors={shelf.HasDoors} open={open} settledSwing={shelf.DebugDoorSwing():0.00}");
             if (System.Environment.GetEnvironmentVariable("UG_CONTAINER_FOCUS") == "1") shelf.SetShelfFocused(true);   // debug: force the whole-prop focus so a --shot shows the container's outline meshes present -- body (_shelfGlow) + each swinging door leaf (_leafOutline)
 
@@ -3879,16 +3908,40 @@ namespace UnturnedGodot
             var bodyAabb = bodyMesh.GetAabb();
             Vector3 bodyCenterWorld = upright * bodyAabb.GetCenter();
             Vector3 pivotWorld = upright * (pivotSum / (float)nLeaves);
+            // THE FALLBACK HAS TO BE LEVELLED TOO. `outward` is Y-zeroed to keep the eye at prop height, but the
+            // fallback was taken AFTER that and never levelled -- and -upright.Z is (0,-1,0) in this frame, i.e.
+            // straight DOWN. Any prop whose leaves hinge on its TOP (a cardboard box: four flaps whose pivots
+            // average to dead centre, so the door direction cancels) landed the camera underneath the floor,
+            // looking up at the bottom of the box, where a swing is invisible and every state looks alike.
             Vector3 outward = pivotWorld - bodyCenterWorld; outward.Y = 0f;
-            if (outward.LengthSquared() < 0.01f) outward = -upright.Z;
+            if (outward.LengthSquared() < 0.01f) { outward = -upright.Z; outward.Y = 0f; }
+            if (outward.LengthSquared() < 0.01f) outward = Vector3.Back;
             outward = outward.Normalized();
             float r = Mathf.Max(bodyAabb.Size.X, Mathf.Max(bodyAabb.Size.Y, bodyAabb.Size.Z));
             if (r < 0.01f) r = 1f;
             Vector3 lookAt = bodyCenterWorld + Vector3.Up * (r * 0.15f);
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
             AddChild(cam);
-            cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
+            // UG_CONTAINER_ORBIT=<yawDeg>,<pitchDeg>,<distMul> puts the eye on an orbit instead of the default
+            // straight-on door view. That default assumes a TALL prop with a front door; a cardboard box is short
+            // and wide and its flaps open UPWARD, so from eye height they are slivers and the shut, half-open and
+            // open frames all look the same. A raised three-quarter view is what shows the swing.
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            string orbit = System.Environment.GetEnvironmentVariable("UG_CONTAINER_ORBIT");
+            if (!string.IsNullOrEmpty(orbit))
+            {
+                var q = orbit.Split(',');
+                float yaw = float.Parse(q[0], ci);
+                float pitch = q.Length > 1 ? float.Parse(q[1], ci) : 25f;
+                float dm = q.Length > 2 ? float.Parse(q[2], ci) : 1f;
+                var eye = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * outward;
+                var right = eye.Cross(Vector3.Up).Normalized();
+                eye = (new Basis(right, Mathf.DegToRad(pitch)) * eye).Normalized();   // +pitch raises the eye
+                cam.Position = lookAt + eye * ((r * 1.6f + 2.0f) * dm);
+            }
+            else cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
             cam.LookAt(lookAt, Vector3.Up);
+            GD.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
