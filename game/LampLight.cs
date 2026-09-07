@@ -37,6 +37,25 @@ namespace UnturnedGodot
         public static bool IsToggle(Kind k) => k is Kind.FloorShade or Kind.DeskBulb;
         public const string LookMeta = "lampdevice";   // meta on the prop body collider -> this lamp (PlayerController look-ray)
 
+        // A STANDING LAMP MUST NOT SHADOW ITSELF (master 2026-09-07: "exclude the standing lamps own model from its
+        // omni shadow map"). Its shade is a closed opaque box around the bulb, so the omni inside is occluded in
+        // every direction but straight down: the room reads far darker than the glowing shade says it should, with a
+        // hard rim-shadow where the shade cuts. Real shades pass light.
+        //
+        // ShadowCasterMask is the exact lever (LightShadowBudget's own comment already names it as the one that
+        // exists) -- the fixture is still LIT by its bulb and still casts from the sun and every other light, it just
+        // stops casting into the shadow map of the bulb it contains.
+        //
+        // ⚠ The mask is per-LAYER, not per-instance, so what this literally says is "floor-lamp bodies do not cast
+        // from floor-lamp bulbs" -- Godot has no per-caster-per-light exclusion (godot-proposals#4635). For the case
+        // that matters, a shade around its own bulb, it is identical; two standing lamps close enough for the
+        // difference to read would each be washing the other out anyway. Visual layer 17: 18/19/20 are already taken
+        // by WaterReflection.WaterLayer / ReflLayer / OutlineOverlay.OutlineLayer.
+        //
+        // The DESK lamp deliberately keeps its shadow: its bulb sits 0.18 in FRONT of the head opening, outside the
+        // housing, so the head casting backwards is the directional pool a desk lamp is supposed to make.
+        public const uint SelfShadowLayer = 1u << 16;
+
         public static Color BulbColor = new Color(1f, 0.90f, 0.72f);   // warm white (incandescent-ish)
         public static float Range = 8f;                // OmniLight3D radius -- a room, not a street
         public static float Energy = 2.2f;             // base LightEnergy, scaled by _worn
@@ -49,6 +68,11 @@ namespace UnturnedGodot
         public static float CeilingDecalSize = 6f;     // decal footprint on the ceiling, metres square (UG_LAMP_DECALSIZE)
         public static float CeilingDecalEnergy = 3.0f; // decal emission (UG_LAMP_DECALENERGY)
         public static bool DebugLightPose;             // UG_LAMP_POSE=1: print the built light's world pose/aim -- a dark render does not say WHY
+        // UG_LAMPSHADOW=1: force this fixture to cast. Lamps ship with ShadowEnabled FALSE and only LightShadowBudget
+        // turns the nearest few on, and the budget only exists in a built world -- so in any bare harness scene a
+        // lamp never casts and anything about its shadow map is unphotographable. This is the knob that makes the
+        // self-shadow (and its exclusion, see SelfShadowLayer) visible in a --deploytest frame.
+        public static readonly bool DebugForceShadow = System.Environment.GetEnvironmentVariable("UG_LAMPSHADOW") == "1";
         public static bool CeilingSpot;                // UG_LAMP_CEILSPOT=1: ceiling strip as a downward cone instead of an omni.
                                                        // DEFAULT OFF -- measured, and the trade does not pay. See MakeLight.
 
@@ -86,6 +110,7 @@ namespace UnturnedGodot
             float scale = _kind == Kind.DeskBulb ? 0.5f : 1f;   // master: desk lamp at half intensity
             _omniEnergy = Energy * _worn * scale;
             _light = MakeLight(_kind, _omniEnergy);
+            if (DebugForceShadow) _light.ShadowEnabled = true;   // harness only: the budget is absent in a bare scene
             _light.AddToGroup(LightShadowBudget.Group);   // opt in to the shadow budget; it decides when this one casts
 
             if (_fixture != null && IsInstanceValid(_fixture))
@@ -127,6 +152,20 @@ namespace UnturnedGodot
                     _outline = OutlineOverlay.MakeOutline(src);
                     _fixture.AddChild(_outline);
                 }
+            }
+
+            if (_kind == Kind.FloorShade)   // the shade wraps its own bulb -- see SelfShadowLayer
+            {
+                _light.ShadowCasterMask &= ~SelfShadowLayer;
+                // MOVE the body onto that layer, do not add it. The mask is an OR test -- a caster is drawn into the
+                // shadow map when (Layers & ShadowCasterMask) != 0 -- so a fixture left on the default layer 1 keeps
+                // matching through bit 0 and casts exactly as before. `|=` here changed nothing at all: 0.06% of
+                // pixels, 7 of them by more than 8/255, which is noise. Every camera in the project culls by
+                // (0xFFFFF & ~OutlineLayer) at tightest, so layer 17 is still drawn everywhere it was.
+                if (_fixture != null && IsInstanceValid(_fixture)) _fixture.Layers = SelfShadowLayer;
+                // the EMISSIVE half too, or the one part guaranteed to sit between the bulb and the room is exactly
+                // the part still casting -- the split moved those faces to their own MeshInstance, off the housing.
+                if (_emissive != null && IsInstanceValid(_emissive)) _emissive.Layers = SelfShadowLayer;
             }
 
             AddChild(_light);
