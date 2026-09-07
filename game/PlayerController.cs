@@ -7056,7 +7056,7 @@ namespace UnturnedGodot
             else if (!NetAvatar && !_fp && _body != null && _body.MuzzleWorld is Vector3 _bmz)   // 3P: anchor the tracer at the 3P gun's OWN muzzle (position); it still flies to the converged aim, so it tracks the bullet
             { b.MuzzleAnchor = _bmz; b.HasAnchor = true; }
             else if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
-            { b.MuzzleAnchor = _cam.ProjectPosition(_mpx, 1.5f); b.HasAnchor = true; }   // a bit down the barrel line: the muzzle reference for the tracer's teardrop axis
+            { b.MuzzleAnchor = _cam.ProjectPosition(_mpx, MuzzleAnchorDepth); b.HasAnchor = true; }   // the muzzle reference: where the streak's TAIL sits, and the axis its teardrop runs along
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             if (g?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
@@ -7619,6 +7619,15 @@ namespace UnturnedGodot
         // The tracer: a CROSSED QUAD (two perpendicular planes sharing the flight axis, so it reads solid from ANY angle --
         // never edge-on flat) whose geometry is a TEARDROP: round fat nose at the bullet, tapering to a point at the tail,
         // textured with the soft circle sprite. Rides the round along its velocity; starts at the muzzle while young.
+        // How far down the muzzle's screen ray the tracer's tail is pinned, in metres from the eye. UpdateTracer puts
+        // the tail AT this point until the bullet is further away than the streak is long, so it is literally where a
+        // shot appears to start. 1.5 m was set when the streak was 40 m long and fat -- at that size a tail floating a
+        // metre past the barrel read as part of a long bar. The streak is 10 m and thin now (strawberry 2026-09-05
+        // "much shorter ... and smaller") and the same 1.5 reads as a short dash starting in mid-air ahead of the gun:
+        // "change the bullet tracers to start from way closer to the muzzle (didnt adjust after we shrunk them)"
+        // (2026-09-07). 0.6 m is about where the viewmodel's own muzzle sits on screen.
+        const float MuzzleAnchorDepth = 0.6f;
+
         void UpdateTracer(Bullet b)
         {
             if (b.Tracer == null || b.Tracer.Mesh is not ImmediateMesh im) return;
