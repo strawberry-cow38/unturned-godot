@@ -2175,6 +2175,19 @@ namespace UnturnedGodot
                 return _antiRollEnv == 1;
             }
         }
+        /// <summary>UG_ANTIROLLK overrides the bar rate for a tuning sweep, so a stiffness can be chosen from
+        /// measurements in ONE build instead of a rebuild per candidate. Unset = the shipped constant.</summary>
+        static float _antiRollK = -1f;
+        static float AntiRollRate
+        {
+            get
+            {
+                if (_antiRollK < 0f)
+                    _antiRollK = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANTIROLLK"), out var k) && k >= 0f
+                               ? k : AntiRollFraction;
+                return _antiRollK;
+            }
+        }
 
         /// <summary>Suspension EXTENSION under a wheel, 0 = fully compressed .. 1 = hanging free. Measured with
         /// its own ray because Godot exposes no suspension length on VehicleWheel3D. A wheel with no ground
@@ -2199,8 +2212,6 @@ namespace UnturnedGodot
             if (_wNodes == null || _wNodes.Length < 2) return;
             if (Freeze || Sleeping || _asleep || _parked) return;   // parked scenery has no roll to resist
 
-            var up = GlobalTransform.Basis.Y;
-            var com = ToGlobal(CenterOfMass);
             // Pair wheels into AXLES by their local z, then by opposite sign of x. Done per call rather than
             // cached because a spec's wheel list is short and this keeps six-wheelers working with no table.
             for (int i = 0; i < _wNodes.Length; i++)
@@ -2212,14 +2223,27 @@ namespace UnturnedGodot
                     var rj = _wNodes[j];
                     if (rj == null || rj.Position.X <= 0f) continue;      // ...on the right
                     if (Mathf.Abs(rj.Position.Z - li.Position.Z) > 0.35f) continue;   // same axle
-                    bool cl = li.IsInContact(), cr = rj.IsInContact();
-                    if (!cl && !cr) break;                                // axle in the air: a bar has nothing to push against
-                    float f = (WheelExtension(li) - WheelExtension(rj)) * AntiRollFraction * Mass * 9.8f * 0.5f;
-                    // The MORE extended side is pulled DOWN and the more compressed side pushed UP, which is a
-                    // pure roll couple: equal and opposite, so it adds no net vertical force and cannot pump the
-                    // car off the ground the way a one-sided push would.
-                    if (cl) ApplyForce(up * -f, li.GlobalPosition - com);
-                    if (cr) ApplyForce(up *  f, rj.GlobalPosition - com);
+                    if (!li.IsInContact() && !rj.IsInContact()) break;   // axle in the air: nothing to react against
+                    float f = (WheelExtension(li) - WheelExtension(rj)) * AntiRollRate * Mass * 9.8f * 0.5f;
+
+                    // A TORQUE, NOT TWO FORCES -- and this is a correctness fix, not a style one.
+                    //
+                    // It was `-f` up at the left wheel and `+f` up at the right, each guarded by THAT wheel being
+                    // in contact. With both wheels down that is a couple and the comment here used to claim it
+                    // "adds no net vertical force". True only in that case. The moment the inside wheel lifts --
+                    // which is precisely what a corner hard enough to roll you does -- one guard fails, a single
+                    // force survives, and the "bar" becomes a shove upward on one corner of the car.
+                    //
+                    // Measured cost of that: the jeep's full-lock spin transient moved from main's 0.910 rad/s to
+                    // 1.4-1.8 and went non-monotonic in bar rate (0.589 at K=0.35, 0.907 at 0.25, 1.791 at 0.55),
+                    // which is not what a stiffness knob does -- it is what an intermittent net force does.
+                    //
+                    // The equivalent couple is a pure torque: summing the two forces about the CoM gives
+                    // tau_z = f*(|xL| + |xR|) = f * track, about the body's own Z, with zero net force BY
+                    // CONSTRUCTION. Identical to the old code when both wheels are down, and still a couple when
+                    // one is airborne, so the bar keeps resisting roll at the exact moment it is needed.
+                    float track = Mathf.Abs(rj.Position.X - li.Position.X);
+                    ApplyTorque(GlobalTransform.Basis.Z * (f * track));
                     break;                                                // one partner per left wheel
                 }
             }
