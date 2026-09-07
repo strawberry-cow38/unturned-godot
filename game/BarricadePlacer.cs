@@ -179,9 +179,18 @@ namespace UnturnedGodot
 
         // The ghost/placed transform for the current mount. Window = stood-up + faced like a Wall mount, but scaled to
         // fit the opening and seated at the opening centre + face standoff (Point), not a raycast hit + MountOrigin lift.
+        // ⚠ THE GHOST *IS* THE MESH, so it has to carry the model fixup itself. A PLACED deployable is two nodes --
+        // the body holding the placement basis, the MeshInstance holding Def.MeshBasis() -- so its world basis is
+        // placement × meshFixup. The ghost is the MeshInstance returned by BuildMesh, and assigning GlobalTransform
+        // here OVERWRITES the `mi.Basis = mrot` BuildMesh just set. Any def with a non-identity MeshEuler therefore
+        // previewed WITHOUT its fixup while placing WITH it: the standing lamp's ghost hung shade-down with its base
+        // and port arrows in the air (master 2026-09-07), and the battery's ghost has been 180 off since it got one.
+        // Appended, not prepended, to match the parent×child order the real object composes in.
         Transform3D GhostTransform() => Mount == BarricadeMount.Window
-            ? new Transform3D(DeployableDef.StandBasis(Yaw) * Basis.FromScale(_windowScale), Point)
-            : new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright), MountOrigin());
+            ? new Transform3D(DeployableDef.StandBasis(Yaw) * Basis.FromScale(_windowScale) * MeshFix, Point)
+            : new Transform3D(MountBasis(Mount, Normal, Yaw, Def != null && Def.Upright) * MeshFix, MountOrigin());
+
+        Basis MeshFix => Def != null ? Def.MeshBasis() : Basis.Identity;
 
         // Window mount aim -- a window HOLE has no collider, so a raycast sails straight through it. Enumerate the live
         // WallSurface nodes ("walls" group), UV-project the camera ray onto each wall plane, and find the OPENING the

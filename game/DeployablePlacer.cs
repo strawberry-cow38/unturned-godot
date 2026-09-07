@@ -93,7 +93,9 @@ namespace UnturnedGodot
         {
             if (_ghost == null) return;
             bool up = Def != null && Def.Upright;   // upright models (wind turbine) skip the flat->stand-up
-            _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(Yaw)) : DeployableDef.StandBasis(Yaw),
+            // × MeshBasis: the ghost IS the MeshInstance, so overwriting GlobalTransform drops the per-def model
+            // fixup BuildMesh set on it. See BarricadePlacer.GhostTransform for the full account.
+            _ghost.GlobalTransform = new Transform3D((up ? new Basis(Vector3.Up, Mathf.DegToRad(Yaw)) : DeployableDef.StandBasis(Yaw)) * (Def?.MeshBasis() ?? Basis.Identity),
                 Point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));   // base sits on the surface point
             _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
@@ -106,7 +108,7 @@ namespace UnturnedGodot
             if (_ghost == null) return;
             _ghost.Visible = true;
             bool up = Def != null && Def.Upright;
-            _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw),
+            _ghost.GlobalTransform = new Transform3D((up ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw)) * (Def?.MeshBasis() ?? Basis.Identity),
                 point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));
             _ghost.MaterialOverride = ValidMat;
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }

@@ -4365,6 +4365,20 @@ namespace UnturnedGodot
                     for (int i = 0; i < 8; i++) { float y = (xf * ab.GetEndpoint(i)).Y; lo = Mathf.Min(lo, y); hi = Mathf.Max(hi, y); }
                     GD.Print($"[LAMPROT] {nm} StandRotX={DeployableDef.StandRotX} meshEuler={dep.Def.MeshEuler} worldY=[{lo:0.000},{hi:0.000}] basisY={xf.Basis.Y} {(hi > lo && lo > -0.2f ? "UPRIGHT" : "SUSPECT")}");
                 }
+                // ...and the GHOST, through the REAL placer master uses -- not the harness Ghost() helper. The ghost is
+                // the MeshInstance itself, so it is the half that can lose the model fixup while the placed body keeps it.
+                var probe = new BarricadePlacer(); AddChild(probe);
+                probe.SetDef(DeployableDef.StandingLamp);
+                probe.Freeze(new Vector3(4f, 0f, 0f), Vector3.Up, 0f);
+                foreach (var ch in probe.GetChildren())
+                {
+                    if (ch is not MeshInstance3D gm || gm.Mesh == null) continue;
+                    var gxf = gm.GlobalTransform; var gab = gm.Mesh.GetAabb();
+                    float glo = float.MaxValue, ghi = float.MinValue;
+                    for (int i = 0; i < 8; i++) { float y = (gxf * gab.GetEndpoint(i)).Y; glo = Mathf.Min(glo, y); ghi = Mathf.Max(ghi, y); }
+                    GD.Print($"[LAMPROT] GHOST standing worldY=[{glo:0.000},{ghi:0.000}] {(ghi > 1.5f && glo > -0.2f ? "UPRIGHT" : "UPSIDE DOWN")}");
+                    break;
+                }
                 look = new Vector3(0.2f, 1.0f, 0f);
                 cam.Position = new Vector3(1.4f, 2.2f, 6.4f);
                 cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
@@ -4635,7 +4649,7 @@ namespace UnturnedGodot
             var g = Deployable.BuildMesh(def, out Aabb ab);
             g.MaterialOverride = valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             AddChild(g);
-            g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw), surface + Vector3.Up * DeployableDef.GroundLift(ab));
+            g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw) * def.MeshBasis(), surface + Vector3.Up * DeployableDef.GroundLift(ab));   // × MeshBasis: this ghost is the MeshInstance too (see BarricadePlacer.GhostTransform)
             if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // mirror DeployablePlacer: in/out port arrows on the ghost (blueprint blue/red)
             {
                 var mat = ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed);
