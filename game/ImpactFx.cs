@@ -111,6 +111,15 @@ namespace UnturnedGodot
                 ScaleAmountMin = (metal ? 0.3f : 0.5f) * ParticleFx.SizeScale, ScaleAmountMax = (metal ? 0.6f : 1.0f) * ParticleFx.SizeScale,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB)
+                // TUMBLE (master 2026-09-07: "apply random rotation and rotation-over-life to bullet impact
+                // debris particles"). Every chip used to spawn at angle 0 and hold it, so a burst was a fan of
+                // identically-oriented quads -- readable as sprites rather than as debris, and worst on the
+                // 4-frame sheet where several chips share a frame and the repetition lines up exactly.
+                // AngleMin/Max is the random START, AngularVelocity the spin OVER life; both are needed, since
+                // random-but-static still reads as stamped and spinning-from-zero starts them all aligned.
+                // +/-360 deg/s against a 1 s lifetime is about one turn per chip: visibly tumbling, not a blur.
+                AngleMin = -180f, AngleMax = 180f,
+                AngularVelocityMin = -360f, AngularVelocityMax = 360f,
             };
             if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; dust.AnimSpeedMin = 0f; dust.AnimSpeedMax = 0f; }   // AnimSpeed 0 -> each chip HOLDS one static random frame for its whole life. THE BUG: the anim advanced over the 1 s lifetime and (Loop=false) clamped onto the blank past-the-end frame, so a chip sat blank early and only landed on a real frame ~1 lifetime later -> "nothing at impact, a lone straggler ~1 s later" (master + tinyclaw). Loop=true + AnimSpeed 0 = a solid chip from frame 0.
             scene.AddChild(dust);

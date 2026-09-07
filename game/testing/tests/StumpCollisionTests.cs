@@ -98,6 +98,24 @@ namespace UnturnedGodot.Testing
             T.Check("regrowing clears the stump collider",
                     !RayHits(real, new Vector3(56f, 1.0f, 0f), new Vector3(64f, 1.0f, 0f), out _));
             real.QueueFree();
+            yield return Ticks(1);
+
+            // ---- the stump is as THICK as the tree was. Trunk radius is per-species now (Birch 0.48, Pine 0.80,
+            // Maple 0.83, measured at chest height) and the stump reads the same field, so a stump you could walk
+            // through where the trunk blocked you is the bug this pins. 1.2 is deliberately wider than the widest
+            // real species, so a ray at 1.0 m out hits ONLY if the radius was actually carried across.
+            var fat = new TreeTrunk { Field = null, Index = 3, LogItem = 39, Health = 10f, RewardMin = 1, RewardMax = 1,
+                                      TreeXf = Transform3D.Identity, TrunkRadius = 1.2f };
+            World.AddChild(fat);
+            fat.GlobalPosition = new Vector3(120f, 0f, 0f);
+            yield return Ticks(1);
+            fat.Chop(999f, Vector3.Zero, Vector3.Forward);
+            yield return Ticks(2);
+            T.Check("a wide-trunked species leaves a wide stump (1.0 m out still blocks)",
+                    RayHits(fat, new Vector3(116f, 1.0f, 1.0f), new Vector3(124f, 1.0f, 1.0f), out _));
+            T.Check("...and still stops somewhere, rather than being infinitely wide",
+                    !RayHits(fat, new Vector3(116f, 1.0f, 2.0f), new Vector3(124f, 1.0f, 2.0f), out _));
+            fat.QueueFree();
         }
     }
 }

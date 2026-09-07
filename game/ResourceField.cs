@@ -108,6 +108,20 @@ namespace UnturnedGodot
                     float treeHp = isMaple ? 1000f : isPine ? 1200f : 800f;
                     float treeReset = isMaple ? 600f : isPine ? 750f : 450f;
                     int rMin = isMaple ? 6 : isPine ? 5 : 7, rMax = isMaple ? 9 : isPine ? 8 : 10;
+                    // WIDER TRUNKS (master 2026-09-07: "widen the hitboxes of tree trunks"). The old collider was a
+                    // flat 0.5 for every species, which is birch-sized: MEASURED off the trunk meshes in the band a
+                    // player actually shoots and walks through (y 1..2, chest height), the real radii are
+                    // Birch 0.48, Pine 0.80, Maple 0.83. So a pine's hitbox was under two thirds of its trunk and you
+                    // could put a round through the visible bark.
+                    //
+                    // Chest height, NOT the mesh's widest point. Every trunk flares at the roots (knee band 0..1
+                    // measures Birch 0.93, Pine 1.28, Maple 1.31) and taking that would hand a pine 48 cm of hitbox
+                    // standing in open air at the height you aim at -- trading "shots pass through the trunk" for
+                    // "shots stop short of it", which is the same bug wearing a hat.
+                    //
+                    // Floored at the old 0.5 so nothing gets NARROWER on a widen request; birch is within 2 cm of it
+                    // either way. Re-measure with: max hypot(x,z) over verts with 1 <= y < 2 in <Species>_1.obj.
+                    float trunkR = Mathf.Max(0.5f, isMaple ? 0.83f : isPine ? 0.80f : 0.48f);
                     for (int k = 0; k < xf.Count; k++)
                     {
                         var t = xf[k];
@@ -119,7 +133,8 @@ namespace UnturnedGodot
                         var body = new TreeTrunk { Field = this, Index = baseIdx + k, LogItem = logItem, Health = treeHp, Reset = treeReset, RewardMin = rMin, RewardMax = rMax, TreeName = name, ResDir = dir, TreeXf = t, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
                         body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
-                        body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
+                        body.TrunkRadius = trunkR;   // the stump reuses it, so the two never disagree about how thick the tree is
+                        body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = trunkR * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
                         AddChild(body);
                         body.AddToGroup(ColliderBudget.Group);   // 1124 tree trunks, same streaming as the prop colliders
                         {   // same rule as props: collision lasts as long as the tree is drawn (trees compute far, so they keep it far)
@@ -504,6 +519,7 @@ namespace UnturnedGodot
         public int Index;
         public string TreeName, ResDir;                 // for loading the felling stump/debris meshes at runtime
         public Transform3D TreeXf;                      // the instance's full transform (pos+rot+scale) -> stump/debris match the tree
+        public float TrunkRadius = 0.5f;                // this species' measured trunk radius (see where the trunk body is built)
         public ushort LogItem;                          // Birch 37 / Maple 39 / Pine 41
         ushort StickItem => (ushort)(LogItem + 1);      // catalog pairs Log then Stick: 38 / 40 / 42
         public float Health = 800f;                     // retail ResourceAsset health (set per-species by ResourceField)
@@ -567,9 +583,10 @@ namespace UnturnedGodot
         ///
         /// It is the trunk's own base, so it collides where the trunk did. Measured, not guessed:
         /// Pine_0_1.obj (the standing trunk) and Pine_0_stump_0.obj share a halfwidth of 1.28 and a base of
-        /// -1.20 -- the stump mesh IS the bottom 2.8 m of the trunk. So it reuses the trunk's 0.5 * sr radius
-        /// (deliberately slimmer than the mesh, see the note where the trunk body is built) and the trunk's
-        /// own -1.5 base, and only the TOP comes from the stump.
+        /// -1.20 -- the stump mesh IS the bottom 2.8 m of the trunk. So it reuses the trunk's own measured
+        /// per-species radius (TrunkRadius, see where the trunk body is built) and the trunk's own -1.5 base,
+        /// and only the TOP comes from the stump. Sharing that radius is the point: a stump you can walk
+        /// through where the tree blocked you would be a worse bug than either.
         ///
         /// That top is read off the loaded mesh rather than hardcoded. Every stump asset in the map today tops
         /// at exactly +1.60, but reading the AABB means a species whose stump is a different height gets a
@@ -594,7 +611,7 @@ namespace UnturnedGodot
             float h = (top - StumpBaseLocal) * sh;
             _stumpBody = new StaticBody3D { CollisionLayer = 1u << 0, Name = "StumpCollider" };
             _stumpBody.AddChild(new CollisionShape3D {
-                Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = h },
+                Shape = new CylinderShape3D { Radius = TrunkRadius * sr, Height = h },
                 Position = new Vector3(0f, (top + StumpBaseLocal) * 0.5f * sh, 0f) });
             AddChild(_stumpBody);
             _stumpBody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);   // it is a tree: wood footsteps
