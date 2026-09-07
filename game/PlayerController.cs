@@ -3246,6 +3246,7 @@ namespace UnturnedGodot
         // attach UI. A 2D one-shot (your own gun) like PlayConsumeSound.
         AudioStreamPlayer _selectorAudio;
         AudioStreamPlayer _wearAudio;   // the clothing wear one-shot (see PlayClothingWearSound)
+        bool _adoptedWornOnce;   // the first replicated inventory is the LOAD, not somebody getting dressed
         // ---- HANDHELD FLASHLIGHT (source: ItemMeleeAsset "Light" + UseableMelee) -------------------------------
         //
         // The torch is a MELEE item in retail, not a gun attachment: flashlight.dat is `Type Melee / Useable Melee /
@@ -3880,6 +3881,18 @@ namespace UnturnedGodot
             static ushort WId(Item i) => i?.id ?? (ushort)0;
             bool wornChanged = WId(Inventory.wornHat) != WId(replica.wornHat) || WId(Inventory.wornGlasses) != WId(replica.wornGlasses) || WId(Inventory.wornMask) != WId(replica.wornMask)
                 || WId(Inventory.wornShirt) != WId(replica.wornShirt) || WId(Inventory.wornVest) != WId(replica.wornVest) || WId(Inventory.wornBackpack) != WId(replica.wornBackpack) || WId(Inventory.wornPants) != WId(replica.wornPants);
+            // ...and WHICH slot newly gained something, for the wear sound. AfterAutoPickup's Worn branch is the
+            // DIRECT path only, and singleplayer runs through the loopback -- so the inventory is server-owned and
+            // every pickup, including the one that dresses you, arrives here instead. Wiring only the direct path is
+            // why master heard nothing (2026-09-07 "not hearing the sound").
+            // EMPTY -> FILLED only: a swap or a strip is not putting something on. And skipped on the FIRST adoption,
+            // so a player who loads in already dressed does not get seven clips at once.
+            SDG.Unturned.Item _newlyWorn = null;
+            foreach (var _w in new[] { (Inventory.wornHat, replica.wornHat), (Inventory.wornGlasses, replica.wornGlasses),
+                                       (Inventory.wornMask, replica.wornMask), (Inventory.wornShirt, replica.wornShirt),
+                                       (Inventory.wornVest, replica.wornVest), (Inventory.wornBackpack, replica.wornBackpack),
+                                       (Inventory.wornPants, replica.wornPants) })
+                if (WId(_w.Item1) == 0 && WId(_w.Item2) != 0) { _newlyWorn = _w.Item2; break; }
             Inventory.wornHat = replica.wornHat; Inventory.wornGlasses = replica.wornGlasses; Inventory.wornMask = replica.wornMask;
             Inventory.wornShirt = replica.wornShirt; Inventory.wornVest = replica.wornVest;
             Inventory.wornBackpack = replica.wornBackpack; Inventory.wornPants = replica.wornPants;
@@ -3890,6 +3903,8 @@ namespace UnturnedGodot
             }
             RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
             if (wornChanged) _clothing?.Refresh();   // a server-side wear (auto-worn pickup) repaints the body like a local one does
+            if (_adoptedWornOnce && _newlyWorn != null) PlayClothingWearSound(_newlyWorn.GetAsset());   // ...and sounds like one
+            _adoptedWornOnce = true;
             if (_pendingPickupId != 0)
             {
                 if (Time.GetTicksMsec() / 1000.0 > _pendingPickupUntil) _pendingPickupId = 0;
