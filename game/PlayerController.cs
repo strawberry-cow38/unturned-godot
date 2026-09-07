@@ -1964,7 +1964,7 @@ namespace UnturnedGodot
             var asset = item?.GetAsset();
             switch (went)
             {
-                case PlayerInventory.AutoPlace.Worn: _clothing?.Refresh(); break;
+                case PlayerInventory.AutoPlace.Worn: _clothing?.Refresh(); PlayClothingWearSound(asset); break;   // it went straight onto the player -> the retail wear sound
                 case PlayerInventory.AutoPlace.Slot: if (EquipItemAsset(asset, item)) NoteHeldFrom(slot, 0, 0); break;
                 default: if (wasUnarmed) EquipItemAsset(asset, item); break;
             }
@@ -3245,6 +3245,8 @@ namespace UnturnedGodot
         // Firemode.mp3. Master wired this same click to firemode-cycle + putting on/taking off attachments in the
         // attach UI. A 2D one-shot (your own gun) like PlayConsumeSound.
         AudioStreamPlayer _selectorAudio;
+        AudioStreamPlayer _wearAudio;   // the clothing wear one-shot (see PlayClothingWearSound)
+        bool _adoptedWornOnce;   // the first replicated inventory is the LOAD, not somebody getting dressed
         // ---- HANDHELD FLASHLIGHT (source: ItemMeleeAsset "Light" + UseableMelee) -------------------------------
         //
         // The torch is a MELEE item in retail, not a gun attachment: flashlight.dat is `Type Melee / Useable Melee /
@@ -3381,6 +3383,33 @@ namespace UnturnedGodot
                 _cam?.AddChild(_heldLight);   // rides the eye, so the beam points where you look
             }
             _heldLight.Visible = true;
+        }
+
+        /// <summary>The retail clothing WEAR sound (master 2026-09-07: "source the clothing-equip-from-ground sound
+        /// from the source game and wire it to clothes being auto equipped from pickup").
+        ///
+        /// src ItemClothingAsset: an item may declare its own `WearAudio`, and when it does not the game defaults it
+        /// BY TYPE -- `Sounds/Zipper.mp3` for a BACKPACK or a VEST, `Sounds/Sleeve.mp3` for everything else (shirt,
+        /// pants, hat, mask, glasses). Both clips are already in the rip as misc/zipper.wav and misc/sleeve.wav, so
+        /// nothing new had to be extracted; the sourcing was finding out WHICH of the two, and that a zipper is the
+        /// minority case rather than the obvious default it sounds like.
+        ///
+        /// ⚠ The per-item `WearAudio` override is NOT parsed by this port, so an item that declares its own clip gets
+        /// the type default instead. Faithful for every item that does not declare one, which is the overwhelming
+        /// majority; wiring the override means teaching the item loader to read an AudioReference.
+        ///
+        /// Non-positional: this is the local player's own clothing, at their own ears. Retail plays it on EVERY slot
+        /// change (PlayerClothing does it for all seven slots); this is wired to the auto-equip-on-pickup path master
+        /// asked for, which is the one place clothing goes on without the player driving the inventory UI.</summary>
+        void PlayClothingWearSound(SDG.Unturned.ItemAsset asset)
+        {
+            if (asset == null) return;
+            bool zip = asset.type == SDG.Unturned.EItemType.BACKPACK || asset.type == SDG.Unturned.EItemType.VEST;
+            var stream = LoadWavOneShot($"res://content/audio/misc/{(zip ? "zipper" : "sleeve")}.wav");
+            if (stream == null) return;
+            if (_wearAudio == null || !IsInstanceValid(_wearAudio)) { _wearAudio = new AudioStreamPlayer(); AddChild(_wearAudio); }
+            _wearAudio.Stream = stream;
+            _wearAudio.Play();
         }
 
         public void PlaySelectorSwitchSound()
@@ -3852,6 +3881,18 @@ namespace UnturnedGodot
             static ushort WId(Item i) => i?.id ?? (ushort)0;
             bool wornChanged = WId(Inventory.wornHat) != WId(replica.wornHat) || WId(Inventory.wornGlasses) != WId(replica.wornGlasses) || WId(Inventory.wornMask) != WId(replica.wornMask)
                 || WId(Inventory.wornShirt) != WId(replica.wornShirt) || WId(Inventory.wornVest) != WId(replica.wornVest) || WId(Inventory.wornBackpack) != WId(replica.wornBackpack) || WId(Inventory.wornPants) != WId(replica.wornPants);
+            // ...and WHICH slot newly gained something, for the wear sound. AfterAutoPickup's Worn branch is the
+            // DIRECT path only, and singleplayer runs through the loopback -- so the inventory is server-owned and
+            // every pickup, including the one that dresses you, arrives here instead. Wiring only the direct path is
+            // why master heard nothing (2026-09-07 "not hearing the sound").
+            // EMPTY -> FILLED only: a swap or a strip is not putting something on. And skipped on the FIRST adoption,
+            // so a player who loads in already dressed does not get seven clips at once.
+            SDG.Unturned.Item _newlyWorn = null;
+            foreach (var _w in new[] { (Inventory.wornHat, replica.wornHat), (Inventory.wornGlasses, replica.wornGlasses),
+                                       (Inventory.wornMask, replica.wornMask), (Inventory.wornShirt, replica.wornShirt),
+                                       (Inventory.wornVest, replica.wornVest), (Inventory.wornBackpack, replica.wornBackpack),
+                                       (Inventory.wornPants, replica.wornPants) })
+                if (WId(_w.Item1) == 0 && WId(_w.Item2) != 0) { _newlyWorn = _w.Item2; break; }
             Inventory.wornHat = replica.wornHat; Inventory.wornGlasses = replica.wornGlasses; Inventory.wornMask = replica.wornMask;
             Inventory.wornShirt = replica.wornShirt; Inventory.wornVest = replica.wornVest;
             Inventory.wornBackpack = replica.wornBackpack; Inventory.wornPants = replica.wornPants;
@@ -3862,6 +3903,8 @@ namespace UnturnedGodot
             }
             RebindHeldRefs();   // the jars are all new objects now -- re-point what the player is holding at them
             if (wornChanged) _clothing?.Refresh();   // a server-side wear (auto-worn pickup) repaints the body like a local one does
+            if (_adoptedWornOnce && _newlyWorn != null) PlayClothingWearSound(_newlyWorn.GetAsset());   // ...and sounds like one
+            _adoptedWornOnce = true;
             if (_pendingPickupId != 0)
             {
                 if (Time.GetTicksMsec() / 1000.0 > _pendingPickupUntil) _pendingPickupId = 0;

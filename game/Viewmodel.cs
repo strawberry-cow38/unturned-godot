@@ -277,6 +277,28 @@ namespace UnturnedGodot
         // the optic sits wrong by however much the two differ (master 2026-09-07: "the whole SCOPE is sunk into the
         // guns' model partially"). Retail parents an attachment to this hook at local position ZERO and lets the
         // attachment's own model offset do the rest.
+        // EVERY GUN'S MAGAZINE: content/guns_maghook.tsv = <gun>\t<hook x,y,z>\t<magazine folder>, emitted by
+        // tools/extract_mags.py off each gun's item.prefab and the magazine's own magazine.prefab (the model that
+        // MOUNTS -- item.prefab is the one lying on the ground). Master 2026-09-07: "source and wire all weapon
+        // magazines". Before this, 2 guns of 57 showed a magazine and both borrowed the eaglefire's.
+        // Confirms itself: the extracted eaglefire hook is 0,0.0166,0.0238, exactly the constant that was hardcoded
+        // here for it, so the convention this table is emitted in is the one the port already used.
+        static System.Collections.Generic.Dictionary<string, (Vector3 Hook, string Mesh)> _magHooks;
+        static System.Collections.Generic.Dictionary<string, (Vector3 Hook, string Mesh)> LoadMagHooks()
+        {
+            var d = new System.Collections.Generic.Dictionary<string, (Vector3, string)>();
+            string path = ProjectSettings.GlobalizePath("res://content/guns_maghook.tsv");
+            if (!System.IO.File.Exists(path)) return d;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var c = line.Split('\t');
+                if (c.Length < 3 || c[1].Trim().Length == 0) continue;
+                string mesh = c[2].Trim().Length > 0 ? $"mag_{c[2].Trim().ToLowerInvariant()}.txt" : null;
+                d[c[0]] = (V3(c[1]), mesh);
+            }
+            return d;
+        }
+
         static System.Collections.Generic.Dictionary<string, Vector3> _sightHooks;
         static System.Collections.Generic.Dictionary<string, Vector3> LoadSightHooks()
         {
@@ -639,9 +661,27 @@ namespace UnturnedGodot
                     // (Instantiate(magazineAsset.magazine) at the Magazine hook, localPos 0 / identity); the mesh sits
                     // on the item root so its origin = MagazineHook(0,0.0166,-0.0238) -> port (0,0.0166,0.0238).
                     var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
-                    var magMesh = gv.Mag != null ? ContentProvider.ParseObj($"res://content/{gv.Mag}") : null;
+                    // PER GUN, from the table -- mesh AND hook. The old code had one hardcoded hook and read gv.Mag,
+                    // which only two rows in guns_visual.tsv ever set (both to the eaglefire's), so 55 guns carried no
+                    // magazine at all and the two that did shared one mesh at one position. gv.Mag stays as an
+                    // override for anything hand-authored; a gun absent from the table keeps exactly the old path.
+                    _magHooks ??= LoadMagHooks();
+                    string _magKey = gv.Gun?.Replace("_gun.txt", "");
+                    // THE TABLE WINS over gv.Mag, and the old eaglefire mesh is why. magazine.prefab's root has one
+                    // child, Model_0, at its own local (0, 0.0147, -0.0206). Retail instantiates the WHOLE prefab at
+                    // the hook, so the geometry lands at hook + that offset. eaglefire_mag.txt was exported
+                    // Model_0-LOCAL (offset not included) and then mounted at the bare hook, so the only magazine in
+                    // the game has been sitting ~2 cm short this whole time. The extracted meshes are root-relative
+                    // and carry it, which is why they measure exactly that delta away from the old one. gv.Mag stays
+                    // as the escape hatch for a hand-authored mesh on a gun the table has no row for.
+                    string _magFile = null;
+                    Vector3 _magPos = new(0f, 0.0166f, 0.0238f);
+                    if (_magKey != null && _magHooks.TryGetValue(_magKey, out var _mh) && _mh.Mesh != null)
+                    { _magFile = _mh.Mesh; _magPos = _mh.Hook; }
+                    _magFile ??= gv.Mag;
+                    var magMesh = _magFile != null ? ContentProvider.ParseObj($"res://content/{_magFile}") : null;
                     if (magMesh != null)
-                        mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
+                        mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = _magPos });
 
                     // Real Military Suppressor (Barrel attachment) — barrel.prefab Model_0 from core.masterbundle, converted
                     // (x,y,z)->(-x,y,-z). HIDDEN by default (guns ship with no barrel); the T menu toggles it, and when on it
