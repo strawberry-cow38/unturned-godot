@@ -1,57 +1,57 @@
-cobra	0.0000,-0.1849,0.0800	Cobra_20
-zubeknakov	0.0000,-0.0310,0.0140	Ranger_35
-grizzly	0.0000,0.0250,-0.0180	Grizzly_5
-timberwolf	0.0000,0.0733,-0.0004	Timberwolf_6
-sabertooth	0.0000,0.0540,0.0340	Sabertooth_10
-colt	0.0000,-0.1841,0.0438	Colt_7
-snayperskya	0.0000,0.0600,0.0220	Snayperskya_7
-ace	0.0024,-0.1255,-0.0402	Ace_6
-augewehr	0.0000,-0.4678,0.0392	
-avenger	0.0000,-0.2033,0.0425	Avenger_13
-bluntforce	0.0000,0.1843,-0.0695	Shells_8
-nightraider	0.0000,0.0230,0.0550	
-heartbreaker	-0.0000,0.0400,0.0530	
-nykorev	0.0000,0.0218,0.0302	Nykorev_200
-sportshot	0.0000,0.0280,0.0450	Sportshot_10
-schofield	0.0000,0.0829,-0.0895	Schofield_5
-sawed_off	0.0000,0.0574,-0.0663	Shells_2
-desert_falcon	0.0000,-0.1673,0.0384	Desert_Falcon_7
-hawkhound	0.0000,0.1150,-0.0074	Hawkhound_8
-dragonfang	0.0000,0.0545,0.0302	Dragonfang_150
-shadowstalker	0.0000,0.0166,-0.0305	Rail_1
-honeybadger	0.0000,0.0166,0.0238	
-crossbow	0.0000,0.3180,-0.1467	Arrow_1
-bow_maple	0.1708,0.1742,0.0050	Arrow_Maple_1
-bow_birch	0.1708,0.1742,0.0050	Arrow_Birch_1
-bow_pine	0.1708,0.1742,0.0050	Arrow_Pine_1
-bow_compound	0.1708,0.1742,0.0050	Arrow_1
-launcher_rocket	0.0000,0.2667,-0.0618	Rocket_1
-eaglefire	0.0000,0.0166,0.0238	Military_30
-maplestrike	0.0000,0.0166,0.0238	Military_30
-masterkey	0.0000,0.0574,-0.0663	Shells_2
-empire	0.0000,0.0560,0.0240	Empire_28
-yuri	0.0000,0.0540,0.0100	Yuri_64
-matamorez	0.0000,0.0340,-0.0000	Matamorez_17
-peacemaker	0.0000,0.0470,-0.1100	Peacemaker_50
-viper	0.0000,0.0240,0.0130	Viper_25
-kryzkarek	0.0000,-0.1841,0.0438	Kryzkarek_12
-nailgun	0.0000,0.1750,-0.0000	Nailgun_20
-paintballgun	0.0000,0.0170,-0.1230	
-teklowvka	0.0000,0.0830,0.0660	Teklowvka_15
-fury	0.2120,0.0000,-0.0180	Fury_250
-vonya	0.0000,0.0390,0.0140	Vonya_7
-bulldog	0.0000,-0.0020,0.0660	Bulldog_45
-fusilaut	0.0000,-0.4540,0.0220	
-card	0.0000,0.0850,-0.0140	Card_71
-ekho	0.0360,0.0940,-0.2263	Ekho_7
-quadbarrel	0.0000,0.0574,-0.0663	Shells_8
-shadowstalkermk2	0.0000,0.0166,-0.0305	ShadowstalkerMk2_20
-scalar	0.0000,0.1150,0.1060	Scalar_30
-luger	0.0000,-0.1947,0.0599	Luger_9
-mp40	0.0000,0.0940,0.0240	MP40_32
-determinator	0.0000,-0.1255,-0.0396	Shells_8
-bane	0.0000,-0.0151,0.0140	Bane_21
-swissgewehr	-0.0000,0.0130,0.0720	Swissgewehr_20
-rifle_birch	0.0000,0.0568,-0.0272	
-rifle_pine	0.0000,0.0568,-0.0272	
-rifle_maple	0.0000,0.0568,-0.0272	
+cobra	-0.0000,-0.1849,0.0800	Cobra_20
+zubeknakov	-0.0000,-0.0310,0.0140	Ranger_35
+grizzly	-0.0000,0.0250,-0.0180	Grizzly_5
+timberwolf	-0.0000,0.0733,-0.0004	Timberwolf_6
+sabertooth	-0.0000,0.0540,0.0340	Sabertooth_10
+colt	-0.0000,-0.1841,0.0438	Colt_7
+snayperskya	-0.0000,0.0600,0.0220	Snayperskya_7
+ace	-0.0024,-0.1255,-0.0402	Ace_6
+augewehr	-0.0000,-0.4678,0.0392	
+avenger	-0.0000,-0.2033,0.0425	Avenger_13
+bluntforce	-0.0000,0.1843,-0.0695	Shells_8
+nightraider	-0.0000,0.0230,0.0550	
+heartbreaker	0.0000,0.0400,0.0530	
+nykorev	-0.0000,0.0218,0.0302	Nykorev_200
+sportshot	-0.0000,0.0280,0.0450	Sportshot_10
+schofield	-0.0000,0.0829,-0.0895	Schofield_5
+sawed_off	-0.0000,0.0574,-0.0663	Shells_2
+desert_falcon	-0.0000,-0.1673,0.0384	Desert_Falcon_7
+hawkhound	-0.0000,0.1150,-0.0074	Hawkhound_8
+dragonfang	-0.0000,0.0545,0.0302	Dragonfang_150
+shadowstalker	-0.0000,0.0166,-0.0305	Rail_1
+honeybadger	-0.0000,0.0166,0.0238	
+crossbow	-0.0000,0.3180,-0.1467	Arrow_1
+bow_maple	-0.1708,0.1742,0.0050	Arrow_Maple_1
+bow_birch	-0.1708,0.1742,0.0050	Arrow_Birch_1
+bow_pine	-0.1708,0.1742,0.0050	Arrow_Pine_1
+bow_compound	-0.1708,0.1742,0.0050	Arrow_1
+launcher_rocket	-0.0000,0.2667,-0.0618	Rocket_1
+eaglefire	-0.0000,0.0166,0.0238	Military_30
+maplestrike	-0.0000,0.0166,0.0238	Military_30
+masterkey	-0.0000,0.0574,-0.0663	Shells_2
+empire	-0.0000,0.0560,0.0240	Empire_28
+yuri	-0.0000,0.0540,0.0100	Yuri_64
+matamorez	-0.0000,0.0340,-0.0000	Matamorez_17
+peacemaker	-0.0000,0.0470,-0.1100	Peacemaker_50
+viper	-0.0000,0.0240,0.0130	Viper_25
+kryzkarek	-0.0000,-0.1841,0.0438	Kryzkarek_12
+nailgun	-0.0000,0.1750,-0.0000	Nailgun_20
+paintballgun	-0.0000,0.0170,-0.1230	
+teklowvka	-0.0000,0.0830,0.0660	Teklowvka_15
+fury	-0.2120,0.0000,-0.0180	Fury_250
+vonya	-0.0000,0.0390,0.0140	Vonya_7
+bulldog	-0.0000,-0.0020,0.0660	Bulldog_45
+fusilaut	-0.0000,-0.4540,0.0220	
+card	-0.0000,0.0850,-0.0140	Card_71
+ekho	-0.0360,0.0940,-0.2263	Ekho_7
+quadbarrel	-0.0000,0.0574,-0.0663	Shells_8
+shadowstalkermk2	-0.0000,0.0166,-0.0305	ShadowstalkerMk2_20
+scalar	-0.0000,0.1150,0.1060	Scalar_30
+luger	-0.0000,-0.1947,0.0599	Luger_9
+mp40	-0.0000,0.0940,0.0240	MP40_32
+determinator	-0.0000,-0.1255,-0.0396	Shells_8
+bane	-0.0000,-0.0151,0.0140	Bane_21
+swissgewehr	0.0000,0.0130,0.0720	Swissgewehr_20
+rifle_birch	-0.0000,0.0568,-0.0272	
+rifle_pine	-0.0000,0.0568,-0.0272	
+rifle_maple	-0.0000,0.0568,-0.0272	

@@ -61,11 +61,16 @@ namespace UnturnedGodot
             var basis = Basis.Identity;
             float ang = Vector3.Back.AngleTo(n);
             if (ang > 1e-4f) basis = ang > Mathf.Pi - 1e-4f ? new Basis(Vector3.Right, Mathf.Pi) : new Basis(Vector3.Back.Cross(n).Normalized(), ang);   // turn the quad's +Z onto the leaf's normal
-            var glass = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.70f, 0.78f, 0.35f), Metallic = 0.3f, Roughness = 0.1f,
-                                                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // == Vehicle's window glass
-            var pane = new MeshInstance3D { Name = "Glass", Mesh = new QuadMesh { Size = _glassSize }, MaterialOverride = glass,
-                                            Transform = new Transform3D(basis, -_pivotLocal + _glassCentre), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-            if (_cull > 0f) pane.VisibilityRangeEnd = _cull;
+            // A REAL PANE, not a decorative quad (master 2026-09-07: "make the cooler glass destructable"). This was a
+            // plain MeshInstance3D with a glass-looking material: no body, no collider, no health, so a bullet went
+            // straight through the front of a display cooler and nothing happened. GlassPane is the same thing every
+            // building window and vehicle window already is -- it takes damage, shatters into shards, and picks up the
+            // rain-on-glass shader for free. Its mesh is a BOX (a pane has thickness) whose big face is on Z, which is
+            // the same axis the quad's +Z used, so the basis that turns +Z onto the leaf normal is unchanged.
+            var pane = GlassPane.Build(_glassSize, new Color(0.55f, 0.70f, 0.78f), hp: 1f, thickness: 0.03f);
+            pane.Name = "Glass";
+            pane.Transform = new Transform3D(basis, -_pivotLocal + _glassCentre);
+            pane.CullDistance = _cull;
             _pivot.AddChild(pane);
         }
         MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)

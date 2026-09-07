@@ -43,6 +43,9 @@ namespace UnturnedGodot
         }
 
         MeshInstance3D _mesh;
+        /// <summary>Distance-cull the pane's mesh (the body and its collider stay -- a pane you cannot see is still a
+        /// pane you can shoot). Props set this; a window in a wall does not.</summary>
+        public float CullDistance { set { if (_mesh != null && GodotObject.IsInstanceValid(_mesh) && value > 0f) { _mesh.VisibilityRangeEnd = value; } } }
         /// <summary>Rain-on-glass shelter for THIS pane (the shader's per-instance `covered`): true = no rain reaches it, so no
         /// beads or runners. A pane cannot tell an exterior window from a window-shaped opening in an interior partition -- the
         /// wall that spawned it can (WallSurface: 0.50 partition vs 0.70 exterior thickness, the editor's own convention), so

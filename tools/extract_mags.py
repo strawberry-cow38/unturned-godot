@@ -7,8 +7,13 @@ Two outputs, one bundle load (opening core.masterbundle is the slow part):
                              maplestrike, Shells_8 three shotguns).
   content/guns_maghook.tsv   <gun>\t<x,y,z>  the Magazine child hook off each gun's item.prefab, port frame.
 
-Conventions copied from extract_attachment_mesh.py / extract_sightview_hooks.py rather than reinvented: UnityPy's
-OBJ export has ALREADY flipped X, so only Z is negated here, and the winding is reversed to match.
+⚠ AXES: the port frame is (-x, y, -z) from Unity, for the MESH VERTS and the HOOKS alike. I first copied
+extract_attachment_mesh.py's "negate Z only", on the belief that UnityPy's OBJ export already flips X -- it does
+NOT, and every magazine came out mirrored (master 2026-09-07: "all our mags are mirrored horizontally lol").
+Checked rather than argued: extracting the eaglefire's own Model_0 through this tool and diffing it against the
+shipped, known-correct eaglefire_gun.txt gives 430 verts either way, Y and Z identical to 4dp, and X exactly
+negated. Two negations is a ROTATION, not a mirror, so the winding is NOT reversed -- reversing it was the
+companion mistake to the missing X flip.
 """
 import UnityPy, numpy as np, os, re, sys
 
@@ -72,7 +77,7 @@ def extract_mesh(prefab, out_path):
             if not p: continue
             if p[0] == "v":
                 w = M @ np.array([float(p[1]), float(p[2]), float(p[3]), 1.0])
-                Vs.append((w[0], w[1], -w[2]))
+                Vs.append((-w[0], w[1], -w[2]))
             elif p[0] == "vt":
                 Ts.append((float(p[1]), float(p[2])))
             elif p[0] == "f":
@@ -82,7 +87,7 @@ def extract_mesh(prefab, out_path):
                     vi = int(a[0]) + vb
                     ti = (int(a[1]) + tb) if len(a) > 1 and a[1] else None
                     idx.append((vi, ti))
-                idx.reverse()   # Z negate flips handedness -> reverse the winding
+                # NO winding reversal: negating X and Z is a 180-degree turn, which preserves handedness.
                 Fs.append(idx)
     with open(out_path, "w") as f:
         f.write("g Model_0\n")
@@ -142,7 +147,7 @@ def child_local(gun, child):
 lines, nh = [], 0
 for g in guns:
     h = child_local(g, "Magazine")
-    hp = "%.4f,%.4f,%.4f" % (h[0], h[1], -h[2]) if h else ""   # mount: z-neg, same as the Sight hook
+    hp = "%.4f,%.4f,%.4f" % (-h[0], h[1], -h[2]) if h else ""   # port frame (-x, y, -z), same as the verts
     if hp: nh += 1
     lines.append("%s\t%s\t%s" % (g, hp, gun_mag.get(g, "")))
 open(os.path.join(CONTENT, "guns_maghook.tsv"), "w").write("\n".join(lines) + "\n")
