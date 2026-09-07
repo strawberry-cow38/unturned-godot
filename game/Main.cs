@@ -4351,6 +4351,20 @@ namespace UnturnedGodot
                     GD.Print($"[LAMPTEST] gen={lampGen.IsPowered} desk.recv={deskIn.Live:0}w powered={deskIn.Powered} thru={deskThru.Live:0}w floor.recv={floorIn.Live:0}w powered={floorIn.Powered}");
                 }
                 else GD.Print($"[LAMPTEST] MISSING PORTS gen={lampGen.Ports.Count} desk={desk.Ports.Count} floor={floorLamp.Ports.Count}");
+                // ORIENTATION PROBE, and it runs HEADLESS on purpose: master reports hand-placed standing lamps
+                // upside down, the arithmetic says otherwise, and a render cannot settle it while their game owns the
+                // GPU. The mesh's WORLD aabb is the ground truth -- if the shade is not above the base, the stand-up
+                // is wrong whatever the algebra claims.
+                foreach (var (nm, dep) in new[] { ("desk", desk), ("standing", floorLamp) })
+                {
+                    MeshInstance3D mi = null;
+                    foreach (var ch in dep.GetChildren()) if (ch is MeshInstance3D m && m.Mesh != null) { mi = m; break; }
+                    if (mi == null) { GD.Print($"[LAMPROT] {nm}: no mesh"); continue; }
+                    var xf = mi.GlobalTransform; var ab = mi.Mesh.GetAabb();
+                    float lo = float.MaxValue, hi = float.MinValue;
+                    for (int i = 0; i < 8; i++) { float y = (xf * ab.GetEndpoint(i)).Y; lo = Mathf.Min(lo, y); hi = Mathf.Max(hi, y); }
+                    GD.Print($"[LAMPROT] {nm} StandRotX={DeployableDef.StandRotX} meshEuler={dep.Def.MeshEuler} worldY=[{lo:0.000},{hi:0.000}] basisY={xf.Basis.Y} {(hi > lo && lo > -0.2f ? "UPRIGHT" : "SUSPECT")}");
+                }
                 look = new Vector3(0.2f, 1.0f, 0f);
                 cam.Position = new Vector3(1.4f, 2.2f, 6.4f);
                 cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
