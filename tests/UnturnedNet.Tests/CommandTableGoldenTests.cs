@@ -60,6 +60,10 @@ namespace UnturnedNet.Tests
             // v35: sitting on furniture. 45 was claimed by shelf-take in the same hour, so this took 46 --
             // ids are append-only and the collision was resolved by MOVING, never by sharing a byte.
             [46] = "CommandSitSeat",
+
+            // v37: a PROP door (shipping container, crossing arm). Its own command rather than
+            // CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic.
+            [47] = "CommandToggleObjectDoor",
         };
 
         static Dictionary<byte, string> Actual() =>

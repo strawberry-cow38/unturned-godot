@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("752308000000000000002800"));   // byte[1]=0x23 = Version 35 (v35 mp-seats: CommandSitSeat(46) + EventSeatOccupied(42) + a seat list on the SystemInteractables block; the seat command started life as 45 and MOVED, because shelf-take claimed 45 and v34 in the same hour -- so 0x21 -> 0x22 -> 0x23 in one evening and neither wave reused a byte). Before that 0x21 = Version 33 (v33 oxygen: the owner vitals block gains a fifth normalized vital, server-owned).
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("752508000000000000002800"));   // byte[1]=0x25 = Version 37 (v37 prop doors: CommandToggleObjectDoor(47) + EventObjectDoorState(43) + a prop-door list on the SystemInteractables block -- ONLY the version byte moves here, which is this golden's whole job). Before that 0x24 = v36 (shared containers), 0x23 = v35 (mp-seats), 0x21 = v33 (oxygen).
         }
 
         [Test]

@@ -152,6 +152,7 @@ namespace UnturnedGodot.Net
         /// player if any step is dropped. Grabbing one item is one atomic thing and should cost one message.</summary>
         public const byte CommandTakeFromStorage = 45;   // v34 (see the doc above; the old one-liner here described CommandCraftCancel and was left behind by a copy-paste)
 
+        public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
 
         // EventRegistry id space (server -> client, ReliableOrdered)
@@ -195,6 +196,7 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
         public const byte EventPlayerMelee = 39;
         public const byte EventCookerState = 40;
+        public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
     }

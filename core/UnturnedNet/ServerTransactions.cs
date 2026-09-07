@@ -285,6 +285,14 @@ namespace UnturnedGodot.Net
                 // removed under them. Anything else is a real seat and takes the same reach + occupancy test
                 // an enter-vehicle does, because two clients each deciding they took the same chair is the
                 // failure CommandEnterVehicle's occupancy check exists to stop.
+                // v37: prop doors. Reach and nothing else -- a shipping container has no owner and no lock,
+                // and the re-toggle cooldown is ObjectDoor's own, client-side, where it belongs (a second one
+                // enforced here would fight it at a different rate and eat legitimate presses).
+                commands.Register<ToggleObjectDoorCommand>(ReplicationIds.CommandToggleObjectDoor, ToggleObjectDoorCommand.TryRead,
+                    OnToggleObjectDoor,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _interactables.CanToggleObjectDoor(cmd.NetId, pos));
+
                 commands.Register<SitSeatCommand>(ReplicationIds.CommandSitSeat, SitSeatCommand.TryRead,
                     OnSitSeat,
                     validate: (sender, cmd) => cmd.NetId == 0
@@ -690,6 +698,13 @@ namespace UnturnedGodot.Net
                     new BedClaimedEvent { NetId = released, Owner = 0 }.Write));
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventBedClaimed,
                 new BedClaimedEvent { NetId = cmd.NetId, Owner = sender }.Write));
+        }
+
+        void OnToggleObjectDoor(ushort sender, ToggleObjectDoorCommand cmd)
+        {
+            if (!_interactables.ToggleObjectDoor(cmd.NetId, out bool open)) return;
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventObjectDoorState,
+                new ObjectDoorStateEvent { NetId = cmd.NetId, Open = open }.Write));
         }
 
         void OnSitSeat(ushort sender, SitSeatCommand cmd)

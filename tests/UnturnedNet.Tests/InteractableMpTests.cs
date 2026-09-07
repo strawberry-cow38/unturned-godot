@@ -145,6 +145,73 @@ namespace UnturnedNet.Tests
                         "...and still open to the owner");
         }
 
+        // ---- prop doors (v37): a shipping container, a crossing gate arm ----
+        //
+        // These were purely LOCAL until v37: RequestToggleObjectDoor called ObjectDoor.Toggle and nothing
+        // left the machine. So the checks that matter are that the intent now reaches the server at all, and
+        // that what comes back is the SERVER's answer rather than the sender's optimism.
+
+        const uint ObjDoorId = 801;
+
+        static TransactionalHarness ObjDoorHarness(out NetWorldClient alice, out NetWorldClient bob)
+        {
+            var h = new TransactionalHarness(seed: 91).Connected("alice", "bob");
+            alice = h.Clients[0];
+            bob = h.Clients[1];
+            h.Server.Interactables.RegisterObjectDoor(ObjDoorId, Vector3.zero);
+            PutPlayerAt(h, alice, Vector3.zero);
+            PutPlayerAt(h, bob, Vector3.zero);
+            return h;
+        }
+
+        [Test]
+        public void Opening_A_Container_Is_Seen_By_Everyone_Else()
+        {
+            var h = ObjDoorHarness(out var alice, out var bob);
+            ObjectDoorStateEvent? atBob = null;
+            bob.ObjectDoorState += e => atBob = e;
+
+            alice.SendToggleObjectDoor(ObjDoorId);
+            Assert.That(h.StepUntil(() => atBob.HasValue), Is.True,
+                        "the swing reaches the OTHER player -- the whole point, since the leaf is a solid collider");
+            Assert.That(atBob.Value.NetId, Is.EqualTo(ObjDoorId));
+            Assert.That(atBob.Value.Open, Is.True);
+            Assert.That(h.Server.Interactables.IsObjectDoorOpen(ObjDoorId), Is.True);
+        }
+
+        [Test]
+        public void A_Second_Toggle_Shuts_It_Again()
+        {
+            var h = ObjDoorHarness(out var alice, out _);
+            alice.SendToggleObjectDoor(ObjDoorId);
+            Assert.That(h.StepUntil(() => h.Server.Interactables.IsObjectDoorOpen(ObjDoorId)), Is.True);
+            alice.SendToggleObjectDoor(ObjDoorId);
+            Assert.That(h.StepUntil(() => !h.Server.Interactables.IsObjectDoorOpen(ObjDoorId)), Is.True,
+                        "it is a TOGGLE, not a latch -- a door that could only open is half a feature");
+        }
+
+        [Test]
+        public void A_Container_Across_The_Map_Is_Refused()
+        {
+            var h = ObjDoorHarness(out var alice, out _);
+            PutPlayerAt(h, alice, new Vector3(200f, 0f, 0f));
+            alice.SendToggleObjectDoor(ObjDoorId);
+            h.Step(40);
+            Assert.That(h.Server.Interactables.IsObjectDoorOpen(ObjDoorId), Is.False,
+                        "reach is the server's business, whatever the client believes it is standing next to");
+        }
+
+        [Test]
+        public void The_Snapshot_Carries_The_Door_So_A_Late_Joiner_Is_Not_Wrong()
+        {
+            // Without the table in the block, a client joining after someone opened a container renders it
+            // SHUT -- and then collides with a leaf every other player can see is out of the way.
+            var h = ObjDoorHarness(out var alice, out var bob);
+            alice.SendToggleObjectDoor(ObjDoorId);
+            Assert.That(h.StepUntil(() => bob.InteractableState.ObjectDoorOpen(ObjDoorId)), Is.True,
+                        "the snapshot names it open, not just the event");
+        }
+
         // ---- seats (v35): sitting on furniture ----
         //
         // The rules are the vehicle's, one chair at a time, and the reason is the same: two clients each

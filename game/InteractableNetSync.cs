@@ -36,6 +36,9 @@ namespace UnturnedGodot
         // and door 1 can never be confused. Tracked beside the node for the same reason the others are: the
         // id is what deregisters it, and by then the node may be gone.
         readonly List<(uint NetId, PropSeat Node)> _seats = new List<(uint, PropSeat)>();
+        // v37: PROP doors -- a shipping container's, a crossing arm's. One entry per door ASSEMBLY, not per
+        // leaf: see ObjectDoor.GroupLead for why a per-leaf table cannot hold a wardrobe's state coherently.
+        readonly List<(uint NetId, ObjectDoor Node)> _objectDoors = new List<(uint, ObjectDoor)>();
 
         /// <summary>Ids start at 1: 0 is the "not replicated, this is a singleplayer node" sentinel every
         /// other node in this codebase uses, and a door with NetId 0 must never be routable.</summary>
@@ -51,6 +54,7 @@ namespace UnturnedGodot
         public int DoorCount => _doors.Count;
         public int BedCount => _beds.Count;
         public int SeatCount => _seats.Count;
+        public int ObjectDoorCount => _objectDoors.Count;
 
         /// <summary>Server-side barricade damage along a bullet/melee segment (ServerCombat's
         /// DamageBarricadeAlong seam). Returns true if it hit a door or bed.
@@ -78,7 +82,7 @@ namespace UnturnedGodot
 
         void RegisterWorld(Node root)
         {
-            uint doorId = FirstId, bedId = FirstId, seatId = FirstId;
+            uint doorId = FirstId, bedId = FirstId, seatId = FirstId, objDoorId = FirstId;
             foreach (var node in Walk(root))
             {
                 if (node is Door d)
@@ -95,6 +99,17 @@ namespace UnturnedGodot
                     var p = b.GlobalPosition;
                     _server.Interactables.RegisterBed(b.NetId, new UVector3(p.X, p.Y, p.Z), b.RotationDegrees.Y);
                 }
+                else if (node is ObjectDoor od)
+                {
+                    // ONLY the group lead. Skipping the others is what keeps the id sequence deterministic
+                    // across peers AND keeps one bit per assembly -- both halves matter, and the client's
+                    // StampNetIds skips them by the same test.
+                    if (od.GroupLead != od) continue;
+                    od.NetId = objDoorId++;
+                    _objectDoors.Add((od.NetId, od));
+                    var p = od.GlobalPosition;
+                    _server.Interactables.RegisterObjectDoor(od.NetId, new UVector3(p.X, p.Y, p.Z), od.IsOpen);
+                }
                 else if (node is PropSeat ps)
                 {
                     // The registered position is the seat ANCHOR, not the node's own transform, so the reach
@@ -107,7 +122,7 @@ namespace UnturnedGodot
                     _server.Interactables.RegisterSeat(ps.NetId, new UVector3(p.X, p.Y, p.Z));
                 }
             }
-            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {_seats.Count} seat(s) as server-authoritative");
+            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {_seats.Count} seat(s) + {_objectDoors.Count} prop door(s) as server-authoritative");
         }
 
         void SeedDeadzones(DeadzoneField field)
@@ -169,6 +184,22 @@ namespace UnturnedGodot
                 if (GodotObject.IsInstanceValid(node)) continue;
                 _server.Interactables.RemoveSeat(netId);
                 _seats.RemoveAt(i);
+            }
+
+            // The server runs a real world too, so its OWN prop doors have to swing -- a container that every
+            // client sees standing open must not still be a solid leaf to a server-side bullet. Same mirror
+            // the building doors above get, and the same reason.
+            for (int i = _objectDoors.Count - 1; i >= 0; i--)
+            {
+                var (netId, node) = _objectDoors[i];
+                if (!GodotObject.IsInstanceValid(node))
+                {
+                    _server.Interactables.RemoveObjectDoor(netId);
+                    _objectDoors.RemoveAt(i);
+                    continue;
+                }
+                bool open = _server.Interactables.IsObjectDoorOpen(netId);
+                if (node.IsOpen != open) node.ApplyReplicatedOpen(open);
             }
         }
     }

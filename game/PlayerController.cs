@@ -4328,6 +4328,7 @@ namespace UnturnedGodot
         public System.Action<uint, bool> NetSetDoorLocked;           // (door NetId, locked) -> Client.SendSetDoorLocked
         public System.Action<uint> NetClaimBed;                      // bed NetId -> Client.SendClaimBed
         public System.Action<uint> NetSitSeat;                       // seat NetId (0 = stand) -> Client.SendSitSeat
+        public System.Action<uint> NetToggleObjectDoor;              // prop-door assembly NetId -> Client.SendToggleObjectDoor
 
         VehiclePuppet NearestPuppet()
         {
@@ -5390,6 +5391,13 @@ namespace UnturnedGodot
         public bool RequestToggleObjectDoor(ObjectDoor d)
         {
             if (d == null || !IsInstanceValid(d)) return false;
+            // MP (v37): ASK. Before this the toggle was purely local, so a shipping container someone opened
+            // stayed shut on every other screen -- and its leaf keeps a solid collider, so you also walked
+            // into a door nobody else could see. Addressed by the door ASSEMBLY (GroupLead), never a leaf:
+            // SetOpen brings a multi-leaf prop's siblings along, so one bit per assembly is the only shape
+            // that cannot contradict itself. Null in SP/loopback -> the direct path below is unchanged.
+            var lead = d.GroupLead;
+            if (lead.NetId != 0 && NetToggleObjectDoor != null) { NetToggleObjectDoor(lead.NetId); return true; }
             return d.Toggle();
         }
 

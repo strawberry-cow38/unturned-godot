@@ -711,6 +711,9 @@ namespace UnturnedGodot.Net
         /// <summary>A furniture seat's occupant changed (0 = freed). The game side moves the player or the
         /// puppet; core only carries the fact.</summary>
         public event System.Action<SeatOccupiedEvent> SeatOccupied;
+        /// <summary>A prop door swung (shipping container, crossing arm). The game side owns the ObjectDoor
+        /// nodes; core only carries the bit.</summary>
+        public event System.Action<ObjectDoorStateEvent> ObjectDoorState;
 
         /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
         /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
@@ -815,6 +818,8 @@ namespace UnturnedGodot.Net
             // out. The snapshot's seat table is the join answer; this is the low-latency path.
             Events.Register<SeatOccupiedEvent>(ReplicationIds.EventSeatOccupied, SeatOccupiedEvent.TryRead,
                 e => SeatOccupied?.Invoke(e));
+            Events.Register<ObjectDoorStateEvent>(ReplicationIds.EventObjectDoorState, ObjectDoorStateEvent.TryRead,
+                e => ObjectDoorState?.Invoke(e));
             // Avatar bytes. ClientAcceptAvatar RE-VALIDATES the header and RECOMPUTES the hash rather than
             // believing either: this is the last point before something hands the bytes to an image decoder,
             // and a client that trusts whatever a server sends is a client a hostile server owns.
@@ -1150,6 +1155,12 @@ namespace UnturnedGodot.Net
         /// strength of having sent this: the answer is EventSeatOccupied, because the seat may have been
         /// taken between the ask and the arrival, and a client that sat optimistically would have to be
         /// yanked back out of a chair someone else is already in.</summary>
+        /// <summary>Ask to swing a prop door. The client does NOT swing it locally on the strength of having
+        /// sent this -- ObjectDoorState comes back and the node adopts it, so one truth reaches every screen
+        /// including the sender's.</summary>
+        public bool SendToggleObjectDoor(uint netId)
+            => SendCommand(ReplicationIds.CommandToggleObjectDoor, new ToggleObjectDoorCommand { NetId = netId }.Write);
+
         public bool SendSitSeat(uint netId)
             => SendCommand(ReplicationIds.CommandSitSeat, new SitSeatCommand { NetId = netId }.Write);
 
