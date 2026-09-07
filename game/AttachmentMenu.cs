@@ -180,6 +180,16 @@ namespace UnturnedGodot
             // strawberry reported twice, and it is why the local-only path below cannot be the whole story.
             if (Player != null && Player.InventoryIsServerOwned)
             {
+                // NEVER SPEND WHAT WE CANNOT RECORD. The order below is: ask the server to destroy the clicked
+                // attachment, THEN write the fitted id onto the gun's backing item. But SetInstalledId no-ops on a
+                // null gun (AttachmentFit.SetInstalledId's first line), so with no backing item the attachment is
+                // consumed server-side and nothing anywhere remembers it was fitted -- the click "does nothing" and
+                // the item is gone. A refusal you can read beats a silent loss.
+                if (Player.HeldItemForTest == null)
+                {
+                    HUD.Alert("Re-equip the gun first");
+                    return false;
+                }
                 // The displaced attachment cannot be returned server-side: there is no intent that ADDS an item
                 // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
                 // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
