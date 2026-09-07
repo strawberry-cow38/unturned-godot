@@ -162,6 +162,13 @@ namespace UnturnedGodot.Net
             // off), not a stream you can resample: a dropped one leaves the bar stuck at the wrong height.
             Cooking.StateChanged = (netId, on, fuel) =>
             {
+                // THE LIT BIT GOES TO EVERYONE, and it has to be published BEFORE the opener-only guard below
+                // rather than inside it. The fuel BAR is a panel readout and rightly costs nothing for an
+                // appliance nobody has open; a lit barbecue's raised lid and smoke are things you are meant to
+                // see from across a field, and gating them on "somebody has this open" would mean an appliance
+                // only smokes while a player is standing in its inventory -- which is the one moment nobody is
+                // looking at it from a distance (master 2026-09-07: "so make cooking state serverside").
+                Containers.ServerSetCookerOn(netId, on, Session.CurrentTick);
                 if (!Inventories.TryGetCrate(netId, out var crate) || !crate.IsOpen) return;
                 var evt = new CookerStateEvent { NetId = netId, On = on, Fuel = fuel };
                 var pak = NetMessagePak.Pack(ReplicationIds.EventCookerState, evt.Write);
