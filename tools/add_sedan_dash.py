@@ -29,6 +29,7 @@ import sys
 BODY = "game/content/sedan_body.txt"
 STEER = "game/content/sedan_steer.txt"
 GLASS = "game/content/sedan_glass_windshield.txt"
+DOOR = "game/content/sedan_glass_r_front.txt"   # cut to the A-pillar: its leading edge IS the pillar's angle
 SPEC = "game/Vehicle.cs"
 EPS = 1e-3
 
@@ -201,12 +202,26 @@ def rerake_glass(g):
     # out, which is the complaint that started all this.
     zs = [v[2] for v in V if abs(v[1] - topY) < EPS and abs(abs(v[0]) - innerX) < EPS and v[2] < -0.5]
     if not zs: return None, "no pillar faces at the header height"
-    slope = (max(zs) - screenZ) / (topY - seamY)         # the REAR edge: the pillar's own angle
-    # ...slid forward onto the pillar's FRONT face (master: "fwd more"). Half a pillar-depth put it on the centre
-    # line; a full one puts it on the front face, which is the last landmark there is -- past this the pane is
-    # forward of the pillar altogether and no longer in the frame. Its base lands at -1.373, still on the dash
-    # top (which runs -1.461..-0.998), so the screen still meets the cowl rather than hanging off the front of it.
-    shift = min(zs) - max(zs)                            # negative = forward
+    frontZ, rearZ = min(zs), max(zs)
+    depth = rearZ - frontZ                               # the pillar's thickness at the header
+
+    # THE ANGLE COMES OFF THE DOOR PANE, which is cut to this very pillar. Its leading edge is a slight CURVE, not
+    # one line: the middle segment is 0.550 (what I shipped first) and the chord of the whole sloping run is
+    # 0.625, which is the one master picked. Measured here rather than typed, so it stays tied to the part it came
+    # from -- and the first 55 mm of that edge is VERTICAL, so the chord has to start where z begins to change.
+    dv = [[float(x) for x in l.split()[1:4]] for l in io.open(DOOR, encoding="utf-8") if l.startswith("v ")]
+    dv = [v for v in dv if v[1] <= topY + 0.05]          # below the header: the pillar run, not the roof rail
+    if len(dv) < 2: return None, "door pane has no pillar run to measure"
+    zmin = min(v[2] for v in dv)
+    startY = max(v[1] for v in dv if abs(v[2] - zmin) < EPS)   # top of the vertical foot
+    top = max(dv, key=lambda v: v[1])
+    if top[1] - startY < EPS: return None, "door pane's leading edge has no rise"
+    slope = (top[2] - zmin) / (top[1] - startY)
+
+    # POSITION: a QUARTER of the pillar's depth back from its FRONT face (master: front face, then "move back
+    # slightly"). Half a depth is the centre line and a full one is the rear face, so a quarter is the smallest
+    # step that is still a fraction of the same ruler rather than a number picked out of the air.
+    shift = -depth * 0.75                                # negative = forward, from the rear face
     botZ = screenZ + shift
     topZ = botZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
@@ -216,16 +231,16 @@ def rerake_glass(g):
         return None, "glass       already on the pillar's angle, centred"
     xs = sorted({round(v[0], 6) for v in gv})
     head = [l.rstrip("\n") for l in io.open(GLASS, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
-    head.append("# RE-RAKED by tools/add_sedan_dash.py: the A-PILLAR'S REAR-EDGE ANGLE, slid forward to pass through")
-    head.append("# the middle of the pillar. Angle and position are separate -- taking the angle off the midline")
-    head.append("# instead flattens the screen, because a wedge's midline is shallower than either of its faces.")
+    head.append("# RE-RAKED by tools/add_sedan_dash.py: angle = the chord of sedan_glass_r_front's leading edge (that")
+    head.append("# door pane is cut to this same A-pillar); position = a quarter of the pillar's depth back from its")
+    head.append("# front face. Angle and position are separate -- re-deriving one while moving the other flattens it.")
     head.append("# Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.")
     for x, y, z in ((xs[0], seamY, botZ), (xs[-1], seamY, botZ), (xs[-1], topY, topZ), (xs[0], topY, topZ)):
         head.append("v %.6f %.6f %.6f" % (x, y, z))
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
-    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (pillar rear edge), slid %.3f forward" % (
-        seamY, botZ, topY, topZ, slope, -shift)
+    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (door-pane chord), %.3f back from the front face" % (
+        seamY, botZ, topY, topZ, slope, depth * 0.25)
 
 
 def main():
