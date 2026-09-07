@@ -27,8 +27,10 @@ namespace UnturnedGodot
         public string BlockedReason => _reason;
         public bool AimValid => _reason == null;
 
-        static readonly Color OkTint = new(0.35f, 0.75f, 1f, 0.38f);
-        static readonly Color BadTint = new(1f, 0.30f, 0.25f, 0.38f);
+        // Same transparency pass as the deployable ghost (master 2026-09-07) -- double-sided and unshaded, so
+        // 0.38 read as ~0.62 of solid tint over the ground you are trying to line the piece up with.
+        static readonly Color OkTint = new(0.35f, 0.75f, 1f, 0.22f);
+        static readonly Color BadTint = new(1f, 0.30f, 0.25f, 0.22f);
 
         public override void _Ready()
         {
@@ -80,11 +82,19 @@ namespace UnturnedGodot
             if (!TryAim(out Vector3 world)) return;
 
             var c = Construct;
-            var (snapped, yaw) = StructureCatalog.Snap(world, c);
+            var sm = StructureManager.Instance;
+            // FOLLOW THE TERRAIN. Snap the preview on the SAME storey anchor the manager will use to place it --
+            // CanPlace and Place both pass LevelAnchorY, this called Snap's DEFAULT anchor of 0, i.e. sea level.
+            // So on any ground that is not at y=0 the blueprint drew itself at the nearest absolute multiple of
+            // WallHeight (4.25 m): up to 2.125 m of float or burial on a hillside, while the piece it was
+            // previewing landed on the ground you aimed at. The manager was fixed for exactly this (see the
+            // anchorY doc on StructureCatalog.Snap) and the preview was left behind, so blueprint and result
+            // disagreed about height everywhere except sea level. NaN back from LevelAnchorY means "nothing to
+            // build onto here yet" -> the ghost takes the terrain height under the cursor and rides the slope.
+            var (snapped, yaw) = StructureCatalog.Snap(world, c, sm == null ? float.NaN : sm.LevelAnchorY(world));
             _ghost.GlobalPosition = snapped + Vector3.Up * StructureCatalog.PivotOffset(c);
             _ghost.RotationDegrees = new Vector3(0f, yaw, 0f);
 
-            var sm = StructureManager.Instance;
             _reason = sm == null ? null : (sm.CanPlace(world, c, Tier, out var why) ? null : why);
             _mat.AlbedoColor = _reason == null ? OkTint : BadTint;
         }

@@ -658,7 +658,13 @@ namespace UnturnedGodot
                     // and callers refund materials off that number -- then re-serialised as 7 forever.
                     int tier = Mathf.Clamp(r["t"].GetInt32(), 0, StructureCatalog.TierCount - 1);
                     var pos = new Vector3(r["x"].GetSingle(), r["y"].GetSingle(), r["z"].GetSingle());
-                    var (snapped, yaw) = StructureCatalog.Snap(pos, c);
+                    // Y comes back off disk AS SAVED. The XZ re-snap is a cheap tidy-up for hand-edited or
+                    // pre-lattice rows, but Snap's default anchor is sea level, so re-snapping the height
+                    // re-rounded every stored Y to an absolute multiple of WallHeight: a base founded on a
+                    // hillside at y=12 reloaded at 12.75, floating three quarters of a metre off its own
+                    // ground, and was then re-serialised there. Anchoring on the row's own Y is identity for
+                    // the height and leaves the XZ normalisation exactly as it was.
+                    var (snapped, yaw) = StructureCatalog.Snap(pos, c, pos.Y);
                     var t = StructureCatalog.TierAt(tier);
                     var node = BuildNode(c, t, snapped, yaw);
                     AddChild(node);

@@ -18,8 +18,13 @@ namespace UnturnedGodot
         Aabb _localAabb;
         StandardMaterial3D _arrowMat;   // shared by the ghost's in/out port arrows; recoloured blue/red with validity
 
-        public static readonly StandardMaterial3D ValidMat = Ghost(new Color(0.30f, 0.62f, 1f, 0.45f));   // blue
-        public static readonly StandardMaterial3D InvalidMat = Ghost(new Color(1f, 0.28f, 0.28f, 0.45f)); // red
+        // Alpha 0.25, not 0.45 (master 2026-09-07: "make deployable placement ghosts more transparent"). The
+        // ghost is DOUBLE-SIDED and unshaded, so you look through the near face AND the far one: apparent
+        // coverage is 1-(1-a)^2, which made 0.45 read as a 0.70 solid blob you could not see the ground through.
+        // 0.25 lands at 0.44 -- still unmistakably there, but you can now see what you are placing it ON.
+        // Shared with BarricadePlacer, so wall/sticky mounts get the same weight.
+        public static readonly StandardMaterial3D ValidMat = Ghost(new Color(0.30f, 0.62f, 1f, 0.25f));   // blue
+        public static readonly StandardMaterial3D InvalidMat = Ghost(new Color(1f, 0.28f, 0.28f, 0.25f)); // red
 
         static StandardMaterial3D Ghost(Color c) => new()
         {
