@@ -133,7 +133,24 @@ namespace UnturnedGodot.Net
         /// BBCode, so a name is a place someone can put [img]https://attacker/x[/img].</summary>
         public const byte CommandSetProfile = 42;
         public const byte CommandSetCookerOn = 43;   // v28: the oven/toaster/microwave/bbq on-off button (strawberry 2026-09-05)
-        public const byte CommandCraftCancel = 44;   // v32: give up on a queued craft and take the ingredients back
+        public const byte CommandCraftCancel = 44;
+
+        /// <summary>Take ONE item straight off a container's display shelf (v34), addressed by the crate's
+        /// NetId and the item's cell in that crate's grid.
+        ///
+        /// The smart shelves show their contents as real models you can look at and press F on, and that grab
+        /// was a purely LOCAL edit: it removed the jar from the client's StoreShelf.Storage and added it to the
+        /// client's bag. Both halves are display mirrors in multiplayer -- the shelf's grid is rebuilt from the
+        /// server's display digest, and the bag is rebuilt from the owner echo -- so the item came back onto the
+        /// shelf and never arrived in the bag (master 2026-09-07: "multiplayer doesnt understand taking items
+        /// off smart shelves"). Exactly the failure v15/v16 documented for the other three grid mutations the
+        /// client used to make on its own.
+        ///
+        /// A distinct intent rather than open+move+close, which is the other way to say this with the ids that
+        /// already exist: that sequence needs the STORAGE page echo to land before the move can be addressed,
+        /// so it is a three-message state machine that leaves the container LOCKED OPEN against every other
+        /// player if any step is dropped. Grabbing one item is one atomic thing and should cost one message.</summary>
+        public const byte CommandTakeFromStorage = 45;   // v32: give up on a queued craft and take the ingredients back
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)

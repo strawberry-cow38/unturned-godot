@@ -2258,6 +2258,100 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // F ON AN ITEM SITTING ON A SHELF (v34). The smart shelves draw their contents as real models you can look
+    // at and grab, and that grab used to be a purely LOCAL edit at BOTH ends of the transfer -- the client
+    // removed the jar from its own StoreShelf.Storage and added it to its own bag, while in multiplayer the
+    // shelf grid is rebuilt from the server's display digest and the bag from the owner echo. So the item went
+    // back on the shelf and never arrived (master 2026-09-07: "multiplayer doesnt understand taking items off
+    // smart shelves").
+    //
+    // The property that separates this from open+move+close, and the reason it is its own intent: the container
+    // is NEVER OPENED. Taking one tin off a shelf must not evict a player standing in the container, and must
+    // not leave the taker holding it open if a message is dropped. (c) is that assertion.
+    public class NetShellTakeFromShelf : GameTest
+    {
+        public override string Name => "net.shell_take_from_shelf";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        static bool BagHas(InventoryReplication.PlayerEntry inv, ushort id)
+        {
+            if (inv?.Inventory == null) return false;
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
+            {
+                var pg = inv.Inventory.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                    if (pg.getItem(i)?.item?.id == id) return true;
+            }
+            return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260907);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "shopper" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            T.Check("seeded the fixture kit into the server grid", Rigs.SeedServerKit(ded, sess));
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("the server tracks this player's inventory", sHave);
+            yield return Ticks(10);
+
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            // IN reach (the open path's StorageReach), holding one bean can at a known cell
+            var shelf = ded.Server.Inventories.ServerRegisterCrate(ded.Server.Ids.Mint(), 5, 4,
+                ToU(sess.Shell.GlobalPosition + fwd * 2f));
+            shelf.Storage.tryAddItem(new Item(13));
+            var jar = shelf.Storage.getItem(0);
+            byte cx = jar.x, cy = jar.y;
+
+            T.Check("the take request fired through the NetTakeFromStorage seam",
+                    sess.Shell.RequestTakeFromStorage(shelf.NetIdValue, cx, cy));
+            yield return Until(() => shelf.Storage.getItemCount() == 0, 5);
+            T.Check("(a) the server took it OFF the shelf", shelf.Storage.getItemCount() == 0);
+            T.Check("(b) ...and put it in the taker's own bag", BagHas(sInv, 13));
+            T.Check("(c) the container was never OPENED -- a grab is not an open", shelf.OpenBy == 0);
+            T.Check("(d) the taker's STORAGE page stayed empty (no dashboard hijack)",
+                    sess.Shell.Inventory.items[PlayerInventory.STORAGE].width == 0);
+
+            // OUT of reach: a model can be seen much further than an arm reaches, so the cell is the client's
+            // to name and the distance is the server's to judge.
+            var far = ded.Server.Inventories.ServerRegisterCrate(ded.Server.Ids.Mint(), 5, 4,
+                ToU(sess.Shell.GlobalPosition + fwd * 60f));
+            far.Storage.tryAddItem(new Item(13));
+            var fj = far.Storage.getItem(0);
+            sess.Shell.RequestTakeFromStorage(far.NetIdValue, fj.x, fj.y);
+            yield return Ticks(30);
+            T.Check("(e) an out-of-reach shelf refused -- the item stayed on it", far.Storage.getItemCount() == 1);
+
+            // An EMPTY cell is a refusal, not a licence to take whatever else is in the grid.
+            shelf.Storage.tryAddItem(new Item(13));
+            var occupied = shelf.Storage.getItem(0);
+            byte ex = (byte)(occupied.x == 4 ? 0 : 4);
+            sess.Shell.RequestTakeFromStorage(shelf.NetIdValue, ex, 3);
+            yield return Ticks(30);
+            T.Check("(f) a stale/empty cell took nothing", shelf.Storage.getItemCount() == 1);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // Phase 6/8 client seams: the connect shell OPENS A CRATE -- RequestOpenStorage/NetOpenStorage; the
     // server arbitrates (one opener), loads the crate grid into the opener's STORAGE page, and the
     // StorageOpened fact + owner echo bring the dashboard + grid back. Then a crate->bag drag rides the

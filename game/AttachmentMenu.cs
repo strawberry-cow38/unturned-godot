@@ -111,6 +111,7 @@ namespace UnturnedGodot
                         // would hide most of the arsenal from a menu whose whole job is showing what you own.
                         if (mesh != null) VM.SetSlotMesh(sl, mesh);
                         else if (VM.SlotHasModel(sl)) VM.SetSlotAttached(sl, true);
+                        Player?.NoteAttachmentChanged();     // the gun's item just changed -- tell the server before the next grid move repaints over it
                         Player?.PlaySelectorSwitchSound();   // attach click (source: shared firemode/selector sound)
                         Refresh();
                     }, rounds: rounds, vertical: isMag));
@@ -149,6 +150,7 @@ namespace UnturnedGodot
             // picture stayed live and the next mount landed on a hidden node -> "the scope slot is never freed" (master).
             if (installed >= 0 && slot == "Sight" && !string.IsNullOrEmpty(VM.DefaultSightTxt)) VM.SetSlotMesh("Sight", VM.DefaultSightTxt);
             else VM.SetSlotAttached(slot, false);
+            Player?.NoteAttachmentChanged();     // same as the fit above: the slot is empty on the ITEM now, and only the server's copy counts
             Player?.PlaySelectorSwitchSound();   // detach click (source: shared firemode/selector sound)
             Refresh();
             return true;

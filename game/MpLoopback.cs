@@ -149,6 +149,7 @@ namespace UnturnedGodot
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
+                Player.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);
                 // B9: the server's StorageOpened fact must open the dashboard on the loopback HOST too (mirrors
                 // ClientWorldSession) -- the host SENDS the open request (above) but must also RECEIVE the
                 // confirmation, else a replicated container's F-open sends but never opens the grid. Latched on

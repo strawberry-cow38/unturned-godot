@@ -24,6 +24,8 @@ namespace UnturnedGodot.Net
         public long MagLoadsApplied;        // one round moved into or out of a magazine
         public long MagLoadsRejected;       // stale slot, wrong item id, rule refused, or a full bag on unload
         public long PickupsDenied;          // legal pickup, full grid -> ItemPickupDenied went back
+        public long ShelfTakesApplied;      // F straight onto an item on a shelf -> it moved into the taker's bag
+        public long ShelfTakesRejected;     // ...out of reach, someone else has the container open, cell empty, or bag full
         public long ReloadsApplied;
         public long ReloadsRejected;        // no magazine at that address / not a magazine
         public long ClothingApplied;
@@ -398,6 +400,18 @@ namespace UnturnedGodot.Net
                         if (isCooker) Cooking.ForceStateSync(cmd.NetId);
                     }
                 });
+
+            // F on an item sitting on a shelf: take THAT one, without opening the container (v34). The grab is
+            // an intent like every other grid mutation -- the client's shelf grid and its bag are both display
+            // mirrors, so the local version of this was undone twice over.
+            commands.Register<TakeFromStorageCommand>(ReplicationIds.CommandTakeFromStorage, TakeFromStorageCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!TryGetSenderPos(sender, out var pos)) return;
+                    if (_inventories.ServerTakeFromStorage(sender, cmd.NetId, cmd.X, cmd.Y, pos, _tick())) Diag.ShelfTakesApplied++;
+                    else Diag.ShelfTakesRejected++;
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _));
 
             commands.Register<CloseStorageCommand>(ReplicationIds.CommandCloseStorage, CloseStorageCommand.TryRead,
                 (sender, cmd) =>

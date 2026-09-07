@@ -1102,6 +1102,9 @@ namespace UnturnedGodot.Net
         public bool SendOpenStorage(uint netId)
             => SendCommand(ReplicationIds.CommandOpenStorage, new OpenStorageCommand { NetId = netId }.Write);
 
+        public bool SendTakeFromStorage(uint netId, byte x, byte y)
+            => SendCommand(ReplicationIds.CommandTakeFromStorage, new TakeFromStorageCommand { NetId = netId, X = x, Y = y }.Write);
+
         public bool SendCloseStorage()
             => SendCommand(ReplicationIds.CommandCloseStorage, new CloseStorageCommand().Write);
 

@@ -344,6 +344,25 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Take the item in ONE cell of a container's grid straight into the sender's bag (v34, id 45).
+    ///
+    /// Addressed by crate NetId + cell, NOT by item id: two identical cans on a shelf are two different objects
+    /// and the player pressed F on one of them. The server still checks what is actually in that cell, so a
+    /// stale cell (someone else took it a tick earlier) is a refusal rather than a grab of whatever moved in.</summary>
+    public struct TakeFromStorageCommand
+    {
+        public uint NetId;
+        public byte X, Y;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt8(X); w.WriteUInt8(Y); }
+        public static bool TryRead(NetPakReader r, out TakeFromStorageCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            cmd = new TakeFromStorageCommand { NetId = id, X = x, Y = y };
+            return true;
+        }
+    }
+
     public struct CloseStorageCommand
     {
         public void Write(NetPakWriter w) { }
@@ -676,6 +695,40 @@ namespace UnturnedGodot.Net
                 CopyPage(crate.Freezer, e.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
             e.Dirty = true;
             return true;
+        }
+
+        /// <summary>Take ONE item out of a container and put it in the sender's own bag -- the server half of
+        /// pressing F on an item sitting on a shelf.
+        ///
+        /// Deliberately does NOT open the crate. Open is arbitration ("this container is mine until I close
+        /// it"), and reaching past a shelf's front to lift one tin is not that: it must not evict whoever has
+        /// the container open, and it must not leave the taker holding it. It DOES refuse while somebody else
+        /// has it open, because that player is editing a copy of this grid in their STORAGE page and close
+        /// copies the whole page back -- taking from underneath them would be undone, or worse, put back.
+        ///
+        /// Reach is checked against the same StorageReach the open path uses: the client picks the cell off a
+        /// model it can see, and a model can be seen from further than an arm reaches.</summary>
+        public bool ServerTakeFromStorage(ushort ownerPlayerId, uint crateId, byte x, byte y, Vector3 senderPos, long tick)
+        {
+            if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return false;
+            if (!_crates.TryGetValue(crateId, out var crate) || crate.Storage == null) return false;
+            if (crate.OpenBy != 0 && crate.OpenBy != ownerPlayerId) return false;   // someone is editing a copy of this grid
+            if ((crate.Pos - senderPos).magnitude > StorageReach) return false;
+            for (byte i = 0; i < crate.Storage.getItemCount(); i++)
+            {
+                var jar = crate.Storage.getItem(i);
+                if (jar == null || jar.x != x || jar.y != y || jar.item == null) continue;
+                // ADD FIRST, REMOVE ONLY ON SUCCESS. A full bag has to leave the item on the shelf; taking it
+                // out and finding nowhere to put it is how an item stops existing (the same order OnPickupItem
+                // uses, and the reason FitAttachmentTo was rewritten).
+                if (e.Inventory.tryAddItemAuto(jar.item, out _) == PlayerInventory.AutoPlace.None) return false;
+                crate.Storage.removeItem(i);
+                // The taker's own bag AND the container's display digest both have to move: the first rides the
+                // owner echo from this flag, the second is re-projected by ContainerNetSync off the changed grid.
+                e.Dirty = true;
+                return true;
+            }
+            return false;   // nothing in that cell -- a stale click, not a licence to take the neighbour
         }
 
         /// <summary>Close = save the STORAGE page back into the crate and clear the view (SP CloseCrate).</summary>

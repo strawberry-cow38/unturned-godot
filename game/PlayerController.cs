@@ -1941,8 +1941,15 @@ namespace UnturnedGodot
             if (_focusShelfItem != null && IsInstanceValid(_focusShelfItem) && _focusShelfItem.Shelf != null)
             {
                 var shelf = _focusShelfItem.Shelf;
-                var grabbed = shelf.GrabItem(_focusShelfItem.CellKey);   // removes it from the grid -> the display syncs the model away
+                int cellKey = _focusShelfItem.CellKey;
                 _focusShelfItem = null;
+                // A REPLICATED shelf's grid is not ours to edit. Its contents are rebuilt from the server's
+                // display digest and our bag is rebuilt from the owner echo, so the local grab below was undone
+                // at BOTH ends -- the tin went back on the shelf and never reached the bag (master 2026-09-07:
+                // "multiplayer doesnt understand taking items off smart shelves"). Ask instead; the two echoes
+                // that used to revert it are the same two that now carry it through.
+                if (RequestTakeFromStorage(shelf.NetId, (byte)(cellKey >> 8), (byte)(cellKey & 0xFF))) return;
+                var grabbed = shelf.GrabItem(cellKey);   // removes it from the grid -> the display syncs the model away
                 if (grabbed == null) return;
                 bool freeHands = Unarmed;
                 var wentShelf = Inventory.tryAddItemAuto(grabbed, out byte shelfSlot);
@@ -3235,6 +3242,16 @@ namespace UnturnedGodot
 
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
+
+        /// <summary>An attachment was just fitted or taken off: push the gun's state to the server NOW.
+        ///
+        /// AttachmentFit.SetInstalledId writes gunSightId/gunBarrelId/gunGripId/gunTacticalId straight onto the
+        /// item and nothing marked the gun state dirty, so the four ids the v16 wire exists to carry were only
+        /// ever sent if some LATER save happened to fire. Until one did, the server still held the old sight --
+        /// and the next grid move repaints the bag from the server, which puts it back (the exact shape of
+        /// "sometimes ammo magically refills into guns", one field over). Forced rather than coalesced because
+        /// fitting a scope is a deliberate single act, not a burst like firing.</summary>
+        public void NoteAttachmentChanged() { SaveGunState(); FlushGunState(force: true); }
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload
         public bool DebugIsReloading => _reloading;                                 // test: is a reload still in flight?
         public void DebugRestoreGunState(SDG.Unturned.Item it) => RestoreGunState(it);   // test: restore a gun's state from an item
@@ -4291,6 +4308,7 @@ namespace UnturnedGodot
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
+        public System.Action<uint, byte, byte> NetTakeFromStorage;   // (crate netId, cell x, cell y) -> Client.SendTakeFromStorage: F on an item sitting ON a shelf, without opening the container
         public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
         // A4 (SP/MP-unify) crop seams -- the NetPickupItem pattern: wired ONLY by ClientWorldSession, null in
         // SP/loopback so the direct CropManager path below stays byte-identical. Plant routes seed+point;
@@ -4530,6 +4548,17 @@ namespace UnturnedGodot
         {
             if (NetRemoveWire == null || w == null || !IsInstanceValid(w) || w.NetId == 0) return false;
             NetRemoveWire(w.NetId);
+            return true;
+        }
+
+        /// <summary>MP shelf grab: take the item in ONE cell of a container straight into the bag, WITHOUT
+        /// opening the container. A request like every other grid mutation -- the bag repaints from the owner
+        /// echo and the shelf from the display digest, so nothing changes locally on the send.</summary>
+        public bool RequestTakeFromStorage(uint netId, byte x, byte y)
+        {
+            if (NetTakeFromStorage == null || netId == 0) return false;
+            FlushGunState(force: true);   // a grid mutation is about to be requested -- see MarkGunStateDirty
+            NetTakeFromStorage(netId, x, y);
             return true;
         }
 
@@ -5862,6 +5891,7 @@ namespace UnturnedGodot
             ApplyGunToViewmodel();   // the replacement viewmodel starts on defaults -- re-push the gun's tuning
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
+            ApplyInstalledAttachments(backingItem);   // ...and re-MOUNT what is actually fitted; the mask alone cannot (see below)
             GD.Print($"[gun] holding {_gunName}");
         }
 
@@ -8328,6 +8358,39 @@ namespace UnturnedGodot
                 _body.SetGunOverlay(_bodyHammerClip, _reloadSpeed, loop: false);
             _bodyHammer3p = _hammerActive;
             _body.AimBlend = _viewmodel?.AimAlpha ?? 0f;            // ADS: same eased 0..1 the 1P arms use
+        }
+
+        /// <summary>Re-mount whatever the gun's ITEM says is fitted onto a freshly built viewmodel.
+        ///
+        /// ⚠ THE ATTACH MASK IS NOT ENOUGH, and that is the whole bug. gunAttach records which slots are
+        /// VISIBLE; the installed ids (gunSightId/gunBarrelId/gunGripId/gunTacticalId/gunMagId) record WHAT is
+        /// fitted -- and until now the only thing that ever pushed those MESHES into a viewmodel was the
+        /// attachment menu, at the moment of the click. EquipHeldGun builds a NEW Viewmodel on every equip and
+        /// it starts on the gun's factory visual, so ApplyAttachMask could only turn the FACTORY sight on or
+        /// off: a fitted scope came back as irons the moment you switched weapons and switched back, while the
+        /// item underneath still said the scope was on it (master 2026-09-07: "still seems to struggle to
+        /// remember a gun's attachment state through equip/dequips"). The 3P body never had this bug --
+        /// MountBody3PAttachments reads the installed ids every time it mounts -- so the same gun could wear a
+        /// scope in third person and irons in first.
+        ///
+        /// Runs AFTER ApplyAttachMask on purpose: an installed id is the stronger statement (the item says this
+        /// scope is bolted on), so it overrides a stale mask rather than being hidden by one.</summary>
+        void ApplyInstalledAttachments(SDG.Unturned.Item gun)
+        {
+            if (gun == null || _viewmodel == null) return;
+            foreach (var slot in AttachmentFit.Slots)
+            {
+                int id = AttachmentFit.InstalledId(gun, slot);
+                if (id <= 0) continue;
+                // The two FACTORY fits are already on the fresh viewmodel and must not be re-pushed: SetSlotMesh
+                // moves a sight onto the RAIL (hook + AttachModel0) because that is where an attachment goes,
+                // and the gun's own irons belong at their composed spot, not on the rail.
+                if (slot == "Sight" && AttachmentFit.IsDefaultIrons(gun)) continue;
+                if (slot == "Magazine" && Gun != null && id == Gun.MagazineId) continue;
+                string mesh = AttachmentFit.MeshFor((ushort)id);
+                if (!string.IsNullOrEmpty(mesh)) _viewmodel.SetSlotMesh(slot, mesh);
+                else if (_viewmodel.SlotHasModel(slot)) _viewmodel.SetSlotAttached(slot, true);   // fitted but never ripped: attached, just renders the default (same rule the menu uses)
+            }
         }
 
         // 3P attachments: mount the gun's installed sight/scope + magazine + barrel onto the 3P gun mesh, mirroring the
