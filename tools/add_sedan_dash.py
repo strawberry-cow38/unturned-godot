@@ -164,27 +164,42 @@ def move_wheel():
 
 
 def rerake_glass(g):
-    """The windscreen was raked steeper than the frame holding it -- 0.44 z per y against the pillar's 0.22. Lay
-    it in the pillar plane, which is both 'match the angle' and 'actually fill the aperture'."""
+    """Rake the windscreen to the pillar's OUTSIDE SLANT (master 2026-09-07: "the glass should follow the outside
+    slant of the pillars").
+
+    ⚠ THAT IS NOT THE APERTURE'S FRONT EDGE, which is what I fitted first and what master corrected. The A-pillar
+    is a WEDGE -- zero depth at the beltline, 0.25 at the top -- so it has three different "slants" and they are
+    far apart:
+        aperture front edge, beltline -> header      0.216   (fitted first; too upright, master pushed back)
+        pillar REAR edge, against the side glass     0.549
+        OUTSIDE SILHOUETTE, beltline -> roof front   0.324   <- the one you SEE from outside, and the one meant
+    The original rip was 0.442, so raking to 0.216 made the screen stand UP relative to the body, which is what
+    looked wrong. The outside silhouette runs past the header to the roof's leading edge, so the glass top lands
+    at z=-0.880 -- BEHIND the aperture's front edge and under the header panel (which spans -0.961..-0.711 at
+    y=1.875). Tucking under the header is how a windscreen is bonded anyway; it is not a gap."""
     seamY, seamZ, screenZ, innerX, outerX = g
     V, VT, F = load(BODY)
     tops = [v for v in V if abs(abs(v[0]) - innerX) < EPS and v[1] > seamY + 0.5 and v[2] < -0.9]
     if not tops: return None, "no A-pillar top found on the inner skin"
-    topY = min(v[1] for v in tops)
-    topZ = min(v[2] for v in tops)
+    topY = min(v[1] for v in tops)                       # the header, i.e. how tall the aperture is
+    roof = max((v for v in V if v[2] < -0.7 and abs(abs(v[0]) - innerX) < EPS), key=lambda v: v[1])
+    slope = (roof[2] - screenZ) / (roof[1] - seamY)      # the OUTSIDE line: beltline -> roof leading edge
+    topZ = screenZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
-    if abs((max(v[2] for v in gv) - min(v[2] for v in gv)) - (topZ - screenZ)) < 5e-3:
-        return None, "glass       already raked to the pillar"
+    gy = max(v[1] for v in gv) - min(v[1] for v in gv)
+    if gy > EPS and abs((max(v[2] for v in gv) - min(v[2] for v in gv)) / gy - slope) < 5e-3:
+        return None, "glass       already on the pillar's outside slant"
     xs = sorted({round(v[0], 6) for v in gv})
     head = [l.rstrip("\n") for l in io.open(GLASS, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
-    head.append("# RE-RAKED by tools/add_sedan_dash.py: laid into the A-pillar plane (master: match the pillar slope).")
+    head.append("# RE-RAKED by tools/add_sedan_dash.py to the A-pillar's OUTSIDE slant (beltline -> roof leading edge),")
+    head.append("# which is steeper than the aperture's own front edge -- see the tool for why those differ.")
     head.append("# Regenerating this pane with gen_vehicle_glass.py will undo that -- the rake lives HERE, not there.")
     for x, y, z in ((xs[0], seamY, screenZ), (xs[-1], seamY, screenZ), (xs[-1], topY, topZ), (xs[0], topY, topZ)):
         head.append("v %.6f %.6f %.6f" % (x, y, z))
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
-    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's own" % (
-        seamY, screenZ, topY, topZ, (topZ - screenZ) / (topY - seamY))
+    return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f, the pillar's OUTSIDE line" % (
+        seamY, screenZ, topY, topZ, slope)
 
 
 def main():
