@@ -218,11 +218,11 @@ def rerake_glass(g):
     if top[1] - startY < EPS: return None, "door pane's leading edge has no rise"
     slope = (top[2] - zmin) / (top[1] - startY)
 
-    # POSITION: an EIGHTH of the pillar's depth back from its FRONT face -- master asked for it "between the last
-    # and most recent values", and those two were the front face itself (70c20c31) and a quarter back (56ffcbdc),
-    # so halfway between them is an eighth. Still a fraction of the same ruler: 0 = front face, 1/2 = centre
-    # line, 1 = rear face.
-    shift = -depth * 0.875                               # negative = forward, measured from the rear face
+    # POSITION: a SIXTEENTH of the pillar's depth back from its FRONT face -- 16 mm. The sequence of asks was
+    # front face -> "back slightly" (a quarter) -> "between the last two" (an eighth) -> "lil hair further
+    # forward", and each step has halved the setback, so a hair is half of an eighth. Still the same ruler:
+    # 0 = front face, 1/2 = centre line, 1 = rear face.
+    shift = -depth * 0.9375                              # negative = forward, measured from the rear face
     botZ = screenZ + shift
     topZ = botZ + slope * (topY - seamY)
     gv = [[float(x) for x in l.split()[1:4]] for l in io.open(GLASS, encoding="utf-8") if l.startswith("v ")]
@@ -241,7 +241,7 @@ def rerake_glass(g):
     head += ["f 1 2 3", "f 1 3 4"]
     io.open(GLASS, "w", encoding="utf-8").write("\n".join(head) + "\n")
     return [], "glass       bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (door-pane chord), %.3f back from the front face" % (
-        seamY, botZ, topY, topZ, slope, depth * 0.125)
+        seamY, botZ, topY, topZ, slope, depth * 0.0625)
 
 
 def center_side_glass(g):
