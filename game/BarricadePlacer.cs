@@ -110,11 +110,18 @@ namespace UnturnedGodot
             _ => true,                                      // Sticky: anything (UseableBarricade.cs:1483)
         };
 
-        // The final yaw fed to StandBasis for this mount + normal. Floor = the player's aim yaw; Wall = the wall's
-        // outward facing (src angle_y = LookRotation(normal).eulerAngles.y) + manual spin; Sticky = manual spin only.
+        // The final yaw fed to StandBasis for this mount + normal. Floor = the player's aim yaw; Sticky = manual spin
+        // only; Wall = the wall's outward facing (src angle_y = LookRotation(normal).eulerAngles.y) and NOTHING ELSE.
+        //
+        // A wall mount does not take the manual spin, and that is src, not a simplification: UseableBarricade.cs:1595
+        // returns false from startSecondary for the whole wall family -- TORCH, CAGE, STORAGE_WALL, SIGN_WALL,
+        // BARRICADE_WALL, and the doors -- so R never reaches rotate_y for any of them. The wall normal already fully
+        // determines the yaw, and adding to it aims the fixture off its own wall. Nothing observable changed for the
+        // metal barricade (the only other Wall def, and a symmetric ProcBox); the cage light is the first asset with
+        // a front and a back, where spinning it 90 degrees points the cage into the brickwork.
         float ResolveYaw(float aimYaw, Vector3 n) => Mount switch
         {
-            BarricadeMount.Wall => YawFacing(n) + YawOffset,
+            BarricadeMount.Wall => YawFacing(n),
             BarricadeMount.Sticky => YawOffset,
             _ => aimYaw,   // Floor: aim yaw + R (aimYaw already includes YawOffset, see Aim)
         };

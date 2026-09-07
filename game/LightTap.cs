@@ -17,7 +17,7 @@ namespace UnturnedGodot
         // A wrecked lamp taps the MUNICIPAL MAIN, not just its own ~200W HPS bulb, so the stub is worth more than the
         // fixture drew -- enough to run a real consumer (Spotlight 250W) with margin. Traffic = the cabinet feed.
         public const float StreetlightWatts = 500f;
-        public const float TrafficWatts     = 300f;   // clears the 250W Spotlight (the smallest consumer in DeployableDef) with headroom
+        public const float TrafficWatts     = 300f;   // clears the 250W Spotlight (the biggest single light in DeployableDef; the 100W cage light rides on it too) with headroom
 
         LightKind _kind;
         float _outWatts;

@@ -4090,15 +4090,26 @@ namespace UnturnedGodot
         // the surface-placement gap the ground DeployablePlacer couldn't do (it rejects any normal.y < 0.01).
         void BuildBarricadeTest()
         {
+            // UG_CAGELIGHT=1: the wall CAGE LIGHT instead of the metal-barricade pair -- two mounted on the wall, one
+            // of them wired to a generator on the floor and switched on, plus a placement ghost so the Wall blueprint
+            // mode is in the same frame as the thing it previews. Dark, because a lamp under a 1.0 ambient and a 1.3
+            // sun tells you nothing about whether it is lit.
+            bool cage = System.Environment.GetEnvironmentVariable("UG_CAGELIGHT") == "1";
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                BackgroundColor = cage ? new Color(0.025f, 0.03f, 0.045f) : new Color(0.30f, 0.34f, 0.42f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+                AmbientLightColor = cage ? new Color(0.16f, 0.18f, 0.24f) : new Color(0.72f, 0.72f, 0.75f),
+                AmbientLightEnergy = cage ? 0.10f : 1.0f,
             };
+            if (cage)
+            {
+                env.GlowEnabled = true; env.GlowIntensity = 0.7f; env.GlowStrength = 1.0f; env.GlowBloom = 0.10f;
+                env.GlowHdrThreshold = 0.9f; env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive;
+            }
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = cage ? 0.04f : 1.3f, ShadowEnabled = true });
 
             AddChild(new MeshInstance3D
             {
@@ -4123,23 +4134,42 @@ namespace UnturnedGodot
             float faceZ = wallPos.Z + wallSize.Z * 0.5f;
             float wallYaw = BarricadePlacer.YawFacing(n);           // face straight out of the wall
 
-            // WALL: two metal-plate barricades flush on the wall face. Mount comes from the def (Wall) -> upright, facing out.
-            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(-1.6f, 1.7f, faceZ), n, wallYaw);
-            Barricade.PlaceOnSurface(this, DeployableDef.MetalBarricade, new Vector3(1.6f, 1.7f, faceZ), n, wallYaw);
+            var showDef = cage ? DeployableDef.Cagelight : DeployableDef.MetalBarricade;
+            float mountY = cage ? 2.6f : 1.7f;   // a cage light hangs high on the wall; a barricade plate sits at chest height
+
+            // WALL: two of them flush on the wall face. Mount comes from the def (Wall) -> upright, facing out.
+            var wallA = Barricade.PlaceOnSurface(this, showDef, new Vector3(-1.6f, mountY, faceZ), n, wallYaw);
+            Barricade.PlaceOnSurface(this, showDef, new Vector3(1.6f, mountY, faceZ), n, wallYaw);
 
             // a blue VALID placement ghost snapped to the wall (the placer preview; SetDef reads Mount=Wall from the def)
             var placer = new BarricadePlacer();
             AddChild(placer);
-            placer.SetDef(DeployableDef.MetalBarricade);
-            placer.Freeze(new Vector3(0f, 1.7f, faceZ), n, wallYaw);
+            placer.SetDef(showDef);
+            placer.Freeze(new Vector3(0f, mountY, faceZ), n, wallYaw);
 
             // FLOOR: a deployable on the ground in front for contrast (Floor mount, upright, free yaw)
-            Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-3.4f, 0f, 2.2f), 25f);
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-3.4f, 0f, 2.2f), 25f);
+
+            if (cage)   // wire the generator to the left cage light and switch it on -- the lamps only light when
+            {           // the consumer port is actually receiving, so an unwired fixture proves nothing about the lamp
+                var outp = gen.Ports.Count > 0 ? gen.Ports[0] : null;
+                var cons = wallA?.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                if (outp != null && cons != null)
+                {
+                    var w = new Wire(); AddChild(w);
+                    w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
+                    w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(-3.0f, 1.4f, 0.6f), cons.GlobalPosition }, valid: true);
+                    gen.TogglePower();
+                    PowerNet.Recompute(GetTree());
+                    GD.Print($"[CAGETEST] gen.IsPowered={gen.IsPowered} consumer.recv={cons.Live:0}w powered={cons.Powered}");
+                }
+                else GD.Print($"[CAGETEST] MISSING PORTS gen={gen.Ports.Count} cage={wallA?.Ports.Count}");
+            }
 
             var cam = new Camera3D { Current = true, Fov = 56f, Far = 10000f };
             AddChild(cam);
-            cam.Position = new Vector3(5.6f, 3.2f, 8.2f);
-            cam.LookAt(new Vector3(-0.3f, 1.5f, -0.6f), Vector3.Up);
+            cam.Position = cage ? new Vector3(3.6f, 2.9f, 5.4f) : new Vector3(5.6f, 3.2f, 8.2f);
+            cam.LookAt(cage ? new Vector3(-0.9f, 2.2f, -1.6f) : new Vector3(-0.3f, 1.5f, -0.6f), Vector3.Up);
         }
 
         // --barricadeplay : an interactive sandbox to TEST barricade placement feel before the in-game held-item flow

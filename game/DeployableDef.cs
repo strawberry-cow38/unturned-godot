@@ -489,6 +489,54 @@ namespace UnturnedGodot
             PlaceSound = "metalplacement",
         };
 
+
+        // src Cagelight.dat: id 1222, Useable Barricade, Build CAGE, footprint 1x1x0.5, Health 300, Range 4,
+        // Offset 0.15, Explosion 36, and NO Radius key (see below).
+        //
+        // CAGE IS THE SPOTLIGHT'S OWN INTERACTABLE. BarricadeManager.cs:1892 and BarricadeTool.cs:163 both read
+        //     else if (asset.build == EBuild.SPOT || asset.build == EBuild.CAGE)
+        //         barricade.GetOrAddComponent<InteractableSpot>().updateState(asset, state);
+        // so a cage light is wired/powered/lit by exactly the machinery the Spotlight already ports -- one "Spots"
+        // node of lights, on when isWired && isPowered, one state byte for lit (ItemBarricadeAsset.cs:53).
+        //
+        // AND IT IS A WALL MOUNT. UseableBarricade.cs:1393 puts CAGE in the same family as TORCH / STORAGE_WALL /
+        // SIGN_WALL / BARRICADE_WALL: spherecast, accept only |normal.y| < 0.1, seat at hit + normal*offset, and take
+        // the yaw from the wall (:1397-1400). That is BarricadeMount.Wall verbatim -- the mode already existed for the
+        // metal barricade, and this is the first REAL asset to use it (the metal barricade is a ProcBox, symmetric
+        // front-to-back, so nothing it did could ever expose a facing error).
+        //
+        // Radius 0.1 is not from the .dat, which omits the key: the wall branch does not use the asset radius at all,
+        // it hardcodes OverlapSphereNonAlloc(point, 0.1f, ...) (UseableBarricade.cs:1402). Our placer takes the
+        // clearance radius from the def, so the src constant is written here rather than left at 0.
+        //
+        // MESH: tools/extract_barricade_mesh.py cagelight:Cagelight_0 -- 332 verts, 7 welded components: five
+        // identical cage BARS at z = 0, +-0.150, +-0.300 spanning y[-0.202,-0.015], the bulb panel, and the housing
+        // box at y[-0.030,0.212]. So the raw mesh's cage faces -Y while our stand-up convention wants the front on
+        // +Y (StandBasis(0) -> +Z, see BarricadePlacer.YawFacing). MeshEuler spins the model 180 about Z to agree;
+        // the lamp is a SIBLING of the mesh, not a child, so its src position (0,-0.131,0) is mirrored to +0.131 to
+        // stay inside the cage.
+        //
+        // LAMP: the prefab's Spots/Lamp is a POINT light (m_Type 2), intensity 1.370351, range 16 -- "Electricity
+        // powered large area light", and genuinely omnidirectional, unlike the Spotlight whose lamps master asked to
+        // become real spots. Energy 2.4 is the value the Spotlight's own 1.370351-intensity point bulbs already use,
+        // so the same src intensity keeps the same brightness here.
+        public static readonly DeployableDef Cagelight = new()
+        {
+            Id = 1222, Name = "Cagelight", Model = "Cagelight_0", PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Wall,
+            Size = new Vector3(1f, 1f, 0.5f), Offset = 0.15f, Radius = 0.1f, Range = 4f, Health = 300f, ShatterOnDeath = true,
+            MeshEuler = new Vector3(0f, 0f, 180f),
+            Ports = new[] {   // power IN + a passthrough so a run of cage lights daisy-chains off one feed (master).
+                              // On the housing's lower corners (flat +Z = world DOWN after the stand-up), so the wire
+                              // drops out of the bottom of the fixture rather than through the wall behind it.
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.20f, -0.05f, 0.25f), Watts = 100f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.20f, -0.05f, 0.25f), Watts = 0f },
+            },
+            Lights = new[] {
+                new DeployLight { Spot = false, Pos = new Vector3(0f, 0.131f, 0f), Range = 16f, Energy = 2.4f, Color = LampWarm },
+            },
+        };
+
         // CRAFTING STATIONS (strawberry): placed barricades that grant crafting tags within CraftingRange + LOS.
         // Real world meshes ripped by tools/extract_station_meshes.py (LOD0, like Generator_0); the tag GUIDs +
         // ranges are from the src barricade .dat (PlaceableProvidesCraftingTags + Range). Campfire has no explicit
@@ -522,7 +570,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef SewingTable   = Station(1924, "Sewing Table",   "SewingTable_0",   4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
         public static readonly DeployableDef SpinningWheel = Station(1922, "Spinning Wheel", "SpinningWheel_0", 4f, "2ac5ddc545a848008c0308d21f5d2e6b");   // Sewing
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Cagelight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
             DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate };
@@ -534,6 +582,7 @@ namespace UnturnedGodot
             386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
+            1222 => Cagelight,
             1916 => Workbench,
             362 => Campfire,
             1250 => OvenElectric,
