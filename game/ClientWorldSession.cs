@@ -259,10 +259,11 @@ namespace UnturnedGodot
             Client.StorageOpened += e =>
             {
                 if (Shell == null || !IsInstanceValid(Shell)) return;
-                Shell.OnReplicatedStorageOpened(e.NetId);
                 // v28: the server says whether what you just opened cooks, so the inventory can draw the on/off
                 // button. The client never decides this for itself -- it would have to guess from a mesh name.
-                Shell.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                // Passed INTO the open rather than set after it: the panel is built from these (see the overload).
+                Shell.OnReplicatedStorageOpened(e.NetId,
+                    e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
             };
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };

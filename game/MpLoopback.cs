@@ -171,8 +171,8 @@ namespace UnturnedGodot
                 Client.StorageOpened += e =>
                 {
                     if (Player == null || !IsInstanceValid(Player)) return;
-                    Player.OnReplicatedStorageOpened(e.NetId);
-                    Player.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                    Player.OnReplicatedStorageOpened(e.NetId,
+                        e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
                 };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };

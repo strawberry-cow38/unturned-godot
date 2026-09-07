@@ -3889,6 +3889,9 @@ namespace UnturnedGodot
             GD.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
         }
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+        /// <summary>L1: is the cooker's on/off button DRAWN, as opposed to merely knowable? See
+        /// OnReplicatedStorageOpened -- those were two different answers, and the player only gets the drawn one.</summary>
+        public bool DebugCookerButtonShown => _invUI != null && IsInstanceValid(_invUI) && _invUI.DebugHasCookerButton;
 
         /// <summary>Is any UI up that wants the cursor? Asked before ANYTHING recaptures the mouse, because
         /// recapturing under an open panel is worse than leaving it free: every polled input in here gates on
@@ -3901,9 +3904,26 @@ namespace UnturnedGodot
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
         /// CRATE grid itself arrives via the owner-block echo (the server loads it into STORAGE page 7,
         /// the SP OpenNearestCrate mechanic), so there's nothing to copy here.</summary>
-        public void OnReplicatedStorageOpened(uint netId)
+        public void OnReplicatedStorageOpened(uint netId) => OnReplicatedStorageOpened(netId, null, false, 0);
+
+        /// <summary>The server's StorageOpened fact, cooker facts INCLUDED, applied in the one order that works.
+        ///
+        /// ONE CALL RATHER THAN TWO, and that is the fix rather than a tidy-up. Both call sites used to do
+        /// `OnReplicatedStorageOpened(id)` and then `NoteOpenCooker(...)`, in that order -- and Open() builds the
+        /// whole panel, creating the on/off button only `if (Player?.OpenCookerKind is ECookerKind ck)`. So the
+        /// panel was built one line before the facts it is built from arrived: no button. Nothing rebuilds the
+        /// panel on its own, and RefreshCookerBar only repaints a button that already exists, so it stayed
+        /// missing until something ELSE forced a Refresh -- which is why strawberry found that moving an item
+        /// made it appear (2026-09-07: "sometimes i have to move an item to even get the on/off button to show").
+        ///
+        /// Two lines whose ORDER is load-bearing, duplicated across MpLoopback and ClientWorldSession, is a
+        /// standing invitation to transpose one -- and this exact pair has already gone wrong once here, when the
+        /// loopback handler claimed to mirror ClientWorldSession and simply omitted the cooker line. Folding them
+        /// into a single ordered operation makes the order un-gettable-wrong instead of merely correct today.</summary>
+        public void OnReplicatedStorageOpened(uint netId, ECookerKind? cookerKind, bool cookerOn, byte cookerFuel)
         {
             _openCrateNetId = netId;
+            NoteOpenCooker(cookerKind, cookerOn, cookerFuel);   // BEFORE Open(): the panel is built from these
             _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }

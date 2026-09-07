@@ -110,6 +110,14 @@ namespace UnturnedGodot.Testing
             yield return Until(() => player.OpenCookerKind != null, 10);
             T.Check($"opening the oven offers its on/off button ({player.OpenCookerKind})", player.OpenCookerKind != null);
             if (player.OpenCookerKind == null) yield break;
+            // AND IT IS ACTUALLY DRAWN. Knowing the container cooks and having a button on the panel were two
+            // different states: the panel is built inside Open(), the button only exists `if OpenCookerKind is
+            // ...`, and the facts used to be applied one line AFTER the open. So this check and the one above it
+            // disagreed on the broken build -- OpenCookerKind set, no button -- which is exactly the shape of
+            // "sometimes i have to move an item to even get the on/off button to show": moving an item forces
+            // the Refresh that the open should have done.
+            T.Check($"...and the button is actually ON THE PANEL, with no item moved ({player.DebugCookerButtonShown})",
+                    player.DebugCookerButtonShown);
             player.ToggleOpenCooker();
             yield return Ticks(20);
             loop.Server.Cooking.TryGet(ovenId, out var ovenAfterPress);
