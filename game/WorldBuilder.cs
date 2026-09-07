@@ -68,6 +68,36 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        /// <summary>wind_sway.gdshader, loaded once. Shared with the swaying props (hedges); tree leaves load
+        /// their own copy in ResourceField, which builds its materials on a different path.</summary>
+        static Shader _windSway;
+
+        /// <summary>Which props sway in the wind (master 2026-09-07: "add the grass wind effect to hedges").
+        /// Matched on the MATERIAL name, which for a hedge is its mesh name -- checked against the real data
+        /// rather than assumed: all 25 Hedge_0 rows in placements.txt are 10 tokens, so none carries the
+        /// 11th material-palette override that would otherwise arrive here instead of "Hedge_0".</summary>
+        public static bool SwayProp(string nm) => nm != null && nm.StartsWith("Hedge_");
+
+        /// <summary>Wrap a prop's flat material in wind_sway.gdshader -- world-direction sway weighted by LOCAL
+        /// height, gust wave, off the same global wind_vec the grass and the tree leaves already use.
+        ///
+        /// NOT grass_displace.gdshader, which weights root-to-tip by UV.y. True for a grass billboard, and
+        /// meaningless on a hedge mesh whose UVs are ordinary texture coordinates -- it would bend the hedge by
+        /// its texture layout rather than by its height.
+        ///
+        /// Returns the base material untouched when there is no shader or no texture to hand it: a hedge that
+        /// does not sway is a small loss, a hedge that renders blank is a big one.</summary>
+        public static Material SwayMat(StandardMaterial3D b)
+        {
+            _windSway ??= GD.Load<Shader>("res://content/wind_sway.gdshader");
+            if (_windSway == null || b?.AlbedoTexture == null) return b;
+            var sm = new ShaderMaterial { Shader = _windSway };
+            sm.SetShaderParameter("albedo_tex", b.AlbedoTexture);
+            sm.SetShaderParameter("alpha_scissor", b.AlphaScissorThreshold);
+            sm.SetShaderParameter("use_alpha", b.Transparency == BaseMaterial3D.TransparencyEnum.AlphaScissor);
+            return sm;
+        }
+
         // ABLATION knob for profiling (2026-09-02): UG_SKIP="Vehicles,Foliage,Shadows" skips a subsystem at build so its
         // frame cost can be measured as a delta on the same pinned scene. Off by default; never set by the game itself.
         // UG_PERF=1: where the vehicle phase goes, per spec -- Build() (pure C#: meshes/materials/nodes) vs AddChild (scene entry:
@@ -465,7 +495,25 @@ namespace UnturnedGodot
             // large dock prop. NOT on all props"). The road pieces placed as objects, and Dock_1 -- the big 37x41 m
             // platform, not Dock_0, which is a 2.5 m jetty. Everything else still gets the wet sheen and nothing more.
             static bool PuddleProp(string nm) => nm.StartsWith("Road_") || nm.StartsWith("Block_Road") || nm == "Dock_1";
-            Material WetMatFor(string nm) => WetSurface.Wrap(MatFor(nm), PuddleProp(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
+
+            // WHICH PROPS SWAY (master 2026-09-07: "add the grass wind effect to hedges"). Hedges are a sprawl of
+            // thin alpha-cutout planes -- the same thing grass is -- and they stood dead still next to grass that
+            // moves, which is what reads as wrong.
+            //
+            // Reuses wind_sway.gdshader rather than growing a second wind: it already does world-direction sway
+            // weighted by LOCAL height with a gust wave crawling the map, off the same global wind_vec, and tree
+            // leaves have used it since 2026-08-24. NOT grass_displace.gdshader, which weights by UV.y as
+            // root-to-tip -- true for a grass billboard, meaningless on a hedge mesh whose UVs are just texture
+            // coordinates, so it would bend by texture layout instead of by height.
+            //
+            // Losing the wet wrapper costs nothing here: WetSurface.Eligible requires Transparency.Disabled and
+            // MatFor gives every cutout prop AlphaScissor, so hedges were never wrapped in the first place.
+            var swayCache = new System.Collections.Generic.Dictionary<string, Material>();
+            Material SwayMatFor(string nm) => swayCache.TryGetValue(nm, out var had) ? had
+                                            : swayCache[nm] = SwayMat(MatFor(nm));
+
+            Material WetMatFor(string nm) => SwayProp(nm) ? SwayMatFor(nm)
+                                           : WetSurface.Wrap(MatFor(nm), PuddleProp(nm));   // the RENDER material: wet-in-rain wrapper over the same StandardMaterial3D (WetSurface.BaseOf gets it back)
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
