@@ -238,8 +238,25 @@ namespace UnturnedGodot.Net
             // water" itself -- off the same adopted position it already validates, and the same per-stance eye
             // table the shell uses. Core has no terrain, so the game layer hands down the two numbers that
             // describe the sea and nothing more.
-            Vitals.SubmergedOf = pid => HasWater && PlayerHost.TryGetDrivenState(pid, out var ds)
-                && ds.Pos.y + PlayerMovementDef.EyeHeightForStance(ds.Stance) < SeaLevelY;
+            // POSITION COMES FROM THE REPLICATED ENTITY, not from the driven state, and that is the fix
+            // (master 2026-09-07: oxygen "not depleting underwater"). This read PlayerHost.TryGetDrivenState
+            // alone -- which exists only for a client-authoritative MP shell -- so anything the server drives
+            // itself had no driven state, the predicate short-circuited false, and the player was permanently
+            // dry no matter how deep they swam.
+            //
+            // The line immediately below already knew this: SprintingOf reads the driven state and FALLS BACK
+            // to the held input "for a loopback/demo walker". I copied its shape and dropped its safety net.
+            // Every player the server knows has a replicated entity; only some have a driven state.
+            Vitals.SubmergedOf = pid =>
+            {
+                if (!HasWater || !Players.TryGetByOwner(pid, out var pe)) return false;
+                // Stance only picks the EYE HEIGHT, so it degrades gracefully: same driven-state-then-held-input
+                // pair as SprintingOf, and STAND if neither is there -- the tallest eye, which is the
+                // conservative choice since it takes the MOST water to call someone submerged.
+                var stance = PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance
+                           : Players.TryGetHeldInput(pid, out var mi) ? mi.Stance : EPlayerStance.STAND;
+                return pe.Pos.y + PlayerMovementDef.EyeHeightForStance(stance) < SeaLevelY;
+            };
             Vitals.SprintingOf = pid =>
                 PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance == EPlayerStance.SPRINT
                 : Players.TryGetHeldInput(pid, out var mi) && mi.Stance == EPlayerStance.SPRINT;

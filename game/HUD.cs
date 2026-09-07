@@ -21,13 +21,13 @@ namespace UnturnedGodot
         ulong _hotbarSig = ulong.MaxValue;   // MaxValue = "not built yet", distinct from the empty row's hash
         readonly System.Collections.Generic.List<(int Key, ushort Id)> _hbEntries = new();
 
-        // Palette.cs: COLOR_R (health), COLOR_O (food), COLOR_B (water), COLOR_Y (stamina), COLOR_G (virus), cyan (oxygen).
+        // Palette.cs: COLOR_R (health), COLOR_O (food), COLOR_B (water), COLOR_Y (stamina), COLOR_G (virus), WHITE (oxygen -- master 2026-09-07 overrode the palette's cyan).
         static readonly Color CR = new Color(0.7490196f, 0.12156863f, 0.12156863f);
         static readonly Color CO = new Color(57f / 85f, 0.5019608f, 5f / 51f);
         static readonly Color CB = new Color(10f / 51f, 0.59607846f, 40f / 51f);
         static readonly Color CY = new Color(44f / 51f, 0.7058824f, 0.07450981f);
         static readonly Color CG = new Color(0.24f, 0.71f, 0.29f);   // Palette COLOR_G (virus / infection)
-        static readonly Color CC = new Color(0.25f, 0.85f, 0.90f);   // cyan (oxygen) -- the palette note above already reserved it, and water owns CB
+        static readonly Color CC = new Color(0.95f, 0.97f, 1.00f);   // oxygen: WHITE (master 2026-09-07). The palette note above reserves "cyan" for it and cyan is what I shipped, but next to water's blue that read as a second water bar; a hair of blue keeps it from glaring against the dark HUD without reading as a hue.
 
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 

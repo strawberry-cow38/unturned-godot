@@ -32,6 +32,39 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void the_server_works_out_submersion_from_the_replicated_position()
+        {
+            // THE BUG THIS EXISTS FOR (master 2026-09-07, oxygen "not depleting underwater"): SubmergedOf read
+            // PlayerHost.TryGetDrivenState alone. A driven state exists only for a client-authoritative MP
+            // shell, so anything the server drives itself had none, the predicate short-circuited false, and
+            // the player never lost a breath however deep they swam. The earlier oxygen tests all injected
+            // `submerged` directly and could not see it -- they proved the RULE, not the WIRING.
+            //
+            // Here the sea is above the player and nothing sets a driven state, which is exactly the shape
+            // that was broken.
+            var h = new TransactionalHarness(9081).Connected("a");
+            var a = h.Clients[0];
+            h.Server.Vitals.SurvivalDrain = false;
+            h.Server.HasWater = true;
+            h.Server.SeaLevelY = 1000f;          // well over any spawn: heads are under
+
+            h.Step(150);
+
+            Assert.That(h.Server.Vitals.TryGet(a.PlayerId, out var se), Is.True);
+            Assert.That(se.Sim.Oxygen, Is.LessThan(1f),
+                        $"the server drained a submerged player without a driven state (seed={h.Net.Seed})");
+
+            // CONTROL: drop the sea below them and it must stop -- otherwise this passes on any always-true
+            // predicate, which is the failure it was written to catch.
+            h.Server.SeaLevelY = -1000f;
+            h.Step(20);
+            float dry = se.Sim.Oxygen;
+            h.Step(150);
+            Assert.That(se.Sim.Oxygen, Is.GreaterThan(dry),
+                        "...and refills once the water is below them, so it is reading the sea and not just ticking");
+        }
+
+        [Test]
         public void oxygen_alone_is_enough_to_make_the_block_dirty()
         {
             // THE POINT OF THIS TEST is the dirty gate, not the wire. A diving player has food, water and
