@@ -257,14 +257,30 @@ namespace UnturnedGodot.Testing
                 foreach (var (m, hitter, target) in rams)
                 {
                     var t0 = target.GlobalPosition;
+                    var ramFwd = (-hitter.GlobalTransform.Basis.Z).Normalized();   // BEFORE the run: the hitter yaws a little as it shunts
                     hitter.EngineOn = true;
                     for (int i = 0; i < 260; i++) { hitter.Drive(1f, 0f, false); yield return Ticks(1); }
-                    float shoved = target.GlobalPosition.DistanceTo(t0);
-                    GD.Print($"[HITBOX] {m}: rammed target moved {shoved:0.00} m (hitter ended {hitter.GlobalPosition.DistanceTo(t0):0.0} m from it)");
+                    var disp = target.GlobalPosition - t0;
+                    float shoved = disp.Length(), along = disp.Dot(ramFwd);
+                    GD.Print($"[HITBOX] {m}: rammed target moved {shoved:0.00} m ({along:0.00} m of it down the hitter's line; hitter ended {hitter.GlobalPosition.DistanceTo(t0):0.0} m from it)");
                     float gap = hitter.GlobalPosition.DistanceTo(target.GlobalPosition);
                     T.Check($"[{m}] the hitter actually reached the target, so a zero shove means something ({gap:0.0} m apart)",
                             gap < 8f);
-                    T.Check($"[{m}] a rammed car is shoved rather than treated as a wall ({shoved:0.00} m)", shoved > 0.5f);
+                    // A FLOOR PLUS A DIRECTION, not a distance target, and the threshold moved for a reason
+                    // worth writing down. This used to require 0.5 m and it was silently measuring the
+                    // HITTER'S DRIVETRAIN: when road cars went 2wd (Vehicle.DrivesWheel) the same sedan shunted
+                    // the same target 0.46 m instead of 0.78 m -- confirmed by flipping ONLY the sedan's
+                    // OffRoad flag back and watching it return to 0.78/0.81. Nothing about the hitbox moved.
+                    //
+                    // The failure this leg exists to catch is the target behaving as the immovable StaticBody3D
+                    // its HitMesh is, which reads EXACTLY 0.00 -- so the magnitude only ever needed to clear
+                    // noise, and pinning it near what one particular drivetrain happened to manage made a
+                    // handling change look like a collision bug. The direction check is what replaces the lost
+                    // strictness, and it is strictly harder to fake: contact jitter moves a body any which way,
+                    // while being shunted moves it down the hitter's line.
+                    T.Check($"[{m}] a rammed car is shoved rather than treated as a wall ({shoved:0.00} m)", shoved > 0.25f);
+                    T.Check($"[{m}] ...and shoved ALONG the hitter's line, not jittered off it ({along:0.00} of {shoved:0.00} m)",
+                            along > shoved * 0.8f);
                     hitter.EngineOn = false;
                 }
             }
