@@ -267,6 +267,16 @@ void fragment() {
 
         /// <summary>Does this screen point land on a live Button anywhere in the dashboard? If so the press is
         /// that Button's and _Input must not consume it -- see the note at the call site.</summary>
+        /// <summary>Test seam: the clothing column's scroll offset, and the storage box itself so a test can
+        /// aim a wheel event at something real inside it.</summary>
+        public float DebugScrollY => _scrollY;
+        public Control DebugStorageCol => _storageCol;
+
+        /// <summary>Wheel notches, including the horizontal pair. They ride InputEventMouseButton like a click
+        /// does, which is the whole reason the press guard above has to exclude them by name.</summary>
+        static bool IsWheel(MouseButton b) => b is MouseButton.WheelUp or MouseButton.WheelDown
+                                                or MouseButton.WheelLeft or MouseButton.WheelRight;
+
         bool PressLandsOnButton(Vector2 global) => _dash != null && IsInstanceValid(_dash) && HasButtonAt(_dash, global);
 
         static bool HasButtonAt(Node n, Vector2 global)
@@ -414,8 +424,14 @@ void fragment() {
             // and quick-craft outright. And hover state is only refreshed on mouse MOTION, so the click right after
             // a Refresh() rebuild (exactly the ON -> OFF double-press on the cooker) can read a freed node or null.
             // Walking the tree is deterministic and costs one pass over a few hundred nodes per click.
-            if (e is InputEventMouseButton pb && PressLandsOnButton(pb.GlobalPosition)) return;
-            if (e is InputEventMouseButton wh && wh.Pressed && (wh.ButtonIndex == MouseButton.WheelUp || wh.ButtonIndex == MouseButton.WheelDown)
+            // WHEEL IS NOT A PRESS, and excluding it here is load-bearing. A wheel notch arrives as an
+            // InputEventMouseButton too, so this guard -- added to stop a CLICK being stolen from a Button
+            // underneath -- was also swallowing every scroll that happened over a Button. The grids contain no
+            // buttons and the rest of the panel does, which is exactly why scrolling appeared to work "only
+            // over a grid" (master 2026-09-07). Buttons do not consume wheel input, so there is nothing to
+            // protect them from.
+            if (e is InputEventMouseButton pb && !IsWheel(pb.ButtonIndex) && PressLandsOnButton(pb.GlobalPosition)) return;
+            if (e is InputEventMouseButton wh && wh.Pressed && IsWheel(wh.ButtonIndex)
                 && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
             {
                 _vscroll.Value = Mathf.Clamp(_vscroll.Value + (wh.ButtonIndex == MouseButton.WheelUp ? -60 : 60), 0, _vscroll.MaxValue - _vscroll.Page);   // wheel over the box scrolls the clothing column
