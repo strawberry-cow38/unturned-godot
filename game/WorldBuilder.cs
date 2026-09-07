@@ -332,6 +332,30 @@ namespace UnturnedGodot
             return cat;
         }
 
+        /// <summary>Where you can sit on a prop (master 2026-09-07: "wire up sitting on couches, chairs,
+        /// benches, etc"). seats.txt, one line per SEAT -- a couch has two, a picnic table eight -- grouped
+        /// here by prop name the same way LoadDoorCatalog groups a multi-leaf door.
+        ///
+        /// Position and facing are in the raw obj space the mesh vertices are in, exactly like a door's pivot
+        /// and axis, so a rotated placement carries its seats around with it and there is no second convention
+        /// to get wrong. tools/extract_seats.py measures them off the meshes; retail has no seat data at all.</summary>
+        public static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3 Pos, Vector3 Face)>> LoadSeatCatalog(string dir)
+        {
+            var cat = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3, Vector3)>>();
+            string path = dir + "seats.txt";
+            if (!System.IO.File.Exists(path)) return cat;
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var line in System.IO.File.ReadLines(path))
+            {
+                if (line.StartsWith("#")) continue;
+                var p = line.Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 7) continue;
+                if (!cat.TryGetValue(p[0], out var list)) { list = new System.Collections.Generic.List<(Vector3, Vector3)>(); cat[p[0]] = list; }
+                list.Add((new Vector3(F(p[1]), F(p[2]), F(p[3])), new Vector3(F(p[4]), F(p[5]), F(p[6]))));
+            }
+            return cat;
+        }
+
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
         // whole build runs synchronously inside one _Ready (the dedicated server uses this).
         /// <summary>Zombies off switch (master 2026-09-02: "add back the ability to toggle zombies off on
@@ -458,6 +482,7 @@ namespace UnturnedGodot
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var doorCatalog = LoadDoorCatalog(dir);   // openable prop doors (MVP: Fridge_0) -- tools/extract_doors.py doors.txt
+            var seatCatalog = LoadSeatCatalog(dir);   // sittable furniture -- tools/extract_seats.py seats.txt
             // SIDE-ROAD SIGNALS (strawberry: "add a per prop flag for 'side road'"). Which road a mast is on cannot be
             // derived at runtime -- an independent per-prop timer has no junction to ask -- so it is data, keyed by
             // placement position like the rest of content/objects/. Absent file = every signal flashes amber, which is
@@ -1275,6 +1300,26 @@ namespace UnturnedGodot
                         foreach (var d in spawnedDoors) d.BodyOutline = bodyGlow;
                     }
                 }
+                // SITTABLE FURNITURE (master 2026-09-07: "wire up sitting on couches, chairs, benches, etc").
+                // Same shape as the door branch above and gated the same way -- Playable only, because a seat
+                // has no NetId and no server-side occupancy, so on a dedicated server two players would sit in
+                // the same chair and neither would see it. Anchors come from seats.txt in the prop's own raw
+                // obj space, so `new Transform3D(basis, gpos)` places them exactly as it places a door's pivot.
+                //
+                // A prop carries a LIST of these (a couch two, a picnic table eight) and they are tagged onto
+                // the prop's single body collider below as an array, so looking anywhere at the prop finds the
+                // seat NEAREST the point you aimed at rather than a fixed one.
+                System.Collections.Generic.List<PropSeat> propSeats = null;
+                if (mode == WorldMode.Playable && seatCatalog.TryGetValue(name, out var seatDefs))
+                {
+                    propSeats = new System.Collections.Generic.List<PropSeat>(seatDefs.Count);
+                    foreach (var sd in seatDefs)
+                    {
+                        var ps = PropSeat.Spawn(root, new Transform3D(basis, gpos), sd.Pos, sd.Face);
+                        ps.GroundY = gpos.Y;   // the prop's own floor -- where standing up puts you, not cushion height
+                        propSeats.Add(ps);
+                    }
+                }
                 // Road/rail connection points, if this prop has any (see PropConnectors). Registered from the
                 // SAME basis+position the mesh is placed with, so a rotated tile's snap points rotate with it.
                 PropConnectors.Register(name, new Transform3D(basis, gpos));
@@ -1352,6 +1397,18 @@ namespace UnturnedGodot
                         if (placedIndoorLamp != null && LampLight.IsToggle(placedIndoorLamp.LampKind)) body.SetMeta(LampLight.LookMeta, placedIndoorLamp);   // look-at the standing/desk lamp body -> its LampLight (F on/off + outline)
                         if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
                         if (placedRadio != null) body.SetMeta(RadioDevice.HitMeta, placedRadio);   // look-at the radio body -> its device (F on/off)
+                        if (propSeats != null && propSeats.Count > 0)
+                        {   // look-at a chair/couch/bench body -> ITS seats (F sits in the nearest one). An array,
+                            // like the traffic signal's heads: one collider, several interactables on it.
+                            var sarr = new Godot.Collections.Array();
+                            foreach (var ps in propSeats) sarr.Add(ps);
+                            body.SetMeta(PropSeat.HitMeta, sarr);
+                            // The whole-prop outline is the affordance -- built once and shared, since every seat
+                            // on this prop lights the same chair. Hidden until a seat is the look target.
+                            var seatGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));   // MakeOutline already starts hidden
+                            root.AddChild(seatGlow);
+                            foreach (var ps in propSeats) ps.BodyOutline = seatGlow;
+                        }
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the

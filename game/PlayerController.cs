@@ -463,6 +463,11 @@ namespace UnturnedGodot
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
         RadioDevice _focusRadio;      // the radio being LOOKED AT -> F toggles it on/off
+        PropSeat _focusSeat;          // the chair/couch/bench seat being LOOKED AT -> F sits in it
+        PropSeat _sitting;            // the seat we are IN, or null. The furniture analogue of _driving.
+        public PropSeat DebugFocusSeat => _focusSeat;
+        public PropSeat DebugSitting => _sitting;
+        public bool IsSeatedOnProp => _sitting != null && IsInstanceValid(_sitting);
         HeartMonitor _focusMonitor;   // ...and the patient monitor, same deal
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
@@ -545,7 +550,7 @@ namespace UnturnedGodot
             // which door/hood/trunk of the focused vehicle the ray found
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
-            RadioDevice hitRadio = null;
+            RadioDevice hitRadio = null; PropSeat hitSeat = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
@@ -599,6 +604,7 @@ namespace UnturnedGodot
                     else if (rcol is Node hmn && hmn.HasMeta(HeartMonitor.HitMeta) && hmn.GetMeta(HeartMonitor.HitMeta).As<HeartMonitor>() is HeartMonitor hmd && IsInstanceValid(hmd)) hitMonitor = hmd;   // patient monitor body -> its device (F toggles; the bullet path shoots the screen out)
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
                     else if (rcol is Node rdn && rdn.HasMeta(RadioDevice.HitMeta) && rdn.GetMeta(RadioDevice.HitMeta).As<RadioDevice>() is RadioDevice rdd && IsInstanceValid(rdd)) hitRadio = rdd;   // radio body collider tagged in WorldBuilder -> its device (F toggles)
+                    else if (rcol is Node psn && psn.HasMeta(PropSeat.HitMeta) && NearestFreeSeat(psn, _lookEnd) is PropSeat pss) hitSeat = pss;   // chair/couch/bench body tagged in WorldBuilder -> the seat NEAREST where you aimed (F sits)
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
@@ -611,7 +617,7 @@ namespace UnturnedGodot
                 // A ray claim on anything except a SHELF is terminal -- the shelf is the one case where the assist
                 // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
                 // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
-                rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null
+                rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null || hitSeat != null
                            || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitElevButton != null || hitNote != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
@@ -657,7 +663,7 @@ namespace UnturnedGodot
                 _debugLookCandidates = (rayTerminal ? 1 : 0) + (hitShelf != null ? 1 : 0)
                                      + (hitItem != null ? 1 : 0) + (hitVeh != null ? 1 : 0)
                                      + (hitShelfItem != null && !rayShelfItem ? 1 : 0) + (hitPuppet != null ? 1 : 0);
-                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; hitLamp = null; hitElevButton = null; }
+                if (won != Look.RayOther) { hitDoor = null; hitObjectDoor = null; hitBed = null; hitDeploy = null; hitFluid = null; hitGasPump = null; hitGrid = null; hitTV = null; hitMonitor = null; hitLamp = null; hitElevButton = null; hitSeat = null; }
                 if (won != Look.Shelf) hitShelf = null;
                 if (won != Look.ShelfItem) hitShelfItem = null;
                 if (won != Look.Item) hitItem = null;
@@ -790,6 +796,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
+            }
+            if (hitSeat != _focusSeat)   // seat look-focus: whole-prop white outline, the same affordance a doored prop gets
+            {
+                if (IsInstanceValid(_focusSeat)) _focusSeat.SetLookFocused(false);
+                _focusSeat = hitSeat;
+                _focusSeat?.SetLookFocused(true);
             }
             if (hitRadio != _focusRadio)   // radio look-focus: same whole-prop white outline as the TV
             {
@@ -5465,8 +5477,80 @@ namespace UnturnedGodot
             return spot.Y < groundY + 0.1f ? new Vector3(spot.X, groundY + 0.5f, spot.Z) : spot;
         }
 
+        // ---- SITTING ON FURNITURE (master 2026-09-07: "wire up sitting on couches, chairs, benches, etc") ----
+        //
+        // Mirrors the vehicle seat -- freeze, hide the collider, pose the body -- but far smaller, because a
+        // chair does not move, has no engine and nobody drives it. The two things worth reading twice:
+        //
+        // WHERE THE ORIGIN GOES. The player's origin is at the FEET and the camera rides 1.6 above it, while
+        // rig.json puts the hips 0.735 above the body root and Idle_Sit rotates bones without moving any of
+        // them. So dropping the origin one hip-height below the cushion lands the pelvis ON the cushion AND
+        // puts the eye 0.865 above it -- the standing head-above-hips distance -- which is why nothing here
+        // touches the camera. One number does both, so they cannot drift apart.
+        //
+        // WHY THE COLLIDER GOES OFF. Exactly as for a vehicle: the capsule would otherwise fight the prop's
+        // own trimesh at cushion height and squeeze the player out sideways.
+        /// <summary>Test seam for NearestFreeSeat. The picking rule is the one thing here that a player
+        /// cannot see going wrong -- an occupied or far seat quietly wins and you end up somewhere odd -- and
+        /// it is unreachable otherwise, since the real call site is inside the look raycast.</summary>
+        public static PropSeat DebugNearestFreeSeat(Node body, Vector3 at) => NearestFreeSeat(body, at);
+
+        static PropSeat NearestFreeSeat(Node body, Vector3 at)
+        {
+            // Nearest to where you AIMED, not to the prop: on a picnic table the eight seats are 3 m apart and
+            // "the prop's first free seat" would teleport you across the table from the one you looked at.
+            PropSeat best = null; float bestD = float.MaxValue;
+            foreach (var v in body.GetMeta(PropSeat.HitMeta).AsGodotArray())
+                if (v.As<PropSeat>() is PropSeat ps && GodotObject.IsInstanceValid(ps) && ps.Free)
+                {
+                    float d = ps.Anchor.Origin.DistanceSquaredTo(at);
+                    if (d < bestD) { bestD = d; best = ps; }
+                }
+            return best;
+        }
+
+        public void SitDown(PropSeat seat)
+        {
+            if (seat == null || !IsInstanceValid(seat) || !seat.Free || _dead) return;
+            if (_driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null) return;   // already sitting on something that moves
+            _sitting = seat;
+            seat.Occupant = this;
+            if (_focusSeat != null && IsInstanceValid(_focusSeat)) { _focusSeat.SetLookFocused(false); _focusSeat = null; }   // drop the look-outline once you are in it
+            GlobalPosition = seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+            Rotation = new Vector3(0f, seat.Anchor.Basis.GetEuler().Y, 0f);   // face the way the seat faces -- yaw only
+            Velocity = Vector3.Zero;
+            // Retail's own enum value for this. Set on _move (Stance is a read-only view of it), and it STICKS:
+            // StepStanceOnce runs later in PhysicsTick, after the seated early-return above, so nothing
+            // overwrites it while you are in the chair. Leaving it at whatever it was -- SPRINT, say -- would
+            // otherwise be what a replicated pose and the eye-height lookup both read.
+            _move.Stance = EPlayerStance.SITTING;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = true;
+        }
+
+        /// <summary>Get off the seat. Safe to call when not sitting (death and teleports both route through
+        /// here rather than each remembering to check), and it always restores the collider -- a player left
+        /// with a disabled capsule falls through the world, which is much worse than a chair that stays busy.</summary>
+        public void StandUp()
+        {
+            var seat = _sitting; _sitting = null;
+            if (seat != null && IsInstanceValid(seat))
+            {
+                if (seat.Occupant == this) seat.Occupant = null;
+                GlobalPosition = SafeSpot(seat.ExitSpot(), "seat exit");
+            }
+            _move.Stance = EPlayerStance.STAND;   // the next PhysicsTick's StepStanceOnce re-decides and resizes the capsule from here
+            Velocity = Vector3.Zero;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+        }
+
         void EjectFromVehicleOnDeath()
         {
+            // Dying in a chair stands you up first. Without this the corpse keeps the seat forever -- the exact
+            // leak the vehicle seats had and that the block below exists to fix -- and respawning would leave
+            // the player with a disabled collider, falling through the map.
+            if (IsSeatedOnProp) StandUp();
             if (_driving == null && _riding == null) return;
             var v = _driving; _driving = null; _riding = null;
             if (v != null && !IsInstanceValid(v)) v = null;   // dying as the vehicle is torn down: a stale wrapper's zero transform is how a jet death ended at 0,0,0
@@ -6243,6 +6327,7 @@ namespace UnturnedGodot
                 else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (_ridingCrane != null) ExitCrane();                     // hop out of a boarded crane
+                else if (IsSeatedOnProp) StandUp();                             // get off the chair/couch/bench (F sat you down, F stands you up)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
@@ -6279,6 +6364,7 @@ namespace UnturnedGodot
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
+                else if (_focusSeat != null && IsInstanceValid(_focusSeat) && _focusSeat.Free) SitDown(_focusSeat);   // looking at a chair/couch/bench: sit in the seat you aimed at
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
@@ -8157,6 +8243,14 @@ namespace UnturnedGodot
                 _body.GlobalTransform = _riding.GlobalTransform * new Transform3D(Basis.Identity, _riding.SeatOffset);
                 _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");
             }
+            else if (IsSeatedOnProp)   // sat on furniture: same place as on foot (SitDown put the origin a hip-height below the cushion), seated clip instead of locomotion
+            {
+                _body.GlobalPosition = GlobalPosition;
+                _body.Rotation = new Vector3(0f, Rotation.Y, 0f);
+                _body.LeanDeg = 0f;              // you cannot lean out of an armchair
+                _body.PitchDeg = _pitchDeg;      // ...but you can still look up and down, and the spine should follow
+                _body.PlayLoop(_body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
+            }
             else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed
             {
                 _body.GlobalPosition = GlobalPosition;
@@ -8925,6 +9019,11 @@ namespace UnturnedGodot
             if (_ridingTrain != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveTrain((float)delta); return; }   // riding a train: skip on-foot movement, drive the rail
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
+            // SEATED ON FURNITURE: the same freeze, with nothing to drive. SitDown set the position once and
+            // turned the collider off, so there is no gravity to fall under and no input to integrate -- but
+            // LastMoveInput/LastJumpInput are still cleared, because those are POLLED and would otherwise hold
+            // whatever they had when you sat down and read out as a player walking on the spot.
+            if (IsSeatedOnProp) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; Velocity = Vector3.Zero; return; }
             if (_interpReady && !_dead)
             {
                 // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual lerp)...
