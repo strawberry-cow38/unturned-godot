@@ -255,6 +255,7 @@ namespace UnturnedGodot
                     var toaster = Toaster.Make(mi);
                     if (toaster != null)
                     {
+                        _toaster = toaster;   // the lever rides the open/close state -- see SetDoorsOpen
                         AddChild(toaster);
                         // the look/shoot ray resolves through the body's meta, exactly as SmartProps.TagBody does
                         foreach (var _child in mi.GetChildren())
@@ -392,9 +393,16 @@ namespace UnturnedGodot
           : IsDisplayCooler(mesh) ? new Color(0.45f, 0.72f, 1.0f)       // cold blue
           : (Color?)null;
 
+        Toaster _toaster;   // Toaster_0 only: its lever is this container's "door" (strawberry 2026-09-07)
+
         public void SetDoorsOpen(bool open)
         {
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
+            // THE TOASTER'S LEVER IS ITS DOOR. It has no leaf, but it rides this exact signal, which is why the
+            // feature needed no new state and no wire change: OpenCrate/CloseCrate already call this for ANY
+            // StoreShelf in SP-direct, and StorageReplicaView drives it from the server's door bit in MP -- the
+            // bit cow tools derived as "the viewer set is not empty", which is per-container and not per-leaf.
+            if (_toaster != null && IsInstanceValid(_toaster)) _toaster.SetLeverUp(open);
             _doorsOpen = open;
             RefreshGlow();
         }
@@ -412,7 +420,12 @@ namespace UnturnedGodot
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
         public float DebugDoorSwing() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugSwing : -1f;
-        public void TickDoorsForTest(double delta) { foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta); }
+        public void TickDoorsForTest(double delta)
+        {
+            foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta);
+            if (_toaster != null && IsInstanceValid(_toaster)) _toaster.TickLeverForTest(delta);
+        }
+        public Toaster DebugToaster => _toaster;
         /// <summary>Stop the leaves animating so a settled PART-WAY pose survives to the screenshot. Ticking by hand
         /// only pre-advances the swing: the engine keeps calling _PhysicsProcess for the frames between the tick loop
         /// and the shot, which finishes it -- so every "mid-swing" still came out fully open and matched the open
