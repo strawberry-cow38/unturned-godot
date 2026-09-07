@@ -26,11 +26,21 @@ namespace UnturnedGodot
             _globalsRegistered = true;
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
+            // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
+            // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
+            // in, im talking minutes"). WeatherManager integrates it.
+            RenderingServer.GlobalShaderParameterAdd("rain_puddle", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
             // ROOF MAP (RainRoofMap): the topmost-surface heightmap around the player; rect.z = 0 means "no map" (every shader skips)
             var blank = Image.CreateEmpty(1, 1, false, Image.Format.Rf); blank.Fill(new Color(RainRoofMap.NoHit, 0f, 0f, 1f));   // nothing above anything
             RenderingServer.GlobalShaderParameterAdd("rain_roof", RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(ImageTexture.CreateFromImage(blank)));
             RenderingServer.GlobalShaderParameterAdd("rain_roof_rect", RenderingServer.GlobalShaderParameterType.Vec4, Vector4.Zero);
+            // SEA LEVEL: a drop that has reached the water has landed -- it must not carry on falling through it
+            // (master 2026-09-07: "the water level should kill raindrops falling below it, so they dont fall
+            // underwater"). Same idea as the roof map, one plane instead of a heightfield. NoSea is far below any
+            // real terrain, so a map with no water (Yukon's seaLevel = 1.0) kills nothing.
+            RenderingServer.GlobalShaderParameterAdd("rain_sea_level", RenderingServer.GlobalShaderParameterType.Float, NoSea);
         }
 
         /// <summary>Zero the rain globals. They're process-wide and OUTLIVE a scene change (the Add is Nil-guarded
@@ -42,7 +52,23 @@ namespace UnturnedGodot
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
+            RenderingServer.GlobalShaderParameterSet("rain_puddle", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f));
+            RenderingServer.GlobalShaderParameterSet("rain_sea_level", NoSea);
+        }
+
+        public const float NoSea = -100000f;   // "this map has no water": below every drop, so the sea test never fires
+        float _lastSea = float.NaN;
+
+        /// <summary>Push the water plane's world Y to the rain shader, so drops stop AT the surface instead of
+        /// continuing underwater. Cheap and idempotent -- it only writes when the value actually moves (a fresh
+        /// StringName per literal every frame is the allocation tinyclaw caught in the intensity push).</summary>
+        void PushSeaLevel()
+        {
+            float sea = Terrain.HasWater ? Terrain.SeaLevelY : NoSea;
+            if (sea == _lastSea) return;
+            _lastSea = sea;
+            RenderingServer.GlobalShaderParameterSet("rain_sea_level", sea);
         }
 
         public override void _Ready()
@@ -88,6 +114,7 @@ namespace UnturnedGodot
 
         public void HubProcess(double delta)
         {
+            PushSeaLevel();   // outside the camera guard: the water plane exists whether or not the rain has a camera yet
             if (Cam != null && IsInstanceValid(Cam))
             {
                 float dt = (float)delta; _t += dt; if (_restartCd > 0f) _restartCd -= dt;

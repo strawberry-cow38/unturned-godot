@@ -53,6 +53,7 @@ uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
 uniform float caustic_strength = 0.15;   // toned down 70% (master)
 global uniform float rain_wetness;                              // 0..1 wet soak (WeatherManager drives it) -> darken + gloss up-facing terrain
 global uniform float rain_intensity;                           // 0..1 raindrop-impact splash density/brightness
+global uniform float rain_puddle;                              // 0..1 standing water, minutes behind the rain (WeatherManager)
 global uniform sampler2D rain_roof;                             // RainRoofMap (rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
 varying vec3 wpos;
@@ -183,13 +184,16 @@ void fragment() {
         // PUDDLES on the ROAD LAYER only (master 2026-09-06: ""give road props, road splines (not trails) and road
         // terrain materials a separate puddles shader""). Same field the road props and splines use -- one include,
         // so a puddle that straddles a kerb is the same puddle on both sides rather than two that disagree.
-        float pud = puddle_mask(wpos.xz, r_wet, r_up) * roadw;
+        float prange = 1.0 - smoothstep(42.0, 60.0, length((VIEW_MATRIX * vec4(wpos, 1.0)).xyz));   // no water drawn far away
+        float pud = puddle_mask(wpos.xz, clamp(rain_puddle, 0.0, 1.0), r_up, prange) * roadw;   // `level` stays the BARE global: it gates the branch puddle_mask's fwidth() sits behind, and r_up varies within a quad (it is already the upness argument anyway)
         ALBEDO *= mix(1.0, 0.62, pud);          // standing water reads darker than the wet road around it
         ROUGHNESS = mix(ROUGHNESS, 0.06, pud);  // ...and far more reflective, which is the whole point of it
-        if (rain_intensity > 0.0 && road_wet > 0.0) {
-            // ~800 ALU: gated on there being both rain AND road here, so grass and clear weather pay nothing.
-            float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * road_wet;
-            ALBEDO += sp * 0.18;                                     // impact_opacity from the prop shader -- subtle glints, not paint
+        if (rain_intensity > 0.0 && pud > 0.01) {
+            // ~800 ALU, and now gated on STANDING WATER as well as rain (master 2026-09-06 ""gate water ripple impacts
+            // behind being on a puddle""): a ring only lands where there is a puddle to ring, which is also where one
+            // is visible. Grass, dry road and clear weather all pay nothing.
+            float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * pud;
+            ALBEDO += sp * 0.45;                                     // brighter than before because it only shows on water now
         }
         SPECULAR = mix(0.5 + r_wet * 0.06 + road_wet * 0.06, 0.9, pud);   // no metallic -- wet asphalt is not chrome, but a puddle is a mirror
     }

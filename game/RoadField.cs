@@ -76,6 +76,7 @@ namespace UnturnedGodot
             m.SetShaderParameter("dry_roughness", 1.0f);
             m.SetShaderParameter("impact_amount", 1.0f);
             m.SetShaderParameter("splash_scale", 1.0f);
+            m.SetShaderParameter("puddle_amount", 1.0f);   // a road spline is one of the four surfaces that pools water (master 2026-09-06); dirt TRAILS never reach here
             if (img != null) { m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); return m; }
             m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
             return m;

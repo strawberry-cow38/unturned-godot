@@ -33,6 +33,7 @@ global uniform float rain_intensity;    // 0 .. 1: rain falling NOW
 uniform float covered : hint_range(0.0, 1.0) = 0.0;
 
 uniform float streak_amount : hint_range(0.0, 1.0) = 1.0;
+uniform float streak_alpha : hint_range(0.0, 1.0) = 0.5;   // master 2026-09-06: "increase the transparency of the rain runners on car windows by 50%"
 uniform float refract_strength = 0.038;   // a rivulet is a fat lens: it bends the scene behind it a lot more than a bead does
 uniform float max_distance = 22.0;      // past this: no runners, no screen-texture read (same gate as the drops)
 uniform float rim_gain = 0.55;          // refraction alone is invisible against a flat sky; the lit EDGES are what read as water.
@@ -108,7 +109,7 @@ void fragment(){
         // the scene behind the runner, bent -- already lit, so it goes out unshaded rather than being re-lit
         vec3 bg = textureLod(screen_tex, clamp(SCREEN_UV + off, vec2(0.001), vec2(0.999)), 0.0).rgb;
         col = bg * (1.0 + rim * 0.35) + vec3(rim * rim_gain);   // the rim both brightens what it bends and glints on its own
-        a = clamp(cov * 0.95 + rim * 0.9, 0.0, 1.0);
+        a = clamp((cov * 0.95 + rim * 0.9) * streak_alpha, 0.0, 1.0);
     }
     if (debug_paint > 1.5) { ALBEDO = vec3(1.0, 0.0, 1.0); ALPHA = 0.6; }        // the pass itself: magenta over every pixel of the glass
     else if (debug_paint > 0.5) { ALBEDO = vec3(1.0, 0.0, 0.0); ALPHA = step(0.002, max(cov, rim)); }   // just the runners
