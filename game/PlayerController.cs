@@ -3326,8 +3326,10 @@ namespace UnturnedGodot
         /// using two clips means on and off are audibly different -- which the old code could not manage, since it
         /// played the fire-selector click both ways.
         ///
-        /// The HEADLAMP deliberately keeps the mechanical click: it is a lamp with a switch, not an electronic
-        /// device booting, and a boot-up beep for a torch would be worse than what it has.</summary>
+        /// The HEADLAMP uses it too. I had argued it should keep the mechanical click -- a lamp with a switch is not
+        /// an electronic device booting -- and master's answer to the offer was "yes its beep", so both worn vision
+        /// items now sound the same. Their call, and it does make the one key behave consistently whichever of the
+        /// two is in the glasses slot.</summary>
         void PlayVisionToggleSound(bool on)
         {
             var stream = LoadWavOneShot($"res://content/audio/misc/general_target_{(on ? "on" : "off")}_beep.wav");
@@ -3362,7 +3364,7 @@ namespace UnturnedGodot
             _headlampOn = !_headlampOn;
             _headlampLit = _headlampOn && WearingHeadlamp;
             ApplyHeadlamp();
-            PlaySelectorSwitchSound();   // same click the handheld toggle makes
+            PlayVisionToggleSound(_headlampOn);   // master 2026-09-07 wanted the beep on this too, not just the goggles
         }
 
         /// <summary>Bring the beam in line with the state. Idempotent, and safe to call when the lamp was taken
