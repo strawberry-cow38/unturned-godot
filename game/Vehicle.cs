@@ -2907,7 +2907,7 @@ namespace UnturnedGodot
             Fuel = 50_000f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",   // 50 L tank (metric 1u=1mL; realistic sedan)
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),   // prefab Headlights (Z neg)
             TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.841f), new Vector3(0.979f, 0.688f, 2.841f) },   // prefab Taillights (rear, Z neg)
-            SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steer centroid + disc normal (PCA)
+            SteerPivot = new Vector3(-0.464f, 1.094f, -0.816f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steer centroid + disc normal (PCA); moved with the mesh when the dash went in
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },   // X +-1.30, front Z -1.62, rear 1.38
             Parts = new (string, Color)[]
