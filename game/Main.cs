@@ -8107,6 +8107,25 @@ namespace UnturnedGodot
                 pane.LookAt(pane.GlobalPosition - fwd, Vector3.Up);   // the pane's face toward the player
                 GD.Print($"[glasspane] pane 3 m ahead at movie frame {Engine.GetFramesDrawn()}");
             }
+            // UG_PDLOOK=x,y,z: point the peidrive player's eye at a world point, every frame. A still shot of anything
+            // ON THE GROUND -- puddles, terrain paint, road caps -- is otherwise impossible from this harness: the spawn
+            // gaze is level, so the frame is 60% sky and the surface under discussion is a sliver at the bottom. Re-applied
+            // per frame rather than once because the player's own camera setup writes _cam.Rotation back (the stale-aim
+            // trap DebugLookAt's own doc describes), and because the body is still settling onto the ground for the first
+            // second after spawn.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && System.Environment.GetEnvironmentVariable("UG_PDLOOK") is string _pdl && !string.IsNullOrEmpty(_pdl))
+            {
+                var _q = _pdl.Split(',');
+                var _ci = System.Globalization.CultureInfo.InvariantCulture;
+                if (_q.Length == 3 && float.TryParse(_q[0], System.Globalization.NumberStyles.Float, _ci, out float _lx)
+                                   && float.TryParse(_q[1], System.Globalization.NumberStyles.Float, _ci, out float _ly)
+                                   && float.TryParse(_q[2], System.Globalization.NumberStyles.Float, _ci, out float _lz))
+                    _pdPlayer.DebugLookAt(new Vector3(_lx, _ly, _lz));
+            }
+            // UG_PDPITCH=<deg>: tilt the eye down (negative) or up, keeping the spawn yaw. The everyday case for a
+            // ground shot -- UG_SPAWNAT already aims the body along the road, and this is the one axis it cannot set.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && float.TryParse(System.Environment.GetEnvironmentVariable("UG_PDPITCH"), out float _pdp))
+                _pdPlayer.DebugSetPitch(_pdp);
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
             if (_rigDir != null)
             {

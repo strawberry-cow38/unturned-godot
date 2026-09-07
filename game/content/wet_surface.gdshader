@@ -101,7 +101,10 @@ void fragment(){
     // PUDDLES first: the impact rings are gated behind them (master 2026-09-06 "gate water ripple impacts behind being
     // on a puddle"), so a ring only ever lands on standing water -- which is where you actually see one.
     float prange = 1.0 - smoothstep(puddle_max_distance * 0.7, puddle_max_distance, length(VERTEX));
-    float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0) * sheltered, upness, prange) * puddle_amount;
+    // `level` must be the BARE global: it is the one argument puddle_mask branches on, and a branch on anything
+    // that varies within a quad (shelter does, at a roof edge) leaves the fwidth() in there undefined. Shelter
+    // scales the mask instead, via the upness argument -- under a roof there is no puddle either way.
+    float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0), upness * sheltered, prange) * puddle_amount;
     float sp = 0.0;
     if (rint > 0.0 && impact_amount > 0.0 && pud > 0.01) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount * pud;   // gate the ~800-ALU voronoi -- zero in clear weather, off a puddle, or on impact-disabled surfaces (terrain)
     // Standing water: MORE reflective than the damp around it (master: "puddles of more reflective blobs"). The damp

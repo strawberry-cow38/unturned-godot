@@ -185,7 +185,7 @@ void fragment() {
         // terrain materials a separate puddles shader""). Same field the road props and splines use -- one include,
         // so a puddle that straddles a kerb is the same puddle on both sides rather than two that disagree.
         float prange = 1.0 - smoothstep(42.0, 60.0, length((VIEW_MATRIX * vec4(wpos, 1.0)).xyz));   // no water drawn far away
-        float pud = puddle_mask(wpos.xz, clamp(rain_puddle, 0.0, 1.0) * (r_up > 0.0 ? 1.0 : 0.0), r_up, prange) * roadw;
+        float pud = puddle_mask(wpos.xz, clamp(rain_puddle, 0.0, 1.0), r_up, prange) * roadw;   // `level` stays the BARE global: it gates the branch puddle_mask's fwidth() sits behind, and r_up varies within a quad (it is already the upness argument anyway)
         ALBEDO *= mix(1.0, 0.62, pud);          // standing water reads darker than the wet road around it
         ROUGHNESS = mix(ROUGHNESS, 0.06, pud);  // ...and far more reflective, which is the whole point of it
         if (rain_intensity > 0.0 && pud > 0.01) {

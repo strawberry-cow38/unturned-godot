@@ -153,6 +153,7 @@ namespace UnturnedGodot
         /// Polled on a timer because a raycast per frame per viewer is exactly the "million rebuilds each
         /// frame" cost strawberry_cow warned about, and shelter changes at walking pace.</summary>
         float _puddleLevel, _lastPuddle = -1f;                     // standing water, integrated (see HubProcess)
+        bool _puddleSeeded;                                        // UG_PUDDLE start level, applied once (harness)
         const float PuddleFillSeconds = 150f, PuddleDrainSeconds = 420f;   // ~2.5 min to fill in steady rain, ~7 min to dry out
         float _shelter = 1f, _shelterPoll;
         const float ShelterPollSeconds = 0.15f;
@@ -217,6 +218,16 @@ namespace UnturnedGodot
             // water does not -- it takes a few minutes of rain to gather and a good while longer to drain away, so it is
             // its own slowly-integrated level (master 2026-09-06 "im talking minutes"). Driven off the same scaled dt as
             // the rest of the weather, so a sped-up day fills and dries puddles at the same rate the clouds move.
+            // HARNESS SEED (UG_PUDDLE=0..1). Puddles gather over MINUTES on purpose, which no render is going to sit
+            // through -- ten seconds of rain reaches 0.07 and the roads photograph dry. This sets the STARTING level and
+            // then lets the ordinary integrator carry on from there, so a render shows the real field at a real level
+            // rather than a render-only branch that could look right while the live game never fills.
+            if (!_puddleSeeded)
+            {
+                _puddleSeeded = true;
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_PUDDLE"), out float pSeed))
+                    _puddleLevel = Mathf.Clamp(pSeed, 0f, 1f);
+            }
             float pTarget = rint > 0.02f ? Mathf.Min(1f, rint * 1.3f) : 0f;   // heavier rain -> deeper standing water, capped
             float pRate = pTarget > _puddleLevel ? 1f / PuddleFillSeconds : 1f / PuddleDrainSeconds;
             _puddleLevel = Mathf.MoveToward(_puddleLevel, pTarget, pRate * dt);

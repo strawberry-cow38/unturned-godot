@@ -8457,7 +8457,14 @@ namespace UnturnedGodot
         public bool ThirdPersonActive => !_fp && !_dead && _driving == null && _riding == null;
         /// <summary>Test hook: aim the view without a mouse. Clamped like the real look, so a test cannot ask for a
         /// pitch the player could never reach and get an answer that does not apply in play.</summary>
-        public void DebugSetPitch(float deg) => _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
+        public void DebugSetPitch(float deg)
+        {
+            _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
+            // ...and MOVE THE CAMERA, which real mouse input does on the same line (see the look handler). Setting
+            // the field alone changes where shots go without changing what is on screen, so a harness that aimed
+            // down photographed the horizon while the aim really was at its feet.
+            if (_cam != null) _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
+        }
         public float DebugPitch => _pitchDeg;
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
 

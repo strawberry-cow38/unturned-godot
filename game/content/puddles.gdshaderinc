@@ -30,10 +30,27 @@ float pud_noise(vec2 p) {
 // NOTE: the third argument is NOT called `flat` -- that is a reserved interpolation qualifier in GLSL and the
 // compiler rejects it with "Expected an identifier for argument name", pointing at the include rather than the caller.
 float puddle_mask(vec2 wxz, float level, float upness, float range) {
-    if (level <= 0.01 || upness <= 0.01 || range <= 0.01) return 0.0;
+    // ONLY `level` gates the early out, and that is deliberate: it is a global uniform, so every pixel of a quad
+    // takes the same branch and the fwidth() below is well defined. upness and range VARY within a quad (a road
+    // meeting a kerb, the far edge of the distance fade), and branching on those would leave neighbouring lanes
+    // without a `depth` to differentiate against -- undefined derivatives, a hairline of wrong edge width along
+    // exactly those seams. They multiply out at the end instead; in clear weather nothing here runs either way.
+    if (level <= 0.01) return 0.0;
     // two octaves: hollows a few metres across with a smaller wobble on the shoreline, so the outline is irregular
     // rather than a circle. Scaled down from the first pass at master's word -- these are puddles, not ponds.
     float depth = pud_noise(wxz * 0.19) * 0.72 + pud_noise(wxz * 0.62) * 0.28;
-    float line = mix(0.62, 0.46, clamp(level, 0.0, 1.0));   // the waterline rises as water gathers: bigger, joined-up puddles
-    return smoothstep(line + 0.05, line - 0.03, depth) * upness * range;
+    // THE WATERLINE RISES WITH THE WATER -- and it used to fall. `depth` is ground HEIGHT and the test below wets
+    // everything BELOW `line`, so mix(0.62 -> 0.46) meant the driest moment had the highest waterline: the instant
+    // rain_puddle crossed the early-out at 0.01 the roads went straight to their widest coverage, and then shrank
+    // as it kept raining. That is what master saw as "the puddles just appear suddenly" -- not a fade that was too
+    // fast, a fade running backwards from full. Low end sits under the noise floor so no rain really is no water.
+    float line = mix(0.10, 0.46, clamp(level, 0.0, 1.0));
+    // A SHORELINE, not a smudge. A fixed-width band (0.05/0.03) is many metres wide on noise this slow, so every
+    // puddle faded out like smoke instead of ending at an edge. fwidth gives the band the width of about one PIXEL
+    // of the depth field, so the edge is crisp at your feet and still anti-aliased at range rather than crawling.
+    float aa = max(fwidth(depth) * 1.5, 0.004);
+    if (upness <= 0.001 || range <= 0.001) return 0.0;
+    // ...and the first puddles come UP rather than blinking on: coverage alone would start them as fully-formed
+    // specks. Over the first ~12% of the fill (about 18 s of rain) they are faint as well as small.
+    return smoothstep(line + aa, line - aa, depth) * upness * range * smoothstep(0.0, 0.12, level);
 }
