@@ -35,6 +35,41 @@ VK_ICD = "/usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
 RENDER_TIMEOUT = 180  # s per scene; a hang is an infra failure, not a mismatch
 
 
+ASSEMBLY = os.path.join(ROOT, "game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll")
+
+
+def stamp_assembly():
+    """Print WHICH BUILD these renders come from, and shout if it predates the source.
+
+    This runner never compiles anything -- it launches godot, and godot mono does not rebuild on boot. So
+    `git checkout <sha> && visual_tests.py` renders whatever was last built, silently, and in the PASSING
+    direction: a bake taken that way is a golden for code that was never compiled (2026-09-07, two of them).
+    A checkout rewrites source mtimes to now, so "assembly older than the newest .cs" catches exactly that.
+    """
+    if not os.path.isfile(ASSEMBLY):
+        print(f"[VISUAL] STALE: no assembly at {os.path.relpath(ASSEMBLY, ROOT)} -- "
+              f"run: dotnet build game/UnturnedGodot.csproj -c Debug")
+        return
+    built = os.path.getmtime(ASSEMBLY)
+    newest, newest_src = 0.0, None
+    for sub in ("game", "core"):
+        for dirpath, dirnames, files in os.walk(os.path.join(ROOT, sub)):
+            dirnames[:] = [d for d in dirnames if d not in (".godot", "bin", "obj")]
+            for f in files:
+                if not f.endswith(".cs"):
+                    continue
+                p = os.path.join(dirpath, f)
+                m = os.path.getmtime(p)
+                if m > newest:
+                    newest, newest_src = m, p
+    age = time.strftime("%Y-%m-%d %H:%M", time.localtime(built))
+    if newest > built:
+        print(f"[VISUAL] STALE ASSEMBLY: built {age}, but {os.path.relpath(newest_src, ROOT)} is newer -- "
+              f"these renders are NOT this checkout. Run: dotnet build game/UnturnedGodot.csproj -c Debug")
+    else:
+        print(f"[VISUAL] assembly built {age} (newer than every .cs -- renders match the checkout)")
+
+
 def render(entry, work):
     """Run one scene through xvfb+lavapipe+movie-mode; return the captured png path or (None, why)."""
     os.makedirs(work, exist_ok=True)
@@ -113,6 +148,7 @@ def main():
         print(f"[VISUAL] no manifest entries match '{update or only}'"); return 2
 
     os.makedirs(GOLDEN_DIR, exist_ok=True)
+    stamp_assembly()
     passed = failed = infra = updated = 0
     t0 = time.time()
     for e in entries:
