@@ -1657,6 +1657,21 @@ namespace UnturnedGodot
         {
             if (d == null || !IsInstanceValid(d) || d.IsWreck || d.OnFire) return;
             if (d.NetId != 0) { NetPickupDeployable?.Invoke(d.NetId); return; }
+            // NO NetId + a LIVE net seam = a body the server never registered, so there is nothing to ask it to
+            // remove -- and the bag is server-owned on every path (singleplayer runs through MpLoopback, which wires
+            // this very seam at MpLoopback.cs:145). The local tryAddItem below would therefore be reverted by the
+            // next owner-inventory echo and the item would simply VANISH from the grid, which is exactly what master
+            // reported: "picking up props isnt server verified, they disappear on inv update".
+            //
+            // Refusing is also the rule the SERVER already applies to world fixtures -- ServerTransactions' pickup
+            // validate gates on `def.FixtureKind == FixtureKind.None` because a world fixture is "unreplaceable"
+            // (review M4). A WorldBuilder-spawned prop is the same thing arriving by a different road; it just never
+            // reaches that check, because it never reaches the server at all.
+            if (NetPickupDeployable != null)
+            {
+                GD.Print($"[deploy] pickup refused: {d.Def?.Name} is world scenery the server does not own (NetId 0)");
+                return;
+            }
             ushort id = d.Def?.Id ?? 0;
             string name = d.Def?.Name;
             Vector3 pos = d.GlobalPosition;
