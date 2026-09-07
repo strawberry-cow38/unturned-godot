@@ -433,28 +433,58 @@ namespace SDG.Unturned
         /// lists above left inert -- those arrived from the item TSV with magCapacity 0 / IsMagazine false, which made
         /// PlayerController.UsesMagItem false for their guns, and a gun that is neither mag-fed nor shell-fed reloaded to
         /// full out of thin air (strawberry 2026-09-04: "fix ammo items not being consumed by guns"). Hand-wired rows win:
-        /// anything with a capacity or the ammo flag already set is left alone. Pellets > 1 = a shotgun shell (Shell()
-        /// shape: stackable ammo, pellets per shot); else a magazine with the retail capacity and its first caliber
-        /// group (the port keys a magazine on ONE caliber; no retail magazine in the table lists more than one).</summary>
+        /// anything with a capacity or the ammo flag already set is left alone. DELETE_EMPTY = a loose shell (Shell()
+        /// shape: stackable ammo); else a magazine with the retail capacity and its first caliber group (the port keys
+        /// a magazine on ONE caliber; no retail magazine in the table lists more than one). Either kind keeps its
+        /// Pellets -- see the note at the branch for why that is not what decides the feed.</summary>
         static void WireMagazinesFromTsv()
         {
             string path = ProjectSettings.GlobalizePath("res://content/magazines.tsv");
             if (!System.IO.File.Exists(path)) return;
             int wired = 0, shells = 0;
+            var pelletMags = new System.Collections.Generic.List<string>();
             foreach (var line in System.IO.File.ReadAllLines(path))
             {
                 var c = line.Split('\t');
                 if (c.Length < 5 || !ushort.TryParse(c[0], out ushort id)) continue;
                 var a = Assets.find(id);
-                if (a == null || a.magCapacity > 0 || a.isAmmo) continue;   // hand-wired (or not an item we carry) -> keep
+                if (a == null) continue;                                   // not an item we carry
                 int.TryParse(c[2], out int cap);
                 int cal = 0; var cals = c[3].Split(','); if (cals.Length > 0) int.TryParse(cals[0], out cal);
                 int.TryParse(c[4], out int pellets);
+                // PELLETS ARE APPLIED FIRST AND UNCONDITIONALLY, before the already-wired bail below. They are AMMO
+                // data, not feed data, and NOBODY else in the catalog has them: the hand Mag() list does not take a
+                // pellet count, and DeriveMagazinesFromGuns fills a magazine's capacity from its GUN's Ammo_Max --
+                // a gun .dat carries no Pellets key at all. Derive runs BEFORE this pass, so every magazine it
+                // touched arrived here with magCapacity already set and got skipped wholesale, pellets and all.
+                // That is why a magazine-fed shotgun fired a single ray: not a missing number, a skipped row.
+                if (pellets > 1 && a.pellets <= 1) { a.pellets = pellets; pelletMags.Add($"{id}x{pellets}"); }
+                if (a.magCapacity > 0 || a.isAmmo) continue;               // capacity/feed already authored -> keep
                 if (cap <= 0 || cal <= 0) continue;
-                if (pellets > 1) { a.magCaliber = cal; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; shells++; }
-                else { a.magCapacity = cap; a.magCaliber = cal; a.ammoType ??= "FMJ"; wired++; }
+                // LOOSE SHELL vs MAGAZINE: retail's Delete_Empty says it, and Pellets does NOT.
+                //
+                // This used to read `pellets > 1`, on the reasoning that pellets mean a shotgun and a shotgun means
+                // loose shells. The first half is true; the second is not. Delete_Empty is the flag for ammo that
+                // CEASES TO EXIST once spent -- a loose shell you push into a tube -- and it is the actual thing that
+                // separates the two. Five reusable magazines carry pellets and no Delete_Empty (Bane_21 21rd,
+                // Vonya_7 7rd, Nykorev_200, Dragonfang_150, Fury_250), and every one of them was being turned into a
+                // stack of 32 loose rounds: the gun lost its magazine entirely. Master found it on the Devil's Bane
+                // (2026-09-07: "taking mags, not loose shells") -- it is an AA-12, a box-fed automatic shotgun.
+                //
+                // Pellets are carried onto BOTH kinds now. They describe the AMMO, not the feed, which is the whole
+                // point: a magazine full of buckshot is still buckshot.
+                bool deleteEmpty = c.Length > 9 && c[9].Trim() == "1";
+                if (deleteEmpty) { a.magCaliber = cal; a.isAmmo = true; a.stackSize = 32; a.pellets = pellets; shells++; }
+                else
+                {
+                    a.magCapacity = cap; a.magCaliber = cal;
+                    a.ammoType ??= pellets > 1 ? "Buckshot" : "FMJ";   // the mag pie names what is in it
+                    wired++;
+                }
             }
-            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept)");
+            // Name the pellet-carrying MAGAZINES: a magazine-fed shotgun is invisible in any other log line, and
+            // "it fired one ray" is what that looks like from the outside (Devil's Bane, 2026-09-07).
+            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept); buckshot mags: {(pelletMags.Count > 0 ? string.Join(", ", pelletMags) : "none")}");
         }
 
         static void WireConsumableStats()
