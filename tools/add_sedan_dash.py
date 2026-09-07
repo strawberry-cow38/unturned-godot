@@ -29,7 +29,8 @@ import sys
 BODY = "game/content/sedan_body.txt"
 STEER = "game/content/sedan_steer.txt"
 GLASS = "game/content/sedan_glass_windshield.txt"
-DOOR = "game/content/sedan_glass_r_front.txt"   # cut to the A-pillar: its leading edge IS the pillar's angle
+DOOR = "game/content/sedan_glass_r_front.txt"      # cut to the A-pillar: its leading edge IS the pillar's angle
+REARDOOR = "game/content/sedan_glass_r_rear.txt"  # cut to the C-pillar: its TRAILING edge is that pillar's angle
 SPEC = "game/Vehicle.cs"
 EPS = 1e-3
 
@@ -244,6 +245,48 @@ def rerake_glass(g):
         seamY, botZ, topY, topZ, slope, depth * 0.0625)
 
 
+def rerake_rear_glass():
+    """Rake the REAR screen to the C-pillar, the same way the windscreen was raked to the A-pillar (master: "fix
+    da angle of it").
+
+    Measured off sedan_glass_r_rear -- the rear door pane, cut to this same C-pillar -- whose TRAILING edge is the
+    pillar: (1.187, 1.475) -> (1.877, 1.085), chord -0.565. The pane was at -0.430, so it stood up relative to the
+    pillar holding it, the same complaint the windscreen had.
+
+    ⚠ ANGLE ONLY. Master asked for the angle and said nothing about position, and the whole windscreen thread was
+    a lesson in not touching the other variable: this pivots about the pane's own CENTRE, so its vertical extent
+    and its mid-height position are exactly where they were and only the rake changes.
+    """
+    REAR = "game/content/sedan_glass_rear.txt"
+    dv = [[float(x) for x in l.split()[1:4]] for l in io.open(REARDOOR, encoding="utf-8") if l.startswith("v ")]
+    dv = [v for v in dv if v[1] <= 1.93]                 # below the roof rail: the pillar run
+    if len(dv) < 2: return None, "rear door pane has no pillar run to measure"
+    zmax = max(v[2] for v in dv)
+    startY = max(v[1] for v in dv if abs(v[2] - zmax) < EPS)
+    top = max(dv, key=lambda v: v[1])
+    if top[1] - startY < EPS: return None, "rear door pane's trailing edge has no rise"
+    slope = (top[2] - zmax) / (top[1] - startY)
+
+    gv = [[float(x) for x in l.split()[1:4]] for l in io.open(REAR, encoding="utf-8") if l.startswith("v ")]
+    if len(gv) < 4: return None, "rear pane is not a quad"
+    yLo, yHi = min(v[1] for v in gv), max(v[1] for v in gv)
+    zLo, zHi = min(v[2] for v in gv), max(v[2] for v in gv)
+    if abs((zLo - zHi) / (yHi - yLo) - slope) < 5e-3: return None, "rear glass  already on the C-pillar's angle"
+    midZ = (zLo + zHi) / 2.0
+    half = -slope * (yHi - yLo) / 2.0                    # slope is negative: the pane leans FORWARD going up
+    botZ, topZ = midZ + half, midZ - half
+    xs = sorted({round(v[0], 6) for v in gv})
+    head = [l.rstrip("\n") for l in io.open(REAR, encoding="utf-8") if not (l.startswith("v ") or l.startswith("f "))]
+    head.append("# RE-RAKED by tools/add_sedan_dash.py to the C-PILLAR, measured off sedan_glass_r_rear's trailing")
+    head.append("# edge (that door pane is cut to this same pillar). Pivoted about the pane's centre: angle only.")
+    for x, y, z in ((xs[0], yLo, botZ), (xs[-1], yLo, botZ), (xs[-1], yHi, topZ), (xs[0], yHi, topZ)):
+        head.append("v %.6f %.6f %.6f" % (x, y, z))
+    head += ["f 1 2 3", "f 1 3 4"]
+    io.open(REAR, "w", encoding="utf-8").write("\n".join(head) + "\n")
+    return [], "rear glass  bottom (y %.3f, z %.3f) top (y %.3f, z %.3f) -- slope %.3f (rear door-pane chord), pivoted about its centre" % (
+        yLo, botZ, yHi, topZ, slope)
+
+
 def center_side_glass(g):
     """Sit the side panes in the MIDDLE of the door wall instead of flush with its outer skin (master: "center
     horizontally the side windows in their frames too").
@@ -290,7 +333,7 @@ def main():
         if lines: append(BODY, lines); did = True
     V, VT, F = load(BODY)
     g = geometry(V)
-    for fn in (move_wheel, lambda: rerake_glass(g), lambda: center_side_glass(g)):
+    for fn in (move_wheel, lambda: rerake_glass(g), rerake_rear_glass, lambda: center_side_glass(g)):
         lines, msg = fn()
         print("  " + msg)
         if lines is not None: did = True
