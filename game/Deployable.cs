@@ -65,11 +65,24 @@ namespace UnturnedGodot
         {
             mat = null;
             float len = ld.BeamLength > 0f ? ld.BeamLength : ld.Range;
-            float half = ld.BeamHalf > 0f ? ld.BeamHalf : 0.3f;
+            float halfW = ld.BeamHalf > 0f ? ld.BeamHalf : 0.3f;          // across the aperture
+            float halfV = ld.BeamHalfV > 0f ? ld.BeamHalfV : halfW;       // ...and through it; equal = the old square
             // The shaft ends exactly as wide as the light it is drawing: the spot's own half-angle over its own
             // length. Deriving it means retuning SpotAngle cannot leave a cone of air that misses the lit ground.
             float baseR = len * Mathf.Tan(Mathf.DegToRad(Mathf.Clamp(ld.AngleDeg, 1f, 80f)));
-            var mesh = StreetLight.BeamMesh(len, half, half, baseR);
+            // KEEP THE LAMP'S SHAPE. BeamMesh's default lerps both half-extents toward a single baseR and morphs the
+            // cross-section to a circle over the first 38% of the throw -- so any aperture, however wide and flat,
+            // leaves as a round cone. That is what stopped the shaft matching the heads. endScale grows the aperture
+            // instead, which preserves its aspect, and keepRect stops the circularisation: a wide flat lamp throws a
+            // wide flat wedge. It is also what the car does -- HeadlightBeam extrudes the lens HULL and never
+            // circularises anything. Scale is solved on the WIDE axis so the silhouette still ends on the spot's
+            // 25 deg; the short axis lands narrower, which under-claims lit air rather than over-claiming it.
+            float endScale = baseR / Mathf.Max(halfW, 0.001f);
+            // ...and it opens WIDE before it opens TALL, at the same 0.40 ratio HeadlightBeam uses ("a headlight
+            // throws WIDE and comparatively flat, not a round cone"). Growing both axes by the one endScale kept the
+            // head's aspect but scaled it up 10x, which from the side is a 3.5 m tall wall of grey, not a beam.
+            float endScaleV = 1f + (endScale - 1f) * BeamVertical;
+            var mesh = StreetLight.BeamMesh(len, halfW, halfV, baseR, keepRect: true, endScale: endScale, endScaleV: endScaleV);
             if (mesh == null) return null;
             mat = new StandardMaterial3D
             {
@@ -93,6 +106,7 @@ namespace UnturnedGodot
         }
 
         public static float BeamAlpha = 0.020f;   // matched to Vehicle.BeamAlpha -- the density the night tuning was built against
+        public static float BeamVertical = 0.40f; // vertical spread as a fraction of horizontal (Vehicle.BeamVertical)
         public static float BeamCull  = 90f;      // a close-range detail; retire it well before the object itself
 
         // BeamMesh writes v = t * 0.5 (its own comment explains why: CylinderMesh reserves the top half of UV space

@@ -87,8 +87,11 @@ namespace UnturnedGodot
         /// <param name="endScale">If &gt; 0, the far end is the near end scaled by this factor, which KEEPS THE
         /// ASPECT RATIO. The default path lerps both half-extents toward baseR instead, which converges any starting
         /// rectangle to a square and would quietly discard a widescreen screen's proportions.</param>
+        /// <param name="endScaleV">Separate growth for the SECOND half-extent, so a beam can open wider than it
+        /// opens tall -- what makes a headlight a flat wedge rather than a slab. -1 (the default) means "same as
+        /// endScale", which is every existing caller's behaviour unchanged.</param>
         internal static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16,
-                                           bool keepRect = false, float endScale = -1f)
+                                           bool keepRect = false, float endScale = -1f, float endScaleV = -1f)
         {
             // Cross-section at depth t (0 = at the lens, 1 = at the base): a rectangle blended toward a circle.
             // The rectangle point for an angle is the circle point pushed out to the rect boundary (max-norm), which
@@ -96,7 +99,7 @@ namespace UnturnedGodot
             Vector3 Section(float th, float t)
             {
                 float a, b;
-                if (endScale > 0f) { float k = Mathf.Lerp(1f, endScale, t); a = halfA * k; b = halfB * k; }
+                if (endScale > 0f) { a = halfA * Mathf.Lerp(1f, endScale, t); b = halfB * Mathf.Lerp(1f, endScaleV > 0f ? endScaleV : endScale, t); }
                 else { a = Mathf.Lerp(halfA, baseR, t); b = Mathf.Lerp(halfB, baseR, t); }
                 float ct = Mathf.Cos(th), st = Mathf.Sin(th);
                 float m = Mathf.Max(Mathf.Abs(ct), Mathf.Abs(st));

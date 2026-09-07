@@ -108,7 +108,7 @@ namespace UnturnedGodot
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
         // AngleAtten = Godot SpotAngleAttenuation (0 leaves the engine default, a hard rim; the car headlights run
         // 1.3 for a soft edge). Beam/BeamLength/BeamHalf draw the VISIBLE shaft -- see Deployable.BeamShaft.
-        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; }
+        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; public float BeamHalfV; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
         static readonly Color LampWarm = new Color(0.9706f, 0.9612f, 0.835f);   // src Lamp m_Color (warm white)
         // The spotlight's aim, in the FLAT authored frame -- nearly straight down here, which the +90 X stand-up
@@ -172,11 +172,21 @@ namespace UnturnedGodot
             // apart throwing 6.5 m wide cones -- near enough concentric that the overlap has no separate silhouette
             // to read as an artefact, and the brighter core where they cross is what two lamps pointed the same way
             // actually do.
+            // MEASURED off Spotlight_deploy.obj rather than guessed (master 2026-09-07: "the faux cone isnt matching
+            // the lamps very well"). The mesh welds into 13 components; two of them are the heads --
+            //     x[-0.812,-0.168] y[-0.380,-0.140] z[-1.568,-1.138]   mid (-0.490,-0.260,-1.353)
+            //     x[ 0.168, 0.812] y[-0.380,-0.140] z[-1.568,-1.138]   mid ( 0.490,-0.260,-1.353)
+            // -- each a 0.644 x 0.240 x 0.429 box (the remaining ten are the 0.046 bulb tubes inside them, six per
+            // head). The beam runs along flat -Y, so the face light leaves is y=-0.380 and the aperture it leaves
+            // through is the head's X by Z: half-extents 0.322 WIDE by 0.215 TALL.
+            //
+            // I had the lamp 0.17 below the head and the shaft a 0.34 SQUARE that BeamMesh then rounded to a circle
+            // by 38% of the throw -- a round cone out of a wide flat rectangle, sitting under the thing emitting it.
             Lights = new[] {
-                new DeployLight { Spot = true, Pos = new Vector3(-0.48f, -0.427f, -1.427f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.34f },
-                new DeployLight { Spot = true, Pos = new Vector3( 0.48f, -0.427f, -1.427f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.34f },
+                new DeployLight { Spot = true, Pos = new Vector3(-0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
+                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
+                new DeployLight { Spot = true, Pos = new Vector3( 0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
+                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
             },
         };
 
