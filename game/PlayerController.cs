@@ -5586,7 +5586,12 @@ namespace UnturnedGodot
             _sitting = seat;
             seat.Occupant = this;
             if (_focusSeat != null && IsInstanceValid(_focusSeat)) { _focusSeat.SetLookFocused(false); _focusSeat = null; }   // drop the look-outline once you are in it
-            GlobalPosition = seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+            // LYING is not sitting one metre lower. Sat up, the hips are on the cushion and the eye lands at
+            // the standing 1.6 for free; laid down, the whole body pivots to horizontal, so the feet stay at
+            // the anchor and the EYE has to be moved up the bed to where the head now is. That is the one
+            // place a bed costs a line the chair did not.
+            GlobalPosition = seat.Recline ? seat.Anchor.Origin
+                                          : seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
             Rotation = new Vector3(0f, seat.Anchor.Basis.GetEuler().Y, 0f);   // face the way the seat faces -- yaw only
             Velocity = Vector3.Zero;
             // Retail's own enum value for this. Set on _move (Stance is a read-only view of it), and it STICKS:
@@ -5594,6 +5599,7 @@ namespace UnturnedGodot
             // overwrites it while you are in the chair. Leaving it at whatever it was -- SPRINT, say -- would
             // otherwise be what a replicated pose and the eye-height lookup both read.
             _move.Stance = EPlayerStance.SITTING;
+            if (seat.Recline && _cam != null) _cam.Position = PropSeat.LieEyeLocal;   // the player is yawed to the seat, so the seat-local eye IS the player-local eye
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = true;
         }
@@ -5624,6 +5630,11 @@ namespace UnturnedGodot
             }
             _move.Stance = EPlayerStance.STAND;   // the next PhysicsTick's StepStanceOnce re-decides and resizes the capsule from here
             Velocity = Vector3.Zero;
+            // Unconditionally, not only when getting off a BED: the camera offset is the kind of state that
+            // strands a player looking out of their own knees if one exit path forgets it, and putting it
+            // back when it was never moved costs nothing. ExitVehicle restores the same value for the same
+            // reason.
+            if (_cam != null) _cam.Position = new Vector3(0f, 1.6f, 0f);
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
         }
@@ -6447,6 +6458,14 @@ namespace UnturnedGodot
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
+                // A BED IS TWO INTERACTIONS ON ONE KEY, resolved by whether it is already yours. First F
+                // claims it as your respawn; after that F lies down on it, and F again gets you up. That
+                // ordering is the point: claiming is the thing you must not lose, and a bed you have not
+                // claimed is one you have no business sleeping in. No modifier and no hold -- the sequence a
+                // player meets is walk up, F (mine), F (lie down), F (up).
+                else if (_focusBed != null && IsInstanceValid(_focusBed) && _focusBed.Owner == PlayerId
+                         && _focusBed.Seat != null && IsInstanceValid(_focusBed.Seat) && _focusBed.Seat.Free)
+                    SitDown(_focusBed.Seat);
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (_focusSeat != null && IsInstanceValid(_focusSeat) && _focusSeat.Free) SitDown(_focusSeat);   // looking at a chair/couch/bench: sit in the seat you aimed at
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
@@ -8326,6 +8345,16 @@ namespace UnturnedGodot
             {
                 _body.GlobalTransform = _riding.GlobalTransform * new Transform3D(Basis.Identity, _riding.SeatOffset);
                 _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");
+            }
+            else if (IsSeatedOnProp && _sitting.Recline)   // LYING on a bed: the standing pose, pitched flat
+            {
+                // Straight to the seat's own lying frame rather than to GlobalPosition + a yaw, because this
+                // needs a full basis and the yaw-only path cannot express one. Idle_Stand, not Idle_Sit --
+                // Idle_Sit raises the knees, which is exactly right in a chair and wrong on a mattress.
+                _body.GlobalTransform = _sitting.LieTransform;
+                _body.LeanDeg = 0f;
+                _body.PitchDeg = 0f;   // the spine already IS horizontal; feeding the look pitch in on top bends it through the bed
+                _body.PlayLoop("Idle_Stand");
             }
             else if (IsSeatedOnProp)   // sat on furniture: same place as on foot (SitDown put the origin a hip-height below the cushion), seated clip instead of locomotion
             {

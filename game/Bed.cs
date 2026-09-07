@@ -29,6 +29,15 @@ namespace UnturnedGodot
         float _yaw;
         Vector3 _spawnPos;
         StandardMaterial3D _mat;
+        PropSeat _seat;
+
+        /// <summary>Mattress height and half-length, from the same box the mesh and collider are built from
+        /// below (1.0 x 0.45 x 2.0). Named rather than repeated so the seat cannot drift off the bed the day
+        /// somebody resizes it.</summary>
+        const float MattressY = 0.45f, BedHalfLength = 1.0f;
+
+        /// <summary>The place to lie down, or null before _Ready.</summary>
+        public PropSeat Seat => _seat;
 
         public static Bed Spawn(Node parent, Vector3 basePos, float yawDeg)
         {
@@ -62,6 +71,25 @@ namespace UnturnedGodot
             GlobalPosition = _spawnPos;
             RotationDegrees = new Vector3(0f, _yaw, 0f);
             Register();
+
+            // YOU CAN LIE ON IT (master 2026-09-07: "add the same seat idea to beds"). A bed reuses PropSeat
+            // whole rather than growing its own occupancy: the rules that matter -- one person at a time, the
+            // server decides, a disconnect gives it back -- are the same rules, and the ONLY difference is
+            // that the body is laid down instead of sat up.
+            //
+            // Anchor: the mattress surface at the FOOT of the bed (+Z), facing the head (-Z), because a
+            // standing rig's origin is its feet and the feet are what stays at the foot end. The seat is a
+            // CHILD, so InteractableNetSync's world walk finds it right after this bed and gives it an id in
+            // the same deterministic order on every peer -- no separate registration to keep in step.
+            //
+            // Coverage note, said plainly: this inherits the bed system's existing limit. Beds are registered
+            // with the server by the world-build walk only, so a bed a player DEPLOYS mid-game is not
+            // server-registered today -- its claim is not either, and that gap is older than this. Such a bed
+            // still works in singleplayer; in multiplayer it simply has no NetId, which SitDown already reads
+            // as "not replicated" and handles by sitting locally.
+            _seat = PropSeat.Spawn(this, GlobalTransform, new Vector3(0f, MattressY, BedHalfLength),
+                                   Vector3.Forward, recline: true);
+            _seat.GroundY = _spawnPos.Y;
         }
 
         // Registered on ENTERING the tree, not only in _Ready: _Ready fires once, so a bed that is

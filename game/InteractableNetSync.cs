@@ -159,6 +159,17 @@ namespace UnturnedGodot
                 _server.Interactables.RemoveBed(netId);
                 _beds.RemoveAt(i);
             }
+
+            // ...and so does its SEAT, for the sharper version of the same reason: a seat left in the table
+            // after its bed is gone is one a player can still be recorded as occupying, and nothing will ever
+            // free it. RemoveSeat drops the occupant with it.
+            for (int i = _seats.Count - 1; i >= 0; i--)
+            {
+                var (netId, node) = _seats[i];
+                if (GodotObject.IsInstanceValid(node)) continue;
+                _server.Interactables.RemoveSeat(netId);
+                _seats.RemoveAt(i);
+            }
         }
     }
 }

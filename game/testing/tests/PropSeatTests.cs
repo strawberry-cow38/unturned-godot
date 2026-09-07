@@ -195,6 +195,50 @@ namespace UnturnedGodot.Testing
             T.Check("...and tags them onto the prop body so the look ray can find them",
                     wb.Contains("PropSeat.HitMeta"));
 
+            // ---- LYING ON A BED (master 2026-09-07: "add the same seat idea to beds. im not sure theres a
+            // lay down animation. so use the standing pose, layed down").
+            //
+            // She is right that there is no lay-down clip, and it was worth checking rather than assuming:
+            // the rig HAS Idle_Prone, but posed out it is a forward-leaning crawl with the hips still at 0.74
+            // and the head only 0.09 above them -- not a body lying flat. So the standing pose pitched back is
+            // the honest answer, and the check that MATTERS here is that it really ends up horizontal.
+            Bed.DebugResetAll();
+            var bed = Bed.Spawn(World, new Vector3(20f, 0f, 20f), 0f);
+            yield return Ticks(2);
+            T.Check("a bed carries a seat", bed.Seat != null && GodotObject.IsInstanceValid(bed.Seat));
+            if (bed.Seat == null) yield break;
+            T.Check("...and it is a RECLINING one, not a chair", bed.Seat.Recline);
+            T.Check($"...at mattress height ({bed.Seat.Anchor.Origin.Y - bed.GlobalPosition.Y:0.00} above the bed)",
+                    Mathf.Abs((bed.Seat.Anchor.Origin.Y - bed.GlobalPosition.Y) - 0.45f) < 0.01f);
+
+            // THE LOAD-BEARING ONE. Take the point where Idle_Stand puts the skull -- 1.32 up the body, off
+            // rig.json -- and push it through the lying transform. Standing on the bed it would end up 1.32 in
+            // the AIR; laid down it has to end up 1.32 along the bed instead, still at mattress height.
+            var headStanding = new Vector3(0f, 1.32f, 0f);
+            var headLying = bed.Seat.LieTransform * headStanding;
+            T.Check($"the head lands at mattress height, not in the air (y {headLying.Y:0.00} vs seat {bed.Seat.Anchor.Origin.Y:0.00})",
+                    Mathf.Abs(headLying.Y - bed.Seat.Anchor.Origin.Y) < 0.05f);
+            float alongBed = (headLying - bed.Seat.Anchor.Origin).Dot(-bed.Seat.Anchor.Basis.Z);
+            T.Check($"...and 1.3 m UP the bed toward the head end ({alongBed:0.00} m)", alongBed > 1.2f);
+            T.Check("...on the bed's centre line, not off the side",
+                    Mathf.Abs((headLying - bed.Seat.Anchor.Origin).Dot(bed.Seat.Anchor.Basis.X)) < 0.05f);
+            // ...and the feet stay put, which is what makes the anchor the FOOT of the bed rather than a guess.
+            T.Check("the feet stay at the anchor", (bed.Seat.LieTransform * Vector3.Zero).DistanceTo(bed.Seat.Anchor.Origin) < 0.001f);
+
+            // A reclining seat does NOT drop the origin a hip-height: the body pivots instead of sinking.
+            var r = Rigs.Player(World, new Vector3(20f, 1f, 24f));
+            yield return Ticks(2);
+            r.SitDown(bed.Seat);
+            yield return Ticks(2);
+            T.Check("lying down takes the seat", r.IsSeatedOnProp && !bed.Seat.Free);
+            T.Check($"...with the origin ON the mattress, not a hip below it ({r.GlobalPosition.Y:0.00} vs {bed.Seat.Anchor.Origin.Y:0.00})",
+                    Mathf.Abs(r.GlobalPosition.Y - bed.Seat.Anchor.Origin.Y) < 0.01f);
+            T.Check("...and the collider off, same as a chair", !ColliderOn(r));
+            r.StandUp();
+            yield return Ticks(2);
+            T.Check("getting up off a bed frees it and restores the collider", bed.Seat.Free && ColliderOn(r));
+
+            r.QueueFree(); bed.QueueFree();
             body.QueueFree(); p.QueueFree(); q.QueueFree();
             foreach (var ps in made) ps.QueueFree();
             foreach (var ps in bench) ps.QueueFree();

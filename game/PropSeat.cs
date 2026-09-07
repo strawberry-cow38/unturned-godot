@@ -80,6 +80,29 @@ namespace UnturnedGodot
 
         public bool Free => (Occupant == null || !IsInstanceValid(Occupant)) && NetOccupant == 0;
 
+        /// <summary>You LIE on this rather than sit on it -- a bed (master 2026-09-07: "add the same seat
+        /// idea to beds"). It changes the pose and the eye, nothing about the occupancy rules, which is the
+        /// whole reason a bed reuses this class instead of growing a parallel one.
+        ///
+        /// THERE IS NO LAY-DOWN CLIP, and I checked rather than assuming: the rig has Idle_Prone, but posed
+        /// out it is a forward-leaning CRAWL with the hips still at 0.74 and the head only 0.09 above them --
+        /// not a body lying flat. So master's own suggestion is the right one: take the standing pose and lay
+        /// it down, by pitching the whole body back 90 degrees. Idle_Sit would be wrong for the same reason it
+        /// is right on a chair -- it raises the knees.</summary>
+        public bool Recline;
+
+        /// <summary>The lying body's transform: the seat's own frame pitched back 90 degrees about its X, so
+        /// the standing figure's "up" becomes the seat's forward and the head ends up at the far end. The
+        /// ORIGIN is unchanged, because a standing rig's origin is its FEET and the feet are exactly what
+        /// stays at the foot of the bed.</summary>
+        public Transform3D LieTransform => new Transform3D(Anchor.Basis * new Basis(Vector3.Right, -Mathf.Pi * 0.5f), Anchor.Origin);
+
+        /// <summary>Where the eye goes when lying: up the bed toward the head, a little above the mattress.
+        /// Local to the seat's frame (-Z is the facing), so it rotates with the bed for free. 1.5 m is where
+        /// the skull actually lands -- Idle_Stand puts it 1.32 up the body and the neck carries the rest --
+        /// rather than a number picked to look right.</summary>
+        public static readonly Vector3 LieEyeLocal = new Vector3(0f, 0.25f, -1.5f);
+
         /// <summary>Where the sitter goes: origin at the seat surface, -Z along the facing (Godot's forward),
         /// Y up. Built once at spawn from the placement basis, since a world prop never moves.</summary>
         public Transform3D Anchor { get; private set; }
@@ -93,7 +116,7 @@ namespace UnturnedGodot
         /// that the prop's own mesh was placed with, and `posLocal`/`faceLocal` are in the raw obj space that
         /// seats.txt stores -- the identical convention ObjectDoor.Spawn takes its pivot and axis in, so a
         /// rotated prop's seats rotate with it for free.</summary>
-        public static PropSeat Spawn(Node parent, Transform3D propXform, Vector3 posLocal, Vector3 faceLocal)
+        public static PropSeat Spawn(Node parent, Transform3D propXform, Vector3 posLocal, Vector3 faceLocal, bool recline = false)
         {
             var origin = propXform * posLocal;
             var fwd = (propXform.Basis * faceLocal).Normalized();
@@ -107,7 +130,7 @@ namespace UnturnedGodot
                 if (fwd.LengthSquared() < 1e-4f) fwd = Vector3.Forward;
             }
             fwd = fwd.Normalized();
-            var s = new PropSeat { Name = "PropSeat" };
+            var s = new PropSeat { Name = "PropSeat", Recline = recline };
             // LookingAt wants a TARGET, and Godot's forward is -Z, so aim it a metre along the facing.
             s.Anchor = new Transform3D(Basis.Identity, origin).LookingAt(origin + fwd, Vector3.Up);
             parent.AddChild(s);

@@ -74,9 +74,19 @@ namespace UnturnedGodot
         // per puppet -- is a scan of every vehicle per player per frame, which on a map with ~88 cars is
         // thousands of comparisons a frame to answer a question that changes when somebody presses F.
         readonly HashSet<ushort> _seated = new();
+        // v35: who is LYING rather than sitting. Deliberately derived here instead of spending a second wire
+        // stance code on it: the seat table already says which seat each player occupies, and whether a seat
+        // reclines is local map data every peer built identically. So the information is already replicated
+        // and this is a lookup, not a protocol change.
+        readonly HashSet<ushort> _reclined = new();
         void RefreshSeated()
         {
             _seated.Clear();
+            _reclined.Clear();
+            if (Client != null)
+                foreach (var kv in Client.InteractableState.ReplicaSeats)
+                    if (kv.Value != 0 && PropSeat.TryGetByNetId(kv.Key, out var ps) && ps.Recline)
+                        _reclined.Add(kv.Value);
             if (Client == null) return;
             foreach (var v in Client.Vehicles.All)
             {
@@ -142,6 +152,7 @@ namespace UnturnedGodot
                 // nothing to look up: no seat NetId on the player entity, no lookup table, and a puppet
                 // renders right even on a client that has not finished registering its seats.
                 bool sitFurniture = e.Stance == UnturnedGodot.Net.MoveInput.WireStanceSitting;
+                bool lying = sitFurniture && _reclined.Contains(e.OwnerPlayerId);
                 // Match the local shell's capsule for this stance, so crawling under something you could crawl
                 // under alone still works when someone is standing there.
                 // Sitting on furniture counts as seated for everything below -- the hull, the footsteps, the
@@ -200,7 +211,21 @@ namespace UnturnedGodot
                 }
                 // A seated puppet is POSED, not walked. SetLocomotion with SITTING would fall through to its
                 // default and play the idle stand, which is what a chair full of standing men looked like.
-                if (sitFurniture) av.Body.PlayLoop(av.Body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
+                if (lying)
+                {
+                    // The standing pose pitched flat, same as the local shell does it -- there is no lay-down
+                    // clip in the rig (Idle_Prone is a forward-leaning crawl with the hips still up, not a
+                    // body lying down), which is why master asked for exactly this.
+                    av.Body.PlayLoop("Idle_Stand");
+                    // Rebuilt from the REPLICATED yaw each frame, never by rotating the basis that is already
+                    // there: multiplying the current basis would compound 90 degrees per frame and spin the
+                    // sleeper. Same yaw source line 127 uses, so lying and standing agree about which way the
+                    // puppet faces.
+                    av.Body.GlobalTransform = new Transform3D(
+                        new Basis(Vector3.Up, Mathf.DegToRad(e.YawDegrees)) * new Basis(Vector3.Right, -Mathf.Pi * 0.5f),
+                        av.Body.GlobalPosition);
+                }
+                else if (sitFurniture) av.Body.PlayLoop(av.Body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
                 else av.Body.SetLocomotion(av.Speed, stance);
                 av.Body.Tick(delta);
                 if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
