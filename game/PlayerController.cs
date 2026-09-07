@@ -6149,9 +6149,21 @@ namespace UnturnedGodot
             }
             // N = IGNITION (strawberry_cow 2026-08-24). DRIVER ONLY: a passenger reaching over and killing the
             // engine is not a feature. Echo:false so holding N cannot flap the engine on and off at key-repeat.
-            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N })
+            //
+            // THE DRIVER TEST IS IN THE CONDITION, NOT THE BODY, and that is the whole fix (master 2026-09-07:
+            // "night vision isnt working, neither is headlamp"). It used to read `else if (key is N) { if
+            // (driving) ToggleEngine(); }`, so an N pressed ON FOOT still MATCHED this branch, did nothing, and
+            // ended the else-chain -- swallowing the key before the Flashlight branch ~80 lines below could see
+            // it. N is also the worn-vision toggle (added 2026-09-04/05, after this), so the goggles and the
+            // headlamp were both unreachable by the only key that turns them on.
+            //
+            // That is why it read as two dead features: they are one key apart, not one bug apart. The slot was
+            // always fine -- the item appears on your face, and the sim-side toggles pass 19 checks -- and the
+            // goggle shader renders standalone. Nothing was broken except that the key never arrived.
+            else if (_driving != null && _seatIndex == 0
+                     && @event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N })
             {
-                if (_driving != null && _seatIndex == 0) _driving.ToggleEngine();
+                _driving.ToggleEngine();
             }
             else if (Keybinds.JustPressed(GameAction.Interact, @event) && AltLooking) { }   // ALT-look: no interacting (master 2026-09-04) -- the eye is on the camera, not the hands
             else if (Keybinds.JustPressed(GameAction.Interact, @event))   // Interact (default F, moved off E): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact -> inspect the held weapon. Echo:false so HOLDING it can't double-fire the hitch toggle.
