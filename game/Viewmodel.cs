@@ -1230,7 +1230,7 @@ namespace UnturnedGodot
             // optical axis (composed from that gun's Sight hook 0,-0.2398,-0.1386) and are now derived per gun from where
             // the optic actually mounts, so a kobra centres on a vonya exactly as it does on an eaglefire. They are kept
             // here as the measured reference the Y came from, and because they document what the composed aim looked like.
-            { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), -0.3611f, 0.014f, new Color(1f, 0f, 0f)) },
+            { "red_dot_sight.txt",   (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), -0.3611f, 0.005f, new Color(1f, 0f, 0f)) },   // master 2026-09-07 "shrink the red dot ... to be wayy smaller": 0.014 -> 0.005. Only THIS sight -- the halo is a ring and the kobra a T, and their sizes are the whole reticle, not a dot
             { "red_halo_sight.txt",  (new Vector3(0f, -0.2970f, -0.0813f), new Vector3(0f, -0.4576f, -0.1990f), -0.2918f, 0.016f, new Color(1f, 0f, 0f)) },
             { "red_kobra_sight.txt", (new Vector3(0f, -0.1884f, -0.0655f), new Vector3(0f, -0.4183f, -0.1831f), -0.3611f, 0.02f,  new Color(1f, 0f, 0f)) },
         };
