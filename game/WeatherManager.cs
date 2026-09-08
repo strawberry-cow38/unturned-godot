@@ -270,6 +270,10 @@ namespace UnturnedGodot
             // drizzle. Flags, foliage, the turbine and the rain streaks all read WindField, so one write here
             // reaches all of them.
             WindField.WeatherWind = Mathf.Clamp(Sim.WindMain, 0f, 1f);
+            // ...and the time of day, for the UNSHADED rain streaks (master 2026-09-08: "the raindrops look oddly
+            // 'lit' at night"). Pushed from here because this is where the rain globals already live and where the
+            // DayNightCycle reference already is; the streak shader dims itself by it.
+            if (Cycle != null) RenderingServer.GlobalShaderParameterSet("rain_daylight", Cycle.DaylightFactor);
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {

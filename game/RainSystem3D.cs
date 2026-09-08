@@ -32,6 +32,12 @@ namespace UnturnedGodot
             // in, im talking minutes"). WeatherManager integrates it.
             RenderingServer.GlobalShaderParameterAdd("rain_puddle", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
+            // DAYLIGHT, 0..1 (master 2026-09-08: "the raindrops look oddly 'lit' at night"). The streaks render
+            // `unshaded` -- deliberately, they are thin alpha threads and real shading on them is neither cheap nor
+            // convincing -- which means nothing about the time of day reaches them and a midnight drop was exactly
+            // as bright as a noon one. This carries the day factor to the streak shader so it can dim them itself.
+            // Defaults to 1 so anything that renders rain without a DayNightCycle looks the way it always did.
+            RenderingServer.GlobalShaderParameterAdd("rain_daylight", RenderingServer.GlobalShaderParameterType.Float, 1f);
             // ROOF MAP (RainRoofMap): the topmost-surface heightmap around the player; rect.z = 0 means "no map" (every shader skips)
             var blank = Image.CreateEmpty(1, 1, false, Image.Format.Rf); blank.Fill(new Color(RainRoofMap.NoHit, 0f, 0f, 1f));   // nothing above anything
             RenderingServer.GlobalShaderParameterAdd("rain_roof", RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(ImageTexture.CreateFromImage(blank)));

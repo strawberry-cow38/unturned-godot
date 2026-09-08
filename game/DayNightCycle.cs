@@ -424,6 +424,7 @@ void sky() {
                 // CONSTANTS (bright 0.8), so the clouds (cloudBodyColor = ambient_ground + cloud_rim_color) GLOWED at night.
                 // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
                 float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
+                DaylightFactor = dayF;   // published for the rain streaks, which are unshaded and cannot ask the lighting themselves
                 float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
                 WellShaft.SetDaylight(Mathf.Lerp(0.06f, 1f, dayF) * (Overcast ? 0.75f : 1f));   // the well shaft's unshaded mouth-light follows the day (see WellShaft)
                 _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(amb, amb, amb));
@@ -536,6 +537,9 @@ void sky() {
 
         public bool Overcast;   // denser fog + greyer feel (a simple weather state; map-editor toggle)
         public float StormAmount;   // 0..1 storm intensity (WeatherManager sets it from the rain) -> blends the scene toward the moody overcast look in Apply(). Defaults 0 = fair weather, so editor/demos/golden are unchanged.
+        /// <summary>0 at night .. 1 with the sun well up -- the same factor this class dims its own ambient by.
+        /// Published so UNSHADED effects (the rain streaks) can follow the time of day instead of ignoring it.</summary>
+        public float DaylightFactor { get; private set; } = 1f;
         // Lightning flash on the CLOUD LAYER (Fable's pick). WeatherManager sets these; Apply() pushes them to the sky
         // shader IN the same writer so there's no two-writer fight. Default flash 0 -> the shader block skips (golden safe).
         public float LightningFlash;

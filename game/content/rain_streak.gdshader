@@ -12,6 +12,7 @@ global uniform vec4 rain_canopy;              // xy = canopy centre XZ, z = radi
 global uniform sampler2D rain_roof;           // RainRoofMap: world Y of the topmost solid per cell (Rf, 64x64 over 64 m)
 global uniform vec4 rain_roof_rect;           // centre X, centre Z, half-size (z = 0 -> no map)
 global uniform float rain_sea_level;          // world Y of the water plane; RainSystem3D.NoSea (-1e5) on a map with no water
+global uniform float rain_daylight;           // 0 night .. 1 midday (DayNightCycle.DaylightFactor)
 
 // SHELTER, SMOOTHED (master 2026-09-06 "the rainmap seems really jagged on buildings placed on non-cardinals").
 // The map stores a HEIGHT per 0.5 m cell and one nearest read gives a hard yes/no, so a roof that is not axis-aligned
@@ -85,7 +86,13 @@ void vertex() {
 }
 
 void fragment() {
-    ALBEDO = tint;
+    // DIM WITH THE DAY. This shader is `unshaded`, so no light in the world reaches it and a midnight drop was
+    // rendered at exactly the noon brightness -- a pale, self-lit thread against a dark scene, which is what
+    // master saw as the raindrops looking "oddly lit at night". Real shading is the wrong answer for a 1.4 cm
+    // alpha thread; carrying the day factor in and scaling the colour is. NightFloor is not 0 because rain IS
+    // still faintly visible at night (it catches moon, sky and whatever lamps are about) -- it just does not glow.
+    const float NightFloor = 0.18;
+    ALBEDO = tint * mix(NightFloor, 1.0, clamp(rain_daylight, 0.0, 1.0));
     // soft edges: a streak is a translucent thread, not a hard bar -- fade across its width and at both ends (master 2026-09-04
     // "there isnt transparency on the raindrop particles")
     float edge = smoothstep(0.0, 0.45, UV.x) * smoothstep(1.0, 0.55, UV.x) * smoothstep(0.0, 0.18, UV.y) * smoothstep(1.0, 0.82, UV.y);
