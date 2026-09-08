@@ -44,6 +44,7 @@ namespace UnturnedGodot
         TextureRect _map;    // Map.png, square, sized base*zoom and moved by _pan inside _clip
         Polygon2D _arrow;    // local player marker (position + facing)
         Label _coord;
+        Panel _panel;          // the screen frame, matching the inventory/crafting panel
         Panel _playersPanel;
         VBoxContainer _playersList;
         Label _playersHead;
@@ -89,6 +90,14 @@ namespace UnturnedGodot
             _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.AddChild(_slide);
 
+            // THE SAME PANEL FRAME THE OTHER TABS HAVE (strawberry 2026-09-08: "fix the formatting of the skills
+            // page and information page to more closely match the style of the inv and crafting menus"). Added
+            // FIRST so it draws behind the map and the roster. UITheme.Panel is Box(Bg, RadiusPanel=6), which is
+            // byte-for-byte what CraftingMenu does with Box(_panel, UITheme.Bg, 6).
+            _panel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+            UITheme.Panel(_panel);
+            _slide.AddChild(_panel);
+
             _clip = new Control { ClipContents = true, MouseFilter = Control.MouseFilterEnum.Ignore };
             _slide.AddChild(_clip);
 
@@ -117,11 +126,12 @@ namespace UnturnedGodot
             BuildPlayersPanel();
 
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Information, t => Player?.ShowMenu(t), () => Close());   // the Information tab of the unified menu hosts the map
+            // Header, matched to CraftingMenu's: FontBody in TextDim. The outline it used to carry was for sitting
+            // ON the map image; it lives on the panel now, where an outline would just look heavy next to the
+            // crafting screen's header.
             _coord = new Label();
             _coord.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            _coord.AddThemeColorOverride("font_color", new Color(0.82f, 1f, 0.82f));
-            _coord.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
-            _coord.AddThemeConstantOverride("outline_size", 4);
+            _coord.AddThemeColorOverride("font_color", UITheme.TextDim);
             _slide.AddChild(_coord);
 
             _swoop = MenuSwoop.Attach(this, _root, _slide);
@@ -167,13 +177,19 @@ namespace UnturnedGodot
 
         void BuildPlayersPanel()
         {
+            // OPAQUE, like crafting's right-hand detail pane -- Box(_detail, UITheme.BgSolid) at the default
+            // RadiusCell. It was translucent Bg, which over a blurred forest left the roster's names sitting on
+            // treetops; the analogous element on the crafting screen is a solid dark slab and reads as one.
             _playersPanel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
-            UITheme.Panel(_playersPanel);
+            UITheme.Panel(_playersPanel, true, UITheme.RadiusCell);
             _slide.AddChild(_playersPanel);
 
+            // FontBody/TextDim, crafting's treatment for a section label ("CRAFTING QUEUE"). It was Accent, and
+            // Accent is already spent on this screen -- every town dot and every marker pin is that yellow, so a
+            // yellow column title is the fourth thing claiming to be the important one.
             _playersHead = new Label { Position = new Vector2(14, 10), MouseFilter = Control.MouseFilterEnum.Ignore };
             _playersHead.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            _playersHead.AddThemeColorOverride("font_color", UITheme.Accent);
+            _playersHead.AddThemeColorOverride("font_color", UITheme.TextDim);
             _playersPanel.AddChild(_playersHead);
 
             var scroll = new ScrollContainer { Position = new Vector2(8, 40), MouseFilter = Control.MouseFilterEnum.Ignore, Name = "RosterScroll" };
@@ -187,20 +203,42 @@ namespace UnturnedGodot
 
         void Layout()
         {
+            // CraftingMenu.Layout's numbers, measured rather than eyeballed: outer margin M=16, header at
+            // (16, navbar+8) sized (pw-32, 24), content starting at navbar+40. This page used 12 / navbar+36 and
+            // hung its label off the map's own left edge, so it sat a few pixels out from every other tab.
             var vp = GetViewport().GetVisibleRect().Size;
-            float top = MenuNavbar.Height + 36f;   // under the shared navbar + the coord line
-            float right = PlayersW + 24f;          // the roster column lives on the right (master)
-            float s = Mathf.Min(vp.X * 0.9f - right, vp.Y - top - 24f);
-            if (s < 64f) s = Mathf.Max(64f, vp.Y - top - 24f);   // very narrow window: keep a usable map rather than a sliver
+            const float M = 16f, Gutter = 16f;
+            const float barH = MenuNavbar.Height;
+            // +M BECAUSE THESE CONTROLS ARE SCREEN-SPACE. Crafting's header and columns are children of its
+            // panel, so its (16, barH+8) and barH+40 are PANEL-relative and land at (32, barH+24) and barH+56 on
+            // screen. This page hangs everything off _slide instead, so the same literals put it a whole outer
+            // margin higher -- 8 px under the navbar rather than 24. Copying the numbers without the parent is
+            // how a screen ends up "nearly" aligned, which is the failure mode this task is about.
+            const float top = M + barH + 40f;
+            float pw = vp.X - 2f * M, ph = vp.Y - 2f * M;
+
+            _panel.Position = new Vector2(M, M);
+            _panel.Size = new Vector2(pw, ph);
+            _coord.Position = new Vector2(M + 16f, M + barH + 8f);
+            _coord.Size = new Vector2(pw - 32f, 24f);
+
+            // Roster hard against the panel's inner right edge, map filling what is left, one gutter between.
+            float contentBottom = vp.Y - M - M;
+            float rosterX = vp.X - M - M - PlayersW;
+            float regionX = M + M, regionW = rosterX - Gutter - regionX;
+            float s = Mathf.Min(regionW, contentBottom - top);
+            if (s < 64f) s = Mathf.Max(64f, contentBottom - top);   // very narrow window: keep a usable map rather than a sliver
             _baseSize = s;
 
-            _clip.Position = new Vector2(Mathf.Max(12f, (vp.X - right - s) * 0.5f), top);
+            // CENTRED in what is left, not jammed against the left margin. The map window is SQUARE and the
+            // space beside the roster is not, so on a 16:9 screen the square is height-capped and roughly 500 px
+            // narrower than its region -- left-aligned, all of that slack piles up as one lopsided hole between
+            // the island and the roster. Splitting it puts a matching gutter on both sides instead.
+            _clip.Position = new Vector2(regionX + Mathf.Max(0f, (regionW - s) * 0.5f), top);
             _clip.Size = new Vector2(s, s);
 
-            _playersPanel.Position = new Vector2(vp.X - PlayersW - 12f, top);
-            _playersPanel.Size = new Vector2(PlayersW, Mathf.Max(120f, vp.Y - top - 24f));
-
-            _coord.Position = new Vector2(_clip.Position.X, _clip.Position.Y - 24f);
+            _playersPanel.Position = new Vector2(rosterX, top);
+            _playersPanel.Size = new Vector2(PlayersW, Mathf.Max(120f, contentBottom - top));
             ApplyView();
         }
 

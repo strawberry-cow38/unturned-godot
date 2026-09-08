@@ -4876,6 +4876,51 @@ namespace UnturnedGodot
             GD.Print("[skillsui] opened skills menu with a sample PlayerSkills");
         }
 
+        bool _menuXpDone;
+        /// <summary>UG_MENUXP=&lt;n&gt;: top the XP pool up and level a spread of skills, so a render of the skills
+        /// page shows the states the layout exists to tell apart -- levelled, part-levelled, affordable,
+        /// unaffordable, maxed -- instead of twenty identical dead rows.
+        ///
+        /// DEFERRED AND RETRIED, for two reasons that both cost a render to find. --peidrive boots a CONSUMING
+        /// listen-server, and MpLoopback mirrors the replicated owner skills into the shell every tick, so a
+        /// LOCAL grant is overwritten by the server's zeros within a frame -- the first attempt printed
+        /// "granted 400 XP, 295 left" and photographed 0 XP, a true statement about an object the screen had
+        /// stopped reading. Routing it through the server fixed that and exposed the second: at the moment
+        /// AttachMpLoopback returns the client has not registered, so there is no skills entry to award to and
+        /// every write silently misses (total 0, 0/8 levels). Hence: each frame until it lands, then once.</summary>
+        void MenuXpTick()
+        {
+            if (!uint.TryParse(System.Environment.GetEnvironmentVariable("UG_MENUXP"), out uint xp)) { _menuXpDone = true; return; }
+            (string name, int lv)[] demo = {
+                ("sharpshooter", 3), ("cardio", 2), ("parkour", 5),      // OFFENSE: part, part, MAXED
+                ("vitality", 1), ("strength", 4),                        // DEFENSE
+                ("crafting", 3), ("agriculture", 2), ("cooking", 1),     // SUPPORT: MAXED, part, part
+            };
+            MpLoopback loop = null;
+            foreach (Node n in GetChildren()) if (n is MpLoopback ml) { loop = ml; break; }
+            if (loop?.Server != null && loop.Client != null)
+            {
+                ushort pid = loop.Client.PlayerId;
+                if (!loop.Server.Skills.TryGet(pid, out _)) return;   // not registered yet -- try again next frame
+                long tick = loop.Server.Session.CurrentTick;
+                uint total = loop.Server.Transactions.AwardXp(pid, xp);
+                int set = 0;
+                foreach (var (name, lv) in demo)
+                    if (loop.Server.Skills.ServerSetSkillLevel(pid, name, lv, tick, out _, out _)) set++;
+                GD.Print($"[menuxp] server-granted {xp} XP (total {total}) + {set}/{demo.Length} skill levels");
+            }
+            else
+            {
+                var sk = _pdPlayer.Skills;
+                if (sk == null) { _menuXpDone = true; return; }
+                sk.AwardExperience(xp);
+                foreach (var (name, lv) in demo)
+                    if (sk.TryFind(name, out var one, out _)) one.level = (byte)System.Math.Min(lv, one.max);
+                GD.Print($"[menuxp] locally granted {xp} XP + {demo.Length} skill levels (no server)");
+            }
+            _menuXpDone = true;
+        }
+
 
 
 
@@ -5321,6 +5366,25 @@ namespace UnturnedGodot
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             SpawnAiTraffic();
             Underwater.DebugAttach(this);   // UG_UNDERWATER=<metres>: pin the submerged view on so a render can show it without diving
+            // UG_MENUOPEN=inventory|craft|skills|information -- open a menu tab at load so a render can show its
+            // layout. UG_MAPOPEN only ever reached the map; the skills page had no way to be photographed at all,
+            // which is a poor position to be in when the task is "fix the formatting".
+            var menuTab = System.Environment.GetEnvironmentVariable("UG_MENUOPEN");
+            if (!string.IsNullOrEmpty(menuTab) && _pdPlayer != null)
+            {
+                MenuNavbar.Tab? t = menuTab.Trim().ToLowerInvariant() switch
+                {
+                    "inventory" or "inv" => MenuNavbar.Tab.Inventory,
+                    "craft" or "crafting" => MenuNavbar.Tab.Craft,
+                    "skills" => MenuNavbar.Tab.Skills,
+                    "information" or "info" or "map" => MenuNavbar.Tab.Information,
+                    _ => null,
+                };
+                // (UG_MENUXP is applied from _Process -- see MenuXpTick; the listen-server has no skills
+                //  entry for this player yet at this point, so an award here returns a total of 0.)
+                if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); GD.Print($"[menuopen] {t.Value}"); }
+                else GD.PrintErr($"[menuopen] unknown tab '{menuTab}'");
+            }
             if (_peiPlayable)
             {
                 string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
@@ -8433,6 +8497,7 @@ namespace UnturnedGodot
                 if (ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDITEM"), out var hid) && Assets.find(hid) is ItemAsset ha)
                     GD.Print($"[holditem] {ha.itemName} ({hid}) -> hands: {_pdPlayer.EquipItemAsset(ha, new SDG.Unturned.Item(hid))} (movie frame {Engine.GetFramesDrawn()})");
             }
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_menuXpDone) MenuXpTick();
             if (_peiPlayable && _pdPlayer != null && _holdItemDone && int.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDTHROW"), out var thf) && ++_holdThrowT == thf)   // UG_HOLDTHROW=N: LMB N frames after the equip (the throw swing on camera)
             { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
             if (_peiPlayable && _pdPlayer != null && _worldReady && int.TryParse(System.Environment.GetEnvironmentVariable("UG_ENTERCAR"), out var ecf) && ++_enterCarT == ecf)   // UG_ENTERCAR=N: N ticks after the world is up, spawn a sedan ahead + take the driver's seat (the in-vehicle rain muffle check, rainshot.ps1)
