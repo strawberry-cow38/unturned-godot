@@ -106,6 +106,24 @@ namespace UnturnedGodot
             foreach (var z in zs) sb.Append(z.min.X).Append(',').Append(z.min.Y).Append(',').Append(z.min.Z).Append('/').Append(z.max.X).Append(',').Append(z.max.Y).Append(',').Append(z.max.Z).Append(';');
             return sb.ToString();
         }
+        /// <summary>The first `triCount` triangles of an obj, as its own mesh.
+        ///
+        /// For meshes authored as N interchangeable sub-objects laid out back to back -- the ammo bundles,
+        /// whose triangles are contiguous per round -- this is how a dropped stack shows fewer rounds without
+        /// a second file per count. The caller owns the promise that the prefix is a whole number of
+        /// sub-objects; nothing here can check it, so the installers assert it instead (a triangle spanning
+        /// two rounds would tear one in half and the render would look like a mesh bug, not a range bug).
+        ///
+        /// Shares _meshCache under a distinct key, so the full mesh and each prefix are parsed once each.</summary>
+        public static ArrayMesh ParseObjPrefix(string path, int triCount)
+        {
+            if (triCount <= 0) return ParseObj(path);
+            string key = path + "|tris" + triCount.ToString(CultureInfo.InvariantCulture);
+            if (_meshCache.TryGetValue(key, out var hit)) return hit;
+            var mm = ParseObjUncached(path, triCount);
+            if (mm != null) _meshCache[key] = mm;
+            return mm;
+        }
         public static ArrayMesh ParseObj(string path)
         {
             if (_meshCache.TryGetValue(path, out var cached)) return cached;
@@ -163,7 +181,7 @@ namespace UnturnedGodot
             _shaderCache[absPath] = sh;
             return sh;
         }
-        static ArrayMesh ParseObjUncached(string path)
+        static ArrayMesh ParseObjUncached(string path, int maxTris = 0)
         {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return null; }
@@ -185,6 +203,7 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;   // Unity vt is V-up (origin bottom-left); Godot samples V-down (top-left) -> flip V or the texture wraps upside-down
                     case "f":
+                        if (maxTris > 0 && fv.Count >= maxTris * 3) break;   // ParseObjPrefix: stop at N triangles
                         for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
