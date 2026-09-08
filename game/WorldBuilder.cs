@@ -1625,6 +1625,7 @@ namespace UnturnedGodot
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");
+                    rf.AddToGroup("roadfield");   // so an AI driver can find the lane paths without a reference chain
                     root.AddChild(rf);
                 }
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
@@ -1910,6 +1911,7 @@ namespace UnturnedGodot
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");
+                    rf.AddToGroup("roadfield");   // so an AI driver can find the lane paths without a reference chain
                     root.AddChild(rf);
                 }
                 {

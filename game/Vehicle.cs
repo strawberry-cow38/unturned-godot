@@ -1804,6 +1804,8 @@ namespace UnturnedGodot
         public bool AlarmActiveForTest => _alarmTimer > 0f;
         public bool BrakingNow => _braking;
         public float SteerAngleDegrees => _steerAngle;
+        public float SteerMaxDegrees => _steerMax;     // steering lock at rest -- an AI driver normalises its command by it
+        public float SpeedMaxForward => _speedMax;     // .dat Speed_Max (already buffed by TopSpeedBuff at build time)
         public bool HasSteerWheel => _steerPivot != null;                           // a real steering-wheel model exists (its pivot = where 1P driving hands go)
         public Vector3 SteerPivotLocal => _steerPivot != null ? _steerPivot.Position : Vector3.Zero;
         public Vector3 SteerAxisLocal => _steerAxis;                                 // wheel disc normal, vehicle-local      // MP §3.6: the wheel-steer summary the snapshot carries

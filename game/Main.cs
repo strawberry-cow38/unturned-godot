@@ -1936,6 +1936,145 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>UG_AIDRIVE=&lt;n&gt;: put n AI-driven sedans on the road network, each on its own lane path, so the
+        /// driver can be watched doing the thing it is supposed to do. Cars are dropped ON a lane point, facing the
+        /// way that lane runs, a little apart so they do not spawn inside each other.</summary>
+        void SpawnAiTraffic()
+        {
+            var _n = System.Environment.GetEnvironmentVariable("UG_AIDRIVE");
+            if (string.IsNullOrEmpty(_n) || !int.TryParse(_n, out int want) || want <= 0) return;
+            if (GetTree().GetFirstNodeInGroup("roadfield") is not RoadField rf) { GD.PrintErr("[aidrive] no road field in the tree"); return; }
+            var lanes = rf.LanePaths;
+            if (lanes.Count == 0) { GD.PrintErr("[aidrive] road field has no lane paths"); return; }
+            var rng = new RandomNumberGenerator(); rng.Randomize();
+            // SPAWN THEM WHERE THE CAMERA IS. PEI's lane network is 70 paths spread over the whole island, so
+            // picking uniformly at random put every AI car kilometres from the only viewpoint that exists -- a
+            // render of the feature with none of it in frame. Reuse UG_SPAWNAT (the eye's own position) and keep
+            // only the lanes that pass near it; with no override this falls back to the whole network.
+            Vector3 near = Vector3.Zero; bool hasNear = false;
+            var sa = System.Environment.GetEnvironmentVariable("UG_SPAWNAT");
+            if (!string.IsNullOrEmpty(sa))
+            {
+                var f = sa.Split(',');
+                if (f.Length >= 2 && float.TryParse(f[0], out float nx) && float.TryParse(f[1], out float nz)) { near = new Vector3(nx, 0f, nz); hasNear = true; }
+            }
+            if (hasNear)
+            {
+                float radius = float.TryParse(System.Environment.GetEnvironmentVariable("UG_AINEAR"), out float rr) && rr > 0f ? rr : 200f;
+                var close = new System.Collections.Generic.List<RoadField.LanePath>();
+                foreach (var l in lanes)
+                    foreach (var pt in l.Points)
+                        if (new Vector2(pt.X - near.X, pt.Z - near.Z).LengthSquared() < radius * radius) { close.Add(l); break; }
+                if (close.Count > 0) lanes = close;
+                VehicleAiDriver.Log($"[aidrive] {close.Count} of {rf.LanePaths.Count} lane paths within {radius:0} m of ({near.X:0},{near.Z:0})");
+            }
+            // UG_LANELINK=1: for every lane, how far away is the nearest point of ANOTHER road heading roughly the
+            // same way? That is exactly the test HandleEnd runs to decide "continuation or dead end", and printing it
+            // for the whole network is the difference between tuning a radius by guesswork and knowing whether the
+            // island's roads actually meet at all.
+            if (System.Environment.GetEnvironmentVariable("UG_LANELINK") == "1")
+                foreach (var l in rf.LanePaths)
+                {
+                    if (l.Points.Length < 2) continue;
+                    Vector3 end = l.Points[l.Points.Length - 1];
+                    Vector3 ed = (end - l.Points[l.Points.Length - 2]).Normalized();
+                    float bd = float.MaxValue, bdot = 0f; int br = -1;
+                    foreach (var o in rf.LanePaths)
+                    {
+                        if (o.Road == l.Road || o.Points.Length < 2) continue;
+                        for (int i = 0; i < o.Points.Length - 1; i++)
+                        {
+                            float d = o.Points[i].DistanceTo(end);
+                            if (d >= bd) continue;
+                            Vector3 od = (o.Points[i + 1] - o.Points[i]).Normalized();
+                            bd = d; bdot = od.Dot(ed); br = o.Road;
+                        }
+                    }
+                    float len = 0f;
+                    for (int i = 0; i < l.Points.Length - 1; i++) len += l.Points[i].DistanceTo(l.Points[i + 1]);
+                    VehicleAiDriver.Log($"[lanelink] road {l.Road} lane {l.Lane} {(l.Forward ? "fwd" : "rev")} len {len:0} m -> nearest other road {br} at {bd:0.0} m dot {bdot:0.00}");
+                }
+            int made = 0;
+            var placed = new System.Collections.Generic.List<Vector3>();
+            for (int attempt = 0; attempt < want * 40 && made < want; attempt++)
+            {
+                var lane = lanes[rng.RandiRange(0, lanes.Count - 1)];
+                if (lane.Points.Length < 6) continue;
+                // UG_AIEND=1 parks them NEAR THE END of their lane instead of anywhere along it. The dead-end
+                // turnaround is the one behaviour in the brief that a car has to drive a kilometre to reach, so
+                // without this it is a thing you hope shows up in a clip rather than a thing you can watch happen.
+                int i;
+                if (_aiAtEnd) i = Mathf.Max(1, lane.Points.Length - 12);
+                else if (hasNear)
+                {
+                    // ...and enter that lane at the point nearest the eye, offset a little per car so three of them
+                    // form a line of traffic rather than three cars in the same cubic metre.
+                    int bi = 0; float bd = float.MaxValue;
+                    for (int k = 0; k < lane.Points.Length; k++)
+                    {
+                        float d = new Vector2(lane.Points[k].X - near.X, lane.Points[k].Z - near.Z).LengthSquared();
+                        if (d < bd) { bd = d; bi = k; }
+                    }
+                    i = Mathf.Clamp(bi + made * 5, 1, lane.Points.Length - 4);
+                    // ...and that clamp is why the next check exists: on a short lane every car after the first
+                    // lands on the SAME point, so they spawn inside one another and the physics flings them off
+                    // the road (one ended up 116 m from its lane). Reject the slot and let the attempt loop pick
+                    // another lane instead.
+                }
+                else i = rng.RandiRange(1, lane.Points.Length - 4);
+                Vector3 p0 = lane.Points[i], p1 = lane.Points[i + 1];
+                bool crowded = false;
+                foreach (var taken in placed) if (taken.DistanceSquaredTo(p0) < 14f * 14f) { crowded = true; break; }
+                if (crowded) continue;
+                var car = Vehicle.BuildByName("sedan", rng.RandiRange(0, 3));
+                if (car == null) { GD.PrintErr("[aidrive] sedan failed to build"); return; }
+                AddChild(car);
+                car.GlobalPosition = p0 + Vector3.Up * 1.2f;
+                Vector3 fwd = (p1 - p0).Normalized();
+                if (fwd.LengthSquared() > 0.5f) car.LookAt(car.GlobalPosition + fwd, Vector3.Up);   // Godot LookAt puts -Z on the target, which IS the car's front
+                // TURN THE KEY. A vehicle is built with EngineOn=false -- it is waiting for somebody to get in and
+                // start it -- and Vehicle.Drive zeroes the throttle outright while the engine is off, so an AI that
+                // never does this pushes the pedal all day and the car does not move a millimetre. (Battery and
+                // engine health are full on build, so the start always catches; it still cranks for ~1.2 s first.)
+                if (!car.TryStartEngine()) GD.PrintErr($"[aidrive] sedan {made} would not start");
+                var ai = new VehicleAiDriver { Car = car, Roads = rf, Name = $"ai{made}", StartPath = lane, StartIndex = i };
+                car.AddChild(ai);
+                _aiDrivers.Add(ai);
+                placed.Add(p0);
+                VehicleAiDriver.Log($"[aidrive] ai{made} at ({p0.X:0.0},{p0.Y:0.0},{p0.Z:0.0}) road {lane.Road} lane {lane.Lane} {(lane.Forward ? "fwd" : "rev")} pt {i}/{lane.Points.Length}");
+                made++;
+            }
+            // UG_AICHASE=1: ride behind the first car. The whole point of this feature is how the car BEHAVES over
+            // a stretch of road, and the on-foot camera loses it in about four seconds -- a clip from a fixed
+            // viewpoint shows a sedan going past and nothing else. A plain Camera3D parented to the car takes over
+            // from the player's simply by being Current.
+            if (made > 0 && System.Environment.GetEnvironmentVariable("UG_AICHASE") == "1")
+            {
+                var chase = new Camera3D { Position = new Vector3(0f, 3.4f, 9.0f), RotationDegrees = new Vector3(-11f, 0f, 0f), Current = true, Far = 2000f };
+                _aiDrivers[0].Car.AddChild(chase);
+                GD.Print("[aidrive] chase camera on ai0");
+            }
+            GD.Print($"[aidrive] {made} AI sedans on {lanes.Count} lane paths");
+            VehicleAiDriver.Log($"[aidrive] {made} AI sedans on {lanes.Count} lane paths (atEnd={_aiAtEnd})");
+            // UG_AIQUIT=<sec>: quit after that many seconds of DRIVING, counted from here rather than from launch.
+            // --quit-after counts engine iterations, and headless burns thousands of those while the world is still
+            // streaming in -- a telemetry run kept exiting before a single car existed. This clock starts when the
+            // cars do, so the run length means what it says whether or not there is a renderer attached.
+            var q = System.Environment.GetEnvironmentVariable("UG_AIQUIT");
+            if (made > 0 && !string.IsNullOrEmpty(q) && float.TryParse(q, out float secs) && secs > 0f)
+            {
+                // HOLD THE TIMER IN A FIELD. A SceneTreeTimer kept only in a local is collected along with the
+                // lambda subscribed to it, and the callback silently never fires -- the first run asked for 70 s
+                // of driving and was still going at 113 s with a 269 MB movie file behind it. Same trap as the
+                // elevator's door timer.
+                _aiQuitTimer = GetTree().CreateTimer(secs, false, true);
+                _aiQuitTimer.Timeout += () => { GD.Print($"[aidrive] {secs:0}s of driving done"); VehicleAiDriver.Log($"[aidrive] {secs:0}s of driving done"); GetTree().Quit(); };
+            }
+        }
+        readonly System.Collections.Generic.List<VehicleAiDriver> _aiDrivers = new();
+        static readonly bool _aiAtEnd = System.Environment.GetEnvironmentVariable("UG_AIEND") == "1";
+        SceneTreeTimer _aiQuitTimer;   // strong ref: see UG_AIQUIT above
+
         void BuildVehicleTest(string type)
         {
             var env = new Godot.Environment
@@ -5149,6 +5288,7 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            SpawnAiTraffic();
             if (_peiPlayable)
             {
                 string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
