@@ -29,7 +29,7 @@ Caliber_Name "7.62x39mm"
 Real_Weapon "SKS"
 
 Range 220
-Firerate 6
+Firerate 3
 Action Trigger
 
 Damage 28
