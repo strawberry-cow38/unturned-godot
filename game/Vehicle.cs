@@ -60,6 +60,15 @@ namespace UnturnedGodot
         public bool SlingDeployed => _magnet != null && IsInstanceValid(_magnet);
         public bool DebugNoSling;   // suppress winch deployment, so a rig can fly the SAME airframe with and without its magnet
         public Vector3 DebugTailHub => _tailHubCentre;
+        // The rest of the hit-resolution geometry, exposed for the same reason DebugTailHub was: a test that
+        // types in the hub coordinates is pinned to ONE size of aircraft, and the minicopter's 1.25x rescale on
+        // 2026-09-08 walked the hubs out from under four such literals in HeliFlightTests. Half-extents too, not
+        // just the centres -- without them a probe cannot be placed deliberately just inside or just outside the
+        // box, which is the only pair of checks that makes "a hit at the mast is a rotor hit" mean anything.
+        public Vector3 DebugMainHub => _mainHubCentre;
+        public Vector3 DebugMainHubHalf => _mainHubHalf;
+        public Vector3 DebugTailHubHalf => _tailHubHalf;
+        public float DebugRotorRadius => _rotorRadius;
         public float DebugCollective => _inCollective;
         /// <summary>The lift force the wing produced last tick, in g (force / (mass * 9.8)), as a WORLD vector.
         /// Exposed because the plane had no tests at all and the two 2026-09-06 dive/inverted bugs are both
@@ -2826,7 +2835,7 @@ namespace UnturnedGodot
             // (0, 0.32, 0.10) put the pelvis at 1.055 -- above the rotor -- and the pilot floated over the
             // machine in every showcase (strawberry: "the seating position is way off"). It predates this
             // model: the procedural frame floated him identically, which is what a control render confirmed.
-            ["minicopter"] = new[] { new Vector3(0f, -0.845f, -0.27f) },
+            ["minicopter"] = new[] { new Vector3(0f, -0.8725f, -0.3375f) },   // cushion (now y -0.1375 after the 1.25x) minus HipRest 0.735
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
             ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.44f, 2.0f, 1.45f) },   // gunner: the hatch shaft under the turret's top hatch (TankGunnerSeatDown + the yaw pivot's 0.85), where SeatBodyLocal actually sits him -- the extracted Seat_1 (-0.471, 2.348, 1.421) put the door/entry spot a metre off (master 2026-09-06 "move the turret gunners get-into-seat position to the actual spot in the turret they sit")   // tank: driver from the root Seats; the GUNNER is the turret's Seats/Seat_1 -- Yaw (0,0,-0.85) + Seats (0,2.8,2.0) + Seat_1 (-0.471,-0.452,-2.571), Z-negated. The root's own Seat_1 is a (0,0,0) placeholder and had the gunner sitting in the hull floor.
@@ -3914,8 +3923,13 @@ namespace UnturnedGodot
             // hover at ~83 % collective, so there is still real climb available but you have to commit to it.
             HeliThrust = 11.8f, HeliPitchTorque = 2.08f, HeliRollTorque = 2.40f, HeliYawTorque = 1.76f, HeliLevel = 0f,
             HeliClimbMax = 22f, HeliFallMax = 45f,
-            RotorRadius = 2.85f, TailRotorRadius = 0.34f,
-            RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
+            // Scaled 1.25x with the mesh (strawberry: "scale it up a decent amount"). The machine measured
+            // 1.85 m tall against a 1.957 m rig -- 0.95x the height of the pilot meant to sit in it. Mesh and
+            // every anchor move together or the model stops matching its own hitboxes; mass is an explicit
+            // field so flight is unchanged, and the only derived value that shifts is HeliSizePitch (1.50 ->
+            // 1.47, inaudible).
+            RotorRadius = 3.5625f, TailRotorRadius = 0.425f,
+            RotorHub = new Vector3(0f, 1.525f, 0.6875f), TailRotorHub = new Vector3(0.1125f, 0.025f, 3.075f),
             // The airframe is a real mesh now (astra/blender, 2026-09-08, VoX: "model an even better
             // minicopter in the unturned style"). HeliBodyMeshes makes Frame=Ultralight inert -- the
             // procedural tube frame is no longer built -- but BuildHeliRotors still runs either way, so the
@@ -3934,12 +3948,12 @@ namespace UnturnedGodot
             // (a Mosquito-class ultralight, ~100 km/h) would scale to 10 m/s and be miserable to fly. Gamified
             // instead, and placed below the whole fleet, which is the relationship that matters.
             Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 20f, SpeedMin = 0f, Brake = 0f,
-            BoxSize = new Vector3(1.05f, 0.80f, 1.60f), BoxCenter = new Vector3(0f, 0.05f, 0.20f),   // seats + engine bay
+            BoxSize = new Vector3(1.3125f, 1.00f, 2.00f), BoxCenter = new Vector3(0f, 0.0625f, 0.25f),   // seats + engine bay (1.25x)
             ExtraBoxes = new (Vector3, Vector3)[]
             {
-                (new Vector3(1.85f, 0.22f, 0.30f), new Vector3(0f, -0.46f, -1.05f)),   // front axle -- what it sits on
-                (new Vector3(0.24f, 0.24f, 2.60f), new Vector3(0f, -0.30f, 1.30f)),    // keel aft section + tail
-                (new Vector3(0.20f, 0.30f, 0.20f), new Vector3(0f, -0.50f, 2.35f)),    // tail wheel
+                (new Vector3(2.3125f, 0.275f, 0.375f), new Vector3(0f, -0.575f, -1.3125f)),   // front axle -- what it sits on
+                (new Vector3(0.30f, 0.30f, 3.25f), new Vector3(0f, -0.375f, 1.625f)),         // keel aft section + tail
+                (new Vector3(0.25f, 0.375f, 0.25f), new Vector3(0f, -0.625f, 2.9375f)),       // tail wheel
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = "heli_engine.ogg", IgnitionSound = "heli_ignition.ogg", IdlePitch = 0.85f, MaxPitch = 1.35f, IdleVolume = 0.7f, MaxVolume = 1.0f,
