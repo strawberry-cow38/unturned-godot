@@ -43,6 +43,7 @@ namespace UnturnedGodot
         const string TERRAIN_SHADER = @"
 shader_type spatial;
 #include ""res://content/puddles.gdshaderinc""
+#include ""res://content/rain_impacts.gdshaderinc""
 uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D splat0 : filter_linear;
 uniform sampler2D splat1 : filter_linear;
@@ -68,34 +69,10 @@ float cnoise(vec2 p) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;
 }
 float cfbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * cnoise(p); p *= 2.03; a *= 0.5; } return s; }
-// Splash rings, VERBATIM from wet_surface.gdshader (the road props' shader). Copied rather than shared because
-// Godot has no shader include for a string-embedded shader -- but it must stay in step: terrain road and road
-// props meet at the kerb, and two subtly different ripple fields there is worse than none.
-float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
-float splashes(vec2 wxz, float t, float amt){
-    float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;
-    for (int k = 0; k < 2; k++){
-        float sc = 1.6 + float(k) * 2.8;
-        vec2 g = wxz * sc + float(k) * 21.0;
-        vec2 base = floor(g);
-        for (int dy = -1; dy <= 1; dy++){
-            for (int dx = -1; dx <= 1; dx++){
-                vec2 id = base + vec2(float(dx), float(dy));
-                float seed = h21(id);
-                float tt = t * (0.65 + seed * 0.7) + seed;
-                float cyc = floor(tt);
-                float life = fract(tt);
-                vec2 q = id + cyc * 13.7;
-                vec2 center = id + vec2(h21(q + 1.3), h21(q + 7.7));
-                float rad = life * (0.16 + seed * 0.20);
-                float ring = smoothstep(0.05, 0.0, abs(length(g - center) - rad));
-                acc += ring * (1.0 - life) * step(gate, h21(q)) * (0.55 + seed * 0.45);
-            }
-        }
-    }
-    return acc;
-}
+// Splash rings + splashback crown now come from content/rain_impacts.gdshaderinc, shared with wet_surface.gdshader.
+// They USED to be copied in here verbatim, under a comment claiming a string-embedded shader cannot #include -- it
+// can, and this one already did for puddles two lines up. The copy's own warning was that the two must stay in step
+// because terrain road and road props meet at the kerb; sharing is how that actually holds.
 float caustics(vec2 p, float t) {
     float a = cfbm(p + vec2(t, t * 0.4)), b = cfbm(p * 1.31 + vec2(-t * 0.7, t * 0.55) + 17.3);
     return pow(clamp(1.0 - abs(a - b) * 4.0, 0.0, 1.0), 4.0);
@@ -192,8 +169,13 @@ void fragment() {
             // ~800 ALU, and now gated on STANDING WATER as well as rain (master 2026-09-06 ""gate water ripple impacts
             // behind being on a puddle""): a ring only lands where there is a puddle to ring, which is also where one
             // is visible. Grass, dry road and clear weather all pay nothing.
-            float sp = splashes(wpos.xz, TIME, rain_intensity) * rain_intensity * pud;
-            ALBEDO += sp * 0.45;                                     // brighter than before because it only shows on water now
+            vec2 aw = wpos.xz - INV_VIEW_MATRIX[3].xz;   // crown leans away from the VIEWER; degenerate (overhead) disables it
+            float awl = length(aw);
+            float sp = 0.0, crown = 0.0;
+            rain_impacts(wpos.xz, TIME, rain_intensity, 1.0, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
+            sp *= rain_intensity * pud;
+            crown *= rain_intensity * pud;
+            ALBEDO += sp * 0.45 + crown * 0.58;                      // brighter than before because it only shows on water now; the crown a little more so, as a splash is brighter than its ring
         }
         SPECULAR = mix(0.5 + r_wet * 0.06 + road_wet * 0.06, 0.78, pud);   // no metallic -- wet asphalt is not chrome, and neither is a puddle
     }

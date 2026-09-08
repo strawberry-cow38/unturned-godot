@@ -1237,14 +1237,21 @@ namespace UnturnedGodot
             // surface shader to the hard surfaces so up-facing faces darken/gloss + ripple as the rain soaks them.
             RainSystem3D.EnsureGlobals();
             var wetShader = GD.Load<Shader>("res://content/wet_surface.gdshader");
-            ShaderMaterial WetMat(Color dry, float rough, float impact = 1f) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); m.SetShaderParameter("impact_amount", impact); return m; }
+            // PUDDLE-GATED IMPACTS. Since 2026-09-06 a ring only draws where puddle_mask says there is standing
+            // water, and this harness set neither rain_puddle nor puddle_amount -- so --raintest has been unable to
+            // show the one thing its own comment promises ("splashes") ever since. UG_PUDDLE seeds the level the way
+            // puddleshot does; the boxes opt in so there is a surface to see impacts and splashback ON.
+            float pudv = 0f; var _rp = System.Environment.GetEnvironmentVariable("UG_PUDDLE"); if (!string.IsNullOrEmpty(_rp)) float.TryParse(_rp, out pudv);
+            float sbv = 1f; var _sb = System.Environment.GetEnvironmentVariable("UG_SPLASHBACK"); if (!string.IsNullOrEmpty(_sb)) float.TryParse(_sb, out sbv);   // 0 = rings only, for an A/B against the crowns
+            RenderingServer.GlobalShaderParameterSet("rain_puddle", pudv);
+            ShaderMaterial WetMat(Color dry, float rough, float impact = 1f, float puddle = 0f) { var m = new ShaderMaterial { Shader = wetShader }; m.SetShaderParameter("dry_albedo", dry); m.SetShaderParameter("dry_roughness", rough); m.SetShaderParameter("impact_amount", impact); m.SetShaderParameter("puddle_amount", puddle); m.SetShaderParameter("splashback_amount", sbv); return m; }
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(140f, 140f) }, MaterialOverride = WetMat(new Color(0.20f, 0.22f, 0.25f), 0.7f, impact: 0f) });   // GROUND = wetness only, no impacts (master: impacts on props, not terrain)
             for (int i = 0; i < 6; i++)
             {
                 float hgt = 2.5f + (i % 3);
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(3f, hgt, 3f) },
                     Position = new Vector3((i - 2.5f) * 5.2f, hgt * 0.5f, -6f - (i % 2) * 4f),
-                    MaterialOverride = WetMat(new Color(0.38f, 0.40f, 0.44f), 0.75f) });
+                    MaterialOverride = WetMat(new Color(0.38f, 0.40f, 0.44f), 0.75f, puddle: pudv > 0f ? 1f : 0f) });
             }
             var cam = new Camera3D { Current = true, Fov = 60f, Far = 500f };
             AddChild(cam);

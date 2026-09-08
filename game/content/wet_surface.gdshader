@@ -4,6 +4,7 @@
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
 #include "res://content/puddles.gdshaderinc"
+#include "res://content/rain_impacts.gdshaderinc"   // h21 + rain_impacts(): the ring AND the splashback crown, shared with the terrain shader
 
 global uniform float rain_wetness;                       // 0 dry .. 1 soaked (surface darken/gloss)
 global uniform float rain_intensity;                     // 0 .. 1 -- drives the splash-impact density + brightness to MATCH the falling rain
@@ -46,6 +47,8 @@ uniform vec3 dry_albedo : source_color = vec3(0.30, 0.32, 0.35);
 uniform float dry_roughness = 0.85;
 uniform float splash_scale = 1.0;                        // world-space frequency of the ripple cells
 uniform float impact_amount : hint_range(0.0, 1.0) = 1.0;    // 0 = wetness only, NO splash impacts (terrain-like ground); 1 = full impacts (props). Master: gate impacts to solid props, not terrain.
+uniform float splashback_amount : hint_range(0.0, 1.0) = 1.0;   // 0 = rings only, no splashback (per-surface kill switch)
+uniform float splashback_gain = 4.5;                          // crown brightness RELATIVE to impact_opacity -- a splash is brighter than the ring it comes from
 uniform float impact_opacity : hint_range(0.0, 1.0) = 0.18;  // splash brightness/opacity -- LOW so impacts read as subtle wet glints, not paint (master: more transparent; was a hard 0.38)
 uniform float puddle_amount : hint_range(0.0, 1.0) = 0.0;    // standing water on this surface (see puddles.gdshaderinc). DEFAULT OFF: only roads
                                                              // and the big dock opt in (master 2026-09-06 "ONLY have puddles on Road, road spline,
@@ -53,37 +56,6 @@ uniform float puddle_amount : hint_range(0.0, 1.0) = 0.0;    // standing water o
 uniform float puddle_max_distance = 60.0;                    // past this there is no water at all -- and no noise field evaluated for it
 
 varying vec3 world_pos;
-
-float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
-
-// Splash rings: tile world-XZ into cells; each cell fires an expanding-then-fading ring on its own phase, so the
-// surface reads as a field of overlapping raindrop impacts. Two octaves so it doesn't look grid-locked.
-float splashes(vec2 wxz, float t, float amt){
-    float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;       // more rain -> lower threshold -> more impacts fire (kept SPARSE: heavy ~18%, drizzle ~7% of cells)
-    for (int k = 0; k < 2; k++){
-        float sc = (1.6 + float(k) * 2.8) * splash_scale;   // larger cells -> fewer impacts per area
-        vec2 g = wxz * sc + float(k) * 21.0;
-        vec2 base = floor(g);
-        // Voronoi-style: scan the 3x3 neighbourhood, each cell has a JITTERED ripple source -> scattered, not a grid,
-        // and rings from neighbouring cells overlap freely (no cell-edge clipping).
-        for (int dy = -1; dy <= 1; dy++){
-            for (int dx = -1; dx <= 1; dx++){
-                vec2 id = base + vec2(float(dx), float(dy));
-                float seed = h21(id);
-                float tt = t * (0.65 + seed * 0.7) + seed;              // rate stays on the STATIC seed -- per-cycle rate feeds back into cyc + stutters the lifecycle (tinyclaw)
-                float cyc = floor(tt);                                  // WHICH ripple this cell is on (not where within it)
-                float life = fract(tt);                                 // 0..1 within that ripple
-                vec2 q = id + cyc * 13.7;                               // re-roll the cell's randomness each cycle
-                vec2 center = id + vec2(h21(q + 1.3), h21(q + 7.7));    // splash point MOVES every cycle -> scattered, not frozen at one spot per cell (master: impacts looked fixed)
-                float rad = life * (0.16 + seed * 0.20);               // small raindrop-impact radius (~0.22m), not big pond ripples
-                float ring = smoothstep(0.05, 0.0, abs(length(g - center) - rad));
-                acc += ring * (1.0 - life) * step(gate, h21(q)) * (0.55 + seed * 0.45);   // WHICH cells fire also re-rolls per cycle (was static seed -> same ~18% forever)
-            }
-        }
-    }
-    return acc;
-}
 
 void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; vcol = COLOR; }
 
@@ -105,13 +77,21 @@ void fragment(){
     // that varies within a quad (shelter does, at a roof edge) leaves the fwidth() in there undefined. Shelter
     // scales the mask instead, via the upness argument -- under a roof there is no puddle either way.
     float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0), upness * sheltered, prange) * puddle_amount;
-    float sp = 0.0;
-    if (rint > 0.0 && impact_amount > 0.0 && pud > 0.01) sp = splashes(world_pos.xz, TIME, rint) * rint * upness * impact_amount * pud;   // gate the ~800-ALU voronoi -- zero in clear weather, off a puddle, or on impact-disabled surfaces (terrain)
+    float sp = 0.0, crown = 0.0;
+    if (rint > 0.0 && impact_amount > 0.0 && pud > 0.01) {
+        // The crown leans away from the VIEWER, so it needs the camera on the ground plane. A degenerate direction
+        // (camera exactly overhead) disables the crown rather than feeding normalize() a zero vector.
+        vec2 aw = world_pos.xz - INV_VIEW_MATRIX[3].xz;
+        float awl = length(aw);
+        float m = rint * upness * impact_amount * pud;
+        rain_impacts(world_pos.xz, TIME, rint, splash_scale, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);   // gate the ~800-ALU voronoi -- zero in clear weather, off a puddle, or on impact-disabled surfaces (terrain)
+        sp *= m; crown *= m * splashback_amount;
+    }
     // Standing water: MORE reflective than the damp around it (master: "puddles of more reflective blobs"). The damp
     // surface stays deliberately dull -- the contrast between the two is the whole effect.
     vec3 alb2 = mix(alb, alb * 0.62, pud);                 // water over it reads darker than the wet surface
     float rough2 = mix(rough, 0.13, pud);                  // a puddle is REFLECTIVE, not a mirror -- 0.06 was chrome (master 2026-09-07 "make puddles slightly less reflective")
-    ALBEDO = alb2 + sp * impact_opacity * 2.5;
+    ALBEDO = alb2 + sp * impact_opacity * 2.5 + crown * impact_opacity * splashback_gain;   // crown rides the SAME opacity as its ring, so tuning one cannot desync them
     ROUGHNESS = rough2;
     METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
     SPECULAR = mix(0.5 + wet * 0.12, 0.78, pud);           // a hint of sheen on damp ground; a real one on water, but standing water is not polished metal
