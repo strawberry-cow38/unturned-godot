@@ -497,6 +497,14 @@ namespace UnturnedGodot
         static Shader _swayShader;
         static ShaderMaterial MakeSwayMat(string texPath)
         {
+            // GLOBALS BEFORE THE MATERIAL. wind_sway reads the `wind_vec` global, and a material that links it
+            // before it is registered binds it INVALID -- Godot warns "uses global parameter 'wind_vec', but it
+            // was removed at some point. Material will not display correctly" and the leaves then sway NOT AT ALL.
+            // FoliageField's grass path has had this call since the bug was first found there; the tree/bush path
+            // and the flower path never got it, so whether the canopy moved depended on load order. Seen live in a
+            // 2026-09-08 weather render, which is why master could ask for wind variation on trees that were not
+            // swaying in the first place. EnsureGlobals is idempotent.
+            GrassDisplacers.EnsureGlobals();
             _swayShader ??= GD.Load<Shader>("res://content/wind_sway.gdshader");
             var m = new ShaderMaterial { Shader = _swayShader };
             if (File.Exists(texPath))

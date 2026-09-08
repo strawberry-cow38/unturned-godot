@@ -89,6 +89,7 @@ namespace UnturnedGodot
         /// does not sway is a small loss, a hedge that renders blank is a big one.</summary>
         public static Material SwayMat(StandardMaterial3D b)
         {
+            GrassDisplacers.EnsureGlobals();   // wind_vec must EXIST before this material links it, or the hedge binds it invalid and never sways (see ResourceField.MakeSwayMat)
             _windSway ??= GD.Load<Shader>("res://content/wind_sway.gdshader");
             if (_windSway == null || b?.AlbedoTexture == null) return b;
             var sm = new ShaderMaterial { Shader = _windSway };

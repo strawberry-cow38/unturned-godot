@@ -81,7 +81,7 @@ void vertex() {
 	VERTEX += off;
 	// WIND SWAY (master 2026-08-24): bend the tips in the wind direction with a gust wave crawling over the map.
 	float wh = 1.0 - UV.y;   // 1 at the tip, 0 at the root (same weight as the player push)
-	float gust = sin(TIME * 1.5 + VERTEX.x * 0.25 + VERTEX.z * 0.2);
+	float gust = sin(wind_vec.w * 1.5 + VERTEX.x * 0.25 + VERTEX.z * 0.2);
 	float wbend = wh * (0.10 + 0.35 * wind_vec.z) * (0.65 + 0.35 * gust);
 	VERTEX.xz += wind_vec.xy * wbend;
 	VERTEX.y -= abs(wbend) * 0.15;   // a bent blade sits a touch lower

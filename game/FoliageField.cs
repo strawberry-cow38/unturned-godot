@@ -31,6 +31,7 @@ namespace UnturnedGodot
         /// missing, so a bad path costs the EFFECT rather than the foliage.</summary>
         static ShaderMaterial MakeFoliageUpMaterial()
         {
+            GrassDisplacers.EnsureGlobals();   // flowers read `wind_vec` too -- same rule as the grass material above, and this path never had it
             var sh = GD.Load<Shader>("res://content/foliage_up.gdshader");
             if (sh == null) { GD.PrintErr("[foliage] foliage_up.gdshader missing -- flowers/pebbles keep the dark-backface bug"); return null; }
             return new ShaderMaterial { Shader = sh };

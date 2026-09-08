@@ -8,7 +8,7 @@ shader_type spatial;
 // leaf colour must be consistent with the standing tree). The sway is a VERTEX effect; only the fragment must match.
 render_mode cull_disabled, depth_prepass_alpha;
 
-global uniform vec4 wind_vec;   // xy = wind direction, z = 0..1 strength
+global uniform vec4 wind_vec;   // xy = direction, z = 0..1 strength, w = SWAY PHASE (integrated CPU-side: the gust rate rises with the wind, and a running clock scaled by a changing factor would jump)
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
@@ -18,7 +18,7 @@ uniform float sway : hint_range(0.0, 0.4) = 0.05;   // metres of lateral sway pe
 void vertex() {
     float h = max(VERTEX.y, 0.0);                            // LOCAL height above the base -> the canopy top sways most
     vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;        // world pos so the gust travels coherently across the map
-    float gust = sin(TIME * 1.3 + wp.x * 0.16 + wp.z * 0.14);
+    float gust = sin(wind_vec.w * 1.3 + wp.x * 0.16 + wp.z * 0.14);
     float amp = h * sway * (0.4 + wind_vec.z) * (0.7 + 0.3 * gust);
     // Bend in the WORLD wind direction: build the world offset, rotate it into local (the instance may be Y-rotated).
     vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp;

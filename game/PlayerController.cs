@@ -8043,6 +8043,7 @@ namespace UnturnedGodot
         // material is built -- see GrassDisplacers.EnsureGlobals; registering them AFTER a material links them invalid
         // ("removed at some point"), which silently kills ALL grass displacement). This just keeps the gather buffer.
         static System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispScratch;
+        static float _windPhase;   // integrated foliage sway phase -> wind_vec.w (see the push site below)
         static Vector3 _grassSmooth; static bool _grassSmoothInit;   // the grass point's OWN smoothing (master): lerp toward the player each frame so the flatten glides instead of stepping
 
         /// <summary>Drive the grass-displacement shader each frame: retail's local-player point at (x, y+0.5, z) exactly
@@ -8066,7 +8067,22 @@ namespace UnturnedGodot
             // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
             RenderingServer.GlobalShaderParameterSet(GrassDisplacers.PointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
-            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.WindParam, new Vector4(wd.X, wd.Y, WindField.SampleWind(p), 0f));
+            // ...and W is the SWAY PHASE (strawberry 2026-09-08: "vary the wind speed for grass, trees when bad
+            // weather"). All three sway shaders used a fixed `TIME * rate`, so a gale bent the foliage further but
+            // at exactly the calm-day rhythm -- the amplitude varied and the SPEED never did. They read this
+            // accumulator instead, which advances faster the harder it blows.
+            //
+            // ⚠ It must be ACCUMULATED, not `TIME * f(wind)`: the strength changes every frame with the gusts, and
+            // multiplying a running clock by a changing factor re-maps the phase and makes every blade and leaf
+            // JUMP. Same trap as the cloud drift. Integrate the rate; never scale the clock.
+            float windZ = WindField.SampleWind(p);
+            // 0.55x dead calm .. 1.45x full gale, and exactly 1.0x at the typical fair-weather 0.5 -- so the sway
+            // already signed off keeps its rhythm and only the extremes move.
+            _windPhase += (float)delta * (0.55f + 0.9f * windZ);
+            // Wrapped at 20*PI, a whole number of cycles for ALL THREE consumers (1.3, 1.5 and 1.6 times 20PI are
+            // 26PI, 30PI and 32PI), so the wrap is invisible rather than a shared stutter across every plant.
+            _windPhase = Mathf.PosMod(_windPhase, Mathf.Tau * 10f);
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.WindParam, new Vector4(wd.X, wd.Y, windZ, _windPhase));
 
             // WAKE (master): the local player + moving vehicles leave a fading flattened trail. Age the trail + drop the
             // player's breadcrumb here; the gather below drops vehicle breadcrumbs + adds the whole fading trail as texels.
