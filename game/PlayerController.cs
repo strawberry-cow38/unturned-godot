@@ -5166,7 +5166,7 @@ namespace UnturnedGodot
             float sp = Skills.DexterityReloadSpeed();
             _viewmodel?.SetReloading(true, sp);   // play the swap anim (the instant swap already happened)...
             _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // ...clear it when the anim ends so ADS/fire un-block (master's ADS bug)
-            _magSwapAutoRack = !chambered && HasChamber && Ammo > 0;   // seated into an EMPTY chamber -> auto-rack the first round when the anim ends (master)
+            _magSwapAutoRack = !chambered && HasChamber && Ammo > 0 && !(_viewmodel?.ReloadIncludesChambering ?? false);   // SKS Reload already chambers; other empty chambers rack afterward
             SaveGunState();
         }
         // Remove the loaded magazine to the bag WITH its rounds, LEAVING the chambered round (master); mag-out anim.
@@ -6810,7 +6810,7 @@ namespace UnturnedGodot
             _hammerActive = false;
             // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
             // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
-            _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false);   // rack after an empty reload only on chambered (mag-fed) guns -- neither shotgun racks on reload
+            _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false) && !_viewmodel.ReloadIncludesChambering;   // SKS closes its bolt within Reload; other chambered guns rack afterward
             float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
             _reloadSpeed = rspeed;
             _viewmodel?.SetReloading(true, rspeed);

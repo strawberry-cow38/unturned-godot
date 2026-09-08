@@ -586,6 +586,7 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    BuildSksAction(mi, mat);
                     // glowing sight dots: each peeled marker surface rendered emissive in its OWN source colour (ace red,
                     // avenger/desert_falcon green, cobra white). Children of the body so they ride its transform. Energy is
                     // tunable -- it pushes the dot into HDR so the viewport glow blooms it.
@@ -1095,6 +1096,7 @@ namespace UnturnedGodot
         public void SetReloading(bool on, float speed = 1f)
         {
             _reloading = on;
+            if (on) StartSksAction("reload", speed); else CancelSksAction();
             if (on) { _aiming = false; _arms?.Play(_reloadClip, speed); if (_reloadSnd != null) { _reloadSnd.PitchScale = speed; _reloadSnd.Play(); } }   // per-gun reload arm anim + sound, sped up by DEXTERITY
         }
         // The rechamber RACK (source Hammer clip) -- the 2nd half of an empty reload. Stays in the reloading state so ADS/fire stay blocked.
@@ -1103,6 +1105,7 @@ namespace UnturnedGodot
         public void PlayHammer(float speed = 1f)
         {
             if (_hammerClip == null) return;
+            StartSksAction("hammer", speed);
             _arms?.Play(_hammerClip, speed);
             if (_hammerSnd != null) { _hammerSnd.PitchScale = speed; _hammerSnd.Play(); }   // the real rack / bolt-cycle sound (was missing) -- master
             _aiming = false;                                                // master: working the bolt/pump DROPS you out of ADS (SetAiming already blocks re-aim while _hammering; source canStartAim = !isHammering)
@@ -1478,6 +1481,7 @@ namespace UnturnedGodot
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
+            if (_capturePoseFrozen) delta = 0;
             if (_arms == null || _cam == null) return;
             // take in the world's lighting: sync the FP viewport's sun + ambient to the day/night cycle each frame
             if (WorldSun != null && _vpLight != null)
@@ -1776,6 +1780,8 @@ namespace UnturnedGodot
                     basis = basis.Rotated(cb.X, Mathf.DegToRad(_adsp) * _aimAlpha);   // tuning: extra ADS muzzle pitch to level a drooping iron-sight pistol barrel
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
+
+            TickSksAction(delta);
 
             // integrate ejected casings: gravity + tumble in the viewport world, despawn after ~1.3s
             for (int i = _casings.Count - 1; i >= 0; i--)

@@ -817,8 +817,10 @@ namespace UnturnedGodot
                     : new[] { 10, 66, 89, 92, 95, 120 };        // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
                 _vmTest = true;
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_VMSMALL") == "1" ? new Vector2I(1280, 720) : new Vector2I(2560, 1440);
+                if (System.Environment.GetEnvironmentVariable("UG_VM_NATIVE_SIZE") == "1") GetWindow().ContentScaleSize = GetWindow().Size;
                 BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
                 if (_vmAttach) _rigCaptureFrames = new[] { 40, 50, 60, 70, 80, 90 };   // menu open (post-equip) for each frame
+                ConfigureViewmodelCapture();
                 return;
             }
 
@@ -8248,7 +8250,8 @@ namespace UnturnedGodot
                 // ADS -> hip-fire -> reload and never inspects, so before this there was NO WAY to render the pose
                 // at all -- and "show me inspect" is a normal thing to ask of a new gun. Deliberately outside the
                 // UG_NOADS gate so it can be captured on a quiet hip hold instead of fighting the aim script.
-                if (_vmTest && _vm != null && !_vmMelee && !_vmInspected
+                if (TickViewmodelActionCapture(delta)) { }
+                else if (_vmTest && _vm != null && !_vmMelee && !_vmInspected
                     && int.TryParse(System.Environment.GetEnvironmentVariable("UG_INSPECT_AT"), out var insAt) && _frame >= insAt
                     && _vm.IsEquipComplete)
                 { _vm.PlayInspect(); _vmInspected = true; GD.Print($"[vm] inspect fired at frame {_frame}"); }
@@ -8800,6 +8803,7 @@ namespace UnturnedGodot
                         if (g != null)
                         {
                             g.SavePng($"{_rigDir}/vpraw_{_rigShot:D2}.png");   // DEBUG: the raw SubViewport capture (does it hold the gun?)
+                            _vm.DumpSksCapture($"{_rigDir}/sks_state_{_rigShot:D2}.json");
                             if (im.GetFormat() != Image.Format.Rgba8) im.Convert(Image.Format.Rgba8);
                             if (g.GetFormat() != Image.Format.Rgba8) g.Convert(Image.Format.Rgba8);
                             if (g.GetSize() != im.GetSize()) g.Resize(im.GetWidth(), im.GetHeight());
