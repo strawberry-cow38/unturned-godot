@@ -41,6 +41,7 @@ namespace UnturnedGodot
         System.Collections.Generic.HashSet<string> _stationTags = new();   // crafting-station tags the player currently has (recomputed each Rebuild)
         bool _open;
         public bool IsOpen => _open;
+        Control _slide; MenuSwoop _swoop;   // swoop in/out (strawberry 2026-09-08)
 
         // crafting queue: index 0 = LEFTMOST (newest); last = RIGHTMOST (active, counting its timer down).
         // ingredients are consumed into "limbo" (PerUnit) when a job is queued and returned if it's cancelled;
@@ -141,9 +142,15 @@ void fragment() {
             _root.AddChild(dim);
 
             // FULLSCREEN, translucent panel matching the inventory (was a centred 1100x680 SOLID box); sized in Layout()
+            // The swoop's slider: a full-rect Control that owns NOTHING but an offset, so the animation cannot
+            // fight this screen's own Layout() (which sets the panel's position from the viewport size).
+            _slide = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _root.AddChild(_slide);
             _panel = new Panel();
             Box(_panel, UITheme.Bg, 6);
-            _root.AddChild(_panel);
+            _slide.AddChild(_panel);
+            _swoop = MenuSwoop.Attach(this, _root, _slide);
 
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Craft, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });   // the SHARED strip -- on the full-screen ROOT, not the inset panel, so it sits exactly where the inventory's does (the 16 px panel inset was the "bar moves slightly")
             // "N shown / M craftable" info line, small, below the navbar (text set in Rebuild)
@@ -315,15 +322,18 @@ void fragment() {
         public void Toggle() { if (_open) Close(); else Open(); }
         MenuNavbar _navbar;   // tabs route through PlayerController.ShowMenu (MenuNavbar)
 
-        public void Close() { _open = false; Visible = false; }
+        // _open goes false NOW so input routing stops; the swoop hides the pixels when it lands.
+        public void Close() { _open = false; if (_swoop == null || !_swoop.Out()) Visible = false; }
 
         public void Open()
         {
             _open = true; Visible = true;
+            if (_root != null) _root.Visible = true;
             _qScroll = 0f;   // start showing the active (rightmost) side
             ComputeData();
             if (System.Array.IndexOf(CatOrder, _cat) < 0 || CountFor(_cat) == 0) _cat = "All";
             Rebuild();
+            _swoop?.In();
         }
 
         void ComputeData()

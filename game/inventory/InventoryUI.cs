@@ -148,6 +148,7 @@ void fragment() {
         byte _selPage, _selX, _selY;
 
         public bool IsOpen => _open;
+        Control _slide; MenuSwoop _swoop;   // swoop in/out (strawberry 2026-09-08)
 
         public override void _Ready()
         {
@@ -165,9 +166,18 @@ void fragment() {
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
 
+            // The swoop's slider: a full-rect Control that owns NOTHING but an offset, so the animation cannot
+            // fight this screen's own Layout() (which sets the panel's position from the viewport size).
+            _slide = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _root.AddChild(_slide);
             _dash = new Control();
             _dash.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // the dashboard FILLS the screen (source container = full rect)
-            _root.AddChild(_dash);
+            _slide.AddChild(_dash);
+            _swoop = MenuSwoop.Attach(this, _root, _slide);
+            // The paperdoll viewport keeps rendering until the swoop has actually finished; blanking it the
+            // instant Close() is called would show an empty doll for the whole fade out.
+            _swoop.Closed += () => { if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; };
 
             BuildNavbar();            // top 60px tab strip (Inventory / Crafting / Skills / Information)
             BuildCharacterPanel();    // left 410px: paperdoll + worn slots + the two weapon slots at the bottom
@@ -324,8 +334,10 @@ void fragment() {
         // went through Toggle -> Open and never populated the page, so Nearby was permanently empty in-game
         // while the demo path in Main.cs worked fine. Scanning on Open closes the whole class instead of the
         // one call site that got noticed.
-        public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
-        public void Close() { _open = false; Visible = false; _pdDragging = false; _pendingSlotEquip = -1; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
+        public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_root != null) _root.Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); _swoop?.In(); }
+        // _open goes false NOW -- input routing must stop the moment you press the key -- but the pixels stay up
+        // for the length of the swoop, and the swoop hides them when it lands.
+        public void Close() { _open = false; _pdDragging = false; _pendingSlotEquip = -1; if (_swoop == null || !_swoop.Out()) { Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; } }
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);

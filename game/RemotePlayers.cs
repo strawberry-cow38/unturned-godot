@@ -12,7 +12,29 @@ namespace UnturnedGodot
     // LOCAL player never gets a puppet -- that's the PlayerController shell (loopback) or the prediction path.
     public partial class RemotePlayers : Node3D
     {
-        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
+        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); Current = this; }   // PERF: hub-ticked (see TickHub.AddProcess)
+        public override void _ExitTree() { if (Current == this) Current = null; }
+
+        /// <summary>The live puppet set (one per world), so a UI can ask who is on the server without being handed
+        /// a reference through five constructors. Same pattern as MapUI.Current. Null in singleplayer, which is
+        /// exactly the "no remote players" answer a caller wants.</summary>
+        public static RemotePlayers Current;
+
+        /// <summary>Everyone else on the server: replicated profile name and where their puppet is standing. The
+        /// LOCAL player is deliberately not in here -- this class only owns other people's bodies -- so a caller
+        /// building a full roster adds themselves. Name falls back to the player id while the profile block is
+        /// still in flight (it arrives a tick or two after the first snapshot).</summary>
+        public System.Collections.Generic.List<(ushort id, string name, Vector3 pos)> Roster()
+        {
+            var list = new System.Collections.Generic.List<(ushort, string, Vector3)>();
+            foreach (var kv in _avatars)
+            {
+                var av = kv.Value;
+                if (av == null || !IsInstanceValid(av.Body)) continue;
+                list.Add((kv.Key, string.IsNullOrEmpty(av.PlateName) ? $"player {kv.Key}" : av.PlateName, av.Body.GlobalPosition));
+            }
+            return list;
+        }
         public NetWorldClient Client;
 
         const float GlideRate = 14f;      // 1/s exponential approach to the replicated target

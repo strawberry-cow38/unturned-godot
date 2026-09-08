@@ -18,6 +18,7 @@ namespace UnturnedGodot
         VBoxContainer _list;
         bool _open;
         public bool IsOpen => _open;
+        Control _slide; MenuSwoop _swoop;   // swoop in/out (strawberry 2026-09-08)
 
         static readonly string[] SpecNames = { "OFFENSE", "DEFENSE", "SUPPORT" };
         static readonly string[][] SkillNames =
@@ -41,9 +42,15 @@ namespace UnturnedGodot
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
+            // The swoop's slider: a full-rect Control that owns NOTHING but an offset, so the animation cannot
+            // fight this screen's own Layout() (which sets the panel's position from the viewport size).
+            _slide = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _root.AddChild(_slide);
             _panel = new Panel { CustomMinimumSize = new Vector2(PANELW, PANELH), Size = new Vector2(PANELW, PANELH) };
             UITheme.Panel(_panel);
-            _root.AddChild(_panel);
+            _slide.AddChild(_panel);
+            _swoop = MenuSwoop.Attach(this, _root, _slide);
             _header = new Label { Position = new Vector2(20, 14), Size = new Vector2(PANELW - 40, 30) };
             _header.AddThemeFontSizeOverride("font_size", 24);
             _panel.AddChild(_header);
@@ -80,8 +87,9 @@ namespace UnturnedGodot
 
         MenuNavbar _navbar;
         public void Toggle() { if (_open) Close(); else Open(); }
-        public void Open() { _open = true; Visible = true; Refresh(); }
-        public void Close() { _open = false; Visible = false; }
+        public void Open() { _open = true; Visible = true; if (_root != null) _root.Visible = true; Refresh(); _swoop?.In(); }
+        // _open goes false NOW so input routing stops; the swoop hides the pixels when it lands.
+        public void Close() { _open = false; if (_swoop == null || !_swoop.Out()) Visible = false; }
 
         void Refresh()
         {
