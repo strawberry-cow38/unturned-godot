@@ -2820,7 +2820,13 @@ namespace UnturnedGodot
             ["skycrane"] = new[] { new Vector3(0.000f, 0.096f, -2.844f) },   // skycrane: 1 seats, verbatim from the prefab
             ["hummingbird"] = new[] { new Vector3(-0.625f, 0.096f, -1.958f), new Vector3(0.625f, 0.096f, -1.958f), new Vector3(-1.261f, -0.120f, -0.423f), new Vector3(1.261f, -0.120f, -0.423f) },   // hummingbird_police: 4 seats, verbatim from the prefab
 
-            ["minicopter"] = new[] { new Vector3(0f, 0.32f, 0.10f) },
+            // DERIVED from the airframe mesh, not eyeballed: the seat cushion's own horizontal face sits at
+            // y = -0.110 (Seat_Brown_6b472a in minicopter_body.txt) and the rig's pelvis rests PropSeat.HipRest
+            // = 0.735 above the body origin, so the origin belongs one hip-height below the cushion. The old
+            // (0, 0.32, 0.10) put the pelvis at 1.055 -- above the rotor -- and the pilot floated over the
+            // machine in every showcase (strawberry: "the seating position is way off"). It predates this
+            // model: the procedural frame floated him identically, which is what a control render confirmed.
+            ["minicopter"] = new[] { new Vector3(0f, -0.845f, -0.27f) },
 
             ["scoutcopter"] = new[] { new Vector3(-0.34f, 0.32f, 0.10f), new Vector3(0.34f, 0.32f, 0.10f) },
             ["tank"] = new[] { new Vector3(0.000f, 0.192f, -2.711f), new Vector3(0.44f, 2.0f, 1.45f) },   // gunner: the hatch shaft under the turret's top hatch (TankGunnerSeatDown + the yaw pivot's 0.85), where SeatBodyLocal actually sits him -- the extracted Seat_1 (-0.471, 2.348, 1.421) put the door/entry spot a metre off (master 2026-09-06 "move the turret gunners get-into-seat position to the actual spot in the turret they sit")   // tank: driver from the root Seats; the GUNNER is the turret's Seats/Seat_1 -- Yaw (0,0,-0.85) + Seats (0,2.8,2.0) + Seat_1 (-0.471,-0.452,-2.571), Z-negated. The root's own Seat_1 is a (0,0,0) placeholder and had the gunner sitting in the hull floor.
@@ -3910,7 +3916,18 @@ namespace UnturnedGodot
             HeliClimbMax = 22f, HeliFallMax = 45f,
             RotorRadius = 2.85f, TailRotorRadius = 0.34f,
             RotorHub = new Vector3(0f, 1.22f, 0.55f), TailRotorHub = new Vector3(0.09f, 0.02f, 2.46f),
-            Body = null, Palette = null, DefaultPaints = new[] { "#8a7f5c" },   // bare weathered tube frame
+            // The airframe is a real mesh now (astra/blender, 2026-09-08, VoX: "model an even better
+            // minicopter in the unturned style"). HeliBodyMeshes makes Frame=Ultralight inert -- the
+            // procedural tube frame is no longer built -- but BuildHeliRotors still runs either way, so the
+            // mesh deliberately ships WITHOUT blades: a baked set would draw a second, stationary rotor
+            // through the spinning one. Mast and tail housing are kept for the real rotors to sit on.
+            HeliBodyMeshes = new[] { "minicopter_body.txt" },
+            // Palette, not a flat colour: the heli body path applies ONE MaterialOverride to the whole mesh, so
+            // with Palette=null every colour in the model collapsed to DefaultPaints and the airframe rendered
+            // flat black (strawberry, on sight: "its flat black, with no color"). minicopter_palette.png is the
+            // usual 4x2 -- texel 0 is alpha-0 PAINTABLE so the frame still takes the vehicle paint like the
+            // semi's panels, and the rust, red, charcoal and seat brown are fixed texels the mesh indexes.
+            Body = null, Palette = "minicopter_palette.png", DefaultPaints = new[] { "#25282a" },
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels), non-null for safety like the runabout
             // 20, not 26: once the fleet was balanced against real aircraft, a scrap ultralight out-running a Huey
             // and a Skycrane read wrong. This is the one figure NOT derived from a real machine -- its analogue
