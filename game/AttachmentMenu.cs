@@ -194,7 +194,12 @@ namespace UnturnedGodot
                 // to a player's grid (consume/move/drop/equip/pickup are the whole set). Rather than dupe it or
                 // silently destroy it, refuse the swap and say so -- detaching first goes through DetachSlot,
                 // which has the same gap and is the next thing to wire.
-                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) >= 0 && !(slot == "Sight" && AttachmentFit.IsDefaultIrons(Player.HeldItemForTest)))   // factory irons displace to nothing -- a scope goes straight on
+                // ">0", NOT ">=0". Item ids start at 1, and EVERY other reader in the codebase spells "something is
+                // loaded" as `_loadedMagId > 0` (PlayerController LoadedMagCap / HasMagLoaded / MagAmmoType). Only
+                // this guard used >=0, so an UNSET slot -- gunMagId sits at 0 for a gun that has never been reloaded,
+                // because SaveGunState writes the int-default _loadedMagId straight onto the item -- read as
+                // "occupied" and refused every first fit with "Take the old one off first". -1 and 0 both mean empty.
+                if (AttachmentFit.InstalledId(Player.HeldItemForTest, slot) > 0 && !(slot == "Sight" && AttachmentFit.IsDefaultIrons(Player.HeldItemForTest)))   // factory irons displace to nothing -- a scope goes straight on
                 {
                     HUD.Alert("Take the old one off first");
                     return false;

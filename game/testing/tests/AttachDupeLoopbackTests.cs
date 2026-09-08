@@ -70,6 +70,24 @@ namespace UnturnedGodot.Testing
             // below compare a bag that simply has not synced yet, and every number is meaningless.
             yield return Until(() => CountOf(sess.Shell.Inventory, MagId) == CountOf(sInv.Inventory, MagId)
                                   && CountOf(sInv.Inventory, MagId) > 0, 5);
+
+            // HOLD THE GUN FIRST -- this fixture never did, and that is the whole of the 2026-09-08 regression.
+            // PopulateDemoKit leaves the Eaglefire in the PRIMARY SLOT, so HeldItemForTest was null here, and a fit
+            // with no backing item cannot be recorded anywhere: AttachmentFit.SetInstalledId no-ops on a null gun.
+            // The old code spent the magazine regardless, so this suite went green while the item vanished into
+            // nothing -- it was passing THROUGH the bug next door to the one it watches. 97f1386a refuses that
+            // spend instead (strawberry: "attachments will not fit onto a gun sitting in the primary/secondary
+            // slot"), which is what turned the fixture's own gap into a failure. Press 1, exactly as a player does.
+            sess.Shell.EquipHotbar(1);
+            yield return Ticks(5);
+            T.Check($"the primary gun is in hand -- a fit needs an item to record onto (held {sess.Shell.HeldItemForTest?.id})",
+                sess.Shell.HeldItemForTest != null);
+            if (sess.Shell.HeldItemForTest == null) yield break;
+
+            // ...and only NOW take the baseline: equipping resyncs the bag (and seeds the gun's own magazine id),
+            // so counts captured before it are measuring a different grid than the one the fit acts on.
+            yield return Until(() => CountOf(sess.Shell.Inventory, MagId) == CountOf(sInv.Inventory, MagId)
+                                  && CountOf(sInv.Inventory, MagId) > 0, 5);
             int serverBefore = CountOf(sInv.Inventory, MagId);
             int clientBefore = CountOf(sess.Shell.Inventory, MagId);
             T.Check($"client and server agree on the magazine count before ({clientBefore} vs {serverBefore})",

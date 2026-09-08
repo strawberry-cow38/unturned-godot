@@ -253,6 +253,43 @@ def mat_of(bp):
 
 curveDir = os.path.join(OUT, "door_curves")
 
+def fix_bounce_roles(openPath, closePath, label):
+    """Catch an INVERTED open/close pair and correct it.
+
+    The role classifier above decides which clip is the opening one by which endpoint sits farther from the
+    bone's rest rotation. That is a weak signal and it has now been wrong twice: Cooler_0 sprang ten degrees
+    PAST SHUT while barely moving past its stop on opening, and Wardrobe_1 shipped the same way (open +2.2% vs
+    close +7.4%) and was caught by the nightly, not by this tool.
+
+    The BOUNCE is a much stronger signal, and it is the rule the doors actually obey (strawberry: "doors
+    shouldnt bounce closed. they should bounce open. and be sorta solid closing"). A door closing against its
+    frame cannot swing 7% past shut -- it would pass through the frame. So: measure both curves the way
+    props.doors_bounce_open_not_closed measures them, and if the closing one is the springy one, exchange them.
+
+    The exchange is `new(t) = 1 - other(t)`, not a file swap: that both moves the bounce to the right curve AND
+    re-expresses it in the right direction, since an open curve runs 0->1 and a close curve runs 1->0. Verified
+    on Wardrobe_1 -- it lands on 1.074074, bit-identical to the open bounce every other door in the catalog has.
+    """
+    def rd(path):
+        rows = []
+        for line in open(path):
+            f = line.split()
+            if len(f) >= 2:
+                rows.append((f[0], float(f[1])))
+        return rows
+    o, c = rd(openPath), rd(closePath)
+    if len(o) != len(c) or not o or any(a[0] != b[0] for a, b in zip(o, c)):
+        return
+    openOver = max(v - 1.0 for _, v in o)
+    closeOver = max(-v for _, v in c)
+    if closeOver <= openOver:
+        return
+    print(f"    ROLE INVERTED for {label}: close bounces +{closeOver*100:.1f}% vs open +{openOver*100:.1f}% "
+          f"-- exchanging the curves (a door cannot spring through its own frame)")
+    open(openPath, "w").write("".join(f"{t} {1.0-v:.6f}\n" for t, v in c))
+    open(closePath, "w").write("".join(f"{t} {1.0-v:.6f}\n" for t, v in o))
+
+
 def write_curve(path, samples):
     """Writes the normalized (t_norm, frac) curve; returns (farAng, length) -- the DERIVED angle magnitude
     and clip duration -- or None if the samples are degenerate (caller then has no angle/duration to catalog)."""
@@ -492,6 +529,9 @@ def process_leaf(leaf_name):
                 if r: angleDeg, durationSec = r
             if "close" in role:
                 write_curve(os.path.join(curveDir, base + "_close.txt"), role["close"][1])
+            if "open" in role and "close" in role:
+                fix_bounce_roles(os.path.join(curveDir, base + "_open.txt"),
+                                 os.path.join(curveDir, base + "_close.txt"), base)
 
     if angleDeg is None or durationSec is None or axis is None:
         print(f"  NOTE: could not derive angle/duration/axis for {leaf_name} from clip data -- no doors.txt entry for this leaf (mesh/curves already written above, if any)")
