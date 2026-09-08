@@ -71,6 +71,7 @@ namespace UnturnedGodot
         bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
         string _glEquipClip, _glReloadClip, _glHammerClip;   // resolved overlay clips for the gun-layer test (+ the empty-reload rack)
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
+        bool _vmInspected;                           // UG_INSPECT_AT fires PlayInspect once
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
@@ -8243,6 +8244,14 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
+                // UG_INSPECT_AT=<frame>: play the gun's inspect once at that frame. The scripted sequence above is
+                // ADS -> hip-fire -> reload and never inspects, so before this there was NO WAY to render the pose
+                // at all -- and "show me inspect" is a normal thing to ask of a new gun. Deliberately outside the
+                // UG_NOADS gate so it can be captured on a quiet hip hold instead of fighting the aim script.
+                if (_vmTest && _vm != null && !_vmMelee && !_vmInspected
+                    && int.TryParse(System.Environment.GetEnvironmentVariable("UG_INSPECT_AT"), out var insAt) && _frame >= insAt
+                    && _vm.IsEquipComplete)
+                { _vm.PlayInspect(); _vmInspected = true; GD.Print($"[vm] inspect fired at frame {_frame}"); }
                 else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings). UG_NOADS=1 skips the whole sequence so the gun HOLDS at hip -> a late frame shows a fully-ramped sprint/safety pose (which ADS would otherwise fade out).
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)

@@ -145,6 +145,13 @@ namespace UnturnedGodot
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
         string _hammerClip = null;           // {Gun}_Hammer: the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun); null = gun has none
         string _inspectClip = null;          // per-gun inspect clip ({Gun}_Inspect); null if the gun ships no Inspect anim
+        /// <summary>Guns with no ripped animations of their own, and the clip they borrow. Explicit and per gun:
+        /// a model added to this port has no {Gun}_Inspect, and silently falling back to some other rifle is what
+        /// strawberry rejected. Naming the donor here keeps the borrow visible in review.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, string> InspectDonor = new()
+        {
+            ["Sks"] = "Zubeknakov_Inspect",   // new model, no rip; same 7.62x39 family and its measurement reference
+        };
         bool _inspecting; float _inspectTimer; Basis _inspectBoneStart; bool _inspectCapture;   // inspect: layer the hand-bone rotation delta onto the camera-locked gun so it tilts with the gesture
         string _attachStartClip = null, _attachStopClip = null;   // per-gun attach-view pose clips ({Gun}_AttachStart/Stop)
         bool _attachView, _attachCapture; Basis _attachBoneStart;   // T attachment view: hold the presented pose (gun follows the bone like inspect)
@@ -490,7 +497,15 @@ namespace UnturnedGodot
                 //
                 // Non-weapon holdables have no Inspect clip of their own and shouldn't: null here means PlayInspect
                 // early-returns and nothing plays, which is the asked-for behaviour, not a fallback.
-                _inspectClip = IsGunViewmodel && _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
+                // A gun with NO RIP OF ITS OWN may name a DONOR clip here, explicitly and per gun. The sks is a
+                // new model, not a retail rip, so there is no Sks_Inspect and inspect would simply play nothing.
+                // strawberry chose the Zubeknakov donor (2026-09-08) -- same 7.62x39 family and the reference this
+                // model was measured against. This does NOT reopen the hole the gate above closes: that bug was
+                // every NON-gun silently inheriting "Eaglefire" from a defaulted GunName, whereas this is a named
+                // gun opting in to a named clip. A gun not in this map still gets nothing.
+                _inspectClip = IsGunViewmodel && _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect"
+                             : IsGunViewmodel && InspectDonor.TryGetValue(capGun, out var donor) && _arms.ClipLength(donor) > 0f ? donor
+                             : null;
                 if (_inspectClip != null) _arms.SetClipLoop(_inspectClip, false);
                 _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
