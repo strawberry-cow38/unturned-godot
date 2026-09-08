@@ -1860,6 +1860,15 @@ namespace UnturnedGodot
             UpdateOptic();
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
+            // SUBMERGED VIEW (strawberry 2026-09-08). Driven from the CAMERA, not the body: the two disagree
+            // exactly when it matters -- wading with your head under, or swimming with the eye just clear of the
+            // surface -- and what you see is decided by where the eye is. Built lazily on first submersion so a
+            // map with no water never pays for it.
+            // Parented to the CAMERA, not to the player: it is a fullscreen 3D pass drawn by that camera, so it
+            // has to be in that camera's view to be submitted at all.
+            if (_underwater == null && Terrain.HasWater && _cam != null && IsInstanceValid(_cam)
+                && _cam.GlobalPosition.Y < Terrain.SeaLevelY) { _underwater = new Underwater(); _cam.AddChild(_underwater); }
+            _underwater?.Drive(_cam);
             _clothing?.ReconcileTick();   // repaint the body if a worn slot moved without anything calling Refresh (master 2026-09-07: clothing needing an inventory poke to apply)
         }
 
@@ -3389,6 +3398,8 @@ namespace UnturnedGodot
         }
         /// <summary>Per frame: the goggles' view follows the switch AND the slot -- taking them off kills the view, and the
         /// switch stays where it was so putting them back on brings it straight back.</summary>
+        Underwater _underwater;   // submerged-camera screen pass; created on first submersion
+
         void UpdateNightVision()
         {
             bool on = NightVisionOn && !_dead;

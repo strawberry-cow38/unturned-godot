@@ -5320,6 +5320,7 @@ namespace UnturnedGodot
             AttachMpLoopback(res, gameDefault: _peiPlayable);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             SpawnAiTraffic();
+            Underwater.DebugAttach(this);   // UG_UNDERWATER=<metres>: pin the submerged view on so a render can show it without diving
             if (_peiPlayable)
             {
                 string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
