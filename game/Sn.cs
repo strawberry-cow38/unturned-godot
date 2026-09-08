@@ -13,6 +13,8 @@ namespace UnturnedGodot
         public static readonly StringName ambient_ground = "ambient_ground";
         public static readonly StringName cloud_intensity = "cloud_intensity";
         public static readonly StringName cloud_params = "cloud_params";
+        public static readonly StringName cloud_offset = "cloud_offset";
+        public static readonly StringName cloud_offset2 = "cloud_offset2";
         public static readonly StringName cloud_rim_color = "cloud_rim_color";
         public static readonly StringName clouds_tex = "clouds_tex";
         public static readonly StringName equator_color = "equator_color";

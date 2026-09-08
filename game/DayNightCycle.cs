@@ -97,6 +97,13 @@ uniform sampler2D clouds_tex : repeat_enable, filter_linear;
 uniform vec3 cloud_rim_color : source_color;
 uniform float cloud_intensity;
 uniform vec4 cloud_params;        // R: macro cutoff, G: macro saturation
+// WEATHER-DRIVEN CLOUD MOTION (strawberry 2026-09-08: make the cloud layer shift, move, morph and change shape
+// depending on the weather, as well as moving and morphing as usual).
+// Both are ACCUMULATED ON THE CPU, not direction-times-elapsed-time. That distinction matters: the wind bearing
+// drifts, and `dir * TIME` re-maps the whole accumulated offset the instant `dir` changes, which teleports the
+// entire sky sideways. Integrating velocity instead means a change of wind BENDS the clouds' path, as it should.
+uniform vec2 cloud_offset = vec2(0.0);        // macro layer's travelled distance in texcoord space
+uniform vec2 cloud_offset2 = vec2(0.0);       // the morph sample's own path -- different rate AND direction
 uniform float lightning_flash;                   // 0..1+ strike envelope (WeatherManager drives it via DayNightCycle; 0 = skip the whole block)
 uniform vec3 lightning_tint : source_color;      // warm-white flash colour
 uniform vec3 lightning_dir;                      // unit XZ azimuth of the strike -- one part of the sky carries the glow
@@ -145,8 +152,12 @@ void sky() {
     // clouds: real Clouds.png projected viewDir.xz/viewDir.y, R=macro / G=medium / B=small, scrolling
     if (viewDir.y > 0.0001) {
         vec2 texcoord = viewDir.xz / viewDir.y;
-        float macroAlpha = texture(clouds_tex, texcoord * 0.1 - vec2(0.0, tX * 0.01)).r;
-        macroAlpha += cloud_intensity * 0.25 * texture(clouds_tex, texcoord * 0.1 + 0.5 - vec2(0.0, tX * 0.01)).r;
+        // MORPH, not just travel. The two macro samples used to scroll at the SAME rate in the SAME direction, so
+        // their sum was a fixed pattern sliding across the sky -- clouds that move but never change. Giving the
+        // second sample its own rate AND a perpendicular component makes the two slide ACROSS each other, so the
+        // interference between them continuously grows and dissolves shapes in place. Same two texture fetches.
+        float macroAlpha = texture(clouds_tex, texcoord * 0.1 + cloud_offset).r;
+        macroAlpha += cloud_intensity * 0.25 * texture(clouds_tex, texcoord * 0.1 + 0.5 + cloud_offset2).r;
         macroAlpha = clamp((macroAlpha - cloud_params.r) * cloud_params.g, 0.0, 1.0);
 
         float sunAtmosphereFactor = clamp(sun_direction.y * -2.0 + 1.0, 0.0, 1.0);
@@ -157,8 +168,9 @@ void sky() {
         float moonViewFactor = clamp(-dot(viewDir, moon_direction), 0.0, 1.0);
         float moonFactor = moonAtmosphereFactor * moonViewFactor;
 
-        float cloudsMedium = texture(clouds_tex, texcoord * 0.2 - vec2(0.0, tX * 0.04)).g;
-        float cloudsSmall = texture(clouds_tex, texcoord - vec2(0.0, tX * 0.2)).b;
+        // the detail layers ride the same wind, each at its own rate (parallax: small scud outruns the macro deck)
+        float cloudsMedium = texture(clouds_tex, texcoord * 0.2 + cloud_offset * 4.0).g;
+        float cloudsSmall = texture(clouds_tex, texcoord + cloud_offset * 20.0).b;
 
         vec3 cloudBodyColor = ambient_ground + cloud_rim_color;
         cloudBodyColor = mix(cloudBodyColor, sun_color, sunFactor * cloudsMedium * 0.5);
@@ -208,7 +220,7 @@ void sky() {
         public void HubTick(double delta)   // PERF: hub-ticked at 60 Hz (was a per-frame engine callback; see TickHub)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
-            if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
+            if (VisualsEnabled) { AdvanceClouds((float)delta); Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
             DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
         }
 
@@ -396,6 +408,42 @@ void sky() {
                 : Godot.Environment.ToneMapper.Aces;
         }
 
+        // CLOUD MOTION (strawberry 2026-09-08: "making our cloud layer shift and move and morph and change shape,
+        // depending on weather, as well as just moving and morphing as usual").
+        //
+        // The layer used to scroll both of its macro samples at the SAME rate in the SAME hardcoded direction, so
+        // the sum was one fixed pattern sliding across the sky: clouds that moved and never changed. Two paths at
+        // different rates, one of them angled off the wind, make the samples slide ACROSS each other, so shapes
+        // grow and dissolve in place. Costs nothing -- same two texture fetches the shader always did.
+        Vector2 _cloudOff, _cloudOff2;
+        const float CloudRate = 0.0005f;   // reproduces the original `tX * 0.01` exactly: tX = TIME/20, so 0.01/20 per second
+        float _cloudT;                     // our own clock: fixed-delta, so a movie render is reproducible
+        static readonly float CloudBaseAngle = Mathf.Atan2(1.2f, 2.5f);   // WindField's prevailing gust-drift bearing, so sky and flags broadly agree
+        void AdvanceClouds(float dt)
+        {
+            if (dt <= 0f || dt > 1f) return;   // a huge frame (load hitch, a debugger pause) must not fling the sky
+            float ww = Mathf.Clamp(WindField.WeatherWind, 0f, 1f);
+            float st = Mathf.Clamp(StormAmount, 0f, 1f);
+            float speed = Mathf.Lerp(1f, 3.4f, ww);        // a gale genuinely races the deck past
+            float morph = Mathf.Lerp(1f, 2.4f, st);        // and a storm sky churns rather than merely travelling
+            // BEARING, AND IT HAS TO BE DETERMINISTIC. The obvious source is WindField.WindXZ -- the same bearing
+            // the flags and foliage use -- but WindField reads Time.GetTicksMsec(), i.e. the WALL CLOCK, so under
+            // --write-movie the direction at a given frame would depend on how long the process had been running.
+            // That is exactly how you get a golden that passes locally and flickers on the nightly. So: the same
+            // prevailing bearing WindField uses (its DriftX/DriftZ gust crawl), swung by an oscillation on our OWN
+            // accumulated time, which advances by the fixed frame delta and is identical every run.
+            _cloudT += dt;
+            float ang = CloudBaseAngle + 0.30f * Mathf.Sin(_cloudT * 0.06f);
+            // Scrolling the sample coordinate by +d makes the pattern appear to move by -d, hence the negation.
+            Vector2 dir = -new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+            Vector2 perp = new Vector2(dir.Y, -dir.X);
+            _cloudOff += dir * (CloudRate * speed * dt);
+            _cloudOff2 += (dir * 0.55f + perp * 0.38f) * (CloudRate * speed * morph * dt);
+            // texcoords repeat, so fold the accumulators before float precision starts to grain the sampling
+            _cloudOff = new Vector2(Mathf.PosMod(_cloudOff.X, 1f), Mathf.PosMod(_cloudOff.Y, 1f));
+            _cloudOff2 = new Vector2(Mathf.PosMod(_cloudOff2.X, 1f), Mathf.PosMod(_cloudOff2.Y, 1f));
+        }
+
         public void Apply()
         {
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TIME"), out var ft)) Time = ft;   // freeze time-of-day for lighting A/B tests (0.5 = noon)
@@ -430,6 +478,16 @@ void sky() {
                 _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(amb, amb, amb));
                 _skyMat.SetShaderParameter(Sn.cloud_rim_color, new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF));
+                // The travelled paths AdvanceClouds integrated, and the COVER. cloud_params was set once at
+                // startup and never moved again, so a storm had exactly the same cloud SHAPES as a clear noon and
+                // only the tint said otherwise. Dropping the macro cutoff lets far more of the layer through and
+                // raising the saturation hardens its edges: overcast that genuinely closes over the sky. Both
+                // interpolate from the original values, so fair weather is unchanged.
+                _skyMat.SetShaderParameter(Sn.cloud_offset, _cloudOff);
+                _skyMat.SetShaderParameter(Sn.cloud_offset2, _cloudOff2);
+                float cover = Mathf.Clamp(StormAmount, 0f, 1f);
+                _skyMat.SetShaderParameter(Sn.cloud_params, new Vector4(Mathf.Lerp(0.60f, 0.26f, cover), Mathf.Lerp(10f, 15f, cover), 0f, 0f));
+                _skyMat.SetShaderParameter(Sn.cloud_intensity, Mathf.Lerp(1.0f, 1.6f, cover));
                 // lightning cloud-flash uniforms -- WeatherManager drives these; pushed only while flashing (+ one frame
                 // to switch off), not every idle frame. 0 flash = the sky-shader block skips (no-WM/golden stays 0).
                 if (LightningFlash > 0.001f || _lightningActive)
