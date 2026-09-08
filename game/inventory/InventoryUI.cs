@@ -2115,7 +2115,11 @@ void fragment() {
             yA = BuildQuickCraftSection(aCol, yA, colW);   // Quick Craft as a section under Nearby (master), not a floating panel
             _storageW = boxW;
             // SCROLL (master 2026-09-03): the clothing column can outgrow the screen; clip the box and hang a scrollbar on its right.
-            float visibleH = vpsz.Y - NAVH - MARGIN;   // to the bottom of the screen (master 2026-09-03: "the scrollable region should go all the way to the bottom")
+            // to the bottom of the screen (master 2026-09-03: "the scrollable region should go all the way to the
+            // bottom"), EXCEPT where the vitals reach it. The box starts at x=580 and the bars end at 20% of the
+            // width, so on any 16:9 window this is the same number it always was; it only gives ground on an
+            // ultrawide, where 20% is past 580 and the two would genuinely collide.
+            float visibleH = HUD.ContentBottom(vpsz, BOXX, BOXX + boxW, vpsz.Y - MARGIN) - (NAVH + MARGIN);
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLTEST"), out var _vh) && _vh > 100f) visibleH = _vh;   // render harness: cap the box height so the scrollbar shows on a short column
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY"), out var _sy) && !_scrollTestApplied) { _scrollY = _sy; _scrollTestApplied = true; }   // render harness: pre-scrolled
             _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
@@ -2136,8 +2140,16 @@ void fragment() {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
             if (_charBox != null)
             {
-                _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
-                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - 215);   // master 2026-09-03: "move primary and secondary up a bit so they are above the vitals bars" (was -155: the slots touched the bars)   // lifted ABOVE the layer-12 vitals (~180px up from the panel bottom) so they don't collide (master 2026-08-26)
+                // THE PANEL STOPS ABOVE THE VITALS (strawberry 2026-09-08: "built around the vitals panel being
+                // visable and not covered"). It used to run to the bottom of the screen and the contents dodged
+                // the bars one at a time: the weapon slots carry the scar, "-155: the slots touched the bars"
+                // and then "-215" when that still was not enough. Both were HUD.VitalsRect, guessed twice --
+                // and the second guess pushed the slots 171 px ABOVE the cosmetic strip that is supposed to sit
+                // just above them, so the row order silently inverted. Shortening the PANEL fixes the cause:
+                // every child goes back to keying off its own panel's bottom with an ordinary margin.
+                float charBottom = HUD.ContentBottom(vp, MARGIN, MARGIN + CHARW, vp.Y - MARGIN);
+                _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, charBottom - _charBox.Position.Y));
+                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
                 // rotation slider + cosmetic buttons sit in the reserved COSMH strip just above the weapon slots
                 if (_cosmeticRow != null) _cosmeticRow.Position = new Vector2(0, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - COSMH);
 

@@ -235,21 +235,39 @@ void fragment() {
             float detX = pw - detW - M;
             float gridW = detX - gridX - 16f;
 
+            // KEEP OFF THE VITALS (strawberry 2026-09-08: "built around the vitals panel being visable and not
+            // covered"). Measured, not eyeballed: the bars are HUD.VitalsRect -- the left 20% of the width, 179 px
+            // tall, ending 42 px off the bottom -- and on a 2048x1490 window this screen ran three things through
+            // them. The category list overshot the top of the box by 55 px, the grid+search block by 11, and the
+            // crafting queue sat ACROSS it, its whole left half behind the health and food bars.
+            //
+            // Two different fixes, because they are two different problems. The lists sit ABOVE the band and
+            // simply stop at it (per column, so only the ones that reach it pay). The queue LIVES in that band by
+            // design -- it is the bottom strip -- so it cannot be shortened, it is moved: its left edge starts
+            // clear of the bars and it keeps its right edge. HUD coordinates are screen, these are panel-relative
+            // (the panel is inset by M), hence the +M / -M.
+            float catBottom = HUD.ContentBottom(vp, M + M, M + M + catW, M + ph - bottomPad) - M;
             _catScroll.Position = new Vector2(M, top);
-            _catScroll.Size = new Vector2(catW, ph - top - bottomPad);
+            _catScroll.Size = new Vector2(catW, Mathf.Max(120f, catBottom - top));
 
+            // the grid and its search box move as one block: search 38 up from the block's bottom, 32 tall, grid
+            // ending 44 above it -- the same relationship as before, against a bottom that can now be raised.
+            float blockBottom = HUD.ContentBottom(vp, M + gridX, M + gridX + gridW, M + ph - bottomPad) - M;
             _gridScroll.Position = new Vector2(gridX, top);
-            _gridScroll.Size = new Vector2(gridW, ph - top - bottomPad - 44f);
+            _gridScroll.Size = new Vector2(gridW, Mathf.Max(120f, blockBottom - 44f - top));
             _grid.CustomMinimumSize = new Vector2(gridW - 16f, 0);
             int cols = Mathf.Max(5, (int)(gridW / (TILE + 8f)));
             if (_grid.Columns != cols) _grid.Columns = cols;
 
-            _search.Position = new Vector2(gridX, ph - bottomPad - 38f);
+            _search.Position = new Vector2(gridX, blockBottom - 38f);
             _search.Size = new Vector2(gridW, 32f);
 
-            _queuePanel.Position = new Vector2(M, ph - bottomPad + 8f);
-            _queuePanel.Size = new Vector2(catW + 16f + gridW, bottomPad - 24f);
-            _queueRow.Size = new Vector2(catW + 16f + gridW - 158f, bottomPad - 32f);
+            var vit = HUD.VitalsRect(vp);
+            float queueX = Mathf.Max(M, vit.Position.X + vit.Size.X + 16f - M);   // panel-relative, one gutter clear of the bars
+            float queueW = Mathf.Max(240f, catW + 16f + gridW - (queueX - M));
+            _queuePanel.Position = new Vector2(queueX, ph - bottomPad + 8f);
+            _queuePanel.Size = new Vector2(queueW, bottomPad - 24f);
+            _queueRow.Size = new Vector2(Mathf.Max(80f, queueW - 158f), bottomPad - 32f);
 
             _detail.Position = new Vector2(detX, top);
             _detail.Size = new Vector2(detW, ph - top - 16f);

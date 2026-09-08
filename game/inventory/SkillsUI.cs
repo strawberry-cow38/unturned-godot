@@ -127,11 +127,18 @@ namespace UnturnedGodot
             _xp.Size = new Vector2(XpW, 26f);
 
             float colW = (pw - 2f * M - 2f * Gutter) / PlayerSkills.SPECIALITIES;
-            float colH = ph - top - M;
+            // KEEP OFF THE VITALS (strawberry 2026-09-08: "built around the vitals panel being visable and not
+            // covered"). Per column, not across the whole panel: the bars are the left fifth of the screen, so
+            // only the column that actually reaches them pays the 180 px -- reserving the band everywhere would
+            // shorten two columns to dodge something neither can touch. Screen coords, because the panel is
+            // inset by M and HUD.VitalsRect is measured off the viewport.
+            float colBottomPanel = ph - M;
             for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
             {
-                _cols[s].Position = new Vector2(M + s * (colW + Gutter), top);
-                _cols[s].Size = new Vector2(colW, colH);
+                float x = M + s * (colW + Gutter);
+                float bottom = HUD.ContentBottom(vp, M + x, M + x + colW, M + colBottomPanel) - M;
+                _cols[s].Position = new Vector2(x, top);
+                _cols[s].Size = new Vector2(colW, Mathf.Max(120f, bottom - top));
                 _colBox[s].CustomMinimumSize = new Vector2(colW - 16f, 0f);   // crafting: _grid.CustomMinimumSize = gridW - 16
             }
         }

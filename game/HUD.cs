@@ -31,6 +31,35 @@ namespace UnturnedGodot
 
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 
+        // ---- the vitals box, as a rectangle other screens can read -------------------------------------
+        // strawberry 2026-09-08: "design all those menus except the map to be built around the vitals panel
+        // being visable and not covered". The bars already DRAW over every menu (their own CanvasLayer at 12,
+        // above the inventory family at 11) -- what was missing is any menu KNOWING where they are, so each one
+        // that came near them grew its own hand-tuned dodge instead. InventoryUI's weapon row carries the scar:
+        // "-155: the slots touched the bars", then "-215" when that still was not enough. Both are this
+        // rectangle, guessed twice.
+        //
+        // Derived from the same constants the box itself is built from, so the two cannot drift apart.
+        public const int VitalRows = 6;                                   // health, food, water, stamina, infection, oxygen
+        public const float VitalsLeft = 24f;                              // lifeBox OffsetLeft
+        public const float VitalsRightAnchor = 0.2f;                      // ...and its AnchorRight: the box is 20% of the screen wide
+        public const float VitalsTopGap = TopPad + VitalRows * RowH + 36f;   // lifeBox OffsetTop, off the screen bottom
+        public const float VitalsBottomGap = 42f;                         // ...and its OffsetBottom
+        /// <summary>Where the health/food/water/stamina/infection/oxygen bars sit, in screen pixels.
+        /// 20% of the width, so on an ultrawide it reaches further right than any fixed number would.</summary>
+        public static Rect2 VitalsRect(Vector2 vp)
+            => new(VitalsLeft, vp.Y - VitalsTopGap, VitalsRightAnchor * vp.X, VitalsTopGap - VitalsBottomGap);
+
+        /// <summary>How far down a menu column spanning x in [x0, x1) may go before it runs into the vitals.
+        /// Columns that miss the box horizontally keep the full height -- reserving the band across the whole
+        /// screen would cost every panel 180 px to dodge something only the left fifth of it can touch.</summary>
+        public static float ContentBottom(Vector2 vp, float x0, float x1, float bottom, float gap = 12f)
+        {
+            var v = VitalsRect(vp);
+            if (x1 <= v.Position.X || x0 >= v.Position.X + v.Size.X) return bottom;
+            return Mathf.Min(bottom, v.Position.Y - gap);
+        }
+
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
         readonly System.Collections.Generic.List<(Control ic, Control bg, System.Func<bool> show)> _vitalRows = new();   // situational vitals (virus): whole row hidden unless its condition holds
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
@@ -122,9 +151,9 @@ namespace UnturnedGodot
 
             // lifeBox: bottom-left, right edge at 20% of the screen, sized to the 4 always-on vitals
             var lifeBox = new Control();
-            lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = 0.2f; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
-            lifeBox.OffsetLeft = 24f; lifeBox.OffsetRight = 24f;   // left padding off the screen edge (master 2026-08-26)
-            lifeBox.OffsetTop = -(TopPad + 6f * RowH) - 36f; lifeBox.OffsetBottom = -42f;   // 6 rows since oxygen joined (was 5), lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26)
+            lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = VitalsRightAnchor; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
+            lifeBox.OffsetLeft = VitalsLeft; lifeBox.OffsetRight = VitalsLeft;   // left padding off the screen edge (master 2026-08-26)
+            lifeBox.OffsetTop = -VitalsTopGap; lifeBox.OffsetBottom = -VitalsBottomGap;   // 6 rows since oxygen joined (was 5), lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26). Named, because VitalsRect() above hands these same numbers to every menu.
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             vitalsRoot.AddChild(lifeBox);   // layer-12 root -> the vitals render OVER the inventory
             _playerOnly.Add(lifeBox);

@@ -34,7 +34,9 @@ namespace UnturnedGodot
 
         public const int MapLayer = 90;                  // under the F1 console (100), above the inventory family (11)
         public const float ZoomMin = 1f, ZoomMax = 8f;   // 1 = the whole island fits the panel
-        const float PlayersW = 264f;                     // right-hand roster column
+        const float RosterMinW = 540f;                   // NAME + POSITION + DISTANCE and their gutters: the map never squeezes below this
+        const float RosterRowH = 30f;                    // the crafting category row / skills row height
+        const float RosterNameW = 220f, RosterPosW = 190f, RosterDistW = 100f;   // the roster's three columns
         const float MarkerHit = 14f;                     // px: RMB this close to a marker removes it instead of stacking another
 
         Control _root;
@@ -46,6 +48,9 @@ namespace UnturnedGodot
         Label _coord;
         Panel _panel;          // the screen frame, matching the inventory/crafting panel
         Panel _playersPanel;
+        Panel _rosterHead;
+        readonly System.Collections.Generic.List<(Label pos, Label dist)> _rosterCells = new();
+        static Color RosterRowC => new(0.22f, 0.22f, 0.23f, 0.98f);   // CraftingMenu's TileC, the same row face the skills page uses
         VBoxContainer _playersList;
         Label _playersHead;
         readonly System.Collections.Generic.List<(Vector2 norm, Control dot, Label lbl)> _towns = new();
@@ -192,11 +197,28 @@ namespace UnturnedGodot
             _playersHead.AddThemeColorOverride("font_color", UITheme.TextDim);
             _playersPanel.AddChild(_playersHead);
 
-            var scroll = new ScrollContainer { Position = new Vector2(8, 40), MouseFilter = Control.MouseFilterEnum.Ignore, Name = "RosterScroll" };
+            // NAME | POSITION | DISTANCE, the crafting detail pane's ingredient-table treatment (FontSmall in
+            // TextDim over the columns it labels). The roster owns most of the screen now, so it is a table
+            // rather than a list of names down one edge -- and a table wants to say what its columns are.
+            _rosterHead = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore, Position = new Vector2(8, 36) };
+            UITheme.Strip(_rosterHead);
+            _playersPanel.AddChild(_rosterHead);
+            var hh = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            hh.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            hh.OffsetLeft = 10; hh.OffsetRight = -10;
+            hh.AddThemeConstantOverride("separation", 12);
+            _rosterHead.AddChild(hh);
+            hh.AddChild(UITheme.Label(new Label { Text = "NAME", VerticalAlignment = VerticalAlignment.Center, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill }, UITheme.FontSmall, UITheme.TextDim));
+            hh.AddChild(UITheme.Label(new Label { Text = "POSITION", VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterPosW, 0) }, UITheme.FontSmall, UITheme.TextDim));
+            hh.AddChild(UITheme.Label(new Label { Text = "DISTANCE", VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterDistW, 0) }, UITheme.FontSmall, UITheme.TextDim));
+
+            var scroll = new ScrollContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Name = "RosterScroll" };
+            scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
             scroll.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            scroll.OffsetLeft = 8; scroll.OffsetTop = 40; scroll.OffsetRight = -8; scroll.OffsetBottom = -8;
+            scroll.OffsetLeft = 8; scroll.OffsetTop = 36f + RosterRowH + 4f; scroll.OffsetRight = -8; scroll.OffsetBottom = -8;
             _playersPanel.AddChild(scroll);
             _playersList = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _playersList.AddThemeConstantOverride("separation", 3);
             _playersList.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             scroll.AddChild(_playersList);
         }
@@ -222,23 +244,29 @@ namespace UnturnedGodot
             _coord.Position = new Vector2(M + 16f, M + barH + 8f);
             _coord.Size = new Vector2(pw - 32f, 24f);
 
-            // Roster hard against the panel's inner right edge, map filling what is left, one gutter between.
+            // MAP RIGHT, ROSTER FILLS WHAT IS LEFT (strawberry 2026-09-08: "align map to the right of the
+            // screen. change the player list to fill the screen"). The two swapped sides: the roster was a
+            // fixed 264 px column pinned right and the map took the rest, so the square map -- height-capped on
+            // a 16:9 screen -- had to be centred in a region far wider than itself. Anchoring the SQUARE to the
+            // right edge and giving the roster everything else means the leftover width has somewhere to go
+            // instead of sitting between them as a hole, and the roster gets a real page rather than a strip.
             float contentBottom = vp.Y - M - M;
-            float rosterX = vp.X - M - M - PlayersW;
-            float regionX = M + M, regionW = rosterX - Gutter - regionX;
-            float s = Mathf.Min(regionW, contentBottom - top);
-            if (s < 64f) s = Mathf.Max(64f, contentBottom - top);   // very narrow window: keep a usable map rather than a sliver
+            // The square is as tall as the content area -- capping it at half the width instead left a band of
+            // empty panel under the island, which is the same lopsided hole this move was undoing, rotated 90
+            // degrees. The only cap that earns its place is the one that keeps the roster wide enough for its
+            // three columns; short of that the map takes the height and the roster takes the rest.
+            float s = contentBottom - top;
+            s = Mathf.Min(s, Mathf.Max(200f, vp.X - 3f * M - Gutter - RosterMinW));
+            if (s < 64f) s = Mathf.Max(64f, contentBottom - top);     // very narrow window: keep a usable map rather than a sliver
             _baseSize = s;
 
-            // CENTRED in what is left, not jammed against the left margin. The map window is SQUARE and the
-            // space beside the roster is not, so on a 16:9 screen the square is height-capped and roughly 500 px
-            // narrower than its region -- left-aligned, all of that slack piles up as one lopsided hole between
-            // the island and the roster. Splitting it puts a matching gutter on both sides instead.
-            _clip.Position = new Vector2(regionX + Mathf.Max(0f, (regionW - s) * 0.5f), top);
+            float mapX = vp.X - M - M - s;
+            _clip.Position = new Vector2(mapX, top);
             _clip.Size = new Vector2(s, s);
 
-            _playersPanel.Position = new Vector2(rosterX, top);
-            _playersPanel.Size = new Vector2(PlayersW, Mathf.Max(120f, contentBottom - top));
+            _playersPanel.Position = new Vector2(M + M, top);
+            _playersPanel.Size = new Vector2(Mathf.Max(160f, mapX - Gutter - (M + M)), Mathf.Max(120f, contentBottom - top));
+            if (_rosterHead != null) _rosterHead.Size = new Vector2(Mathf.Max(120f, _playersPanel.Size.X - 16f), RosterRowH);
             ApplyView();
         }
 
@@ -315,21 +343,46 @@ namespace UnturnedGodot
 
             _playersHead.Text = rows.Count == 1 ? "PLAYERS  (1)" : $"PLAYERS  ({rows.Count})";
 
-            // Rebuild the label column only when the set of names actually changed -- otherwise every 0.4 s we
-            // would throw away and rebuild a pile of Controls for no visible difference.
+            // Rebuild the ROWS only when the set of names actually changed -- otherwise every 0.4 s we would
+            // throw away and rebuild a pile of Controls for no visible difference. The position and distance
+            // cells DO change every tick, so they are held and written below rather than rebuilt with the row.
             string sig = "";
             foreach (var r in rows) sig += r.name + "|";
             if (sig != _rosterSig)
             {
                 _rosterSig = sig;
                 foreach (var c in _playersList.GetChildren()) c.QueueFree();
+                _rosterCells.Clear();
                 foreach (var r in rows)
                 {
-                    var l = new Label { Text = r.me ? r.name + "  (you)" : r.name, MouseFilter = Control.MouseFilterEnum.Ignore };
-                    l.AddThemeFontSizeOverride("font_size", UITheme.FontBody);   // a roster is read at a glance; FontSmall is for map labels
-                    l.AddThemeColorOverride("font_color", r.me ? new Color(0.25f, 0.9f, 1f) : new Color(0.92f, 0.92f, 0.92f));
-                    _playersList.AddChild(l);
+                    var row = new Panel { CustomMinimumSize = new Vector2(0, RosterRowH), MouseFilter = Control.MouseFilterEnum.Ignore };
+                    row.AddThemeStyleboxOverride("panel", UITheme.Box(RosterRowC, UITheme.RadiusCell));
+                    var h = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+                    h.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    h.OffsetLeft = 10; h.OffsetRight = -10;
+                    h.AddThemeConstantOverride("separation", 12);
+                    row.AddChild(h);
+                    h.AddChild(UITheme.Label(new Label
+                    {
+                        Text = r.me ? r.name + "   (you)" : r.name,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                        CustomMinimumSize = new Vector2(RosterNameW, 0),
+                    }, UITheme.FontBody, r.me ? new Color(0.25f, 0.9f, 1f) : UITheme.Text));   // a roster is read at a glance; FontSmall is for map labels
+                    var pos = UITheme.Label(new Label { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterPosW, 0) }, UITheme.FontBody, UITheme.TextDim);
+                    var dist = UITheme.Label(new Label { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterDistW, 0) }, UITheme.FontBody, UITheme.TextDim);
+                    h.AddChild(pos); h.AddChild(dist);
+                    _playersList.AddChild(row);
+                    _rosterCells.Add((pos, dist));
                 }
+            }
+            // live cells, every tick: where each player is and how far off they are.
+            for (int i = 0; i < _rosterCells.Count && i < rows.Count; i++)
+            {
+                var r = rows[i];
+                _rosterCells[i].pos.Text = $"X {r.pos.X:0}   Z {r.pos.Z:0}";
+                float d = self.DistanceTo(r.pos);
+                _rosterCells[i].dist.Text = r.me ? "—" : (d >= 1000f ? $"{d / 1000f:0.0} km" : $"{d:0} m");
             }
 
             // one dot per OTHER player, pooled
