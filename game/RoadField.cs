@@ -41,6 +41,36 @@ namespace UnturnedGodot
 
         // editor state: the parsed roads + materials kept live so a joint move can rebuild one road + save Paths.dat back
         readonly List<RoadData> _roads = new();
+        // AI LANE PATHS (master 2026-09-08: "add ai paths along road splines ... find the middle of each lane and
+        // add a path line for ai cars that will drive to follow them").
+        //
+        // One polyline per LANE per road, built off the SAME RoadFrame the surface is built from, so a lane cannot
+        // sit anywhere the road is not. Points follow the terrain exactly as the road does.
+        public sealed class LanePath
+        {
+            public int Road;              // index into the road list
+            public int Lane;              // 0 = leftmost lane looking along the spline
+            public bool Forward;          // true = drive along the spline, false = against it
+            public float Offset;          // signed distance from the centreline along `side` (+ = spline-left)
+            public Vector3[] Points;      // lane centreline, in travel order
+        }
+        readonly List<LanePath> _lanes = new();
+        public IReadOnlyList<LanePath> LanePaths => _lanes;
+
+        /// <summary>Metres per lane. 4.60 is not a taste pick: PEI's Highway_0 is 8.0 half-width, so 18.40 m across
+        /// after WidthScale -- exactly 4 lanes at 4.60, which is the count master gave. The same constant divides
+        /// Trail (9.20 m) into exactly 2. One number, both real cases integral.</summary>
+        public const float LaneWidth = 4.60f;
+
+        /// <summary>Materials that carry no traffic: index 4 is Tracks (railway) and 6..9 are the White/Yellow line
+        /// decals, per the same Roads.unity3d container order TexHeight above is indexed by. Without this a painted
+        /// centre line would get its own pair of lanes and a railway would get cars. PEI uses only 0/3/5 so none of
+        /// them arise there, but Washington and Yukon are their own maps.</summary>
+        static bool Drivable(int material) => material != 4 && (material < 6 || material > 9);
+
+        static readonly bool LaneDbg = System.Environment.GetEnvironmentVariable("UG_LANEDBG") == "1";    // print a per-material lane summary once the network is built
+        static readonly bool LaneDraw = System.Environment.GetEnvironmentVariable("UG_LANEDRAW") == "1";   // draw the lane centrelines so a render can show where they actually landed
+
         List<RoadMat> _mats = new();
         byte _pathsVersion = 6;
         public int RoadCount => _roads.Count;
@@ -106,6 +136,9 @@ namespace UnturnedGodot
                 built++;
             }
             GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {_mats.Count} materials)");
+            GD.Print($"[lanes] {_lanes.Count} AI lane paths, {LanePointCount()} points (lane width {LaneWidth} m)");
+            if (LaneDbg) ReportLanes();
+            if (LaneDraw) DrawLanes();
         }
 
         // NEW MAP: load only the road MATERIALS (from a shared Roads.dat) so roads can be ADDED, with no roads to start.
@@ -116,11 +149,49 @@ namespace UnturnedGodot
             GD.Print($"[roads] new-map materials loaded ({_mats.Count})");
         }
 
+        /// <summary>Lane centrelines for one road. Lane k of n is offset from the centre by
+        /// ((n-1)/2 - k) * LaneWidth along `side`, which points RIGHT, so lanes are symmetric about the centreline
+        /// and lane 0 is the rightmost. RIGHT-HAND TRAFFIC: the lanes on the right half (positive offset) run ALONG
+        /// the spline, the left half runs against it, and the against-the-spline lanes have their points reversed so
+        /// every path is already in travel order for whatever follows it.
+        ///
+        /// ⚠ That sign was inverted on the first pass and the numbers could not show it -- every lane still landed
+        /// inside the road and the widths still summed exactly. It took rendering the lines on PEI's highway and
+        /// seeing the forward lanes sitting on the wrong side of the yellow centre line.</summary>
+        void BuildLanePaths(RoadData r, int roadIndex, RoadMat mat)
+        {
+            _lanes.RemoveAll(l => l.Road == roadIndex);
+            if (!Drivable(r.Material) || r.Joints.Count < 2) return;
+            float full = mat.Width * WidthScale * 2f;
+            int lanes = Mathf.Max(2, 2 * Mathf.RoundToInt(full / LaneWidth * 0.5f));   // round to an EVEN count: a road carries traffic both ways
+            var samples = SampleWalk(r);
+            if (samples.Count < 2) return;
+            for (int k = 0; k < lanes; k++)
+            {
+                float off = ((lanes - 1) * 0.5f - k) * LaneWidth;
+                var pts = new Vector3[samples.Count];
+                for (int i = 0; i < samples.Count; i++)
+                {
+                    RoadFrame(r, samples[i].idx, samples[i].t, out Vector3 pos, out _, out _, out Vector3 side, out float jo);
+                    Vector3 p = pos + side * off;
+                    // Re-sample the terrain AT THE LANE, not at the centreline: `side` tilts with the cross-slope,
+                    // so pos + side*off drifts off the ground on a banked road. This is the same rule the surface's
+                    // own edge verts use (lY/rY in BuildRoadMesh) -- terrain under that XZ, plus the joint offset.
+                    if (Terr != null && !r.Joints[samples[i].idx].IgnoreTerrain) p.Y = Terr.SampleHeight(p.X, p.Z) + jo;
+                    pts[i] = p;
+                }
+                bool forward = off > 0f;                       // right of the centreline (side points RIGHT) -> travels along the spline
+                if (!forward) System.Array.Reverse(pts);       // hand every path back already pointing the way it is driven
+                _lanes.Add(new LanePath { Road = roadIndex, Lane = k, Forward = forward, Offset = off, Points = pts });
+            }
+        }
+
         // build (or rebuild) the MeshInstance + collider for one road, stashing them on the RoadData (flat top-ribbon collider)
         void BuildRoadNode(RoadData r)
         {
             float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
             var mesh = BuildRoadMesh(r, _mats[r.Material], texH, out var collShape);
+            BuildLanePaths(r, _roads.IndexOf(r), _mats[r.Material]);   // lanes follow the road: rebuilt whenever it is
             if (mesh == null) return;
             if (r.Mi == null) { r.Mi = new MeshInstance3D(); AddChild(r.Mi); }
             r.Mi.Mesh = mesh;
@@ -732,6 +803,97 @@ namespace UnturnedGodot
             return list;
         }
 
+        int LanePointCount() { int n = 0; foreach (var l in _lanes) n += l.Points.Length; return n; }
+
+        /// <summary>UG_LANEDBG=1: what got built, per material -- the numbers are the check. A highway must come out
+        /// at 4 lanes and a trail at 2, and the outermost lane centre must sit inside the road's own half-width.</summary>
+        void ReportLanes()
+        {
+            var byMat = new Dictionary<int, (int roads, int lanes, float half, float widest)>();
+            foreach (var l in _lanes)
+            {
+                var r = _roads[l.Road];
+                float half = _mats[r.Material].Width * WidthScale;
+                byMat.TryGetValue(r.Material, out var acc);
+                byMat[r.Material] = (acc.roads, acc.lanes + 1, half, Mathf.Max(acc.widest, Mathf.Abs(l.Offset)));
+            }
+            var seen = new HashSet<(int, int)>();
+            foreach (var l in _lanes) if (seen.Add((_roads[l.Road].Material, l.Road))) { var a = byMat[_roads[l.Road].Material]; byMat[_roads[l.Road].Material] = (a.roads + 1, a.lanes, a.half, a.widest); }
+            foreach (var kv in byMat)
+            {
+                var a = kv.Value;
+                int per = a.roads > 0 ? a.lanes / a.roads : 0;
+                bool inside = a.widest + LaneWidth * 0.5f <= a.half + 0.01f;
+                GD.Print($"[lanes] material {kv.Key}: {a.roads} roads x {per} lanes, road half-width {a.half:0.00} m, "
+                       + $"outermost lane centre {a.widest:0.00} m -> edge {a.widest + LaneWidth * 0.5f:0.00} m {(inside ? "INSIDE the road" : "*** OUTSIDE THE ROAD ***")}");
+            }
+        }
+
+        /// <summary>UG_LANEDRAW=1: the lane centrelines as flat lines a metre above the tarmac, so a render shows
+        /// whether they sit on the road rather than only that the arithmetic closed.</summary>
+        void DrawLanes()
+        {
+            var im = new ImmediateMesh();
+            var mat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true, NoDepthTest = true };
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines, mat);
+            foreach (var l in _lanes)
+            {
+                // forward lanes green, against-the-spline lanes red: direction is half the point of a lane path
+                Color c = l.Forward ? new Color(0.2f, 1f, 0.3f) : new Color(1f, 0.35f, 0.2f);
+                for (int i = 1; i < l.Points.Length; i++)
+                {
+                    im.SurfaceSetColor(c); im.SurfaceAddVertex(l.Points[i - 1] + Vector3.Up * 0.35f);
+                    im.SurfaceSetColor(c); im.SurfaceAddVertex(l.Points[i] + Vector3.Up * 0.35f);
+                }
+            }
+            im.SurfaceEnd();
+            AddChild(new MeshInstance3D { Mesh = im, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+        }
+
+        /// <summary>Where along the spline the road is sampled: src updateSamples' arc-length step every 5 world
+        /// units, carried continuously across joints, plus a final sample. Shared with the LANE paths -- sampling
+        /// them anywhere else would let a lane cut a corner the road surface does not.</summary>
+        List<(int idx, float t)> SampleWalk(RoadData r)
+        {
+            int jc = r.Joints.Count;
+            int segs = r.IsLoop ? jc : jc - 1;
+            var samples = new List<(int idx, float t)>();
+            float carry = 0f;
+            for (int index = 0; index < segs; index++)
+            {
+                float length = Mathf.Max(SegLength(r, index), 0.001f);
+                float step;
+                for (step = carry; step < length; step += 5f) samples.Add((index, step / length));   // sample every 5u (src value) -- the 2.5u tighter sampling left BALD road patches, reverted (master)
+                carry = step - length;
+            }
+            if (r.IsLoop) samples.Add((0, 0f)); else samples.Add((jc - 2, 1f));
+            return samples;
+        }
+
+        /// <summary>The frame the road's cross-section is built on at one sample: the centre ON the terrain, the
+        /// travel direction, the terrain normal, and the SIDE vector its width is measured along.
+        ///
+        /// Extracted so the lane paths are built from the same expression the SURFACE is, rather than a second copy
+        /// of it. `side` is dir x normal, and it points to the road's RIGHT -- established by RENDERING the lanes on
+        /// PEI's highway and looking at which side of the yellow line they landed on, not by reasoning about the
+        /// cross product, which I got backwards first time. Lane offsets are signed in these units, so the sign
+        /// convention has exactly one definition and one piece of evidence behind it.</summary>
+        void RoadFrame(RoadData r, int index, float t, out Vector3 pos, out Vector3 dir, out Vector3 normal, out Vector3 side, out float jo)
+        {
+            int jc = r.Joints.Count;
+            bool ign = r.Joints[index].IgnoreTerrain;
+            pos = SplinePos(r, index, t);
+            if (Terr != null && !ign) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
+            dir = SplinePos(r, index, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, index, Mathf.Max(t - 0.02f, 0f));
+            dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
+            normal = (Terr != null && !ign) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
+            side = dir.Cross(normal).Normalized();
+            // per-joint offset lerped along the segment (added to y)
+            jo = index < jc - 1 ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[index + 1].Offset, t)
+               : r.IsLoop ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[0].Offset, t) : r.Joints[index].Offset;
+            pos.Y += jo;   // keep the centre on the terrain (UV distance + end caps use it)
+        }
+
         static Vector3 Bezier(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
         {
             float u = 1f - t;
@@ -761,17 +923,7 @@ namespace UnturnedGodot
             int jc = r.Joints.Count;
             int segs = loop ? jc : jc - 1;
 
-            // src updateSamples: arc-length step every 5 world units, carried continuously across joints, + a final sample.
-            var samples = new List<(int idx, float t)>();
-            float carry = 0f;
-            for (int index = 0; index < segs; index++)
-            {
-                float length = Mathf.Max(SegLength(r, index), 0.001f);
-                float step;
-                for (step = carry; step < length; step += 5f) samples.Add((index, step / length));   // sample every 5u (src value) -- the 2.5u tighter sampling left BALD road patches, reverted (master)
-                carry = step - length;
-            }
-            if (loop) samples.Add((0, 0f)); else samples.Add((jc - 2, 1f));
+            var samples = SampleWalk(r);
             if (samples.Count < 2) return null;
 
             float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;   // src: UV repeats every texture.height/mat.height world units
@@ -788,16 +940,7 @@ namespace UnturnedGodot
             {
                 int index = samples[s].idx; float t = samples[s].t;
                 bool ign = r.Joints[index].IgnoreTerrain;
-                Vector3 pos = SplinePos(r, index, t);
-                if (Terr != null && !ign) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
-                Vector3 dir = SplinePos(r, index, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, index, Mathf.Max(t - 0.02f, 0f));
-                dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
-                Vector3 normal = (Terr != null && !ign) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
-                Vector3 side = dir.Cross(normal).Normalized();
-                // per-joint offset lerped along the segment (added to y)
-                float jo = index < jc - 1 ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[index + 1].Offset, t)
-                         : loop ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[0].Offset, t) : r.Joints[index].Offset;
-                pos.Y += jo;   // keep the centre on the terrain (UV distance + end caps use it)
+                RoadFrame(r, index, t, out Vector3 pos, out Vector3 dir, out Vector3 normal, out Vector3 side, out float jo);
 
                 // BANK the surface to the terrain at EACH edge so it hugs the cross-slope, instead of lifting the whole strip to the
                 // highest edge (that floated the downhill side on a cross-slope) -- master "horizontal banking issue".
