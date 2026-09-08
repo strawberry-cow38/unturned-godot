@@ -92,7 +92,7 @@ namespace UnturnedGodot
                 EmissionBoxExtents = new Vector3(16f, 2f, 16f),
                 Direction = new Vector3(0.12f, -1f, 0f),
                 Spread = 3f,
-                Gravity = new Vector3(5f, -22f, 0f),   // stronger wind drift so the lean is visible
+                Gravity = new Vector3(BaseDrift, -22f, 0f),   // sideways drift; driven by the weather's wind in HubProcess
                 InitialVelocityMin = 10f, InitialVelocityMax = 14f,
                 ScaleAmountMin = 0.8f, ScaleAmountMax = 1.5f,
                 ParticleFlagAlignY = true,   // align each streak's Y to its VELOCITY -> leans the way it actually falls
@@ -112,9 +112,26 @@ namespace UnturnedGodot
         Vector3 _lastCamPos, _camVel; bool _haveLast; float _restartCd; readonly System.Collections.Generic.Queue<(float t, Vector3 p)> _trail = new(); float _t;
         const float LeadSeconds = 0.45f, MaxLead = 10f, JumpWindow = 0.25f, JumpMetres = 10f, RestartCooldown = 0.4f;
 
+        // THE RAIN LEANS WITH THE WEATHER'S WIND (strawberry 2026-09-08: "varying degrees of wind"). The sideways
+        // gravity used to be a hardcoded +X 5 -- so a squall bent the trees and the flags while the rain itself
+        // fell at exactly the same angle as a drizzle, which is the one place the wind is unmissable. Now the
+        // horizontal component scales with WindField.WeatherWind and points the way the wind is actually blowing,
+        // so a gale drives the rain across and a still downpour falls near-vertically. ParticleFlagAlignY already
+        // turns each streak to its velocity, so tilting gravity tilts the streaks for free.
+        const float BaseDrift = 5f, GaleDrift = 26f;   // horizontal gravity at zero weather-wind, and at full
+        void PushWindDrift()
+        {
+            float w = Mathf.Clamp(WindField.WeatherWind, 0f, 1f);
+            float mag = Mathf.Lerp(BaseDrift, GaleDrift, w);
+            Vector2 dir = _p.GlobalPosition == Vector3.Zero ? new Vector2(1f, 0f) : WindField.WindXZ(_p.GlobalPosition);
+            var g = new Vector3(dir.X * mag, -22f, dir.Y * mag);
+            if (!_p.Gravity.IsEqualApprox(g)) _p.Gravity = g;   // skip the setter churn when nothing moved
+        }
+
         public void HubProcess(double delta)
         {
             PushSeaLevel();   // outside the camera guard: the water plane exists whether or not the rain has a camera yet
+            PushWindDrift();
             if (Cam != null && IsInstanceValid(Cam))
             {
                 float dt = (float)delta; _t += dt; if (_restartCd > 0f) _restartCd -= dt;

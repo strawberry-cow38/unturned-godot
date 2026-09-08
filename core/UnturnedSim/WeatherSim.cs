@@ -230,6 +230,66 @@ namespace SDG.Unturned
             },
         };
 
+        // ---- EXTRA VARIANTS (strawberry 2026-09-08: "add more rain weather variants, varying degrees of wind and
+        // intensities beyond 'heavy' and 'light'"). Kept in their OWN table, deliberately NOT appended to
+        // PeiTypes(): that function is the ripped PEI.asset and its two rain entries are retail data other things
+        // assert against by index and by count. These are a port extension sitting beside it, not a rewrite of it.
+        //
+        // The two axes master named are INDEPENDENT here, which is the whole point -- retail only ever varied both
+        // together (0.3 wind / 0.7 fog, then 0.5 / 1.0). Severity comes off FogDensity (WeatherManager.Severity)
+        // and drives streak density; WindMain now actually drives the WindField, so a squall genuinely blows.
+        //
+        //            intensity ->   light                    heavy
+        //   calm            Drizzle (0.30 fog, 0.10 wind)    Downpour (1.00 fog, 0.20 wind)
+        //   windy           Squall  (0.60 fog, 0.95 wind)    Tempest  (1.00 fog, 1.00 wind)
+        public static WeatherType[] VariantTypes() => new[]
+        {
+            new WeatherType
+            {
+                Name = "Drizzle Rain",   // barely there, and barely moving -- the one you can stand out in
+                FadeInDuration = 30f, FadeOutDuration = 30f,   // creeps in rather than arriving
+                WindMain = 0.10f, FogDensity = 0.30f, ShadowStrengthMultiplier = 0.35f,
+                FishBiteIntervalMultiplier = 0.95f,
+                HasLightning = false,
+            },
+            new WeatherType
+            {
+                Name = "Squall Rain",    // not much water, a LOT of air -- the rain goes sideways
+                FadeInDuration = 8f, FadeOutDuration = 14f,    // squalls hit fast and leave slower
+                WindMain = 0.95f, FogDensity = 0.60f, ShadowStrengthMultiplier = 0.20f,
+                FishBiteIntervalMultiplier = 0.85f,
+                HasLightning = false,
+            },
+            new WeatherType
+            {
+                Name = "Downpour Rain",  // torrential and eerily STILL -- vertical water, no wind to drive it
+                FadeInDuration = 12f, FadeOutDuration = 20f,
+                WindMain = 0.20f, FogDensity = 1.00f, ShadowStrengthMultiplier = 0.12f,
+                FishBiteIntervalMultiplier = 0.75f,
+                HasLightning = false,
+            },
+            new WeatherType
+            {
+                Name = "Tempest Rain",   // both dials at the stop, and it throws lightning more often than Heavy
+                FadeInDuration = 15f, FadeOutDuration = 25f,
+                WindMain = 1.00f, FogDensity = 1.00f, ShadowStrengthMultiplier = 0.10f,
+                FishBiteIntervalMultiplier = 0.70f,
+                HasLightning = true, MinLightningInterval = 8f, MaxLightningInterval = 28f,
+            },
+        };
+
+        /// <summary>Schedule entries for the variants, given the index the first one lands on once they are
+        /// concatenated after the retail types. Rarer than the two retail rains (which keep PEI's own 2.3-5.6
+        /// band) so the island still mostly does what it always did, and the Tempest is the rarest of all --
+        /// a weather you see occasionally is an event, one you see constantly is just the climate.</summary>
+        public static WeatherSchedule[] VariantSchedule(int firstIndex) => new[]
+        {
+            new WeatherSchedule { TypeIndex = firstIndex,     MinFrequency = 3.0f, MaxFrequency = 7.0f,  MinDuration = 0.08f, MaxDuration = 0.22f },   // drizzle: common-ish, lingers
+            new WeatherSchedule { TypeIndex = firstIndex + 1, MinFrequency = 4.5f, MaxFrequency = 9.0f,  MinDuration = 0.03f, MaxDuration = 0.09f },   // squall: brief
+            new WeatherSchedule { TypeIndex = firstIndex + 2, MinFrequency = 5.0f, MaxFrequency = 10.0f, MinDuration = 0.04f, MaxDuration = 0.10f },   // downpour: short and hard
+            new WeatherSchedule { TypeIndex = firstIndex + 3, MinFrequency = 9.0f, MaxFrequency = 18.0f, MinDuration = 0.05f, MaxDuration = 0.12f },   // tempest: rare
+        };
+
         // PEI.asset Weather_Types: both entries carry the SAME frequency/duration band.
         public static WeatherSchedule[] PeiSchedule() => new[]
         {

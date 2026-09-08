@@ -77,7 +77,16 @@ namespace UnturnedGodot
         public static WeatherManager Attach(Node parent, RainOverlay overlay, DayNightCycle cycle, int seed = 0)
         {
             var w = new WeatherManager { Overlay = overlay, Cycle = cycle };
-            w.Sim = new WeatherSim(WeatherSim.PeiTypes(), WeatherSim.PeiSchedule(),
+            // The RETAIL two, then the port's extra variants after them (strawberry 2026-09-08). Concatenated
+            // HERE rather than inside WeatherSim.PeiTypes() so that stays the ripped PEI.asset -- the retail
+            // entries keep indices 0 and 1, which is what PeiSchedule() and the sim tests address them by.
+            var types = new System.Collections.Generic.List<SDG.Unturned.WeatherType>(WeatherSim.PeiTypes());
+            int firstVariant = types.Count;
+            types.AddRange(WeatherSim.VariantTypes());
+            var sched = new System.Collections.Generic.List<SDG.Unturned.WeatherSchedule>(WeatherSim.PeiSchedule());
+            sched.AddRange(WeatherSim.VariantSchedule(firstVariant));
+            VariantBase = firstVariant;
+            w.Sim = new WeatherSim(types.ToArray(), sched.ToArray(),
                                    seed != 0 ? seed : (int)GD.Randi(),
                                    cycleSeconds: cycle != null && cycle.DayLength > 0f ? cycle.DayLength : WeatherSim.DefaultCycleSeconds,
                                    frequencyMultiplier: FrequencyMultiplier,
@@ -255,11 +264,17 @@ namespace UnturnedGodot
             // to 0.7 (a slight top-off), a solid roof still all the way to 0 (full muffle). Two knobs, tunable apart. (tinyclaw)
             if (_rainAudio != null) { _rainAudio.Intensity = rint; _rainAudio.Shelter = Mathf.Min(shelter, Mathf.Lerp(1f, 0.7f, 1f - (_rainMatAudio?.CanopyShelter ?? 1f))); }
             if (_ambience != null) _ambience.WeatherDuck = rint;   // birds go quiet in a downpour (retail ducks day/night by the same factor)
+            // WIND. Sim.WindMain is the active type's Wind_Main already scaled by the fade blend, so it eases in
+            // and back out with the weather and reads 0 when clear. Until now nothing consumed it -- the field's
+            // own comment claimed it drove the WindField and it never did, so a squall blew exactly as hard as a
+            // drizzle. Flags, foliage, the turbine and the rain streaks all read WindField, so one write here
+            // reaches all of them.
+            WindField.WeatherWind = Mathf.Clamp(Sim.WindMain, 0f, 1f);
 
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
                 _dbgFrames++;
-                GD.Print($"[WDBG] f{_dbgFrames} stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} rint={rint:0.000}");
+                GD.Print($"[WDBG] f{_dbgFrames} type='{Sim.Active?.Name}' stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} rint={rint:0.000} wind={WindField.WeatherWind:0.00}");
             }
 
             TickLightning(dt);
@@ -362,6 +377,11 @@ namespace UnturnedGodot
 
         public int StrikeCountDebug { get; private set; }
 
+        /// <summary>Index the first extra variant lands on once appended after the retail types. The console
+        /// names below resolve through this rather than hardcoding 2..5, so inserting a retail type later moves
+        /// the variants instead of silently forecasting the wrong weather.</summary>
+        public static int VariantBase { get; private set; } = 2;
+
         // --- console surface (src CommandWeather) ---
         public bool ApplyCommand(string arg)
         {
@@ -369,7 +389,14 @@ namespace UnturnedGodot
             {
                 case "clear": case "none": Sim.Clear(); return true;
                 case "rain": case "light": Sim.ForecastImmediately(0); return true;
-                case "heavy": case "storm": Sim.ForecastImmediately(1); return true;
+                case "heavy": Sim.ForecastImmediately(1); return true;
+                // the extra variants (strawberry 2026-09-08). "storm" stays pointed at retail Heavy so anything
+                // that already says `weather storm` keeps meaning what it meant.
+                case "storm": Sim.ForecastImmediately(1); return true;
+                case "drizzle": Sim.ForecastImmediately(VariantBase); return true;
+                case "squall": case "windy": Sim.ForecastImmediately(VariantBase + 1); return true;
+                case "downpour": case "torrential": Sim.ForecastImmediately(VariantBase + 2); return true;
+                case "tempest": case "gale": Sim.ForecastImmediately(VariantBase + 3); return true;
                 case "lightning": Strike(); return true;
                 default: return false;
             }

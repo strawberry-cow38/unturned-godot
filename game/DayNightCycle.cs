@@ -487,17 +487,26 @@ void sky() {
                 float storm = Mathf.Clamp(StormAmount, 0f, 1f);
                 if (storm > 0.001f)
                 {
-                    _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop).Lerp(new Color(0.35f, 0.39f, 0.45f), storm));
-                    _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon).Lerp(new Color(0.45f, 0.48f, 0.53f), storm));
+                    // ...AND THE STORM MUST NOT BRIGHTEN THE NIGHT (strawberry 2026-09-08: "stop rain from
+                    // brightening the nighttime"). Every target below was a fixed DAYLIT grey, so at midnight --
+                    // where the sky, the cloud rim and the fog light are all near-black -- lerping toward 0.35..0.60
+                    // RAISED the scene's luminance and rain lit the night up. The cloud BODY never had this problem
+                    // because it already scales by `amb`; these four simply never got the same treatment.
+                    // Scaling by the daylight factor leaves noon exactly as approved (sl = 1) and lets a night
+                    // storm settle to a dark overcast instead of a glowing one. Small floor so it greys rather
+                    // than crushing to pure black.
+                    float sl = Mathf.Lerp(0.06f, 1f, dayF);
+                    _skyMat.SetShaderParameter(Sn.sky_color, Grad(SkyTop).Lerp(new Color(0.35f * sl, 0.39f * sl, 0.45f * sl), storm));
+                    _skyMat.SetShaderParameter(Sn.equator_color, Grad(SkyHorizon).Lerp(new Color(0.45f * sl, 0.48f * sl, 0.53f * sl), storm));
                     float ca = amb * Mathf.Lerp(1f, 0.32f, storm);   // grey the cloud BODY down (bright white -> dark storm grey)
                     _skyMat.SetShaderParameter(Sn.ambient_ground, new Color(ca, ca, ca));
                     _skyMat.SetShaderParameter(Sn.ambient_equator, new Color(ca, ca, ca));
                     Color fairRim = new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF);
-                    _skyMat.SetShaderParameter(Sn.cloud_rim_color, fairRim.Lerp(new Color(0.22f, 0.24f, 0.28f), storm));   // and the RIM -> storm clouds go dark grey, not bright white
+                    _skyMat.SetShaderParameter(Sn.cloud_rim_color, fairRim.Lerp(new Color(0.22f * sl, 0.24f * sl, 0.28f * sl), storm));   // and the RIM -> storm clouds go dark grey, not bright white (and stay dark at night)
                     // NO LIGHTING CHANGE with the weather (strawberry 2026-09-04 "remove the effect that rain has on world lighting"):
                     // the sun's energy/colour and the ambient stay whatever the time of day says. The storm still greys the
                     // sky + clouds and thickens the fog below -- that is the weather's look, not the world's light.
-                    Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f, 0.54f, 0.60f), storm);       // grey-blue fog
+                    Env.FogLightColor = Env.FogLightColor.Lerp(new Color(0.50f * sl, 0.54f * sl, 0.60f * sl), storm);   // grey-blue fog by day, and NOT a glowing haze at midnight
                     Env.FogDensity = Mathf.Lerp(Env.FogDensity, 0.008f, storm);                             // thick moody haze
                     Env.FogSkyAffect = Mathf.Lerp(Env.FogSkyAffect, 0.6f, storm);                           // fog greys into the sky/horizon too
                     if (Env.VolumetricFogEnabled) Env.VolumetricFogDensity = Mathf.Lerp(Env.VolumetricFogDensity, 0.012f, storm);   // storm haze in the volume too

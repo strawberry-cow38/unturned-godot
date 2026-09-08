@@ -28,8 +28,25 @@ namespace UnturnedGodot
             if (TestWind.HasValue) return TestWind.Value;
             float t = (float)(Time.GetTicksMsec() / 1000.0);
             float n = Noise().GetNoise2D(worldPos.X + t * DriftX, worldPos.Z + t * DriftZ);   // -1..1
-            return Mathf.Clamp(0.5f + 0.65f * n, 0f, MaxAmbient);                              // -> 0..MaxAmbient, slightly gusty
+            float wind = Mathf.Clamp(0.5f + 0.65f * n, 0f, MaxAmbient);                        // -> 0..MaxAmbient, slightly gusty
+            // WEATHER WIND (strawberry 2026-09-08: "varying degrees of wind"). WeatherType.WindMain has carried a
+            // comment saying it "drives the port's WindField while active" since the port went in -- and nothing
+            // outside the struct ever read it, so every weather blew at the same fair-weather breeze and the field
+            // was decorative. WeatherManager pushes the ACTIVE type's wind here (already blend-scaled, 0 when clear).
+            //
+            // It raises the FLOOR rather than replacing the noise: a squall is windy EVERYWHERE, but it is still
+            // gusty -- the calm patches just stop being calm. Screen-blend keeps it monotonic and bounded at 1.
+            // Deliberately allowed past MaxAmbient: that cap exists so fair-weather flags do not flap like crazy,
+            // and a gale is exactly when they should.
+            if (WeatherWind > 0.001f) wind += WeatherWind * (1f - wind);
+            return wind;
         }
+
+        /// <summary>0..1 wind the ACTIVE weather is adding on top of the ambient breeze. Set by WeatherManager from
+        /// WeatherType.WindMain (already scaled by the fade blend, so it eases in and out with the storm) and left
+        /// at 0 in clear weather. Static because the wind field is queried from shaders' CPU feeders, flags,
+        /// foliage and the turbine, none of which have a WeatherManager reference.</summary>
+        public static float WeatherWind;
 
         public const float MaxAmbient = 0.8f;      // master: cap the windmap's upper end so flags don't flap like crazy
 

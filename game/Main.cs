@@ -5353,6 +5353,12 @@ namespace UnturnedGodot
                     case "rain": wm.Sim.SetPerpetual(0); break;
                     case "heavy": wm.Sim.SetPerpetual(1); break;
                     case "lightning": wm.Sim.SetPerpetual(1); wm.Strike(); break;
+                    // the extra variants (strawberry 2026-09-08). Addressed through VariantBase rather than by
+                    // literal 2..5 so they follow if a retail type is ever inserted ahead of them.
+                    case "drizzle": wm.Sim.SetPerpetual(WeatherManager.VariantBase); break;
+                    case "squall": case "windy": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 1); break;
+                    case "downpour": case "torrential": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 2); break;
+                    case "tempest": case "gale": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 3); break;
                 }
             }
             // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on
