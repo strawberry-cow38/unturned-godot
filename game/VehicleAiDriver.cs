@@ -35,12 +35,21 @@ namespace UnturnedGodot
         public static float ThrottleRate = 1.8f;     // max change in the throttle command per second: the anti-spam
         public static float GasBand = 0.35f;         // m/s of error below which it does not TOUCH the pedals (deadband)
         public static float BrakeBand = 1.20f;       // ...and how far over speed it must be before it brakes at all
-        public static float Wheelbase = 3.0f;        // sedan front-to-rear axle, for the pure-pursuit steer angle
+        public static float LatAccelTall = 2.1f;     // ...and what a TALL hull (bus, semi, firetruck) is willing to pull
         public static float LaneChangeMin = 9f, LaneChangeMax = 22f;   // seconds between considering a lane change
+        // ---- per-VEHICLE, measured off the car itself rather than typed in for the sedan. Master 2026-09-08:
+        // "allow any vehicle to be an ai driver on ur roads… any ROAD vehicle". A quad, a bus and a semi differ by
+        // a factor of three in wheelbase and width, and every one of the numbers below was a sedan constant.
+        float _wheelbase = 3f;        // Car.WheelbaseM: the bicycle model's arm
+        float _halfWidth = 1f;        // Car.HalfWidthM: how wide a corridor counts as "in my lane" for a gap check
+        float _length = 4.5f;         // hull Z: how far back to start braking for the vehicle in front
+        float _latAccel = 3.2f;       // lowered for a tall hull -- a bus does not corner like a roadster
+        bool _tracked;                // skid-steer: Drive() maps `steer` to a YAW RATE, not to a wheel angle
         public static float TurnaroundAt = 32f;      // metres of path left before it starts looking for what is next
         public static float LinkRadius = 15f;        // a following lane passing this close to our end counts as a continuation
         public static float LinkAt = 14f;            // ...but only COMMIT to it this near the end, or the car cuts the corner
         public static float CrossGain = 0.55f;       // how hard the steady offset is corrected (0 = pure pursuit)
+        public static float FlipBox = 11f;           // metres from where a turnaround began that the shuffle may wander
         public static float LostAt = 12f;            // metres off the line before it admits it is not on that lane any more
         public static float StuckAfter = 3f;         // seconds of "full throttle, no movement" before backing off
         public static float UnstickFor = 1.6f;       // ...and how long to reverse for when that happens
@@ -56,6 +65,7 @@ namespace UnturnedGodot
         float _unstick;               // seconds left of backing off whatever we are wedged against
         float _lost;                  // seconds spent nowhere near the line we are supposed to be on
         float _flipSteer;             // which way round the turn goes, held for the whole manoeuvre
+        Vector3 _flipOrigin;          // where the turn started -- the manoeuvre is boxed to a radius around this
         float _shuffleBlock;          // seconds of no progress in the current direction of the turn
         bool _shuffleRev;             // currently on the reverse leg of a three-point turn
         bool _flipDone;               // a turn-around has already run to completion since the last clean stretch
@@ -118,6 +128,19 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup(Group);
+            if (Car != null)
+            {
+                _wheelbase = Mathf.Max(Car.WheelbaseM, 0.6f);
+                _halfWidth = Mathf.Max(Car.HalfWidthM, 0.6f);
+                _length = Mathf.Max(Car.HullSize.Z, 1.5f);
+                _tracked = Car.Tracked;
+                // A big hull rolls before it slides, so it corners gentler. Threshold set off the MEASURED spec
+                // boxes rather than guessed: quad 2.0x0.8x3.6, sedan-class ~x1.0x5.7, bus 3.0x1.0x8.0, firetruck
+                // 2.5x2.0x7.0, semi 3.2x1.4x4.1. The box height is not a clean "is it tall" signal on its own --
+                // the bus's is 1.0, lower than the firetruck's 2.0 -- so take either a tall box OR a long one,
+                // which puts bus, firetruck and semi in the careful group and leaves the quad and the cars agile.
+                _latAccel = (Car.HullSize.Y >= 1.4f || Car.HullSize.Z >= 6f) ? LatAccelTall : LatAccel;
+            }
             _rng.Randomize();
             _wanderPhase = _rng.Randf() * Mathf.Tau;
             _laneTimer = _rng.RandfRange(LaneChangeMin, LaneChangeMax);
@@ -136,7 +159,7 @@ namespace UnturnedGodot
             float speed = Mathf.Abs(fwd);
 
             // LOOKAHEAD grows with speed: a fixed one wobbles when slow and cuts corners when fast.
-            float look = Mathf.Clamp(3.5f + speed * 0.75f, 5f, 18f);
+            float look = Mathf.Clamp(3.5f + speed * 0.75f, Mathf.Max(5f, _length * 0.9f), 18f + _length * 0.5f);
             Vector3 aim = PointAhead(look, out float curvature, out float remaining);
 
             // "with some deviation" -- up to ~0.5 m of slow lateral drift, per driver, so a column of them does not
@@ -193,21 +216,39 @@ namespace UnturnedGodot
             // measured at 2.7 m of steady cross-track, most of a lane. The second term is the offset fed straight
             // back as an angle (Stanley's correction): right of the line steers left, and it fades with speed so
             // it settles the car at 70 km/h instead of sawing at it.
-            float steerRad = Mathf.Atan(kappa * Wheelbase) - CrossGain * Mathf.Atan(CrossTrackSigned(pos) / (speed + 2f));
-            float steerMax = Mathf.DegToRad(Mathf.Max(Car.SteerMaxDegrees, 1f));
-            float steer = Mathf.Clamp(steerRad / steerMax, -1f, 1f);
+            float steer;
+            if (_tracked)
+            {
+                // SKID STEER IS NOT ACKERMANN. Vehicle.Drive feeds `steer` to a yaw TORQUE on a tracked hull
+                // (_tankYawInput), throttle-independent, with no wheel angle anywhere in it -- so dividing a
+                // bicycle-model steer angle by a nominal steering lock would be dividing by a number that means
+                // nothing here. Command the yaw directly from the heading error instead.
+                float want = Mathf.Atan2(local.X, -local.Z);   // bearing to the aim point: +ve = to the right
+                steer = Mathf.Clamp(want / 0.55f, -1f, 1f) + CrossGain * Mathf.Clamp(CrossTrackSigned(pos) / 6f, -0.5f, 0.5f) * -1f;
+                steer = Mathf.Clamp(steer, -1f, 1f);
+            }
+            else
+            {
+                float steerRad = Mathf.Atan(kappa * _wheelbase) - CrossGain * Mathf.Atan(CrossTrackSigned(pos) / (speed + 2f));
+                float steerMax = Mathf.DegToRad(Mathf.Max(Car.SteerMaxDegrees, 1f));
+                steer = Mathf.Clamp(steerRad / steerMax, -1f, 1f);
+            }
             // PURE PURSUIT IS UNDEFINED BEHIND THE CAR, and the U-turn is exactly that case. With the aim point
             // roughly astern, local.X is small however far round it is, so kappa -> 0 and the "turn around" command
             // comes out as STEER STRAIGHT AHEAD: the car would trundle off the end of the road perfectly straight.
             // Behind the axle, the right answer is not a curvature at all, it is full lock toward the side the
-            // target is on. On a four-lane highway that alone completes the turn; on a narrow road it does not, and
-            // the three-point shuffle further down takes over from here.
+            // target is on. Whether that alone completes the turn depends on the vehicle and the road: the turning
+            // circle is 2 * wheelbase / tan(lock), which is ~11 m for a sedan and well over twice that for a semi,
+            // against 18 m of four-lane highway and 9 m of a two-lane road. Rather than predict it, the three-point
+            // shuffle further down just reverses whenever the swing stops making progress -- which is the same
+            // behaviour for a vehicle that fits and one that does not.
             // ...and A TARGET BEHIND THE CAR IS A TURN-AROUND, whatever put it there -- a dead end, a junction that
             // joined part-way along another road, a recovery onto a lane we had already passed. Entering the same
             // manoeuvre in every one of those cases is the difference between a three-point turn and a car pinned
             // at full lock forever: two of four cars were doing exactly that, one circling at 12 m/s and one
             // stationary with the throttle buried, because the steering override existed without the state that
             // slows it down and shunts it round. Entry needs the target CLEARLY behind, not merely abeam.
+            bool behind = local.Z > 0f;
             if (local.Z > 2f && _flipping <= 0f && _flipCooldown <= 0f)
             {
                 // A SECOND turn-around straight after the first is not a turn-around, it is a car being asked to
@@ -217,20 +258,27 @@ namespace UnturnedGodot
                 else { _flipping = 14f; _flipSteer = 0f; _shuffleRev = false; _shuffleBlock = 0f; }
             }
             _flipCooldown = Mathf.Max(0f, _flipCooldown - dt);
-            if (local.Z > 0f) steer = local.X >= 0f ? 1f : -1f;
+            if (behind) steer = local.X >= 0f ? 1f : -1f;
             if (fwd < -0.5f) steer = -steer;   // reversing: the front wheels push the nose the other way
 
             // ---- SPEED: the lowest of cruise, what the bend allows, and what the remaining path allows.
             float cruise = Car.SpeedMaxForward * CruiseFrac;
-            float corner = curvature > 1e-4f ? Mathf.Sqrt(LatAccel / curvature) : 999f;
+            float corner = curvature > 1e-4f ? Mathf.Sqrt(_latAccel / curvature) : 999f;
             float target = Mathf.Min(cruise, corner);
             if (_uTurning) target = Mathf.Min(target, 2.2f);                       // slow right down before flipping round
-            else if (_flipping > 0f) target = Mathf.Min(target, 4.0f);             // ...and stay slow THROUGH the swing, not just up to it
+            // ...and STAY slow while the target is behind us, whichever bit of bookkeeping we are in. This used to
+            // be `else if (_flipping > 0f)`, i.e. tied to a STATE, and a bus found a path into "aim behind, full
+            // lock" without that state ever being set: it accelerated to 10 m/s on full lock and drove 20 m off the
+            // road, then spent half the run wedged. The condition that matters is the geometric one -- if the place
+            // we are trying to reach is behind the rear axle, we are turning round, and turning round is slow.
+            else if (behind || _flipping > 0f) target = Mathf.Min(target, 4.0f);
             else if (remaining < 40f) target = Mathf.Min(target, 2.0f + remaining * 0.20f);   // ease off toward a dead end
             // ...and never close on the car in front faster than it can be given back: a two-second gap, so following
             // reads as backing off rather than as braking at the last moment.
-            float ahead = GapAhead(pos, -Car.GlobalTransform.Basis.Z, 30f);
-            if (ahead < 30f) target = Mathf.Min(target, Mathf.Max(0f, (ahead - 6f) * 0.5f));
+            float stopGap = _length * 0.8f + 2.5f;   // a semi cannot stop 6 m off the car in front the way a quad can
+            float watch = Mathf.Max(30f, stopGap * 4f);
+            float ahead = GapAhead(pos, -Car.GlobalTransform.Basis.Z, watch);
+            if (ahead < watch) target = Mathf.Min(target, Mathf.Max(0f, (ahead - stopGap) * 0.5f));
 
             // ---- PEDALS, with a deadband and a rate limit. This is the whole of "no spamming": inside the band it
             // holds whatever it was doing, and it can never jump from full gas to full brake in one tick.
@@ -259,15 +307,23 @@ namespace UnturnedGodot
             if (_flipping > 0f)
             {
                 _flipping -= dt;
-                if (_flipSteer == 0f) _flipSteer = steer >= 0f ? 1f : -1f;   // committed once; a turn that changes its mind never finishes
+                if (_flipSteer == 0f) { _flipSteer = steer >= 0f ? 1f : -1f; _flipOrigin = pos; }   // committed once; a turn that changes its mind never finishes
                 Vector3 toAim = aim - pos;
                 bool aligned = toAim.LengthSquared() > 1f && (-Car.GlobalTransform.Basis.Z).Dot(toAim.Normalized()) > 0.75f;
                 if (aligned && !_shuffleRev) { _flipping = 0f; _flipSteer = 0f; _shuffleBlock = 0f; _flipDone = true; }
                 else if (_flipping <= 0f) _flipDone = true;   // ran out of time: also counts as "tried that already"
                 else
                 {
+                    // KEEP THE MANOEUVRE ON THE ROAD. Swapping legs only when BLOCKED assumes something stops the
+                    // vehicle before it runs out of tarmac, and for a big one nothing does: a semi's turning circle
+                    // is 26 m against 18 m of four-lane highway, so its forward swing simply left the road and it
+                    // ended up 27 m from its lane and wedged. Box the whole shuffle inside a radius of where the
+                    // turn began -- swing out to the edge of the box, back up toward the middle, swing again.
+                    float outBy = pos.DistanceTo(_flipOrigin);
                     if (speed < 0.6f && Mathf.Abs(_throttle) > 0.25f) _shuffleBlock += dt; else _shuffleBlock = 0f;
-                    if (_shuffleBlock > 0.7f) { _shuffleRev = !_shuffleRev; _shuffleBlock = 0f; }
+                    bool swungTooWide = !_shuffleRev && outBy > FlipBox;
+                    bool backInside = _shuffleRev && outBy < FlipBox * 0.55f;
+                    if (_shuffleBlock > 0.7f || swungTooWide || backInside) { _shuffleRev = !_shuffleRev; _shuffleBlock = 0f; }
                     steer = _shuffleRev ? -_flipSteer : _flipSteer;
                     _throttle = Mathf.MoveToward(_throttle, _shuffleRev ? -0.45f : 0.45f, ThrottleRate * dt);
                 }
@@ -307,7 +363,7 @@ namespace UnturnedGodot
                 Vector3 to = o.Car.GlobalPosition - from;
                 float along = to.Dot(dir);
                 if (along <= 0f || along > within) continue;
-                if ((to - dir * along).Length() > 2.6f) continue;   // not in my lane-ish corridor
+                if ((to - dir * along).Length() > _halfWidth + 1.3f) continue;   // not in my lane-ish corridor
                 gap = Mathf.Min(gap, along);
             }
             return gap;
@@ -401,7 +457,7 @@ namespace UnturnedGodot
         /// end -- slow down, and once slow enough take the lane going the other way and drive back.</summary>
         void HandleEnd(float remaining, float speed)
         {
-            if (remaining > TurnaroundAt) { _uTurning = false; return; }
+            if (remaining > TurnaroundAt + _length * 2f) { _uTurning = false; return; }   // a semi needs to start thinking about it sooner than a quad
             Vector3 end = _path.Points[_path.Points.Length - 1];
             Vector3 endDir = EndHeading(_path);
 

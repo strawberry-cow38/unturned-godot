@@ -1947,6 +1947,25 @@ namespace UnturnedGodot
             var lanes = rf.LanePaths;
             if (lanes.Count == 0) { GD.PrintErr("[aidrive] road field has no lane paths"); return; }
             var rng = new RandomNumberGenerator(); rng.Randomize();
+            // WHICH VEHICLES. Master 2026-09-08: "allow any vehicle to be an ai driver on ur roads" -> "any ROAD
+            // vehicle*". The pool is derived from the specs (Vehicle.IsRoadVehicle drops boats, aircraft and the
+            // engineless trailer), so a vehicle added later joins the traffic by existing rather than by being
+            // typed into a list here as well. UG_AITYPE=sedan,bus pins it to specific ones for a targeted test.
+            string[] pool = Vehicle.RoadVehicleNames();
+            var want_t = System.Environment.GetEnvironmentVariable("UG_AITYPE");
+            if (!string.IsNullOrEmpty(want_t))
+            {
+                var picked = new System.Collections.Generic.List<string>();
+                foreach (var t in want_t.Split(','))
+                {
+                    var k = t.Trim().Trim('\'', '"').ToLowerInvariant();   // shells love to hand quotes through in the value
+                    if (k.Length > 0 && Vehicle.IsRoadVehicle(k)) picked.Add(k);
+                    else if (k.Length > 0) GD.PrintErr($"[aidrive] '{k}' is not a road vehicle -- ignored");
+                }
+                if (picked.Count > 0) pool = picked.ToArray();
+            }
+            if (pool.Length == 0) { GD.PrintErr("[aidrive] no road vehicles in the pool"); return; }
+            VehicleAiDriver.Log($"[aidrive] pool: {string.Join(", ", pool)}");
             // SPAWN THEM WHERE THE CAMERA IS. PEI's lane network is 70 paths spread over the whole island, so
             // picking uniformly at random put every AI car kilometres from the only viewpoint that exists -- a
             // render of the feature with none of it in frame. Reuse UG_SPAWNAT (the eye's own position) and keep
@@ -2024,10 +2043,22 @@ namespace UnturnedGodot
                 else i = rng.RandiRange(1, lane.Points.Length - 4);
                 Vector3 p0 = lane.Points[i], p1 = lane.Points[i + 1];
                 bool crowded = false;
-                foreach (var taken in placed) if (taken.DistanceSquaredTo(p0) < 14f * 14f) { crowded = true; break; }
+                foreach (var taken in placed) if (taken.DistanceSquaredTo(p0) < 22f * 22f) { crowded = true; break; }   // room for the longest hull in the pool (a semi is 8 m)
                 if (crowded) continue;
-                var car = Vehicle.BuildByName("sedan", rng.RandiRange(0, 3));
-                if (car == null) { GD.PrintErr("[aidrive] sedan failed to build"); return; }
+                string type = pool[rng.RandiRange(0, pool.Length - 1)];
+                // DON'T PARK A SEMI ON A CUL-DE-SAC. A 26.3 m turning circle does not fit on an 18.4 m highway,
+                // let alone a 9.2 m lane -- so a big vehicle started near a dead end has to shuffle back and forth
+                // to get round, which is neither quick nor nice to watch. Small ones can go anywhere; big ones get
+                // a lane long enough that turning round is a rare event rather than the first thing they do.
+                float circle = Vehicle.TurningCircleOf(type);
+                if (circle > 14f)
+                {
+                    float laneLen = 0f;
+                    for (int k = 0; k < lane.Points.Length - 1; k++) laneLen += lane.Points[k].DistanceTo(lane.Points[k + 1]);
+                    if (laneLen < circle * 12f) continue;
+                }
+                var car = Vehicle.BuildByName(type, rng.RandiRange(0, 3));
+                if (car == null) { GD.PrintErr($"[aidrive] {type} failed to build"); return; }
                 AddChild(car);
                 car.GlobalPosition = p0 + Vector3.Up * 1.2f;
                 Vector3 fwd = (p1 - p0).Normalized();
@@ -2036,12 +2067,12 @@ namespace UnturnedGodot
                 // start it -- and Vehicle.Drive zeroes the throttle outright while the engine is off, so an AI that
                 // never does this pushes the pedal all day and the car does not move a millimetre. (Battery and
                 // engine health are full on build, so the start always catches; it still cranks for ~1.2 s first.)
-                if (!car.TryStartEngine()) GD.PrintErr($"[aidrive] sedan {made} would not start");
+                if (!car.TryStartEngine()) GD.PrintErr($"[aidrive] {type} {made} would not start");
                 var ai = new VehicleAiDriver { Car = car, Roads = rf, Name = $"ai{made}", StartPath = lane, StartIndex = i };
                 car.AddChild(ai);
                 _aiDrivers.Add(ai);
                 placed.Add(p0);
-                VehicleAiDriver.Log($"[aidrive] ai{made} at ({p0.X:0.0},{p0.Y:0.0},{p0.Z:0.0}) road {lane.Road} lane {lane.Lane} {(lane.Forward ? "fwd" : "rev")} pt {i}/{lane.Points.Length}");
+                VehicleAiDriver.Log($"[aidrive] ai{made} {type} wb {car.WheelbaseM:0.00} hw {car.HalfWidthM:0.00} hull {car.HullSize.X:0.0}x{car.HullSize.Y:0.0}x{car.HullSize.Z:0.0} vmax {car.SpeedMaxForward:0.0} lock {car.SteerMaxDegrees:0} circle {2f * car.WheelbaseM / Mathf.Max(0.05f, Mathf.Tan(Mathf.DegToRad(car.SteerMaxDegrees))):0.0}m{(car.Tracked ? " TRACKED" : "")} at ({p0.X:0.0},{p0.Y:0.0},{p0.Z:0.0}) road {lane.Road} lane {lane.Lane} {(lane.Forward ? "fwd" : "rev")} pt {i}/{lane.Points.Length}");
                 made++;
             }
             // UG_AICHASE=1: ride behind the first car. The whole point of this feature is how the car BEHAVES over
@@ -2054,8 +2085,8 @@ namespace UnturnedGodot
                 _aiDrivers[0].Car.AddChild(chase);
                 GD.Print("[aidrive] chase camera on ai0");
             }
-            GD.Print($"[aidrive] {made} AI sedans on {lanes.Count} lane paths");
-            VehicleAiDriver.Log($"[aidrive] {made} AI sedans on {lanes.Count} lane paths (atEnd={_aiAtEnd})");
+            GD.Print($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths");
+            VehicleAiDriver.Log($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths (atEnd={_aiAtEnd})");
             // UG_AIQUIT=<sec>: quit after that many seconds of DRIVING, counted from here rather than from launch.
             // --quit-after counts engine iterations, and headless burns thousands of those while the world is still
             // streaming in -- a telemetry run kept exiting before a single car existed. This clock starts when the

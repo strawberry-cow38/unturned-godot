@@ -1806,6 +1806,17 @@ namespace UnturnedGodot
         public float SteerAngleDegrees => _steerAngle;
         public float SteerMaxDegrees => _steerMax;     // steering lock at rest -- an AI driver normalises its command by it
         public float SpeedMaxForward => _speedMax;     // .dat Speed_Max (already buffed by TopSpeedBuff at build time)
+
+        /// <summary>Front-to-rear axle span, metres -- the bicycle model's wheelbase, right for a quad, a bus or a
+        /// semi without anybody maintaining a table of numbers. This is the SAME field the steering cap already
+        /// derives from the spec wheels (see WheelbaseForTest); deliberately not a second, subtly different
+        /// "wheelbase" living alongside it.</summary>
+        public float WheelbaseM => _wheelbase > 0.4f ? _wheelbase : 3f;
+        /// <summary>Half the widest part of the hull, metres: the greater of the track half-width and the body box.</summary>
+        public float HalfWidthM => _halfWidth;
+        /// <summary>The spec BoxCollider extents (Godot space) -- length is Z, height is Y.</summary>
+        public Vector3 HullSize => _hullSizeLocal;
+        float _halfWidth = 1f;
         public bool HasSteerWheel => _steerPivot != null;                           // a real steering-wheel model exists (its pivot = where 1P driving hands go)
         public Vector3 SteerPivotLocal => _steerPivot != null ? _steerPivot.Position : Vector3.Zero;
         public Vector3 SteerAxisLocal => _steerAxis;                                 // wheel disc normal, vehicle-local      // MP §3.6: the wheel-steer summary the snapshot carries
@@ -4210,6 +4221,57 @@ namespace UnturnedGodot
             DriverEye = new Vector3(0f, 1.58f, -4.50f),   // FP eye in the cockpit, under the canopy, looking out the windscreen (master 2026-08-18)
         };
         public static Vehicle BuildFighterJet(int variant = 0) => Build(_fighterjet, variant, "fighterjet");
+        static float HalfWidthOf(Spec s)
+        {
+            float t = 0f;
+            if (s.Wheels != null) foreach (var w in s.Wheels) t = Mathf.Max(t, Mathf.Abs(w.x));
+            return Mathf.Max(Mathf.Max(t, s.BoxSize.X * 0.5f), 0.6f);
+        }
+
+        /// <summary>Can this spec be an AI driver's vehicle -- i.e. is it a ROAD vehicle (strawberry 2026-09-08:
+        /// "allow any vehicle to be an ai driver on ur roads", then "any ROAD vehicle*")? Boats and aircraft are
+        /// out by kind; a trailer is out because it has no engine of its own (SetupDrivetrain gives a hull with a
+        /// Kingpin zero traction wheels); and anything without an engine, a top speed or wheels is out because the
+        /// drivetrain would not be set up at all. Derived from the SPEC, so a new vehicle joins the traffic by
+        /// existing rather than by being added to a second list somebody has to remember.</summary>
+        public static bool IsRoadVehicle(string name)
+        {
+            // KNOWN NAME FIRST. SpecFor falls through to the jeep for anything it does not recognise, so without
+            // this every typo, and every stray quote off a shell argument, "is" a road vehicle -- and then builds a
+            // jeep while reporting itself as whatever was typed. Caught exactly that way: a harness passed
+            // 'quad,semi' with the quotes attached and 'quad silently became a jeep.
+            if (name == null) return false;
+            bool known = false;
+            foreach (var n in SpecNames) if (n == name) { known = true; break; }
+            if (!known) foreach (var n in new[] { "off_roader", "vw_golf", "mini", "heli", "scout", "bird", "containership", "plane" }) if (n == name) { known = true; break; }
+            if (!known) return false;
+            var s = SpecFor(name);
+            return !s.Heli && !s.Plane && s.Water != WaterMode.Boat && s.Kingpin == Vector3.Zero
+                   && s.Engine > 0f && s.SpeedMax > 0f && s.WheelRadius > 0f && s.Wheels != null && s.Wheels.Length > 0;
+        }
+
+        /// <summary>Kerb-to-kerb turning circle in metres for a spec key, WITHOUT building the vehicle:
+        /// 2 * wheelbase / tan(steering lock). 5.9 m for a quad, 11.3 m for a sedan, 26.3 m for a semi -- against
+        /// 18.4 m of four-lane highway and 9.2 m of a two-lane road, which is what decides whether a given vehicle
+        /// can turn round where it stands.</summary>
+        public static float TurningCircleOf(string name)
+        {
+            var s = SpecFor(name);
+            float zmin = float.MaxValue, zmax = float.MinValue;
+            if (s.Wheels != null) foreach (var w in s.Wheels) { zmin = Mathf.Min(zmin, w.z); zmax = Mathf.Max(zmax, w.z); }
+            float wb = zmax > zmin ? zmax - zmin : 3f;
+            return 2f * wb / Mathf.Max(0.05f, Mathf.Tan(Mathf.DegToRad(Mathf.Max(s.SteerMax, 1f))));
+        }
+
+        /// <summary>Every spec key IsRoadVehicle accepts, de-duplicated (SpecNames carries aliases).</summary>
+        public static string[] RoadVehicleNames()
+        {
+            var seen = new System.Collections.Generic.List<string>();
+            foreach (var n in SpecNames)
+                if (IsRoadVehicle(n) && !seen.Contains(n)) seen.Add(n);
+            return seen.ToArray();
+        }
+
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
@@ -5951,6 +6013,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
             v.HealthMax = v.Health = s.Health * VehicleHealthScale; v.Battery = BatteryMax; v.DisplayName = s.Name;
+            v._halfWidth = HalfWidthOf(s);   // _wheelbase is already set from the same spec wheels next to _steerMax
             v.EngineHealthMax = v.EngineHealth = s.Health * VehicleHealthScale * 0.4f; v._hullSizeLocal = s.BoxSize;   // engine hp = 40% of body hp (a separate pool, not a slice of it)   // 10x hp (strawberry 2026-09-03); damage numbers untouched
             // Seats: the spec's own array if it has one, else the extracted table by spec key, else the single
             // hand-tuned driver spot. The fallback matters -- trailer has no bundle prefab to extract from, and a
