@@ -80,6 +80,7 @@ namespace UnturnedGodot
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
         bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
         PlayerController _htPilot; bool _htPilotSeated;   // UG_HELIPILOT=1: a VISIBLE pilot in the seat, and the scripted flight routed through their controls
+        Vector3? _heliCamLocal;   // UG_HELICAM="x,y,z": fixed vehicle-local inspection camera instead of the 12 m chase
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
@@ -2047,6 +2048,14 @@ namespace UnturnedGodot
                 // Spawned here, SEATED on the first physics tick (below) rather than now: EnterVehicle moves
                 // the body onto a seat anchor, and doing that before the tree has ticked once puts it on a
                 // transform nothing has resolved yet.
+                var camEnv = System.Environment.GetEnvironmentVariable("UG_HELICAM");
+                if (!string.IsNullOrEmpty(camEnv))
+                {
+                    var parts = camEnv.Split(',');
+                    if (parts.Length == 3 && float.TryParse(parts[0], out var cx) && float.TryParse(parts[1], out var cy) && float.TryParse(parts[2], out var cz))
+                        _heliCamLocal = new Vector3(cx, cy, cz);
+                    else GD.PrintErr($"[helicam] could not parse UG_HELICAM='{camEnv}' -- want x,y,z; using the chase cam");
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_HELIPILOT") == "1")
                 {
                     _htPilot = new PlayerController { CaptureMouse = false };
@@ -8363,6 +8372,16 @@ namespace UnturnedGodot
                     // left with nobody on the controls, which is the one outcome that renders a clip of nothing.
                     if (_htPilot == null || !_htPilotSeated) _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
 
+                    // ONE-SHOT SEAT MEASUREMENT: where the posed feet actually ended up against the
+                    // airframe underside. Printed rather than asserted because the right rise is an art
+                    // call; the point is that it is a MEASURED number and not another eyeballed one.
+                    if (_htPilot != null && _htPilotSeated && _frame == 40)
+                    {
+                        float footY = _htPilot.DebugFootWorldY;
+                        var vb = _veh.DebugWorldMeshAabb();
+                        GD.Print($"[seatcheck] posed foot world Y {footY:0.0000}; airframe underside {vb.Position.Y:0.0000}; "
+                               + $"foot is {(footY - vb.Position.Y):+0.0000;-0.0000} vs it (negative = THROUGH the machine); clip={_htPilot.DebugBodyLoopClip}");
+                    }
                     if (_frame % 60 == 0)
                         GD.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");
 
@@ -8374,8 +8393,20 @@ namespace UnturnedGodot
                         var ht = _veh.GetGlobalTransformInterpolated();
                         var fwdH = -ht.Basis.Z; fwdH.Y = 0f;
                         fwdH = fwdH.LengthSquared() > 0.001f ? fwdH.Normalized() : Vector3.Forward;
-                        _vehCam.GlobalPosition = ht.Origin - fwdH * 12f + Vector3.Up * 4.5f;
-                        _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                        // UG_HELICAM="x,y,z": park the camera at that VEHICLE-LOCAL offset and look at the
+                        // aircraft instead of chasing it. The chase shot is 12 m behind, which is right for the
+                        // flight and useless for inspecting anything on the machine -- a seated pilot's legs are
+                        // a dozen pixels at that range. Local, so it holds its angle as the aircraft manoeuvres.
+                        if (_heliCamLocal.HasValue)
+                        {
+                            _vehCam.GlobalPosition = ht * _heliCamLocal.Value;
+                            _vehCam.LookAt(ht.Origin, Vector3.Up);
+                        }
+                        else
+                        {
+                            _vehCam.GlobalPosition = ht.Origin - fwdH * 12f + Vector3.Up * 4.5f;
+                            _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                        }
                     }
                     return;
                 }

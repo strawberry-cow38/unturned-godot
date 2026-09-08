@@ -287,6 +287,28 @@ namespace UnturnedGodot
         public bool DebugBodyHasGun => _bodyGunName != null && (_body?.GunLayerOn ?? false);
         /// <summary>Test seam: the looping seated clip the body is playing (driving mime vs plain sit).</summary>
         public string DebugBodyLoopClip => _body?.CurrentLoopClip ?? "";
+        /// <summary>World Y of the LOWEST posed foot bone, or NaN if there is no visible body. The seated body's
+        /// feet are placed by the ANIMATION, not by the seat anchor: the body root is the feet only in the rest
+        /// pose, and Idle_Drive rotates the leg bones away from it. So a seat rise derived from root-to-hip
+        /// arithmetic predicts the wrong foot height, which is exactly how the minicopter ended up with a pilot
+        /// whose legs hung through the airframe after a rise that the arithmetic said was correct. Measure the
+        /// bone.</summary>
+        public float DebugFootWorldY
+        {
+            get
+            {
+                var sk = _body?.Skeleton;
+                if (sk == null) return float.NaN;
+                float lo = float.PositiveInfinity;
+                foreach (var n in new[] { "Left_Foot", "Right_Foot" })
+                {
+                    int b = sk.FindBone(n);
+                    if (b < 0) continue;
+                    lo = Mathf.Min(lo, (sk.GlobalTransform * sk.GetBoneGlobalPose(b)).Origin.Y);
+                }
+                return float.IsInfinity(lo) ? float.NaN : lo;
+            }
+        }
 
         public Vector3? DebugSeatedBodyLocal =>
             _body != null && _driving != null ? _driving.ToLocal(_body.GlobalPosition) : (Vector3?)null;

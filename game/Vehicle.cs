@@ -69,6 +69,25 @@ namespace UnturnedGodot
         public Vector3 DebugMainHubHalf => _mainHubHalf;
         public Vector3 DebugTailHubHalf => _tailHubHalf;
         public float DebugRotorRadius => _rotorRadius;
+        /// <summary>World-space AABB of every VISIBLE mesh on this vehicle -- the machine as it is drawn, not its
+        /// collision boxes. Used to ask whether something (a seated pilot's feet) is inside the airframe or
+        /// hanging through its underside, which the collision boxes cannot answer: they are a crude stand-in and
+        /// on this airframe they sit well inside the drawn skids.</summary>
+        public Aabb DebugWorldMeshAabb()
+        {
+            Aabb? acc = null;
+            void Walk(Node n)
+            {
+                if (n is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                {
+                    var w = mi.GlobalTransform * mi.Mesh.GetAabb();
+                    acc = acc.HasValue ? acc.Value.Merge(w) : w;
+                }
+                foreach (var c in n.GetChildren()) Walk(c);
+            }
+            Walk(this);
+            return acc ?? new Aabb(GlobalPosition, Vector3.Zero);
+        }
         public float DebugCollective => _inCollective;
         /// <summary>The lift force the wing produced last tick, in g (force / (mass * 9.8)), as a WORLD vector.
         /// Exposed because the plane had no tests at all and the two 2026-09-06 dive/inverted bugs are both
@@ -2103,6 +2122,13 @@ namespace UnturnedGodot
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
             public Vector3[] Seats;     // every seat, local, index 0 = DRIVER. Null = single-seat (SeatOf's driver spot only).
+            /// <summary>Extra lift for the VISIBLE 3rd-person body over the seated origin, replacing GenericSeatRise.
+            /// 0 = use the generic one. The generic 0.08 is calibrated on cars, where the seat sits above a floor
+            /// pan and the feet land on it; an open-frame aircraft with the seat up on the mast has nothing under
+            /// the pedals, so the same rise leaves the legs hanging THROUGH the airframe (VoX, 2026-09-08: "guys
+            /// feet are sticking out the bottom"). Per-vehicle because it is a property of what is under the
+            /// seat, not of the rig.</summary>
+            public float SeatBodyRise;
             public TurretDef[] Turrets; // traversing weapon mounts, by seat. Null = none.
             public string SeatModelFile, SteerModel;   // REAL ripped interior models re-centred into the cab (props whose body mesh has no interior sub-objects, e.g. semi). SteerModel turns via SteerPivot/SteerAxis
             public Vector3 SeatModel;   // world-target for the seat model's AABB centre (the mesh is baked at its source vehicle -> translated here)
@@ -3928,6 +3954,11 @@ namespace UnturnedGodot
             // every anchor move together or the model stops matching its own hitboxes; mass is an explicit
             // field so flight is unchanged, and the only derived value that shifts is HeliSizePitch (1.50 ->
             // 1.47, inaudible).
+            // The 3rd-person body needs 0.16 here, not the generic 0.08. DERIVED, not eyeballed: the body root
+            // IS THE FEET, the seated origin sits at -0.8725, and the airframe's lowest mesh point is -0.7125,
+            // so a 0.08 rise leaves the boots 0.080 m THROUGH the underside. 0.16 puts them exactly on it.
+            // (Pre-dates the 1.25x rescale -- it was 0.195 m through before, which the bigger airframe halved.)
+            SeatBodyRise = 0.16f,
             RotorRadius = 3.5625f, TailRotorRadius = 0.425f,
             RotorHub = new Vector3(0f, 1.525f, 0.6875f), TailRotorHub = new Vector3(0.1125f, 0.025f, 3.075f),
             // The airframe is a real mesh now (astra/blender, 2026-09-08, VoX: "model an even better
@@ -4439,7 +4470,8 @@ namespace UnturnedGodot
         {
             var s = SpecFor(name);
             var pSeatLocals = s.Seats ?? (SeatTable.TryGetValue(name, out var pst) ? pst : new[] { SeatOf(s.Name) });
-            var p = new VehiclePuppet { SpecKey = name, SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : pSeatLocals[0] + GenericSeatRise };
+            var p = new VehiclePuppet { SpecKey = name, SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name)
+                         : pSeatLocals[0] + (s.SeatBodyRise > 0f ? new Vector3(0f, s.SeatBodyRise, 0f) : GenericSeatRise) };   // the PUPPET takes the same rise: a remote rider sitting at a different height to the local one is the classic SP/MP seam
             // Opt the puppet OUT of Godot's global physics interpolation (project.godot physics_interpolation=true), like
             // the PlayerController shell does (PlayerController.cs:1674). VehicleReplicaView repositions the puppet every
             // _Process frame with its OWN manual glide/dead-reckoning; leaving Godot interp ON renders the puppet at its
@@ -6142,7 +6174,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // SeatOffset (the visible 3rd-person BODY spot -- SeatBodyLocal, PlayerController.cs) uses the eyeballed
             // rise ONLY for the 11 classes it was actually tuned against; anyone else gets THEIR OWN real seat
             // plus a small generic rise, not the Jeep's absolute coordinate wearing this vehicle's name.
-            v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name) : v.SeatLocals[0] + GenericSeatRise;
+            v.SeatOffset = HandTunedSeatOf(s.Name) ? SeatOf(s.Name)
+                         : v.SeatLocals[0] + (s.SeatBodyRise > 0f ? new Vector3(0f, s.SeatBodyRise, 0f) : GenericSeatRise);
             v.AccessZones = BuildAccessZones(s, v.SeatLocals, s.BoxCenter, s.BoxSize);
             v.AccessRequired = s.Helm.HasValue;
             v._rearEngine = s.RearEngine;
