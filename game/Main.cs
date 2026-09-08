@@ -79,6 +79,7 @@ namespace UnturnedGodot
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
         bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
+        PlayerController _htPilot; bool _htPilotSeated;   // UG_HELIPILOT=1: a VISIBLE pilot in the seat, and the scripted flight routed through their controls
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
@@ -2037,6 +2038,21 @@ namespace UnturnedGodot
                 // Long enough to climb out, translate, and come round -- render at --fixed-fps 50 to match the
                 // 50 Hz physics tick so every movie frame is exactly one tick (no 30/50 sampling judder).
                 _rigCaptureFrames = new[] { 40, 150, 300, 450, 600, 750 };
+
+                // UG_HELIPILOT=1: put a PLAYER in the seat and fly the sequence THROUGH them (VoX 2026-09-07:
+                // "render a video of it in the game with a player flying it"). Without this the clip is an
+                // empty airframe flying itself, which on an open-frame aircraft like the minicopter is the
+                // most conspicuous thing in the shot.
+                //
+                // Spawned here, SEATED on the first physics tick (below) rather than now: EnterVehicle moves
+                // the body onto a seat anchor, and doing that before the tree has ticked once puts it on a
+                // transform nothing has resolved yet.
+                if (System.Environment.GetEnvironmentVariable("UG_HELIPILOT") == "1")
+                {
+                    _htPilot = new PlayerController { CaptureMouse = false };
+                    AddChild(_htPilot);
+                    _htPilot.GlobalPosition = _veh.GlobalPosition + new Vector3(1.5f, 0f, 0f);   // beside it; the seating below teleports them in
+                }
             }
 
             if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VFOCUS")))   // preview the vehicle look-at outline + info panel
@@ -2047,7 +2063,7 @@ namespace UnturnedGodot
 
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
             if (_demo) { _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f; }   // --demo: varied gauge levels (else full/spawn)
-            AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
+            AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD. Its Player field is left unset, which is what hides the on-foot HUD -- HUD never looks one up, so UG_HELIPILOT putting a real PlayerController in the scene does not bring the vitals back.
             if (_night)
             {
                 _veh.ToggleHeadlights();                // headlights on for the night demo
@@ -8306,7 +8322,46 @@ namespace UnturnedGodot
                             rollIn = Mathf.Clamp((0f - rollDeg) * 0.06f, -0.4f, 0.4f);
                             break;
                     }
-                    _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
+                    // ONE WRITER ON THE CONTROLS. With a pilot in the seat, PlayerController calls DriveHeli
+                    // every tick from its own sticks; calling it here as well would give two writers and the
+                    // aircraft would fly on whichever ran last -- so the pilot path REPLACES this one rather
+                    // than joining it, and the maneuver script becomes their stick instead of a bypass.
+                    if (_htPilot != null)
+                    {
+                        if (!_htPilotSeated)
+                        {
+                            // EnterVehicle REFUSES SILENTLY. It returns void and simply does not seat you when a
+                            // remote driver holds the seat or every seat is taken, so "I called it" is not "he is
+                            // in it" -- and the first version of this set the flag unconditionally, never retried,
+                            // and skipped the direct DriveHeli path forever. The result was a helicopter sitting on
+                            // the ground at full collective for the whole clip: no error, no warning, a render that
+                            // completed and showed nothing. Take IsDriving as the post-condition instead.
+                            _htPilot.EnterVehicle(_veh, 0);
+                            _htPilotSeated = _htPilot.IsDriving;
+                            if (_htPilotSeated)
+                            {
+                                _htPilot.DebugSetFirstPerson(false);          // draw the seated body for the outside camera
+                                if (_vehCam != null) _vehCam.Current = true;  // seating builds a ride camera; the chase cam stays the shot
+                                GD.Print($"[helipilot] seated on tick {_frame}; chase cam re-asserted");
+                            }
+                            else if (_frame > 25)
+                            {
+                                // Degrade to the EMPTY-SEAT clip rather than to no flight at all. A pilotless video
+                                // is a worse deliverable; a grounded one is a broken one.
+                                GD.PrintErr($"[helipilot] could NOT seat the pilot by tick {_frame} -- flying the sequence directly instead");
+                                _htPilot = null;   // and the null check below hands the controls straight back
+                            }
+                        }
+                        if (_htPilot != null)
+                        {
+                            _htPilot.ScriptedDrive  = new Vector2(yawIn, coll);        // (steer, throttle) == (yaw, collective)
+                            _htPilot.ScriptedCyclic = new Vector2(pitchIn, rollIn);
+                        }
+                    }
+                    // The pilot flies it if there IS one and he is in the seat. Until he is (the first tick or
+                    // two) and if he never gets there, the harness flies it directly -- so the aircraft is never
+                    // left with nobody on the controls, which is the one outcome that renders a clip of nothing.
+                    if (_htPilot == null || !_htPilotSeated) _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
 
                     if (_frame % 60 == 0)
                         GD.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");

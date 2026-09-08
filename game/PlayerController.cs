@@ -8888,6 +8888,15 @@ namespace UnturnedGodot
         }
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
+        /// <summary>Test hook: (pitch, roll) on the CYCLIC, instead of the mouse stick. ScriptedDrive already
+        /// carries a helicopter's collective and yaw -- it is (steer, throttle), and DriveHeli reads those as
+        /// (yaw, collective) -- so this is the other half, and with both set a harness flies the aircraft
+        /// THROUGH THE PLAYER rather than beside them. That distinction is the whole point: calling
+        /// Vehicle.DriveHeli directly while a player sits in the seat gives TWO writers on the same controls
+        /// every tick, and the render would show whichever ran last, not what the pilot did.
+        /// Injected at the stick rather than at DriveHeli so the cross-axis deadzone still applies -- the
+        /// scripted input is worth exactly what a human's would be, not a privileged channel around it.</summary>
+        public Vector2? ScriptedCyclic;
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
         /// <summary>The third-person camera is live: on foot (or the puppet), not first-person, not dead. The HUD shows
         /// a centre crosshair here (master) since there is no viewmodel reticle to mark where the shot goes; the 3P view
@@ -9008,6 +9017,7 @@ namespace UnturnedGodot
                 if (magNow && !_slingShiftPrev) _driving.ToggleSlingMagnet();
                 _slingShiftPrev = magNow;
                 float sp = _heliStickP, sr = _heliStickR;
+                if (ScriptedCyclic.HasValue) { sp = ScriptedCyclic.Value.X; sr = ScriptedCyclic.Value.Y; }
                 float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
                 float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
                 _driving.DriveHeli(throttle, steer, fp, fr, delta);
