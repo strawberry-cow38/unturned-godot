@@ -722,15 +722,38 @@ def check():
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
     assert abs(wagon["wheelbase"]-3.02)<1e-9 and wagon["tracks"] == [2.6,2.6]
     assert wagon["radii"] == sedan["radii"]
-    for field in ("Wheel", "WheelTex", "Engine", "SpeedMax", "Fuel", "Health"):
+    # SHARED PARTS still come from the sedan; the DRIVETRAIN deliberately does not any more.
+    for field in ("Wheel", "WheelTex", "Health"):
         assert wagon[field] == sedan[field], field
-    assert wagon["Mass"] == 1650  # retained table: (sedan 1500 + police 1800)/2
+    # IT IS BALANCED AS AN SUV, NOT AS A CAR (strawberry 2026-09-09: "its a damn good suv lol. should
+    # probably just rebrand and balance it as one"). It used to carry the sedan's engine/speed/fuel
+    # verbatim, and this check asserted exactly that -- so the check has to move with the intent or it
+    # pins the vehicle to the class it was just taken out of. Measured blocks, not chosen numbers:
+    #   cars      sedan 700/16.5/50k, hatchback 680/15/45k
+    #   off-road  off-roader 600/12.5/80k, jeep 600/12.5/60k, van 600/14.5/70k, truck 600/13.5/150k,
+    #             humvee 680/14/95k
+    offroad = read_specs(("offroader","jeep","van","humvee"))
+    assert wagon["Engine"] == 600, ("engine must sit in the off-road block, not the car block", wagon["Engine"])
+    assert all(offroad[k]["Engine"] <= 680 for k in offroad)
+    spd_lo = min(offroad[k]["SpeedMax"] for k in offroad); spd_hi = max(offroad[k]["SpeedMax"] for k in offroad)
+    assert spd_lo <= wagon["SpeedMax"] <= spd_hi, ("top speed outside the off-road block", wagon["SpeedMax"], spd_lo, spd_hi)
+    assert wagon["SpeedMax"] < sedan["SpeedMax"], "an SUV must not out-run the sedan"
+    fuel_lo = min(offroad[k]["Fuel"] for k in offroad)
+    assert wagon["Fuel"] >= fuel_lo, ("fuel below the off-road block", wagon["Fuel"], fuel_lo)
+    assert wagon["Fuel"] > sedan["Fuel"], "an SUV should carry more than the sedan"
+    assert wagon["Mass"] == 1850, "SUV mass, between the jeep's 1700 and the off-roader's 2000"
+    assert offroad["jeep"]["Mass"] < wagon["Mass"] < offroad["offroader"]["Mass"]
+    assert wagon["fields"]["Name"].strip().strip(chr(34)) == "SUV", ("display name", wagon["fields"]["Name"])
+    print(f"PASS balanced as an SUV: engine {wagon['Engine']:.0f} (off-road block), top speed "
+          f"{wagon['SpeedMax']} in [{spd_lo},{spd_hi}] and under the sedan's {sedan['SpeedMax']}, fuel "
+          f"{wagon['Fuel']:.0f} over the sedan's {sedan['Fuel']:.0f}, mass {wagon['Mass']:.0f} between "
+          f"jeep {offroad['jeep']['Mass']:.0f} and off-roader {offroad['offroader']['Mass']:.0f}")
     # THE MAIN BOX IS A FITTED LOWER SHELL, NOT AN ENCLOSING ONE. Every roofed car in this fleet
     # pairs a low main box with a separate RoofBox: sedan/police (2.5,0.916,5.656), hatchback
     # (2.5,0.916,5.261), humvee (2.5,1.032,5.029) -- all stopping below the beltline. An earlier pass
     # here asserted that the box must CONTAIN every vertex, which is the opposite of the intent and
     # passes only for a box that swallows the greenhouse: that makes the window apertures solid and
-    # overlaps RoofBox("Station Wagon") at y 1.92..2.17. So assert the convention, not containment.
+    # overlaps RoofBox("SUV") at y 1.92..2.17. So assert the convention, not containment.
     box_lo = tuple(c-s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
     box_hi = tuple(c+s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
     BELTLINE = 1.10   # window aperture bases; posts run 1.10 -> 1.92
@@ -778,15 +801,15 @@ def check():
     assert '"wagon" => BuildWagon(variant)' in build
     assert '"wagon" => _wagon' in lookup
     assert re.search(r'BuildWagon\(int variant = 0\)\s*=>\s*Build\(_wagon, variant, "wagon"\)', src)
-    roof = re.search(r'"Station Wagon"\s*=>\s*\((new Vector3\([^)]*\)),\s*(new Vector3\([^)]*\))\)', src)
+    roof = re.search(r'"SUV"\s*=>\s*\((new Vector3\([^)]*\)),\s*(new Vector3\([^)]*\))\)', src)
     assert roof, "Missing roof/cabin registration"
     size,center = vector(roof[1]),vector(roof[2])
     assert abs(center[1]+size[1]/2-hi[1]) < 1e-6
     assert size == (2.52,.25,3.36) and center == (0,2.045,.88)
     sedan_pose = vector(re.search(r'"Sedan"\s*=>\s*(new Vector3\([^)]*\))',src)[1])
-    wagon_pose = vector(re.search(r'"Station Wagon"\s*=>\s*(new Vector3\([^)]*\))',src)[1])
+    wagon_pose = vector(re.search(r'"SUV"\s*=>\s*(new Vector3\([^)]*\))',src)[1])
     assert all(abs(w-s-(.205 if i==2 else 0))<1e-6 for i,(w,s) in enumerate(zip(wagon_pose,sedan_pose))), 'driver body pose did not follow front row'
-    assert 'name is "Sedan" or "Station Wagon"' in src
+    assert 'name is "Sedan" or "SUV"' in src
     labels = re.findall(r'"([^"]+)"', braced(src,src.index("{",src.index("string[] GlassPaneLabels"))))
     glass_base = wagon["GlassMesh"].removesuffix(".txt")
     pane_names = {f"{glass_base}_{label}.txt" for label in labels if (CONTENT / f"{glass_base}_{label}.txt").exists()}

@@ -22,7 +22,12 @@ namespace UnturnedGodot.Testing
             replica.Position = new Vector3(24f, 0f, 0f);
             World.AddChild(replica);
 
-            T.Check("command vehicle resolves to wagon", wagon.SpecKey == "wagon" && wagon.DisplayName == "Station Wagon");
+            // The spec KEY stays "wagon" -- SpecNames indices ARE the replicated TypeIds and this is 32 --
+            // while the DISPLAY name is now SUV. "suv" is an alias into the same spec, the way "off_roader"
+            // and "vw_golf" already are, so both spawn commands must land on the same vehicle.
+            T.Check("both spawn names resolve to the same vehicle, displayed as SUV",
+                wagon.SpecKey == "wagon" && wagon.DisplayName == "SUV"
+                && Vehicle.BuildByName("suv") is Vehicle alias && alias.DisplayName == "SUV");
             T.Check("wagon is in console/network catalogue once", Vehicle.SpecNames.Count(n => n == "wagon") == 1);
             var cabinShift = new Vector3(0f, 0f, 0.205f);
             T.Check("front seat table follows steering; rear row retained", wagon.SeatCount == 4
@@ -52,7 +57,7 @@ namespace UnturnedGodot.Testing
             var hull = new Aabb(center - size / 2f, size).Grow(0.00001f);
             // THE HULL IS A FITTED LOWER SHELL AND MUST NOT ENCLOSE THE BODY. An earlier pass asserted
             // hull.Encloses(body), which is only satisfiable by a box that swallows the greenhouse --
-            // making the window apertures solid and doubling up with RoofBox("Station Wagon"). The
+            // making the window apertures solid and doubling up with RoofBox("SUVWagon"). The
             // SEDAN is the control: it is the shape this wagon was measured against, it is a shipped
             // roofed car, and its own hull does not enclose its own body either. If containment ever
             // becomes the rule, this control fails first and says so.
@@ -137,8 +142,14 @@ namespace UnturnedGodot.Testing
             var defaultTip = new Vector3(sedanSize.X / 2f - 0.3f, Mathf.Max(0.22f, sedanCenter.Y - sedanSize.Y / 2f + 0.18f), sedanCenter.Z + sedanSize.Z / 2f - 0.05f);
             T.Check("CONTROL: sedan exhaust retains fleet formula", sedan.GetChildren().OfType<CpuParticles3D>()
                 .Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(defaultTip)));
-            T.Check("capacities retained from sedan", wagon.FuelMax == sedan.FuelMax && wagon.HealthMax == sedan.HealthMax);
-            T.Check("mass between sedan and police", Mathf.IsEqualApprox(wagon.Mass, 1650f));
+            // Health still tracks the sedan; FUEL deliberately no longer does -- it is balanced with the
+            // off-road block now, which runs 60-95 kL against the cars' 45-50.
+            T.Check($"health retained from the sedan, fuel raised to the off-road block ({wagon.FuelMax:0} vs {sedan.FuelMax:0})",
+                wagon.HealthMax == sedan.HealthMax && wagon.FuelMax > sedan.FuelMax);
+            T.Check("SUV mass, between the jeep and the off-roader", Mathf.IsEqualApprox(wagon.Mass, 1850f));
+            // The point of the rebrand: it must no longer out-run the car it was derived from.
+            T.Check($"an SUV does not out-run the sedan ({wagon.SpeedMaxForward:0.0} vs {sedan.SpeedMaxForward:0.0} m/s)",
+                wagon.SpeedMaxForward < sedan.SpeedMaxForward);
             yield return Ticks(1);
         }
 
