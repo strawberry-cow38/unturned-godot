@@ -2008,7 +2008,7 @@ namespace UnturnedGodot
         static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
         {
             "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
-            "Station Wagon"     => (new Vector3(2.52f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // full-width roof bounds; front face follows A-post rake; notes/WAGON_REPORT.md
+            "SUV"               => (new Vector3(2.52f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // full-width roof bounds; front face follows A-post rake; notes/WAGON_REPORT.md
             "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
             "Humvee"            => (new Vector3(2.5f, 0.254f, 2.815f), new Vector3(0f, 2.0f, 0.050f)),
             "Roadster"          => (new Vector3(2.5f, 0.254f, 1.367f), new Vector3(0f, 2.0f, 0.672f)),
@@ -2033,6 +2033,7 @@ namespace UnturnedGodot
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public Color? GlassTint;   // GlassMesh albedo+alpha; null = the jet's golden canopy. Cars use GlassPane.DefaultHue so vehicle glass matches the building editor's windows.
+            public Vector3? ExhaustPos;   // authored outlet; null keeps the fleet's lower-shell formula
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -2863,7 +2864,7 @@ namespace UnturnedGodot
             ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
             ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
             ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
-            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // shared four-seat interior; original load deck begins behind the rear seatbacks
+            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.420f), new Vector3(0.500f, -0.079f, -0.420f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // front row follows wagon_steer +0.205 Z; wagon_seats matches; rear row retained
             ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
             ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
             ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
@@ -2901,7 +2902,8 @@ namespace UnturnedGodot
         };
         static Vector3 SeatOf(string name) => name switch
         {
-            "Sedan" or "Station Wagon" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "SUV" => new Vector3(-0.50f, -0.04f, -0.361f),   // front row +0.205 Z; retain sedan's body-to-seat offset
             "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
             "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),
             "Roadster" => new Vector3(-0.50f, -0.04f, 0.390f),
@@ -2921,7 +2923,7 @@ namespace UnturnedGodot
         /// (strawberry 2026-09-03: "theres still a lot of vehicle seating positions that arent accurate. fix them
         /// all"). Mirrors the identical BuildByName/SpecFor gap fixed 2026-08-16 one level up (whole SPEC, not
         /// just the seat) -- same shape of bug, in the sibling table nobody re-checked when that one was found.</summary>
-        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Station Wagon" or "Hatchback" or "Humvee" or "Roadster"
+        static bool HandTunedSeatOf(string name) => name is "Sedan" or "SUV" or "Hatchback" or "Humvee" or "Roadster"
             or "Bus" or "Quad" or "Ambulance" or "Firetruck" or "Tractor" or "Ural" or "Police" or "Jeep";
         /// <summary>Average of the 11 hand-tuned deltas above against their own real Seat_0 (Y +0.04 to +0.10,
         /// Z from -0.005 to +0.09 with no consistent sign -- not touching Z avoids guessing the wrong direction).
@@ -3142,27 +3144,43 @@ namespace UnturnedGodot
         };
 
         // Original wagon authored from fleet proportions, not a sedan-body extension.
-        // Body AABB 5.80 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
+        // Body AABB 5.487996 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
         static readonly Spec _wagon = new()
         {
-            Mass = 1650f,   // midpoint of sedan 1500 and police 1800 kg (same measured footprint)
+            Mass = 1850f,   // SUV class, between the jeep's 1700 and the off-roader's 2000 (strawberry 2026-09-09:
+                            // "its a damn good suv lol. should probably just rebrand and balance it as one")
             Body = "wagon_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "wagon_palette.png",
             GlassMesh = "wagon_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),
             Water = WaterMode.Car, RandomHueGray = true,
-            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, 0f),   // fitted lower shell; separate roof above
+            // REBALANCED OFF THE CAR BLOCK ONTO THE OFF-ROAD ONE. It carried the sedan's numbers VERBATIM --
+            // engine 700, top speed 16.5, 50 kL -- which is the fastest, most powerful pairing on the road and
+            // wrong for an 1850 kg box. The off-road block is unanimous on engine 600 (off-roader, jeep, van,
+            // truck) and runs 12.5-14.5 m/s; 13.5 sits between the jeep/off-roader's 12.5 and the humvee's 14.
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 32f,
+            // FITTED LOWER SHELL, not a full-body box -- the fleet convention for every roofed car: sedan and
+            // police (2.5, 0.916, 5.656), hatchback (2.5, 0.916, 5.261), humvee (2.5, 1.032, 5.029), each
+            // stopping below the beltline with RoofBox("...") carrying the roof slab above it. A box that
+            // encloses the greenhouse makes the window apertures solid and doubles up with RoofBox("Station
+            // Wagon") at y 1.92..2.17. Top sits at 1.080, just under the 1.10 beltline. Z follows the new
+            // asymmetric extents (bumpers at -2.949 and +2.827, centre -0.061) at the sedan's ~95% inset.
+            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, -0.061f),
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
+            // Fuel follows the class too: cars run 45-50 kL, the off-road block 60-95. 70 kL matches the van.
+            Fuel = 70_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "SUV", Horn = "carhorn_02.ogg",
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
-            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // sedan lenses shifted +0.012 m; exposed beyond the rear side-wall ends
-            SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // Sedan emitters follow lens translations: front +0.150 m, rear +0.012 m in Z
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.8269f),   // outlet centre of the SEDAN duct lifted out of sedan_body.txt, its tip flush with this car's rearmost point like the sedan's is with its own
+            SteerPivot = new Vector3(-0.464f, 0.894f, -1.211f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
             Parts = new (string, Color)[]
             {
-                ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
-                ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("wagon_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("wagon_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("wagon_bumper_front.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
+                ("wagon_bumper_rear.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
+                ("wagon_exhaust.txt", new Color(0.16f, 0.17f, 0.18f)),   // short dark-metal tailpipe
                 ("wagon_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
                 ("wagon_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
             },
@@ -4532,7 +4550,7 @@ namespace UnturnedGodot
             return seen.ToArray();
         }
 
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
         // Append new keys: indices are replicated TypeIds, so inserting would renumber existing vehicles.
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = Station Wagon, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
@@ -4553,7 +4571,7 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "tank" => _tank,
+            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "suv" => _wagon, "tank" => _tank,
             // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
             // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
             // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast
@@ -7069,7 +7087,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 v._exhaust = MakeSmoke("veh_smoke_1.png", new Color(0.66f, 0.66f, 0.64f, 0.8f), 1.3f, 1.3f, 14, false, 0.14f, 0.34f);
                 v._exhaust.Direction = new Vector3(0f, 0.35f, 1f); v._exhaust.Spread = 16f; v._exhaust.Gravity = new Vector3(0f, 0.7f, 0f);   // out the back, drifting up
-                v._exhaust.Position = new Vector3(+(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies   // RIGHT rear: the tailpipes are on the right now that the bodies are un-mirrored (master 2026-09-05 "exhaust emitters are on the opposite side")
+                v._exhaust.Position = s.ExhaustPos ?? new Vector3(+(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear right, low; authored pipe tips override the default body-box estimate
                 v.AddChild(v._exhaust);
             }
             // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's

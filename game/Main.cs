@@ -1856,6 +1856,7 @@ namespace UnturnedGodot
             // Bright flat body so the glass is the only thing that isn't magenta (master: "color the body a
             // bright color too to help you diff"). Applied to every mesh EXCEPT the glass panes, which the
             // glass builder already named Glass_<label>.
+            bool keepPaint = System.Environment.GetEnvironmentVariable("UG_GLASSPAINT") == "1";
             var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.10f, 0.85f),
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             int painted = 0, panes = 0;
@@ -1866,7 +1867,12 @@ namespace UnturnedGodot
                 if (n is MeshInstance3D mi)
                 {
                     if (mi.Name.ToString().StartsWith("Glass_") || mi.Name.ToString() == "Glass") { panes++; _glassPanes.Add(mi); }
-                    else { mi.MaterialOverride = bodyMat; painted++; _bodyMeshes.Add(mi); }
+                    // UG_GLASSPAINT=1: keep the vehicle's REAL paint instead of the flat magenta. The magenta
+                    // exists so glass reads against the body, but this is also the only harness that
+                    // photographs a PARKED car from player eye height at eight yaws -- --vehicle is a moving
+                    // chase cam that only ever sees the back. When the question is "what does the front look
+                    // like", the diff colour is the thing in the way.
+                    else { if (!keepPaint) mi.MaterialOverride = bodyMat; painted++; _bodyMeshes.Add(mi); }
                 }
                 foreach (var c in n.GetChildren()) Paint(c);
             }
@@ -1874,6 +1880,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
                 foreach (var mi in _bodyMeshes)
                 { var a = mi.GetAabb(); GD.Print($"[mesh] {mi.Name,-26} size=({a.Size.X,7:0.00},{a.Size.Y,6:0.00},{a.Size.Z,7:0.00}) pos=({mi.Position.X,6:0.00},{mi.Position.Y,6:0.00},{mi.Position.Z,6:0.00})"); }
+            if (keepPaint) _glassPanes.Clear();   // leave the real tinted glass alone too
             // Colour the panes MYSELF rather than leaning on UG_GLASSDEBUG: its palette starts at
             // (1,0.2,1), the same magenta as the body above, so every vehicle's windscreen was
             // invisible against the bodywork and I read a van's REAR window (seen through the empty

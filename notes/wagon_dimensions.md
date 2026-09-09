@@ -2,22 +2,22 @@
 
 Metres; +Y up, forward −Z. This replaces the old sedan-extension derivation. The unchanged `vehicle_measurements.md` still contains a historical copy of that old derivation. Fleet references and the reasoning for the main dimensions are in [WAGON_REPORT.md](WAGON_REPORT.md) and the pre-authoring [vehicle_style.md](vehicle_style.md).
 
-Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revision 3 widens the lateral wall/post span to 0.28 m so every outer face is flush at X = ±1.26. Decimal rounding to 0.01–0.02 m is deliberate. Panel-detail choices below are subdivisions of that section and the chosen envelope, not additional empirical fleet statistics.
+Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. The preceding strip revision widened the lateral wall/post span to 0.28 m so every outer face is flush at X = ±1.26. Decimal rounding to 0.01–0.02 m is deliberate. Panel-detail choices below are subdivisions of that section and the chosen envelope, not additional empirical fleet statistics.
 
 | Part | Coordinates / construction | Source / rule |
 | --- | --- | --- |
-| Body envelope | X ±1.26, Y −0.27..2.17, Z ±2.90 | Rounded road dimensional medians; length between road median and sedan. |
-| Side shell ends | Hood nose Z −2.757828, rear gate Z 2.68; outer X ±1.26 throughout, including both bumper tips at Z ±2.90 | Constant 2.520 m plan width; front nose retains the measured sedan overhang scale. |
-| Side wall | Continuous sill at Y −0.12 through both axles; outer skin at X ±1.26 meets the hood bevel and A-post, then the rail at Y1.10; inner cabin X ±0.98 | Joined shell with no arch openings, recess returns or interior backing solids. |
+| Body envelope | X ±1.26, Y −0.27..2.17, Z −2.807996..2.68 | Fascia plane extended to the flat floor; body bumpers removed. Body length 5.487996 m. |
+| Side shell ends | Floor front Z −2.807996, hood nose Z −2.757828, rear gate Z 2.68 | Outer X ±1.26 throughout; donor bumpers are separate parts. |
+| Side wall | Outer X ±1.26; bottom Y −0.27 throughout, meeting the hood bevel/A-post and belt rail at Y1.10; inner cabin X ±0.98 | Vertical side walls meet the full-width flat floor. |
 | Axles | (±1.30,0.25,−1.56), (±1.30,0.25,1.46); front steering | 3.02 wheelbase from three-specimen mean ratio, 2.60 median track, modal ride −0.35. |
-| Underfloor | X ±0.99, Y −0.27, Z −2.757828..2.90; bevels join the outer sill. Passenger floor X ±0.98, Y −0.12, Z −1.25..1.36 | One connected underside and cabin floor; no overlapping boxes or sill gaps. |
+| Underfloor | X ±1.26, Y −0.27, Z −2.807996..2.68; passenger floor X ±0.98, Y −0.12, Z −1.25..1.36 | Flat external sheet; old underside bevel and front lip stations removed. |
 | Load floor | X ±0.98, Y0.18, Z1.36..2.53; vertical step from Y−0.12 at Z1.36 | Retains start after seatback maximum Z1.357307 and clear run 1.17 to gate. |
 | Sedan hood | Centre X ±0.98, (Y,Z): (0.999953,−2.757828) → (1.125,−1.25), directly to glass. Planar outer strips reach X ±1.26: (0.874953,−2.762766) → (0.994273,−1.323997) | Sedan nose height/drop and longitudinal nose scale 0.964159181; shelf removed. Bevel 24.352857° at the wider 0.28 m span. Both front and rear trim edges remain in the fascia and windscreen planes. |
-| Rear gate lower panel | Inner Z2.53, outer Z2.68; top Y1.10; inner lower edge Y0.18; exterior joins bumper at Y0.16 | Full width X ±1.26; joined directly to deck, side walls and bumper; no sedan boot-lid recess. |
-| Bumpers | Front X ±1.26, Y−0.158648..0.100803, tip Z−2.90; rear X ±1.26, Y−0.12..0.16, Z2.76..2.90 | Sedan front height levels; rear Y/Z silhouette retained with full width. Both join the shell. |
-| Grille | X ±0.48, Y0.36..0.54, on the sloping front fascia (Z approximately −2.7831..−2.7760) | Dark material patch partitioned into the fascia; no overlapping backing face. |
-| Latch | X ±0.23, Y 0.89..0.96, Z 2.68..2.70 | Width ≈2t; height≈t/4; projection≈t/12. Below rear glass. |
-| Roof | X ±1.26, Y 1.92..2.17; front Z −0.80 at underside, −0.658491 at top; rear Z2.56 | Front face continues the unchanged windscreen/A-post plane; top stays flat. |
+| Rear gate lower panel | Inner Z2.53, outer Z2.68; top Y1.10; inner lower edge Y0.18; exterior down to Y−0.27 | Full width X ±1.26; painted closed tailgate, without latch or baked bumper. |
+| Bumpers | Separate hatchback donor parts, X ±1.26; front Y−0.155..0.104451, Z−2.949005..−2.791821; rear Y−0.155..0.104450, Z2.68..2.826938 | Extract 28 triangles/end, refit width and translate, trim buried backs and cap; final 44 triangles/end; finished parts lowered 0.035 without changing X/Z. |
+| Grille | Removed | Entire fascia uses the painted UV swatch. |
+| Latch | Removed | Its former cell is an ordinary painted tailgate surface. |
+| Roof | X ±1.26, Y1.92..2.17; front Z−0.80 at underside, −0.658491 at top; rear Z2.56 at underside, 2.523415 at top | Continue both A-post and D-post planes through roof thickness; top remains horizontal. |
 | All pillar lateral spans | X ±[0.98,1.26] | Shared 0.28 lateral section; all outer faces on the wall plane; bases/roof junctions share edges, with no interior mating caps. |
 | A pillar (each side) | Inner YZ (1.125,−1.25), (1.92,−0.80), (1.92,−0.55), (1.10,−1.00); outer front foot (0.994273,−1.323997), other outer endpoints equal inner | Outer foot extends down the same windscreen plane to the planar bevel. Side-window opening, glass and upper endpoints retained. |
 | B pillar | Y 1.10..1.92, Z 0.12..0.37 | 0.25 section; begins t/2 rounded behind the origin, between shared seat rows. |
@@ -29,10 +29,15 @@ Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revisio
 | Side front pane | Absolute X=1.256; bottom Z −1.00..0.12 at Y1.10; top Z −0.55..0.12 at Y1.92 | A-to-B aperture; common 0.004 side inset. |
 | Side rear-row pane | Same X/Y; Z 0.37..1.35 | B-to-C aperture. |
 | Side cargo pane (`mid1`) | Same X/Y; bottom Z 1.55..2.48; top Z 1.55..2.36 | C-to-D aperture; base/top lengths 0.93/0.81. |
-| Headlight mesh transform | sedan_headlights + (0,0,0.150) | Unchanged accepted lamp coordinates; all outward lens faces clear the revised fascia. |
-| Taillight mesh transform | sedan_taillights + (0,0,0.012) | Unchanged accepted lamp coordinates; all outward lens faces clear the gate. |
-| Spot / omni / tail anchors | Spots (±0.765,0.708,−2.819), omni (0,0.841,−2.795); tails (±0.979,0.688,2.853) | Exactly the same translations as each shared lens mesh. |
-| Lower fitted collider | Size (2.50,0.98,5.52); centre (0,0.59,0) | Accepted fitted box retained: X inset 0.01 each side, upper Y1.08, Z extent ±2.76. Height 0.98 lies between sampled main-box heights 0.916/1.046. |
-| Roof fitted collider | Size (2.52,0.25,3.36); centre (0,2.045,0.88) | Roof AABB; box includes the small wedge ahead of the slanted front face. |
+| Headlight mesh transform | sedan_headlights + (0,0,+0.150) | Original wagon fit; all 20 triangles retained, no scaling. |
+| Taillight mesh transform | sedan_taillights + (0,0,+0.012) | Original wagon fit; all 20 triangles retained, no scaling. |
+| Spot / omni / tail anchors | Spots (±0.765,0.708,−2.819), omni (0,0.841,−2.795); tails (±0.979,0.688,2.853) | Sedan emitter anchors translated by the same deltas as their lenses. |
+| Steering mesh / pivot | wagon_steer: Z −1.367887..−1.056433; pivot (−0.464,0.894,−1.211) | Sedan wheel/pivot +0.205 Z; 0.117887 cabin-front poke-through. |
+| Seat table | Front (±0.500,−0.079,−0.420); rear (±0.500,−0.079,0.772) | Front +0.205 Z; rear unchanged; driver reach 0.792160. |
+| Seat mesh | wagon_seats: front Z −0.828915..0.166275; rear Z 0.362069..1.357307 | Sedan front row +0.205 Z only; row clearance 0.195794; rear-to-step clearance 0.002693. |
+| Driver body/camera anchor | (−0.50,−0.04,−0.361) | Separate wagon SeatOf anchor +0.205 Z; body-to-seat offset retained on server/replica. |
+| Exhaust | Tip/emitter (0.95,0.28,2.730); root Z 2.550; six sides, 0.120 across X, mouth depth 0.040; 28 triangles | Formula point (0.95,0.28,2.649) is inside the closed panel; outlet extends 0.050 beyond Z 2.680. Wagon-only emitter override; pipe dimensions are construction choices. |
+| Lower-shell collider | Size (2.5,0.98,5.52); centre (0,0.59,−0.061) | Preserves 18e58ac0: fitted lower shell ending at Y 1.080, below 1.10 beltline; paired with separate roof box. |
+| Roof fitted collider | Size (2.52,0.25,3.36); centre (0,2.045,0.88) | Existing cabin/roof registration retained; encloses the revised slanted roof slab. |
 
-The main fitted box is intentionally lower-body-only, as on the sampled fleet. It does not enclose the full body: shortfalls are X 0.01 on each side, Y− 0.37, Y+ 1.09, and Z 0.14 on each end. Roof registration adds the roof slab. Runtime convex decomposition can replace these fitted boxes for active physics; see the verification limits in the report.
+The lower-shell box intentionally does not enclose the greenhouse, matching the sedan control. The earlier full-body enclosure description was wrong. Driving, suspension and impacts have not been evaluated. Static geometry and targeted runtime results are recorded in [WAGON_REPORT.md](WAGON_REPORT.md).

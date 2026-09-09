@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the accepted wagon silhouette with joined surfaces and a sedan hood.
+"""Build the wagon shell, sedan interior/lamps and extracted hatchback bumpers.
 
 The sedan front stations are measured from its body; the cabin and axle rig
 retain the independently authored wagon coordinates. No Boolean overlapping
@@ -9,11 +9,35 @@ import math
 from pathlib import Path
 import shutil
 import struct
-from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs
+from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs, vector
 
 PAINT = (0.125, 0.75)
 DARK = (0.375, 0.25)
-HALF_WIDTH = 1.26  # One outer wall plane from bumper to bumper, including every post.
+HALF_WIDTH = 1.26  # One outer wall plane, including every post and bumper tip.
+# FLOOR_Y = the OUTER sill height, and it must match the fleet's visible flank, not its hidden belly.
+# Measured lowest point by width band: sedan, hatchback and golf all bottom at -0.159 on the outer
+# flank (|x| 1.1-1.3) -- the -0.273 they also have is INBOARD, tucked under the car where it is never
+# seen. The first flat-floor pass ran the sheet out to the wall at -0.270, so the wagon's visible sill
+# hung 0.111 lower than any other car and the bumper read as floating above it (strawberry: "the
+# bumpers need to be lower or the bottom needs to be higher. measure vs a sedan"). Still completely
+# flat and full width, just at the fleet's outer height, which also takes ground clearance 0.080 -> 0.191.
+FLOOR_Y = -.159
+REAR_Z = 2.68
+
+
+def translate_asset(source, target, offset):
+    """Translate position records only; keep donor topology, UVs and normals."""
+    lines = []
+    for line in (CONTENT/source).read_text().splitlines():
+        if line.startswith('v '):
+            p = tuple(map(float, line.split()[1:]))
+            delta = offset(p)
+            if any(delta):
+                line = 'v ' + ' '.join(fmt(x+d) for x,d in zip(p,delta))
+        elif line.startswith('g '):
+            line = 'g ' + Path(target).stem
+        lines.append(line)
+    (CONTENT/target).write_text('\n'.join(lines)+'\n')
 
 def sub(a, b):
     return tuple(x-y for x, y in zip(a, b))
@@ -123,6 +147,45 @@ class Mesh:
 
 
 
+def build_exhaust():
+    """THE SEDAN'S OWN EXHAUST, lifted out of its body mesh (strawberry: "REMOVE the exhaust! take the
+    one from the sedan and put it where it should go").
+
+    No vehicle ships an exhaust as a part file -- the sedan's is baked into sedan_body.txt: a tapered
+    square duct, 0.197 x 0.197 in section, running 2.0 m from z 0.942 under the car back to a tip at
+    z 2.942, on the right at x 0.695..0.892. Ten triangles. Its tip is flush with the sedan's rearmost
+    point (2.942378), so the wagon's is placed flush with the wagon's rearmost point in turn.
+
+    Y and X are carried over untouched. On the sedan the duct's lowest point (-0.273) sits below its
+    own bumper lip (-0.159), so keeping Y gives the wagon the same relationship and the same silhouette
+    rather than a re-invented one.
+    """
+    sedan = obj(CONTENT/'sedan_body.txt')
+    verts = sedan['vertices']
+    seed = {i for i,(x,y,z) in enumerate(verts) if .68 <= x <= .90 and -.28 <= y <= -.06 and z >= 2.75}
+    faces = [f for f in sedan['faces']
+             if any(int(c.split('/')[0])-1 in seed for c in f)]
+    assert len(faces) == 10, ('sedan exhaust is not 10 triangles', len(faces))
+    src_tip = max(z for _,_,z in verts)
+    dst_tip = max(max(z for _,_,z in obj(CONTENT/f'wagon_{n}.txt')['vertices'])
+                  for n in ('body','bumper_rear'))
+    dz = dst_tip - src_tip
+    mesh = Mesh()
+    for f in faces:
+        tri = [verts[int(c.split('/')[0])-1] for c in f]
+        moved = [(x, y, z+dz) for x,y,z in tri]
+        n = cross(sub(moved[1],moved[0]), sub(moved[2],moved[0]))
+        mesh.panel(moved, n, DARK)
+    mesh.write('wagon_exhaust.txt', weld_positions=True)
+    out = obj(CONTENT/'wagon_exhaust.txt')
+    tip = ((out['lo'][0]+out['hi'][0])/2, 0, out['hi'][2])
+    at_tip = [v for v in out['vertices'] if abs(v[2]-out['hi'][2]) < 1e-6]
+    tip = (tip[0], sum(v[1] for v in at_tip)/len(at_tip), tip[2])
+    print(f'Exhaust: sedan duct, {len(mesh.f)} triangles, Z {dz:+.6f} -> tip flush at {dst_tip:.6f}; '
+          f'outlet centre {tuple(round(c,4) for c in tip)}')
+    return tip
+
+
 def outward_quad(mesh, points, direction, uv=None):
     n = cross(sub(points[1], points[0]), sub(points[2], points[0]))
     if sum(a*b for a,b in zip(n,direction)) < 0:
@@ -154,10 +217,76 @@ def sedan_front():
                 shoulder=mapped(station(.874953)),
                 crease=mapped(station(1.125,True)),
                 valance=mapped(station(.125)),
-                lower=mapped(station(-.125)),
-                cowl=station(1.125),
-                bumper_lo=round(min(p[1] for p in vs if p[2]<-2.9),6),
-                bumper_hi=round(max(p[1] for p in vs if p[2]<-2.9),6))
+                cowl=station(1.125))
+
+
+def bumper_band(name, sign):
+    """The measured, already closed 28-triangle bumper in each donor body."""
+    source = obj(CONTENT/f'{name}_body.txt')
+    faces = []
+    for face in source['faces']:
+        points = [source['vertices'][int(c.split('/')[0])-1] for c in face]
+        if all(sign*z > 2.1 and
+               min(abs(y+.158647),abs(y-.100803)) < .000003 for x,y,z in points):
+            assert len(face) == 3
+            faces.append(points)
+    assert len(faces) == 28, (name, sign, 'donor bumper band changed')
+    return faces
+
+
+def fit_bumpers(fascia):
+    for label,sign in [('front',-1),('rear',1)]:
+        faces = bumper_band('hatchback',sign)
+        points = {p for f in faces for p in f}
+        lo = tuple(min(p[i] for p in points) for i in range(3))
+        hi = tuple(max(p[i] for p in points) for i in range(3))
+        # Fit to the wall width by shrinking 0.074%, never bridge an inset part.
+        xscale = 2*HALF_WIDTH/(hi[0]-lo[0])
+        dy = -.12-lo[1]  # retain donor height; lower face sits at the old sill Y.
+        # Keep the complete outward band exposed, with the back entering the
+        # closed body. Retain the angled outer contour; trim buried depth below.
+        front_points = [p for p in points if sign*p[2] > sign*(lo[2]+hi[2])/2]
+        dz = (min(fascia(y+dy)-z for x,y,z in front_points)-.08 if sign < 0
+              else REAR_Z-min(p[2] for p in front_points)+.08)
+        part = Mesh()
+        cut = set()
+        for tri in faces:
+            fitted = [((x-(lo[0]+hi[0])/2)*xscale,y+dy,z+dz) for x,y,z in tri]
+            # Remove only the donor's micrometre export jitter at outer tips.
+            fitted = [(math.copysign(HALF_WIDTH,x) if abs(abs(x)-HALF_WIDTH)<.000003 else x,y,z)
+                      for x,y,z in fitted]
+            # Trim the buried portion at the attachment plane. This avoids
+            # coplanar overlapping side walls where the donor wraps backward.
+            def distance(p):
+                return sign*(p[2]-(fascia(p[1]) if sign < 0 else REAR_Z))
+            clipped = []
+            for a,b in zip(fitted,fitted[1:]+fitted[:1]):
+                da,db = distance(a),distance(b)
+                if da >= 0:
+                    clipped.append(a)
+                if da*db < 0:
+                    t = da/(da-db)
+                    p = tuple(a[i]+t*(b[i]-a[i]) for i in range(3))
+                    clipped.append(p)
+                    cut.add(tuple(round(v,6) for v in p))
+            if len(clipped) >= 3:
+                part.panel(clipped,cross(sub(fitted[1],fitted[0]),sub(fitted[2],fitted[0])),DARK)
+        # Only the cut closure is new; all exposed surfaces come from the donor.
+        cx = sum(p[0] for p in cut)/len(cut)
+        cy = sum(p[1] for p in cut)/len(cut)
+        part.panel(sorted(cut,key=lambda p:math.atan2(p[1]-cy,p[0]-cx)),(0,0,-sign),DARK)
+        part.write(f'wagon_bumper_{label}.txt', weld_positions=True)
+        # Lower the finished part, including its attachment cap. Re-fitting at
+        # the new Y would also change Z against the sloped fascia. Keep Z fixed.
+        name = f'wagon_bumper_{label}.txt'
+        # Sit the lip FLUSH with the floor. On the sedan/hatchback/golf the bumper lip IS the lowest
+        # point of the outer flank -- same height, no step -- so derive the drop from FLOOR_Y rather
+        # than carrying a hand-tuned constant that silently goes wrong when the floor moves.
+        lip = min(v[1] for v in obj(CONTENT/name)['vertices'])
+        drop = FLOOR_Y - lip
+        translate_asset(name, name, lambda p, d=drop: (0, d, 0))
+        print(f'Hatchback {label}: X scale {xscale:.9f}; Y {dy:+.6f}; Z {dz:+.6f}')
+        print(f'  Lip {lip:+.6f} -> {FLOOR_Y:+.6f} (drop {drop:+.6f}), flush with the floor; Z unchanged')
 
 
 def build():
@@ -167,11 +296,6 @@ def build():
     hood = sedan_front()
     yn,zn=hood['nose']; yc,zc=1.125,-1.25  # Hood ends at the windscreen, with no shelf.
     ys,_=hood['shoulder']; yv,zv=hood['valance']
-    yl,zl=hood['lower']; blo,bhi=hood['bumper_lo'],hood['bumper_hi']
-    # Where the sedan's lower valance meets the top of its bumper.
-    zj = round(zl+(zv-zl)*(bhi-yl)/(yv-yl),6)
-    front = [(yl,zn),(blo,-2.90),(bhi,-2.90),(bhi,zj),(yv,zv)]
-
     def hood_y(z):
         return yn+(yc-yn)*(z-zn)/(zc-zn)
 
@@ -189,60 +313,31 @@ def build():
     shoulder_cowl_z = zc-bevel_slope*(HALF_WIDTH-.98)/(screen_slope-hood_slope)
     shoulder_cowl_y = yc+screen_slope*(shoulder_cowl_z-zc)
 
-    # Longitudinal side stations have no wheel-dependent coordinates at all.
-    zs = [zn,-2.32,shoulder_cowl_z,zc,-1.00,2.32,2.68]
-    def sill(z):
-        return yl if z == zn else -.12
+    # Continue the painted fascia to the flat full-width floor, with no lip.
+    floor_front_z = round(fascia(FLOOR_Y), 6)
+    zs = [floor_front_z,-2.32,shoulder_cowl_z,zc,-1.00,2.32,REAR_Z]
 
     for sign in (-1,1):
         side=(sign,0,0)
-        # Full-width nose side and stepped sedan bumper profile.
-        panel([(sign*HALF_WIDTH,y,z) for y,z in front]+
-              [(sign*HALF_WIDTH,ys,shoulder_nose_z)],side)
-        # One side wall runs up to the bevel, then to the pillar/window bases.
-        # Retain lower sill subdivisions without introducing hood-edge fans.
-        upper_zs = [zn,shoulder_cowl_z,-1.00,2.32,2.68]
+        # Side walls drop vertically to the same Y across the whole length.
+        upper_zs = [floor_front_z,shoulder_cowl_z,-1.00,2.32,REAR_Z]
         upper = [(ys,shoulder_nose_z),(shoulder_cowl_y,shoulder_cowl_z),
                  (1.10,-1.00),(1.10,2.32),(1.10,2.68)]
         for i,(z0,z1) in enumerate(zip(upper_zs,upper_zs[1:])):
             x0=x1=sign*HALF_WIDTH
-            panel([(x0,sill(z),z) for z in zs if z0 <= z <= z1]+
+            panel([(x0,FLOOR_Y,z) for z in zs if z0 <= z <= z1]+
                   [(x1,*upper[i+1]),(x0,*upper[i])],side)
         a,b=(sign*.98,yn,zn),(sign*HALF_WIDTH,ys,shoulder_nose_z)
         c,d=(sign*HALF_WIDTH,shoulder_cowl_y,shoulder_cowl_z),(sign*.98,yc,zc)
         panel([a,b,c],(0,1,0))
         panel([a,c,d],(0,1,0))
-        # A single underside bevel joins the sill to the bottom sheet.
-        for z0,z1 in zip(zs,zs[1:]):
-            panel([(sign*HALF_WIDTH,sill(z0),z0),(sign*.99,-.27,z0),
-                   (sign*.99,-.27,z1),(sign*HALF_WIDTH,sill(z1),z1)],(sign,-1,0),DARK)
-        for z0,z1 in ((2.68,2.76),(2.76,2.90)):
-            w0=w1=HALF_WIDTH
-            panel([(sign*w0,-.12,z0),(sign*w1,-.12,z1),
-                   (sign*w1,.16,z1),(sign*w0,.16,z0)],side,DARK)
-            panel([(sign*w0,-.12,z0),(sign*.99,-.27,z0),
-                   (sign*.99,-.27,z1),(sign*w1,-.12,z1)],(sign,-1,0),DARK)
-
-    # Across the stepped bumper; the hood above runs straight to the glass.
-    for (y0,z0),(y1,z1) in zip(front,front[1:]):
-        panel([(-HALF_WIDTH,y0,z0),(HALF_WIDTH,y0,z0),(HALF_WIDTH,y1,z1),(-HALF_WIDTH,y1,z1)],(0,z1-z0,y0-y1),DARK if y0 in (blo,bhi) and y1 in (blo,bhi) else PAINT)
-    panel([(-.99,-.27,zn),(.99,-.27,zn),(HALF_WIDTH,yl,zn),(-HALF_WIDTH,yl,zn)],(0,0,-1),DARK)
-    # The central fascia is partitioned around the grille, which is a material
-    # patch on this surface; it has no coincident hidden backing or floating box.
-    for y0,y1 in zip((yv,.36),(.36,.54)):
-        panel([(-.48,y0,fascia(y0)),(.48,y0,fascia(y0)),
-               (.48,y1,fascia(y1)),(-.48,y1,fascia(y1))],(0,0,-1),
-              DARK if y0==.36 else PAINT)
-    # One fascia plane, trimmed by the continuous centre-to-outer bevel edge.
-    panel([(-.48,.54,fascia(.54)),(.48,.54,fascia(.54)),(0,yn,zn)],(0,0,-1))
-    for sign in (-1,1):
-        panel([(sign*.48,.54,fascia(.54)),(0,yn,zn),(sign*.48,yn,zn)],(0,0,-1))
-        a,b=(sign*.48,yv,zv),(sign*HALF_WIDTH,yv,zv)
-        d=(sign*HALF_WIDTH,ys,shoulder_nose_z)
-        e,f=(sign*.98,yn,zn),(sign*.48,yn,zn)
-        panel([a,b,d],(0,0,-1))
-        panel([a,d,e],(0,0,-1))
-        panel([a,e,f],(0,0,-1))
+    # A single painted plane covers the former grille and stepped bumper.
+    # Retain the measured valance station as a coplanar subdivision.
+    panel([(-HALF_WIDTH,FLOOR_Y,floor_front_z),(HALF_WIDTH,FLOOR_Y,floor_front_z),
+           (HALF_WIDTH,yv,zv),(-HALF_WIDTH,yv,zv)],(0,0,-1))
+    panel([(-HALF_WIDTH,yv,zv),(HALF_WIDTH,yv,zv),
+           (HALF_WIDTH,ys,shoulder_nose_z),(.98,yn,zn),
+           (-.98,yn,zn),(-HALF_WIDTH,ys,shoulder_nose_z)],(0,0,-1))
     for sign in (-1,1):
         # Explicit mirrored triangles avoid ear-clipping a fan from one side.
         a,b=(0,yn,zn),(sign*.98,yn,zn)
@@ -257,28 +352,12 @@ def build():
     panel([(-.98,.18,1.36),(.98,.18,1.36),(.98,.18,2.53),(-.98,.18,2.53)],(0,1,0),DARK)
     panel([(-.98,.18,2.53),(.98,.18,2.53),(.98,1.10,2.53),(-.98,1.10,2.53)],(0,0,-1))
     panel([(-.98,1.10,2.53),(.98,1.10,2.53),(.98,1.10,2.68),(-.98,1.10,2.68)],(0,1,0))
-    panel([(-.99,-.27,zn),(.99,-.27,zn),(.99,-.27,2.90),(-.99,-.27,2.90)],(0,-1,0),DARK)
+    panel([(-HALF_WIDTH,FLOOR_Y,floor_front_z),(HALF_WIDTH,FLOOR_Y,floor_front_z),
+           (HALF_WIDTH,FLOOR_Y,REAR_Z),(-HALF_WIDTH,FLOOR_Y,REAR_Z)],(0,-1,0),DARK)
 
-    # Wagon-specific full-width tailgate and bumper: no sedan boot-lid recess.
-    # The latch joins a partitioned rear surface, with its back face omitted.
-    for z0,z1 in ((2.68,2.76),(2.76,2.90)):
-        w0=w1=HALF_WIDTH
-        panel([(-w0,.16,z0),(w0,.16,z0),(w1,.16,z1),(-w1,.16,z1)],(0,1,0),DARK)
-    panel([(-HALF_WIDTH,-.12,2.90),(HALF_WIDTH,-.12,2.90),(HALF_WIDTH,.16,2.90),(-HALF_WIDTH,.16,2.90)],(0,0,1),DARK)
-    panel([(-.99,-.27,2.90),(.99,-.27,2.90),(HALF_WIDTH,-.12,2.90),(-HALF_WIDTH,-.12,2.90)],(0,0,1),DARK)
-    for x0,x1 in zip((-.98,-.23,.23),(-.23,.23,.98)):
-        for y0,y1 in zip((.16,.89,.96),(.89,.96,1.10)):
-            if x0==-.23 and y0==.89:
-                base=[(x0,y0,2.68),(x1,y0,2.68),(x1,y1,2.68),(x0,y1,2.68)]
-                tip=[(x,y,2.70) for x,y,z in base]
-                panel(tip,(0,0,1),DARK)
-                for a,b,c,d in zip(base,base[1:]+base[:1],tip[1:]+tip[:1],tip):
-                    panel([a,b,c,d],(a[0]+b[0],a[1]+b[1]-1.85,0),DARK)
-            else:
-                panel([(x0,y0,2.68),(x1,y0,2.68),(x1,y1,2.68),(x0,y1,2.68)],(0,0,1))
-    for sign in (-1,1):
-        panel([(sign*.98,.16,2.68),(sign*HALF_WIDTH,.16,2.68),
-               (sign*HALF_WIDTH,1.,2.68),(sign*HALF_WIDTH,1.10,2.68),(sign*.98,1.10,2.68)],(0,0,1))
+    # Close the entire rear down to the floor; the old latch cell is paint.
+    panel([(-HALF_WIDTH,FLOOR_Y,REAR_Z),(HALF_WIDTH,FLOOR_Y,REAR_Z),
+           (HALF_WIDTH,1.10,REAR_Z),(-HALF_WIDTH,1.10,REAR_Z)],(0,0,1))
 
     # The accepted four posts, three apertures, and flat roof. Their bases and
     # tops join the wall/roof directly; there are no mating caps inside solids.
@@ -290,6 +369,8 @@ def build():
     # The glass and post endpoints stay fixed; only the former vertical cap moves.
     (base_y,base_z),(top_y,top_z)=posts[0][:2]
     roof_front_z=top_z+(2.17-top_y)*(top_z-base_z)/(top_y-base_y)
+    (top_y,top_z),(base_y,base_z)=posts[3][2:]
+    roof_rear_z=top_z+(2.17-top_y)*(top_z-base_z)/(top_y-base_y)
     for sign in (-1,1):
         xo,xi=sign*HALF_WIDTH,sign*.98
         for post_id,post in enumerate(posts):
@@ -306,14 +387,14 @@ def build():
             panel([(xi,1.92,z0),(xo,1.92,z0),(xo,1.92,z1),(xi,1.92,z1)],(0,-1,0))
         panel([(xi,-.12,-1.25),(xi,-.12,1.36),(xi,.18,1.36),(xi,.18,2.53),
                (xi,1.10,2.53),(xi,1.10,-1.),(xi,1.125,-1.25)],(-sign,0,0),DARK)
-        panel([(xo,1.92,-.80),(xo,2.17,roof_front_z),(xo,2.17,2.56),(xo,1.92,2.56)],(sign,0,0))
+        panel([(xo,1.92,-.80),(xo,2.17,roof_front_z),(xo,2.17,roof_rear_z),(xo,1.92,2.56)],(sign,0,0))
     panel([(-HALF_WIDTH,2.17,roof_front_z),(HALF_WIDTH,2.17,roof_front_z),
-           (HALF_WIDTH,2.17,2.56),(-HALF_WIDTH,2.17,2.56)],(0,1,0))
+           (HALF_WIDTH,2.17,roof_rear_z),(-HALF_WIDTH,2.17,roof_rear_z)],(0,1,0))
     panel([(-.98,1.92,-.80),(.98,1.92,-.80),(.98,1.92,2.56),(-.98,1.92,2.56)],(0,-1,0))
     panel([(-HALF_WIDTH,1.92,-.80),(HALF_WIDTH,1.92,-.80),
            (HALF_WIDTH,2.17,roof_front_z),(-HALF_WIDTH,2.17,roof_front_z)],(0,1,-1))
     panel([(-HALF_WIDTH,1.92,2.56),(HALF_WIDTH,1.92,2.56),
-           (HALF_WIDTH,2.17,2.56),(-HALF_WIDTH,2.17,2.56)],(0,0,1))
+           (HALF_WIDTH,2.17,roof_rear_z),(-HALF_WIDTH,2.17,roof_rear_z)],(0,0,1))
     body.write('wagon_body.txt', weld_positions=True)
     shutil.copyfile(CONTENT/'sedan_palette.png',CONTENT/'wagon_palette.png')
 
@@ -332,18 +413,20 @@ def build():
         outward_quad(mesh,points,direction)
         mesh.write('wagon_glass_'+label+'.txt')
 
-    # Keep the lamp approach: existing lenses and colour, each translated to
-    # the new fascia, paired with the same delta in SpotPos/TailPos in the spec.
+    # Original wagon lamp translations, with every sedan corner retained.
     for lamp,delta in [('headlights',.150),('taillights',.012)]:
-        source=obj(CONTENT/('sedan_'+lamp+'.txt'))
-        lamps=Mesh()
-        for face in source['faces']:
-            cs=[tuple(int(i)-1 for i in c.split('/')) for c in face]
-            lamps.tri([(source['vertices'][v][0],source['vertices'][v][1],source['vertices'][v][2]+delta) for v,t,n in cs],
-                      [(source['uvs'][t][0],1-source['uvs'][t][1]) for v,t,n in cs])
-        lamps.write('wagon_'+lamp+'.txt')
+        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p: (0,0,delta))
+        print(f'Sedan {lamp} Z delta: {delta:+.6f}')
+    translate_asset('sedan_steer.txt', 'wagon_steer.txt', lambda p: (0,0,.205))
+    seats = obj(CONTENT/'sedan_seats.txt')
+    assert all(len({seats['vertices'][int(c.split('/')[0])-1][2] < 0 for c in f}) == 1
+               for f in seats['faces']), 'source seat triangle crosses row split'
+    translate_asset('sedan_seats.txt', 'wagon_seats.txt', lambda p: (0,0,.205 if p[2]<0 else 0))
+    fit_bumpers(fascia)
+    build_exhaust()
     saved=obj(CONTENT/'wagon_body.txt')
-    assert saved['lo']==(-1.26,-.27,-2.9) and saved['hi']==(1.26,2.17,2.9), saved
+    assert saved['lo']==(-HALF_WIDTH,FLOOR_Y,floor_front_z) and saved['hi']==(HALF_WIDTH,2.17,REAR_Z)
+    print(f'Roof rear Z: {roof_rear_z:.9f}')
     print('Body:',len(body.v),'v /',len(body.f),'triangles;',len(set(body.v)),'unique positions')
     print('AABB:',saved['lo'],saved['hi'])
 
