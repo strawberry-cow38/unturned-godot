@@ -73,7 +73,23 @@ def truck_bed():
     return dict(wall_t=outer-inner, wall_h=top-floor, outer_w=2*outer, inner_w=2*inner,
                 floor=floor, top=top)
 
-def design(specs, rear):
+# THREE SIZES OFF ONE DERIVATION (strawberry: "thats its name. dinky trailer. the new one is small
+# trailer. do a medium one which is longer and wider. and 4 wheels."). Nothing here is a typed
+# dimension: `length` is a fraction of the Golf's body length and `width_steps` counts HALF TRUCK WALL
+# SECTIONS added to the Golf track before the box is solved out of it, so every size still traces to
+# the same two fleet measurements the single trailer did.
+#   dinky  .60 / +0 -> 3.137 x 2.100, the one already in the game
+#   small  .75 / +1 -> 3.921 x 2.225, the previous pass
+#   medium .95 / +2 -> 4.967 x 2.350, and two axles because one axle under five metres of deck is a
+#                     wheelbarrow; the fleet's own long bodies (truck, van) all carry four wheels.
+CLASSES = {
+    'dinky':  dict(length=.60, width_steps=0, axles=1, display='Dinky Trailer'),
+    'small':  dict(length=.75, width_steps=1, axles=1, display='Small Trailer'),
+    'medium': dict(length=.95, width_steps=2, axles=2, display='Medium Trailer'),
+}
+
+
+def design(specs, rear, cls='small'):
     golf, quad = specs['golf'], specs['quad']
     # These dimensions are present in the saved fleet note; no new fleet size statistics.
     row = next(l for l in (ROOT/'notes/vehicle_measurements.md').read_text().splitlines() if l.startswith('| golf /'))
@@ -98,7 +114,8 @@ def design(specs, rear):
     # outboard of it. The track is now solved so the TYRE'S OUTER FACE lands exactly on the sideboard's
     # outer face, which is what "flush" means here and what removes the outrigger look the axle bar
     # was drawing attention to.
-    deck_w = (golf['tracks'][-1]+wall_t/2)-tyre_width-2*t
+    C = CLASSES[cls]
+    deck_w = (golf['tracks'][-1]+wall_t/2*C['width_steps'])-tyre_width-2*t
     # FLUSH = the tyre sits AGAINST the sideboard's outer face, not inside it. Aligning the tyre's
     # OUTER face with the wall instead puts the wheel through the box: the tyre tops out .620 above
     # the deck floor, so at that track its inner half rises into the cargo bay. Nothing about removing
@@ -107,7 +124,7 @@ def design(specs, rear):
     # So the wheel is hard against the wall with the gap closed, which is what the axle bar was
     # spanning and why it can go.
     track = deck_w+tyre_width
-    deck_l = length*.75                         # 3/4 Golf body length; 25% longer than the previous .6
+    deck_l = length*C['length']
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)
@@ -115,6 +132,10 @@ def design(specs, rear):
     ground = rear['golf']['ground']
     wheel_y = ground+radius+.25
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
+    # TANDEM SPACING is derived, not chosen: two tyres of radius r on one side must not intersect in
+    # Z, so their centres are at least 2r apart; plus t of clearance. Single-axle classes ignore it.
+    axle_spacing = 2*radius+t
+    axle_zs = [axle_z] if C['axles']==1 else [axle_z-axle_spacing/2, axle_z+axle_spacing/2]
     # WHEELS SIT HIGHER ON THE BODY, at the fleet's own relationship (strawberry: "move the wheels
     # higher up on the trailer"). Measured: golf, sedan, hatchback, jeep, truck and van ALL rest their
     # wheel centre .2734 above the body's lowest point. The trailer's sat at .0000 -- centre exactly
@@ -128,6 +149,8 @@ def design(specs, rear):
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
+                cls=cls, axles=C['axles'], axle_zs=axle_zs, axle_spacing=axle_spacing,
+                display=C['display'], key=cls+'_trailer',
                 lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                 wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)
 

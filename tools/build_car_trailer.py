@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from PIL import Image
 from measure_vehicles import ROOT, CONTENT, obj
-from measure_car_trailer import measurements, design, TOW_CARS
+from measure_car_trailer import measurements, design, TOW_CARS, CLASSES
 from build_wagon import Mesh
 
 COLORS = [(151,159,158,255),(88,111,87,255),(135,105,69,255),(46,49,48,255),
@@ -64,7 +64,7 @@ def sedan_lamp_proud():
     return rear-max(v[2] for v in body['vertices'] if v[2] <= rear+1e-6 and v[2] > 1.5)
 
 
-def sedan_lamps(rear_z, centre_y, half_width, inset):
+def sedan_lamps(rear_z, centre_y, half_width, inset, out_name):
     """The SEDAN's tail lights, moved -- not a pair of boxes shaped like them.
 
     strawberry: "the tail lights should be off the sedan". Parts are drawn with a flat SolidMat, so
@@ -114,12 +114,15 @@ def sedan_lamps(rear_z, centre_y, half_width, inset):
             sgn=-1 if sum(moved[i][0] for i in ids)/3 < 0 else 1
             if sgn!=group: lines.append('g tail_lens_'+str(sgn)); group=sgn
         lines.append(l)
-    (CONTENT/'car_trailer_taillights.txt').write_text('\n'.join(out+lines)+'\n')
+    (CONTENT/out_name).write_text('\n'.join(out+lines)+'\n')
     left=[q for q in moved if q[0]<0]; right=[q for q in moved if q[0]>0]
     return [tuple(sum(q[a] for q in half)/len(half) for a in range(3)) for half in (left,right)]
 
-def generate():
-    specs,rear=measurements();d=design(specs,rear)
+def generate(cls='small', specs=None, rear=None):
+    """One size class. Every dimension still comes out of design(); the class only chooses a length
+    fraction, how many half-wall-sections of extra track, and how many axles."""
+    if specs is None: specs,rear=measurements()
+    d=design(specs,rear,cls); key=d['key']
     t=d['t'];w=d['deck_w']/2;f=d['front'];b=d['back'];y=d['deck_y'];r=d['radius'];ky=d['king'][1];kz=d['king'][2];az=d['axle_z'];cy=d['wheel_center_y'];wt=d['wall_t'];wh=d['wall_h']
     m=Model()
     drawbars=[((sign*t,ky,kz+4*t),(sign*(w-2*t),y-wt/2,f+d['deck_l']/4)) for sign in (-1,1)]
@@ -165,10 +168,10 @@ def generate():
     # Retractable stand is a separate closed component inside an exact split zone.
     stand_z=(kz+f)/2; stand_x=3*t
     m.box('landing_stand',(stand_x-t,d['ground'],stand_z-t/2),(stand_x+t,ky-t,stand_z+t/2),0)
-    m.save('car_trailer_body.txt')
-    tail_pos=sedan_lamps(b,y+wh/2,w,d['lamp_inset'])   # b is the tailgate's outer face now, so 'proud of the tailgate' is literal
+    m.save(key+'_body.txt')
+    tail_pos=sedan_lamps(b,y+wh/2,w,d['lamp_inset'],key+'_taillights.txt')   # b is the tailgate's outer face, so 'proud of the tailgate' is literal
     im=Image.new('RGBA',(4,2));im.putdata(COLORS);im.save(CONTENT/'car_trailer_palette.png')
-    for name in TOW_CARS:
+    for name in (TOW_CARS if cls=='dinky' else []):   # hitches live on the CARS; emit them once
         h=Model(); rr=rear[name];hy=rr['y'];hz=rr['rear']+d['hitch_projection']
         h.box('receiver',(-t,hy-2*t,rr['section_z']-t),(t,hy-t,hz+t),0)
         h.component('ball')
@@ -188,11 +191,15 @@ def generate():
         dx,dz=bb[0]-a[0],bb[2]-a[2]
         hulls.append(((2*t,abs(bb[1]-a[1])+2*t,math.hypot(dx,dz)),tuple((a[i]+bb[i])/2 for i in range(3)),math.degrees(math.atan2(dx,dz))))
     def v(p):return 'new Vector3('+', '.join(f'{x:.6f}f' for x in p)+')'
-    spec=f'''        // Car-scale open trailer. Every value is derived in notes/CAR_TRAILER_REPORT.md.
-        static readonly Spec _car_trailer = new()
+    # One row per wheel: every axle in axle_zs, both sides. A tandem class emits four.
+    wheel_rows=', '.join(f'(-{d["track"]/2:.6f}f, {d["wheel_y"]:.6f}f, {z:.6f}f, false), ({d["track"]/2:.6f}f, {d["wheel_y"]:.6f}f, {z:.6f}f, false)'
+                         for z in d['axle_zs'])
+    Cls=cls.capitalize()
+    spec=f'''        // {d['display']}: car-scale open trailer, {d['axles']} axle(s). Derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _{key} = new()
         {{
             Mass = {d['mass']:.6f}f,
-            Body = "car_trailer_body.txt", Wheel = {d['wheel_mesh']}, WheelTex = {d['wheel_tex']}, Palette = "car_trailer_palette.png",
+            Body = "{key}_body.txt", Wheel = {d['wheel_mesh']}, WheelTex = {d['wheel_tex']}, Palette = "car_trailer_palette.png",
             WheelRadius = {r:.6f}f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
             BoxSize = {v((2*w,wt,b-f))}, BoxCenter = {v((0,y-wt/2,0))},   // the deck slab itself; the load space above it stays open
             ExtraBoxes = new (Vector3, Vector3)[]
@@ -207,20 +214,28 @@ def generate():
             LandingGearSize = {v((4*t,ky-t-d['ground'],4*t))}, LandingGearCenter = {v((stand_x,(ky-t+d['ground'])/2,stand_z))},
             LandingLegZoneMin = {v((stand_x-2*t,d['ground'],stand_z-2*t))}, LandingLegZoneMax = {v((stand_x+2*t,ky-t,stand_z+2*t))},
             ForwardGears = new[] {{ 1f }}, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = null, Fuel = 1000f, Health = {specs['quad']['Health']:.6f}f, Name = "Car Trailer",
+            Sound = null, Fuel = 1000f, Health = {specs['quad']['Health']:.6f}f, Name = "{d['display']}",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            {{ (-{d['track']/2:.6f}f, {d['wheel_y']:.6f}f, {az:.6f}f, false), ({d['track']/2:.6f}f, {d['wheel_y']:.6f}f, {az:.6f}f, false) }},
+            {{ {wheel_rows} }},
             TailPos = new[] {{ {v(tail_pos[0])}, {v(tail_pos[1])} }},
-            Parts = new (string, Color)[] {{ ("car_trailer_taillights.txt", new Color({COLORS[4][0]/255:.6f}f, {COLORS[4][1]/255:.6f}f, {COLORS[4][2]/255:.6f}f)) }},   // the sedan's own tail-lamp texel
+            Parts = new (string, Color)[] {{ ("{key}_taillights.txt", new Color({COLORS[4][0]/255:.6f}f, {COLORS[4][1]/255:.6f}f, {COLORS[4][2]/255:.6f}f)) }},   // the sedan's own tail-lamp texel
         }};
-        public static Vehicle BuildCarTrailer(int variant = 0) => Build(_car_trailer, variant, "car_trailer");
+        public static Vehicle Build{Cls}Trailer(int variant = 0) => Build(_{key}, variant, "{key}");
 '''
-    print('Generated car trailer and eight measured hitch meshes')
+    print(f'Generated {cls} trailer ({d["deck_l"]:.3f} x {d["deck_w"]:.3f}, {d["axles"]} axle(s))')
     return spec
+
+def generate_all():
+    """All three size classes off one measurement pass; returns the concatenated spec text."""
+    specs,rear=measurements()
+    return '\n'.join(generate(c,specs,rear) for c in CLASSES)
+
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--spec-out',type=Path)
-    args=parser.parse_args();spec=generate()
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--spec-out',type=Path); parser.add_argument('--class',dest='cls',default=None)
+    args=parser.parse_args()
+    spec=generate(args.cls,*measurements()) if args.cls else generate_all()
     if args.spec_out: args.spec_out.write_text(spec)

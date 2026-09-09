@@ -411,3 +411,41 @@ and closing the gap are one change rather than two.
 Body is **72 v / 108 tris**, down from 120 with the axle gone. The clearance check is not deleted — it now
 asserts the flush relationship instead, off the real mesh and the real spec, and its docstring records
 that the old gap rule is dead **by instruction** so nobody re-derives it.
+
+## Seventh pass: a family of three
+
+strawberry: *"apply the axe and wheel change to the dinky trailer. thats its name. dinky trailer. the
+new one is small trailer. do a medium one which is longer and wider. and 4 wheels."*
+
+One derivation, three size classes. `CLASSES` in `measure_car_trailer.py` carries only the two things
+that make a size — a fraction of the Golf's body length, and a count of HALF TRUCK WALL SECTIONS added
+to the Golf track before the box is solved out of it — so every dimension still traces to the same two
+fleet measurements a single trailer did. Nothing is a typed dimension.
+
+| class | key | deck | track | axles | body |
+|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 1 | 72 v / 108 tris |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 1 | 72 v / 108 tris |
+| medium | `medium_trailer` | 4.967 x 2.350 | 2.750 | 2 | 72 v / 108 tris |
+
+**The dinky is the vehicle already in the game**, re-derived at its original 3.137 x 2.100 and given
+the axle removal and flush wheels along with the rest. **The medium runs a tandem**, and its axle
+spacing is derived rather than chosen: two tyres of radius r on one side cannot intersect in Z, so
+their centres sit at least 2r apart, plus t of clearance -- 1.250 here. Both axles straddle the same
+60%-of-deck point the single-axle classes put their one axle on.
+
+**Naming.** `car_trailer` was the shipped spawn name and stays as an **alias** onto the dinky, so the
+command people already have keeps working. It is deliberately NOT in `SpecNames` -- that array's
+indices are replicated network TypeIds and an alias there would consume one. The rename happened **in
+place at index 33**, so every TypeId before it is untouched and the two new sizes are appended at 34
+and 35. A named check asserts exactly that ordering, with mutations for an insert, a swap and a drop.
+
+**The verifier runs three times.** `KEY`/`BODY`/`LAMPS` are rebound per class and `main()` loops, so
+every check written for one size is a check on all three: **168 named checks, 687 mutations**, all
+caught. Four mutations had to be repaired to get there, and all four failed the same way -- they
+matched a literal that was only true for one class, or used `replace(..., 1)` which lands on the first
+of three spec blocks rather than the one under test. An unmatched mutation is reported as *ineffective*
+rather than passing, which is the only reason they were visible at all.
+
+Renders: `car_trailer_family.png` puts all three beside the Golf on one ground plane at true scale.
+Unverified as ever: towing stability, cargo retention, multiplayer hitch behaviour.
