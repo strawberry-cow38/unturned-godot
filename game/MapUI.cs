@@ -82,7 +82,7 @@ namespace UnturnedGodot
         Control _clip;       // the map's window; ClipContents so a panned/zoomed map cannot spill over the chrome
         TextureRect _map;    // Map.png, square, sized base*zoom and moved by _pan inside _clip
         Polygon2D _arrow;    // local player marker (position + facing)
-        Label _coord;
+        Label _coord; Panel _coordBar;
         Panel _panel;          // the screen frame, matching the inventory/crafting panel
         Panel _playersPanel;
         Panel _rosterHead;
@@ -186,9 +186,14 @@ namespace UnturnedGodot
             // Header, matched to CraftingMenu's: FontBody in TextDim. The outline it used to carry was for sitting
             // ON the map image; it lives on the panel now, where an outline would just look heavy next to the
             // crafting screen's header.
-            _coord = new Label();
+            // The status line was a bare Label floating on the backdrop in TextDim -- the one bit of this screen
+            // still dressed as raw engine output. It gets a bar of its own, and text you can actually read.
+            _coordBar = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _coordBar.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Nav, UITheme.RadiusCell));
+            _slide.AddChild(_coordBar);
+            _coord = new Label { VerticalAlignment = VerticalAlignment.Center };
             _coord.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            _coord.AddThemeColorOverride("font_color", UITheme.TextDim);
+            _coord.AddThemeColorOverride("font_color", UITheme.TextBody);
             _slide.AddChild(_coord);
 
             _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
@@ -293,8 +298,10 @@ namespace UnturnedGodot
 
             _panel.Position = new Vector2(M, M);
             _panel.Size = new Vector2(pw, ph);
-            _coord.Position = new Vector2(M + 16f, M + barH + 8f);
-            _coord.Size = new Vector2(pw - 32f, 24f);
+            _coordBar.Position = new Vector2(M, M + barH + 4f);
+            _coordBar.Size = new Vector2(pw, 30f);
+            _coord.Position = new Vector2(M + 12f, M + barH + 4f);
+            _coord.Size = new Vector2(pw - 24f, 30f);
 
             // MAP RIGHT, ROSTER FILLS WHAT IS LEFT (strawberry 2026-09-08: "align map to the right of the
             // screen. change the player list to fill the screen"). The two swapped sides: the roster was a

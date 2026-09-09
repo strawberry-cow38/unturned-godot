@@ -29,7 +29,7 @@ namespace UnturnedGodot
             "Airdrops fall in periodically — grab the loot before someone else does.",
         };
 
-        Label _timings;
+        Label _timings; Control _timingsBox;
         Panel _mapFill; Label _mapStatus, _mapPct;                       // map: single bar
         Panel _laFill1, _laFill2; Label _laStage, _laCount, _laName, _laPct;   // launch: top=stage, bottom=overall
         Control _root;
@@ -131,11 +131,21 @@ namespace UnturnedGodot
             tip.AddThemeColorOverride("font_outline_color", Colors.Black); tip.AddThemeConstantOverride("outline_size", 4);
             _root.AddChild(tip);
 
-            _timings = new Label { Text = "", Visible = false, Position = new Vector2(16, 12) };
-            _timings.AddThemeColorOverride("font_color", new Color(0.85f, 0.88f, 0.6f));
-            _timings.AddThemeColorOverride("font_outline_color", Colors.Black);
-            _timings.AddThemeConstantOverride("outline_size", 6);
-            AddChild(_timings);
+            // ON A PLATE, LIKE EVERYTHING ELSE (strawberry 2026-09-09: "default godot buttons/labels are ugly").
+            // This readout hangs over whatever screen you land on for eight seconds after every load, and it was
+            // bare text with a 6 px outline doing the legibility work -- the one thing left in the UI wearing no
+            // theme at all. Same panel, same type colour, same corner radius as the rest of the design system.
+            var tbox = new PanelContainer { Position = new Vector2(16, 12), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            var tsb = UITheme.Box(new Color(0.06f, 0.07f, 0.09f, 0.88f), UITheme.RadiusCell, new Color(1f, 1f, 1f, 0.10f), 1);
+            tsb.ContentMarginLeft = tsb.ContentMarginRight = 12;
+            tsb.ContentMarginTop = tsb.ContentMarginBottom = 8;
+            tbox.AddThemeStyleboxOverride("panel", tsb);
+            _timings = new Label { Text = "" };
+            _timings.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
+            _timings.AddThemeColorOverride("font_color", UITheme.TextBody);
+            tbox.AddChild(_timings);
+            _timingsBox = tbox;
+            AddChild(tbox);
 
             SetProcess(true);
         }
@@ -174,7 +184,7 @@ namespace UnturnedGodot
             foreach (var kv in timings) sb.AppendLine($"  {kv.Key,-10} {kv.Value,6:0} ms  ({(total > 0 ? kv.Value / total * 100 : 0):0}%)");
             GD.Print("[load] " + sb.ToString().Replace("\n", " | "));
             if (_root != null) _root.Visible = false;
-            if (_timings != null) { _timings.Text = sb.ToString(); _timings.Visible = true; }
+            if (_timings != null) { _timings.Text = sb.ToString(); if (_timingsBox != null) _timingsBox.Visible = true; }
             _timingsHold = 8.0;
         }
 

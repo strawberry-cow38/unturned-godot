@@ -15,12 +15,15 @@ namespace UnturnedGodot
     {
         public enum Tab { Inventory, Craft, Skills, Information }
         public const int Height = 60, Margin = 12, Gap = 8;
+        const int UnderlineH = 3;
+        static Color Idle => new(1f, 1f, 1f, 0.03f);   // barely there: enough to catch the tab's shape, not a slab
         static readonly (Tab tab, string label, GameAction action)[] Defs =
         {
             (Tab.Inventory, "Inventory", GameAction.Inventory), (Tab.Craft, "Craft", GameAction.Craft),
             (Tab.Skills, "Skills", GameAction.Skills), (Tab.Information, "Information", GameAction.Map),
         };
-        readonly (Panel bg, Label lbl, Button hit)[] _tabs = new (Panel, Label, Button)[4];
+        readonly (Panel bg, Label lbl, Button hit, ColorRect ul)[] _tabs = new (Panel, Label, Button, ColorRect)[4];
+        ColorRect _rule;   // the strip's own bottom edge
         public System.Action<Tab> OnTab;
         public System.Action OnClose;
 
@@ -34,6 +37,10 @@ namespace UnturnedGodot
             strip.SetAnchorsPreset(LayoutPreset.FullRect);
             strip.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Nav, 0));
             nb.AddChild(strip);
+            // A bar needs an edge. Without it the strip and the screen under it are two flat greys meeting at
+            // nothing, which is most of what reads as "untouched engine default".
+            nb._rule = new ColorRect { Color = new Color(1f, 1f, 1f, 0.10f), MouseFilter = MouseFilterEnum.Ignore };
+            nb.AddChild(nb._rule);
             for (int i = 0; i < Defs.Length; i++)
             {
                 var bg = new Panel { MouseFilter = MouseFilterEnum.Ignore }; nb.AddChild(bg);
@@ -51,7 +58,11 @@ namespace UnturnedGodot
                 hit.MouseEntered += () => { nb._hover = hi; nb.Restyle(); };
                 hit.MouseExited += () => { if (nb._hover == hi) { nb._hover = -1; nb.Restyle(); } };
                 nb.AddChild(hit);
-                nb._tabs[i] = (bg, lbl, hit);
+                // The ACTIVE tab is marked by an accent rule along its bottom, not by being the one grey slab
+                // among four. Underline last so it sits over the tab's own fill.
+                var ul = new ColorRect { Color = UITheme.Accent, Visible = false, MouseFilter = MouseFilterEnum.Ignore };
+                nb.AddChild(ul);
+                nb._tabs[i] = (bg, lbl, hit, ul);
             }
             nb.SetActive(active);
             // A hidden Control does not reliably deliver mouse_exited, and these menus swoop in and out
@@ -78,7 +89,11 @@ namespace UnturnedGodot
             {
                 bool on = Defs[i].tab == _active;
                 bool hov = !on && i == _hover;
-                _tabs[i].bg.AddThemeStyleboxOverride("panel", UITheme.Box(on ? UITheme.Selected : hov ? UITheme.Hover : UITheme.Slot, UITheme.RadiusCell));
+                // An idle tab is now EMPTY, not a filled slab. Four grey blocks in a grey bar is the shape of a
+                // control that nobody styled; letting the strip read as one bar, with fill only where the cursor
+                // is or where you actually are, is the whole difference.
+                _tabs[i].bg.AddThemeStyleboxOverride("panel", UITheme.Box(on ? UITheme.Selected : hov ? UITheme.Hover : Idle, UITheme.RadiusCell));
+                _tabs[i].ul.Visible = on;
                 _tabs[i].lbl.Text = $"{Defs[i].label} [{Keybinds.Get(Defs[i].action).Label}]";   // live bind, never a hardcoded key
                 _tabs[i].lbl.AddThemeColorOverride("font_color", on ? new Color(1f, 1f, 1f) : hov ? UITheme.Text : UITheme.TextBody);
             }
@@ -95,7 +110,10 @@ namespace UnturnedGodot
                 _tabs[i].bg.Position = p; _tabs[i].bg.Size = sz;
                 _tabs[i].lbl.Position = p; _tabs[i].lbl.Size = sz;
                 _tabs[i].hit.Position = p; _tabs[i].hit.Size = sz;
+                _tabs[i].ul.Position = p + new Vector2(0f, sz.Y - UnderlineH);
+                _tabs[i].ul.Size = new Vector2(sz.X, UnderlineH);
             }
+            if (_rule != null) { _rule.Position = new Vector2(0f, Height - 1f); _rule.Size = new Vector2(w, 1f); }
         }
 
     }
