@@ -143,22 +143,28 @@ def expected(cls='dinky'):
     # so importing it is importing the intent, not the answer. Everything it is applied to (the Golf's
     # length and track, the truck's wall section) is still re-measured here by a different route.
     C=CLASSES[cls]
-    track=g['tracks'][-1]+wall_t/2*C['width_steps']
     L=g['mesh']['size'][2]*C['length']
+    track=g['tracks'][-1]+wall_t/2*C['width_steps']
     # The TYRES set the width, not the truck. Without arches, any flat-sided box wider than the tyre's
     # inner face (track/2 - tw/2) has the tyre buried in its sideboard; the bed's own 2.462 did exactly
     # that. The truck still governs the wall SECTION, which is what was actually asked for.
-    W=track-tw-2*t                             # box width, from the widened Golf track
-    track=W+tw                                 # then the track is SOLVED so the tyre sits against it
+    if C['wide']:
+        # NO WIDTH LIMIT: box set straight off the track plus its steps, track left on the Golf's, so
+        # the deck overhangs the wheels instead of being bounded by them.
+        W=track; track=g['tracks'][-1]
+    else:
+        W=track-tw-2*t                         # box width, from the widened Golf track
+        track=W+tw                             # then the track is SOLVED so the tyre sits against it
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
                     # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
-                    dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
+                    dy=(rr['golf']['ground']+radius+.25)+radius+t+wall_t if C['wide']
+                       else wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
                     ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
                     # the sedan's own lamp inset from its body side -- re-measured here, not imported
                     lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
-                    axles=C['axles'], display=C['display'], cls=cls,
+                    axles=C['axles'], display=C['display'], cls=cls, wide=C['wide'],
                     wall_t=wall_t,wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w)
 
 def source_names(src):
@@ -265,7 +271,12 @@ def cases(cls='dinky'):
     wt_=d['wall_t']
     add('deck is one wall section thick, inset inside the walls',
         lambda:require(close(group_bounds('deck'),((-W/2+wt_/2,dy-wt_,-L/2+wt_/2),(W/2-wt_/2,dy,L/2-wt_/2)))
-                       and L<s['golf']['mesh']['size'][2]<s['trailer']['mesh']['size'][2]),
+                       # Was "deck shorter than the Golf, Golf shorter than the semi". The first half
+                       # stopped being true at the large class, which is 6.013 against the Golf's
+                       # 5.229 -- a scale sanity clause that a bigger size outgrew. What still binds
+                       # is the top of the range: no car trailer reaches the articulated semi's deck.
+                       and L < s['trailer']['mesh']['size'][2]
+                       and close(L, s['golf']['mesh']['size'][2]*CLASSES[cls]['length'], 1e-5)),
         (BODY,move_group('deck',(.1,0,0)),'shift deck'),(BODY,move_group('deck',(0,.1,0)),'raise deck'))
     def sideboard():
         lo,hi=group_bounds('side_1')
@@ -281,7 +292,7 @@ def cases(cls='dinky'):
         anchor=float(re.search(r'\(-?[\d.]+f, ([-\d.]+)f,',fields(KEY)['Wheels']).group(1))
         require(close(anchor-.25-group_bounds('deck')[0][1], d['ride']),
                 f'wheel rest {anchor-.25:.4f} sits {anchor-.25-group_bounds("deck")[0][1]:.4f} above the deck underside, fleet is {d["ride"]:.4f}')
-    add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
+    if not d['wide']: add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
         (BODY,move_group('deck',(0,.3,0)),'lift the body off its wheels'),
         fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.900000f, 0.313712f, false), (1.300000f, 0.900000f, 0.313712f, false) }'))
     add('sideboard section = the truck bed wall, measured',sideboard,
@@ -322,7 +333,29 @@ def cases(cls='dinky'):
         outer_wall=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
         require(close(inner_tyre,outer_wall,1e-5),
                 f'tyre inner face {inner_tyre:.4f} does not meet the sideboard at {outer_wall:.4f}')
-    add('tyres flush against the sideboards, tyre inner face on the wall',tyre_flush,
+    def deck_clears_tyre():
+        """WIDE CLASSES: the wheels are under the deck, so the invariant is vertical, not lateral --
+        the deck's underside must sit above the tyre at FULL COMPRESSION, or the wheel comes through
+        its own floor on every bump. Read off the mesh and the spec."""
+        rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields(KEY)['Wheels'])
+        top=max(float(q[1]) for q in rows)+number(fields(KEY)['WheelRadius'])
+        under=group_bounds('deck')[0][1]
+        require(under >= top, f'deck underside {under:.4f} is below the compressed tyre top {top:.4f}')
+        require(under-top < 4*t, f'deck floats {under-top:.4f} above the tyre; clearance should be about t')
+        # PER SIDE. Taking max() over both sideboards meant pulling ONE of them inside the wheels
+        # changed nothing, and the audit caught that mutation surviving -- a check that can only see
+        # the wider half is blind to exactly the asymmetric mistake a hand edit makes.
+        anchor=max(abs(float(q[0])) for q in rows)
+        for sg in (-1,1):
+            edge=max(abs(group_bounds('side_'+str(sg))[i][0]) for i in (0,1))
+            require(edge > anchor, f'side {sg} at {edge:.4f} does not overhang the wheel centre {anchor:.4f}')
+    if d['wide']:
+        add('wide class: deck clears the compressed tyre and overhangs the wheels',deck_clears_tyre,
+            (BODY,move_group('deck',(0,-.3,0)),'drop the deck onto the tyre'),
+            (BODY,move_group('side_1',(-.6,0,0)),'pull the box inside the wheels'),
+            fieldmut('WheelRadius','1.2f'))
+    else:
+        add('tyres flush against the sideboards, tyre inner face on the wall',tyre_flush,
         (BODY,move_group('side_1',(.1,0,0)),'move the wall off the tyre'),
         (BODY,move_group('side_-1',(-.1,0,0)),'move the other wall off the tyre'),
         fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.250000f, 0.313712f, false), (1.300000f, 0.250000f, 0.313712f, false) }'),
@@ -346,14 +379,20 @@ def cases(cls='dinky'):
             require(zs[-1]-zs[0] >= 2*d['r'],f'tandem tyres overlap in Z: {zs[-1]-zs[0]:.4f} < {2*d["r"]:.4f}')
         actual_track=float(rows[1][0])-float(rows[0][0])
         actual_width=group_bounds('side_1')[1][0]-group_bounds('side_-1')[0][0]
-        require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),
-                'tyre inner faces do not meet the sideboards')
-        require(actual_track > actual_width, 'wheels are not outboard of the box')
+        if d['wide']:
+            # The box overhangs the wheel CENTRES, not necessarily the whole tyre -- the medium's tyres
+            # stand 75 mm proud each side, which is the same relationship every car in the fleet has.
+            require(actual_track < actual_width+1e-6,'wide class: the box should overhang the wheel centres')
+        else:
+            require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),'tyre inner faces do not meet the sideboards')
+            require(actual_track > actual_width,'wheels are not outboard of the box')
     add('axles: one row per wheel, passive, flush with the box, centred on 60% deck',wheels,
         # Same trap as the track mutation: the medium's wheels are not at az, so matching that literal
         # edited nothing. Steer the FIRST wheel row of this class's spec whatever its Z happens to be.
         (VEH,lambda x:_steer_first(x,KEY),'revert wheel anchor and steering'),
-        (VEH,lambda x:_retrack(x,KEY,d['track']/2,s['golf']['tracks'][-1]/2),'revert track increase'))
+        # Widen the track rather than "revert" it to the Golf's: the WIDE classes already run the Golf
+        # track, so reverting to it edited nothing and the audit reported an ineffective mutation.
+        (VEH,lambda x:_retrack(x,KEY,d['track']/2,d['track']/2+.3),'shove the track outboard'))
     # The axle bar went with the outboard wheels -- it spanned out to them and was the thing that read
     # as inconsistent under the deck. Asserted ABSENT from both mesh and generator, same as the arches.
     add('no axle bar',
@@ -491,7 +530,7 @@ def cases(cls='dinky'):
         require(set(sides)=={True,False},'lamps are not two lenses')
         require(all(len(v)==1 for v in sides.values()),'a lens is not rigid: its vertices moved by different offsets')
         (rx,ry,rz),(lx,ly,lz)=sides[True].pop(),sides[False].pop()
-        require(rx<0<lx,'lenses did not move toward each other')
+        require(rx*lx < 0,'the two lenses did not move in opposite directions')
         require(close(ry,ly) and close(rz,lz),'the two lenses moved differently in Y or Z')
         want=W/2-d['lamp_inset']
         require(close(max(v[0] for v in dst['vertices']),want) and close(min(v[0] for v in dst['vertices']),-want),
@@ -530,11 +569,11 @@ def cases(cls='dinky'):
     old=source_names(subprocess.check_output(['git','show',BASE+':game/Vehicle.cs'],cwd=ROOT,text=True))
     # The rename happened IN PLACE at index 33, so every TypeId before it is untouched and the two new
     # sizes are appended after. That ordering is the replicated protocol: an insert renumbers everyone.
-    names=['dinky_trailer','small_trailer','medium_trailer']
-    add('33 old network TypeIds preserved; the three trailers appended in size order',
+    names=[c+'_trailer' for c in CLASSES]
+    add('33 old network TypeIds preserved; the trailers appended in size order',
         lambda:require(source_names(VEH.read_text())==old+names),
         (VEH,lambda x:x.replace('"wagon", "dinky_trailer"','"dinky_trailer", "wagon"'),'insert before wagon'),
-        (VEH,lambda x:x.replace(', "medium_trailer" };',' };'),'drop the medium'),
+        (VEH,lambda x:x.replace(', "'+names[-1]+'" };',' };'),'drop the last size'),
         (VEH,lambda x:x.replace('"dinky_trailer", "small_trailer"','"small_trailer", "dinky_trailer"'),'swap dinky and small'))
     # "car_trailer" was the shipped spawn name; it stays as an ALIAS onto the dinky so the command
     # people already have keeps working. It must NOT be in SpecNames -- that would consume a TypeId.

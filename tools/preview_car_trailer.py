@@ -72,13 +72,16 @@ def generate(cls='small'):
         for x,y,z,_ in car['Wheels']:add(car['Wheel'],car['WheelTex'],(x+off[0],y-.25+off[1],z+off[2]),x<0)
         x=car['mesh']['size'][0]/2
         for c in CLASSES:
-            dc=design(specs,rear,c); x+=dc['deck_w']/2+dc['tyre_width']+.4
+            # The camera is isometric, so a trailer's LENGTH projects into screen X as well as its
+            # width -- spacing purely on width had the long classes overlapping on screen while being
+            # metres apart in world space. Gap scales with deck length.
+            dc=design(specs,rear,c); x+=dc['deck_w']/2+dc['deck_l']*.8
             o=(x,-dc['ground'],0.)
             for n in [dc['key']+'_body.txt',dc['key']+'_taillights.txt']:add(n,'car_trailer_palette.png',o)
             for z in dc['axle_zs']:
                 for sign in [-1,1]:add(dc['wheel_mesh'].strip('"'),dc['wheel_tex'].strip('"'),
                                        (sign*dc['track']/2+o[0],dc['wheel_center_y']+o[1],z+o[2]),sign<0)
-            x+=dc['deck_w']/2+dc['tyre_width']
+            x+=max(dc['deck_w']/2,dc['track']/2+dc['tyre_width']/2)
         lines=['# All three trailer sizes beside the Golf. Original coordinates, no scaling.']
         for tag,values in [('v',vs),('vt',ts),('vn',ns)]:lines.extend(tag+' '+' '.join(f'{q:.8f}' for q in p) for p in values)
         lines.extend('f '+' '.join('/'.join(map(str,c)) for c in f) for f in fs)

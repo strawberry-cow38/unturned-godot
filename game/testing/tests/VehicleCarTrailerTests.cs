@@ -29,11 +29,11 @@ namespace UnturnedGodot.Testing
                 Vehicle.BuildByName("car_trailer").SpecKey == "dinky_trailer");
             // The three sizes occupy TypeIds 33/34/35 IN ORDER. SpecNames indices are replicated, so
             // an insert or a reorder silently rebuilds other people's vehicles as something else.
-            T.Check("three trailers appended after the SUV TypeId, in size order",
-                System.Array.IndexOf(Vehicle.SpecNames, "dinky_trailer") == System.Array.IndexOf(Vehicle.SpecNames, "wagon") + 1
-                && System.Array.IndexOf(Vehicle.SpecNames, "small_trailer") == System.Array.IndexOf(Vehicle.SpecNames, "dinky_trailer") + 1
-                && System.Array.IndexOf(Vehicle.SpecNames, "medium_trailer") == System.Array.IndexOf(Vehicle.SpecNames, "small_trailer") + 1
-                && Vehicle.SpecNames.Last() == "medium_trailer");
+            var order = new[] { "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer" };
+            T.Check("the trailers are appended after the SUV TypeId, in size order",
+                order.Select((n, i) => System.Array.IndexOf(Vehicle.SpecNames, n)
+                                       == System.Array.IndexOf(Vehicle.SpecNames, "wagon") + 1 + i).All(ok => ok)
+                && Vehicle.SpecNames.Last() == order.Last());
             T.Check("server and replica load authored mesh", trailer.GetNode<MeshInstance3D>("Body").Mesh != null
                 && puppet.GetChildren().OfType<MeshInstance3D>().Any(n => n.Mesh == ContentProvider.ParseObj("res://content/dinky_trailer_body.txt")));
             var wheels = trailer.GetChildren().OfType<VehicleWheel3D>().ToArray();
@@ -41,22 +41,31 @@ namespace UnturnedGodot.Testing
                 && wheels.All(w => !w.UseAsTraction && !w.UseAsSteering));
             // The medium is the only tandem: four wheels, two per axle, and the two axle Z values must
             // be distinct -- four wheels stacked on one Z would pass a bare count check.
-            var med = Vehicle.BuildByName("medium_trailer");
+            var med = Vehicle.BuildByName("large_trailer");
             World.AddChild(med); med.Position = new Vector3(-20f, 1f, 0f);
             yield return Ticks(2);
             var medWheels = med.GetChildren().OfType<VehicleWheel3D>().ToArray();
             int medZ = medWheels.Select(w => Mathf.Round(w.Position.Z * 1000f)).Distinct().Count();
-            T.Check("medium runs two axles, four passive wheels at two distinct Z", medWheels.Length == 4 && medZ == 2
+            T.Check("large runs two axles, four passive wheels at two distinct Z", medWheels.Length == 4 && medZ == 2
                 && medWheels.All(w => !w.UseAsTraction && !w.UseAsSteering));
             // Off the BUILT bodies, not off the specs: the mesh is what a player sees, and it is the
             // thing that would silently stay the old size if the generator had not been re-run.
             Aabb Box(string k) { var v = Vehicle.BuildByName(k); return v.GetNode<MeshInstance3D>("Body").Mesh.GetAabb(); }
-            Aabb bd = Box("dinky_trailer"), bs = Box("small_trailer"), bm = Box("medium_trailer");
+            var boxes = order.Select(Box).ToArray();
             T.Check("each size is longer and wider than the one below it",
-                bs.Size.Z > bd.Size.Z && bm.Size.Z > bs.Size.Z && bs.Size.X > bd.Size.X && bm.Size.X > bs.Size.X);
+                boxes.Zip(boxes.Skip(1), (a, b) => b.Size.Z > a.Size.Z && b.Size.X > a.Size.X).All(ok => ok));
+            // The two WIDE classes carry their wheels UNDER the deck, so their floors have to clear the
+            // tyre. A box that merely got wider without rising would put the wheel through its own
+            // floor -- which is the whole cost of removing the width limit, and worth a tripwire.
+            foreach (var k in new[] { "medium_trailer", "large_trailer" })
+            {
+                var v = Vehicle.BuildByName(k);
+                var deck = v.GetNode<MeshInstance3D>("Body").Mesh.GetAabb();
+                var top = v.GetChildren().OfType<VehicleWheel3D>().Max(w => w.Position.Y) + 0.6f;
+                T.Check(k + " deck clears its compressed tyre", deck.Position.Y + deck.Size.Y > top);
+            }
             T.Check("no drive classification or drive access zones", trailer.IsTrailer && !trailer.CanTow
-                && !Vehicle.IsRoadVehicle("dinky_trailer") && !Vehicle.IsRoadVehicle("small_trailer")
-                && !Vehicle.IsRoadVehicle("medium_trailer") && !Vehicle.IsRoadVehicle("car_trailer"));
+                && order.All(n => !Vehicle.IsRoadVehicle(n)) && !Vehicle.IsRoadVehicle("car_trailer"));
             var gear = trailer.GetNode<CollisionShape3D>("LandingGear");
             T.Check("parked support exists and is deployed", gear != null && !gear.Disabled);
 

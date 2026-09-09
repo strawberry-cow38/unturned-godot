@@ -412,7 +412,7 @@ Body is **72 v / 108 tris**, down from 120 with the axle gone. The clearance che
 asserts the flush relationship instead, off the real mesh and the real spec, and its docstring records
 that the old gap rule is dead **by instruction** so nobody re-derives it.
 
-## Seventh pass: a family of three
+## Seventh pass: a family of three (superseded by the eighth)
 
 strawberry: *"apply the axe and wheel change to the dinky trailer. thats its name. dinky trailer. the
 new one is small trailer. do a medium one which is longer and wider. and 4 wheels."*
@@ -449,3 +449,36 @@ rather than passing, which is the only reason they were visible at all.
 
 Renders: `car_trailer_family.png` puts all three beside the Golf on one ground plane at true scale.
 Unverified as ever: towing stability, cargo retention, multiplayer hitch behaviour.
+
+## Eighth pass: a large class, and the width limit lifted
+
+strawberry: *"now do a large one. twin axle. wider! ignore the limit on width. redo the medium with no
+width limit"*.
+
+| class | key | deck | track | axles | floor | wheels |
+|---|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 1 | -0.023 | beside the box |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 1 | -0.023 | beside the box |
+| medium | `medium_trailer` | 4.967 x 2.850 | 2.600 | 2 | +1.150 | under the deck |
+| large | `large_trailer` | 6.013 x 3.100 | 2.600 | 2 | +1.150 | under the deck |
+
+**Two width modes, and that is what lifting the limit actually means.** The small classes still solve
+the box out of the track so the tyre lands flush against the sideboard — the limit. The big two do not:
+their box is set straight off the Golf track plus its wall-section steps and the **track is left
+alone**, so the deck overhangs the wheels rather than being bounded by them. Widening the box while
+also widening the track would have been the same rule with bigger numbers.
+
+**The price is the floor height, and it is not optional.** With the wheels under the deck, the deck has
+to clear the tyre — at **full compression**, not at rest, or the wheel comes through its own floor on
+every bump. So the wide classes' floor sits at **+1.150** against the small ones' **−0.023**, and their
+walls top out at 2.150 against the Golf's 2.185 roof. That is what a real flatbed looks like, and it is
+the honest consequence of the instruction rather than a decision I made separately.
+
+The medium's tyres still stand 75 mm proud each side (box 2.850 against a 3.000 tyre envelope), which
+is the same relationship every car in the fleet has. The large's box overhangs its wheels outright.
+
+**The verifier gained a mode.** The flush rule and the .2734 ride rule are now gated to the narrow
+classes, and the wide ones get their own invariant instead: the deck's underside above the compressed
+tyre, clearance about one t, and **each sideboard individually** overhanging the wheel centres. That
+last word matters — the first version took `max()` over both sides, so pulling ONE sideboard inside the
+wheels changed nothing and the mutation survived. **222 named checks, 910 mutations**, all caught.

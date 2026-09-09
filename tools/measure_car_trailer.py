@@ -82,10 +82,15 @@ def truck_bed():
 #   small  .75 / +1 -> 3.921 x 2.225, the previous pass
 #   medium .95 / +2 -> 4.967 x 2.350, and two axles because one axle under five metres of deck is a
 #                     wheelbarrow; the fleet's own long bodies (truck, van) all carry four wheels.
+#   TWO WIDTH MODES. The small classes solve the box out of the track so the tyre lands flush against
+#   the sideboard. The big ones do NOT (strawberry: "wider! ignore the limit on width") -- their box is
+#   set directly and the wheels end up UNDER it, which is the only arrangement that removes the limit
+#   rather than restating it. That forces the deck up over the tyre; see `deck_y` below.
 CLASSES = {
-    'dinky':  dict(length=.60, width_steps=0, axles=1, display='Dinky Trailer'),
-    'small':  dict(length=.75, width_steps=1, axles=1, display='Small Trailer'),
-    'medium': dict(length=.95, width_steps=2, axles=2, display='Medium Trailer'),
+    'dinky':  dict(length=.60, width_steps=0, axles=1, wide=False, display='Dinky Trailer'),
+    'small':  dict(length=.75, width_steps=1, axles=1, wide=False, display='Small Trailer'),
+    'medium': dict(length=.95, width_steps=2, axles=2, wide=True,  display='Medium Trailer'),
+    'large':  dict(length=1.15, width_steps=4, axles=2, wide=True, display='Large Trailer'),
 }
 
 
@@ -115,7 +120,14 @@ def design(specs, rear, cls='small'):
     # outer face, which is what "flush" means here and what removes the outrigger look the axle bar
     # was drawing attention to.
     C = CLASSES[cls]
-    deck_w = (golf['tracks'][-1]+wall_t/2*C['width_steps'])-tyre_width-2*t
+    if C['wide']:
+        # NO WIDTH LIMIT: the box is set straight off the Golf track plus its wall-section steps and
+        # the track is left alone, so the deck simply overhangs the wheels instead of being bounded by
+        # them. Nothing is typed -- it is still the Golf's measured track and the truck's wall section.
+        deck_w = golf['tracks'][-1]+wall_t/2*C['width_steps']
+        track = golf['tracks'][-1]
+    else:
+        deck_w = (golf['tracks'][-1]+wall_t/2*C['width_steps'])-tyre_width-2*t
     # FLUSH = the tyre sits AGAINST the sideboard's outer face, not inside it. Aligning the tyre's
     # OUTER face with the wall instead puts the wheel through the box: the tyre tops out .620 above
     # the deck floor, so at that track its inner half rises into the cargo bay. Nothing about removing
@@ -123,7 +135,7 @@ def design(specs, rear, cls='small'):
     # bed over it, which needs deck_y 1.100 against today's -.023, i.e. a lorry-height floor.
     # So the wheel is hard against the wall with the gap closed, which is what the axle bar was
     # spanning and why it can go.
-    track = deck_w+tyre_width
+        track = deck_w+tyre_width
     deck_l = length*C['length']
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
@@ -144,6 +156,12 @@ def design(specs, rear, cls='small'):
     # have to keep meeting the ground.
     ride = (golf['Wheels'][0][1]-.25) - obj(CONTENT/golf['fields']['Body'].strip('"'))['lo'][1]
     deck_y = wall_t-ride
+    if C['wide']:
+        # THE DECK HAS TO CLEAR THE TYRE, because the wheels are now under it. Clearance is taken at
+        # FULL COMPRESSION (wheel_y + radius), not at rest: a bed sized to the resting tyre has the
+        # wheel through its own floor on every bump. This is the price of the unlimited width and it is
+        # what a real flatbed does -- deck over the wheels, higher floor.
+        deck_y = wheel_y+radius+t+wall_t   # +t so a bottomed suspension does not touch its own floor
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
