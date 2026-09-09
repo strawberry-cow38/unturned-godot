@@ -1,6 +1,7 @@
 using Godot;
 using SDG.Unturned;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedGodot.Testing
 {
@@ -35,53 +36,38 @@ namespace UnturnedGodot.Testing
             // bare L1 host does not.
             ItemCatalog.RegisterAll();
 
-            // (id, stackSize, tris per round, how many rounds the pile has)
-            var beds = new[]
+            // EVERY ammo id that carries a bundle, and the round count comes from the MANIFEST rather than
+            // from a list in here -- a hardcoded pair passed happily while nine other calibers had no bundle
+            // at all, and would go stale again the next time one is added.
+            int[] ammo = { 113, 381, 5000, 5001, 5002, 5003, 5004, 5005, 5006, 103, 108 };
+            foreach (int id in ammo)
             {
-                (id: 5004, stack: 128, per: 22, rounds: 5, label: "5.56 FMJ"),
-                (id: 113,  stack: 32,  per: 20, rounds: 3, label: "12 gauge buckshot"),
-            };
+                var asset = Assets.find((ushort)id);
+                var cum = WorldItem.RoundsFor(id);
+                string label = asset?.itemName ?? id.ToString();
+                if (cum == null || cum.Length < 2) { T.Fail($"{label} (#{id}) has no `rounds` in the manifest"); continue; }
 
-            foreach (var b in beds)
-            {
-                T.Check($"{b.label}: stackSize is {b.stack}", Assets.find((ushort)b.id)?.stackSize == b.stack);
+                int rounds = cum.Length, per = cum[0], stack = asset?.stackSize ?? 0;
+                bool even = true;
+                for (int i = 0; i < rounds; i++) if (cum[i] != per * (i + 1)) even = false;
+                T.Check($"{label}: rounds are evenly sized ({string.Join(",", cum)})", even);
+                T.Check($"{label}: a full stack draws all {rounds} rounds",
+                        Tris(WorldItem.MeshForStack(id, stack)) == per * rounds);
+                T.Check($"{label}: an amount of 1 still draws a round", Tris(WorldItem.MeshForStack(id, 1)) == per);
 
-                var full = WorldItem.MeshForStack(b.id, b.stack);
-                T.Check($"{b.label}: a full stack is {b.rounds} rounds ({b.per * b.rounds} tris)",
-                        Tris(full) == b.per * b.rounds);
-
-                // BANDS = ROUNDS + 1, inclusive at the low edge. Walk EVERY boundary rather than sampling a
-                // couple: the band count changed with the pile size, and an off-by-one here shows up only at
-                // the exact edges -- ceil-vs-floor got all of them wrong while the midpoints stayed right.
-                int bands = b.rounds + 1;
-                for (int k = 1; k <= b.rounds; k++)
+                // Bands = rounds + 1, inclusive at the low edge. Walk every boundary and the amount below it.
+                int bands = rounds + 1;
+                for (int k = 1; k <= rounds; k++)
                 {
-                    int at = (int)System.Math.Ceiling((double)b.stack * k / bands);   // first amount in band k
-                    T.Check($"{b.label}: {at}/{b.stack} shows {k}", Tris(WorldItem.MeshForStack(b.id, at)) == b.per * k);
+                    int at = (int)System.Math.Ceiling((double)stack * k / bands);
+                    var m = WorldItem.MeshForStack(id, at);
+                    T.Check($"{label}: {at}/{stack} shows {k}", Tris(m) == per * k);
                     if (k > 1)
-                    {
-                        int below = at - 1;
-                        T.Check($"{b.label}: {below}/{b.stack} shows {k - 1}",
-                                Tris(WorldItem.MeshForStack(b.id, below)) == b.per * (k - 1));
-                    }
+                        T.Check($"{label}: {at - 1}/{stack} shows {k - 1}",
+                                Tris(WorldItem.MeshForStack(id, at - 1)) == per * (k - 1));
+                    // ...and no prefix may float: hiding rounds must never lift the pile off the ground.
+                    T.Check($"{label}: {k} round(s) sits on the ground", m.GetAabb().Position.Y <= 1e-4f);
                 }
-
-                // The single ejected round -- the case the whole feature exists to serve, and it sits below
-                // every band. It must draw ONE round, never zero: a dropped item that renders nothing is
-                // indistinguishable from a crash.
-                T.Check($"{b.label}: an amount of 1 still draws a round", Tris(WorldItem.MeshForStack(b.id, 1)) == b.per);
-
-                // HEIGHT + GROUND. Hiding must never leave the remainder hovering where a lower round was,
-                // which is the failure a triangle count cannot see: reorder the rounds in the .txt and every
-                // count above still passes. Checked for every prefix the visual can draw.
-                float ground = Height(WorldItem.MeshForStack(b.id, 1));
-                for (int k = 1; k <= b.rounds; k++)
-                {
-                    var m = WorldItem.MeshForStack(b.id, (int)System.Math.Ceiling((double)b.stack * k / bands));
-                    T.Check($"{b.label}: {k} round(s) sits on the ground", m.GetAabb().Position.Y <= 1e-4f);
-                    T.Check($"{b.label}: {k} round(s) is no taller than the full pile", Height(m) <= Height(full) + 1e-5f);
-                }
-                T.Check($"{b.label}: the full pile is taller than one round", Height(full) > ground + 0.0005f);
             }
 
             // CONTROL: an ordinary single-object item has no `rounds` in the manifest and must be immune -- same

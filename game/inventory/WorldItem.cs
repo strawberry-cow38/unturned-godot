@@ -219,6 +219,16 @@ namespace UnturnedGodot
             return ContentProvider.ParseObjPrefix(m.ObjPath, m.Rounds[n - 1]) ?? m.Mesh;
         }
 
+        /// <summary>The manifest's `rounds` for an id -- cumulative triangle counts, one per round -- or null
+        /// for the great majority of items that are a single object. Public so a test can enumerate what is
+        /// actually installed instead of carrying its own copy of the list, which is the copy that goes stale
+        /// the moment a caliber is added.</summary>
+        public static int[] RoundsFor(int itemId)
+        {
+            var m = itemId > 0 ? GetModel(itemId) : null;
+            return m != null && m.Ok ? m.Rounds : null;
+        }
+
         /// <summary>The mesh a dropped stack of `itemId` x `amount` draws, resolved through the real manifest
         /// and the real obj on disk. Public so the stack-visual test can assert on the MESH -- its triangle
         /// count and its height -- rather than on a re-statement of the band arithmetic.</summary>
