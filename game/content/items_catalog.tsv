@@ -98,12 +98,12 @@
 100	Cobra Magazine	Magazine	Rare	1	1	Low caliber civilian grade <color=rare>Cobra</color> magazine. Designed to fit 20 rounds.	d7c2993ceb5b49fd9f8ef8d4195854b4
 101	Schofield	Gun	Uncommon	5	2	Russian battle rifle chambered in Schofield ammunition.	c9e5a852b9c14206b483e629ee33ade0
 102	Schofield Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	da2bfe50b3654a7799dda42e19edd029
-103	Schofield Clip	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Schofield</color> clip. Designed to fit 5 rounds.	9323b74a83da45c6a213ba8f8f16d13b
+103	7.62x54mmR Rounds	Magazine	Uncommon	1	1	Loose 7.62x54mmR rounds. Chambered in the <color=uncommon>Schofield</color>.	9323b74a83da45c6a213ba8f8f16d13b
 104	Fire Axe	Melee	Common	2	3	High power axe used by firefighters.	f779c1dfcc9e44eba9987916cc713799
 105	Baseball Bat	Melee	Common	2	3	Tool for playing America's favorite sport.	bdb0a99f009c42bf92ef8764095f4bae
 106	Hockey Stick	Melee	Common	2	3	Tool for playing Canada's favorite sport.	3920b257c1664bf3b53943867d531bfd
 107	Ace	Gun	Uncommon	2	2	American revolver chambered in Ace ammunition.	92b49222958d4c6fbeca1bd00987b0fd
-108	Ace Clip	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Ace</color> clip. Designed to fit 6 rounds.	2326f2dcced64ff0b61f452b16c9754f
+108	.44 Magnum Rounds	Magazine	Uncommon	1	1	Loose .44 Magnum rounds. Chambered in the <color=uncommon>Ace</color>.	2326f2dcced64ff0b61f452b16c9754f
 109	Hawkhound	Gun	Uncommon	5	2	Canadian hunting rifle chambered in Hawkhound ammunition.	851bdc8130ea44bd80605d896937a5ec
 110	Hawkhound Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	b64aadf1128c4dad919b72e15e152b25
 111	Hawkhound Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Hawkhound</color> magazine. Designed to fit 8 rounds.	4201dc61ec7c4a7dad1695d278c4ba77
