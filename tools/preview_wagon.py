@@ -15,7 +15,7 @@ from measure_vehicles import CONTENT, ROOT, obj, read_specs
 
 
 def scene(key):
-    spec = read_specs()[key]
+    spec = read_specs((key,))[key]
     faces, colors = [], []
     palette = Image.open(CONTENT / spec["Palette"]).convert("RGBA")
 
@@ -60,11 +60,15 @@ def scene(key):
 
 
 def main():
-    fig = plt.figure(figsize=(15,10),facecolor="#f3f3ee")
-    views = [("sedan","Sedan • source",12,-116), ("wagon","Wagon • front quarter",12,-116),
-             ("wagon","Wagon • side (−Z is front)",0,-90), ("wagon","Wagon • rear quarter",16,58)]
+    fig = plt.figure(figsize=(18,10),facecolor="#f3f3ee")
+    views = [("sedan","Sedan • fleet reference",0,-90),
+             ("hatchback","Hatchback • fleet reference",0,-90),
+             ("van","Van • fleet reference",0,-90),
+             ("wagon","Original wagon • front quarter",14,-116),
+             ("wagon","Original wagon • side (−Z is front)",0,-90),
+             ("wagon","Original wagon • rear quarter",16,58)]
     for i,(key,title,elev,azim) in enumerate(views,1):
-        ax = fig.add_subplot(2,2,i,projection="3d",computed_zorder=False)
+        ax = fig.add_subplot(2,3,i,projection="3d",computed_zorder=False)
         faces,colors = scene(key)
         ax.add_collection3d(Poly3DCollection(faces,facecolors=colors,edgecolors=(.1,.1,.1,.12),linewidths=.2,zsort="average"))
         ax.set(xlim=(-3.6,3.6),ylim=(-1.8,1.8),zlim=(-.7,2.5),xlabel="Z (m)",ylabel="X (m)",zlabel="Y (m)")

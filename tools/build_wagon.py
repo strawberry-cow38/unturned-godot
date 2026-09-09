@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""Build the estate from measured sedan geometry. Run after measure_vehicles.py.
+"""Author an original wagon from the dimension brief in notes/vehicle_style.md.
 
-Keeps the sedan lower body, wheel arches, four seats and driving rig. Replaces
-the greenhouse with a flat roof, A/B/C/D pillars, and eight separate panes.
-All output faces are triangles with explicit per-corner UVs and normals.
+No source body, roof, panel or wheel-anchor array is read by this generator.
+Only the retained palette and sedan lamp parts are shared inputs. Wheels and
+seat/steering parts are shared by reference in Vehicle.cs.
 """
-from __future__ import annotations
-
 import math
 from pathlib import Path
 import shutil
-import statistics
 import struct
+from measure_vehicles import CONTENT, ROOT, obj, fmt
 
-from measure_vehicles import CONTENT, ROOT, obj, read_specs, fmt, vec, table
-
+PAINT = (0.125, 0.75)
+DARK = (0.375, 0.25)
 
 def sub(a, b):
     return tuple(x-y for x, y in zip(a, b))
@@ -37,30 +35,39 @@ class Mesh:
             self.maps[kind][value] = len(values)
         return self.maps[kind][value]
 
+    def position(self, point, normal, uv):
+        # Source-like seams: position records split only at a flat normal/UV boundary.
+        key = (point, tuple(round(x, 4) for x in normal), uv)
+        if key not in self.maps[0]:
+            self.v.append(point)
+            self.maps[0][key] = len(self.v)
+        return self.maps[0][key]
+
     def tri(self, points, uvs=None):
         points = [tuple(round(x, 6) for x in p) for p in points]
         # Compute normals from the float32 positions ParseObj actually passes to Godot.
         loaded = [tuple(struct.unpack("f", struct.pack("f", x))[0] for x in p) for p in points]
         n = cross(sub(loaded[1], loaded[0]), sub(loaded[2], loaded[0]))
         length = math.sqrt(sum(x*x for x in n))
-        if length < 1e-10:  # clipping at a source vertex can produce a line
-            return
+        assert length > 1e-10, ("degenerate authored triangle", points)
         normal = tuple(x/length for x in n)
         # OBJ V is up. This samples the sedan palette's alpha-zero (0,0) texel AFTER ParseObj's V flip.
         uvs = uvs or [(0.125, 0.75)] * 3
-        self.f.append(tuple((self.index(p, 0), self.index(uv, 1), self.index(normal, 2)) for p, uv in zip(points, uvs)))
+        self.f.append(tuple((self.position(p, normal, uv), self.index(uv, 1), self.index(normal, 2)) for p, uv in zip(points, uvs)))
 
     def quad(self, points, uv=None):
         for ids in ((0, 1, 2), (0, 2, 3)):
             self.tri([points[i] for i in ids], [uv]*3 if uv else None)
 
-    def prism(self, x0, x1, yz, uv=None):
+    def prism(self, x0, x1, yz, uv=None, joined=False):
         """Extrude a CCW polygon in the Y/Z plane; close all six faces."""
         left = [(x0, y, z) for y, z in yz]
         right = [(x1, y, z) for y, z in yz]
         self.quad(list(reversed(left)), uv)
         self.quad(right, uv)
         for i in range(4):
+            if joined and i in (1, 3):
+                continue  # end faces meet the roof underside and belt rail
             j = (i+1) % 4
             self.quad([left[i], left[j], right[j], right[i]], uv)
 
@@ -78,160 +85,100 @@ class Mesh:
         (CONTENT / name).write_text("\n".join(lines) + "\n")
 
 
-def clip_below(poly, y):
-    """Sutherland-Hodgman clipping, interpolating the source per-corner UV."""
-    result = []
-    for current, following in zip(poly, poly[1:] + poly[:1]):
-        a, auv = current
-        b, buv = following
-        ina, inb = a[1] <= y, b[1] <= y
-        if ina:
-            result.append(current)
-        if ina != inb:
-            t = (y-a[1])/(b[1]-a[1])
-            result.append((tuple(x+(z-x)*t for x,z in zip(a,b)), tuple(x+(z-x)*t for x,z in zip(auv,buv))))
-    return result
+
+def outward_quad(mesh, points, direction, uv=None):
+    n = cross(sub(points[1], points[0]), sub(points[2], points[0]))
+    if sum(a*b for a,b in zip(n,direction)) < 0:
+        points = list(reversed(points))
+    mesh.quad(points, uv)
 
 
 def build():
-    assert (ROOT / "notes/vehicle_measurements.md").exists(), "Measure the fleet first"
-    specs = read_specs()
-    sedan = specs["sedan"]
-    source = sedan["mesh"]
-    verts = source["vertices"]
-    # These are vertex planes in the source mesh, selected by their existing rounded Y levels.
-    level = lambda y: [v for v in verts if round(v[1], 3) == y]
-    belt = statistics.median(v[1] for v in level(1.125))
-    shoulder = statistics.median(v[1] for v in level(1.0))
-    eaves = statistics.median(v[1] for v in level(1.875))
-    roof_edge = statistics.median(v[1] for v in level(2.125))
-    thickness = round(roof_edge - eaves, 6)
-    extension = thickness
-    roof_y = source["hi"][1]
-    under_roof = roof_y - thickness
-    outer_x = round(max(abs(v[0]) for v in level(1.875)), 6)
-    inner_x = outer_x - thickness
-    a_base = min(v[2] for v in level(1.125))
-    a_top = min(v[2] for v in level(1.875))
-    b_front = round(statistics.median(v[2] for v in level(1.91) if 0 < v[2] < 0.2), 6)
-    b_back = b_front + thickness
-    axle = max(w[2] for w in sedan["Wheels"])
-    stretch_start = axle + sedan["WheelRadius"]
-    tailgate = max(v[2] for v in level(0.875)) + extension
-    old_rim_end = max(v[2] for v in level(1.125))
-    c_front, c_back = stretch_start, stretch_start + thickness
-    d_front, d_back = tailgate - thickness, tailgate
-    assert b_back < c_front < c_back < d_front
-
-    def stretch(v):
-        x,y,z = v
-        # Translate the rear fascia/bumper/exhaust by one roof thickness while retaining tyre arches.
-        # Linear ramp starts BEHIND the rear tyre, becoming a rigid translation at the old tailgate plane.
-        fraction = max(0., min(1., (z-stretch_start)/(tailgate-extension-stretch_start)))
-        return (x,y,z+extension*fraction)
-
+    assert (ROOT/'notes/vehicle_style.md').exists(), "Derive the house style first"
     body = Mesh()
-    for face in source["faces"]:
-        assert len(face) == 3
-        indices = [tuple(int(i)-1 for i in c.split("/")) for c in face]
-        poly = [(source["vertices"][v], (source["uvs"][t][0], 1-source["uvs"][t][1])) for v,t,n in indices]
-        poly = clip_below(poly, belt)
-        for i in range(1, len(poly)-1):
-            points = [poly[j] for j in (0,i,i+1)]
-            body.tri([stretch(p) for p,uv in points], [uv for p,uv in points])
-    lower_triangles = len(body.f)
+    # Entirely new faceted side walls. Each arch has four flat edges, with a
+    # 0.25 m deep return into the wheel opening. Front/rear axle Z: -1.56/+1.46.
+    contour = [(-2.76,-.12)]
+    for axle in (-1.56,1.46):
+        contour += [(axle+z,y) for z,y in [(-.70,-.12),(-.50,.50),(0,.72),(.50,.50),(.70,-.12)]]
+    contour += [(2.76,-.12)]
 
-    # Flat roof, including its underside; no retained sedan roof or rear windscreen frame underneath it.
-    body.box((-outer_x, under_roof, a_top), (outer_x, roof_y, tailgate))
+    def width(z):
+        return 1.26 - max(0., abs(z)-2.32)*(.10/.44)
+
     for sign in (-1,1):
-        x0,x1 = sorted((sign*inner_x, sign*outer_x))
-        body.prism(x0,x1, [(belt,a_base), (under_roof,a_top),
-                          (under_roof,a_top+thickness), (belt,a_base+thickness)])
-        for z0,z1 in ((b_front,b_back), (c_front,c_back), (d_front,d_back)):
-            body.box((x0,belt,z0), (x1,under_roof,z1))
-        # Rear belt rail fills the source boot's descending shoulder to the new vertical tailgate.
-        body.box((x0,shoulder,old_rim_end), (x1,belt,tailgate))
-    body.box((-inner_x,shoulder,d_front), (inner_x,belt,tailgate))
-    # Fixed dark handle on the tailgate belt, below its glass; sizes derived from the same frame thickness.
-    handle_y = (shoulder+belt)/2
-    body.box((-thickness,handle_y-thickness/16,tailgate),
-             (thickness,handle_y+thickness/16,tailgate+thickness/8), uv=(0.375,0.25))
-    body.write("wagon_body.txt")
-    shutil.copyfile(CONTENT / sedan["Palette"], CONTENT / "wagon_palette.png")
+        for (z0,y0),(z1,y1) in zip(contour,contour[1:]):
+            x0,x1 = sign*width(z0),sign*width(z1)
+            i0,i1 = x0-sign*.25,x1-sign*.25
+            # Outer skin, inner skin, wheel-arch/sill return and bevelled belt.
+            outward_quad(body,[(x0,y0,z0),(x1,y1,z1),(x1,1.,z1),(x0,1.,z0)],(sign,0,0))
+            outward_quad(body,[(i0,y0,z0),(i0,1.10,z0),(i1,1.10,z1),(i1,y1,z1)],(-sign,0,0),DARK)
+            outward_quad(body,[(x0,y0,z0),(i0,y0,z0),(i1,y1,z1),(x1,y1,z1)],(0,-1,0),DARK)
+            outward_quad(body,[(x0,1.,z0),(x1,1.,z1),(i1,1.10,z1),(i0,1.10,z0)],(0,1,0))
+        for z,y in (contour[0],contour[-1]):
+            x=sign*width(z);i=x-sign*.25
+            outward_quad(body,[(x,y,z),(x,1.,z),(i,1.10,z),(i,y,z)],(0,0,z))
 
-    # Eight independent four-corner panes, using existing GlassPaneLabels (mid1 = cargo side window).
+    # Underfloor stays inboard of the tyres; raised load deck starts behind the
+    # shared rear seatbacks (maximum Z measured locally, not a copied body deck).
+    body.box((-.99,-.27,-2.58),(.99,-.12,2.62),DARK)
+    body.box((-.99,-.12,1.36),(.99,.18,2.65),DARK)
+    # A new wedge bonnet: one top plane and a vertical front fascia.
+    body.prism(-1.01,1.01,[(-.12,-2.76),(.91,-2.76),(1.10,-1.25),(-.12,-1.25)])
+    # Rear lower tailgate has its own flat cargo sill; bumper tips define ±2.90.
+    body.box((-1.01,.18,2.53),(1.01,1.10,2.68))
+    for z0,z1 in ((-2.90,-2.76),(2.76,2.90)):
+        body.box((-1.16,-.12,z0),(1.16,.16,z1),DARK)
+    # Front grille (under the lamps), rear latch: fixed dark palette texel.
+    body.box((-.48,.36,-2.79),(.48,.54,-2.76),DARK)
+    body.box((-.23,.89,2.68),(.23,.96,2.70),DARK)
+
+    # Flat thick roof, A/B/C/D sections. None is computed from sedan vertices.
+    # 0.20 m rear posts frame a separate cargo window (0.93 base / 0.81 top).
+    body.box((-1.23,1.92,-.80),(1.23,2.17,2.56))
+    for sign in (-1,1):
+        x0,x1=sorted((sign*.98,sign*1.23))
+        body.prism(x0,x1,[(1.10,-1.25),(1.92,-.80),(1.92,-.55),(1.10,-1.00)], joined=True)
+        for z0,z1 in ((.12,.37),(1.35,1.55)):
+            body.prism(x0,x1,[(1.10,z0),(1.92,z0),(1.92,z1),(1.10,z1)], joined=True)
+        body.prism(x0,x1,[(1.10,2.48),(1.92,2.36),(1.92,2.56),(1.10,2.68)], joined=True)
+        # Continuous 0.12 m belt rail connects the inset side skins to the posts.
+        body.box((x0,.98,-1.25),(x1,1.10,2.68))
+    # Front/rear roof headers are provided by the slab; opaque apron is below
+    # glass, leaving all eight apertures unbacked by body faces.
+    body.write('wagon_body.txt')
+    shutil.copyfile(CONTENT/'sedan_palette.png',CONTENT/'wagon_palette.png')
+
     panes = {
-        "windshield": [(-inner_x,belt,a_base), (inner_x,belt,a_base),
-                       (inner_x,under_roof,a_top), (-inner_x,under_roof,a_top)],
-        "rear": [(-inner_x,belt,tailgate), (-inner_x,under_roof,tailgate),
-                 (inner_x,under_roof,tailgate), (inner_x,belt,tailgate)],
+        'windshield': [(-.98,1.10,-1.25),(.98,1.10,-1.25),(.98,1.92,-.80),(-.98,1.92,-.80)],
+        'rear': [(-.98,1.10,2.68),(-.98,1.92,2.56),(.98,1.92,2.56),(.98,1.10,2.68)],
     }
-    # Pane centre within the frame thickness avoids coplanar overlap with either frame skin.
-    pane_x = (inner_x+outer_x)/2
-    for side,sign in (("l",-1),("r",1)):
-        x = sign*pane_x
-        panes[f"{side}_front"] = [(x,belt,a_base+thickness), (x,belt,b_front),
-                                  (x,under_roof,b_front), (x,under_roof,a_top+thickness)]
-        for label,z0,z1 in (("rear",b_back,c_front),("mid1",c_back,d_front)):
-            panes[f"{side}_{label}"] = [(x,belt,z0), (x,belt,z1), (x,under_roof,z1), (x,under_roof,z0)]
+    for side,sign in [('l',-1),('r',1)]:
+        x=sign*1.226
+        panes[side+'_front']=[(x,1.10,-1.00),(x,1.10,.12),(x,1.92,.12),(x,1.92,-.55)]
+        panes[side+'_rear']=[(x,1.10,.37),(x,1.10,1.35),(x,1.92,1.35),(x,1.92,.37)]
+        panes[side+'_mid1']=[(x,1.10,1.55),(x,1.10,2.48),(x,1.92,2.36),(x,1.92,1.55)]
     for label,points in panes.items():
-        mesh = Mesh()
-        if label in ("windshield", "rear") or label.startswith("r_"):
-            points = list(reversed(points))
-        mesh.quad(points)
-        mesh.write(f"wagon_glass_{label}.txt")
+        mesh=Mesh()
+        direction = (0,0,-1) if label=='windshield' else (0,0,1) if label=='rear' else (-1,0,0) if label.startswith('l_') else (1,0,0)
+        outward_quad(mesh,points,direction)
+        mesh.write('wagon_glass_'+label+'.txt')
 
-    # Lamps retain the sedan lens geometry and colours. Move the rear mesh by exactly the TailPos delta.
-    mesh = obj(CONTENT / "sedan_taillights.txt")
-    lamps = Mesh()
-    for face in mesh["faces"]:
-        corners = [tuple(int(i)-1 for i in c.split("/")) for c in face]
-        lamps.tri([(mesh["vertices"][c[0]][0],mesh["vertices"][c[0]][1],mesh["vertices"][c[0]][2]+extension) for c in corners],
-                  [(mesh["uvs"][c[1]][0],1-mesh["uvs"][c[1]][1]) for c in corners])
-    lamps.write("wagon_taillights.txt")
-
-    mesh = obj(CONTENT / "wagon_body.txt")
-    expected = (source["size"][0], source["size"][1], source["size"][2]+extension)
-    assert all(abs(x-y)<0.000002 for x,y in zip(mesh["size"],expected)), (mesh["size"],expected)
-    roof_size = (2*outer_x, thickness, tailgate-a_top)
-    roof_center = (0., (under_roof+roof_y)/2, (a_top+tailgate)/2)
-    print("Wagon bounds:", vec(mesh["lo"]), vec(mesh["hi"]))
-    print("RoofBox size/center:", vec(roof_size), vec(roof_center))
-    print("Counts:", len(body.v), "vertices,", len(body.f), "triangles; retained lower triangles:", lower_triangles)
-
-    out = ["## Wagon dimension derivation", "",
-           "Design assumption: prioritize the requested sedan inheritance when the ambulance length limit conflicts with the measured files. The sedan is already longer than the ambulance. No sedan or ambulance measurement was altered. This assumption is not a user-approved waiver; the contradictory length limit remains unmet.", "",
-           "Geometry is generated by `tools/build_wagon.py` from `sedan_body.txt` vertex planes and `_sedan.Wheels`. Lower body triangles are clipped at the measured beltline, the original upper body is removed, and the new roof and pillars are closed prisms. Rear extension ramps only behind the rear tyre; wheel arches and anchors remain at the sedan positions. The boot deck remains the cargo floor. New panes carry explicit normals and UVs.", ""]
-    table(out, ["Dimension / construction", "Value (m)", "Computed source / rule"], [
-        ["AABB min / max", vec(mesh["lo"]) + " / " + vec(mesh["hi"]), "Measured again from wagon_body.txt v records"],
-        ["Length / width / height", vec((mesh["size"][2],mesh["size"][0],mesh["size"][1])), "Sedan length + extension; sedan width and height retained"],
-        ["Rear extension / frame thickness", fmt(extension), f"Sedan roof-edge Y {fmt(roof_edge)} − eave Y {fmt(eaves)}"],
-        ["Beltline / rear shoulder Y", f"{fmt(belt)} / {fmt(shoulder)}", "Sedan vertex planes at these Y values"],
-        ["Roof top / underside Y", f"{fmt(roof_y)} / {fmt(under_roof)}", "Sedan maximum Y; subtract frame thickness"],
-        ["Roof outer / inner half-width", f"{fmt(outer_x)} / {fmt(inner_x)}", "Maximum abs(X) on sedan eave plane; subtract frame thickness"],
-        ["A-pillar front Z, bottom / top", f"{fmt(a_base)} / {fmt(a_top)}", "Minimum sedan Z at beltline / eave; pillar Z thickness = frame thickness"],
-        ["B-pillar front / back Z", f"{fmt(b_front)} / {fmt(b_back)}", "Median front B-pillar vertex Z on sedan underside plane; add frame thickness"],
-        ["C-pillar front / back Z", f"{fmt(c_front)} / {fmt(c_back)}", "Rear anchor Z + WheelRadius; add frame thickness"],
-        ["D-pillar front / back Z", f"{fmt(d_front)} / {fmt(d_back)}", "Tailgate − frame thickness / tailgate"],
-        ["Tailgate Z", fmt(tailgate), "Maximum sedan Z on Y=0.875 vertex plane + extension"],
-        ["Rear belt rail start Z", fmt(old_rim_end), "Maximum sedan Z at beltline"],
-        ["Glass side abs(X); Y span", f"{fmt(pane_x)}; {fmt(belt)} .. {fmt(under_roof)}", "Midpoint of inner/outer frame X; between beltline and roof underside"],
-        ["Glass Z boundaries", "A→B; B→C; C→D; tailgate", "The corresponding pillar aperture edges above; windshield uses A-pillar front plane"],
-        ["Handle width / height / depth", vec((thickness*2,thickness/8,thickness/8)), "Frame thickness × (2, 1/8, 1/8); centre Y = midpoint of shoulder and beltline"],
-        ["RoofBox size / centre (XYZ)", vec(roof_size) + " / " + vec(roof_center), "Exact bounds of generated roof prism"],
-        ["Wheelbase / front & rear track", f"{fmt(sedan['wheelbase'])} / {fmt(sedan['tracks'][0])}", "Unchanged sedan Wheels array"],
-        ["Wheel radius / ride Y−r", f"{fmt(sedan['WheelRadius'])} / {fmt(sedan['Wheels'][0][1]-sedan['WheelRadius'])}", "Unchanged sedan radius and anchor Y"],
-        ["Front / rear overhang", f"{fmt(min(sedan['axles'])-mesh['lo'][2])} / {fmt(mesh['hi'][2]-max(sedan['axles']))}", "Wagon AABB to front/rear axle; rear includes exhaust, as in sedan"],
-    ])
-    table(out, ["Comparison", "Sedan", "Wagon", "Fleet reference"], [
-        ["Body length m", fmt(source["size"][2]), fmt(mesh["size"][2]), f"Ambulance {fmt(specs['ambulance']['mesh']['size'][2])}; Ural {fmt(specs['ural']['mesh']['size'][2])}"],
-        ["Body width m", fmt(source["size"][0]), fmt(mesh["size"][0]), f"Ambulance {fmt(specs['ambulance']['mesh']['size'][0])}"],
-        ["Body height m", fmt(source["size"][1]), fmt(mesh["size"][1]), f"Golf {fmt(specs['golf']['mesh']['size'][1])}; ambulance {fmt(specs['ambulance']['mesh']['size'][1])}"],
-        ["Mass kg", fmt(sedan["Mass"]), fmt((sedan["Mass"]+specs["police"]["Mass"])/2), "Midpoint of sedan and police, which share length/width and seat positions"],
-        ["Body v records / triangles", f"{len(source['vertices'])} / {len(source['faces'])}", f"{len(body.v)} / {len(body.f)}", f"Triangle ratio {len(body.f)/len(source['faces']):.6f}; vertex ratio {len(body.v)/len(source['vertices']):.6f}"],
-    ])
-    (ROOT / "notes/wagon_dimensions.md").write_text("\n".join(out))
+    # Keep the lamp approach: existing lenses and colour, each translated to
+    # the new fascia, paired with the same delta in SpotPos/TailPos in the spec.
+    for lamp,delta in [('headlights',.150),('taillights',.012)]:
+        source=obj(CONTENT/('sedan_'+lamp+'.txt'))
+        lamps=Mesh()
+        for face in source['faces']:
+            cs=[tuple(int(i)-1 for i in c.split('/')) for c in face]
+            lamps.tri([(source['vertices'][v][0],source['vertices'][v][1],source['vertices'][v][2]+delta) for v,t,n in cs],
+                      [(source['uvs'][t][0],1-source['uvs'][t][1]) for v,t,n in cs])
+        lamps.write('wagon_'+lamp+'.txt')
+    saved=obj(CONTENT/'wagon_body.txt')
+    assert saved['lo']==(-1.26,-.27,-2.9) and saved['hi']==(1.26,2.17,2.9), saved
+    print('Body:',len(body.v),'v /',len(body.f),'triangles;',len(set(body.v)),'unique positions')
+    print('AABB:',saved['lo'],saved['hi'])
 
 
-if __name__ == "__main__":
+if __name__=='__main__':
     build()

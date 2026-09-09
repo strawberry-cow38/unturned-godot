@@ -104,7 +104,7 @@ def obj(path):
                 lo=lo, hi=hi, size=tuple(b - a for a, b in zip(lo, hi)))
 
 
-def read_specs():
+def read_specs(names=None):
     src = uncomment((ROOT / "game/Vehicle.cs").read_text())
     seats_start = src.index("SeatTable =")
     seats_text = braced(src, src.index("{", seats_start))
@@ -116,6 +116,8 @@ def read_specs():
         fields = {k.strip(): v.strip() for k, v in fields.items()}
         name = m[1]
         if name not in ROAD + BOATS + ["otter", "wagon"]:
+            continue
+        if names is not None and name not in names:
             continue
         data = dict(key=name, fields=fields)
         for key in ("Mass", "WheelRadius", "Engine", "SpeedMax", "Fuel", "Health"):
@@ -152,7 +154,7 @@ def read_specs():
                           for ids in data["axles"].values()]
         data["mesh"] = obj(CONTENT / data["Body"])
         specs[name] = data
-    assert set(ROAD + BOATS + ["otter"]) <= specs.keys()
+    assert set(names if names is not None else ROAD + BOATS + ["otter"]) <= specs.keys()
     return specs
 
 

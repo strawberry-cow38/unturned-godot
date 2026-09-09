@@ -1981,7 +1981,7 @@ namespace UnturnedGodot
         static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
         {
             "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
-            "Station Wagon"     => (new Vector3(2.461926f, 0.25f, 3.967364f), new Vector3(0f, 2.035082f, 1.022514f)),   // generated roof prism; notes/vehicle_measurements.md
+            "Station Wagon"     => (new Vector3(2.46f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // original flat roof; notes/WAGON_REPORT.md
             "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
             "Humvee"            => (new Vector3(2.5f, 0.254f, 2.815f), new Vector3(0f, 2.0f, 0.050f)),
             "Roadster"          => (new Vector3(2.5f, 0.254f, 1.367f), new Vector3(0f, 2.0f, 0.672f)),
@@ -2836,7 +2836,7 @@ namespace UnturnedGodot
             ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
             ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
             ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
-            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // same four sedan seats and interior mesh; cargo area extends behind them
+            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // shared four-seat interior; original load deck begins behind the rear seatbacks
             ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
             ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
             ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
@@ -3114,10 +3114,8 @@ namespace UnturnedGodot
             },
         };
 
-        // Estate derived AFTER measuring the fleet: sedan wheelbase/track/height, rear overhang +0.25 m,
-        // flat roof to the tailgate. Body AABB 6.202190 L x 2.522096 W x 2.433513 H (not BoxSize).
-        // The source sedan already exceeds the ambulance's 5.353246 m mesh length; see the documented
-        // constraint conflict and all field derivations in notes/vehicle_measurements.md / WAGON_REPORT.md.
+        // Original wagon authored from fleet proportions, not a sedan-body extension.
+        // Body AABB 5.80 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
         static readonly Spec _wagon = new()
         {
             Mass = 1650f,   // midpoint of sedan 1500 and police 1800 kg (same measured footprint)
@@ -3125,20 +3123,20 @@ namespace UnturnedGodot
             GlassMesh = "wagon_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),
             Water = WaterMode.Car, RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            BoxSize = new Vector3(2.5f, 0.916f, 5.906f), BoxCenter = new Vector3(0f, 0.548f, 0.062f),   // sedan lower box, rear face +0.25; separate RoofBox above
+            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, 0f),   // fitted lower shell; separate roof above
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
-            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),
-            TailPos = new[] { new Vector3(-0.979f, 0.688f, 3.091f), new Vector3(0.979f, 0.688f, 3.091f) },   // sedan lamps and mesh +0.25 m
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // sedan lenses shifted +0.012 m; exposed beyond the rear side-wall ends
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]
-            { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },
+            { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
             Parts = new (string, Color)[]
             {
                 ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
-                ("sedan_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("wagon_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
                 ("wagon_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
             },
         };

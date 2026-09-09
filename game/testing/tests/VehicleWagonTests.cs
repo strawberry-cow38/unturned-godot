@@ -38,10 +38,10 @@ namespace UnturnedGodot.Testing
             if (actual != null)
             {
                 var bounds = actual.GetAabb();
-                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.522096f, 2.433513f, 6.202190f)) < 0.00001f);
+                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.52f, 2.44f, 5.80f)) < 0.00001f);
             }
             Vehicle.GetBodyBox("wagon", out var size, out var center);
-            T.Check("replica/debug lookup uses wagon lower collider", size == new Vector3(2.5f, 0.916f, 5.906f) && center == new Vector3(0f, 0.548f, 0.062f));
+            T.Check("replica/debug lookup uses wagon lower collider", size == new Vector3(2.5f, 0.98f, 5.52f) && center == new Vector3(0f, 0.59f, 0f));
             T.Check("capacities retained from sedan", wagon.FuelMax == sedan.FuelMax && wagon.HealthMax == sedan.HealthMax);
             T.Check("mass between sedan and police", Mathf.IsEqualApprox(wagon.Mass, 1650f));
             yield return Ticks(1);
