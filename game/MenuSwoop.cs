@@ -18,20 +18,26 @@ namespace UnturnedGodot
     // is not worth a permanent TickHub entry the way the always-on world systems are.
     public partial class MenuSwoop : Node
     {
-        public static float Seconds = 0.16f;   // long enough to read as motion, short enough not to be in the way
+        public static float Seconds = 0.085f;  // master 2026-09-09: "make the opening/close animation of the ui faster". Still two or three frames of travel at 30fps, so it reads as motion rather than a cut -- but a menu you open constantly should never be something you wait for.
         public static float Rise = 54f;        // pixels the panel travels on its way in
 
         CanvasLayer _layer;
         Control _root;      // faded
         Control _slider;    // slid
+        // The frosted backdrop, hidden the instant a screen starts CLOSING (strawberry 2026-09-09: "the ui goes
+        // dark when switching tabs"). Switching tabs closes one screen and opens another in the same frame, and
+        // for the length of the swoop BOTH were drawing a full-screen blur -- the second one samples the first
+        // one's already-tinted output, so the tint lands twice and the whole screen dips. Only the screen that is
+        // arriving should own the backdrop; the one leaving has nothing left to blur behind.
+        Control _backdrop;
         float _t;           // 0 = fully out, 1 = fully in
         int _dir;           // +1 opening, -1 closing, 0 idle
 
         /// <summary>Wire a screen up. <paramref name="slider"/> is a full-rect Control that owns nothing but the
         /// offset -- put the screen's panel inside it.</summary>
-        public static MenuSwoop Attach(CanvasLayer layer, Control root, Control slider)
+        public static MenuSwoop Attach(CanvasLayer layer, Control root, Control slider, Control backdrop = null)
         {
-            var s = new MenuSwoop { _layer = layer, _root = root, _slider = slider, Name = "Swoop" };
+            var s = new MenuSwoop { _layer = layer, _root = root, _slider = slider, _backdrop = backdrop, Name = "Swoop" };
             layer.AddChild(s);
             return s;
         }
@@ -44,6 +50,7 @@ namespace UnturnedGodot
         public void In()
         {
             _dir = 1;
+            if (_backdrop != null && GodotObject.IsInstanceValid(_backdrop)) _backdrop.Visible = true;
             SetProcess(true);
             Apply();
         }
@@ -54,6 +61,8 @@ namespace UnturnedGodot
         public bool Out()
         {
             if (_root == null || !GodotObject.IsInstanceValid(_root)) return false;
+            // Straight away, not faded out with the rest: a blur that is half-faded is still a second blur pass.
+            if (_backdrop != null && GodotObject.IsInstanceValid(_backdrop)) _backdrop.Visible = false;
             _dir = -1;
             SetProcess(true);
             return true;
@@ -63,6 +72,7 @@ namespace UnturnedGodot
         /// screen simply gone.</summary>
         public void Snap(bool open)
         {
+            if (_backdrop != null && GodotObject.IsInstanceValid(_backdrop)) _backdrop.Visible = open;
             _t = open ? 1f : 0f;
             _dir = 0;
             SetProcess(false);

@@ -174,7 +174,7 @@ void fragment() {
             _dash = new Control();
             _dash.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // the dashboard FILLS the screen (source container = full rect)
             _slide.AddChild(_dash);
-            _swoop = MenuSwoop.Attach(this, _root, _slide);
+            _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
             // The paperdoll viewport keeps rendering until the swoop has actually finished; blanking it the
             // instant Close() is called would show an empty doll for the whole fade out.
             _swoop.Closed += () => { if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; };

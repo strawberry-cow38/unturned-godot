@@ -157,7 +157,7 @@ namespace UnturnedGodot
             _coord.AddThemeColorOverride("font_color", UITheme.TextDim);
             _slide.AddChild(_coord);
 
-            _swoop = MenuSwoop.Attach(this, _root, _slide);
+            _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
             // Give the mouse back only once the panel has actually gone; doing it in Close() hides the cursor
             // while the map is still fading, which reads as the screen freezing rather than closing.
             _swoop.Closed += () => { if (_wantCapture) Input.MouseMode = Input.MouseModeEnum.Captured; };

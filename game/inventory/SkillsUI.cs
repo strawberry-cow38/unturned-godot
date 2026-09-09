@@ -75,16 +75,24 @@ namespace UnturnedGodot
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
-            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
             // The swoop's slider: a full-rect Control that owns NOTHING but an offset, so the animation cannot
             // fight this screen's own Layout() (which sets the panel's position from the viewport size).
             _slide = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
             _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.AddChild(_slide);
-            _panel = new Panel();
+            // MouseFilter.Ignore, and that is not tidiness (strawberry 2026-09-09: "the skills menu have a
+            // translucent overlay that eats clicks over the whole thing"). A Panel defaults to STOP, which was
+            // harmless while this was a 640x680 box floating in the middle and became a screen-sized input trap
+            // the moment I made it fill the viewport. The panel is chrome; its children still take their own
+            // clicks, and _root above already swallows anything that misses so nothing reaches the world.
+            _panel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
             UITheme.Panel(_panel);   // Box(Bg, RadiusPanel=6) -- identical to crafting's Box(_panel, UITheme.Bg, 6)
             _slide.AddChild(_panel);
-            _swoop = MenuSwoop.Attach(this, _root, _slide);
+            _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
+            // ...and the navbar is built AFTER the panel, like every other tab does it. Hit testing runs topmost
+            // first, so building it first put a full-screen panel over the tab strip -- the tabs were drawn, and
+            // dead. It only survived before because the old panel started below the bar.
+            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
 
             // Header line: crafting's "CRAFTING . N shown . M craftable now", same font, same colour, same place.
             _header = UITheme.Label(new Label(), UITheme.FontBody, UITheme.TextDim);

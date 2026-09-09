@@ -2074,8 +2074,20 @@ namespace UnturnedGodot
 
         /// <summary>The item id in the hands for the wire (v22 MoveInput.HeldItemId): the backing item of the held gun/melee/tool, 0 for fists or nothing.</summary>
         public ushort HeldItemIdForNet => _heldItem?.id ?? 0;
+        /// <summary>Is ANYTHING in your hands? Read by the hotbar's put-it-away gesture, so a hold this misses is
+        /// a key that does nothing (strawberry 2026-09-09: "pressing 1/2 with nothing in those slots should still
+        /// dequip whatever you have and become unarmed").
+        ///
+        /// It had drifted out of step with `Unarmed`, which is the same question asked the other way round, and
+        /// the two disagreed in BOTH directions: this one missed throwables and every one of the four
+        /// viewmodel-derived tools, so pressing 1 with a grenade or the wire tool out was a no-op; `Unarmed`
+        /// misses _heldItem and throwables. Kept as the superset and cross-referenced, because a list of
+        /// everything-you-can-hold maintained twice is a list that is wrong once.</summary>
         public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null || _heldOptic != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
+                                     || _heldThrowable != null
+                                     || HoldingWireTool || HoldingRopeTool || HoldingHoseTool || HoldingDetonatorTool
+                                     || HoldingFisher
                                      || (_heldMeleeName != null && _heldMeleeName != "fists");
 
         /// <summary>Record that what is now in hand came out of holster page `page` (-1 = not a holster). The
@@ -8177,6 +8189,12 @@ namespace UnturnedGodot
                         _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
                 }
             }
+            // The R-hold RELEASE branch is gated on `HasGunOut && CanOpenAmmoPie`, so swapping away mid-hold --
+            // to binoculars, a melee, anything -- means it never runs and _rHolding stays set for the rest of the
+            // session. The next gun you draw then satisfies "held long enough" instantly (_rHeldSince is
+            // ancient), pops the radial on its own and frees the cursor. Derived from what is in hand rather
+            // than cleared at the swap sites, the same way the held light two blocks down is.
+            if (_rHolding && !HasGunOut) _rHolding = false;
             if (AmmoRadial != null && AmmoRadial.IsOpen && (!CanOpenAmmoPie || !HasGunOut))
             { AmmoRadial.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; _rHolding = false; }
             else if (_rHolding && CanOpenAmmoPie && HasGunOut && !_reloading && !_unloading && _magSwapAnimTimer <= 0

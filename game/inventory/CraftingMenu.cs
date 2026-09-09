@@ -150,7 +150,7 @@ void fragment() {
             _panel = new Panel();
             Box(_panel, UITheme.Bg, 6);
             _slide.AddChild(_panel);
-            _swoop = MenuSwoop.Attach(this, _root, _slide);
+            _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
 
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Craft, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });   // the SHARED strip -- on the full-screen ROOT, not the inset panel, so it sits exactly where the inventory's does (the 16 px panel inset was the "bar moves slightly")
             // "N shown / M craftable" info line, small, below the navbar (text set in Rebuild)
