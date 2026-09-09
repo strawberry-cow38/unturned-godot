@@ -580,6 +580,7 @@ namespace UnturnedGodot
 
         Node3D _stump;
         StaticBody3D _stumpBody;
+        float _stumpTop;   // world-space height of the cut face above the tree's base
 
         // Retail stumpGameObject: the stump meshes stay where the tree stood until it regrows.
         void SpawnStump()
@@ -588,6 +589,12 @@ namespace UnturnedGodot
             AddChild(_stump);
             LoadParts(_stump, "stump");
             _stump.GlobalTransform = TreeXf;
+            // How high the CUT is. The falling trunk hinges on it, so it is measured off the stump's own mesh
+            // rather than assumed -- a pine's stump is not a birch's.
+            var sb = new Aabb(); bool anyS = false;
+            foreach (Node c in _stump.GetChildren())
+                if (c is MeshInstance3D mi && mi.Mesh != null) { sb = anyS ? sb.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); anyS = true; }
+            _stumpTop = anyS ? Mathf.Max(0f, sb.End.Y * Mathf.Max(0.01f, TreeXf.Basis.Scale.Y)) : 0f;
             SpawnStumpCollider();
         }
 
@@ -708,7 +715,18 @@ namespace UnturnedGodot
                 else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
             }
             var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
-            Vector3 p = _toppleBase.Origin;                          // pivot about the stump/base, in WORLD space
+            // HINGE ON THE STUMP, not on the base centre (strawberry 2026-09-09: "the falling tree should hinge
+            // better off the stump, theres a bit of a gap"). Rotating a trunk about the centre of its own base
+            // swings the butt end up and away -- half the cut face lifts clear while the other half would sweep
+            // through the stump, and the gap is that lift. A real tree pivots on the FAR EDGE of the cut: the
+            // side it is falling toward stays planted and the trunk rolls over it.
+            //
+            // So the pivot moves up to the cut face and out by the trunk's own radius along the fall direction.
+            // Both are measured -- the cut off the stump mesh, the radius off the same TrunkRadius the trunk
+            // collider uses -- so the hinge cannot disagree with the wood it is supposed to be touching.
+            Vector3 p = _toppleBase.Origin
+                      + Vector3.Up * _stumpTop
+                      + _fallDir * (TrunkRadius * Mathf.Max(0.01f, _toppleBase.Basis.Scale.X));
             _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
             if (!_toppling && !_settling) SetProcess(false);
         }
