@@ -379,8 +379,40 @@ void fragment() {
         }
 
         long _lastSig = -1;
+        DirectionalLight3D _pdKey, _pdFill;
+        Godot.Environment _pdEnv;
+
+        /// <summary>Light the paperdoll with the world's (strawberry 2026-09-09: "the inventory paperdoll should
+        /// get world lighting too"). Same problem the viewmodel had: an isolated SubViewport gets no world light,
+        /// so the doll was lit at a fixed 0.75 forever and stood in permanent daylight while you were out at
+        /// midnight in a storm.
+        ///
+        /// COLOUR AND ENERGY follow the world; the key's DIRECTION deliberately does not. The doll is a portrait
+        /// in a UI panel -- a fixed key is what keeps the face and the clothing readable, and a sun that swings
+        /// round would light your character from behind at dawn, which is exactly when you want to see what you
+        /// are wearing. A photographer's key does not move with the weather; the ambient does. It is one line here
+        /// if that turns out to be the wrong call.
+        ///
+        /// Floors are HIGHER than the viewmodel's for the same reason: this is a menu you are reading, not a prop
+        /// in the world, so it may go moody but never unreadable.</summary>
+        const float PdKeyFloor = 0.38f, PdAmbientFloor = 0.45f;
+        void MatchPaperdollLight()
+        {
+            var dn = DayNightCycle.Current;
+            if (dn == null || !IsInstanceValid(dn) || dn.Sun == null || !IsInstanceValid(dn.Sun) || _pdKey == null) return;
+            _pdKey.LightColor = dn.Sun.LightColor;
+            _pdKey.LightEnergy = Mathf.Max(PdKeyFloor, dn.Sun.LightEnergy * 0.75f);   // 0.75 = the authored key strength at full sun
+            if (_pdFill != null) _pdFill.LightEnergy = 0.35f * Mathf.Clamp(_pdKey.LightEnergy / 0.75f, 0.5f, 1f);
+            if (_pdEnv != null && dn.Env != null)
+            {
+                _pdEnv.AmbientLightColor = dn.Env.AmbientLightColor;
+                _pdEnv.AmbientLightEnergy = Mathf.Max(PdAmbientFloor, dn.Env.AmbientLightEnergy);
+            }
+        }
+
         public override void _Process(double delta)
         {
+            if (_open) MatchPaperdollLight();   // only while the bag is up: the doll is not rendered otherwise
             if (!_open) return;
             LayoutDash();   // keep the panels sized/placed to the screen as the viewport settles
             _pdBody?.Tick(delta);   // advance the paperdoll's idle so it breathes instead of a frozen T-pose
@@ -1906,17 +1938,17 @@ void fragment() {
             // clears _pdFramed on a resize so FramePaperdoll recomputes the distance for the real aspect.
             _pdVp.AddChild(_pdCam);
 
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-30f, 150f, 0f), LightEnergy = 0.75f });   // key: 1.2 + ACES blew the head out to near-white (master 2026-09-03 "fix the lighting")                                          // key
-            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.35f, LightColor = UITheme.Text }); // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
-            _pdVp.AddChild(new WorldEnvironment
-            {
-                Environment = new Godot.Environment
+            _pdKey = new DirectionalLight3D { RotationDegrees = new Vector3(-30f, 150f, 0f), LightEnergy = 0.75f };   // key: 1.2 + ACES blew the head out to near-white (master 2026-09-03 "fix the lighting")
+            _pdVp.AddChild(_pdKey);
+            _pdFill = new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.35f, LightColor = UITheme.Text }; // NEUTRAL fill (master: no blue tint). The world env does not reach an isolated SubViewport, so this is the ONLY light on the paperdoll -- a cool one tinted the character too, not just the panels.
+            _pdVp.AddChild(_pdFill);
+            _pdEnv = new Godot.Environment
                 {
                     BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
                     AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.42f, 0.42f, 0.44f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
                     TonemapMode = Godot.Environment.ToneMapper.Filmic,   // ACES crushed the lit side to white; filmic keeps the shirt/skin colour
-                },
-            });
+                };
+            _pdVp.AddChild(new WorldEnvironment { Environment = _pdEnv });
 
             _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // same rig + skin as the live 3P body, wearing your face (master 2026-09-04)
             if (_pdBody != null)
