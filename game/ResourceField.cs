@@ -696,8 +696,11 @@ namespace UnturnedGodot
             float dt = (float)delta;
             if (!_toppling && !_settling)
             {
-                LeafReact(0f, dt);   // the impact shudder outlives the motion that caused it; keep decaying it
-                if (_shake <= 0.002f) SetProcess(false);
+                // The trunk is parked at FallDeg -- pass that, not 0, so the leaf spring sees zero angular rate
+                // and rings DOWN from wherever the landing left it. Passing 0 here would read as another
+                // instantaneous stop and kick off a second, unearned wobble.
+                LeafReact(FallDeg, dt);
+                if (_leafOff.Length() < 1e-4f && _leafVel.Length() < 1e-3f) SetProcess(false);
                 return;
             }
             float deg;
@@ -706,7 +709,7 @@ namespace UnturnedGodot
                 _topple = Mathf.Min(1f, _topple + dt / ToppleTime);
                 deg = FallDeg * (_topple * _topple);                 // ease-in: gravity accelerates the fall
                 LeafReact(deg, dt);                                  // ...and the canopy drags against that sweep
-                if (_topple >= 1f) { _toppling = false; _settling = true; _settleT = 0f; _shake = 1f; }
+                if (_topple >= 1f) { _toppling = false; _settling = true; _settleT = 0f; }
             }
             else
             {
@@ -717,7 +720,7 @@ namespace UnturnedGodot
                 float k = _settleT / SettleTime;
                 if (k >= 1f) { _settling = false; deg = FallDeg; }
                 else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
-                LeafReact(0f, dt);
+                LeafReact(deg, dt);   // the settle's own rocking drives the leaves too -- it is still trunk motion
             }
             var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
             // PIVOT ABOUT THE BASE CENTRE -- and it stays there. ⚠ Two attempts to make this hinge "better" have
@@ -736,33 +739,68 @@ namespace UnturnedGodot
         }
 
         // LEAVES REACT TO THE FALL (strawberry 2026-09-09: "have the leaves react to falling via the wind shader.
-        // and a react on impact"). The canopy is swinging through the air on the end of a twenty-metre lever, so
-        // the foliage streams BACKWARD against its own travel and hardest where the fall is quickest -- and then
-        // the tree hits the ground and the whole canopy shudders. Both ride the same wind_sway shader the standing
-        // canopy already uses, through per-material uniforms, so only the tree that is actually coming down moves.
+        // and a react on impact") -- REWORKED after "i also never saw the leaves move when the tree falls?"
+        //
+        // The first version was measurably large and perceptually invisible, which is worth writing down. It set
+        // the leaf offset DIRECTLY from the canopy's speed: a smooth bulk shear, every leaf displaced the same way,
+        // that faded out as the tree slowed. An A/B render (UG_TREELEAF=0) put it at PSNR 25 against the inert
+        // build -- a big pixel difference -- and you still cannot see it, for two reasons:
+        //   - it is a DISPLACEMENT, not an OSCILLATION. The canopy slides to an offset and creeps back. Nothing
+        //     ever moves against anything else, so there is no motion cue; you just see a differently-shaped tree.
+        //   - it peaks while the trunk is sweeping through 84 degrees. Against that, a smooth shear is invisible:
+        //     the eye has no reference for where the canopy "should" be mid-fall.
+        // Leaf motion is only ever visible when the TRUNK IS STILL. So the effect has to survive the landing and
+        // ring, not fade out with the fall.
+        //
+        // So the leaves are a damped SPRING chasing the drag rather than being set to it. While the trunk swings
+        // they lag behind it (the old look, unchanged); when it stops, the target snaps to zero and the spring
+        // OVERSHOOTS and oscillates about rest -- which is the impact react, out of the same mechanism, bounded by
+        // the fall's own lag so it cannot fly apart. The high-frequency per-leaf jitter now rides the spring's
+        // SPEED, so the canopy flutters while it is moving instead of sliding as one block.
         const float CanopyLever = 0.75f;    // the leaves sit about three quarters of the way out
         const float DragPerMps = 0.0016f;   // metres of leaf offset per metre of local height, per m/s of canopy speed
-        const float ShakeDecay = 3.2f;      // e-folds per second: the shudder is gone in about a second
+        const float LeafFreq = 2.5f;        // Hz -- the ring after it lands; slow enough to read at 30 fps
+        const float LeafZeta = 0.12f;       // lightly damped ON PURPOSE: the ring has to outlive the 0.95 s settle,
+                                            // because leaf motion only becomes visible once the TRUNK stops moving
+        const float ShakeGain = 3.0f;       // spring speed -> the 0..1 per-leaf flutter
+        const float LeafMax = 0.03f;        // hard cap on the offset (metres per metre of height), so a coarse
+                                            // timestep or a daft trunk length can never launch the canopy
         ShaderMaterial _leafMat;            // the felled canopy's wind material; null until the debris is built
-        float _shake, _lastDeg;
+        Vector3 _leafOff, _leafVel;         // the spring: offset per metre of local height, and its rate
+        float _lastDeg;
+
+        // A/B seam: UG_TREELEAF=0 renders the identical fall with the leaves inert, so the reaction can be
+        // measured ON SCREEN by differencing two runs rather than argued about from the amplitude. This is how
+        // the first version was caught being large in pixels and invisible to a viewer.
+        static int _leafOn = -1;
+        static bool LeafOn => (_leafOn < 0 ? _leafOn = (System.Environment.GetEnvironmentVariable("UG_TREELEAF") == "0" ? 0 : 1) : _leafOn) == 1;
+
         void LeafReact(float deg, float dt)
         {
-            if (_leafMat == null) return;
-            Vector3 gust = Vector3.Zero;
-            if (dt > 0.0001f && deg > 0f)
+            if (_leafMat == null || !LeafOn) return;
+            if (dt > 0.0001f)
             {
-                // Tangential speed at the canopy: the trunk's angular rate times how far out the leaves sit. The
-                // drag runs along the TANGENT, backwards -- as the top sweeps down and forward the leaves trail up
-                // and behind it, which is the shape a falling tree actually has.
-                float omega = Mathf.DegToRad(deg - _lastDeg) / dt;
-                float th = Mathf.DegToRad(deg);
-                Vector3 vel = _fallDir * Mathf.Cos(th) - Vector3.Up * Mathf.Sin(th);   // d(trunk axis)/d(theta)
-                gust = -vel * (omega * CanopyLever * _trunkLen * DragPerMps);
+                // Where the leaves WANT to be: trailing the canopy's own travel. Tangential speed is the trunk's
+                // angular rate times how far out the leaves sit, and the drag runs backwards along that tangent --
+                // as the top sweeps down and forward the leaves trail up and behind it.
+                Vector3 target = Vector3.Zero;
+                if (deg > 0f)
+                {
+                    float omega = Mathf.DegToRad(deg - _lastDeg) / dt;
+                    float th = Mathf.DegToRad(deg);
+                    Vector3 vel = _fallDir * Mathf.Cos(th) - Vector3.Up * Mathf.Sin(th);   // d(trunk axis)/d(theta)
+                    target = -vel * (omega * CanopyLever * _trunkLen * DragPerMps);
+                }
+                // Semi-implicit (rate first, then offset): stable at the coarse fixed timesteps renders run at,
+                // where the plain explicit form of a 2.5 Hz spring starts winding itself up.
+                float w = Mathf.Tau * LeafFreq;
+                _leafVel += (w * w * (target - _leafOff) - 2f * LeafZeta * w * _leafVel) * dt;
+                _leafOff += _leafVel * dt;
+                if (_leafOff.Length() > LeafMax) _leafOff = _leafOff.Normalized() * LeafMax;
             }
             _lastDeg = deg;
-            _shake *= Mathf.Exp(-ShakeDecay * dt);   // exact decay, not a Euler step: renders run at coarse fixed timesteps
-            _leafMat.SetShaderParameter("gust_dir", gust);
-            _leafMat.SetShaderParameter("shake", _shake);
+            _leafMat.SetShaderParameter("gust_dir", _leafOff);
+            _leafMat.SetShaderParameter("shake", Mathf.Min(1f, _leafVel.Length() * ShakeGain));
         }
 
         // Load <ResDir>/<TreeName>_<suffix>_<i>.obj + _tex.png as MeshInstance3D children of `parent`, until a part is missing.
