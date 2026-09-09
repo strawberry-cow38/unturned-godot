@@ -28,7 +28,21 @@ namespace UnturnedGodot
         // seeker is limited by the g it can pull, and rad/s = a / v falls as it accelerates -- so the missile is
         // nimble on the way off the rail and committed by the time it arrives, which is exactly the window a
         // helicopter breaks into. At the 118 m/s cap this is 0.72 rad/s (41 deg/s) and a 164 m turn radius.
-        public const float LatAccel = 85f;         // m/s^2, about 8.7 g
+        // 11.2 g. Was 85 (8.7 g), which could not fly the shot it claimed to (strawberry's SAM is meant to hit;
+        // tinyclaw found vehicle.sam_site red on main). A missile launched 45 deg off the bearing closed from
+        // 153 m to 28 m and then sailed past: pure pursuit needs a turn rate that grows as 1/range, so the
+        // heading error GREW as it closed -- 34 deg at 92 m, 46 at 45 m, 76 at 29 -- until it swung wide and the
+        // miss rule correctly called the pass over.
+        //
+        // Simulated the alternatives rather than nudging it: proportional navigation changes NOTHING here (both
+        // laws saturate at the g-limit, and a saturated missile turns the same however it decided to), so this
+        // was never a guidance-law problem -- it was simply not agile enough. 110 closes that shot at 5.7 m.
+        //
+        // ...and it does NOT cost evadability, which is the paired requirement ("make it possible to evade the
+        // missiles"). The hard 90 deg break at 45 m still beats it by 44.1 m -- the same margin as at 85, and
+        // unchanged all the way up to 170, because a 70 m jump at that range is inside any turn radius this
+        // missile can fly. Agility and dodgeability are not on the same axis here; the break wins on geometry.
+        public const float LatAccel = 110f;        // m/s^2, about 11.2 g
         public const float MaxTurnRateDeg = 150f;  // ...and a ceiling for the slow launch phase, so it cannot pirouette off the rail
         // ONCE BEATEN, STAY BEATEN. A missile that sails past and swings round for another go means the break
         // that defeated it did not matter -- with a 14 s life and 118 m/s it has 1.6 km to keep trying, so

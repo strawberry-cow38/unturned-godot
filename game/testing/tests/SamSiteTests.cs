@@ -181,7 +181,7 @@ namespace UnturnedGodot.Testing
             // ---- 8. AND IT CAN BE BEATEN (strawberry: "make it possible to evade the missiles"). A missile that
             // is always dodgeable is as bad as one that never is, so this is the paired claim to the check above:
             // the SAME seeker, given a target that breaks hard across its nose at close range, misses AND STAYS
-            // MISSED. The break is 90 deg at 45 m -- inside the missile's own turn radius (v^2/a = 164 m at the
+            // MISSED. The break is 90 deg at 45 m -- inside the missile's own turn radius (v^2/a = 127 m at the
             // speed cap), which is the geometry that makes evasion a manoeuvre rather than a dice roll.
             near.GlobalPosition = new Vector3(0f, 40f, -300f);
             var m2 = new SamMissile { Target = near };
