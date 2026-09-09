@@ -3727,6 +3727,14 @@ namespace UnturnedGodot
                     if (ExplosionBlocked(point, v.GlobalPosition)) continue;
                     v.TakeDamage(ExplosionMath.Linear(vehicleDamage, range, radius));   // linear falloff (port's simplified explosion model)
                 }
+            foreach (var n in GetTree().GetNodesInGroup("samsites"))   // a SAM emplacement takes blast damage like a vehicle does -- rockets and charges are how you clear one without flying into it
+                if (n is SamSite sam && !sam.Destroyed)
+                {
+                    float range = sam.GlobalPosition.DistanceTo(point);
+                    if (range > radius) continue;
+                    if (ExplosionBlocked(point, sam.GlobalPosition)) continue;
+                    sam.TakeDamage(ExplosionMath.Linear(vehicleDamage, range, radius));
+                }
             float pr = GlobalPosition.DistanceTo(point);
             if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
             PlayerRegistry.FlinchAllFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
@@ -7560,6 +7568,7 @@ namespace UnturnedGodot
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); HitmarkCircle(b);   // source Vehicle_Damage (35) + metal sparks, hole follows the car; circle hitmarker (master)
                     }
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkCircle(b); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage; circle hitmarker
+                    else if (collider is SamSite sam && !sam.Destroyed) { sam.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); HitmarkCircle(b); }   // a SAM emplacement is metal and shootable, same treatment as a generator
                     else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkCircle(b); }   // you can shoot a door open the hard way; circle hitmarker
                     else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); HitmarkCircle(b); }   // circle hitmarker
                     else if (collider is GlassPane gpane) { gpane.TakeDamage(b.ObjectDamage); HitmarkCircle(b); }   // glass pane -> shatter; the pane's own Glass_0 shards ARE the impact (no surface burst)

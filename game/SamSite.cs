@@ -20,8 +20,14 @@ namespace UnturnedGodot
     // The missiles do the hard part (SamMissile homes); the launcher only has to point somewhere sensible, which is
     // why the head is rate-limited rather than snapping. A turret that instantly faces its target reads as a cursor,
     // not a machine.
-    public partial class SamSite : Node3D
+    public partial class SamSite : StaticBody3D
     {
+        // A STATIC BODY rather than a Node3D with a body hanging off it (strawberry 2026-09-09: "give the sam site
+        // collision and make it destructable"). Being the collider itself is what lets the bullet path reach it --
+        // StepBullets resolves an impact by asking what the ray hit, so a launcher whose collision lived on a child
+        // would need every damage site to know to walk up to the parent. One node, one answer.
+        public const float MaxHealth = 900f;
+
         public const float Radius = 260f;          // lock range, metres
         public const int   Rack = 6;               // "launches 6 missiles"
         public const float ShotDelay = 0.55f;      // "delay between each one"
@@ -79,11 +85,75 @@ namespace UnturnedGodot
         float _beepT;         // seconds until the next lock tone
         float _yawDeg, _pitchDeg;
 
+        public float Health { get; private set; } = MaxHealth;
+        public bool Destroyed { get; private set; }
+
         public override void _Ready()
         {
             AddToGroup("samsites");
+            // World AND props: the world bit is what a player's body and the missile sweep look at, the prop bit is
+            // what the look-ray and the bullet mask carry. Mask 0 -- it is scenery, it does not go looking.
+            CollisionLayer = (1u << 0) | (1u << 6);
+            CollisionMask = 0;
+            AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 2.0f, Height = 0.7f }, Position = new Vector3(0f, 0.35f, 0f) });
+            AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.6f, 2.2f, 1.6f) }, Position = new Vector3(0f, 1.75f, 0f) });   // mast + head, unrotated: a collider that swung with the turret would shove whatever was leaning on it
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             Build();
+        }
+
+        /// <summary>Shoot it, blow it up, drive into it. At zero the launcher goes cold: no lock, no launch, no
+        /// warning tone -- it keeps its collision, because a wrecked emplacement is still something you walk
+        /// into. Missiles already in the air are NOT recalled; they were fired by a site that was alive when it
+        /// fired them, and a barrage that vanishes because you killed the launcher a second later reads as a bug.
+        /// </summary>
+        public void TakeDamage(float amount)
+        {
+            if (Destroyed || amount <= 0f) return;
+            Health = Mathf.Max(0f, Health - amount);
+            if (Health > 0f) return;
+            Destroyed = true;
+            Mode = State.Idle;
+            Target = null;
+            Loaded = 0;
+            foreach (var t in _tubes) if (t != null && IsInstanceValid(t)) t.Visible = false;
+            Wreck();
+        }
+
+        void Wreck()
+        {
+            // Scorched and slumped: the head drops to level and everything goes near-black. Cheaper and clearer
+            // than a separate wreck mesh, and it reads instantly at range -- which is what a player scanning for
+            // a live site needs.
+            var burnt = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.09f), Roughness = 0.95f, Metallic = 0.05f };
+            foreach (var n in FindChildren("*", "MeshInstance3D", true, false))
+                if (n is MeshInstance3D mi && IsInstanceValid(mi)) mi.MaterialOverride = burnt;
+            if (_pitch != null) { _pitchDeg = 0f; _pitch.RotationDegrees = Vector3.Zero; }
+
+            var host = GetParent();
+            if (host == null) return;
+            GameAudio.Explosion(host, GlobalPosition, 9f);
+            PlayerRegistry.FlinchAllFromExplosion(GlobalPosition, 26f, 26f);
+            var smoke = new CpuParticles3D
+            {
+                Amount = 40, Lifetime = 4.5, Emitting = false, LocalCoords = false,
+                Mesh = new QuadMesh { Size = new Vector2(2.2f, 2.2f) },
+                Direction = Vector3.Up, Spread = 25f,
+                InitialVelocityMin = 1.5f, InitialVelocityMax = 4.5f,
+                ScaleAmountMin = 1f, ScaleAmountMax = 2.6f,
+                Gravity = new Vector3(0f, 0.8f, 0f),
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    BillboardKeepScale = true,
+                    AlbedoColor = new Color(0.14f, 0.13f, 0.12f, 0.6f),
+                },
+                Position = GlobalPosition + Vector3.Up * 1.4f,   // ⚠ before AddChild
+                VisibilityAabb = new Aabb(new Vector3(-40f, -40f, -40f), new Vector3(80f, 80f, 80f)),
+            };
+            host.AddChild(smoke);
+            smoke.Emitting = true;
         }
 
         public override void _ExitTree() => TickHub.RemoveProcess(this);
@@ -132,6 +202,7 @@ namespace UnturnedGodot
 
         public void HubProcess(double delta)
         {
+            if (Destroyed) return;   // a wreck tracks nothing and fires nothing; its collision stays
             float dt = (float)delta;
             Target = PickTarget();
 
@@ -276,7 +347,7 @@ namespace UnturnedGodot
             if (_tubes[i] != null) _tubes[i].Visible = false;
             Loaded--;
             Fired++;
-            var m = new SamMissile { Target = at };
+            var m = new SamMissile { Target = at, Ignore = GetRid() };   // its own launcher must not be the first thing its sweep finds
             GetParent()?.AddChild(m);
             m.GlobalPosition = muzzle.GlobalPosition;
             m.Fire(-_pitch.GlobalTransform.Basis.Z);   // out of the tube along the head's facing; SamMissile takes over from there

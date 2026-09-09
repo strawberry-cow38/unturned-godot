@@ -273,6 +273,25 @@ namespace UnturnedGodot.Testing
             T.Check($"once the flares burn out it locks again (target {(ReferenceEquals(site.Target, hidden) ? "LOCKED" : "none")})",
                 ReferenceEquals(site.Target, hidden));
 
+            // ---- 12. DESTRUCTIBLE (strawberry: "give the sam site collision and make it destructable"). Two
+            // halves worth separating: partial damage must NOT stop it -- a launcher that goes cold on the first
+            // bullet is not destructible, it is fragile -- and a dead one must go completely quiet rather than
+            // merely stop launching.
+            T.Check($"a fresh site is alive and shootable ({site.Health:0}/{SamSite.MaxHealth:0} hp, collides on layer {site.CollisionLayer})",
+                !site.Destroyed && site.Health > 0f && site.CollisionLayer != 0u);
+
+            site.TakeDamage(SamSite.MaxHealth * 0.5f);
+            Drive(site, 0.2f);
+            T.Check($"half its health does not stop it (health {site.Health:0}, target {(site.Target == null ? "none" : "LOCKED")})",
+                !site.Destroyed && ReferenceEquals(site.Target, hidden));
+
+            int firedBefore = site.Fired;
+            site.TakeDamage(SamSite.MaxHealth);
+            Drive(site, SamSite.LockTime + SamSite.ShotDelay * 3f);
+            T.Check($"a destroyed site goes cold -- no lock, no launch (destroyed {site.Destroyed}, target {(site.Target == null ? "none" : "LOCKED")}, fired {site.Fired} vs {firedBefore})",
+                site.Destroyed && site.Target == null && site.Fired == firedBefore);
+            T.Check($"...but the wreck keeps its collision (layer {site.CollisionLayer})", site.CollisionLayer != 0u);
+
             yield return Ticks(1);
         }
     }

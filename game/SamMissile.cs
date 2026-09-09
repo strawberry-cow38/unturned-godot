@@ -53,6 +53,9 @@ namespace UnturnedGodot
         public const uint HitMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 9);
 
         public Vehicle Target;
+        /// <summary>The launcher's own body, excluded from the sweep. Now that a site IS a collider, the first
+        /// metre of every flight leaves through it.</summary>
+        public Rid Ignore;
 
         // Loaded once for every missile ever fired -- a barrage must not re-parse an .obj six times, and a site
         // that reloads every nine seconds would do it forever.
@@ -228,6 +231,7 @@ namespace UnturnedGodot
             if (space != null)
             {
                 _sweep ??= new PhysicsRayQueryParameters3D { CollisionMask = HitMask };
+                if (Ignore.IsValid && _sweep.Exclude.Count == 0) _sweep.Exclude = new Godot.Collections.Array<Rid> { Ignore };
                 _sweep.From = from; _sweep.To = to;
                 var swept = space.IntersectRay(_sweep);
                 if (swept.Count > 0)
@@ -336,6 +340,12 @@ namespace UnturnedGodot
                     {
                         float d = pl.GlobalPosition.DistanceTo(p);
                         if (d <= BlastRadius) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(BlastDamage, d, BlastRadius));
+                    }
+                foreach (var n in tree.GetNodesInGroup("samsites"))
+                    if (n is SamSite sam && !sam.Destroyed)
+                    {
+                        float d = sam.GlobalPosition.DistanceTo(p);
+                        if (d <= BlastRadius) sam.TakeDamage(SDG.Unturned.ExplosionMath.Linear(BlastDamage, d, BlastRadius));
                     }
                 foreach (var n in tree.GetNodesInGroup("vehicles"))
                     if (n is Vehicle v && !v.Exploded)
