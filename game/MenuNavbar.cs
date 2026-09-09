@@ -40,8 +40,16 @@ namespace UnturnedGodot
                 var lbl = new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore };
                 lbl.AddThemeFontSizeOverride("font_size", 32);
                 nb.AddChild(lbl);
-                var hit = new Button { Flat = true, MouseFilter = MouseFilterEnum.Stop };
+                var hit = new Button { Flat = true, MouseFilter = MouseFilterEnum.Stop, MouseDefaultCursorShape = CursorShape.PointingHand };
                 var t = Defs[i].tab; hit.Pressed += () => nb.OnTab?.Invoke(t);
+                // HOVER FEEDBACK (strawberry 2026-09-09: "show feedback when hovering over the inv/craft/skills/
+                // info ui tabs"). The hit button is FLAT and transparent -- it exists to take the click, so its own
+                // hover stylebox is invisible and the strip gave you nothing back. The tab's `bg` panel is the
+                // thing you can see, so the hover drives that instead, through the same Restyle() the active state
+                // uses: one place decides what a tab looks like, so hovering the open tab cannot un-highlight it.
+                int hi = i;
+                hit.MouseEntered += () => { nb._hover = hi; nb.Restyle(); };
+                hit.MouseExited += () => { if (nb._hover == hi) { nb._hover = -1; nb.Restyle(); } };
                 nb.AddChild(hit);
                 nb._tabs[i] = (bg, lbl, hit);
             }
@@ -51,14 +59,22 @@ namespace UnturnedGodot
             return nb;
         }
 
-        public void SetActive(Tab active)
+        Tab _active; int _hover = -1;
+
+        public void SetActive(Tab active) { _active = active; Restyle(); }
+
+        /// <summary>The one place a tab's look is decided: OPEN beats hovered beats idle. Split out of SetActive
+        /// so the hover cannot fight it -- driving the two from separate handlers is how you end up able to
+        /// un-highlight the tab you are standing on by mousing over it.</summary>
+        void Restyle()
         {
             for (int i = 0; i < Defs.Length; i++)
             {
-                bool on = Defs[i].tab == active;
-                _tabs[i].bg.AddThemeStyleboxOverride("panel", UITheme.Box(on ? UITheme.Selected : UITheme.Slot, UITheme.RadiusCell));
+                bool on = Defs[i].tab == _active;
+                bool hov = !on && i == _hover;
+                _tabs[i].bg.AddThemeStyleboxOverride("panel", UITheme.Box(on ? UITheme.Selected : hov ? UITheme.Hover : UITheme.Slot, UITheme.RadiusCell));
                 _tabs[i].lbl.Text = $"{Defs[i].label} [{Keybinds.Get(Defs[i].action).Label}]";   // live bind, never a hardcoded key
-                _tabs[i].lbl.AddThemeColorOverride("font_color", on ? new Color(1f, 1f, 1f) : UITheme.TextBody);
+                _tabs[i].lbl.AddThemeColorOverride("font_color", on ? new Color(1f, 1f, 1f) : hov ? UITheme.Text : UITheme.TextBody);
             }
         }
 
