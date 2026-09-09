@@ -203,6 +203,38 @@ namespace UnturnedGodot.Testing
                 leanErr < 0.6f);
             p.ScriptedLean = null;
 
+            // ---- SOMETHING BEHIND YOU DOES NOT GET A VOTE ON WHERE YOU ARE AIMING (strawberry 2026-09-09:
+            // "sometimes when in 3p, my shot lands wayyy left of the crosshair").
+            //
+            // The camera sits 1.65 m BEHIND the eyes, so the centre ray used to begin 1.65 m back and could stop
+            // on whatever filled that gap -- the wall you are backed against, a doorframe, a crate. The hit then
+            // landed behind the eyes, convergence bailed, and the shot went straight down the look axis: 1.13 m
+            // beside the crosshair line at every range, on the off-shoulder side. Hence "wayyy left".
+            //
+            // The blocker here is placed just behind the player, squarely in that gap and NOT between the eyes
+            // and the target, so a correct implementation cannot see it at all. Teeth: start the ray at the lens
+            // again and this reads about 8 deg off, because the round leaves parallel instead of converging.
+            p.DriveFP = false;
+            p.DebugSetPitch(0f);
+            yield return Ticks(90);            // the shoulder + boom lerp out to the real over-the-shoulder pose
+
+            var behind = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
+            behind.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(6f, 4f, 0.2f) } });
+            World.AddChild(behind);
+            // Placed off the PLAYER, along the camera's own backward axis, so it lands in the lens-to-eyes gap
+            // wherever the shoulder lerp happens to have settled.
+            behind.GlobalPosition = p.EyesWorld + p.Camera.GlobalTransform.Basis.Z.Normalized() * 0.9f;
+            yield return Ticks(4);
+
+            p.Ammo = 60;
+            var tpCrosshair = -p.Camera.GlobalTransform.Basis.Z;
+            T.Check("a third-person shot fired with a wall behind the player", p.Fire());
+            yield return Ticks(1);
+            float blockedErr = AngleBetween(p.DebugLastShotDir, tpCrosshair);
+            T.Check($"a wall in the lens-to-eyes gap does not drag the shot off the crosshair ({blockedErr:0.##} deg off)",
+                blockedErr < 2.5f);
+            behind.QueueFree();
+
             yield break;
         }
     }

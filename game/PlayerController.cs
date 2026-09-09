@@ -7513,18 +7513,49 @@ namespace UnturnedGodot
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return fallback;
             Vector3 camPos = _cam.GlobalPosition, camFwd = -_cam.GlobalBasis.Z;
+            // START THE TRACE LEVEL WITH THE EYES, NOT AT THE LENS (strawberry: "sometimes when in 3p, my shot
+            // lands wayyy left of the crosshair").
+            //
+            // The third-person camera is not a small nudge off the eye. ThirdPersonOffsetLocal normalises
+            // (TpSide 1.0, TpUp 0.25, TpBack 1.5) and scales by TpLength 2.0, so it sits 1.10 m to the SHOULDER
+            // SIDE, 0.27 m up and 1.65 m BEHIND. Tracing from there means 1.65 m of world -- the space beside and
+            // behind your own body -- gets a vote on what you are aiming at. Back into a wall, stand in a doorway
+            // or hug a crate and the centre ray stops in that gap, on something level with you.
+            //
+            // The old code then found the hit was behind the eyes and fired straight down the look axis instead.
+            // That is the reported bug, and the geometry names the side: a parallel shot from the eyes runs
+            // 1.13 m beside the crosshair line at EVERY range, never converging, and with the default
+            // right-shoulder camera (_camOnLeftSide stays false until you tap Q) the eyes are LEFT of the lens --
+            // so the round lands ~1.1 m LEFT of the reticle. Right symptom, right side, right magnitude, and
+            // "sometimes" is exactly how often you are stood against something.
+            //
+            // Starting the ray at the eye plane deletes that whole class: the gap that was hijacking the aim is
+            // skipped, so what the crosshair reports is what a shot from the eyes can actually reach. It cannot
+            // make a distant target worse -- same ray, same direction, only begun further along it.
+            float eyeAlong = (eyes - camPos).Dot(camFwd);   // how far in front of the lens the eyes sit (~1.65 m)
+            Vector3 start = camPos + camFwd * Mathf.Max(eyeAlong, 0f);
             const float Reach = 512f;
-            var q = PhysicsRayQueryParameters3D.Create(camPos, camPos + camFwd * Reach,
+            var q = PhysicsRayQueryParameters3D.Create(start, start + camFwd * Reach,
                 (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6));   // what a bullet would stop on (no water)
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(q);
-            Vector3 target;
-            if (hit.Count > 0)
-            {
-                target = hit["position"].AsVector3();
-                if ((target - eyes).Dot(camFwd) <= 0f) return fallback;   // it is behind us -- do not turn round and shoot it
-            }
-            else target = camPos + camFwd * Reach;
+            Vector3 target = hit.Count > 0 ? hit["position"].AsVector3() : start + camFwd * Reach;
+            return ConvergeAim(eyes, camFwd, target, fallback);
+        }
+
+        /// <summary>Eyes-to-crosshair convergence as pure geometry, so it can be measured without a physics world.
+        /// `target` is where the centre ray ended up; the result is the direction the bullet leaves the EYES to
+        /// arrive there. Converging on the REAL hit distance is the whole point -- aiming at a fixed far point
+        /// instead leaves the shot ~1.1 m off at combat range, which is the bug in a different costume.</summary>
+        internal static Vector3 ConvergeAim(Vector3 eyes, Vector3 camFwd, Vector3 target, Vector3 fallback)
+        {
+            // Still guarded, but now nearly unreachable: the ray starts at the eye plane, so a hit in front of the
+            // lens is a hit in front of the eyes. Kept because "unreachable" is a claim about geometry that a
+            // future camera offset can quietly falsify -- and firing parallel beats turning round and shooting
+            // backwards. A minimum-distance clamp was tried here and is WRONG: converging on a near point makes
+            // the round diverge past it (a 3 m clamp measures ~5.9 m off at 20 m, worse than the parallel it
+            // replaced). Close targets want the exact convergence; the flight is short enough not to care.
+            if ((target - eyes).Dot(camFwd) <= 0f) return fallback;
             var dir = target - eyes;
             return dir.LengthSquared() < 1e-6f ? fallback : dir.Normalized();
         }
