@@ -287,7 +287,8 @@ vertices against the sedan's.
 
 ## Sixth pass: decently longer, slightly wider (astra-trailer-big)
 
-**Width decision: route 1, widen the track with the box.** The saved sideboards now end at
+**Width decision: route 1, widen the track with the box**, relative to `main` at `5297da9d`.
+The saved sideboards now end at
 **|X| 1.112497**, and the actual `Vehicle.cs` wheel anchors are **±1.362500**. The specified
 `jeep_wheel.txt` measures **.400006 wide**, so its inner faces are at **|X| 1.162497**: the original
 **.050000 m clearance per side is preserved**. The clearance assertion and its `t−1e-6` threshold
@@ -350,6 +351,10 @@ at the floor section's midpoint; collider height encloses the **absolute** rise.
 the saved beam vertices into each actual spec collider's frame and compares their bounds. Another
 checks the saved wall/socket geometry against all five `ExtraBoxes`, including the new length and
 width. Their mutations restore old dimensions, move real geometry or colliders, and remove yaw.
+The old collider dimensions are read from `5297da9d`, rather than copied into the verifier.
+The main collider check measures the saved floor and outer walls; the wall-section check compares
+the saved trailer against the truck mesh; the landing collider must coincide with its split zone.
+Array mutations replace whole initializers, so wheel and lamp regressions retain valid C# syntax.
 
 The body remains **80 vertices / 120 triangles**, with explicit normals/UVs, triangle-only faces,
 closed components and overlapping joints. Sedan lamps remain **56 vertices / 20 triangles** with
@@ -358,10 +363,11 @@ height, wall section, lamp inset, and `car_trailer` **TypeId 33** remain unchang
 
 Validation for this pass:
 
-- `python3 tools/verify_car_trailer.py --mutation-test`: **55 named checks, 222 rejected real-file
+- `python3 tools/verify_car_trailer.py --mutation-test`: **55 named checks, 225 rejected real-file
   mutations**. All original 53 checks and 209 mutations remain represented; the track check now
   requires the measured increase. Both original tyre-clearance mutations still fail, as do the new
-  opposite-side and restored-Golf-track mutations. Original bytes were restored and clean checks rerun.
+  opposite-side and restored-Golf-track mutations. Every check has a live mutation; none survived or
+  was ineffective. Each rejection is printed. Original bytes were restored and clean checks rerun.
 - `dotnet build game/UnturnedGodot.csproj`: **succeeded, zero errors, 22 warnings** (the warning count
   already documented above). `./test.sh` and the gameplay test fixtures were not run.
 - A second generator run reproduced **all 11 mesh/palette assets and the spliced C# spec byte for

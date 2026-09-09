@@ -20,19 +20,22 @@ from verify_wagon import validate, f32
 VEH = ROOT/'game/Vehicle.cs'
 BODY = CONTENT/'car_trailer_body.txt'
 BASE = '1f7f106d'
+RESIZE_BASE = '5297da9d'
 
-def fields(name):
-    s=uncomment(VEH.read_text());start=s.index('static readonly Spec _'+name+' = new()')
+def fields(name,src=None):
+    s=uncomment(VEH.read_text() if src is None else src);start=s.index('static readonly Spec _'+name+' = new()')
     return dict((k.strip(),v.strip()) for k,v in (x.split('=',1) for x in split_top(braced(s,s.index('{',start)))))
 
 def change_field(name,key,value):
     def edit(s):
         start=s.index('static readonly Spec _'+name+' = new()');end=s.index('\n        };',start)
         block=s[start:end]
-        # All mutated fields are scalars/vectors/single-line asset names.
-        pattern=r'\b'+key+r'\s*=\s*(?:new Vector3\([^)]*\)|"[^"]*"|[^,\n]+)'
-        changed,n=re.subn(pattern,key+' = '+value,block,count=1)
-        assert n,(name,key)
+        # Replace the entire initializer, including multiline arrays. Stopping at the first comma
+        # inside Wheels/TailPos left broken C# behind and could reject syntax instead of the regression.
+        match=re.search(r'\b'+re.escape(key)+r'\s*=\s*',block)
+        assert match,(name,key)
+        before=split_top(block[match.end():])[0]
+        changed=block[:match.end()]+value+block[match.end()+len(before):]
         return s[:start]+changed+s[end:]
     return edit
 
@@ -171,10 +174,12 @@ def cases():
         rows=split_top(braced(before,before.index('{')))
         members=split_top(rows[index][1:-1]);members[part]=value
         after=before.replace(rows[index],'('+', '.join(members)+')',1)
-        return VEH,lambda src:src.replace(before,after,1),label
-    def boxes(key):
-        raw=fields('car_trailer')[key]
+        return VEH,change_field('car_trailer',key,after),label
+    def boxes(key,spec=None):
+        raw=(fields('car_trailer') if spec is None else spec)[key]
         return [split_top(row[1:-1]) for row in split_top(braced(raw,raw.index('{')))]
+    previous=fields('car_trailer',subprocess.check_output(['git','show',RESIZE_BASE+':game/Vehicle.cs'],cwd=ROOT,text=True))
+    old_hulls,old_walls=boxes('HullBoxes',previous),boxes('ExtraBoxes',previous)
     assets=[BODY,CONTENT/'car_trailer_taillights.txt']+[CONTENT/(n+'_hitch.txt') for n in TOW_CARS]
     LAMPS=CONTENT/'car_trailer_taillights.txt'
     for path in assets:
@@ -228,10 +233,17 @@ def cases():
         fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.900000f, 0.313712f, false), (1.300000f, 0.900000f, 0.313712f, false) }'))
     add('sideboard section = the truck bed wall, measured',sideboard,
         (BODY,move_group('side_1',(0,.1,0)),'raise sideboard'),(BODY,move_group('side_1',(.1,0,0)),'thin sideboard'))
-    add('trailer wall section equals the truck bed, derived two ways',
-        lambda:require(close(truck_wall()[0],d['wall_t']) and close(truck_wall()[1],d['wall_h'])),
+    def donor_wall():
+        thickness,height,_=truck_wall()
+        floor=group_bounds('deck')[1][1]
+        for group in ('side_-1','side_1'):
+            low,high=group_bounds(group)
+            require(close(high[0]-low[0],thickness) and close(high[1]-floor,height),
+                    group+' section differs from the measured truck bed')
+    add('trailer wall section equals the truck bed, derived two ways',donor_wall,
         (CONTENT/'truck_body.txt',lambda x:re.sub(r'^v 0\.980968 ','v 0.900968 ',x,flags=re.M),'thicken the truck bed wall'),
-        (CONTENT/'truck_body.txt',lambda x:re.sub(r'^(v [-\d.]+ )1\.125001 ','\\g<1>1.325001 ',x,flags=re.M),'raise the truck bed wall'))
+        (CONTENT/'truck_body.txt',lambda x:re.sub(r'^(v [-\d.]+ )1\.125001 ','\\g<1>1.325001 ',x,flags=re.M),'raise the truck bed wall'),
+        (BODY,move_group('side_-1',(0,.1,0)),'raise trailer wall away from donor height'))
     add('kingpin on measured coupler, car ground datum',lambda:require(close(vector(fields('car_trailer')['Kingpin']),k)),fieldmut('Kingpin','Vector3.Zero'))
     add('socket encloses kingpin and follows drawbar',lambda:require(close(group_bounds('coupler'),((-2*t,k[1]-t,k[2]-2*t),(2*t,k[1]+t,k[2]+4*t)))),
         (BODY,move_group('coupler',(0,0,.3)),'bury socket'))
@@ -294,9 +306,17 @@ def cases():
             require(fields(name).get('FifthWheel','Vector3.Zero')==( 'new Vector3(0f, 0.62f, 3.0f)' if name=='semi' else 'Vector3.Zero'))
     add('specialised fleet tow eligibility unchanged',tow_policy,
         (VEH,lambda x:x.replace('static readonly Spec _quad = new()\n        {','static readonly Spec _quad = new()\n        {\n            FifthWheel = new Vector3(0f, 0f, 3f),'),'enable quad'))
-    add('main collider follows deck, does not fill open load space',lambda:require(close(vector(fields('car_trailer')['BoxSize']),(W,wt_,L)) and close(vector(fields('car_trailer')['BoxCenter']),(0,dy-wt_/2,0)) and 'HullBoxes' in fields('car_trailer') and len(vectors(fields('car_trailer')['ExtraBoxes']))==10),
+    def main_collider():
+        spec=fields('car_trailer');size=vector(spec['BoxSize']);centre=vector(spec['BoxCenter'])
+        low=(group_bounds('side_-1')[0][0],group_bounds('deck')[0][1],group_bounds('headboard')[0][2])
+        high=(group_bounds('side_1')[1][0],group_bounds('deck')[1][1],group_bounds('tailgate')[1][2])
+        require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and
+                close(tuple(centre[i]+size[i]/2 for i in range(3)),high),'main collider differs from saved floor and outer walls')
+        require('HullBoxes' in spec and len(boxes('ExtraBoxes'))==5)
+    add('main collider follows deck, does not fill open load space',main_collider,
         fieldmut('BoxSize','new Vector3(3f, 2f, 16f)'),fieldmut('BoxCenter','Vector3.Zero'),
-        (VEH,lambda x:x.replace('HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]','HullBands = new (Vector3 size, Vector3 center, float yawDeg)[]',1),'remove drawbar colliders'))
+        (VEH,lambda x:x.replace('HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]','HullBands = new (Vector3 size, Vector3 center, float yawDeg)[]',1),'remove drawbar colliders'),
+        (BODY,move_group('deck',(0,.1,0)),'move floor outside main collider'))
     def drawbar_colliders():
         rows=boxes('HullBoxes');require(len(rows)==3)
         for row,group in zip(rows[:2],('drawbar_-1','drawbar_1')):
@@ -314,10 +334,10 @@ def cases():
         require(close(vector(rows[2][0]),vector(fields('car_trailer')['BoxSize'])) and
                 close(vector(rows[2][1]),vector(fields('car_trailer')['BoxCenter'])) and number(rows[2][2])==0)
     add('drawbar colliders fit saved beams with positive sizes; hull deck matches main box',drawbar_colliders,
-        boxmut('HullBoxes',0,0,'new Vector3(0.1f, -0.044510f, 2.605695f)','restore old negative drawbar size'),
+        boxmut('HullBoxes',0,0,old_hulls[0][0],'restore old negative drawbar size'),
         boxmut('HullBoxes',1,1,'Vector3.Zero','move drawbar collider'),
         boxmut('HullBoxes',0,2,'0f','remove drawbar yaw'),
-        boxmut('HullBoxes',2,0,'new Vector3(2.099994f, 0.25f, 3.137132f)','restore old hull deck size'),
+        boxmut('HullBoxes',2,0,old_hulls[2][0],'restore old hull deck size'),
         (BODY,move_group('drawbar_1',(0,.1,0)),'move beam outside its collider'))
     def wall_colliders():
         rows=boxes('ExtraBoxes');require(len(rows)==5)
@@ -331,9 +351,9 @@ def cases():
             require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and
                     close(tuple(centre[i]+size[i]/2 for i in range(3)),high),group+' collider does not follow mesh')
     add('wall and socket colliders follow saved mesh around the open cargo space',wall_colliders,
-        boxmut('ExtraBoxes',0,0,'new Vector3(0.25f, 1.000001f, 3.137132f)','restore old side collider length'),
-        boxmut('ExtraBoxes',1,1,'new Vector3(0.924997f, 0.476570f, 0f)','restore old side collider spacing'),
-        boxmut('ExtraBoxes',3,1,'new Vector3(0f, 0.476570f, 1.443566f)','restore old tailgate collider position'),
+        boxmut('ExtraBoxes',0,0,old_walls[0][0],'restore old side collider length'),
+        boxmut('ExtraBoxes',1,1,old_walls[1][1],'restore old side collider spacing'),
+        boxmut('ExtraBoxes',3,1,old_walls[3][1],'restore old tailgate collider position'),
         boxmut('ExtraBoxes',4,1,'Vector3.Zero','move socket collider'),
         (BODY,move_group('headboard',(0,0,.1)),'move headboard outside its collider'))
     # The zone CONTAINS the leg, it does not equal it. Equality held only because the old foot pad
@@ -345,12 +365,17 @@ def cases():
         zmin=vector(fields('car_trailer')['LandingLegZoneMin']);zmax=vector(fields('car_trailer')['LandingLegZoneMax'])
         require(close(zmin,(t,d['ground'],(k[2]-L/2)/2-2*t)) and close(zmax,(5*t,k[1]-t,(k[2]-L/2)/2+2*t)))
         require(close(vector(fields('car_trailer')['LandingGearSize']),(4*t,k[1]-t-d['ground'],4*t)))
+        centre=vector(fields('car_trailer')['LandingGearCenter'])
+        size=vector(fields('car_trailer')['LandingGearSize'])
+        require(close(tuple(centre[i]-size[i]/2 for i in range(3)),zmin) and
+                close(tuple(centre[i]+size[i]/2 for i in range(3)),zmax),'landing collider differs from its split zone')
         lo,hi=group_bounds('landing_stand')
         require(all(zmin[i]<=lo[i]+1e-6 and hi[i]<=zmax[i]+1e-6 for i in range(3)),
                 f'landing leg {lo}..{hi} escapes its zone {zmin}..{zmax}')
     add('landing collider and retractable split cover authored support',landing,
         fieldmut('LandingLegZoneMin','Vector3.Zero'),fieldmut('LandingLegZoneMax','Vector3.Zero'),
-        fieldmut('LandingGearSize','Vector3.Zero'),(BODY,move_group('landing_stand',(.4,0,0)),'leg out of its zone'))
+        fieldmut('LandingGearSize','Vector3.Zero'),fieldmut('LandingGearCenter','Vector3.Zero'),
+        (BODY,move_group('landing_stand',(.4,0,0)),'leg out of its zone'))
     def yaw():
         angle=number(fields('car_trailer')['HitchYawLimit']);want=math.degrees(math.atan2(d['draw'],W/2+t/2))
         require(close(angle,want))
@@ -450,7 +475,9 @@ def main():
                     after=edit(before.decode()).encode();assert after!=before,(c.label,label,'ineffective mutation')
                     path.write_bytes(after)
                     try:c.fn()
-                    except (AssertionError,KeyError,ValueError,IndexError):caught+=1
+                    except (AssertionError,KeyError,ValueError,IndexError) as exc:
+                        caught+=1
+                        print('REJECT',c.label,'/',label,':',exc)
                     else:raise RuntimeError('SURVIVED: '+c.label+' / '+label)
                 finally:path.write_bytes(before)
         for c in checks:c.fn()
