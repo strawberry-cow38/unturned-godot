@@ -429,10 +429,6 @@ namespace UnturnedGodot
         /// 0.9 since 2026-09-09 (master: "sink all trees everwhere by like 40cm") -- 40cm further down on top of
         /// the 0.5 that 2026-09-06's "by like 30cm" left. Still SCALED, so a sapling sinks proportionally rather
         /// than burying itself while a full canopy still hovers.
-        /// ⚠ THE FELLING GEOMETRY READS THIS. Every tree is planted TreeSink into the ground, so the cut face is
-        /// that much closer to the ground than the stump mesh on its own claims, and the angle a falling trunk has
-        /// to swing through to reach the deck is computed from the difference (see _landDeg). Move one without the
-        /// other and a felled tree either hangs in the air or lies buried in it.
         internal const float TreeSink = 0.9f;
 
         internal static void SinkTrees(List<Transform3D> xf)
@@ -652,35 +648,24 @@ namespace UnturnedGodot
         bool _toppling;
         float _topple;                       // 0..1 fall progress
         // A TREE IS NOT A DROPPED PLANK (strawberry 2026-09-09: "have felled trees fall way more slowly"). 1.3 s
-        // to the ground is a fencepost being pushed over; a real trunk takes several seconds because the far end has
-        // metres to travel. The ease-in stays -- gravity does accelerate it -- it just starts from slow.
+        // through 84 degrees is a fencepost being pushed over; a real trunk takes several seconds because the far
+        // end has metres to travel. The ease-in stays -- gravity does accelerate it -- it just starts from slow.
         const float ToppleTime = 4.2f;
-        // PAST HORIZONTAL, ONTO THE GROUND (strawberry 2026-09-09: "have it keep falling past 90 degrees until it
-        // properly lands"). The old 84 degrees never landed the tree AT ALL. The hinge sits on top of the stump, so
-        // 90 degrees is horizontal-but-perched and 84 is still tilted UP: measured on the shipped content, a felled
-        // pine came to rest with its tip about four metres in the air.
-        //
-        // The trunk therefore has to carry on past 90 by exactly the angle that walks its far end down the height of
-        // the cut -- asin(cut / reach) -- and that is PER TREE, because the stump height and the trunk length are.
-        // Pine_0_debris_1.obj runs y 1.60..21.17 and Pine_0_stump_0.obj tops at exactly 1.60, i.e. the debris is
-        // authored to sit on the cut, so both numbers come off the meshes rather than a guess. It works out at ~2
-        // degrees for a pine; small, because the overshoot only has to cover the stump, and the visible change is
-        // not the angle but the four metres of air underneath the thing.
-        const float RestDeg = 90f;           // flat on the ground: where it ends up
-        const float MaxPastDeg = 20f;        // a cap, so a daft stump measurement cannot swing the trunk under the map
-        const float DropTime = 0.5f;         // the butt slipping off the cut face once the far end is down
-        float _landDeg = RestDeg;            // computed in SpawnDebris off this tree's own stump and trunk
-        // ...and it BOUNCES when it lands. A damped rebound about the GROUNDED far end -- the butt is the end that
-        // just fell, so the butt is the end that kicks. Amplitude is small on purpose and it is degrees on a 20 m
-        // lever: 0.9 degrees is a third of a metre at the stump, and 3.5 (what this was while the trunk still
-        // finished in mid-air, where nothing could catch it) would have been a metre and a third of rubber.
-        const float SettleTime = 0.95f, SettleDeg = 0.9f;
-        const double DebrisLife = 9.0;       // long enough that the 4.2 s fall, the drop and the settle are watched, not rushed
-        bool _dropping, _settling;
-        float _dropT, _settleT;
-        Transform3D _landedXf;               // the pose at the instant the far end touched down
-        Vector3 _groundPivot;                // ...and where that far end is: the butt drops about it
-        float _tipLocalY = 8f;               // the far end of the WOOD in mesh space (canopy tips overshoot it)
+        // ⚠ TRIED AND REJECTED, 2026-09-09, by strawberry watching it: carrying the fall PAST 90 degrees so the
+        // trunk finishes flat on the ground. The geometry was sound -- hinge on the stump to 90 + asin(cut/reach),
+        // then pivot on the grounded far end while the butt slips off the cut face -- and it did land the tree,
+        // which at 84 degrees never happens (a pine comes to rest with its tip about four metres up). But that
+        // SECOND pivot reads as the trunk detaching from the stump and sinking: "the hinge looks weird go back to
+        // the old fall animation". So the fall is one hinge again. Anything that puts the trunk on the deck has to
+        // do it without a visible change of pivot part-way down.
+        const float FallDeg = 84f;           // where it comes to rest
+        // ...and it BOUNCES when it lands. A damped rebound about the landed angle, not a spring back up: the tip
+        // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
+        // 10 would read as rubber.
+        const float SettleTime = 0.95f, SettleDeg = 3.5f;
+        const double DebrisLife = 9.0;       // long enough that a 4.2 s fall plus its settle is watched, not rushed
+        bool _settling;
+        float _settleT;
         Vector3 _toppleAxis = Vector3.Right; // horizontal axis; set from the chop direction
         Vector3 _fallDir = Vector3.Forward;  // the horizontal direction the TOP falls toward
         float _trunkLen = 8f;                // measured off the debris mesh, so logs land along the real trunk
@@ -701,26 +686,11 @@ namespace UnturnedGodot
             // the logs are scattered down its length, and a constant would put a birch's logs where a pine's tip
             // is. The debris is authored upright, so its Y extent is the trunk length once the placement scale is
             // applied.
-            var box = new Aabb(); bool any = false; float trunkTop = 0f;
-            var kids = _debris.GetChildren();
-            for (int i = 0; i < kids.Count; i++)
-                if (kids[i] is MeshInstance3D mi && mi.Mesh != null)
-                {
-                    var b = mi.Mesh.GetAabb();
-                    box = any ? box.Merge(b) : b; any = true;
-                    if (i == 1) trunkTop = b.End.Y;   // part 1 is the TRUNK; part 0 is the wide canopy, whose tips reach past it
-                }
+            var box = new Aabb(); bool any = false;
+            foreach (Node c in _debris.GetChildren())
+                if (c is MeshInstance3D mi && mi.Mesh != null) { box = any ? box.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); any = true; }
             if (any) _trunkLen = Mathf.Max(1f, box.Size.Y * Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y));
-            _tipLocalY = trunkTop > 0.01f ? trunkTop : box.End.Y;   // the far end of the WOOD is what comes to rest on the ground
-            // WHERE THE FALL ENDS. The hinge is the far edge of the cut, standing `cut` metres above the ground, so
-            // at 90 degrees the trunk is horizontal and hanging; asin(cut / reach) is the extra swing that walks the
-            // far end down onto the deck. `cut` is the stump top LESS the sink: the whole tree is planted TreeSink
-            // into the ground, so the cut face is that much lower than the stump mesh alone says.
-            float scaleY = Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y);
-            float cut = Mathf.Max(0f, _stumpTop - ResourceField.TreeSink * scaleY);
-            float reach = Mathf.Max(1f, _tipLocalY * scaleY - _stumpTop);   // hinge -> far end, along the trunk
-            _landDeg = RestDeg + Mathf.RadToDeg(Mathf.Asin(Mathf.Min(cut / reach, Mathf.Sin(Mathf.DegToRad(MaxPastDeg)))));
-            _topple = 0f; _toppling = true; _dropping = false; _settling = false; SetProcess(true);
+            _topple = 0f; _toppling = true; _settling = false; SetProcess(true);
             // The logs arrive WITH the cleanup, not at the chop: you fell the tree, it lies there, and what it
             // leaves behind appears as it goes.
             GetTree().CreateTimer(DebrisLife).Timeout += () =>
@@ -731,70 +701,49 @@ namespace UnturnedGodot
             };
         }
 
-        /// <summary>HINGE ON THE STUMP, not on the base centre (strawberry 2026-09-09: "the falling tree should
-        /// hinge better off the stump, theres a bit of a gap"). Rotating a trunk about the centre of its own base
-        /// swings the butt end up and away -- half the cut face lifts clear while the other half would sweep
-        /// through the stump, and the gap is that lift. A real tree pivots on the FAR EDGE of the cut: the side it
-        /// is falling toward stays planted and the trunk rolls over it.
-        ///
-        /// So the pivot moves up to the cut face and out by the trunk's own radius along the fall direction. Both
-        /// are measured -- the cut off the stump mesh, the radius off the same TrunkRadius the trunk collider uses
-        /// -- so the hinge cannot disagree with the wood it is supposed to be touching.</summary>
-        Vector3 HingePivot() => _toppleBase.Origin
-                              + Vector3.Up * _stumpTop
-                              + _fallDir * (TrunkRadius * Mathf.Max(0.01f, _toppleBase.Basis.Scale.X));
-
         public override void _Process(double delta)
         {
             if (!GodotObject.IsInstanceValid(_debris)) { SetProcess(false); return; }
             float dt = (float)delta;
-            if (_toppling)
+            if (!_toppling && !_settling)
             {
-                _topple = Mathf.Min(1f, _topple + dt / ToppleTime);
-                float deg = _landDeg * (_topple * _topple);          // ease-in: gravity accelerates the fall
-                var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
-                Vector3 p = HingePivot();
-                _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
-                LeafReact(deg, dt);
-                if (_topple >= 1f)
-                {
-                    // The far end is down. From here the trunk pivots on THAT and not on the stump: it has gone
-                    // past balance, so the butt slips off the cut face rather than staying perched on it.
-                    _landedXf = _debris.GlobalTransform;
-                    _groundPivot = _landedXf * new Vector3(0f, _tipLocalY, 0f);
-                    _toppling = false; _dropping = true; _dropT = 0f;
-                    _shake = 1f;   // the canopy is doing ~12 m/s at the end of a 20 m lever, and it hits first
-                }
-                return;
-            }
-            if (!_dropping && !_settling)
-            {
-                LeafReact(0f, dt);                    // the shudder outlives the motion; keep decaying it
+                LeafReact(0f, dt);   // the impact shudder outlives the motion that caused it; keep decaying it
                 if (_shake <= 0.002f) SetProcess(false);
                 return;
             }
-            // `back` is how far the trunk has come BACK from its landed angle, rotating about the grounded far end.
-            float back;
-            if (_dropping)
+            float deg;
+            if (_toppling)
             {
-                _dropT += dt;
-                float u = Mathf.Min(1f, _dropT / DropTime);
-                back = (_landDeg - RestDeg) * (u * u);   // it FALLS off the stump: accelerating, not eased out
-                if (u >= 1f) { _dropping = false; _settling = true; _settleT = 0f; _shake = Mathf.Max(_shake, 0.55f); }
+                _topple = Mathf.Min(1f, _topple + dt / ToppleTime);
+                deg = FallDeg * (_topple * _topple);                 // ease-in: gravity accelerates the fall
+                LeafReact(deg, dt);                                  // ...and the canopy drags against that sweep
+                if (_topple >= 1f) { _toppling = false; _settling = true; _settleT = 0f; _shake = 1f; }
             }
             else
             {
-                // Flat on the deck. A decaying rebound: |sin| gives repeated taps rather than a sine wave rolling
-                // THROUGH the ground, and it only ever ADDS to `back`, which lifts the butt off the floor and
-                // drops it again -- the trunk can never rock down into the ground it is lying on.
+                // Landed. A decaying rebound: |sin| gives repeated taps rather than a sine wave rolling THROUGH
+                // the ground, and subtracting it means the trunk always lifts off the floor and drops back --
+                // never sinks below where it came to rest.
                 _settleT += dt;
                 float k = _settleT / SettleTime;
-                if (k >= 1f) { _settling = false; back = _landDeg - RestDeg; }
-                else back = (_landDeg - RestDeg) + SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
+                if (k >= 1f) { _settling = false; deg = FallDeg; }
+                else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
+                LeafReact(0f, dt);
             }
-            var br = new Basis(_toppleAxis, Mathf.DegToRad(-back));
-            _debris.GlobalTransform = new Transform3D(br, _groundPivot - br * _groundPivot) * _landedXf;
-            LeafReact(0f, dt);
+            var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
+            // HINGE ON THE STUMP, not on the base centre (strawberry 2026-09-09: "the falling tree should hinge
+            // better off the stump, theres a bit of a gap"). Rotating a trunk about the centre of its own base
+            // swings the butt end up and away -- half the cut face lifts clear while the other half would sweep
+            // through the stump, and the gap is that lift. A real tree pivots on the FAR EDGE of the cut: the
+            // side it is falling toward stays planted and the trunk rolls over it.
+            //
+            // So the pivot moves up to the cut face and out by the trunk's own radius along the fall direction.
+            // Both are measured -- the cut off the stump mesh, the radius off the same TrunkRadius the trunk
+            // collider uses -- so the hinge cannot disagree with the wood it is supposed to be touching.
+            Vector3 p = _toppleBase.Origin
+                      + Vector3.Up * _stumpTop
+                      + _fallDir * (TrunkRadius * Mathf.Max(0.01f, _toppleBase.Basis.Scale.X));
+            _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
         }
 
         // LEAVES REACT TO THE FALL (strawberry 2026-09-09: "have the leaves react to falling via the wind shader.
