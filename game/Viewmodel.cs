@@ -79,9 +79,14 @@ namespace UnturnedGodot
         /// <summary>camLocal = the wheel pivot in CAMERA space, valid whether or not it is in front of you;
         /// inFront says which. The pair matters because looking over your shoulder puts the wheel BEHIND the
         /// camera, where a screen position does not exist -- see DrivingArmsPos.</summary>
-        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg, Vector3 camLocal, bool inFront)
-        { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelCamLocal = camLocal; _wheelInFront = inFront; _wheelKnown = true; }
-        public void ClearDrivingWheel() => _wheelKnown = false;
+        public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg, Vector3 camLocal, bool inFront, Basis vehBasisCam)
+        { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelCamLocal = camLocal; _wheelInFront = inFront; _wheelKnown = true; _vehBasisCam = vehBasisCam; }
+        public void ClearDrivingWheel() { _wheelKnown = false; _vehBasisCam = Basis.Identity; }
+
+        /// <summary>The VEHICLE's basis expressed in camera space. Identity when you are looking straight down the
+        /// car; it rotates the opposite way to your head as you look around, which is exactly the correction the
+        /// driving arms need.</summary>
+        Basis _vehBasisCam = Basis.Identity;
         Vector3 _wheelTargetCam;   // the wheel pivot in viewmodel-camera space, this frame
         const float WheelHandsDrop = 0.09f;   // how far below the wheel pivot the driving hands sit (master 2026-09-06: they rode too high)
         bool WheelHandsCentre(out Vector3 handsLocal)
@@ -1739,8 +1744,20 @@ namespace UnturnedGodot
             if (Driving && _wheelKnown && _wheelAxisCam.LengthSquared() > 0.5f)
             {
                 // hands turn WITH the wheel: rotate the arm pair about the wheel pivot, around the wheel's own axis, by the steer angle
+                //
+                // ...AND THE ARMS FACE THE CAR, NOT YOUR HEAD (strawberry 2026-09-09: "the 1p driving arms should
+                // always face forward. not tilting w camera"). The pin tracked the wheel's POSITION every frame but
+                // left the orientation at identity -- and the arms hang off the viewmodel camera, so identity means
+                // "welded to wherever you are looking". Turn your head and the whole torso turned with it while the
+                // hands slid sideways to stay on the wheel.
+                //
+                // _vehBasisCam is the car's basis in camera space: identity looking straight ahead, and rotating
+                // opposite to your head as you look away. Using it as the arms' basis pins the body to the CAR and
+                // lets the camera turn inside it -- which is what a driver does. Applied about the arms' own origin,
+                // and that origin is the SKULL (DrivingArmsPos slides the rig so its skull sits on the camera), so
+                // this pivots the body about the neck: head turns, shoulders stay.
                 var pivot = new Transform3D(Basis.Identity, _wheelTargetCam);
-                _arms.Transform = pivot * new Transform3D(new Basis(_wheelAxisCam.Normalized(), Mathf.DegToRad(_wheelSteerDeg)), Vector3.Zero) * pivot.AffineInverse() * new Transform3D(Basis.Identity, _arms.Position);
+                _arms.Transform = pivot * new Transform3D(new Basis(_wheelAxisCam.Normalized(), Mathf.DegToRad(_wheelSteerDeg)), Vector3.Zero) * pivot.AffineInverse() * new Transform3D(_vehBasisCam, _arms.Position);
             }
             else _arms.RotationDegrees = armRot;
             // 1P lean tilt: a 2D roll of the composited viewmodel IMAGE about screen-centre -- NOT a 3D roll of the arms.

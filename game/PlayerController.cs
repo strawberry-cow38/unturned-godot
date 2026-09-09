@@ -8542,7 +8542,8 @@ namespace UnturnedGodot
                     bool inFront = wl.Z < -0.05f;
                     _viewmodel.SetDrivingWheel(inFront ? _cam.UnprojectPosition(wheelW) : Vector2.Zero, -wl.Z,
                                                (camInv.Basis * (vt.Basis * _driving.SteerAxisLocal)).Normalized(),
-                                               _driving.SteerAngleDegrees, wl, inFront);
+                                               _driving.SteerAngleDegrees, wl, inFront,
+                                               camInv.Basis * vt.Basis);   // the car's orientation in camera space: what keeps the arms facing the car rather than your head
                 }
                 else _viewmodel.ClearDrivingWheel();
                 _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug && !TankOpticsActive);   // no arms over a periscope or a gunsight   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
