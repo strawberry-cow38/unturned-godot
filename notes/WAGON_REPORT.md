@@ -1,121 +1,78 @@
-# Wagon: remove the hood ledge and restore the nose bevels
+# Wagon strip and fleet refit
 
-Revision of `5044457d` on `astra-wagon`. The hood now meets the windscreen directly, with a flat centre and two planar bevelled outer strips reaching **X = ±1.260 m**. The front panel's top edge follows the bevel continuously. Its entire surface remains coplanar, without filler wedges.
+Removed the grille material patch, baked front and rear bumpers, trunk handle, both underside bevels, front lower lip, and sedan-derived lamp generation. The fascia is now continuously painted and coplanar down to the floor; the tailgate is a closed painted panel down to the floor. All geometry changes are in `tools/build_wagon.py`; the OBJ files were regenerated.
 
-## Hood and A-pillar junction
+**Identification audit:** every identification in the request matches the shipped generator at `1d8bbd94`. Nothing remains unidentified. In particular, the follow-up about a completely flat underside identifies the full-length bevel from |X| = 0.99, Y = −0.270 to |X| = 1.26, Y = −0.120. The old front lip's actual Y stations were −0.158648 and −0.125000 (the request rounded the first to −0.159); neither exists in the regenerated body. The grille really was a UV/material patch, and the handle really was a protruding box. Neither required leaving an opening.
 
-All six original shelf faces **f16, f17, f72, f73, f146 and f147 are gone**, checked by their original coordinate signatures. There are **zero horizontal hood/cowl faces**. The centre hood runs from **(Y,Z) = (0.999953,−2.757828)** to the existing windscreen bottom **(1.125000,−1.250000)**, giving a **4.740799°** longitudinal tilt. The old slope-to-shelf edge at Z = −1.406856 no longer exists.
+## Donors and refitting
 
-The outer strips each contain two triangles, with normals **(±0.405374, 0.911023, −0.075553)** and a **24.352857°** tilt from horizontal. The sedan's approximately 26.9° uses a 0.25 m strip; the wagon's required 0.125 m drop across a **0.28 m** strip produces this shallower angle. The specified width and leading-edge heights take precedence over copying the sedan's exact angle.
+All dimensions below come from meshes in `game/content/`, in metres. Width includes the complete left/right pair. Shape descriptions describe source geometry, not an in-game appearance judgment.
 
-Each outer strip ends at **(X,Y,Z) = (±1.260000,0.994273,−1.323997)**, the intersection of its plane with the existing windscreen/A-pillar plane. The outer A-pillar foot extends down that same plane to meet it. This removes the shelf without adding a vertical cap or a second transition facet. The inner foot, windscreen glass, side-window apertures, roof and roof-front rake retain their geometry. The A-pillar/windscreen plane remains **60.488501° above horizontal**, and the roof-front upper edge remains **(Y,Z) = (2.170000,−0.658491)**.
+**Golf lamps selected as requested.** `golf_headlights.txt` has horizontally pointed hexagonal outlines: **2.111922 × 0.413821 × 0.125399**, **40 triangles**. `golf_taillights.txt` has wide rectangular outlines: **2.048478 × 0.254716 × 0.125398**, **20 triangles**. They replace the sedan's 20-triangle headlights (2.048 × 0.255) and taillights (2.227 × 0.329). Every donor triangle and UV is retained; only Z is translated and flat normals are recalculated from the saved float32 positions.
 
-## Front panel top edge
+| Part | Golf-to-wagon translation | Final emitter positions (X,Y,Z) |
+| --- | --- | --- |
+| Headlights | (0,0,**−0.215180**) | Spots (±0.765,0.708,−2.803180); omni (0,0.841,−2.779180) |
+| Taillights | (0,0,**+0.332254**) | Tails (±0.765,0.787,2.756254) |
 
-Measurements below intersect the saved float32 fascia triangles with X planes and take the highest point. Both sides agree. The verifier checks all mesh vertex stations and midpoints, plus 101 samples along each bevel: **215 sections total**.
+The generator derives these deltas from the donor outward faces and wagon mounting planes, giving every outward lens corner at least 2 mm clearance. The spec uses the **Golf's** original emitter anchors plus exactly those deltas. The lens backs enter the closed body, as mounting geometry; the Golf taillights retain their donor's open backs. The body itself remains closed.
 
-| Absolute X (m) | top Y (m) | top Z (m) |
-| ---: | ---: | ---: |
-| 0.00 | **0.999953** | −2.757828 |
-| 0.48 | **0.999953** | −2.757828 |
-| 0.98 | **0.999953** | −2.757828 |
-| 1.05 | 0.968703 | −2.759062 |
-| 1.12 | 0.937453 | −2.760297 |
-| 1.19 | 0.906203 | −2.761531 |
-| 1.26 | **0.874953** | −2.762766 |
+- **Humvee/jeep/offroad/truck/van alternative:** vertically pointed hexagonal, round-looking headlights, **2.309 × 0.405, 32 triangles**, wider-spaced than the Golf's; their **2.227 × 0.329, 20-triangle** near-square tails would largely restore the old rear shape (van tails also sit about 0.100 m higher).
+- **Ambulance alternative:** **2.048 × 0.255, 20-triangle** rectangular headlights and **2.227 × 0.329, 20-triangle** near-square tails; essentially the old sedan lamp silhouettes at different donor coordinates, with less headlight detail than the Golf. Both alternatives would need their own mounting translations and matching emitter updates.
 
-The centre stays flat across X; from |X| = 0.98 to 1.26 the top edge is a straight sloped line, with no vertical jump. The slight Z change keeps this line on the existing fascia plane:
+**Hatchback bumpers selected after measuring all three requested candidates.** The offroader spec uses `offroad_body.txt`; there is no `offroader_body.txt`. The bumper bands are geometrically tied to export precision, so there is no honest claim that van or offroader would require more shape distortion. Hatchback requires the least translation and is a civilian-car donor.
 
-`Z(Y) = −2.792392 + 0.034564 × (Y − 0.125) / 0.874953`.
+| Donor | Front band Z extent | Rear band Z extent | Width × height × depth, front / rear | Front / rear Z translation for this fit |
+| --- | --- | --- | --- | --- |
+| **Hatchback** | −2.724326..−2.309333 | 2.302789..2.717784 | 2.521863 × 0.259451 × 0.414993 / 2.521864 × 0.259450 × 0.414995 | **−0.224679 / +0.109154** |
+| Van | −2.517115..−2.102122 | 2.102120..2.517116 | 2.521863 × 0.259450 × 0.414993 / 2.521864 × 0.259450 × 0.414996 | −0.431890 / +0.309822 |
+| Offroader | −2.517115..−2.102122 | 2.102120..2.517116 | Same as van to the displayed precision | −0.431890 / +0.309822 |
 
-All **17 fascia triangles** satisfy this plane within 1 μm. The outer top corner moves forward by approximately **4.938 mm** as it drops, avoiding the twist that occurred when the lowered corner retained the centre nose's Z coordinate. Grille and lamp geometry are retained.
+Each source bumper has **28 triangles, 16 positions and 0/42 boundary edges**. Extraction selects triangles at the two measured Y levels (−0.158647 and +0.100803, within 3 μm export jitter) and at the appropriate end beyond |Z| > 2.1. It excludes valance, grille and exhaust geometry; no complete body is copied. The verifier independently identifies hatchback source faces 290–317 and 318–345, zero-based.
 
-## Every face in the review boxes
+The selected bands are centered in X and reduced to **X = ±1.26** using scales **0.999261260 front / 0.999260864 rear**: a **0.0739% reduction**, not a stretch across an inset gap. Outer-tip jitter below 3 μm is snapped to the wall planes. They move up **0.038648 / 0.038646 m**, putting their bottom faces at the old sill Y = −0.120 without changing donor height. Van/offroader would cost the same width reduction, height and attachment trimming, plus **0.207211 m more forward translation and 0.200668 m more rearward translation**.
 
-Boxes: **X [−1.35,−0.85] / [+0.85,+1.35], Y [0.80,1.30], Z [−2.90,−2.10]**. Face IDs are zero-based. “Forward-facing” means −Z is the normal's dominant direction; the upward hood also has a small negative Z component due to its longitudinal slope.
+The outward donor contours sit at least **0.080 m** beyond their mounting planes. Buried backs are clipped at the fascia/tailgate planes to avoid overlapping exterior side walls, then closed with attachment caps. Those hidden caps are the only newly authored bumper surfaces. All six outward donor triangles per bumper survive intact within export precision; all other exposed triangles remain on donor surfaces. Final parts have **24 positions and 44 triangles each**, including the trimmed/capped attachment, and are listed in `Parts` as `wagon_bumper_front.txt` and `wagon_bumper_rear.txt`. They use dark solid colour RGB 58/255.
 
-Using the existing report's **centroid convention**, the boxes contain only **f21 on the left and f64 on the right**, both upward bevel faces. **Forward-facing count: 0 on each side, 0 total.**
+## Flat underside and bounds
 
-Clipping every triangle against all six box planes gives **24 intersecting faces**, fully listed below. **10 of these are ordinary forward-facing fascia faces** with centroids below or inboard of the boxes. They occupy the same plane and contain no filler wedges. A literal requirement of zero forward-facing intersections is not satisfied: the required closed front panel occupies part of these boxes, as it does on the sedan. This report keeps that distinction explicit rather than claiming those faces are absent.
+The external floor is one plane at **Y = −0.270**, spanning **X = −1.26..1.26**, from the fascia's floor intersection to **Z = 2.68**. Its area is **13.829750 m²**. Both side walls drop vertically onto it. There are no sloping lower bevels or intermediate sub-sill body stations. The internal passenger floor and raised cargo deck are retained.
 
-| side | face | centroid in box | normal | all three vertices |
-| --- | ---: | --- | --- | --- |
-| left | f0 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.100803, -2.786276) |
-| left | f1 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, -0.125000, -2.757828); (-1.260000, 0.874953, -2.762766); (-1.260000, 0.100803, -2.786276) |
-| left | f4 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, -0.125000, -2.757828); (-1.260000, -0.120000, -2.320000) |
-| left | f5 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, -0.120000, -2.320000); (-1.260000, -0.120000, -1.323997) |
-| left | f6 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, -0.120000, -1.323997); (-1.260000, 0.994273, -1.323997); (-1.260000, 0.874953, -2.762766) |
-| left | f21 | yes | (-0.405374, 0.911023, -0.075553) | (-0.980000, 0.999953, -2.757828); (-1.260000, 0.874953, -2.762766); (-1.260000, 0.994273, -1.323997) |
-| left | f22 | no | (-0.405374, 0.911023, -0.075553) | (-0.980000, 0.999953, -2.757828); (-1.260000, 0.994273, -1.323997); (-0.980000, 1.125000, -1.250000) |
-| left | f104 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.874953, -2.762766) |
-| left | f105 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.874953, -2.762766); (-0.980000, 0.999953, -2.757828) |
-| left | f106 | no | (-0.000003, 0.039472, -0.999221) | (-0.480000, 0.360000, -2.783109); (-0.480000, 0.125000, -2.792392); (-0.980000, 0.999953, -2.757828) |
-| left | f107 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998) |
-| left | f108 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998); (-0.480000, 0.360000, -2.783109) |
-| left | f116 | no | (0.000000, 0.996579, -0.082648) | (-0.480000, 0.999953, -2.757828); (-0.980000, 0.999953, -2.757828); (-0.980000, 1.125000, -1.250000) |
-| right | f45 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.762766); (1.260000, -0.125000, -2.757828); (1.260000, 0.100803, -2.786276) |
-| right | f46 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.100803, -2.786276); (1.260000, 0.125000, -2.792392); (1.260000, 0.874953, -2.762766) |
-| right | f47 | no | (1.000000, 0.000000, 0.000000) | (1.260000, -0.125000, -2.757828); (1.260000, 0.874953, -2.762766); (1.260000, 0.994273, -1.323997) |
-| right | f64 | yes | (0.405374, 0.911023, -0.075553) | (1.260000, 0.994273, -1.323997); (1.260000, 0.874953, -2.762766); (0.980000, 0.999953, -2.757828) |
-| right | f65 | no | (0.405374, 0.911023, -0.075553) | (0.980000, 1.125000, -1.250000); (1.260000, 0.994273, -1.323997); (0.980000, 0.999953, -2.757828) |
-| right | f110 | no | (0.000000, 0.039473, -0.999221) | (1.260000, 0.874953, -2.762766); (1.260000, 0.125000, -2.792392); (0.480000, 0.125000, -2.792392) |
-| right | f111 | no | (0.000000, 0.039473, -0.999221) | (0.980000, 0.999953, -2.757828); (1.260000, 0.874953, -2.762766); (0.480000, 0.125000, -2.792392) |
-| right | f112 | no | (0.000000, 0.039474, -0.999221) | (0.480000, 0.540000, -2.775998); (0.480000, 0.999953, -2.757828); (0.980000, 0.999953, -2.757828) |
-| right | f113 | no | (0.000003, 0.039472, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.125000, -2.792392); (0.480000, 0.360000, -2.783109) |
-| right | f114 | no | (0.000000, 0.039474, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.360000, -2.783109); (0.480000, 0.540000, -2.775998) |
-| right | f117 | no | (0.000000, 0.996579, -0.082648) | (0.980000, 1.125000, -1.250000); (0.980000, 0.999953, -2.757828); (0.480000, 0.999953, -2.757828) |
+This preserves the body's lowest Y and its geometric ground clearance. Flattening at **Y = −0.120** instead would raise the underside **0.150 m**, increasing body clearance by that amount. Relative to the unchanged authored wheel-bottom plane (0.25 − 0.60 = −0.35), the nominal body clearance remains **0.080 m**, rather than **0.230 m**; these are geometry measurements, not loaded suspension measurements.
 
-## Dimensions and topology
+The unchanged upper fascia stations give:
 
-Body envelope remains **5.800 × 2.520 × 2.440 m** (length × width × height): **X [−1.26,1.26], Y [−0.27,2.17], Z [−2.90,2.90]**. Body width is 2.520 m at all **27 review stations** and **55 vertex/mid-span sections**. All **82 exterior side triangles**, all eight pillar exteriors and both bumper tips lie at X = ±1.260.
+`Z(Y) = −2.792392 + (−2.757828 + 2.792392) × (Y − 0.125) / (0.999953 − 0.125)`.
 
-The mesh has **163 positions and 350 triangles**, with **0 / 525 boundary edges (0.0%)**, **0 degenerate triangles**, no duplicate faces, no overused edges, and **exactly 3 corners on every face**. It is one connected outward shell, with no coplanar overlaps or triangle piercings across **4,595 candidate pairs**; signed volume is **12.854203 m³**.
+At Y = −0.270 this is **Z = −2.807996 m** after serialization. Thus the new body AABB is **(−1.26,−0.27,−2.807996)..(1.26,2.17,2.68)**, or **2.520 × 2.440 × 5.487996 m** (X/Y/Z). The separate bumper tips extend the assembled envelope to **Z = −2.949005..2.826938**, total length **5.775943 m**.
 
-All **11 non-body wagon assets** are byte-identical to `5044457d`. Dimensions, wheels, seats, lights, glass, cargo clearance, palette and registrations pass the existing checks. Construction coordinates are updated in [wagon_dimensions.md](wagon_dimensions.md).
+`BoxSize = (2.52,2.44,5.776)` and `BoxCenter = (0,0.95,−0.061034)` enclose the full body, lamps and bumpers; Z is rounded outward. The old `(2.5,0.98,5.52)` lower-body box did not enclose even the shipped body. Roof/cabin registration remains intact. The larger full-body box's effects on driving and collisions have not been assessed.
 
-## Verification
+## Rear roof derivation
+
+The D-pillar's exterior rear edge is **(Y,Z) = (1.10,2.68) → (1.92,2.56)**. Its slope is:
+
+`dZ/dY = (2.56 − 2.68) / (1.92 − 1.10) = −0.1463414634`.
+
+Continuing to Y = 2.17 gives:
+
+`roof_rear_z = 2.56 + (2.17 − 1.92) × (2.56 − 2.68) / (1.92 − 1.10) = 2.523414634`.
+
+The generator reads those endpoints from `posts[3]` and derives the value, just as the front does. The serialized top rear edge is **Z = 2.523415**, **36.585 mm forward** of the former vertical cap. The roof top, both side edges and rear cap meet there. D-pillar endpoints, rear glass and the correct A-pillar roof continuation remain unchanged.
+
+## Verification and limits
 
 | Check | Result |
 | --- | --- |
-| `python3 tools/verify_wagon.py` | **PASS**: all 11 OBJ meshes, continuous nose trim, planar bevels, shelf removal, complete box listing, width, roof/A-pillar plane, closure, overlaps, glass, cargo, lamps and registrations. |
-| Regression sensitivity | **PASS**: rejects `5044457d` for its flattened outer top edge, and `13bd2151` for its dropped outer corner off the fascia plane. All six original shelf face signatures are absent. |
-| `dotnet build game/UnturnedGodot.csproj` | **PASS — 0 warnings, 0 errors**, 6.10 s. |
-| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS — 1 test, 13 checks**, 0 failures, 0.84 s. Its build also reports **0 warnings, 0 errors**, 5.82 s. |
-| Reproducibility | **PASS**: regenerating all **12 wagon assets** produces identical bytes. |
+| `python3 tools/verify_wagon.py` | **PASS** for all **13 OBJ assets**: three corners per face, positive indices in range, explicit unit normals agreeing with winding, V-flipped UVs, no degenerate or duplicate triangles. Also checks removals, full-width floor, both roof rakes, donor provenance, emitters, enclosure, retained hood, glass, seats, cargo and registrations. |
+| Body topology under float32 / ParseObj rules | **101 positions, 226 triangles; 0/339 boundary edges (0.0%)**, every edge used twice with opposite winding; one connected outward shell; no coplanar overlaps or triangle piercings across 3,288 candidate pairs. Signed volume 12.785812 m³. |
+| Bumper topology | Each has **0/66 boundary edges (0.0%)**, one connected outward shell, no overlaps or piercings. |
+| `dotnet build game/UnturnedGodot.csproj` | **Succeeded, 0 errors**, 57.97 s. First compile emitted **22 warnings from unchanged declarations/call sites** (including generated code); this was not a warning-free fresh compile. No unrelated warning fixes were made. |
+| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS: 1 test, 19 checks, 0 failures**, 0.98 s. Includes server/replica donor bumper loading and hull enclosure. Its incremental build reported 0 warnings and 0 errors. The headless engine logged its experimental separate-rendering-thread warning. |
+| Reproducibility | **PASS:** all **14 generated assets** (13 OBJ + palette) produce identical bytes on regeneration. Eight glass panes and the palette remain byte-identical to `1d8bbd94`. |
+| Regression sensitivity | The new floor/removal check rejects the shipped body's bevel/lip; the rear-roof check independently rejects its vertical rear cap. |
+| Registration | `BuildWagon`, `BuildByName`, `SpecFor`, seat tables and eight glass panes retained. All **32 preceding `SpecNames` entries** retain their exact ordering; wagon remains **TypeId 32**. |
 
-## Exterior views
+**Not verified:** visual appearance, night lighting, an actual network session, driving, loaded suspension clearance, impacts or full regression suites. The targeted L1 test creates a replica locally; it is not a network-session test. No new visual captures were made, and the existing wagon PNGs document earlier revisions. I do not claim the revised car looks right in game. The body is closed independently of the separate parts; the original Golf taillight backs remain open inside it.
 
-Godot/Vulkan captures of this revision, frame 48, parked with `UG_VSTATIC=1`. Cameras and targets are vehicle-local; **eye Y = target Y = 1.125**. The views show the sloped outer nose and the direct hood-to-A-pillar junction.
-
-| View | Eye (X,Y,Z) | Target (X,Y,Z) | Capture |
-| --- | --- | --- | --- |
-| Left nose and pillar | (−3.5,1.125,−3.8) | (−1.0,1.125,−1.95) | [wagon_hood_left.png](wagon_hood_left.png) |
-| Right nose and pillar | (+3.5,1.125,−3.8) | (+1.0,1.125,−1.95) | [wagon_hood_right.png](wagon_hood_right.png) |
-| Left pillar foot | (−2.7,1.125,−2.4) | (−1.2,1.125,−1.35) | [wagon_pillar_foot_left.png](wagon_pillar_foot_left.png) |
-| Right pillar foot | (+2.7,1.125,−2.4) | (+1.2,1.125,−1.35) | [wagon_pillar_foot_right.png](wagon_pillar_foot_right.png) |
-
-The capture harness logs shader/render synchronization warnings and a renderer-thread shutdown error after saving; these images verify appearance. The build and targeted L1 results above are the clean automated checks.
-
-The [static geometry overview](wagon_geometry.png) is also regenerated from the saved mesh with `python3 tools/preview_wagon.py`.
-
-Reproduce a left-side capture (mirror camera and target X for the right):
-
-```sh
-mkdir -p /tmp/wagon-hood-shot
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.aarch64.json \
-UG_QUICK=1 UG_VSTATIC=1 UG_VCAM='-3.5,1.125,-3.8;-1.0,1.125,-1.95' \
-xvfb-run -a ~/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64 \
-  --path game --rendering-driver vulkan --write-movie /tmp/wagon-hood-shot/mov.avi \
-  --fixed-fps 30 -- --vehicle=/tmp/wagon-hood-shot --gun=wagon
-```
-
-Reproduce the asset and automated checks:
-
-```sh
-python3 tools/build_wagon.py
-python3 tools/verify_wagon.py
-dotnet build game/UnturnedGodot.csproj
-./test.sh --l1 --only 'vehicle.wagon*'
-```
-
-Pre-existing tracked build-artifact modifications are excluded from the commit. Nothing is pushed.
+Current coordinates are also recorded in [wagon_dimensions.md](wagon_dimensions.md). Build artifacts are excluded from the commit. Work is committed on `wagon-strip`; nothing is pushed.

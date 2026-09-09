@@ -181,7 +181,7 @@ def check_hood(sedan, wagon):
     assert abs(sn[0]-wn[0])<2e-6
     assert abs((-1.56+(sn[1]+1.62)*scale)-wn[1])<2e-6
     assert wc == (1.125,-1.25), ('hood must meet windscreen directly',wc)
-    levels=(-.159,-.125,.101,.125,.875,.999953,1.125)
+    levels=(.125,.875,.999953,1.125)  # retain hood/valance, not the deleted bumper lip
     print('| front Y station | sedan | wagon |')
     print('| --- | ---: | ---: |')
     for y in levels:
@@ -221,7 +221,7 @@ def check_straight_sides(mesh):
     print('| Z (m) | body X extent (m) |')
     print('| ---: | ---: |')
     for i in range(27):
-        z = round((i-13)*5.80/26,2)
+        z = stations[0]+i*(stations[-1]-stations[0])/26
         w = width(z)
         assert abs(w-2.52) < 1e-6, ('review width station',z,w)
         print(f'| {z:+.2f} | {w:.3f} |')
@@ -272,10 +272,29 @@ def check_roof_rake(mesh):
     for x in (-1.26,1.26):
         for y,z in ((1.92,-.8),(2.17,round(expected_top,6))):
             assert (x,y,z) in corners, ('roof edge endpoint',x,y,z)
-    rear = obj(CONTENT/'wagon_glass_rear.txt')
-    assert sorted({p[1:] for p in rear['vertices']}) == [(1.1,2.68),(1.92,2.56)], 'tailgate rake changed'
     print(f'PASS roof front coplanar with unchanged windscreen/A-post: top Z {expected_top:.6f}; '
-          f'rake {math.degrees(math.atan(slope)):.6f}° from vertical; tailgate rake unchanged')
+          f'rake {math.degrees(math.atan(slope)):.6f}° from vertical')
+    rear = obj(CONTENT/'wagon_glass_rear.txt')
+    yz = sorted({p[1:] for p in rear['vertices']})
+    assert yz == [(1.1,2.68),(1.92,2.56)], 'tailgate rake changed'
+    (y0,z0),(y1,z1) = yz
+    slope = (z1-z0)/(y1-y0)
+    expected_top = z1+(2.17-y1)*slope
+    cap,posts = [],[]
+    for face in mesh['faces']:
+        tri = [mesh['vertices'][int(c.split('/')[0])-1] for c in face]
+        n = mesh['normals'][int(face[0].split('/')[2])-1]
+        if all(p[1] >= 1.1 and p[2] > 2.5 for p in tri) and n[2] > .5 and abs(n[0]) < 1e-5:
+            (cap if all(p[1] >= 1.92 for p in tri) else posts).append(tri)
+            assert all(abs(z-(z0+(y-y0)*slope)) < 1e-6 for x,y,z in tri), ('roof rear breaks D-pillar plane',tri)
+            assert sum(a*b for a,b in zip(n,rear['normals'][0])) > .999999
+    assert cap and len(posts) == 4, 'missing rear roof cap or D-pillar faces'
+    corners = {p for tri in cap for p in tri}
+    for x in (-1.26,1.26):
+        for y,z in ((1.92,2.56),(2.17,round(expected_top,6))):
+            assert (x,y,z) in corners, ('rear roof endpoint',x,y,z)
+    print(f'PASS rear roof continues unchanged D-pillar/glass plane: top Z {expected_top:.9f}; '
+          f'rake {math.degrees(math.atan(slope)):.6f}° from vertical')
 
 
 def junction_faces(mesh):
@@ -419,9 +438,130 @@ def check_cowl_junction(mesh):
           f'forward-facing intersection count {len(forward)} (ordinary coplanar fascia, all listed)')
 
 
+def check_stripped_shell(mesh):
+    triangles = [[mesh['vertices'][int(c.split('/')[0])-1] for c in f] for f in mesh['faces']]
+    # Every sub-sill corner is now on the floor, including the former lip sites.
+    assert all(y == -.27 for x,y,z in mesh['vertices'] if y < -.12), 'sub-sill lip/bevel remains'
+    assert not any(abs(y+.158647)<.00001 or abs(y+.125)<.00001 for x,y,z in mesh['vertices'])
+    floor_area = 0
+    floor_corners = set()
+    fascia_count = gate_count = 0
+    zn = min(z for x,y,z in mesh['vertices'] if y == .999953)
+    zv = min(z for x,y,z in mesh['vertices'] if y == .125)
+    for f,tri in zip(mesh['faces'],triangles):
+        n = mesh['normals'][int(f[0].split('/')[2])-1]
+        if n[1] < 0 and any(p[1] < -.12 for p in tri):
+            assert all(p[1] == -.27 for p in tri) and n == (0,-1,0), ('sloping underside',tri,n)
+            a,b,c = tri
+            floor_area += abs((b[0]-a[0])*(c[2]-a[2])-(b[2]-a[2])*(c[0]-a[0]))/2
+            floor_corners.update(tri)
+        if n[2] < -.99 and all(p[2] < -2.7 for p in tri):
+            fascia_count += 1
+            assert all(abs(z-(zv+(zn-zv)*(y-.125)/(.999953-.125)))<1e-6 for x,y,z in tri)
+            assert all(mesh['uvs'][int(c.split('/')[1])-1] == (.125,.25) for c in f), 'grille/material patch remains'
+        if all(p[2] >= 2.67 and p[1] <= 1.10 for p in tri) and n[2] > .9:
+            gate_count += 1
+            assert all(p[2] == 2.68 for p in tri), 'rear bumper/handle remains in body'
+            assert all(mesh['uvs'][int(c.split('/')[1])-1] == (.125,.25) for c in f), 'tailgate material patch remains'
+    assert fascia_count and gate_count
+    assert abs(floor_area-2.52*(mesh['hi'][2]-mesh['lo'][2])) < 1e-6, ('incomplete flat floor',floor_area)
+    for x in (-1.26,1.26):
+        for z in (mesh['lo'][2],2.68):
+            assert (x,-.27,z) in floor_corners
+    for x in (-1.259,-1.12,-.99,0,.99,1.12,1.259):
+        for z in (-2.8,-2.5,-1.56,0,1.46,2.65):
+            assert any(segment_hits((x,-.271,z),(x,-.269,z),tri) for tri in triangles), ('floor gap',x,z)
+    print(f'PASS painted fascia/tailgate, no body bumpers/latch/lip; full-width flat floor {floor_area:.6f} m² at Y -0.270')
+
+
+def check_donor_parts(wagon, golf):
+    for lamp,field in (('headlights','SpotPos'),('taillights','TailPos')):
+        source = obj(CONTENT/f'golf_{lamp}.txt')
+        part = obj(CONTENT/f'wagon_{lamp}.txt')
+        delta = part['lo'][2]-source['lo'][2]
+        assert len(part['faces']) == len(source['faces']) == (40 if lamp == 'headlights' else 20)
+        # Check every corner and UV, not merely the same bounding box.
+        for sf,pf in zip(source['faces'],part['faces']):
+            for sc,pc in zip(sf,pf):
+                sv,st,_ = (int(i)-1 for i in sc.split('/'))
+                pv,pt,_ = (int(i)-1 for i in pc.split('/'))
+                assert all(abs(part['vertices'][pv][i]-source['vertices'][sv][i]-(delta if i==2 else 0))<1e-6 for i in range(3)), 'lamp is not a Golf translation'
+                assert all(abs(a-b)<1e-6 for a,b in zip(part['uvs'][pt],source['uvs'][st])), 'donor lamp UV changed'
+        assert len(wagon[field]) == len(golf[field]) == 2
+        positions = list(zip(wagon[field],golf[field]))
+        if lamp == 'headlights':
+            positions.append((wagon['OmniPos'],golf['OmniPos']))
+        for w,g in positions:
+            assert all(abs(w[i]-g[i]-(delta if i==2 else 0))<1e-6 for i in range(3)), ('emitter not translated with Golf lens',field)
+        sign = -1 if lamp == 'headlights' else 1
+        for face in part['faces']:
+            if sign*part['normals'][int(face[0].split('/')[2])-1][2] <= .5:
+                continue
+            for corner in face:
+                x,y,z = part['vertices'][int(corner.split('/')[0])-1]
+                # Independent plane from the retained, measured nose stations.
+                surface_z = -2.792392+.034564*(y-.125)/.874953 if sign<0 else 2.68
+                assert sign*(z-surface_z) >= .001998, ('buried outward lens corner',lamp,x,y,z)
+        print(f'PASS Golf {lamp}: complete donor topology/UVs and emitters translated Z {delta:+.6f}')
+
+    def on_triangle(p, tri):
+        a,b,c = tri
+        u = tuple(b[i]-a[i] for i in range(3)); v = tuple(c[i]-a[i] for i in range(3))
+        q = tuple(p[i]-a[i] for i in range(3))
+        dot = lambda a,b: sum(x*y for x,y in zip(a,b))
+        uu,uv,vv,qu,qv = dot(u,u),dot(u,v),dot(v,v),dot(q,u),dot(q,v)
+        det = uu*vv-uv*uv
+        s,t = (qu*vv-qv*uv)/det,(qv*uu-qu*uv)/det
+        return s >= -1e-5 and t >= -1e-5 and s+t <= 1+1e-5 and sum((q[i]-s*u[i]-t*v[i])**2 for i in range(3)) < 16e-12
+
+    source = obj(CONTENT/'hatchback_body.txt')
+    body = wagon['mesh']
+    zn = min(z for x,y,z in body['vertices'] if y == .999953)
+    zv = min(z for x,y,z in body['vertices'] if y == .125)
+    for label,sign,ids in (('front',-1,range(290,318)),('rear',1,range(318,346))):
+        name = f'wagon_bumper_{label}.txt'
+        assert name in wagon['Parts'], ('bumper missing from Parts',name)
+        part = obj(CONTENT/name)
+        # Independently identified donor faces (before refitting), not generator selection.
+        donor = [[source['vertices'][int(c.split('/')[0])-1] for c in source['faces'][i]] for i in ids]
+        ps = {p for tri in donor for p in tri}
+        lo = tuple(min(p[i] for p in ps) for i in range(3)); hi = tuple(max(p[i] for p in ps) for i in range(3))
+        scale = 2.52/(hi[0]-lo[0]); dy = -.12-lo[1]
+        dz = part['lo'][2]-lo[2] if sign<0 else part['hi'][2]-hi[2]
+        assert part['lo'][0] == -1.26 and part['hi'][0] == 1.26 and part['lo'][1] == -.12
+        assert abs(part['size'][1]-(hi[1]-lo[1])) < 1e-6
+        part_tris = [sorted(part['vertices'][int(c.split('/')[0])-1] for c in f) for f in part['faces']]
+        outer_count = 0
+        for face_id,tri in zip(ids,donor):
+            face = source['faces'][face_id]
+            normal = source['normals'][int(face[0].split('/')[2])-1]
+            if sign*normal[2] <= .9:
+                continue
+            expected = sorted(((x-(lo[0]+hi[0])/2)*scale,y+dy,z+dz) for x,y,z in tri)
+            assert any(all(abs(a[i]-b[i])<4e-6 for a,b in zip(expected,t) for i in range(3)) for t in part_tris), ('missing donor outer face',label,face_id)
+            outer_count += 1
+        assert outer_count == 6, ('incomplete donor outward band',label)
+        cap_count = donor_count = 0
+        for f in part['faces']:
+            tri = [part['vertices'][int(c.split('/')[0])-1] for c in f]
+            distances = [sign*(z-(zv+(zn-zv)*(y-.125)/(.999953-.125) if sign<0 else 2.68)) for x,y,z in tri]
+            assert min(distances) > -1e-6, 'bumper side overlaps body wall'
+            if all(abs(d)<1e-6 for d in distances):
+                cap_count += 1
+            else:
+                original = [((x/scale)+(lo[0]+hi[0])/2,y-dy,z-dz) for x,y,z in tri]
+                assert any(all(on_triangle(p,t) for p in original) for t in donor), ('invented exposed bumper surface',label,tri)
+                donor_count += 1
+        assert donor_count and cap_count
+        _,edges = welded_edges(part)
+        assert all(n==2 for n in edges.values()), ('open donor bumper',label)
+        surface_audit(part)
+        print(f'PASS hatchback {label}: donor exterior surfaces, attachment cap, 2.52 m width; 0 / {len(edges)} boundary edges')
+
+
 def check():
     bounds = {p.name: validate(p) for p in sorted(CONTENT.glob("wagon_*.txt"))}
-    specs = read_specs(("wagon", "sedan"))
+    specs = read_specs(("wagon", "sedan", "golf"))
     sedan, wagon = specs["sedan"], specs["wagon"]
     print('| body | verts | welded | tris | boundary edges | % |')
     print('| --- | ---: | ---: | ---: | ---: | ---: |')
@@ -438,8 +578,15 @@ def check():
     check_straight_sides(wagon["mesh"])
     check_roof_rake(wagon["mesh"])
     check_cowl_junction(wagon["mesh"])
+    check_stripped_shell(wagon["mesh"])
+    check_donor_parts(wagon, specs["golf"])
     lo,hi = bounds["wagon_body.txt"]
-    assert all(abs(x-y) < 0.000001 for x,y in zip(lo+hi,(-1.26,-.27,-2.90,1.26,2.17,2.90))), (lo,hi)
+    # Re-derive the front extent by continuing the saved fascia to floor Y.
+    vs = wagon['mesh']['vertices']
+    zn = min(p[2] for p in vs if abs(p[1]-.999953)<1e-6)
+    zv = min(p[2] for p in vs if p[1] == .125)
+    floor_z = zv+(zn-zv)*(-.27-.125)/(.999953-.125)
+    assert all(abs(x-y) < 1e-6 for x,y in zip(lo+hi,(-1.26,-.27,floor_z,1.26,2.17,2.68))), (lo,hi)
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
     assert abs(wagon["wheelbase"]-3.02)<1e-9 and wagon["tracks"] == [2.6,2.6]
     assert wagon["radii"] == sedan["radii"]
@@ -447,11 +594,13 @@ def check():
     for field in ("Wheel", "WheelTex", "Engine", "SpeedMax", "Fuel", "Health"):
         assert wagon[field] == sedan[field], field
     assert wagon["Mass"] == 1650  # retained table: (sedan 1500 + police 1800)/2
-    assert wagon["BoxSize"] == (2.5,.98,5.52) and wagon["BoxCenter"] == (0,.59,0)
-    for field,delta in (("SpotPos",.150),("TailPos",.012)):
-        for w,s in zip(wagon[field],sedan[field]):
-            assert w[:2] == s[:2] and abs(w[2]-s[2]-delta)<1e-9
-    assert abs(wagon["OmniPos"][2]-sedan["OmniPos"][2]-.150)<1e-9
+    # All full-body vertices, lamps and bumper parts must lie in the hull box.
+    box_lo = tuple(c-s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
+    box_hi = tuple(c+s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
+    for name in ('body','headlights','taillights','bumper_front','bumper_rear'):
+        part = obj(CONTENT/f'wagon_{name}.txt')
+        assert all(box_lo[i]-1e-6 <= p[i] <= box_hi[i]+1e-6
+                   for p in part['vertices'] for i in range(3)), ('hull box misses mesh',name)
     assert (CONTENT / wagon["Palette"]).read_bytes() == (CONTENT / sedan["Palette"]).read_bytes()
     for asset in [wagon[k] for k in ("Body","Wheel","WheelTex","Palette")] + wagon["Parts"]:
         assert (CONTENT / asset).is_file(), asset
@@ -469,12 +618,6 @@ def check():
     seats=obj(CONTENT/'sedan_seats.txt')
     assert seats['hi'][2] < 1.36, ('rear seatback intrudes into cargo deck',seats['hi'])
     print(f"PASS original body panels; rear seatback Z {seats['hi'][2]:.6f} < load floor start 1.36")
-    for lamp,delta in (("headlights",.150),("taillights",.012)):
-        a=obj(CONTENT/f'sedan_{lamp}.txt');b=obj(CONTENT/f'wagon_{lamp}.txt')
-        for axis in range(3):
-            d=delta if axis==2 else 0
-            assert abs(a['lo'][axis]+d-b['lo'][axis])<1e-6
-            assert abs(a['hi'][axis]+d-b['hi'][axis])<1e-6
     print("PASS AABB, new axle rig, shared seats/wheels, moved lamps, fitted colliders, palette and assets")
 
     src = uncomment((ROOT / "game/Vehicle.cs").read_text())
@@ -511,7 +654,7 @@ def check():
                 for y in (-.10,.2,.5,.7):
                     lower_probes.append(((sign*1.1,y,axle+dz),(sign*1.4,y,axle+dz)))
     for x in (-.8,0,.8):
-        lower_probes.append(((x,-.3,2.72),(x,.1,2.72)))
+        lower_probes.append(((x,-.3,2.65),(x,.1,2.65)))
     for a,b in lower_probes:
         assert any(segment_hits(a,b,t) for t in triangles), ('open lower body',a,b)
     print(f'PASS {len(lower_probes)} continuous side, floor/sill and rear-underside closure probes')

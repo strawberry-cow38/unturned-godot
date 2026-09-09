@@ -3142,7 +3142,7 @@ namespace UnturnedGodot
         };
 
         // Original wagon authored from fleet proportions, not a sedan-body extension.
-        // Body AABB 5.80 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
+        // Body AABB 5.487996 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
         static readonly Spec _wagon = new()
         {
             Mass = 1650f,   // midpoint of sedan 1500 and police 1800 kg (same measured footprint)
@@ -3150,12 +3150,12 @@ namespace UnturnedGodot
             GlassMesh = "wagon_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),
             Water = WaterMode.Car, RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, 0f),   // fitted lower shell; separate roof above
+            BoxSize = new Vector3(2.52f, 2.44f, 5.776f), BoxCenter = new Vector3(0f, 0.95f, -0.061034f),   // encloses the full body and donor bumpers; outward-rounded Z bounds
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
-            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
-            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // sedan lenses shifted +0.012 m; exposed beyond the rear side-wall ends
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.80318f), new Vector3(0.765f, 0.708f, -2.80318f) }, OmniPos = new Vector3(0f, 0.841f, -2.77918f),
+            TailPos = new[] { new Vector3(-0.765f, 0.787f, 2.756254f), new Vector3(0.765f, 0.787f, 2.756254f) },   // Golf emitters follow lens translations: front -0.215180 m, rear +0.332254 m in Z
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
@@ -3163,6 +3163,8 @@ namespace UnturnedGodot
             {
                 ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("wagon_bumper_front.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
+                ("wagon_bumper_rear.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
                 ("wagon_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
                 ("wagon_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
             },

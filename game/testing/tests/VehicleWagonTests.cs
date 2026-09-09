@@ -38,10 +38,22 @@ namespace UnturnedGodot.Testing
             if (actual != null)
             {
                 var bounds = actual.GetAabb();
-                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.52f, 2.44f, 5.80f)) < 0.00001f);
+                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.52f, 2.44f, 5.487996f)) < 0.00001f);
             }
             Vehicle.GetBodyBox("wagon", out var size, out var center);
-            T.Check("replica/debug lookup uses wagon lower collider", size == new Vector3(2.5f, 0.98f, 5.52f) && center == new Vector3(0f, 0.59f, 0f));
+            var hull = new Aabb(center - size / 2f, size).Grow(0.00001f);
+            T.Check("replica/debug hull encloses the full wagon body", actual != null && hull.Encloses(actual.GetAabb()));
+            foreach (var end in new[] { "front", "rear" })
+            {
+                string partName = $"wagon_bumper_{end}";
+                var bumper = ContentProvider.ParseObj($"res://content/{partName}.txt");
+                T.Check($"{end} donor bumper loads on server and replica", bumper != null
+                    && wagon.GetNodeOrNull<MeshInstance3D>(partName)?.Mesh == bumper
+                    && replica.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Mesh == bumper));
+                T.Check($"hull encloses {end} bumper", bumper != null && hull.Encloses(bumper.GetAabb()));
+            }
+            T.Check("Golf headlights retain all 40 triangles", ContentProvider.ParseObj("res://content/wagon_headlights.txt")?.GetFaces().Length == 120);
+            T.Check("Golf taillights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_taillights.txt")?.GetFaces().Length == 60);
             T.Check("capacities retained from sedan", wagon.FuelMax == sedan.FuelMax && wagon.HealthMax == sedan.HealthMax);
             T.Check("mass between sedan and police", Mathf.IsEqualApprox(wagon.Mass, 1650f));
             yield return Ticks(1);
