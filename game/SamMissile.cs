@@ -76,6 +76,16 @@ namespace UnturnedGodot
         // sounds, and its rate is the one that matters anyway.
         static readonly System.Collections.Generic.List<SamMissile> Live = new();
 
+        /// <summary>Is a live round already warning this aircraft? The SITE asks, so its slower lock tone can get
+        /// out of the way -- a tracking beep and a closure beep sounding together is two clocks in one cockpit,
+        /// and the pilot cannot read either.</summary>
+        public static bool AnyWarning(Vehicle target)
+        {
+            if (target == null) return false;
+            foreach (var m in Live) if (!m._spent && !m._lost && ReferenceEquals(m.Target, target)) return true;
+            return false;
+        }
+
         public void Fire(Vector3 dir)
         {
             if (dir.LengthSquared() < 1e-6f) dir = Vector3.Up;

@@ -46,6 +46,12 @@ namespace UnturnedGodot
         // site, and it composes with the lock rather than duplicating it: breaking sight drops the target, which
         // zeroes the lock, so a ridge does not merely delay the launch, it resets the clock.
         public const uint SightMask = (1u << 0) | (1u << 6);
+        // THE WARNING STARTS AT ACQUISITION (strawberry 2026-09-09: "give the beeps the second the sam site
+        // targets you"), not at launch. That is the whole value of a targetting time: 1.8 s of "something has
+        // decided about you" is only a warning if you can HEAR it, and until now the first thing a pilot knew
+        // was a missile already in the air. The tone tightens as the lock fills -- slow while it is deciding,
+        // urgent as it completes -- so the rate tells you how long you have rather than merely that you are seen.
+        public const float LockBeepSlow = 0.55f, LockBeepFast = 0.18f;
 
         public enum State { Idle, Tracking, Firing, Reloading }
         /// <summary>How much of the lock has been earned, 0..1. Reads as a light/HUD later if wanted; the suite
@@ -55,6 +61,9 @@ namespace UnturnedGodot
         public int Loaded { get; private set; } = Rack;      // tubes still holding a missile
         public Vehicle Target { get; private set; }          // the heli currently locked
         public int Fired { get; private set; }               // lifetime count, for the harness/tests
+        /// <summary>Lock tones emitted. Counted rather than inferred so the suite can assert the warning starts
+        /// at acquisition -- there is no other way to test a sound.</summary>
+        public int Warnings { get; private set; }
 
         /// <summary>Where the tubes are actually pointing, in world space. Exposed because an aim derivation is a
         /// SIGN, and a sign is not something to reason about twice -- the yaw here was written inverted first time
@@ -67,6 +76,7 @@ namespace UnturnedGodot
         readonly Node3D[] _muzzles = new Node3D[Rack];
         float _timer;         // seconds until the next shot / the end of the reload
         float _lockT;         // seconds of continuous track earned toward LockTime
+        float _beepT;         // seconds until the next lock tone
         float _yawDeg, _pitchDeg;
 
         public override void _Ready()
@@ -135,6 +145,7 @@ namespace UnturnedGodot
             // would let a helicopter be picked apart by a site that only ever half-saw it, which is the opposite
             // of "possible to evade".
             if (Target != null) _lockT += dt; else _lockT = 0f;
+            Warn(dt);
 
             _timer -= dt;
             switch (Mode)
@@ -186,6 +197,21 @@ namespace UnturnedGodot
                 bestD = d; best = v;
             }
             return best;
+        }
+
+        /// <summary>The acquisition tone, at the aircraft, from the instant it becomes the target. Goes quiet
+        /// while a missile of ours is already warning the same aircraft: the closure beep is strictly more
+        /// urgent information and two trains at once is neither.</summary>
+        void Warn(float dt)
+        {
+            _beepT -= dt;
+            if (Target == null || !IsInstanceValid(Target)) { _beepT = 0f; return; }   // reset, so re-acquiring beeps immediately
+            if (SamMissile.AnyWarning(Target)) return;
+            if (_beepT > 0f) return;
+            _beepT = Mathf.Lerp(LockBeepSlow, LockBeepFast, LockProgress);
+            Warnings++;
+            var clip = GameAudio.Pick("misc", "general_beep");
+            if (clip != null) GameAudio.PlayAt(GetParent() ?? this, clip, Target.GlobalPosition, 0f, 8f, 160f, Mathf.Lerp(0.8f, 0.95f, LockProgress));   // lower and quieter than a missile's: this is "seen", not "incoming"
         }
 
         /// <summary>Is this aircraft on the ground? A ray straight down to the world layer -- shorter than

@@ -67,9 +67,13 @@ namespace UnturnedGodot.Testing
             // merely EXISTS is not the ask, it has to be long enough to fly out of.
             var near = Heli(new Vector3(0f, 70f, -140f));
             yield return Ticks(2);
-            Drive(site, SamSite.LockTime - 0.2f);
-            T.Check($"nothing is launched during the {SamSite.LockTime:0.0}s lock (fired {site.Fired}, lock {site.LockProgress:0.00})",
-                site.Fired == 0 && site.LockProgress > 0.7f);
+            Drive(site, 0.05f);
+            T.Check($"the warning starts the instant it acquires, before any launch (warnings {site.Warnings}, fired {site.Fired})",
+                site.Warnings >= 1 && site.Fired == 0);
+
+            Drive(site, SamSite.LockTime - 0.25f);
+            T.Check($"nothing is launched during the {SamSite.LockTime:0.0}s lock (fired {site.Fired}, lock {site.LockProgress:0.00}, warnings {site.Warnings})",
+                site.Fired == 0 && site.LockProgress > 0.7f && site.Warnings > 3);
 
             // ...and it RESETS when the target goes, so skimming the radius costs nothing. Teeth: with a decaying
             // or persistent lock this passes anyway, because the second pass would inherit the first one's credit.
