@@ -56,6 +56,10 @@ namespace UnturnedGodot
 
         public void SetFlipShirt(bool flip) => _clothesMat?.SetShaderParameter("flip_shirt", flip);   // _FlipShirt (left-hand mirror); SP body leaves false
 
+        /// <summary>Test seam: whether this rig is on the clothes-shader path at all. A rig built WITH an albedo
+        /// texture gets a StandardMaterial3D instead, and every SetShirt call on it is a silent no-op.</summary>
+        public bool HasClothesMaterialForTest => _clothesMat != null;
+
         public void SetShirt(Texture2D albedo, Texture2D emission = null, Texture2D metallic = null)
         {
             if (_clothesMat == null) return;
@@ -446,6 +450,11 @@ namespace UnturnedGodot
         {
             if (_oneShot > 0) _oneShot -= delta;
             if (_flashT > 0f) { _flashT -= (float)delta; if (_flashT <= 0f && _flash != null && IsInstanceValid(_flash)) _flash.Visible = false; }
+            // EVERY frame, not just when the trim is toggled. The write itself was never the problem -- it sticks,
+            // and reads back as a zero global pose. The problem is that the block below RETURNS EARLY when nothing
+            // is playing, so the only call was the one on toggle: applied once, then quietly restored by the next
+            // thing that touched the pose, and the arms came back. Cheap enough to just do unconditionally.
+            ApplyArmTrim();
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
                 // PERF: a player that has never played anything (or was explicitly stopped) has no pose to refresh and no
@@ -648,9 +657,17 @@ namespace UnturnedGodot
             var sc = _fpTrim ? Vector3.Zero : Vector3.One;
             foreach (int b in _trimShoulders) if (b >= 0) Skeleton.SetBonePoseScale(b, sc);
             _armTrimApplied = _fpTrim;
+            // Does the write STICK? Read it straight back, and again a second later after the clips have run.
+            if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1" && _trimShoulders[0] >= 0)
+            {
+                _armDbgT += 1;
+                if (_armDbgT == 1 || _armDbgT == 120)
+                    GD.Print($"[armtrim] frame {_armDbgT}: wrote {sc}, reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
+            }
         }
         int[] _trimShoulders;
         bool _armTrimApplied;
+        int _armDbgT;
 
         void PushPitch()
         {

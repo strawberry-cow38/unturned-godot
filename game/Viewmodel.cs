@@ -481,6 +481,13 @@ namespace UnturnedGodot
             }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
+            if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
+            {
+                int meshes = 0; long verts = 0;
+                void Walk(Node n) { if (n is MeshInstance3D mi) { meshes++; verts += mi.Mesh?.GetFaces()?.Length ?? 0; } foreach (Node c in n.GetChildren()) Walk(c); }
+                if (_arms != null) Walk(_arms);
+                GD.Print($"[vmarms] built={_arms != null} visible={_arms?.Visible} meshes={meshes} faceVerts={verts} clothesMat={(_arms?.HasClothesMaterialForTest ?? false)}");
+            }
             if (_arms != null)
             {
                 _cam.AddChild(_arms);
