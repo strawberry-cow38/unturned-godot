@@ -58,7 +58,7 @@ The fractions below are explicit design choices applied to measured donors, not 
 
 The mesh is an open green-sided utility trailer with a timber deck, single axle, A-frame drawbar, coupler/locking handle, faceted mudguards, mudflaps, rear lamps, hinges and latches. It is not a trailer for carrying a whole car.
 
-The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **144 position records, 232 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
+The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **96 position records, 144 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
 
 All 11 authored mesh/palette assets were also regenerated and compared byte for byte; there was no drift.
 
@@ -94,7 +94,7 @@ One small system extension is necessary for this shape: `Spec.HitchYawLimit`, de
 Spawn with the canonical vehicle name **`car_trailer`** wherever the existing vehicle command accepts `golf` or `wagon`. Added `BuildCarTrailer`, `BuildByName`, `SpecFor` (including the MP puppet path), and an **append at SpecNames TypeId 33**. Every old key and index from `1f7f106d` remains unchanged, including SUV at 32. It is command-only; the natural spawn pool is unchanged. The wagon verifier was updated to allow later appended vehicles while still comparing its entire original index prefix.
 
 - `dotnet build game/UnturnedGodot.csproj`: passed. Both the final build and a control build with the original `1f7f106d` Vehicle.cs (new test omitted) reported **22 identical pre-existing warnings, zero errors**. Warning messages were compared as sets; there are no new warnings.
-- `python3 tools/verify_car_trailer.py --mutation-test`: **49 named checks, 199 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
+- `python3 tools/verify_car_trailer.py --mutation-test`: **51 named checks, 203 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
 - `python3 tools/verify_wagon.py`: passed, retaining the original 32 pre-wagon TypeIds and wagon TypeId 32.
 - Godot 4.6 `--headless --path game -- --tests=vehicle.car_trailer`: **46 checks passed** in the construction/coupling fixture: actual server/replica mesh loading, canonical identity, two passive wheels, all eight hitch Parts, attach/detach and PinJoint presence, coincident anchors, retracted/redeployed support, and imported yaw limit. Headless was used for this fixture only, not for the renders.
 
@@ -152,3 +152,43 @@ the sideboards' base: coplanar faces with coincident corners get welded by `save
 and the shared edge then carries four faces, which the verifier correctly calls non-manifold. And the
 fender's segment count is now derived rather than chosen -- see the clearance row above for why three
 segments is wrong at this radius and why inflating the radius to rescue it is worse.
+
+## Second pass: arches out, truck-bed wall section, sedan lamps, bigger
+
+strawberry: *"remove the wheel arches. the truck bed walls/body measure the thickness and size. the tail
+lights should be off the sedan. should also be bigger"*.
+
+**The truck bed's wall section, measured.** Isolating the bed (Z > .294, behind the cab) and selecting
+its side walls by face normal gives outer/inner planes at |X| 1.231 / .981 and a wall running from the
+floor plane at Y .125 to Y 1.125. So **.250 thick, 1.000 tall, 2.462 outer width**. Mine were t = .050
+and .450 -- five times too thin and under half the height, which is what made the box read as a tray
+rather than as bodywork. Both numbers now come from `truck_bed()` and neither is typed.
+
+`expected()` re-derives the same section by a **different route** (a Z slab plus vertex-column
+clustering, anchored on the bed's own floor plane) precisely so a bug in one shows up as a
+disagreement. It earned that twice while being written: clustering without excluding the cab's rear
+wall reported the wall as 2.250 tall, and anchoring the floor on the wall column's lowest vertex
+reported 1.250. **Both are real numbers answering a different question** -- the second is the wall
+panel including the .250 of under-frame below the deck, which is not a height you can stand a crate
+in. They agree to 3.3e-07 m now.
+
+**Arches removed**, and with them the derived segment-count machinery from the previous pass. The
+wheels tuck flush under the deck edge instead: track is `deck_w - tyre_width` = 2.062, so the tyres end
+exactly at |X| 1.231. Leaving them on the Golf's 2.600 track would have hung them 270 mm outboard of a
+deck with nothing above them. The clearance check went with the part, replaced by its negative: an
+assertion that nothing arch-shaped exists in either the mesh or the generator.
+
+**Tail lamps are the sedan's mesh**, not a pair of boxes shaped like it -- 56 v / 20 tris, its exact
+2.2269 x .3291 x .1899 section, translated so the front face meets the trailer's rear and the lenses
+centre on the tailgate. X is untouched, which is the point: at +/-1.1135 they already sit inside a
+2.462 deck. The palette's red is now the sedan's own measured (142,32,32) texel. A verifier check pins
+this as a **rigid translation** -- one distinct offset across every vertex, dX = 0 -- which a lookalike
+box of the same bounds would fail.
+
+Note `sedan_taillights.txt` is itself **two open shells** (8 unpaired edges in the fleet's own asset),
+so the closure requirement is waived for that one mesh and replaced by the translation check above.
+Everything else -- ParseObj rules, indices, per-corner normals and UVs, degenerate and duplicate faces
+-- still applies to it.
+
+**Bigger:** deck **3.1371 x 2.4620** (was 2.6143 x 2.1000), from `golf length * .6` and the truck bed's
+own outer width. Body is **96 v / 144 tris**, down again from 232.

@@ -3060,32 +3060,32 @@ namespace UnturnedGodot
             Mass = 300.000000f,
             Body = "car_trailer_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
             WheelRadius = 0.450000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
-            BoxSize = new Vector3(2.099996f, 0.100000f, 2.614276f), BoxCenter = new Vector3(0.000000f, 0.200000f, 0.000000f),
+            BoxSize = new Vector3(2.462000f, 0.100000f, 3.137132f), BoxCenter = new Vector3(0.000000f, 0.200000f, 0.000000f),
             ExtraBoxes = new (Vector3, Vector3)[]
             {
-                (new Vector3(0.050000f, 0.450000f, 2.614276f), new Vector3(-1.024998f, 0.475000f, 0.000000f)),
-                (new Vector3(0.050000f, 0.450000f, 2.614276f), new Vector3(1.024998f, 0.475000f, 0.000000f)),
-                (new Vector3(1.999996f, 0.450000f, 0.050000f), new Vector3(0.000000f, 0.475000f, -1.282138f)),
-                (new Vector3(1.999996f, 0.450000f, 0.050000f), new Vector3(0.000000f, 0.475000f, 1.282138f)),
-                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -2.968188f)),
+                (new Vector3(0.250000f, 1.000001f, 3.137132f), new Vector3(-1.106000f, 0.750000f, 0.000000f)),
+                (new Vector3(0.250000f, 1.000001f, 3.137132f), new Vector3(1.106000f, 0.750000f, 0.000000f)),
+                (new Vector3(1.962000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.750000f, -1.443566f)),
+                (new Vector3(1.962000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.750000f, 1.443566f)),
+                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -3.229615f)),
             },
             HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
             {
-                (new Vector3(0.100000f, 0.228921f, 2.344263f), new Vector3(-0.499999f, 0.035540f, -1.735878f), -22.576403f),
-                (new Vector3(0.100000f, 0.228921f, 2.344263f), new Vector3(0.499999f, 0.035540f, -1.735878f), 22.576403f),
-                (new Vector3(2.099996f, 0.100000f, 2.614276f), new Vector3(0.000000f, 0.200000f, 0.000000f), 0f),
+                (new Vector3(0.100000f, 0.228921f, 2.537146f), new Vector3(-0.590500f, 0.035540f, -1.931949f), -25.218360f),
+                (new Vector3(0.100000f, 0.228921f, 2.537146f), new Vector3(0.590500f, 0.035540f, -1.931949f), 25.218360f),
+                (new Vector3(2.462000f, 0.100000f, 3.137132f), new Vector3(0.000000f, 0.200000f, 0.000000f), 0f),
             },
-            Kingpin = new Vector3(0.000000f, -0.028921f, -3.018188f),
-            HitchYawLimit = 57.860160f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.162663f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.262663f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.062663f),
+            Kingpin = new Vector3(0.000000f, -0.028921f, -3.279615f),
+            HitchYawLimit = 53.719380f, // front rail corner remains behind pivot at full yaw
+            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.424091f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.524091f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.324091f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Car Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.300000f, 0.100000f, 0.261428f, false), (1.300000f, 0.100000f, 0.261428f, false) },
-            TailPos = new[] { new Vector3(-0.899998f, 0.200000f, 1.357138f), new Vector3(0.899998f, 0.200000f, 1.357138f) },
-            Parts = new (string, Color)[] { ("car_trailer_taillights.txt", new Color(0.56f, 0.13f, 0.13f)) },
+            { (-1.030998f, 0.100000f, 0.313713f, false), (1.030998f, 0.100000f, 0.313713f, false) },
+            TailPos = new[] { new Vector3(-0.948937f, 0.750000f, 1.677084f), new Vector3(0.948913f, 0.750000f, 1.677092f) },
+            Parts = new (string, Color)[] { ("car_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
         public static Vehicle BuildCarTrailer(int variant = 0) => Build(_car_trailer, variant, "car_trailer");
 

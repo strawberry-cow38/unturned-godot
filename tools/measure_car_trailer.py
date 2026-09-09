@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fresh rear sections/spec audit only; reuse the wagon job's fleet dimensions."""
 from pathlib import Path
+import math
 import re
 from measure_vehicles import ROOT, CONTENT, ROAD, read_specs, obj, vector, number, vec, table
 
@@ -39,6 +40,39 @@ def measurements():
                             mount_mesh='wagon_bumper_rear.txt' if name=='wagon' else s['Body'])
     return specs,result
 
+
+def truck_bed():
+    """The truck's cargo bed, measured -- strawberry named it as the reference for how thick and how
+    big this trailer's walls should be ("the truck bed walls/body measure the thickness and size").
+
+    Isolated by face normal rather than by eye: the bed is everything behind the cab (Z > .294, where
+    the cab's rear plane sits), and its side walls are the X-facing faces in that region. Their outer
+    and inner planes give the thickness; the floor plane and the wall top give the height."""
+    V=[];F=[]
+    for line in (CONTENT/'truck_body.txt').read_text().splitlines():
+        c=line.split()
+        if line.startswith('v '): V.append([float(x) for x in c[1:4]])
+        elif line.startswith('f '): F.append([int(x.split('/')[0])-1 for x in c[1:4]])
+    bed=[f for f in F if sum(V[i][2] for i in f)/3 > .294]
+    planes={}
+    for f in bed:
+        a,b,c=[V[i] for i in f]
+        u=[b[k]-a[k] for k in range(3)]; v=[c[k]-a[k] for k in range(3)]
+        n=(u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0])
+        L=math.sqrt(sum(x*x for x in n)) or 1.
+        if abs(n[0]/L) < .9: continue                       # side walls only
+        ps=[V[i] for i in f]
+        key=round(sum(p[0] for p in ps)/3, 3)
+        lo,hi,cnt=planes.get(key,(1e9,-1e9,0))
+        planes[key]=(min(lo,min(p[1] for p in ps)), max(hi,max(p[1] for p in ps)), cnt+1)
+    # The wall proper is the tallest pair of planes; the short outboard patches are step/flare trim.
+    tall=sorted((k for k,(lo,hi,c) in planes.items() if hi-lo > .5), key=abs)
+    inner,outer = abs(tall[0]), abs(tall[-1])
+    floor=min(planes[k][0] for k in planes if abs(k)==inner)   # the wall's own base = the bed floor
+    top  =max(planes[k][1] for k in planes)
+    return dict(wall_t=outer-inner, wall_h=top-floor, outer_w=2*outer, inner_w=2*inner,
+                floor=floor, top=top)
+
 def design(specs, rear):
     golf, quad = specs['golf'], specs['quad']
     # These dimensions are present in the saved fleet note; no new fleet size statistics.
@@ -48,9 +82,17 @@ def design(specs, rear):
     radius = quad['WheelRadius']; car_radius = golf['WheelRadius']
     t = (car_radius-radius)/3
     tyre_width = obj(CONTENT/quad['Wheel'])['size'][0]
-    track = golf['tracks'][-1]
-    deck_l = length/2
-    deck_w = track-tyre_width-2*t
+    bed = truck_bed()
+    # SIZE AND WALL SECTION FROM THE TRUCK'S BED (strawberry: "the truck bed walls/body measure the
+    # thickness and size ... should also be bigger"). Its walls are .250 thick and stand 1.000 above
+    # the floor; mine were t = .050 and .450, five times too thin and under half the height.
+    wall_t, wall_h = bed['wall_t'], bed['wall_h']
+    deck_w = bed['outer_w']                     # the bed's own outer width, up from 2.100
+    deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
+    # The wheels tuck UNDER the deck now the arches are gone. Leaving them on the Golf's 2.600 track
+    # would hang the tyres 270 mm outboard of a deck with nothing over them, which reads as broken
+    # rather than as a design. Flush with the deck edge instead.
+    track = deck_w-tyre_width
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)
@@ -61,7 +103,7 @@ def design(specs, rear):
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
-                axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+radius,
+                axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=radius/3, mass=quad['Mass'])
 
 def write():
