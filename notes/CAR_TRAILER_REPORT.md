@@ -576,3 +576,23 @@ and a band check ("wall top anywhere inside the roof") was loose enough that a 1
 inside it. The audit caught both surviving.
 
 **282 named checks, 1149 mutations**, over five classes.
+
+### Correction within the ninth pass: taller, with the raked nose
+
+strawberry: *"needs to be taller and have the distinct horsebox shape at the front"*.
+
+**Taller:** `roof_ref` moves from the ambulance to the **bus** — the tallest enclosed body in the fleet.
+Roof top 2.775 (was 2.375), walls 2.548 from floor to roof underside.
+
+**The nose is the shape.** A plain tall box reads as a van; a box with a wedge nose reads as a horsebox.
+The front now leans back as it rises, and the roof begins where the lean reaches it. The angle is the
+**ambulance's own**: its box front rakes back 28.0% of its height, and that PROPORTION is applied
+here rather than its distance — a fixed distance would have flattened out as the roof rose. Rake works
+out at **0.714** over a 2.548 wall. Both sideboards and the headboard are prisms with a trapezoid
+Y/Z profile instead of boxes.
+
+**The existing checks were blind to it, all of them.** `group_bounds()` on a raked wall returns exactly
+the rectangle it returns unraked, so every dimension check in the file passed the flat-fronted version
+without noticing. The new check reads the group's **vertices** — topmost front vertex against
+bottom-most — and carries a `square the nose off` mutation so the blindness is demonstrated rather than
+asserted. **283 named checks, 1151 mutations.**

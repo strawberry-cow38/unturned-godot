@@ -149,23 +149,39 @@ def generate(cls='small', specs=None, rear=None):
     # t = .050 and .450 -- five times too thin and under half the height, which is what made the box
     # read as a tray rather than as fleet bodywork. No capping rail and no stake posts; both were
     # sub-centimetre trim at a scale nothing else in the fleet models.
+    rake=d['rake']
     for sign in [-1,1]:
         xo=sign*w; xi=sign*(w-wt)
-        m.box('side_'+str(sign),(min(xo,xi),y-wt,f),(max(xo,xi),y+wh,b),1)
+        if rake:
+            # RAKED FRONT: the side's leading edge leans back as it rises, so the profile in Y/Z is a
+            # trapezoid, not a rectangle. This is the whole of the horsebox silhouette -- a box with a
+            # wedge nose reads as a horsebox where a plain box reads as a van.
+            prof=[(y-wt,f),(y-wt,b),(y+wh,b),(y+wh,f+rake)]
+            m.component('side_'+str(sign))
+            m.prism([(min(xo,xi),py,pz) for py,pz in prof],[(max(xo,xi),py,pz) for py,pz in prof],1)
+        else:
+            m.box('side_'+str(sign),(min(xo,xi),y-wt,f),(max(xo,xi),y+wh,b),1)
     # The GATES own the ends now: their outer faces are f and b, so nothing stands proud of them. The
     # deck used to overhang the tailgate by wt/4, which is the lip that read as a mis-modelled edge.
     # They still tuck into the sideboards (x +/- wt/2 past the inner face) -- butting flush puts the
     # gate's outer face exactly on the side's inner face with matching corners, and
     # save(weld_positions=True) merges those into an edge carrying four faces.
-    for label,z in [('headboard',f),('tailgate',b-wt)]:
-        m.box(label,(-w+wt/2,y-wt,z),(w-wt/2,y+wh,z+wt),1)
+    if rake:
+        # The headboard IS the wedge: same section, leaning back with the sides it sits between.
+        prof=[(y-wt,f),(y-wt,f+wt),(y+wh,f+rake+wt),(y+wh,f+rake)]
+        m.component('headboard')
+        m.prism([(-w+wt/2,py,pz) for py,pz in prof],[(w-wt/2,py,pz) for py,pz in prof],1)
+        m.box('tailgate',(-w+wt/2,y-wt,b-wt),(w-wt/2,y+wh,b),1)
+    else:
+        for label,z in [('headboard',f),('tailgate',b-wt)]:
+            m.box(label,(-w+wt/2,y-wt,z),(w-wt/2,y+wh,z+wt),1)
     # NO WHEEL ARCHES (strawberry: "remove the wheel arches"). The widened track in design() keeps
     # the tyres outboard of the wider box with the same construction-module clearance.
     # A ROOF makes it a horsebox rather than a very tall open trailer. One slab of the same wall
     # section as everything else, overlapping the walls it sits on (never butting flush -- coincident
     # corners get welded and the shared edge then carries four faces).
     if d['roof_top'] is not None:
-        m.box('roof',(-w,y+wh-wt/2,f),(w,y+wh+wt/2,b),1)
+        m.box('roof',(-w,y+wh-wt/2,f+rake),(w,y+wh+wt/2,b),1)   # starts where the raked front reaches it
     m.box('coupler',(-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t),0)
     # Gone with the rest of the trim: mudflaps, the coupler's latch and handle, the stand's foot pad
     # and the amber reflectors. Every one was a box under ~8 cm; nothing else in the fleet models at
@@ -189,8 +205,10 @@ def generate(cls='small', specs=None, rear=None):
     boxes=[]
     def box(lo,hi):boxes.append((tuple(hi[i]-lo[i] for i in range(3)),tuple((hi[i]+lo[i])/2 for i in range(3))))
     box((-w,y,f),(-w+wt,y+wh,b));box((w-wt,y,f),(w,y+wh,b))                 # sideboards, truck-bed section
-    box((-w+wt,y,f),(w-wt,y+wh,f+wt));box((-w+wt,y,b-wt),(w-wt,y+wh,b))     # headboard and tailgate
-    if d['roof_top'] is not None: box((-w,y+wh-wt/2,f),(w,y+wh+wt/2,b))   # the roof is solid too
+    # The raked headboard's collider is its AABB -- front face at f, back face where the wedge's top
+    # edge lands. Slightly proud of the leaning panel at the top corner, which is outside the vehicle.
+    box((-w+wt,y,f),(w-wt,y+wh,f+rake+wt));box((-w+wt,y,b-wt),(w-wt,y+wh,b))
+    if d['roof_top'] is not None: box((-w,y+wh-wt/2,f+rake),(w,y+wh+wt/2,b))   # the roof is solid too
     box((-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t))
     # Oriented drawbar collider boxes follow the two diagonal beams exactly in plan.
     hulls=[]

@@ -3203,11 +3203,11 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.100000f, 0.250000f, 6.012836f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
             ExtraBoxes = new (Vector3, Vector3)[]
             {
-                (new Vector3(0.250000f, 2.148431f, 6.012836f), new Vector3(-1.425000f, 1.050785f, 0.000000f)),
-                (new Vector3(0.250000f, 2.148431f, 6.012836f), new Vector3(1.425000f, 1.050785f, 0.000000f)),
-                (new Vector3(2.600000f, 2.148431f, 0.250000f), new Vector3(0.000000f, 1.050785f, -2.881418f)),
-                (new Vector3(2.600000f, 2.148431f, 0.250000f), new Vector3(0.000000f, 1.050785f, 2.881418f)),
-                (new Vector3(3.100000f, 0.250000f, 6.012836f), new Vector3(0.000000f, 2.125000f, 0.000000f)),
+                (new Vector3(0.250000f, 2.548432f, 6.012836f), new Vector3(-1.425000f, 1.250785f, 0.000000f)),
+                (new Vector3(0.250000f, 2.548432f, 6.012836f), new Vector3(1.425000f, 1.250785f, 0.000000f)),
+                (new Vector3(2.600000f, 2.548432f, 0.964496f), new Vector3(0.000000f, 1.250785f, -2.524170f)),
+                (new Vector3(2.600000f, 2.548432f, 0.250000f), new Vector3(0.000000f, 1.250785f, 2.881418f)),
+                (new Vector3(3.100000f, 0.250000f, 5.298340f), new Vector3(0.000000f, 2.525001f, 0.357248f)),
                 (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -4.817467f)),
             },
             HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]

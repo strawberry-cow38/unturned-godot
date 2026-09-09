@@ -135,6 +135,25 @@ def truck_wall():
 # Expected dimensions are recomputed from donors, independently of the asset generator.
 
 
+
+def _unrake(src):
+    """Square the nose off, so the raked-nose check has something to reject.
+
+    Every `v` line is written before any `g` marker, so this cannot select the sideboard's vertices by
+    walking groups -- it works on Z instead: any vertex whose Z is neither the body's front plane nor
+    its back plane is a raked top-front corner, and gets pulled forward onto the front."""
+    lines=src.splitlines()
+    zs=sorted({round(float(l.split()[3]),6) for l in lines if l.startswith('v ')})
+    front,back=zs[0],zs[-1]
+    out=[]
+    for l in lines:
+        if l.startswith('v '):
+            x,y,z=[float(q) for q in l.split()[1:4]]
+            if front < round(z,6) < back: l=f'v {x:.9f} {y:.9f} {front:.9f}'
+        out.append(l)
+    return '\n'.join(out)+'\n'
+
+
 def _shift_axles(src,name,dz):
     """Move every wheel row of one spec along Z."""
     start=src.index('static readonly Spec _'+name+' = new()'); end=src.index('};',start)
@@ -165,6 +184,14 @@ def expected(cls='dinky'):
     # An ENCLOSED class runs its walls up to a roof taken from a fleet body instead of the truck bed's
     # own 1.000. Re-measured here off that body's mesh, not imported from the generator.
     roof_top=obj(CONTENT/s[CLASSES[cls]['roof_ref']]['fields']['Body'].strip('"'))['hi'][1] if CLASSES[cls].get('roof_ref') else None
+    # RAKE: the proportion the donor's box front leans back over its own height, re-measured here off
+    # that body's mesh. Applied to whatever wall height this class ends up with, so the nose angle is
+    # the donor's angle rather than a distance that would flatten out as the roof rose.
+    rake_frac=None
+    if CLASSES[cls].get('rake_ref'):
+        rm=obj(CONTENT/s[CLASSES[cls]['rake_ref']]['fields']['Body'].strip('"'))
+        top=[v for v in rm['vertices'] if v[1] >= rm['hi'][1]-.02]
+        rake_frac=(min(v[2] for v in top)-rm['lo'][2])/(rm['hi'][1]-rm['lo'][1])
     t=wall_t/5
     # The class table is the SPECIFICATION -- a length fraction and a count of half-wall-sections --
     # so importing it is importing the intent, not the answer. Everything it is applied to (the Golf's
@@ -190,8 +217,9 @@ def expected(cls='dinky'):
                     lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                     axles=C['axles'], display=C['display'], cls=cls, wide=C['wide'], roof_top=roof_top,
                     wall_t=wall_t,bed_wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w,
-                    wall_h=(roof_top-wall_t-(wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])))
-                           if roof_top is not None else wall_h)
+                    wall_h=(WH:=(roof_top-wall_t-(wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])))
+                           if roof_top is not None else wall_h),
+                    rake=WH*rake_frac if rake_frac is not None else 0.)
 
 def source_names(src):
     src=uncomment(src);return re.findall(r'"([^"]+)"',braced(src,src.index('{',src.index('string[] SpecNames'))))
@@ -346,6 +374,30 @@ def cases(cls='dinky'):
                 rl,rh=group_bounds('roof')
                 require(close(high[1],(rl[1]+rh[1])/2,1e-5),
                         group+f' ends at {high[1]:.4f}, not the roof mid-height {(rl[1]+rh[1])/2:.4f}')
+    if d['rake']:
+        def raked_nose():
+            """The front leans BACK as it rises -- the horsebox silhouette, and the only thing that
+            separates it from a tall van at this poly count. Measured off the mesh: the sideboard's
+            topmost front vertex sits `rake` behind its bottom-most one, and the roof begins there.
+
+            An AABB cannot see this. group_bounds() on a raked wall returns exactly the rectangle it
+            would return unraked, so every other check in this file passed the flat-fronted version
+            without noticing -- which is why the shape needs a check that reads vertices, not bounds."""
+            # Vertices come from the group's FACES: save() writes every `v` line before any `g`
+            # marker, so scanning for `v` lines while a group is open finds nothing at all.
+            m=obj(BODY);V=[];cur=''
+            for line in BODY.read_text().splitlines():
+                if line.startswith('g '):cur=line[2:]
+                elif line.startswith('f ') and cur=='side_1':
+                    V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
+            lo,hi=group_bounds('side_1')
+            bot=min(v[2] for v in V if abs(v[1]-lo[1])<1e-6)
+            top=min(v[2] for v in V if abs(v[1]-hi[1])<1e-6)
+            require(close(top-bot,d['rake'],1e-4),f'front rakes back {top-bot:.4f}, expected {d["rake"]:.4f}')
+            require(close(group_bounds('roof')[0][2],top,1e-4),'roof does not start where the raked front reaches it')
+        add('raked nose: the front leans back as it rises, and the roof starts there',raked_nose,
+            (BODY,move_group('roof',(0,0,-.3)),'run the roof out over the nose'),
+            (BODY,_unrake,'square the nose off'))
     add('trailer wall section equals the truck bed, derived two ways',donor_wall,
         (CONTENT/'truck_body.txt',lambda x:re.sub(r'^v 0\.980968 ','v 0.900968 ',x,flags=re.M),'thicken the truck bed wall'),
         # HEIGHT COMES FROM A DIFFERENT DONOR PER CLASS. Raising the truck bed's wall is a mutation for

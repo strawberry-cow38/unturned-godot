@@ -99,7 +99,10 @@ CLASSES = {
     # same track, same tandem, same rear-axle setback. What makes it a horsebox is that it is ENCLOSED:
     # walls to a roof instead of open sideboards. Roof height comes off the fleet, see roof_ref below.
     'horsebox': dict(length=1.15, width_steps=4, axles=2, wide=True, display='Horsebox Trailer',
-                     rear_setback_from='medium', roof_ref='ambulance'),
+                     # roof: the TALLEST enclosed body in the fleet. rake: the proportion the
+                     # ambulance's box front leans back over its own height -- the fleet's own
+                     # box-behind-a-nose profile, scaled to whatever height the roof lands at.
+                     rear_setback_from='medium', roof_ref='bus', rake_ref='ambulance'),
 }
 
 
@@ -127,6 +130,11 @@ def design(specs, rear, cls='small'):
     # enclosed bodies sit in two tiers -- van and truck top out at 2.125, ambulance and Ural at 2.375 --
     # and a horsebox takes the taller one, because the thing it carries has to stand up in it.
     roof_top = obj(CONTENT/specs[C['roof_ref']]['fields']['Body'].strip('"'))['hi'][1] if C.get('roof_ref') else None
+    rake_frac = None
+    if C.get('rake_ref'):
+        rm = obj(CONTENT/specs[C['rake_ref']]['fields']['Body'].strip('"'))
+        top = [v for v in rm['vertices'] if v[1] >= rm['hi'][1]-.02]
+        rake_frac = (min(v[2] for v in top)-rm['lo'][2])/(rm['hi'][1]-rm['lo'][1])
     # BOX FIRST, THEN THE TRACK (strawberry: "remove the axle and have the wheels flush with the
     # trailer walls"). The box keeps the width the previous pass sized it to -- the Golf track plus
     # half a truck wall section, less the tyre and its clearance -- but the wheels no longer stand
@@ -180,13 +188,14 @@ def design(specs, rear, cls='small'):
     deck_y = wall_t-ride
     if roof_top is not None:
         wall_h = roof_top-wall_t-deck_y     # walls run from the floor to the roof's underside
+    rake = wall_h*rake_frac if rake_frac is not None else 0.
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_center_y,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
                 cls=cls, axles=C['axles'], axle_zs=axle_zs, axle_spacing=axle_spacing,
-                roof_top=roof_top, lamp_y=deck_y+bed['wall_h']/2,
+                roof_top=roof_top, lamp_y=deck_y+bed['wall_h']/2, rake=rake, rake_frac=rake_frac,
                 display=C['display'], key=cls+'_trailer',
                 lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                 wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)
