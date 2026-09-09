@@ -4,9 +4,10 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    // A dropped ammo stack shows a round per quarter of its stackSize (strawberry 2026-09-08: "stacks will show
+    // A dropped ammo stack shows more rounds the fuller it is (strawberry 2026-09-08: "stacks will show
     // visually, 1/4-2/4 1 round 2/4-3/4 2 round 3/4-4/4 3 rounds. the stack shape stays the same just hide rounds
-    // in the stack").
+    // in the stack"). His example is a THREE-round pile in quarters, i.e. one more band than rounds -- so a
+    // five-round pile reads in sixths and the three-round case still lands exactly where he specified.
     //
     // ASSERTS ON THE MESH, NOT ON THE BANDS. Re-checking `VisibleRounds(96,128,3) == 3` would only confirm that
     // the test and the function agree about arithmetic I wrote twice; it passes just as happily when the manifest
@@ -14,9 +15,10 @@ namespace UnturnedGodot.Testing
     // leaves a cartridge floating where the bottom of the pile used to be. So every check below reads the real
     // ArrayMesh built from the real manifest entry and the real .txt on disk: its triangle count, and its HEIGHT.
     //
-    // Height is the load-bearing one. Both bundles are two rounds on the ground with a third resting on top, so
-    // hiding a round must lower the mesh; if the file order ever changes and the ground round is the one dropped,
-    // the triangle count still falls by exactly the same amount and only the AABB notices.
+    // The GROUND check is the load-bearing one. Hiding rounds must never leave the remainder hovering where a
+    // lower round used to be; if the file order changes and a ground round is the one dropped, every triangle
+    // count above still passes and only the AABB notices. (It replaced an earlier "round N is highest" assert,
+    // which was a PROXY: it held for these piles and would have forbidden a flat arrangement outright.)
     public class AmmoStackVisual : GameTest
     {
         public override string Name => "ammo.stack_visual";
@@ -26,18 +28,18 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
-            // The bands are quarters of the asset's stackSize, and stackSize defaults to 1 until the catalog
+            // The bands are fractions of the asset's stackSize, and stackSize defaults to 1 until the catalog
             // wires it -- at which point every amount reads as a full stack and the whole feature silently
-            // returns the 3-round mesh. That is what this test caught on its first run, so the setup is here
+            // returns the complete mesh. That is what this test caught on its first run, so the setup is here
             // rather than assumed: the game calls RegisterAll on every world load (Main, WorldBuilder), the
             // bare L1 host does not.
             ItemCatalog.RegisterAll();
 
-            // (id, stackSize, tris per round, expected full-pile height in metres)
+            // (id, stackSize, tris per round, how many rounds the pile has)
             var beds = new[]
             {
-                (id: 5004, stack: 128, per: 22, label: "5.56 FMJ"),
-                (id: 113,  stack: 32,  per: 20, label: "12 gauge buckshot"),
+                (id: 5004, stack: 128, per: 22, rounds: 5, label: "5.56 FMJ"),
+                (id: 113,  stack: 32,  per: 20, rounds: 3, label: "12 gauge buckshot"),
             };
 
             foreach (var b in beds)
@@ -45,32 +47,41 @@ namespace UnturnedGodot.Testing
                 T.Check($"{b.label}: stackSize is {b.stack}", Assets.find((ushort)b.id)?.stackSize == b.stack);
 
                 var full = WorldItem.MeshForStack(b.id, b.stack);
-                T.Check($"{b.label}: full stack is 3 rounds ({b.per * 3} tris)", Tris(full) == b.per * 3);
+                T.Check($"{b.label}: a full stack is {b.rounds} rounds ({b.per * b.rounds} tris)",
+                        Tris(full) == b.per * b.rounds);
 
-                var two = WorldItem.MeshForStack(b.id, (int)(b.stack * 0.60f));   // inside [2/4, 3/4)
-                var one = WorldItem.MeshForStack(b.id, (int)(b.stack * 0.30f));   // inside [1/4, 2/4)
-                T.Check($"{b.label}: 60% of a stack is 2 rounds", Tris(two) == b.per * 2);
-                T.Check($"{b.label}: 30% of a stack is 1 round", Tris(one) == b.per);
+                // BANDS = ROUNDS + 1, inclusive at the low edge. Walk EVERY boundary rather than sampling a
+                // couple: the band count changed with the pile size, and an off-by-one here shows up only at
+                // the exact edges -- ceil-vs-floor got all of them wrong while the midpoints stayed right.
+                int bands = b.rounds + 1;
+                for (int k = 1; k <= b.rounds; k++)
+                {
+                    int at = (int)System.Math.Ceiling((double)b.stack * k / bands);   // first amount in band k
+                    T.Check($"{b.label}: {at}/{b.stack} shows {k}", Tris(WorldItem.MeshForStack(b.id, at)) == b.per * k);
+                    if (k > 1)
+                    {
+                        int below = at - 1;
+                        T.Check($"{b.label}: {below}/{b.stack} shows {k - 1}",
+                                Tris(WorldItem.MeshForStack(b.id, below)) == b.per * (k - 1));
+                    }
+                }
 
-                // Band edges, where an inclusive/exclusive slip lives.
-                T.Check($"{b.label}: exactly 3/4 is 3 rounds", Tris(WorldItem.MeshForStack(b.id, b.stack * 3 / 4)) == b.per * 3);
-                T.Check($"{b.label}: one under 3/4 is 2 rounds", Tris(WorldItem.MeshForStack(b.id, b.stack * 3 / 4 - 1)) == b.per * 2);
-                T.Check($"{b.label}: exactly 1/2 is 2 rounds", Tris(WorldItem.MeshForStack(b.id, b.stack / 2)) == b.per * 2);
-                T.Check($"{b.label}: one under 1/2 is 1 round", Tris(WorldItem.MeshForStack(b.id, b.stack / 2 - 1)) == b.per);
+                // The single ejected round -- the case the whole feature exists to serve, and it sits below
+                // every band. It must draw ONE round, never zero: a dropped item that renders nothing is
+                // indistinguishable from a crash.
+                T.Check($"{b.label}: an amount of 1 still draws a round", Tris(WorldItem.MeshForStack(b.id, 1)) == b.per);
 
-                // The single ejected round -- the case the whole feature exists to serve, and the one that sits
-                // below every band strawberry named. It must draw ONE round, never zero: a dropped item that
-                // renders nothing is indistinguishable from a crash.
-                var single = WorldItem.MeshForStack(b.id, 1);
-                T.Check($"{b.label}: an amount of 1 still draws a round", Tris(single) == b.per);
-
-                // HEIGHT: hiding must take the TOP round off, so a 1- or 2-round pile is shorter than the full one.
-                float hFull = Height(full), hTwo = Height(two), hOne = Height(one);
-                T.Check($"{b.label}: 2 rounds is shorter than 3 ({hTwo:0.0000} < {hFull:0.0000})", hTwo < hFull - 0.0005f);
-                T.Check($"{b.label}: 1 round is no taller than 2", hOne <= hTwo + 1e-5f);
-                // ...and the two ground rounds are the SAME height as one of them, which is what proves the
-                // survivors are the pair lying on the ground rather than an arbitrary two of the three.
-                T.Check($"{b.label}: the two survivors both lie on the ground", Mathf.Abs(hOne - hTwo) < 1e-5f);
+                // HEIGHT + GROUND. Hiding must never leave the remainder hovering where a lower round was,
+                // which is the failure a triangle count cannot see: reorder the rounds in the .txt and every
+                // count above still passes. Checked for every prefix the visual can draw.
+                float ground = Height(WorldItem.MeshForStack(b.id, 1));
+                for (int k = 1; k <= b.rounds; k++)
+                {
+                    var m = WorldItem.MeshForStack(b.id, (int)System.Math.Ceiling((double)b.stack * k / bands));
+                    T.Check($"{b.label}: {k} round(s) sits on the ground", m.GetAabb().Position.Y <= 1e-4f);
+                    T.Check($"{b.label}: {k} round(s) is no taller than the full pile", Height(m) <= Height(full) + 1e-5f);
+                }
+                T.Check($"{b.label}: the full pile is taller than one round", Height(full) > ground + 0.0005f);
             }
 
             // CONTROL: an ordinary single-object item has no `rounds` in the manifest and must be immune -- same

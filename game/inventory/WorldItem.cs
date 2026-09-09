@@ -193,8 +193,16 @@ namespace UnturnedGodot
         public static int VisibleRounds(int amount, int stackSize, int rounds)
         {
             if (rounds <= 1 || stackSize <= 0) return rounds;
+            // ONE MORE BAND THAN ROUNDS, which is the rule his 3-round example already describes: quarters
+            // for three rounds ("1/4-2/4 1 round 2/4-3/4 2 round 3/4-4/4 3 rounds"). Generalised that way a
+            // 5-round pile reads in SIXTHS, and the 3-round case still lands exactly where he specified --
+            // a plain "one round per 1/rounds of the stack" would have quietly re-banded the 3-round pile
+            // into thirds and contradicted the spec it was derived from.
+            // FLOOR, not ceil-1: his bands are inclusive at the LOW edge ("2/4-3/4 2 round" means exactly
+            // half a stack already shows two). ceil(frac*(rounds+1))-1 is the same rule shifted one texel
+            // over and gets every boundary exactly wrong -- 16/32 came out as 1 round instead of 2.
             float frac = (float)amount / stackSize;
-            int n = frac >= 0.75f ? 3 : frac >= 0.5f ? 2 : 1;
+            int n = Mathf.FloorToInt(frac * (rounds + 1));
             return Mathf.Clamp(n, 1, rounds);
         }
 
