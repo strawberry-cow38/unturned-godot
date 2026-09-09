@@ -7901,7 +7901,17 @@ namespace UnturnedGodot
         {
             if (!_rocketTried) { _rocketTried = true; try { _rocketMesh = ContentProvider.ParseObj("res://content/rocket_projectile.txt"); } catch { } }
             if (_rocketMesh == null) return null;
-            var rv = new MeshInstance3D { Mesh = _rocketMesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f } };   // projectile.prefab material _Color (olive body) + _Glossiness 0.25 -> roughness 0.75
+            // A HOLDER, not the mesh itself. The flight code LookAt()s whatever this returns, which aims its -Z --
+            // and rocket_projectile.txt is authored standing up (long axis Y, nose at +Y), so a mesh that IS the
+            // aimed node can never be laid down: the aim would overwrite the correction every frame. The holder
+            // takes the aim, the child carries the lay-down. See SamMissile.RocketMeshFix for the measurement.
+            var rv = new Node3D();
+            rv.AddChild(new MeshInstance3D
+            {
+                Mesh = _rocketMesh,
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f },   // projectile.prefab material _Color (olive body) + _Glossiness 0.25 -> roughness 0.75
+                RotationDegrees = SamMissile.RocketMeshFix,
+            });
             // The projectile's own ROAR: retail's projectile.prefab (tank cannon and rocket launcher share it) carries an
             // AudioSource playing "Fire" for the whole flight -- the one shell-specific clip the source has (master
             // 2026-09-05 "extract tank shell specific sounds": no Shoot clip exists for the cannon, only this, the

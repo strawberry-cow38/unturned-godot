@@ -74,6 +74,17 @@ namespace UnturnedGodot
         // Loaded once for every missile ever fired -- a barrage must not re-parse an .obj six times, and a site
         // that reloads every nine seconds would do it forever.
         static ArrayMesh _rocketMesh; static bool _rocketTried;
+
+        /// <summary>LAY THE ROCKET DOWN (strawberry 2026-09-09: "rockets r broken everywhere they are used. they
+        /// sit perfectly vertical instead of pointing the durection of flight"). content/rocket_projectile.txt is
+        /// authored STANDING UP -- measured off the mesh: it spans 0.72 in Y against 0.23 in X and Z, and the
+        /// tapered end (17 verts at y +0.2247, radius 0.047) is the nose while the motor sits at y -0.4956.
+        ///
+        /// Both users point the NODE down the velocity with LookAt, which aims its -Z; the mesh child was never
+        /// turned to match, so the model stayed upright no matter where the round was going. Rx(-90) carries +Y
+        /// onto -Z, nose first. The fallback cylinder below wants the same lay-down and has always had it, which
+        /// is the tell that the real mesh was simply missed.</summary>
+        public static readonly Vector3 RocketMeshFix = new(-90f, 0f, 0f);
         static AudioStream _fireSnd; static bool _fireTried;
 
         Vector3 _vel;
@@ -142,6 +153,7 @@ namespace UnturnedGodot
                 {
                     Mesh = _rocketMesh,
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f },   // projectile.prefab _Color + _Glossiness 0.25
+                    RotationDegrees = RocketMeshFix,
                 });
             }
             else
