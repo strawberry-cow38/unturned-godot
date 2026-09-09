@@ -32,6 +32,15 @@ namespace UnturnedGodot
             _            => ("pei_map.png",        1920f, "PEI"),
         };
 
+        /// <summary>The level extent the map image is assumed to cover, metres. WorldToNorm divides by it, so the
+        /// BAKE has to frame exactly this or every dot on the map is wrong by the ratio -- which is why the baker
+        /// reads it from here rather than carrying its own copy.</summary>
+        public static float LevelSize => Info().size;
+
+        /// <summary>Our own top-down render of the world, if one has been baked (--bakemap). Sits beside the
+        /// retail image rather than replacing it, so a bad bake is one file deletion away from undone.</summary>
+        public static string BakedImageName => System.IO.Path.GetFileNameWithoutExtension(Info().img) + "_baked.png";
+
         // THE SAME LAYER AS ITS SIBLING TABS, so the vitals sit over it exactly as they sit over the bag
         // (strawberry 2026-09-08: "cant see vitals on map"). It was 90, above the inventory family and above the
         // vitals' own layer 12 -- and this screen's backdrop is the opaque frosted blur, so it painted straight
@@ -549,9 +558,19 @@ namespace UnturnedGodot
 
         static Texture2D LoadMap()
         {
-            string p = ProjectSettings.GlobalizePath("res://content/" + Info().img);
-            if (!System.IO.File.Exists(p)) { GD.Print($"[map] missing content/{Info().img}"); return null; }
+            // OUR BAKE FIRST, the retail image as the fallback (strawberry 2026-09-09: "can we setup our own
+            // baked map image from high above our scene?"). UG_MAPRETAIL=1 forces the shipped one, which is what
+            // you want when comparing the two or when a bake has gone wrong.
+            string name = Info().img;
+            if (System.Environment.GetEnvironmentVariable("UG_MAPRETAIL") != "1")
+            {
+                string b = ProjectSettings.GlobalizePath("res://content/" + BakedImageName);
+                if (System.IO.File.Exists(b)) name = BakedImageName;
+            }
+            string p = ProjectSettings.GlobalizePath("res://content/" + name);
+            if (!System.IO.File.Exists(p)) { GD.Print($"[map] missing content/{name}"); return null; }
             var img = ContentProvider.LoadImage(p);
+            if (img != null) GD.Print($"[map] {name} {img.GetWidth()}x{img.GetHeight()} for a {Info().size:0} m level");
             return img == null ? null : ImageTexture.CreateFromImage(img);
         }
     }

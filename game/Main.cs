@@ -236,6 +236,7 @@ namespace UnturnedGodot
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg == "--bakemap" || arg.StartsWith("--bakemap=")) { objects = true; _bakeMapRes = arg.Contains('=') && int.TryParse(arg.Split('=')[1], out var _bmr) && _bmr >= 256 ? _bmr : 2048; }   // render OUR world from straight above into content/<map>_map_baked.png
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
@@ -4861,6 +4862,108 @@ namespace UnturnedGodot
             GD.Print($"[CROPTEST] {name}: young(Foliage_0) left, grown(Foliage_1) right");
         }
 
+        // ---- MAP BAKE --------------------------------------------------------------------------------------
+        // --bakemap[=RES]: render OUR OWN world from straight above into content/<map>_map_baked.png, which MapUI
+        // then prefers over the shipped retail image (strawberry 2026-09-09: "can we setup our own baked map image
+        // from high above our scene?"). Retail's pei_map.png is 1923x1927 for a 1920 m level -- one pixel per
+        // metre -- so the default 2048 lands in the same ballpark.
+        //
+        // ORTHOGRAPHIC and axis-aligned, framed to EXACTLY MapUI.LevelSize, because the map screen's WorldToNorm
+        // is `p.X / size + 0.5`: any other framing and every town dot, marker and player arrow is off by the
+        // ratio. The camera sits at (0, y, 0) with rotation (-90, 0, 0), which puts world +X to the right and
+        // world +Z DOWN the image -- the same handedness WorldToNorm assumes. Getting that backwards would look
+        // almost right and mirror the island.
+        int _bakeMapRes; bool _bakeMapDone; int _bakeMapFrames;
+        SubViewport _bakeMapVp;
+
+        void BakeMapTick()
+        {
+            if (_bakeMapVp == null)
+            {
+                // NOTHING MAY CULL BY DISTANCE. This is the trap the existing UG_MAPSHOT harness already
+                // documents -- props carry per-instance VisibilityRangeEnd (64/256/512 m), so a camera parked
+                // above the island renders an empty tan plane because every object is past its own cull
+                // distance. UG_MAPSHOT dodges it by sitting low and shooting a small patch; a whole-map bake
+                // cannot, so the ranges come off instead. This process exists to take one picture and quit, so
+                // there is nothing to restore them for.
+                int cleared = ClearVisibilityRanges(this);
+
+                // Flat noon light and NO FOG. The first bake came out as a near-white sheet -- the island was all
+                // there, at about 15% contrast under a grey wash -- because turning the fog off once does not
+                // turn it off: DayNightCycle.Apply() writes Env.FogEnabled = true every tick, so the disable
+                // lasted exactly one frame. Apply() once for the noon lighting, then VisualsEnabled = false so
+                // nothing writes the environment again, and only then clear the fog.
+                foreach (var dn in FindAll<DayNightCycle>(this))
+                {
+                    dn.Time = 0.5f; dn.Speed = 0f;
+                    dn.Apply();                  // noon sun/sky/ambient, once
+                    dn.VisualsEnabled = false;   // ...and no more per-tick Apply() to undo what follows
+                    if (dn.Env != null) { dn.Env.FogEnabled = false; dn.Env.VolumetricFogEnabled = false; }
+                }
+
+                float size = MapUI.LevelSize;
+                // AN ORTHOGRAPHIC CAMERA'S FRAMING DOES NOT DEPEND ON ITS HEIGHT -- only Size does. So there is
+                // nothing to buy by parking it 2 km up, and something to lose: every distance-based effect
+                // (fog, and any aerial perspective) is computed over that whole path. 400 m clears PEI's terrain
+                // and its tallest trees with room to spare and keeps the atmosphere between camera and ground
+                // down to a fifth of what it was.
+                float y = float.TryParse(System.Environment.GetEnvironmentVariable("UG_BAKEMAP_Y"), out var by) ? by : 400f;
+                _bakeMapVp = new SubViewport
+                {
+                    Size = new Vector2I(_bakeMapRes, _bakeMapRes),
+                    RenderTargetClearMode = SubViewport.ClearMode.Always,
+                    RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                    Msaa3D = Viewport.Msaa.Msaa4X,
+                };
+                AddChild(_bakeMapVp);
+                _bakeMapVp.AddChild(new Camera3D
+                {
+                    Current = true,
+                    Projection = Camera3D.ProjectionType.Orthogonal,
+                    Size = size,                                   // the FULL level width, not a half-extent
+                    Near = 1f, Far = y + 4000f,
+                    Position = new Vector3(0f, y, 0f),
+                    RotationDegrees = new Vector3(-90f, 0f, 0f),   // straight down; +X right, +Z down, matching WorldToNorm
+                });
+                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared");
+                return;
+            }
+
+            // A viewport only has a texture the frame AFTER it renders, and the world is still settling behind
+            // us (streamed meshes, shader compiles), so give it a few rather than exactly one.
+            if (++_bakeMapFrames < 12) return;
+            _bakeMapDone = true;
+            var img = _bakeMapVp.GetTexture()?.GetImage();
+            if (img == null) { GD.PrintErr("[bakemap] the viewport produced no image"); GetTree().Quit(); return; }
+            string outPath = ProjectSettings.GlobalizePath("res://content/" + MapUI.BakedImageName);
+            var err = img.SavePng(outPath);
+            if (err != Error.Ok) GD.PrintErr($"[bakemap] SavePng failed: {err}");
+            else GD.Print($"[bakemap] wrote {outPath} ({img.GetWidth()}x{img.GetHeight()})");
+            GetTree().Quit();
+        }
+
+        /// <summary>Drop every per-instance distance cull in the subtree, and report how many there were.</summary>
+        static int ClearVisibilityRanges(Node n)
+        {
+            int k = 0;
+            if (n is GeometryInstance3D g && g.VisibilityRangeEnd > 0f)
+            {
+                g.VisibilityRangeEnd = 0f;
+                g.VisibilityRangeEndMargin = 0f;
+                k++;
+            }
+            foreach (Node c in n.GetChildren()) k += ClearVisibilityRanges(c);
+            return k;
+        }
+
+        static System.Collections.Generic.List<T> FindAll<T>(Node n) where T : Node
+        {
+            var outp = new System.Collections.Generic.List<T>();
+            void Walk(Node x) { if (x is T t) outp.Add(t); foreach (Node c in x.GetChildren()) Walk(c); }
+            Walk(n);
+            return outp;
+        }
+
         // --skillsui: render the SkillsUI with a sample PlayerSkills (some XP + a few leveled) to showcase/validate it.
         void BuildSkillsUiShot()
         {
@@ -8497,6 +8600,7 @@ namespace UnturnedGodot
                 if (ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDITEM"), out var hid) && Assets.find(hid) is ItemAsset ha)
                     GD.Print($"[holditem] {ha.itemName} ({hid}) -> hands: {_pdPlayer.EquipItemAsset(ha, new SDG.Unturned.Item(hid))} (movie frame {Engine.GetFramesDrawn()})");
             }
+            if (_bakeMapRes > 0 && _worldReady && !_bakeMapDone) BakeMapTick();
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_menuXpDone) MenuXpTick();
             if (_peiPlayable && _pdPlayer != null && _holdItemDone && int.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDTHROW"), out var thf) && ++_holdThrowT == thf)   // UG_HOLDTHROW=N: LMB N frames after the equip (the throw swing on camera)
             { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
