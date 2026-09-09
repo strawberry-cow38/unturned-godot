@@ -5172,6 +5172,41 @@ namespace UnturnedGodot
             }
             return n;
         }
+        /// <summary>Put <paramref name="n"/> loose rounds back in the bag, returning false if it could not be done.
+        ///
+        /// On a server-owned bag a plain tryAddItem is a lie -- the next owner echo wipes it, which is exactly why
+        /// unloading "never gives rounds back". The rounds are folded into an EXISTING stack of the same shell
+        /// through the reload intent (spend that stack, hand back its count plus these), because that is the only
+        /// wire today that can add to the bag.
+        ///
+        /// It deliberately does NOT invent an address to spend when no stack exists. The server owns no gun
+        /// simulation, so a give-back with nothing spent is unverifiable -- it would be a free-ammo generator
+        /// bounded only by the stack clamp. Better to refuse the unload than to open that, and far better than
+        /// the current behaviour, which decrements the gun and destroys the rounds on the echo.</summary>
+        bool ReturnShellsToBag(SDG.Unturned.ItemAsset a, int n)
+        {
+            if (a == null || n <= 0 || Inventory == null) return false;
+            if (!(InventoryIsServerOwned && NetReloadSwap != null))
+            {
+                Inventory.tryAddItem(new Item((ushort)a.id, (byte)n));
+                return true;
+            }
+            int cap = System.Math.Max(1, a.stackSize);
+            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
+            {
+                var pg = Inventory.items[b];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i);
+                    if (jar?.item == null || jar.item.id != a.id) continue;
+                    if (jar.item.amount + n > cap) continue;                     // would overflow the stack clamp
+                    NetReloadSwap(b, jar.x, jar.y, (ushort)a.id, (byte)(jar.item.amount + n));
+                    return true;
+                }
+            }
+            return false;
+        }
+
         int ConsumeShells(int want)   // remove up to `want` matching shells from inventory stacks; returns how many were actually taken
         {
             if (Inventory == null || Gun == null || want <= 0) return 0;
@@ -5184,8 +5219,23 @@ namespace UnturnedGodot
                     var jar = pg.getItem((byte)i); var a = jar?.item != null ? SDG.Unturned.Assets.find(jar.item.id) : null;
                     if (!ShellMatches(a)) continue;
                     int t = System.Math.Min(want - taken, jar.item.amount);
-                    jar.item.amount = (byte)(jar.item.amount - t); taken += t;
-                    if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
+                    // THE BAG IS THE SERVER'S. This used to decrement the stack locally and call removeItem, which
+                    // the server never heard about -- so the next owner echo put the round back while the gun kept
+                    // the ammo it had already counted. Free rounds, for years, on every shell-fed gun. It is the
+                    // same hole DoMagSwap had and had fixed for magazines in 2026-08-16; the shell path never got
+                    // the equivalent. Singleplayer is NOT exempt: MpLoopback wires NetConsume, so
+                    // InventoryIsServerOwned is true there too.
+                    //
+                    // Expressed with the existing reload intent -- spend this stack, take back what is left --
+                    // rather than a new message, so there is no wire format change and no version bump.
+                    if (InventoryIsServerOwned && NetReloadSwap != null)
+                        NetReloadSwap(b, jar.x, jar.y, jar.item.id, (byte)System.Math.Max(0, jar.item.amount - t));
+                    else
+                    {
+                        jar.item.amount = (byte)(jar.item.amount - t);
+                        if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
+                    }
+                    taken += t;
                 }
             }
             return taken;
@@ -9548,14 +9598,15 @@ namespace UnturnedGodot
                         var a = ShellAsset;
                         if (Gun?.ShellReload == true)   // pump: eject ONE shell per interval (the count lowers 1 by 1)
                         {
-                            if (Ammo > 0 && a != null) { Inventory?.tryAddItem(new Item((ushort)a.id, 1)); Ammo--; }
+                            if (Ammo > 0 && a != null) { if (ReturnShellsToBag(a, 1)) Ammo--; else { _unloading = false; _viewmodel?.SetReloading(false); } }
                             if (Ammo <= 0) { _unloading = false; _viewmodel?.SetReloading(false); }
                             else _unloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, Gun?.AmmoMax ?? 1);
                         }
                         else   // break-action (masterkey / quadbarrel): eject ALL barrels at once
                         {
-                            if (a != null && Ammo > 0) Inventory?.tryAddItem(new Item((ushort)a.id, (byte)Ammo));
-                            Ammo = 0;
+                            // Ammo is only cleared if the rounds actually landed: dropping it on a refused return
+                            // is how you turn "unload gave me nothing" into "unload deleted my magazine".
+                            if (a != null && Ammo > 0 && ReturnShellsToBag(a, Ammo)) Ammo = 0;
                             _unloading = false; _viewmodel?.SetReloading(false);
                         }
                         SaveGunState();

@@ -1024,9 +1024,17 @@ namespace UnturnedGodot.Net
             byte index = page.getIndex(cmd.X, cmd.Y);
             var jar = index == byte.MaxValue ? null : page.getItem(index);
             var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
-            // Must actually be a magazine sitting where the client says it is. A stale address is the ordinary
-            // case (the bag moved under the reload), not an attack, so it is a quiet reject.
-            if (asset == null || asset.magCapacity <= 0) { Diag.ReloadsRejected++; return; }
+            // Must actually be a magazine OR A LOOSE AMMO STACK sitting where the client says it is. A stale
+            // address is the ordinary case (the bag moved under the reload), not an attack, so it is a quiet
+            // reject.
+            //
+            // AMMO ADDED 2026-09-09. A shell-fed gun (the ACE, the mosin -- anything whose Magazine item is
+            // isAmmo) spends ROUNDS out of a stack, and this same intent already expresses that exactly: remove
+            // the stack, hand back what is left. Refusing anything without magCapacity meant the shell path had
+            // no wire at all, so it edited the bag locally and the next owner echo undid it -- the round came
+            // back while the gun kept the +1, which is an infinite-ammo dupe rather than a cosmetic desync
+            // (strawberry: "the bullet isnt consumed and i gain +1 in my mag").
+            if (asset == null || (asset.magCapacity <= 0 && !asset.isAmmo)) { Diag.ReloadsRejected++; return; }
             page.removeItem(index);
             // Give the spent magazine back, CLAMPED to what that magazine can physically hold. SpentAmount is the
             // one number only the client knows (no gun state is replicated), so this is the cheat surface: the
@@ -1034,9 +1042,16 @@ namespace UnturnedGodot.Net
             if (cmd.SpentId != 0)
             {
                 var spent = Assets.find(cmd.SpentId);
-                if (spent != null && spent.magCapacity > 0)
+                // Clamped by what that item can physically hold: a magazine by its capacity, a loose round by its
+                // stack size. Ammo returns through this path too now, and clamping ammo against magCapacity would
+                // give a hard 0 -- the give-back would silently vanish while the spend still happened.
+                int cap = spent == null ? 0
+                        : spent.magCapacity > 0 ? spent.magCapacity
+                        : spent.isAmmo ? System.Math.Max(1, spent.stackSize)
+                        : 0;
+                if (cap > 0)
                 {
-                    byte amt = (byte)System.Math.Min(cmd.SpentAmount, (int)spent.magCapacity);
+                    byte amt = (byte)System.Math.Min(cmd.SpentAmount, cap);
                     if (amt > 0) inv.tryAddItem(new Item(cmd.SpentId, amt, 100));
                 }
             }
