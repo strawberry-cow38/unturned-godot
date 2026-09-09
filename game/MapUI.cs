@@ -370,8 +370,12 @@ namespace UnturnedGodot
             _chunkLayer.Size = new Vector2(s, s);
             float tile = s / BakedChunks;
             // The visible window in map-local pixels: _map sits at _pan inside _clip, so the panel's top-left is
-            // at -_pan on the image.
-            var view = new Rect2(-_pan, _clip.Size);
+            // at -_pan on the image. GROWN BY A MARGIN, because load and drop test the same rect and this runs on
+            // every pan: a tile sitting exactly on the edge would otherwise decode, drop and decode again as the
+            // cursor jitters across the boundary, and decoding a 2048 JPEG is not something to do twice a frame.
+            // The margin means a tile has to travel a quarter of its width clear of the panel before it is let go,
+            // which also gets it loaded slightly before it is needed.
+            var view = new Rect2(-_pan, _clip.Size).Grow(tile * 0.25f);
             for (int r = 0; r < BakedChunks; r++)
                 for (int c = 0; c < BakedChunks; c++)
                 {
