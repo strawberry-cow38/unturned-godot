@@ -73,7 +73,32 @@ def truck_bed():
     return dict(wall_t=outer-inner, wall_h=top-floor, outer_w=2*outer, inner_w=2*inner,
                 floor=floor, top=top)
 
-def design(specs, rear):
+# THREE SIZES OFF ONE DERIVATION (strawberry: "thats its name. dinky trailer. the new one is small
+# trailer. do a medium one which is longer and wider. and 4 wheels."). Nothing here is a typed
+# dimension: `length` is a fraction of the Golf's body length and `width_steps` counts HALF TRUCK WALL
+# SECTIONS added to the Golf track before the box is solved out of it, so every size still traces to
+# the same two fleet measurements the single trailer did.
+#   dinky  .60 / +0 -> 3.137 x 2.100, the one already in the game
+#   small  .75 / +1 -> 3.921 x 2.225, the previous pass
+#   medium .95 / +2 -> 4.967 x 2.350, and two axles because one axle under five metres of deck is a
+#                     wheelbarrow; the fleet's own long bodies (truck, van) all carry four wheels.
+#   TWO WIDTH MODES. The small classes solve the box out of the track so the tyre lands flush against
+#   the sideboard. The big ones do NOT (strawberry: "wider! ignore the limit on width") -- their box is
+#   set directly and the wheels end up UNDER it, which is the only arrangement that removes the limit
+#   rather than restating it. That forces the deck up over the tyre; see `deck_y` below.
+CLASSES = {
+    'dinky':  dict(length=.60, width_steps=0, axles=1, wide=False, display='Dinky Trailer'),
+    'small':  dict(length=.75, width_steps=1, axles=1, wide=False, display='Small Trailer'),
+    'medium': dict(length=.95, width_steps=2, axles=2, wide=True,  display='Medium Trailer'),
+    'large':  dict(length=1.15, width_steps=4, axles=2, wide=True, display='Large Trailer',
+                   # strawberry: "move the large trailer wheels back. same distance from the back as
+                   # the medium trailer's wheels-back distance". Derived from that class, not typed --
+                   # move the medium's axles and the large's follow.
+                   rear_setback_from='medium'),
+}
+
+
+def design(specs, rear, cls='small'):
     golf, quad = specs['golf'], specs['quad']
     # These dimensions are present in the saved fleet note; no new fleet size statistics.
     row = next(l for l in (ROOT/'notes/vehicle_measurements.md').read_text().splitlines() if l.startswith('| golf /'))
@@ -92,29 +117,50 @@ def design(specs, rear):
     # thickness and size ... should also be bigger"). Its walls are .250 thick and stand 1.000 above
     # the floor; mine were t = .050 and .450, five times too thin and under half the height.
     wall_t, wall_h = bed['wall_t'], bed['wall_h']
-    # WHEELS SIT PROUD, THE WAY EVERY CAR'S DO (strawberry: "move wheels to the sides like cars are").
-    # Measured across the fleet, sedan/hatchback/golf/police/jeep/offroader/truck/van all share body
-    # half-width 1.261 against track/2 1.300 and tyre half-width .200 -- the tyre's outer face stands
-    # .239 outboard of the bodywork on every one of them. Tucking them under the deck was my own idea
-    # when the arches came off and it made the trailer read as a box on castors. Back to the fleet track.
-    track = golf['tracks'][-1]
-    # WIDTH IS SET BY THE TYRES, NOT BY THE TRUCK. I had this at the bed's own outer width 2.462, and
-    # it was wrong the moment the wheels went back on the fleet track without arches: the tyre's inner
-    # face sits at track/2 - tyre_width/2 = 1.100, so any flat-sided box wider than that has the tyre
-    # buried in its sideboard. At 2.462 the overlap was 131 mm of X through 550 mm of Y -- a tyre
-    # embedded in the bodywork, which is exactly the class of thing "fix the weird geom" was about.
-    # The fleet's cars get away with 1.261 because they have ARCHES cut into the body, and those are
-    # gone by instruction. So the box clears the tyres by t a side and the truck governs the wall
-    # SECTION (.250 thick, 1.000 tall) rather than the overall width.
-    deck_w = track-tyre_width-2*t
-    deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
+    # BOX FIRST, THEN THE TRACK (strawberry: "remove the axle and have the wheels flush with the
+    # trailer walls"). The box keeps the width the previous pass sized it to -- the Golf track plus
+    # half a truck wall section, less the tyre and its clearance -- but the wheels no longer stand
+    # outboard of it. The track is now solved so the TYRE'S OUTER FACE lands exactly on the sideboard's
+    # outer face, which is what "flush" means here and what removes the outrigger look the axle bar
+    # was drawing attention to.
+    C = CLASSES[cls]
+    # NO WIDTH LIMIT ON THE BIG TWO -- but the wheels still mount on the SIDES (strawberry: "the medium
+    # and large trailers are sitting on TOP of the wheels. wheels should attach to the sides"). Lifting
+    # the limit means the box stops being capped by the tyre; the TRACK simply follows it outward. The
+    # first attempt kept the track on the Golf's and put the deck over the wheels, which is a different
+    # vehicle -- a flatbed -- and not what was asked for.
+    budget = golf['tracks'][-1]+wall_t/2*C['width_steps']
+    deck_w = budget if C['wide'] else budget-tyre_width-2*t
+    # FLUSH = the tyre sits AGAINST the sideboard's outer face, not inside it. Aligning the tyre's
+    # OUTER face with the wall instead puts the wheel through the box: the tyre tops out .620 above
+    # the deck floor, so at that track its inner half rises into the cargo bay. Nothing about removing
+    # the axle changes that -- the only way to have a wheel inboard of the wall is to raise the whole
+    # bed over it, which needs deck_y 1.100 against today's -.023, i.e. a lorry-height floor.
+    # So the wheel is hard against the wall with the gap closed, which is what the axle bar was
+    # spanning and why it can go.
+    track = deck_w+tyre_width
+    deck_l = length*C['length']
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)
     hitch_projection = 3*t   # was radius/3, which would now drag all eight cars' tow balls back 50 mm
     ground = rear['golf']['ground']
     wheel_y = ground+radius+.25
+    wheel_center_y = wheel_y-.25        # the RESTING centre: the tyre touches `ground` here
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
+    # TANDEM SPACING is derived, not chosen: two tyres of radius r on one side must not intersect in
+    # Z, so their centres are at least 2r apart; plus t of clearance. Single-axle classes ignore it.
+    axle_spacing = 2*radius+t
+    axle_zs = [axle_z] if C['axles']==1 else [axle_z-axle_spacing/2, axle_z+axle_spacing/2]
+    if C.get('rear_setback_from'):
+        # Put the REAR axle the same distance in from the tailgate as the referenced class puts its
+        # own, then hang the rest of the set forward of it. On a longer deck the 60%-of-length rule
+        # walks the wheels forward; this pins them to the back end instead.
+        ref = design(specs, rear, C['rear_setback_from'])
+        setback = ref['back'] - max(ref['axle_zs'])
+        last = back - setback
+        axle_zs = [last-axle_spacing*i for i in range(C['axles']-1, -1, -1)]
+        axle_z = sum(axle_zs)/len(axle_zs)
     # WHEELS SIT HIGHER ON THE BODY, at the fleet's own relationship (strawberry: "move the wheels
     # higher up on the trailer"). Measured: golf, sedan, hatchback, jeep, truck and van ALL rest their
     # wheel centre .2734 above the body's lowest point. The trailer's sat at .0000 -- centre exactly
@@ -125,9 +171,11 @@ def design(specs, rear):
     deck_y = wall_t-ride
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
-                king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
+                king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_center_y,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
+                cls=cls, axles=C['axles'], axle_zs=axle_zs, axle_spacing=axle_spacing,
+                display=C['display'], key=cls+'_trailer',
                 lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                 wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)
 

@@ -3054,11 +3054,11 @@ namespace UnturnedGodot
             LandingLegScaleY = 1.44f, LandingLegPivotY = 1.13f,   // stretch the legs down ~0.5 (anchored at the deck ~Y1.13) so they reach the ground with the nose propped up 0.5
         };
 
-        // Car-scale open trailer. Every value is derived in notes/CAR_TRAILER_REPORT.md.
-        static readonly Spec _car_trailer = new()
+        // Dinky Trailer: car-scale open trailer, 1 axle(s). Derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _dinky_trailer = new()
         {
             Mass = 300.000000f,
-            Body = "car_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            Body = "dinky_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
             WheelRadius = 0.600000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
             BoxSize = new Vector3(2.099994f, 0.250000f, 3.137132f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
             ExtraBoxes = new (Vector3, Vector3)[]
@@ -3071,8 +3071,8 @@ namespace UnturnedGodot
             },
             HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
             {
-                (new Vector3(0.100000f, -0.044510f, 2.605695f), new Vector3(-0.499999f, -0.101176f, -2.006949f), -20.205981f),
-                (new Vector3(0.100000f, -0.044510f, 2.605695f), new Vector3(0.499999f, -0.101176f, -2.006949f), 20.205981f),
+                (new Vector3(0.100000f, 0.219510f, 2.605695f), new Vector3(-0.499999f, -0.088676f, -2.006949f), -20.205981f),
+                (new Vector3(0.100000f, 0.219510f, 2.605695f), new Vector3(0.499999f, -0.088676f, -2.006949f), 20.205981f),
                 (new Vector3(2.099994f, 0.250000f, 3.137132f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -3.429615f),
@@ -3080,14 +3080,119 @@ namespace UnturnedGodot
             LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.499091f),
             LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.599091f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.399091f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
-            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Car Trailer",
+            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Dinky Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.300000f, 0.250000f, 0.313713f, false), (1.300000f, 0.250000f, 0.313713f, false) },
+            { (-1.250000f, 0.250000f, 0.313713f, false), (1.250000f, 0.250000f, 0.313713f, false) },
             TailPos = new[] { new Vector3(-0.737863f, 0.476570f, 1.510794f), new Vector3(0.737862f, 0.476570f, 1.510802f) },
-            Parts = new (string, Color)[] { ("car_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
+            Parts = new (string, Color)[] { ("dinky_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
-        public static Vehicle BuildCarTrailer(int variant = 0) => Build(_car_trailer, variant, "car_trailer");
+        public static Vehicle BuildDinkyTrailer(int variant = 0) => Build(_dinky_trailer, variant, "dinky_trailer");
+
+        // Small Trailer: car-scale open trailer, 1 axle(s). Derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _small_trailer = new()
+        {
+            Mass = 300.000000f,
+            Body = "small_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            WheelRadius = 0.600000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(2.224994f, 0.250000f, 3.921415f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.250000f, 1.000001f, 3.921415f), new Vector3(-0.987497f, 0.476570f, 0.000000f)),
+                (new Vector3(0.250000f, 1.000001f, 3.921415f), new Vector3(0.987497f, 0.476570f, 0.000000f)),
+                (new Vector3(1.724994f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, -1.835707f)),
+                (new Vector3(1.724994f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, 1.835707f)),
+                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -3.771757f)),
+            },
+            HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
+            {
+                (new Vector3(0.100000f, 0.219510f, 2.811301f), new Vector3(-0.531249f, -0.088676f, -2.301055f), -20.021160f),
+                (new Vector3(0.100000f, 0.219510f, 2.811301f), new Vector3(0.531249f, -0.088676f, -2.301055f), 20.021160f),
+                (new Vector3(2.224994f, 0.250000f, 3.921415f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
+            },
+            Kingpin = new Vector3(0.000000f, -0.028921f, -3.821757f),
+            HitchYawLimit = 58.566199f, // front rail corner remains behind pivot at full yaw
+            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.891232f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.991232f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.791232f),
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Small Trailer",
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            Wheels = new (float, float, float, bool)[]
+            { (-1.312500f, 0.250000f, 0.392141f, false), (1.312500f, 0.250000f, 0.392141f, false) },
+            TailPos = new[] { new Vector3(-0.800363f, 0.476570f, 1.902936f), new Vector3(0.800362f, 0.476570f, 1.902944f) },
+            Parts = new (string, Color)[] { ("small_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
+        };
+        public static Vehicle BuildSmallTrailer(int variant = 0) => Build(_small_trailer, variant, "small_trailer");
+
+        // Medium Trailer: car-scale open trailer, 2 axle(s). Derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _medium_trailer = new()
+        {
+            Mass = 300.000000f,
+            Body = "medium_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            WheelRadius = 0.600000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(2.850000f, 0.250000f, 4.967125f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.250000f, 1.000001f, 4.967125f), new Vector3(-1.300000f, 0.476570f, 0.000000f)),
+                (new Vector3(0.250000f, 1.000001f, 4.967125f), new Vector3(1.300000f, 0.476570f, 0.000000f)),
+                (new Vector3(2.350000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, -2.358563f)),
+                (new Vector3(2.350000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, 2.358563f)),
+                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -4.294612f)),
+            },
+            HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
+            {
+                (new Vector3(0.100000f, 0.219510f, 3.170497f), new Vector3(-0.687500f, -0.088676f, -2.693197f), -23.712350f),
+                (new Vector3(0.100000f, 0.219510f, 3.170497f), new Vector3(0.687500f, -0.088676f, -2.693197f), 23.712350f),
+                (new Vector3(2.850000f, 0.250000f, 4.967125f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
+            },
+            Kingpin = new Vector3(0.000000f, -0.028921f, -4.344612f),
+            HitchYawLimit = 52.076764f, // front rail corner remains behind pivot at full yaw
+            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.414087f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -3.514087f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.314087f),
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Medium Trailer",
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            Wheels = new (float, float, float, bool)[]
+            { (-1.625003f, 0.250000f, -0.128287f, false), (1.625003f, 0.250000f, -0.128287f, false), (-1.625003f, 0.250000f, 1.121713f, false), (1.625003f, 0.250000f, 1.121713f, false) },
+            TailPos = new[] { new Vector3(-1.112866f, 0.476570f, 2.425791f), new Vector3(1.112865f, 0.476570f, 2.425799f) },
+            Parts = new (string, Color)[] { ("medium_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
+        };
+        public static Vehicle BuildMediumTrailer(int variant = 0) => Build(_medium_trailer, variant, "medium_trailer");
+
+        // Large Trailer: car-scale open trailer, 2 axle(s). Derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _large_trailer = new()
+        {
+            Mass = 300.000000f,
+            Body = "large_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            WheelRadius = 0.600000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(3.100000f, 0.250000f, 6.012836f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.250000f, 1.000001f, 6.012836f), new Vector3(-1.425000f, 0.476570f, 0.000000f)),
+                (new Vector3(0.250000f, 1.000001f, 6.012836f), new Vector3(1.425000f, 0.476570f, 0.000000f)),
+                (new Vector3(2.600000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, -2.881418f)),
+                (new Vector3(2.600000f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, 2.881418f)),
+                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -4.817467f)),
+            },
+            HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
+            {
+                (new Vector3(0.100000f, 0.219510f, 3.460135f), new Vector3(-0.750000f, -0.088676f, -3.085338f), -23.866598f),
+                (new Vector3(0.100000f, 0.219510f, 3.460135f), new Vector3(0.750000f, -0.088676f, -3.085338f), 23.866598f),
+                (new Vector3(3.100000f, 0.250000f, 6.012836f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
+            },
+            Kingpin = new Vector3(0.000000f, -0.028921f, -4.867467f),
+            HitchYawLimit = 49.758873f, // front rail corner remains behind pivot at full yaw
+            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.936943f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Large Trailer",
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            Wheels = new (float, float, float, bool)[]
+            { (-1.750003f, 0.250000f, 0.394568f, false), (1.750003f, 0.250000f, 0.394568f, false), (-1.750003f, 0.250000f, 1.644568f, false), (1.750003f, 0.250000f, 1.644568f, false) },
+            TailPos = new[] { new Vector3(-1.237866f, 0.476570f, 2.948646f), new Vector3(1.237865f, 0.476570f, 2.948654f) },
+            Parts = new (string, Color)[] { ("large_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
+        };
+        public static Vehicle BuildLargeTrailer(int variant = 0) => Build(_large_trailer, variant, "large_trailer");
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
@@ -4577,7 +4682,7 @@ namespace UnturnedGodot
             if (name == null) return false;
             bool known = false;
             foreach (var n in SpecNames) if (n == name) { known = true; break; }
-            if (!known) foreach (var n in new[] { "off_roader", "vw_golf", "mini", "heli", "scout", "bird", "containership", "plane" }) if (n == name) { known = true; break; }
+            if (!known) foreach (var n in new[] { "off_roader", "vw_golf", "mini", "heli", "scout", "bird", "containership", "plane", "car_trailer" }) if (n == name) { known = true; break; }
             if (!known) return false;
             var s = SpecFor(name);
             return !s.Heli && !s.Plane && s.Water != WaterMode.Boat && s.Kingpin == Vector3.Zero
@@ -4606,9 +4711,9 @@ namespace UnturnedGodot
             return seen.ToArray();
         }
 
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "car_trailer" => BuildCarTrailer(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "dinky_trailer" => BuildDinkyTrailer(variant), "small_trailer" => BuildSmallTrailer(variant), "medium_trailer" => BuildMediumTrailer(variant), "large_trailer" => BuildLargeTrailer(variant), "car_trailer" => BuildDinkyTrailer(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
         // Append new keys: indices are replicated TypeIds, so inserting would renumber existing vehicles.
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon", "car_trailer" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = SUV and "car_trailer" = Car Trailer, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon", "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = SUV and the three trailers are command-only, no natural spawn; "car_trailer" still spawns the dinky one as an alias; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
         /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
@@ -4627,7 +4732,7 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "car_trailer" => _car_trailer, "suv" => _wagon, "tank" => _tank,
+            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "dinky_trailer" => _dinky_trailer, "small_trailer" => _small_trailer, "medium_trailer" => _medium_trailer, "large_trailer" => _large_trailer, "car_trailer" => _dinky_trailer, "suv" => _wagon, "tank" => _tank,
             // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
             // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
             // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast

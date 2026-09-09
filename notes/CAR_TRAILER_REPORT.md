@@ -284,3 +284,266 @@ requiring the two shifts to be exactly mirrored, which that asymmetry makes impo
 compared numbers `expected()` had derived itself, so no file mutation could fail them. They read the
 mesh and the spec now -- the deck group's underside against the spec's wheel anchor, and the lamp
 vertices against the sedan's.
+
+## Sixth pass: decently longer, slightly wider (astra-trailer-big)
+
+**Width decision: route 1, widen the track with the box**, relative to `main` at `5297da9d`.
+The saved sideboards now end at
+**|X| 1.112497**, and the actual `Vehicle.cs` wheel anchors are **±1.362500**. The specified
+`jeep_wheel.txt` measures **.400006 wide**, so its inner faces are at **|X| 1.162497**: the original
+**.050000 m clearance per side is preserved**. The clearance assertion and its `t−1e-6` threshold
+are unchanged. Returning these wheels to the Golf's track puts **12.5 mm of tyre inside the wider
+sideboard**; that exact regression is now an additional failing mutation.
+
+“Slightly” means **half the truck's measured .250 wall thickness added to the total width**:
+**+.125 m / +5.95%** over the previous 2.099994 box. Each wall and wheel moves out **.0625 m**;
+the track becomes **2.725 m**, from the Golf's 2.600. Including the real wheel mesh, the trailer is
+**3.125006 m wide**, versus the Golf's **3.000006 m**: **4.17% wider overall**, just .0625 m beyond
+the Golf's tyre envelope on each side. Fresh Golf measurements are body **5.228553 long × 2.522099
+wide**, with no Body/Parts vertex farther out than |X| 1.261051; the wheels determine its total width.
+That is a modest increase next to its tow car, while keeping the low bed and exposed car-sized wheels.
+
+Rejected widths: one whole truck wall section extra would make a **2.349994 m box / 3.250006 m
+total**, an **11.90% box-width increase**; using the truck's full **2.462 m** box width would require
+**2.962006 track / 3.362012 total**, **12.07% wider overall than the Golf**. Both go farther than
+“slightly.” Keeping the original 2.600 track with the chosen wider box fails the clearance measurement
+above. Route 2, restoring arches, contradicts the author's explicit removal instruction.
+
+Route 3, putting the entire box above the tyres, is measurable and too high here. The wheel mesh
+spans Y **−.600000..+.582565** at the staged rotation and has a swept Y/Z radius **.600001**. With
+the wheel rest centre at local Y 0, nominal ground at −.600, the same .050 gap and a .250 floor
+section require a finished bed height of **1.500001 m above nominal ground even at rest**. Allowing
+the existing .250 rest drop to compress to the anchor requires **1.750001 m**. Those are increases
+of **.923432 / 1.173432 m** over the current .576569 bed. These are conservative clearance heights
+for a flat box entirely above the rotating wheel, not observed suspension or driving results.
+
+The new dimensions follow the existing measured donors. Fractions are design choices; dimensions
+are metres. The outer deck footprint includes its surrounding walls, as in the previous passes.
+
+| Feature | New value | Derivation |
+| --- | --- | --- |
+| Outer deck length | **3.921415** in spec; **3.921414** between saved end faces | **3/4 × Golf body length 5.228553**, from 3/5 previously: **+.784283 / +25%**; sub-micrometre endpoint rounding |
+| Outer deck width | **2.224994** | Golf track 2.600 + half truck wall section .125 − real tyre width .400006 − 2t .100 |
+| Wall / gate / floor section; wall height | **.250000; 1.000001** | Truck bed outer/inner X planes and floor-to-wall-top measurement; `t = wall_t/5 = .050000` |
+| Clear opening between walls | **3.421414 long × 1.724994 wide** | Saved outer length/width less two truck wall sections |
+| Floor slab | **3.671414 long × 1.974994 wide × .250000 thick** | Outer footprint inset half a wall section at each edge, preserving overlapping joints |
+| Finished deck Y / nominal height | **−.023431 / .576569** | Truck wall thickness minus Golf wheel-rest-centre-to-body-underside distance .273431; ground −.600 |
+| Sideboard top local Y | **.976570** | Deck Y + measured truck wall height |
+| Wheels / track / anchors | **jeep_wheel.txt, r .600000; 2.725000; (±1.362500,.250000,.392141)** | Golf wheel and anchor Y; Golf track + wall_t/2; axle stays 60% of outer deck length from its front (`Z = L/10`) |
+| Axle beam | **2.725000 × .100000 × .100000** | New track × 2t × 2t, at wheel rest Y 0 and axle Z |
+| Tyre outer envelope / sideboard gap | **±1.562503 / .050000** | Saved spec anchors ± actual wheel half-width; compare against saved sideboard faces ±1.112497 |
+| Free tongue, pin to front wall | **1.861050** | Golf body half-width 1.2610495 + Golf radius .600 |
+| Kingpin | **(0,−.028921,−3.821757)** | Golf rear-section Y midpoint; `Z = −L/2 − free tongue` |
+| Drawbar beam section / plan length | **.100000 square / 2.811301** | 2t; endpoints at `(±t, pinY, pinZ+4t)` and `(±(W/2−2t), deckY−wall_t/2, −L/4)` |
+| Drawbar collider height / yaw | **.219510 / ±20.021160°** | Absolute Y difference of those mesh endpoints + 2t; `atan2(dx,dz)` in plan |
+| Main box size / centre | **(2.224994,.250000,3.921415) / (0,−.148431,0)** | Outer footprint × truck floor section, centred half a section below deck Y |
+| Hitch yaw limit | **58.566199°**, formerly 59.988005° | `atan2(free tongue, W/2+t/2)`; complete saved-body sweep still clears the towing rear plane |
+| Stand Z / split-zone Z | **−2.891232 / −2.991232..−2.791232** | Midpoint of pin and front wall, with ±2t split clearance; existing support height remains .521079 |
+| Lamp outside | **|X| .964902; rear Z 1.984333** | Each original sedan lens rigidly translated to the sedan's .147595 side inset and .023626 tail-panel projection |
+| Saved body AABB | **(−1.362500,−.600000,−3.921757)..(1.362500,.976570,1.960707)** | Axle ends, parked stand bottom, pin−2t coupler nose, wall top, tailgate rear |
+| Complete static trailer envelope | **3.125006 wide × 1.576570 high × 5.906090 long** | Body + actual wheels + sedan lamps; lamps extend the body's 5.882464 length |
+| Empty mass / health | **300 / 450** | Existing quad spec donors; no new payload or tow rating |
+
+While following the enlarged drawbars into their colliders, I found an existing defect from the
+lowered ride height: the generator still used `deckY−3t` for the collider endpoint and a signed rise,
+emitting **negative .044510 m collider heights**. Both mesh and collider now use the same endpoint
+at the floor section's midpoint; collider height encloses the **absolute** rise. A new check transforms
+the saved beam vertices into each actual spec collider's frame and compares their bounds. Another
+checks the saved wall/socket geometry against all five `ExtraBoxes`, including the new length and
+width. Their mutations restore old dimensions, move real geometry or colliders, and remove yaw.
+The old collider dimensions are read from `5297da9d`, rather than copied into the verifier.
+The main collider check measures the saved floor and outer walls; the wall-section check compares
+the saved trailer against the truck mesh; the landing collider must coincide with its split zone.
+Array mutations replace whole initializers, so wheel and lamp regressions retain valid C# syntax.
+
+The body remains **80 vertices / 120 triangles**, with explicit normals/UVs, triangle-only faces,
+closed components and overlapping joints. Sedan lamps remain **56 vertices / 20 triangles** with
+their original per-lens geometry. All eight car hitch assets and tow points, wheel radius, ride
+height, wall section, lamp inset, and `car_trailer` **TypeId 33** remain unchanged.
+
+Validation for this pass:
+
+- `python3 tools/verify_car_trailer.py --mutation-test`: **55 named checks, 225 rejected real-file
+  mutations**. All original 53 checks and 209 mutations remain represented; the track check now
+  requires the measured increase. Both original tyre-clearance mutations still fail, as do the new
+  opposite-side and restored-Golf-track mutations. Every check has a live mutation; none survived or
+  was ineffective. Each rejection is printed. Original bytes were restored and clean checks rerun.
+- `dotnet build game/UnturnedGodot.csproj`: **succeeded, zero errors, 22 warnings** (the warning count
+  already documented above). `./test.sh` and the gameplay test fixtures were not run.
+- A second generator run reproduced **all 11 mesh/palette assets and the spliced C# spec byte for
+  byte**. Saved preview wheel vertices also match the actual spec anchors and wheel mesh within
+  **one micrometre** in all three staged poses.
+- Re-rendered the three previews with Godot 4.6 Vulkan/llvmpipe, `UG_ISO=1`, Xvfb and
+  `--render-thread safe`, without `--headless`; all are 640 × 640 and were visually inspected. The
+  longer box keeps the low bed and simple silhouette. The comparison meshes retain the original
+  unscaled Golf; its opaque atlas paint/glass appearance is still not a gameplay material check.
+  The coupled view aligns the pins and hides the stand. All three renders exited without errors.
+
+[Standalone](car_trailer_alone.png), [beside the Golf](car_trailer_beside_golf.png),
+[coupled to the Golf](car_trailer_coupled_golf.png).
+
+**Towing stability, cargo retention and multiplayer hitch behaviour remain untested.** These static
+geometry/spec checks and bakeicon poses do not establish loaded ride height, braking or reversing,
+pitch/roll contact, sustained towing stability, or network coupling/replication. The wider track and
+longer box are measured geometry changes; the previews are not driving evidence.
+
+## Sixth pass: no axle, wheels against the walls
+
+strawberry, on the render: *"fix the floor? looks inconsistent"*, then *"its the axle. remove the axle
+and have the wheels flush with the trailer walls"*.
+
+The floor itself measured fine — the deck reaches |X| .987 against sideboard inner faces at .862, so it
+covers the interior completely; the narrow visible strip is a 1.000-deep box occluding its own floor at
+isometric elevation. What was inconsistent was the **axle bar** reaching out under the deck to wheels
+standing .050 clear of it. Both are gone: no axle group, and the track is solved from the box instead
+of the box from the track.
+
+**"Flush" has two readings and only one of them is buildable.** Aligning the tyre's OUTER face with the
+wall — track 1.825 — puts the wheel **through the cargo bay**: the tyre tops out at Y .600
+against a deck floor at -0.023, so its inner half rises into the box. Rendered it to be sure, and it is
+as bad as it sounds. The only arrangement with a wheel inboard of the wall raises the bed over it,
+which needs `deck_y` **1.100** against today's -0.023 — a lorry-height floor on a car trailer.
+
+So flush means **against**: the tyre's inner face sits exactly on the sideboard's outer face, track
+2.625, gap closed to zero. That gap is what the axle bar was spanning, which is why removing the bar
+and closing the gap are one change rather than two.
+
+Body is **72 v / 108 tris**, down from 120 with the axle gone. The clearance check is not deleted — it now
+asserts the flush relationship instead, off the real mesh and the real spec, and its docstring records
+that the old gap rule is dead **by instruction** so nobody re-derives it.
+
+## Seventh pass: a family of three (superseded by the eighth)
+
+strawberry: *"apply the axe and wheel change to the dinky trailer. thats its name. dinky trailer. the
+new one is small trailer. do a medium one which is longer and wider. and 4 wheels."*
+
+One derivation, three size classes. `CLASSES` in `measure_car_trailer.py` carries only the two things
+that make a size — a fraction of the Golf's body length, and a count of HALF TRUCK WALL SECTIONS added
+to the Golf track before the box is solved out of it — so every dimension still traces to the same two
+fleet measurements a single trailer did. Nothing is a typed dimension.
+
+| class | key | deck | track | axles | body |
+|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 1 | 72 v / 108 tris |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 1 | 72 v / 108 tris |
+| medium | `medium_trailer` | 4.967 x 2.350 | 2.750 | 2 | 72 v / 108 tris |
+
+**The dinky is the vehicle already in the game**, re-derived at its original 3.137 x 2.100 and given
+the axle removal and flush wheels along with the rest. **The medium runs a tandem**, and its axle
+spacing is derived rather than chosen: two tyres of radius r on one side cannot intersect in Z, so
+their centres sit at least 2r apart, plus t of clearance -- 1.250 here. Both axles straddle the same
+60%-of-deck point the single-axle classes put their one axle on.
+
+**Naming.** `car_trailer` was the shipped spawn name and stays as an **alias** onto the dinky, so the
+command people already have keeps working. It is deliberately NOT in `SpecNames` -- that array's
+indices are replicated network TypeIds and an alias there would consume one. The rename happened **in
+place at index 33**, so every TypeId before it is untouched and the two new sizes are appended at 34
+and 35. A named check asserts exactly that ordering, with mutations for an insert, a swap and a drop.
+
+**The verifier runs three times.** `KEY`/`BODY`/`LAMPS` are rebound per class and `main()` loops, so
+every check written for one size is a check on all three: **168 named checks, 687 mutations**, all
+caught. Four mutations had to be repaired to get there, and all four failed the same way -- they
+matched a literal that was only true for one class, or used `replace(..., 1)` which lands on the first
+of three spec blocks rather than the one under test. An unmatched mutation is reported as *ineffective*
+rather than passing, which is the only reason they were visible at all.
+
+Renders: `car_trailer_family.png` puts all three beside the Golf on one ground plane at true scale.
+Unverified as ever: towing stability, cargo retention, multiplayer hitch behaviour.
+
+## Eighth pass: a large class, and the width limit lifted (see the correction below)
+
+strawberry: *"now do a large one. twin axle. wider! ignore the limit on width. redo the medium with no
+width limit"*.
+
+| class | key | deck | track | axles | floor | wheels |
+|---|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 1 | -0.023 | beside the box |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 1 | -0.023 | beside the box |
+| medium | `medium_trailer` | 4.967 x 2.850 | 2.600 | 2 | +0.900 | under the deck |
+| large | `large_trailer` | 6.013 x 3.100 | 2.600 | 2 | +0.900 | under the deck |
+
+**Two width modes, and that is what lifting the limit actually means.** The small classes still solve
+the box out of the track so the tyre lands flush against the sideboard — the limit. The big two do not:
+their box is set straight off the Golf track plus its wall-section steps and the **track is left
+alone**, so the deck overhangs the wheels rather than being bounded by them. Widening the box while
+also widening the track would have been the same rule with bigger numbers.
+
+**The price is the floor height, and it is not optional.** With the wheels under the deck, the deck has
+to clear the tyre — at **full compression**, not at rest, or the wheel comes through its own floor on
+every bump. So the wide classes' floor sits at **+1.150** against the small ones' **−0.023**, and their
+walls top out at 2.150 against the Golf's 2.185 roof. That is what a real flatbed looks like, and it is
+the honest consequence of the instruction rather than a decision I made separately.
+
+The medium's tyres still stand 75 mm proud each side (box 2.850 against a 3.000 tyre envelope), which
+is the same relationship every car in the fleet has. The large's box overhangs its wheels outright.
+
+**The verifier gained a mode.** The flush rule and the .2734 ride rule are now gated to the narrow
+classes, and the wide ones get their own invariant instead: the deck's underside above the compressed
+tyre, clearance about one t, and **each sideboard individually** overhanging the wheel centres. That
+last word matters — the first version took `max()` over both sides, so pulling ONE sideboard inside the
+wheels changed nothing and the mutation survived. **222 named checks, 910 mutations**, all caught.
+
+### Correction within the eighth pass: the deck sat too high
+
+strawberry, on the render: *"fix the wheel positions"*.
+
+Clearance was taken at **full compression** (`wheel_y + radius` = .850), which put the deck's underside
+at .900 against a **resting** tyre top of .600 — **300 mm of daylight with the wheels hanging in it**,
+unattached to anything. That is the whole of the complaint, and it is only visible in a render; every
+number involved was individually correct.
+
+Clearance is taken at rest now, plus one t: floor **+0.900** rather than +1.150, underside .650 against
+a .600 tyre, gap **50 mm**. A bottomed suspension meets the deck underside, which is what a bump stop
+is for and what the fleet's own cars do inside their arches. Walls top out at 1.900, comfortably under
+the Golf's 2.185 roof rather than level with it.
+
+The wide-class check moved with it — deck underside above the RESTING tyre, within 2t — and gained a
+second mutation, `float the deck above the tyre`, because the old rule had only ever been able to catch
+a deck that was too LOW. The defect it missed was a deck that was too high.
+
+### Second correction: the wheels belong on the SIDES, not under the deck
+
+strawberry: *"they arent fixed. the medium and large trailers are sitting on TOP of the wheels. wheels
+should attach to the sides."*
+
+That is a correction of my reading, not of an arithmetic slip. I took *"ignore the limit on width"* to
+mean the box should stop being tied to the track at all — so I froze the track on the Golf's and let
+the deck overhang the wheels, which makes a **flatbed**. Widening the box *and* letting the track follow
+it out is what was actually wanted, and I had explicitly rejected that in the eighth pass as "the same
+rule with bigger numbers". It is not: the rule was the box being **capped** by the tyre, and lifting the
+cap while keeping the wheels on the sides is exactly the thing.
+
+So there is one arrangement again, in every class — tyre inner face flush on the sideboard's outer
+face, floor back at **−0.023**. The only difference between narrow and wide classes is now a single
+line: whether the width budget has the tyre subtracted from it.
+
+| class | key | deck | track | overall | axles |
+|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 2.900 | 1 |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 3.025 | 1 |
+| medium | `medium_trailer` | 4.967 x 2.850 | 3.250 | 3.650 | 2 |
+| large | `large_trailer` | 6.013 x 3.100 | 3.500 | 3.900 | 2 |
+
+The wide-class-only checks went with the arrangement: no deck-clears-tyre rule, no gating of the ride
+rule, one flush rule covering all four. **224 named checks, 916 mutations.**
+
+### Third correction: the large's axles pinned to the medium's setback
+
+strawberry: *"move the large trailer wheels back. same distance from the back as the medium trailer's
+wheels-back distance"*.
+
+`axle_z` was 60% of the deck length in every class, which walks the wheels **forward** as the deck grows
+— the large's rear axle sat 1.781 in from its tailgate against the medium's 1.362. The large now takes
+its rear-axle setback **from the medium**, and the rest of its axle set hangs forward of that:
+
+- dinky   back +1.569, axles at [0.314], rear setback **1.255**
+- small   back +1.961, axles at [0.392], rear setback **1.569**
+- medium  back +2.484, axles at [-0.128, 1.122], rear setback **1.362**
+- large   back +3.006, axles at [0.395, 1.645], rear setback **1.362**
+
+Derived, not typed: `rear_setback_from='medium'` in the class table, so moving the medium's wheels moves
+the large's with them. The check is the cross-class invariant read off **both** real specs and **both**
+real meshes, with two mutations — walk this class's axles forward, and move the reference's instead.
+The second is the one that matters: it fails if the two ever stop tracking each other.
+
+**225 named checks, 918 mutations.**
