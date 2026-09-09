@@ -74,6 +74,7 @@ namespace UnturnedGodot
         // Loaded once for every missile ever fired -- a barrage must not re-parse an .obj six times, and a site
         // that reloads every nine seconds would do it forever.
         static ArrayMesh _rocketMesh; static bool _rocketTried;
+        MeshInstance3D _vis; bool _noseLogged;
 
         /// <summary>LAY THE ROCKET DOWN (strawberry 2026-09-09: "rockets r broken everywhere they are used. they
         /// sit perfectly vertical instead of pointing the durection of flight"). content/rocket_projectile.txt is
@@ -149,12 +150,13 @@ namespace UnturnedGodot
             }
             if (_rocketMesh != null)
             {
-                AddChild(new MeshInstance3D
+                _vis = new MeshInstance3D
                 {
                     Mesh = _rocketMesh,
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f },   // projectile.prefab _Color + _Glossiness 0.25
                     RotationDegrees = RocketMeshFix,
-                });
+                };
+                AddChild(_vis);
             }
             else
             {
@@ -244,6 +246,17 @@ namespace UnturnedGodot
                 if (axis.LengthSquared() < 1e-10f) axis = Mathf.Abs(cur.Y) < 0.9f ? cur.Cross(Vector3.Up) : cur.Cross(Vector3.Right);
                 var dir = ang <= maxStep || ang < 1e-5f ? want : cur.Rotated(axis.Normalized(), maxStep);
                 _vel = dir * _vel.Length();
+            }
+
+            // NOSE-FORWARD CHECK, not eyeballed. The mesh's own +Y is the nose (see RocketMeshFix), so after the
+            // lay-down its GLOBAL +Y must point down the velocity. 0 deg = nose first, 180 = flying tail first,
+            // which is the failure mode a sign error produces and which looks perfectly fine sat on the rail.
+            if (!_noseLogged && _life > 0.6f && _vis != null && IsInstanceValid(_vis) && _vel.LengthSquared() > 1f
+                && System.Environment.GetEnvironmentVariable("UG_SAMTEST") == "1")
+            {
+                _noseLogged = true;
+                float noseErr = Mathf.RadToDeg(_vis.GlobalTransform.Basis.Y.Normalized().AngleTo(_vel.Normalized()));
+                GD.Print($"[sam] nose vs velocity: {noseErr:0.0} deg  ({(noseErr < 15f ? "NOSE FIRST" : noseErr > 165f ? "TAIL FIRST -- sign flipped" : "SIDEWAYS")})");
             }
 
             float sp = Mathf.Min(MaxSpeed, _vel.Length() + Accel * dt);
