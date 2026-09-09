@@ -547,3 +547,32 @@ real meshes, with two mutations — walk this class's axles forward, and move th
 The second is the one that matters: it fails if the two ever stop tracking each other.
 
 **225 named checks, 918 mutations.**
+
+## Ninth pass: a horsebox on the large's chassis
+
+strawberry: *"then make a horsebox trailer based off the large one"*.
+
+Same deck (6.013 x 3.100), same track, same tandem, same rear-axle setback — it inherits the
+large's whole class entry. What makes it a horsebox is that it is **enclosed**: the sideboards run up to
+a roof instead of stopping at the truck bed's 1.000.
+
+**The roof height is a fleet measurement, not a number I picked.** The fleet's enclosed bodies sit in
+two tiers — van and truck top out at 2.125, ambulance and Ural at **2.375**. A horsebox takes the taller
+one, because the thing it carries has to stand up in it. `roof_ref='ambulance'` in the class table, so
+the roof is that body's measured top and moving the ambulance moves the horsebox with it. Walls run
+2.148 from the floor to the roof's underside, against 1.000 on the open classes.
+
+Two details worth recording. The roof **straddles** the wall tops by half a section each way rather than
+sitting on them — coincident corners get welded into a four-face edge, the same trap the deck and the
+gates each hit. And the tail lamps are pinned to half the **truck bed's** wall height above the floor
+rather than to this class's own: centring them on a 2.148 wall put the horsebox's lamps up by its
+roofline.
+
+The verifier gained an enclosed mode rather than exemptions. Wall THICKNESS is still the truck bed's in
+every class; HEIGHT is only the truck's for the open ones, and for an enclosed class the binding
+relationship is that the wall ends exactly at the roof's mid-height. Two mutations needed swapping for
+it: raising the truck bed's wall is not a mutation for a class whose height comes from the ambulance,
+and a band check ("wall top anywhere inside the roof") was loose enough that a 100 mm wall move stayed
+inside it. The audit caught both surviving.
+
+**282 named checks, 1149 mutations**, over five classes.

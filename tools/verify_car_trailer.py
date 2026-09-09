@@ -162,6 +162,9 @@ def expected(cls='dinky'):
     radius=g['WheelRadius']                    # the CAR's wheel, not the quad's
     wheel=g['fields']['Wheel'];tw=obj(CONTENT/wheel.strip('"'))['size'][0]
     wall_t,wall_h,bed_w=truck_wall()
+    # An ENCLOSED class runs its walls up to a roof taken from a fleet body instead of the truck bed's
+    # own 1.000. Re-measured here off that body's mesh, not imported from the generator.
+    roof_top=obj(CONTENT/s[CLASSES[cls]['roof_ref']]['fields']['Body'].strip('"'))['hi'][1] if CLASSES[cls].get('roof_ref') else None
     t=wall_t/5
     # The class table is the SPECIFICATION -- a length fraction and a count of half-wall-sections --
     # so importing it is importing the intent, not the answer. Everything it is applied to (the Golf's
@@ -185,8 +188,10 @@ def expected(cls='dinky'):
                     ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
                     # the sedan's own lamp inset from its body side -- re-measured here, not imported
                     lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
-                    axles=C['axles'], display=C['display'], cls=cls, wide=C['wide'],
-                    wall_t=wall_t,wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w)
+                    axles=C['axles'], display=C['display'], cls=cls, wide=C['wide'], roof_top=roof_top,
+                    wall_t=wall_t,bed_wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w,
+                    wall_h=(roof_top-wall_t-(wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])))
+                           if roof_top is not None else wall_h)
 
 def source_names(src):
     src=uncomment(src);return re.findall(r'"([^"]+)"',braced(src,src.index('{',src.index('string[] SpecNames'))))
@@ -286,7 +291,7 @@ def cases(cls='dinky'):
     # tailgate -- the deck no longer overhangs it.
     add('body AABB from deck, wall height, stand and tongue',
         lambda:require(close(obj(BODY)['lo'],(-W/2,d['ground'],k[2]-2*t)) and
-                       close(obj(BODY)['hi'],(W/2,dy+d['wall_h'],L/2))),
+                       close(obj(BODY)['hi'],(W/2,dy+d['wall_h']+(d['wall_t']/2 if d['roof_top'] is not None else 0),L/2))),
         (BODY,move_group('coupler',(0,0,-.1)),'grow nose'),(BODY,move_group('landing_stand',(0,-.1,0)),'lower stand'),
         (BODY,move_group('tailgate',(0,0,.1)),'stretch tail'))   # the TAILGATE owns the rear datum now, not the deck
     wt_=d['wall_t']
@@ -301,7 +306,9 @@ def cases(cls='dinky'):
         (BODY,move_group('deck',(.1,0,0)),'shift deck'),(BODY,move_group('deck',(0,.1,0)),'raise deck'))
     def sideboard():
         lo,hi=group_bounds('side_1')
-        require(close(hi[1],dy+d['wall_h']),'sideboard top is not the truck bed wall height')
+        require(close(hi[1],dy+d['wall_h']),
+                'enclosed: sideboard top is not the roof underside' if d['roof_top'] is not None
+                else 'sideboard top is not the truck bed wall height')
         require(close(hi[0]-lo[0],d['wall_t']),'sideboard is not the truck bed wall thickness')
         require(close(hi[0],W/2))
     def ride():
@@ -319,15 +326,34 @@ def cases(cls='dinky'):
     add('sideboard section = the truck bed wall, measured',sideboard,
         (BODY,move_group('side_1',(0,.1,0)),'raise sideboard'),(BODY,move_group('side_1',(.1,0,0)),'thin sideboard'))
     def donor_wall():
+        # THICKNESS is the truck bed's in every class. HEIGHT is only the truck's for the OPEN ones:
+        # an enclosed class runs its walls up to a roof taken from another fleet body instead, so
+        # asserting the bed's 1.000 there would be asserting it is not a horsebox. What still binds
+        # for an enclosed class is that the wall reaches the roof's underside.
         thickness,height,_=truck_wall()
         floor=group_bounds('deck')[1][1]
         for group in ('side_-1','side_1'):
             low,high=group_bounds(group)
-            require(close(high[0]-low[0],thickness) and close(high[1]-floor,height),
-                    group+' section differs from the measured truck bed')
+            require(close(high[0]-low[0],thickness),group+' thickness differs from the measured truck bed')
+            if d['roof_top'] is None:
+                require(close(high[1]-floor,height),group+' does not reach the bed wall height')
+            else:
+                # The wall runs INTO the roof, not up to its underside: solids in this model overlap
+                # rather than butt, because coincident corners get welded into a four-face edge.
+                # The roof straddles the wall top by half a section each way, so the wall ends at the
+                # roof's mid-height EXACTLY. A band check (anywhere inside the roof) was too loose:
+                # a 100 mm wall move stayed inside it and the audit caught the mutation surviving.
+                rl,rh=group_bounds('roof')
+                require(close(high[1],(rl[1]+rh[1])/2,1e-5),
+                        group+f' ends at {high[1]:.4f}, not the roof mid-height {(rl[1]+rh[1])/2:.4f}')
     add('trailer wall section equals the truck bed, derived two ways',donor_wall,
         (CONTENT/'truck_body.txt',lambda x:re.sub(r'^v 0\.980968 ','v 0.900968 ',x,flags=re.M),'thicken the truck bed wall'),
-        (CONTENT/'truck_body.txt',lambda x:re.sub(r'^(v [-\d.]+ )1\.125001 ','\\g<1>1.325001 ',x,flags=re.M),'raise the truck bed wall'),
+        # HEIGHT COMES FROM A DIFFERENT DONOR PER CLASS. Raising the truck bed's wall is a mutation for
+        # an OPEN class only -- an enclosed one takes its height from its roof_ref body, and the audit
+        # caught this surviving on the horsebox precisely because the truck no longer sets its walls.
+        *([(CONTENT/'truck_body.txt',lambda x:re.sub(r'^(v [-\d.]+ )1\.125001 ','\\g<1>1.325001 ',x,flags=re.M),'raise the truck bed wall')]
+          if d['roof_top'] is None else
+          [(BODY,move_group('roof',(0,.3,0)),'lift the roof off its walls')]),
         (BODY,move_group('side_-1',(0,.1,0)),'raise trailer wall away from donor height'))
     add('kingpin on measured coupler, car ground datum',lambda:require(close(vector(fields(KEY)['Kingpin']),k)),fieldmut('Kingpin','Vector3.Zero'))
     add('socket encloses kingpin and follows drawbar',lambda:require(close(group_bounds('coupler'),((-2*t,k[1]-t,k[2]-2*t),(2*t,k[1]+t,k[2]+4*t)))),
@@ -437,7 +463,9 @@ def cases(cls='dinky'):
         high=(group_bounds('side_1')[1][0],group_bounds('deck')[1][1],group_bounds('tailgate')[1][2])
         require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and
                 close(tuple(centre[i]+size[i]/2 for i in range(3)),high),'main collider differs from saved floor and outer walls')
-        require('HullBoxes' in spec and len(boxes('ExtraBoxes'))==5)
+        # 5 solid parts, 6 if the class has a roof. The point of the count is that the load space is
+        # NOT filled -- one box per solid panel, never a hull that swallows the cargo volume.
+        require('HullBoxes' in spec and len(boxes('ExtraBoxes'))==(6 if d['roof_top'] is not None else 5))
     add('main collider follows deck, does not fill open load space',main_collider,
         fieldmut('BoxSize','new Vector3(3f, 2f, 16f)'),fieldmut('BoxCenter','Vector3.Zero'),
         # SCOPED TO THIS CLASS'S SPEC. A bare replace(...,1) lands on the FIRST match in the file, which
@@ -468,12 +496,14 @@ def cases(cls='dinky'):
         shove('HullBoxes',2,0,'stretch the hull deck box'),
         (BODY,move_group('drawbar_1',(0,.1,0)),'move beam outside its collider'))
     def wall_colliders():
-        rows=boxes('ExtraBoxes');require(len(rows)==5)
+        # An enclosed class carries one more: the roof is solid too. Order follows the generator.
+        groups=['side_-1','side_1','headboard','tailgate']+(['roof'] if d['roof_top'] is not None else [])+['coupler']
+        rows=boxes('ExtraBoxes');require(len(rows)==len(groups),f'{len(rows)} wall colliders for {len(groups)} solid parts')
         floor=group_bounds('deck')[1][1]
-        for row,group in zip(rows,('side_-1','side_1','headboard','tailgate','coupler')):
+        for row,group in zip(rows,groups):
             size,centre=map(vector,row);require(all(v>0 for v in size),'nonpositive wall/socket collider size')
             low,high=(list(v) for v in group_bounds(group))
-            if group!='coupler':low[1]=floor  # main slab covers the wall below the floor
+            if group not in ('coupler','roof'):low[1]=floor  # main slab covers the wall below the floor
             if group in ('headboard','tailgate'):
                 low[0]=group_bounds('side_-1')[1][0];high[0]=group_bounds('side_1')[0][0]
             require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and

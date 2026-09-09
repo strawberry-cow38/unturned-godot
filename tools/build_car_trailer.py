@@ -161,6 +161,11 @@ def generate(cls='small', specs=None, rear=None):
         m.box(label,(-w+wt/2,y-wt,z),(w-wt/2,y+wh,z+wt),1)
     # NO WHEEL ARCHES (strawberry: "remove the wheel arches"). The widened track in design() keeps
     # the tyres outboard of the wider box with the same construction-module clearance.
+    # A ROOF makes it a horsebox rather than a very tall open trailer. One slab of the same wall
+    # section as everything else, overlapping the walls it sits on (never butting flush -- coincident
+    # corners get welded and the shared edge then carries four faces).
+    if d['roof_top'] is not None:
+        m.box('roof',(-w,y+wh-wt/2,f),(w,y+wh+wt/2,b),1)
     m.box('coupler',(-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t),0)
     # Gone with the rest of the trim: mudflaps, the coupler's latch and handle, the stand's foot pad
     # and the amber reflectors. Every one was a box under ~8 cm; nothing else in the fleet models at
@@ -169,7 +174,10 @@ def generate(cls='small', specs=None, rear=None):
     stand_z=(kz+f)/2; stand_x=3*t
     m.box('landing_stand',(stand_x-t,d['ground'],stand_z-t/2),(stand_x+t,ky-t,stand_z+t/2),0)
     m.save(key+'_body.txt')
-    tail_pos=sedan_lamps(b,y+wh/2,w,d['lamp_inset'],key+'_taillights.txt')   # b is the tailgate's outer face, so 'proud of the tailgate' is literal
+    # Lamps sit at the same absolute height on every class -- half the TRUCK BED's wall height above
+    # the floor. Centring them on this class's own wall put the horsebox's lamps at 1.07, up by its
+    # roofline, because its walls are twice as tall.
+    tail_pos=sedan_lamps(b,d['lamp_y'],w,d['lamp_inset'],key+'_taillights.txt')
     im=Image.new('RGBA',(4,2));im.putdata(COLORS);im.save(CONTENT/'car_trailer_palette.png')
     for name in (TOW_CARS if cls=='dinky' else []):   # hitches live on the CARS; emit them once
         h=Model(); rr=rear[name];hy=rr['y'];hz=rr['rear']+d['hitch_projection']
@@ -182,6 +190,7 @@ def generate(cls='small', specs=None, rear=None):
     def box(lo,hi):boxes.append((tuple(hi[i]-lo[i] for i in range(3)),tuple((hi[i]+lo[i])/2 for i in range(3))))
     box((-w,y,f),(-w+wt,y+wh,b));box((w-wt,y,f),(w,y+wh,b))                 # sideboards, truck-bed section
     box((-w+wt,y,f),(w-wt,y+wh,f+wt));box((-w+wt,y,b-wt),(w-wt,y+wh,b))     # headboard and tailgate
+    if d['roof_top'] is not None: box((-w,y+wh-wt/2,f),(w,y+wh+wt/2,b))   # the roof is solid too
     box((-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t))
     # Oriented drawbar collider boxes follow the two diagonal beams exactly in plan.
     hulls=[]
