@@ -94,7 +94,7 @@ One small system extension is necessary for this shape: `Spec.HitchYawLimit`, de
 Spawn with the canonical vehicle name **`car_trailer`** wherever the existing vehicle command accepts `golf` or `wagon`. Added `BuildCarTrailer`, `BuildByName`, `SpecFor` (including the MP puppet path), and an **append at SpecNames TypeId 33**. Every old key and index from `1f7f106d` remains unchanged, including SUV at 32. It is command-only; the natural spawn pool is unchanged. The wagon verifier was updated to allow later appended vehicles while still comparing its entire original index prefix.
 
 - `dotnet build game/UnturnedGodot.csproj`: passed. Both the final build and a control build with the original `1f7f106d` Vehicle.cs (new test omitted) reported **22 identical pre-existing warnings, zero errors**. Warning messages were compared as sets; there are no new warnings.
-- `python3 tools/verify_car_trailer.py --mutation-test`: **52 named checks, 206 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
+- `python3 tools/verify_car_trailer.py --mutation-test`: **53 named checks, 209 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
 - `python3 tools/verify_wagon.py`: passed, retaining the original 32 pre-wagon TypeIds and wagon TypeId 32.
 - Godot 4.6 `--headless --path game -- --tests=vehicle.car_trailer`: **46 checks passed** in the construction/coupling fixture: actual server/replica mesh loading, canonical identity, two passive wheels, all eight hitch Parts, attach/detach and PinJoint presence, coincident anchors, retracted/redeployed support, and imported yaw limit. Headless was used for this fixture only, not for the renders.
 
@@ -259,3 +259,28 @@ wheels from the literal `'quad_wheel.txt'` rather than from the spec, so the fir
 change came back showing the old .450 wheel and looked exactly like a change that had not landed. It
 reads `d['wheel_mesh']` now. Verified by measuring the staged mesh rather than by eye: the vertices at
 the trailer's axle span 1.1826 in Y, which is the jeep wheel's height, not the quad's .8869.
+
+## Fifth pass: ride height and lamp spacing, both off fleet constants
+
+strawberry: *"move the wheels higher up on the trailer. bring the tail lights closer together"*.
+
+**Ride.** Measured across golf, sedan, hatchback, jeep, truck and van: every one rests its wheel centre
+**.2734 above the body's lowest point**, without exception. The trailer's sat at **.0000** -- centre
+exactly level with the deck's underside, which is what made it read as a box on stilts. Raising the
+wheel and lowering the body are the same edit and the body is the half that can move, since the tyres
+have to keep meeting the ground: `deck_y` is `wall_t - ride` = -0.0234, down from .2500.
+
+**Lamp spacing, and it was a defect rather than a preference.** The sedan insets its lenses **.1476**
+from its body side. Transplanted unchanged onto a 2.100 deck they reached |X| 1.1135 against a 1.050
+side -- **hanging 63.5 mm out past the trailer**. They now sit at the sedan's own inset, |X| 0.9024.
+
+Two details that only showed up on measurement. The sedan's lens pair is **not symmetric** -- max |X|
+is 1.113476 on the left and 1.113453 on the right, 23 um apart -- so one shared offset lands the two
+lenses at different insets; each side is solved to the same target instead. And the verifier now pins
+the **outcome** (both lenses inset by the sedan's figure, each lens rigid within itself) rather than
+requiring the two shifts to be exactly mirrored, which that asymmetry makes impossible.
+
+**Both new checks were toothless on the first try**, and the mutation audit caught both surviving: each
+compared numbers `expected()` had derived itself, so no file mutation could fail them. They read the
+mesh and the spec now -- the deck group's underside against the spec's wheel anchor, and the lamp
+vertices against the sedan's.

@@ -107,7 +107,12 @@ def expected():
     W=track-tw-2*t
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
-                    ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,dy=g['Wheels'][0][1],tw=tw,
+                    ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
+                    # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
+                    dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
+                    ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
+                    # the sedan's own lamp inset from its body side -- re-measured here, not imported
+                    lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                     wall_t=wall_t,wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w)
 
 def source_names(src):
@@ -195,6 +200,18 @@ def cases():
         require(close(hi[1],dy+d['wall_h']),'sideboard top is not the truck bed wall height')
         require(close(hi[0]-lo[0],d['wall_t']),'sideboard is not the truck bed wall thickness')
         require(close(hi[0],W/2))
+    def ride():
+        """Off the MESH and the SPEC, not off expected()'s own arithmetic -- the first version of this
+        compared two numbers I had derived, so no file mutation could fail it and the audit caught it
+        surviving. Fleet constant: golf, sedan, hatchback, jeep, truck and van all rest their wheel
+        centre .2734 above the body's lowest point. The trailer's sat at .0000, wheel centre exactly
+        level with the deck underside, which is what made it read as a box on stilts."""
+        anchor=float(re.search(r'\(-?[\d.]+f, ([-\d.]+)f,',fields('car_trailer')['Wheels']).group(1))
+        require(close(anchor-.25-group_bounds('deck')[0][1], d['ride']),
+                f'wheel rest {anchor-.25:.4f} sits {anchor-.25-group_bounds("deck")[0][1]:.4f} above the deck underside, fleet is {d["ride"]:.4f}')
+    add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
+        (BODY,move_group('deck',(0,.3,0)),'lift the body off its wheels'),
+        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.900000f, 0.313712f, false), (1.300000f, 0.900000f, 0.313712f, false) }'))
     add('sideboard section = the truck bed wall, measured',sideboard,
         (BODY,move_group('side_1',(0,.1,0)),'raise sideboard'),(BODY,move_group('side_1',(.1,0,0)),'thin sideboard'))
     add('trailer wall section equals the truck bed, derived two ways',
@@ -298,16 +315,30 @@ def cases():
         size would pass a bounds check and fail this."""
         src=obj(CONTENT/'sedan_taillights.txt'); dst=obj(LAMPS)
         require(len(src['vertices'])==len(dst['vertices']) and len(src['faces'])==len(dst['faces']),'lamp mesh is not the sedan mesh')
-        deltas={tuple(round(b[i]-a[i],6) for i in range(3)) for a,b in zip(src['vertices'],dst['vertices'])}
-        require(len(deltas)==1,f'lamps are not a rigid translation of the sedan: {len(deltas)} distinct offsets')
-        dx,dy_,dz=deltas.pop()
-        require(dx==0,'lamp transplant moved in X; the sedan spacing is what makes it fit')
+        # RIGID PER LENS, and the OUTCOME is what gets pinned rather than the two shifts being exactly
+        # mirrored -- the sedan's own pair is 23 um asymmetric (max |X| 1.113476 left, 1.113453 right),
+        # so solving each side to the same inset gives shifts that are equal and opposite only to that
+        # tolerance. On a 2.100 deck the sedan's +/-1.1135 hung 63.5 mm out past the sides, so the
+        # spacing had to move; the lens SHAPE does not.
+        sides={}
+        for a,b in zip(src['vertices'],dst['vertices']):
+            sides.setdefault(a[0]>0,set()).add(tuple(round(b[i]-a[i],6) for i in range(3)))
+        require(set(sides)=={True,False},'lamps are not two lenses')
+        require(all(len(v)==1 for v in sides.values()),'a lens is not rigid: its vertices moved by different offsets')
+        (rx,ry,rz),(lx,ly,lz)=sides[True].pop(),sides[False].pop()
+        require(rx<0<lx,'lenses did not move toward each other')
+        require(close(ry,ly) and close(rz,lz),'the two lenses moved differently in Y or Z')
+        want=W/2-d['lamp_inset']
+        require(close(max(v[0] for v in dst['vertices']),want) and close(min(v[0] for v in dst['vertices']),-want),
+                f'lenses are not inset {d["lamp_inset"]:.4f} from each trailer side the way the sedan insets its own')
+        dy_,dz=ry,rz
         body=obj(CONTENT/'sedan_body.txt'); rear=src['hi'][2]
         proud=rear-max(v[2] for v in body['vertices'] if 1.5 < v[2] <= rear+1e-6)
         require(close(max(v[2] for v in dst['vertices']),L/2+proud),
                 f'lens should stand {proud:.4f} m proud of the tailgate, the way it does on the sedan')
     add('tail lamps are the sedan mesh, translated',transplant,
-        (LAMPS,lambda x:x.replace('v -1.113','v -1.000',1),'reshape a lens'))
+        (LAMPS,lambda x:re.sub(r'^v (-?[\d.]+)', lambda m:'v '+('%.9f'%(float(m.group(1))*0.9)), x, count=1, flags=re.M),'reshape a lens'),
+        (LAMPS,lambda x:re.sub(r'^v (-?[\d.]+)', lambda m:'v '+('%.9f'%(float(m.group(1))+0.05)), x, count=1, flags=re.M),'shift one vertex of a lens'))
     add('tail lamps and palette load through Parts',lambda:require('"car_trailer_taillights.txt"' in fields('car_trailer')['Parts'] and fields('car_trailer')['Palette']=='"car_trailer_palette.png"' and close(vectors(fields('car_trailer')['TailPos']),lenses())),
         (VEH,lambda x:x.replace('"car_trailer_taillights.txt"','"missing.txt"',1),'remove lamp part'),fieldmut('Palette','"missing.png"'),
         fieldmut('TailPos','null'),fieldmut('TailPos','new[] { Vector3.Zero, Vector3.Zero }'))

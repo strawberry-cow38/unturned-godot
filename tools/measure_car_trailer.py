@@ -115,12 +115,20 @@ def design(specs, rear):
     ground = rear['golf']['ground']
     wheel_y = ground+radius+.25
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
-    deck_y = golf['Wheels'][0][1]
+    # WHEELS SIT HIGHER ON THE BODY, at the fleet's own relationship (strawberry: "move the wheels
+    # higher up on the trailer"). Measured: golf, sedan, hatchback, jeep, truck and van ALL rest their
+    # wheel centre .2734 above the body's lowest point. The trailer's sat at .0000 -- centre exactly
+    # level with the deck's underside, which is what made it look like a box on stilts. Raising the
+    # wheel and lowering the body are the same edit, and the body is the one that can move: the tyres
+    # have to keep meeting the ground.
+    ride = (golf['Wheels'][0][1]-.25) - obj(CONTENT/golf['fields']['Body'].strip('"'))['lo'][1]
+    deck_y = wall_t-ride
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
-                hitch_projection=hitch_projection, mass=quad['Mass'],
+                hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
+                lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                 wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)
 
 def write():
