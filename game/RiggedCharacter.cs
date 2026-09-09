@@ -206,7 +206,7 @@ namespace UnturnedGodot
         public static float FirstPersonClip =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _fpc) && _fpc >= 0f ? _fpc : 0.7f;   // UG_FPCLIP tunes it without a rebuild
+                           out float _fpc) && _fpc >= 0f ? _fpc : 0f;   // OFF by default: moving the body back replaced it (UG_FPCLIP re-enables)
 
         void ApplyFirstPersonTrim()
         {

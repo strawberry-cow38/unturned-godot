@@ -4241,6 +4241,13 @@ namespace UnturnedGodot
         /// FootSurfaceUnderFeet because that one also feeds Vehicle's grip, which must not hear about puddles.</summary>
         Surf FootAudioSurface() => GameAudio.PuddleAudio(this, GlobalPosition, FootSurfaceUnderFeet());
 
+        /// <summary>How far behind the eye the 1P body stands, metres. Enough to put the head and chest behind the
+        /// camera; the legs stay in view when you look down. UG_FPBACK tunes it without a rebuild.</summary>
+        public static float FirstPersonBodyBack =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPBACK"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _fpb) && _fpb >= 0f ? _fpb : 0.42f;
+
         /// <summary>The shared footstep/landing surface probe: water when wading, else the terrain splatmap or a
         /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
         /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
@@ -8619,7 +8626,20 @@ namespace UnturnedGodot
             }
             else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed
             {
-                _body.GlobalPosition = GlobalPosition;
+                // STAND THE BODY BEHIND THE EYE IN 1P (strawberry 2026-09-09: "then move the model back so you
+                // arent looking inside it"). The camera sits at the player's origin, which is the middle of the
+                // chest -- so the eye is INSIDE the torso and any amount of it that is drawn is drawn from within.
+                // Sliding the body back along its own facing puts the head and chest behind the camera, and the
+                // legs still hang where you look when you look down.
+                //
+                // Better than the fragment clip it replaces: a discard does not CAP geometry, so cutting the body
+                // open left you looking into the hollow of the hips. Moving it leaves the mesh whole.
+                // + basis.Z, not -: Godot's forward is -Z, so the Z column IS the backward axis. Subtracting it
+                // walks the body FORWARD into the camera, which is the opposite of the fix and looks identical to
+                // having done nothing at all except worse.
+                _body.GlobalPosition = _fp
+                    ? GlobalPosition + new Basis(Vector3.Up, Rotation.Y).Z * FirstPersonBodyBack
+                    : GlobalPosition;
                 _body.Rotation = new Vector3(0f, Rotation.Y, 0f);   // yaw only -- the LEAN goes on the spine, not here
                 // The character leans too, or the muzzle every 3P effect is sourced from stays bolt upright while the
                 // camera tilts away from it. Fed the same smoothed angle the camera rides, so body and view agree.
