@@ -32,7 +32,15 @@ namespace UnturnedGodot
             _            => ("pei_map.png",        1920f, "PEI"),
         };
 
-        public const int MapLayer = 90;                  // under the F1 console (100), above the inventory family (11)
+        // THE SAME LAYER AS ITS SIBLING TABS, so the vitals sit over it exactly as they sit over the bag
+        // (strawberry 2026-09-08: "cant see vitals on map"). It was 90, above the inventory family and above the
+        // vitals' own layer 12 -- and this screen's backdrop is the opaque frosted blur, so it painted straight
+        // over the bars. The four dashboard tabs are mutually exclusive (ShowMenu closes the other three), so
+        // there was never anything for 90 to be above; the tab hand-off it was protecting is handled by DuckLayer
+        // below instead. Raising the VITALS over 90 would have been the other fix and is worse: it would also put
+        // them over the pause menu at 60, which does not hide the HUD.
+        public const int MapLayer = 11;                  // the inventory/craft/skills family; the vitals (12) draw over all four
+        const int DuckLayer = 9;                         // ...and under the HUD (10) while a close fades out
         public const float ZoomMin = 1f, ZoomMax = 8f;   // 1 = the whole island fits the panel
         const float RosterMinW = 540f;                   // NAME + POSITION + DISTANCE and their gutters: the map never squeezes below this
         const float RosterRowH = 30f;                    // the crafting category row / skills row height
@@ -49,6 +57,7 @@ namespace UnturnedGodot
         Panel _panel;          // the screen frame, matching the inventory/crafting panel
         Panel _playersPanel;
         Panel _rosterHead;
+        ScrollContainer _rosterScroll;
         readonly System.Collections.Generic.List<(Label pos, Label dist)> _rosterCells = new();
         static Color RosterRowC => new(0.22f, 0.22f, 0.23f, 0.98f);   // CraftingMenu's TileC, the same row face the skills page uses
         VBoxContainer _playersList;
@@ -80,7 +89,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
-            Layer = MapLayer;   // under the F1 console (100)
+            Layer = MapLayer;   // under the vitals (12), the F1 console (100) and the note reader (91)
             _root = new Control { Visible = false, MouseFilter = Control.MouseFilterEnum.Stop };   // eat clicks so the map doesn't shoot the gun underneath
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             AddChild(_root);
@@ -212,7 +221,7 @@ namespace UnturnedGodot
             hh.AddChild(UITheme.Label(new Label { Text = "POSITION", VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterPosW, 0) }, UITheme.FontSmall, UITheme.TextDim));
             hh.AddChild(UITheme.Label(new Label { Text = "DISTANCE", VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, CustomMinimumSize = new Vector2(RosterDistW, 0) }, UITheme.FontSmall, UITheme.TextDim));
 
-            var scroll = new ScrollContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Name = "RosterScroll" };
+            var scroll = _rosterScroll = new ScrollContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Name = "RosterScroll" };
             scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
             scroll.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             scroll.OffsetLeft = 8; scroll.OffsetTop = 36f + RosterRowH + 4f; scroll.OffsetRight = -8; scroll.OffsetBottom = -8;
@@ -267,6 +276,15 @@ namespace UnturnedGodot
             _playersPanel.Position = new Vector2(M + M, top);
             _playersPanel.Size = new Vector2(Mathf.Max(160f, mapX - Gutter - (M + M)), Mathf.Max(120f, contentBottom - top));
             if (_rosterHead != null) _rosterHead.Size = new Vector2(Mathf.Max(120f, _playersPanel.Size.X - 16f), RosterRowH);
+            // The PANEL still fills the page -- master asked for that and asked for this screen to be left out of
+            // the vitals reflow. The LIST inside it stops at the bars anyway, because now that they draw over this
+            // screen a row behind the health bar is unreadable, and "not covered" cuts both ways.
+            if (_rosterScroll != null)
+            {
+                float panelBottom = _playersPanel.Position.Y + _playersPanel.Size.Y;
+                float listBottom = HUD.ContentBottom(vp, _playersPanel.Position.X, _playersPanel.Position.X + _playersPanel.Size.X, panelBottom);
+                _rosterScroll.OffsetBottom = -Mathf.Max(8f, panelBottom - listBottom + 8f);
+            }
             ApplyView();
         }
 
@@ -521,7 +539,7 @@ namespace UnturnedGodot
             // same frame, and the map lives on layer 90 against their 11 -- so for the length of the swoop its
             // full-screen frosted backdrop would sit ON TOP of the screen you just asked for. Dropping below them
             // for those few frames makes the hand-off read as a cross-fade instead of a flash of the old screen.
-            Layer = MapLayer - 81;
+            Layer = DuckLayer;
             if (_swoop == null || !_swoop.Out()) { _root.Visible = false; if (captureMouse) Input.MouseMode = Input.MouseModeEnum.Captured; }
         }
 
