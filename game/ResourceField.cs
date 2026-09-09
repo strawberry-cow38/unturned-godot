@@ -780,7 +780,32 @@ namespace UnturnedGodot
             // all this -- known, and preferred to either of the above. Fix that by moving the DEBRIS, not the
             // pivot: anything that shifts where the trunk swings about is the thing that looked wrong.
             Vector3 p = _toppleBase.Origin;                          // pivot about the stump/base, in WORLD space
-            _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
+            // ...AND IT RIDES UP OVER THE STUMP AS IT GOES (strawberry 2026-09-09: "it sinks into the ground when
+            // it falls"). The pivot is the tree's BASE, and every tree is planted TreeSink into the ground, so the
+            // rotation centre is half a metre BELOW the surface: everything near it sweeps under the ground on the
+            // way over, and at horizontal the trunk's axis ends up buried. Measured, the butt goes under at about
+            // 72 degrees and stays there.
+            //
+            // The fix is a TRANSLATION, not another pivot. The rotation centre is still _toppleBase.Origin -- three
+            // versions of this animation have now been rejected for moving what it swings about, and this does not.
+            // The debris just rises as it leans, weighted so it is exactly zero while the tree is upright (no pop at
+            // the moment of felling) and full once it is down.
+            //
+            // sin CUBED, not sin. Plain sin has the trunk a third of the way up by 30 degrees, which opens daylight
+            // between the butt and the cut while the tree still visibly looks attached to it -- and a gap at the
+            // stump is the complaint that started this whole animation (b8a24e68). Cubing holds the lift near zero
+            // through the first half and puts it in the last stretch, where the trunk is coming off the stump
+            // anyway. Checked across the whole sweep: the butt's UNDERSIDE clears the ground at every lean
+            // (+0.22 at 30 degrees, +0.31 at 60, resting at 90), so it still never digs in.
+            //
+            // The amount is what it takes to put the trunk ON the ground rather than through it: the sink, to undo
+            // the planting, plus the trunk's own radius, to stand the log on its side instead of on its axis. Both
+            // are the numbers already in use -- TreeSink, and the same per-species TrunkRadius the trunk collider
+            // and the stump are built from -- so the log cannot come to rest disagreeing with its own hitbox.
+            float _liftSn = Mathf.Sin(Mathf.DegToRad(deg));
+            float lift = (ResourceField.TreeSink * Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y)
+                        + TrunkRadius * Mathf.Max(0.01f, _toppleBase.Basis.Scale.X)) * _liftSn * _liftSn * _liftSn;
+            _debris.GlobalTransform = new Transform3D(rot, p - rot * p + Vector3.Up * lift) * _toppleBase;
         }
 
         // LEAVES REACT TO THE FALL (strawberry 2026-09-09: "have the leaves react to falling via the wind shader.
