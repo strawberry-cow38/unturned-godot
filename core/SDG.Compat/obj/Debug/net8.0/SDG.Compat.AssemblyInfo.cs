@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SDG.Compat")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f8491b3be32dca20a3ac4e3bdc6845a92d824acc")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9b28be20fd4ef92811faffd9d1a9add13020246c")]
 [assembly: System.Reflection.AssemblyProductAttribute("SDG.Compat")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SDG.Compat")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
