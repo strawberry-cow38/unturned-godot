@@ -2279,6 +2279,11 @@ namespace UnturnedGodot
         // moment they are in the hands and LMB cycles the level. No viewmodel to see: the lenses fill the screen.
         ItemAsset _heldOptic; SDG.Unturned.Item _heldOpticItem; BinocularsView _bino; int _opticZoomIdx; bool _opticForceRaise, _opticLensesDone; float _opticBaseFov = 75f; int _opticDbgT;
         const float OpticEyeX = 0.0791f, OpticEyeY = -0.259f, OpticLensR = 0.0372f;   // the 333 model's eyepiece rings (measured; barrels along +Y)
+        /// <summary>How far the pip discs sit INSIDE the eyepieces (strawberry 2026-09-09: "move the 'lens'
+        /// viewports further into the binoculars"). Positive is up the barrel, away from the eye, because the
+        /// eyepieces face -Y. They used to sit at -0.008, a hair OUTSIDE the end face, which reads as a picture
+        /// stuck on the back of the pair rather than glass down a tube.</summary>
+        const float OpticLensInset = 0.030f;
         static readonly float[] OpticZoomLevels = { 4f, 8f, 12f };
         public bool HoldingOptic => _heldOptic != null;
         public float OpticZoom => _bino?.Zoom ?? 1f;
@@ -2296,7 +2301,7 @@ namespace UnturnedGodot
                 lens.SetShaderParameter("debug", System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1");
                 bool ok = true;
                 foreach (float sx in new[] { -OpticEyeX, OpticEyeX })
-                    ok &= _viewmodel.AddHeldLens(lens, new Vector3(sx, OpticEyeY - 0.008f, 0f), new Vector3(90f, 0f, 0f), OpticLensR * 1.05f);   // a hair outside the end face, facing -Y (the eye)
+                    ok &= _viewmodel.AddHeldLens(lens, new Vector3(sx, OpticEyeY + OpticLensInset, 0f), new Vector3(90f, 0f, 0f), OpticLensR * 1.05f);   // sunk up the barrel, still facing -Y (the eye)
                 _opticLensesDone = ok;
                 if (ok) GD.Print("[optic] PiP lenses on the carried pair");
             }
@@ -2320,7 +2325,7 @@ namespace UnturnedGodot
                                          HoldPos = new Vector3(0f, 0.44f, -0.14f), HoldRoll = new Vector3(0f, 0f, -90f), HoldScale = 1f };   // LOWERED: carried at the chest, EYEPIECES to you (the +90 roll showed the objectives -- the lens debug put the eyepiece discs 27 cm behind the pair), barrels forward
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            _bino = new BinocularsView { Zoom = OpticZoomLevels[0], Raised = false };   // RAISED only while RMB is held (UpdateOptic)
+            _bino = new BinocularsView { Zoom = OpticZoomLevels[0], Raised = false, Vm = _viewmodel };   // RAISED only while RMB is held (UpdateOptic); Vm so the CARRIED pip looks down the barrels rather than down your eyeline
             AddChild(_bino);
             _opticForceRaise = System.Environment.GetEnvironmentVariable("UG_ADS") == "1";   // harness: hold them up for a render
             GD.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");

@@ -83,12 +83,41 @@ namespace UnturnedGodot
             (_overlay?.Material as ShaderMaterial)?.SetShaderParameter("screen_aspect", win.X / Mathf.Max(1f, win.Y));   // keeps the retail overlay's holes round on non-16:9 screens
         }
 
+        /// <summary>The viewmodel holding the pair, if any. When set, the CARRIED pip looks down the barrels.</summary>
+        public Viewmodel Vm;
+
+        /// <summary>How far in front of the objective end the pip camera sits, metres. Far enough that the pair's
+        /// own geometry is behind the near plane rather than filling its own lenses.</summary>
+        public const float ObjectiveAhead = 0.12f;
+
         public override void _Process(double delta)
         {
             if (_raised) return;
             var main = GetViewport()?.GetCamera3D();
             if (main == null) return;
-            _cam.GlobalTransform = main.GlobalTransform;
+
+            // CARRIED: the discs show what the BINOCULARS are pointed at, not what you are (strawberry 2026-09-09:
+            // "change binocular pip 'camera' when held ... to be in front of the binocular viewmodel and follow
+            // it instead of being from center screen"). Lowered, the pair sits across your chest at its own angle,
+            // so a pip rendered from the eyeline showed two little discs of exactly the view already behind them.
+            //
+            // The mapping is exact rather than approximate: the arms viewport's camera is at the origin with an
+            // identity basis, so its world space IS camera space, and mainCam.GlobalTransform composes the held
+            // pose straight into the world.
+            //
+            // +Y IS THE LOOKING DIRECTION, derived from the same convention the lenses are placed on rather than
+            // guessed: PlayerController puts the eyepiece discs at -Y "facing -Y (the eye)", so the objectives
+            // point +Y. Rx(+90) takes a camera's -Z onto +Y, which is the basis below.
+            var pose = Vm?.HeldModelViewPose;
+            if (pose.HasValue)
+            {
+                var view = pose.Value;
+                var camBasis = view.Basis * new Basis(Vector3.Right, Mathf.Pi * 0.5f);
+                var camPos = view.Origin + view.Basis.Y.Normalized() * ObjectiveAhead;
+                _cam.GlobalTransform = main.GlobalTransform * new Transform3D(camBasis, camPos);
+            }
+            else _cam.GlobalTransform = main.GlobalTransform;   // nothing held (harness paths): the old eyeline behaviour
+
             _cam.Fov = main.Fov / Mathf.Max(1f, Zoom);
             _cam.Near = main.Near; _cam.Far = main.Far; _cam.CullMask = main.CullMask;
         }

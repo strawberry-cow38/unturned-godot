@@ -1459,6 +1459,13 @@ namespace UnturnedGodot
         public string ShownDebug => $"layer={( _layer == null ? "null" : _layer.Visible.ToString())} layerN={_layer?.Layer} rectVis={_vpRect?.IsVisibleInTree()} rectParent={_vpRect?.GetParent()?.Name}";
         /// <summary>A lens disc on the CARRIED model (binoculars: one per eyepiece, mesh-local placement) drawing `mat` -- the
         /// magnified-world disc of content/binoculars.gdshader. False until the held model exists (call again next tick).</summary>
+        /// <summary>The held model's pose in VIEW space, or null when nothing is held. The arms live in their own
+        /// SubViewport whose camera sits at the ORIGIN with an identity basis, so that viewport's world axes ARE
+        /// the main camera's axes -- which makes this directly composable: mainCam.GlobalTransform * this pose
+        /// puts the held object where it appears to be in the real world. Exposed for the binocular PiP, which
+        /// has to point its camera down the barrels rather than down the player's eyeline.</summary>
+        public Transform3D? HeldModelViewPose => _gun != null && Godot.GodotObject.IsInstanceValid(_gun) ? _gun.GlobalTransform : null;
+
         public bool AddHeldLens(Material mat, Vector3 localPos, Vector3 localRotDeg, float radius)
         {
             if (_gun == null || !Godot.GodotObject.IsInstanceValid(_gun)) return false;
