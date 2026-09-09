@@ -15,13 +15,31 @@ uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
 uniform bool use_alpha = true;
 uniform float sway : hint_range(0.0, 0.4) = 0.05;   // metres of lateral sway per metre of height at full wind
 
+// A FELLED TREE'S OWN CANOPY (master 2026-09-09: "have the leaves react to falling via the wind shader. and a react
+// on impact"). Per-material, not global: only the tree that is actually coming down moves. `gust_dir` is a world
+// -space push whose LENGTH is metres of offset per metre of local height, which ResourceField aims against the
+// canopy's own travel while the trunk swings; `shake` is the landing shudder, spiked on impact and decayed CPU-side
+// so the whole animation stays deterministic. A standing tree leaves both at zero and renders exactly as before.
+uniform vec3 gust_dir = vec3(0.0);
+uniform float shake : hint_range(0.0, 1.0) = 0.0;
+const float SHAKE_AMP = 0.018;   // metres of shudder per metre of local height at shake = 1
+
 void vertex() {
     float h = max(VERTEX.y, 0.0);                            // LOCAL height above the base -> the canopy top sways most
     vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;        // world pos so the gust travels coherently across the map
     float gust = sin(wind_vec.w * 1.3 + wp.x * 0.16 + wp.z * 0.14);
     float amp = h * sway * (0.4 + wind_vec.z) * (0.7 + 0.3 * gust);
     // Bend in the WORLD wind direction: build the world offset, rotate it into local (the instance may be Y-rotated).
-    vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp;
+    vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp + gust_dir * h;
+    if (shake > 0.0) {
+        // Leaf-BY-LEAF, so the canopy shudders instead of sliding about as one block. Layered sines off the vertex
+        // position rather than fract(sin(dot(...))): this is twenty metres of geometry and that hash bands visibly
+        // at this scale (the same reason the water shader dropped it).
+        vec3 j = vec3(sin(VERTEX.x * 3.7 + VERTEX.y * 2.3),
+                      sin(VERTEX.z * 4.1 - VERTEX.y * 1.9),
+                      cos(VERTEX.x * 2.9 + VERTEX.z * 3.3));
+        world_off += j * (shake * h * SHAKE_AMP);
+    }
     VERTEX += inverse(mat3(MODEL_MATRIX)) * world_off;
 }
 
