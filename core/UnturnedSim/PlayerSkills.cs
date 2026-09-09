@@ -85,6 +85,17 @@ namespace SDG.Unturned
         // wire -- a client-side replica writes it through here, never through AwardExperience/TryUpgrade.
         public void NetSetExperience(uint xp) { _experience = xp; }
 
+        /// <summary>Spend from the pool without levelling one of the grid skills. The skill TREE buys nodes out of
+        /// the same experience, and TryUpgrade cannot serve it: that one is bound to a (speciality, index) and to
+        /// the per-level cost curve, neither of which a tree node has. Returns false and spends nothing if the
+        /// pool will not cover it, so the caller can never end up half-charged.</summary>
+        public bool TrySpend(uint xp)
+        {
+            if (_experience < xp) return false;
+            _experience -= xp;
+            return true;
+        }
+
         // Source GetSharpshooterRecoilMultiplier: recoil + spread scale by 1 - mastery*0.4 (up to 40% less at max SHARPSHOOTER lvl 7).
         public float SharpshooterRecoilMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.SHARPSHOOTER).Mastery * 0.4f;
 

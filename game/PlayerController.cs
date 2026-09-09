@@ -253,6 +253,11 @@ namespace UnturnedGodot
         HarborCrane _ridingCrane;   // a boarded harbor crane (custom vehicle, same parallel ride path as the train)
         bool _jogWPrev, _jogSPrev;   // Ctrl+W/S edge-detect: jog the train exactly one carriage
         bool _craneMagPrev;   // Shift edge-detect: energise/de-energise the hoist magnet
+        /// <summary>Which skill-TREE nodes this player has taken. Lives on the player rather than on the menu so
+        /// gameplay can ask "do they have wiring?" without the skills screen having to exist -- the menu is a view
+        /// of this, not the owner of it. (Not saved yet; the save only ever needs the id set.)</summary>
+        public readonly SkillProgress SkillTree = new();
+
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;
         float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")

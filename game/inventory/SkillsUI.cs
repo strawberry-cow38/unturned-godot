@@ -3,64 +3,65 @@ using SDG.Unturned;
 
 namespace UnturnedGodot
 {
-    // The skills menu: the 3 specialities x their skills, each showing level/max + an Upgrade button that spends the
-    // player's XP pool (PlayerSkills.TryUpgrade at the source cost). Toggled by a keybind (PlayerController).
-    // Source surface = PlayerDashboardSkillsUI.
+    // THE SKILLS SCREEN IS A TREE (strawberry 2026-09-09: "convert the skills menu into a skills tree. at the top
+    // we have our 'pillars'. main skills ... under those are separate nodes that advance. new recipes, character
+    // buffs, etc. there are then 'sub pillars' which are advanced skills. engineering, etc. which unlock their own
+    // nodes. some nodes may unlock multiple things, some nodes may require multiple things to unlock.").
     //
-    // LAID OUT OFF CraftingMenu.Layout, MEASURED RATHER THAN EYEBALLED (strawberry 2026-09-08: "fix the formatting
-    // of the skills page and information page to more closely match the style of the inv and crafting menus.
-    // actual measured detail"). Every number below is that file's:
-    //   M = 16            outer margin on all four edges
-    //   panel             = viewport - 2M, Box(UITheme.Bg, RadiusPanel=6)
-    //   header            (16, MenuNavbar.Height + 8), size (pw-32, 24), FontBody in TextDim
-    //   content top       MenuNavbar.Height + 40
-    //   Gutter = 16       crafting's gap between its columns (gridX = M + catW + 16)
-    //   RowH = HeadH = 30 crafting's category-row height, separation 2
-    // This screen was the odd one out on every one of them: a fixed 640x680 box floating in the middle of a
-    // full-screen backdrop, header 24 px in the default white at (20, 14) INSIDE that box, rows built from
-    // unstyled Labels and Buttons -- Godot's default light chrome, which is the "one screen looks like a
-    // different app" effect arriving from controls nobody remembered to style.
+    // The graph, the placeholder content and the unlock rules live in SkillTree.cs; this file is only the view.
+    // Two consequences of that split worth keeping:
+    //   - the multi-prerequisite case is a GRAPH, not a tree. `improvised_armour` needs a node from Craft and one
+    //     from Might, and `field_surgery` reaches from Medicine into Craft, so a link is drawn per requirement and
+    //     may cross columns. Anything that assumes one parent per node will be wrong the first time it is used.
+    //   - an ADVANCED pillar (sub pillar) has no nodes you can reach until the node that opens it is taken; its
+    //     whole column renders dimmed with its opener named, rather than being hidden, so the player can see what
+    //     they are working towards.
     //
-    // THREE COLUMNS, ONE PER SPECIALITY. Fitting the panel is not the same as filling it: the first attempt kept
-    // the single flat list and just stretched it to the full-screen panel, which flung every "Up" button to the
-    // far screen edge with a metre of dead space between each label and its button -- worse than the fixed box it
-    // replaced. Crafting earns its width with STRUCTURE (categories | tile grid | detail pane), so this screen
-    // does the same with the structure it actually has: OFFENSE | DEFENSE | SUPPORT side by side. The leftover
-    // width inside a row goes to the level bar, which is why a wide row reads better here rather than worse.
+    // Kept from the list version this replaces: the panel/backdrop/swoop/navbar shell, the measured margins
+    // (M = 16, header at MenuNavbar.Height + 8, content at +40), and the rule that Accent is spent on exactly one
+    // number per screen -- here, as before, the XP you have to spend.
     public partial class SkillsUI : CanvasLayer
     {
         public PlayerController Player;
         public SDG.Unturned.PlayerSkills SkillsSource;   // optional direct skills (render harness); else Player.Skills
 
-        const float M = 16f, Gutter = 16f;   // CraftingMenu.Layout's outer margin and inter-column gap
-        const int RowH = 30, HeadH = 30;     // CraftingMenu's category-row height
-        const int RowGap = 3;                // its _catList separation is 2; a row carrying a level bar wants one more
-        const int NameW = 112;               // "Sharpshooter", the longest name, at FontBody
-        const int LvlW = 34;                 // "0/7"
-        const int BtnW = 96;                 // "120 XP"
-        const int PipH = 10, PipGap = 3;
-        const int XpW = 200;                 // the XP readout reserved out of the header line's right end
+        const float M = 16f;
+        // Sized for a full-screen chart, not a corner panel -- the same lesson the map furniture just taught.
+        const float NodeW = 244f, NodeH = 82f;       // a node box
+        const float ColGap = 48f, RowGap = 56f;      // between columns, between tiers
+        const float HeadH = 44f;                     // a pillar's own header box
+        const float BandGap = 72f;                   // the gap that separates the main band from the advanced band
+        const float DetailW = 380f;                  // the pane on the right
+        const float XpW = 200f;
 
-        Control _root;
-        Panel _panel;
-        Label _header, _xp;
-        readonly ScrollContainer[] _cols = new ScrollContainer[PlayerSkills.SPECIALITIES];
-        readonly VBoxContainer[] _colBox = new VBoxContainer[PlayerSkills.SPECIALITIES];
+        Control _root, _slide, _clip, _canvas;
+        Panel _panel, _detailBg;
+        Label _header, _xp, _detailTitle, _detailBlurb, _detailReq, _detailGrant, _detailWhy;
+        Button _takeBtn;
+        MenuSwoop _swoop;
+        MenuNavbar _navbar;
         bool _open;
         public bool IsOpen => _open;
-        Control _slide; MenuSwoop _swoop;   // swoop in/out (strawberry 2026-09-08)
 
-        static readonly string[] SpecNames = { "OFFENSE", "DEFENSE", "SUPPORT" };
-        static readonly string[][] SkillNames =
-        {
-            new[] { "Overkill", "Sharpshooter", "Dexterity", "Cardio", "Exercise", "Diving", "Parkour" },
-            new[] { "Sneakybeaky", "Vitality", "Immunity", "Toughness", "Strength", "Warmblooded", "Survival" },
-            new[] { "Healing", "Crafting", "Outdoors", "Cooking", "Fishing", "Agriculture", "Mechanic", "Engineer" },
-        };
+        readonly SkillTree _tree = SkillTree.Placeholder();
+        readonly SkillProgress _localProgress = new();   // harness/no-player fallback; the player owns the real one
+        SkillProgress Prog => Player?.SkillTree ?? _localProgress;
 
-        // Crafting's own row colours, so a skill row and a recipe tile are the same object at rest and selected.
-        static Color RowC => new(0.22f, 0.22f, 0.23f, 0.98f);              // CraftingMenu.TileC
-        static Color RowDone => new(0.15f, 0.15f, 0.16f, 0.96f);           // its "cannot craft" tile: a maxed skill is spent, not offered
+        string _selected;
+        Vector2 _pan;
+        bool _dragging;
+
+        // Node boxes and pillar heads, kept so Layout can place them and Refresh can recolour them.
+        readonly System.Collections.Generic.Dictionary<string, (Panel bg, Label title, Label cost, Button hit)> _nodeUi = new();
+        readonly System.Collections.Generic.Dictionary<string, (Panel bg, Label title)> _pillarUi = new();
+        readonly System.Collections.Generic.Dictionary<string, Vector2> _nodePos = new();   // canvas-space top-left
+        readonly System.Collections.Generic.Dictionary<string, Vector2> _pillarPos = new();
+
+        static Color NodeTaken => new(0.30f, 0.42f, 0.30f, 0.98f);
+        static Color NodeReady => new(0.24f, 0.28f, 0.34f, 0.98f);
+        static Color NodeLocked => new(0.16f, 0.16f, 0.17f, 0.94f);
+        static Color PillarC => new(0.20f, 0.26f, 0.33f, 0.98f);
+        static Color PillarShut => new(0.15f, 0.15f, 0.17f, 0.92f);
 
         public override void _Ready()
         {
@@ -70,55 +71,126 @@ namespace UnturnedGodot
             _root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.MouseFilter = Control.MouseFilterEnum.Stop;
             AddChild(_root);
-            var dim = new ColorRect();   // the same frosted-glass backdrop as the inventory/crafting screens (unified UI, master 2026-09-03)
+            var dim = new ColorRect();   // the same frosted-glass backdrop as the inventory/crafting screens
             dim.Material = new ShaderMaterial { Shader = new Shader { Code = InventoryUI.BACKDROP_BLUR } };
             dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             dim.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(dim);
-            // The swoop's slider: a full-rect Control that owns NOTHING but an offset, so the animation cannot
-            // fight this screen's own Layout() (which sets the panel's position from the viewport size).
             _slide = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
             _slide.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _root.AddChild(_slide);
-            // MouseFilter.Ignore, and that is not tidiness (strawberry 2026-09-09: "the skills menu have a
-            // translucent overlay that eats clicks over the whole thing"). A Panel defaults to STOP, which was
-            // harmless while this was a 640x680 box floating in the middle and became a screen-sized input trap
-            // the moment I made it fill the viewport. The panel is chrome; its children still take their own
-            // clicks, and _root above already swallows anything that misses so nothing reaches the world.
+            // Ignore, not the Panel default STOP -- this is chrome, and a screen-sized panel that takes clicks is
+            // the "translucent overlay that eats clicks" bug all over again.
             _panel = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
-            UITheme.Panel(_panel);   // Box(Bg, RadiusPanel=6) -- identical to crafting's Box(_panel, UITheme.Bg, 6)
+            UITheme.Panel(_panel);
             _slide.AddChild(_panel);
             _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
-            // ...and the navbar is built AFTER the panel, like every other tab does it. Hit testing runs topmost
-            // first, so building it first put a full-screen panel over the tab strip -- the tabs were drawn, and
-            // dead. It only survived before because the old panel started below the bar.
-            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
 
-            // Header line: crafting's "CRAFTING . N shown . M craftable now", same font, same colour, same place.
             _header = UITheme.Label(new Label(), UITheme.FontBody, UITheme.TextDim);
             _panel.AddChild(_header);
-            // ...and the ONE accent on the screen. UITheme reserves Accent for "the single most important number
-            // on a screen", and on the skills page that is unambiguously the XP you have to spend.
             _xp = UITheme.Label(new Label { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center }, UITheme.FontHeading, UITheme.Accent);
             _panel.AddChild(_xp);
 
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-            {
-                var sc = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };   // crafting does the same on both of its lists
-                _panel.AddChild(sc);
-                var box = new VBoxContainer();
-                box.AddThemeConstantOverride("separation", RowGap);
-                sc.AddChild(box);
-                _cols[s] = sc; _colBox[s] = box;
-            }
+            // The tree scrolls by DRAG rather than by scrollbars: it is a graph with links crossing columns, so it
+            // is read by moving around it, and a pair of bars either side would cut the links at the edge.
+            _clip = new Control { ClipContents = true, MouseFilter = Control.MouseFilterEnum.Stop };
+            _panel.AddChild(_clip);
+            _clip.GuiInput += OnCanvasInput;
+            _canvas = new TreeCanvas { Owner2 = this, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _clip.AddChild(_canvas);
+
+            BuildGraphControls();
+            BuildDetail();
+
+            _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Skills, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });
 
             GetViewport().SizeChanged += Layout;
             Layout();
         }
 
-        /// <summary>The crafting screen's own numbers, so the two read as one UI. Called on resize rather than
-        /// every frame -- the panel used to be re-centred in _Process, which is a layout pass per frame for a
-        /// value that only changes when the window does.</summary>
+        void BuildGraphControls()
+        {
+            foreach (var p in _tree.Pillars)
+            {
+                var bg = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+                bg.AddThemeStyleboxOverride("panel", UITheme.Box(PillarC, UITheme.RadiusCell));
+                _canvas.AddChild(bg);
+                var t = UITheme.Label(new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore }, UITheme.FontHeading, UITheme.Text);
+                t.Text = p.Title;
+                _canvas.AddChild(t);
+                _pillarUi[p.Id] = (bg, t);
+            }
+            foreach (var n in _tree.Nodes)
+            {
+                var bg = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+                bg.AddThemeStyleboxOverride("panel", UITheme.Box(NodeLocked, UITheme.RadiusCell));
+                _canvas.AddChild(bg);
+                var title = UITheme.Label(new Label { HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore }, UITheme.FontHeading, UITheme.Text);
+                title.Text = n.Title;
+                _canvas.AddChild(title);
+                var cost = UITheme.Label(new Label { HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore }, UITheme.FontBody, UITheme.TextDim);
+                _canvas.AddChild(cost);
+                var hit = new Button { Flat = true, MouseFilter = Control.MouseFilterEnum.Stop, MouseDefaultCursorShape = Control.CursorShape.PointingHand };
+                string id = n.Id;
+                hit.Pressed += () => { _selected = id; RefreshDetail(); };
+                _canvas.AddChild(hit);
+                _nodeUi[n.Id] = (bg, title, cost, hit);
+            }
+        }
+
+        void BuildDetail()
+        {
+            _detailBg = new Panel { MouseFilter = Control.MouseFilterEnum.Ignore };
+            _detailBg.AddThemeStyleboxOverride("panel", UITheme.Box(new Color(0.13f, 0.13f, 0.14f, 0.96f), UITheme.RadiusCell));
+            _panel.AddChild(_detailBg);
+            _detailTitle = UITheme.Label(new Label(), UITheme.FontHeading, UITheme.Text);
+            _panel.AddChild(_detailTitle);
+            _detailBlurb = UITheme.Label(new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart }, UITheme.FontBody, UITheme.TextBody);
+            _panel.AddChild(_detailBlurb);
+            _detailReq = UITheme.Label(new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart }, UITheme.FontSmall, UITheme.TextDim);
+            _panel.AddChild(_detailReq);
+            _detailGrant = UITheme.Label(new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart }, UITheme.FontBody, UITheme.TextBody);
+            _panel.AddChild(_detailGrant);
+            _detailWhy = UITheme.Label(new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart }, UITheme.FontSmall, UITheme.TextDim);
+            _panel.AddChild(_detailWhy);
+            _takeBtn = new Button { Text = "Learn", MouseDefaultCursorShape = Control.CursorShape.PointingHand };
+            UITheme.Button(_takeBtn, true);
+            _takeBtn.Pressed += TakeSelected;
+            _panel.AddChild(_takeBtn);
+        }
+
+        /// <summary>Where every box sits in CANVAS space. Main pillars occupy the top band, advanced ones the band
+        /// below it, so "advanced" is a place on the screen and not just a flag -- and the link from the node that
+        /// opens a sub pillar crosses that gap, which is the thing worth being able to see.</summary>
+        void PlaceGraph()
+        {
+            _nodePos.Clear(); _pillarPos.Clear();
+            int mainTiers = 0, advTiers = 0;
+            foreach (var n in _tree.Nodes)
+            {
+                var p = _tree.PillarOf(n.Pillar);
+                if (p == null) continue;
+                if (p.Advanced) advTiers = Mathf.Max(advTiers, n.Tier + 1);
+                else mainTiers = Mathf.Max(mainTiers, n.Tier + 1);
+            }
+            float bandTop = HeadH + RowGap;                                   // first main tier
+            float advHeadY = bandTop + mainTiers * (NodeH + RowGap) + BandGap; // advanced pillar heads
+            float advTop = advHeadY + HeadH + RowGap;
+            foreach (var p in _tree.Pillars)
+            {
+                float x = p.Column * (NodeW + ColGap);
+                _pillarPos[p.Id] = new Vector2(x, p.Advanced ? advHeadY : 0f);
+            }
+            foreach (var n in _tree.Nodes)
+            {
+                var p = _tree.PillarOf(n.Pillar);
+                if (p == null) continue;
+                float x = p.Column * (NodeW + ColGap);
+                float y = (p.Advanced ? advTop : bandTop) + n.Tier * (NodeH + RowGap);
+                _nodePos[n.Id] = new Vector2(x, y);
+            }
+        }
+
         void Layout()
         {
             if (_panel == null || _root == null) return;
@@ -134,168 +206,224 @@ namespace UnturnedGodot
             _xp.Position = new Vector2(pw - 16f - XpW, barH + 4f);
             _xp.Size = new Vector2(XpW, 26f);
 
-            float colW = (pw - 2f * M - 2f * Gutter) / PlayerSkills.SPECIALITIES;
-            // KEEP OFF THE VITALS (strawberry 2026-09-08: "built around the vitals panel being visable and not
-            // covered"). Per column, not across the whole panel: the bars are the left fifth of the screen, so
-            // only the column that actually reaches them pays the 180 px -- reserving the band everywhere would
-            // shorten two columns to dodge something neither can touch. Screen coords, because the panel is
-            // inset by M and HUD.VitalsRect is measured off the viewport.
-            float colBottomPanel = ph - M;
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
+            // KEEP OFF THE VITALS, the same rule the list version followed: the bars are the bottom-left of the
+            // screen, and HUD.ContentBottom is measured in viewport coords, hence the +M / -M either side.
+            float bottom = HUD.ContentBottom(vp, M + 16f, M + pw - DetailW - 32f, M + ph - M) - M;
+            float treeW = Mathf.Max(200f, pw - DetailW - 48f);
+            _clip.Position = new Vector2(16f, top);
+            _clip.Size = new Vector2(treeW, Mathf.Max(140f, bottom - top));
+
+            PlaceGraph();
+            float cw = 0f, chh = 0f;
+            foreach (var kv in _nodePos) { cw = Mathf.Max(cw, kv.Value.X + NodeW); chh = Mathf.Max(chh, kv.Value.Y + NodeH); }
+            _canvas.Size = new Vector2(cw, chh);
+            // CENTRE a graph narrower than the space it is in. Three placeholder pillars do not fill a 2.5k panel,
+            // and a tree pinned to the left with a screen of nothing beside it reads as broken rather than sparse.
+            // Once the content grows past the panel this does nothing and the drag takes over.
+            if (cw < _clip.Size.X) _pan.X = (_clip.Size.X - cw) * 0.5f;
+            ClampPan();
+            _canvas.Position = _pan;
+            foreach (var p in _tree.Pillars)
             {
-                float x = M + s * (colW + Gutter);
-                float bottom = HUD.ContentBottom(vp, M + x, M + x + colW, M + colBottomPanel) - M;
-                _cols[s].Position = new Vector2(x, top);
-                _cols[s].Size = new Vector2(colW, Mathf.Max(120f, bottom - top));
-                _colBox[s].CustomMinimumSize = new Vector2(colW - 16f, 0f);   // crafting: _grid.CustomMinimumSize = gridW - 16
+                if (!_pillarPos.TryGetValue(p.Id, out var pos) || !_pillarUi.TryGetValue(p.Id, out var ui)) continue;
+                ui.bg.Position = pos; ui.bg.Size = new Vector2(NodeW, HeadH);
+                ui.title.Position = pos; ui.title.Size = new Vector2(NodeW, HeadH);
+            }
+            foreach (var n in _tree.Nodes)
+            {
+                if (!_nodePos.TryGetValue(n.Id, out var pos) || !_nodeUi.TryGetValue(n.Id, out var ui)) continue;
+                ui.bg.Position = pos; ui.bg.Size = new Vector2(NodeW, NodeH);
+                ui.title.Position = pos + new Vector2(0f, 14f); ui.title.Size = new Vector2(NodeW, 26f);
+                ui.cost.Position = pos + new Vector2(0f, 46f); ui.cost.Size = new Vector2(NodeW, 22f);
+                ui.hit.Position = pos; ui.hit.Size = new Vector2(NodeW, NodeH);
+            }
+            _canvas.QueueRedraw();
+
+            float dx = pw - DetailW - 16f;
+            _detailBg.Position = new Vector2(dx, top);
+            _detailBg.Size = new Vector2(DetailW, Mathf.Max(140f, bottom - top));
+            float ix = dx + 14f, iw = DetailW - 28f, y = top + 14f;
+            _detailTitle.Position = new Vector2(ix, y); _detailTitle.Size = new Vector2(iw, 24f); y += 30f;
+            _detailBlurb.Position = new Vector2(ix, y); _detailBlurb.Size = new Vector2(iw, 54f); y += 60f;
+            _detailGrant.Position = new Vector2(ix, y); _detailGrant.Size = new Vector2(iw, 96f); y += 102f;
+            _detailReq.Position = new Vector2(ix, y); _detailReq.Size = new Vector2(iw, 60f); y += 66f;
+            _detailWhy.Position = new Vector2(ix, y); _detailWhy.Size = new Vector2(iw, 36f); y += 44f;
+            // Under the text it belongs to, not pinned to the floor. The pane is as tall as the screen and the
+            // content is a few lines, so a bottom-anchored button sits alone with 500 px of nothing above it.
+            _takeBtn.Position = new Vector2(ix, y);
+            _takeBtn.Size = new Vector2(iw, 34f);
+        }
+
+        void ClampPan()
+        {
+            if (_clip == null) return;
+            // A graph SMALLER than the view is centred, not clamped to 0 -- clamping to [min,0] would drag it
+            // back to the left edge the moment anything called this.
+            float maxX = Mathf.Max(0f, _clip.Size.X - _canvas.Size.X);
+            float maxY = Mathf.Max(0f, _clip.Size.Y - _canvas.Size.Y);
+            float minX = Mathf.Min(0f, _clip.Size.X - _canvas.Size.X);
+            float minY = Mathf.Min(0f, _clip.Size.Y - _canvas.Size.Y);
+            _pan = new Vector2(Mathf.Clamp(_pan.X, minX, maxX), Mathf.Clamp(_pan.Y, minY, maxY));
+        }
+
+        void OnCanvasInput(InputEvent e)
+        {
+            if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left) _dragging = mb.Pressed;
+            else if (e is InputEventMouseMotion mm && _dragging)
+            {
+                _pan += mm.Relative;
+                ClampPan();
+                _canvas.Position = _pan;
             }
         }
 
+        /// <summary>Repaint when the numbers behind the screen move. The list version polled this for MP (the
+        /// server applies the upgrade and the levels change underneath you); the tree needs it for a plainer
+        /// reason too -- XP is awarded while the menu is open, and the harness's own grant lands a frame or two
+        /// AFTER Open() has already drawn. Dropping this in the rewrite is why the first render showed "0 XP" on
+        /// a player who had just been given 500.</summary>
         public override void _Process(double delta)
         {
-            // MP only: the upgrade is applied by the SERVER (the levels/XP change in the background when
-            // the owner skills echo adopts) -- repaint off a cheap signature, like the InventoryUI poll.
-            if (_open && Player?.NetUpgradeSkill != null)
-            {
-                long sig = SkillsSignature();
-                if (sig != _lastSig) { _lastSig = sig; Refresh(); }
-            }
-        }
-
-        long _lastSig = -1;
-        long SkillsSignature()
-        {
+            if (!_open) return;
             var sk = SkillsSource ?? Player?.Skills;
-            if (sk == null) return 0;
-            long h = sk.experience;
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-                foreach (var skill in sk.skills[s]) h = (h * 31) ^ skill.level;
-            return h;
+            long sig = ((long)(sk?.experience ?? 0u) * 397L) ^ Prog.Count;
+            if (sig != _lastSig) { _lastSig = sig; Refresh(); }
         }
+        long _lastSig = -1;
 
-        MenuNavbar _navbar;
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Open() { _open = true; Visible = true; if (_root != null) _root.Visible = true; Refresh(); _swoop?.In(); }
-        // _open goes false NOW so input routing stops; the swoop hides the pixels when it lands.
         public void Close() { _open = false; if (_swoop == null || !_swoop.Out()) Visible = false; }
+
+        void TakeSelected()
+        {
+            var sk = SkillsSource ?? Player?.Skills;
+            var n = _tree.NodeOf(_selected);
+            if (sk == null || n == null) return;
+            // Take() re-checks everything against the live pool, so a stale button cannot buy a node -- and it
+            // returns the price rather than deducting, because the pool is not its to touch.
+            uint cost = Prog.Take(_tree, n, sk.experience);
+            if (cost == 0u) return;
+            sk.TrySpend(cost);
+            Refresh();
+        }
 
         void Refresh()
         {
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-                foreach (Node c in _colBox[s].GetChildren()) c.QueueFree();
             var sk = SkillsSource ?? Player?.Skills;
-            if (sk == null) return;
+            uint xp = sk?.experience ?? 0u;
+            int taken = 0;
+            foreach (var n in _tree.Nodes) if (Prog.Has(n.Id)) taken++;
+            int ready = 0;
+            foreach (var n in _tree.Nodes) if (Prog.CanTake(_tree, n, xp, out _)) ready++;
+            _header.Text = $"SKILLS   ·   {taken} / {_tree.Nodes.Length} learned   ·   {ready} available now";
+            _xp.Text = $"{xp} XP";
 
-            int lv = 0, cap = 0, ready = 0;
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-                foreach (var k in sk.skills[s])
+            foreach (var p in _tree.Pillars)
+            {
+                if (!_pillarUi.TryGetValue(p.Id, out var ui)) continue;
+                bool open = Prog.PillarOpen(p);
+                ui.bg.AddThemeStyleboxOverride("panel", UITheme.Box(open ? PillarC : PillarShut, UITheme.RadiusCell));
+                ui.title.AddThemeColorOverride("font_color", open ? UITheme.Text : UITheme.TextDim);
+            }
+            foreach (var n in _tree.Nodes)
+            {
+                if (!_nodeUi.TryGetValue(n.Id, out var ui)) continue;
+                bool has = Prog.Has(n.Id);
+                bool can = !has && Prog.CanTake(_tree, n, xp, out _);
+                ui.bg.AddThemeStyleboxOverride("panel", UITheme.Box(has ? NodeTaken : can ? NodeReady : NodeLocked, UITheme.RadiusCell,
+                    can ? UITheme.Accent : null, can ? 2 : 0));
+                ui.title.AddThemeColorOverride("font_color", has || can ? UITheme.Text : UITheme.TextDim);
+                ui.cost.Text = has ? "learned" : $"{n.Cost} XP";
+                ui.cost.AddThemeColorOverride("font_color", has ? UITheme.TextDim : can ? UITheme.Accent : UITheme.TextDim);
+            }
+            RefreshDetail();
+            _canvas?.QueueRedraw();
+        }
+
+        void RefreshDetail()
+        {
+            var sk = SkillsSource ?? Player?.Skills;
+            uint xp = sk?.experience ?? 0u;
+            var n = _tree.NodeOf(_selected);
+            if (n == null)
+            {
+                _detailTitle.Text = "Select a node";
+                _detailBlurb.Text = "Pillars run across the top. Advanced pillars sit below and open once the node that unlocks them is learned.";
+                _detailGrant.Text = ""; _detailReq.Text = ""; _detailWhy.Text = "";
+                _takeBtn.Disabled = true; _takeBtn.Text = "Learn";
+                return;
+            }
+            _detailTitle.Text = n.Title;
+            _detailBlurb.Text = n.Blurb ?? "";
+
+            var g = new System.Text.StringBuilder("GRANTS\n");
+            foreach (var gr in n.Grants) g.Append("  • ").Append(gr.Describe()).Append('\n');
+            if (n.Grants.Length == 0) g.Append("  • —\n");
+            _detailGrant.Text = g.ToString();
+
+            var r = new System.Text.StringBuilder("REQUIRES\n");
+            if (n.Requires.Length == 0) r.Append("  • nothing\n");
+            foreach (var req in n.Requires)
+                r.Append(Prog.Has(req) ? "  ✓ " : "  ✗ ").Append(_tree.NodeOf(req)?.Title ?? req).Append('\n');
+            _detailReq.Text = r.ToString();
+
+            bool has = Prog.Has(n.Id);
+            bool can = Prog.CanTake(_tree, n, xp, out string why);
+            _detailWhy.Text = has ? "" : can ? "" : why ?? "";
+            _takeBtn.Disabled = !can;
+            _takeBtn.Text = has ? "Learned" : $"Learn  ·  {n.Cost} XP";
+        }
+
+        /// <summary>Draws the links. A separate Control rather than lines parented to the nodes, because a link is
+        /// a relationship between TWO boxes and belongs to neither -- and because the requirement edges cross
+        /// columns, so there is no parent that contains both ends.</summary>
+        partial class TreeCanvas : Control
+        {
+            public SkillsUI Owner2;
+
+            public override void _Draw()
+            {
+                var o = Owner2;
+                if (o?._tree == null) return;
+                foreach (var n in o._tree.Nodes)
                 {
-                    lv += k.level; cap += k.max;
-                    if (k.level < k.max && sk.experience >= k.Cost) ready++;
+                    if (!o._nodePos.TryGetValue(n.Id, out var to)) continue;
+                    var toPt = to + new Vector2(NodeW * 0.5f, 0f);
+                    // A node with no requirements hangs off its own pillar head; one with requirements gets a line
+                    // per requirement, which is what makes a multi-parent node legible as multi-parent.
+                    if (n.Requires.Length == 0)
+                    {
+                        if (o._pillarPos.TryGetValue(n.Pillar, out var ph))
+                            Link(ph + new Vector2(NodeW * 0.5f, HeadH), toPt, o.Prog.PillarOpen(o._tree.PillarOf(n.Pillar)));
+                        continue;
+                    }
+                    foreach (var req in n.Requires)
+                        if (o._nodePos.TryGetValue(req, out var fr))
+                            Link(fr + new Vector2(NodeW * 0.5f, NodeH), toPt, o.Prog.Has(req));
                 }
-            _header.Text = $"SKILLS   ·   {lv} / {cap} levels   ·   {ready} upgradable now";   // crafting: "CRAFTING · N shown · M craftable now"
-            _xp.Text = $"{sk.experience} XP";
-
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-            {
-                var arr = sk.skills[s];
-                int slv = 0, scap = 0;
-                foreach (var k in arr) { slv += k.level; scap += k.max; }
-                _colBox[s].AddChild(SpecHeader(SpecNames[s], slv, scap));
-                for (int i = 0; i < arr.Length; i++) _colBox[s].AddChild(SkillRow(sk, s, i));
+                // ...and the link from the node that OPENS an advanced pillar down to that pillar's head, which is
+                // the one edge that is not node-to-node.
+                foreach (var p in o._tree.Pillars)
+                {
+                    if (!p.Advanced || !o._pillarPos.TryGetValue(p.Id, out var php)) continue;
+                    foreach (var req in p.Requires)
+                        if (o._nodePos.TryGetValue(req, out var fr))
+                            Link(fr + new Vector2(NodeW * 0.5f, NodeH), php + new Vector2(NodeW * 0.5f, 0f), o.Prog.Has(req));
+                }
             }
-        }
 
-        /// <summary>A column's title strip. Crafting's category row is a Panel of height 30 with the name at the
-        /// left in FontBody and a count hard against the right in TextDim; this is that, with UITheme.Strip for
-        /// the raised-bar treatment the inventory's section headers use.</summary>
-        static Control SpecHeader(string name, int lv, int cap)
-        {
-            var p = new Panel { CustomMinimumSize = new Vector2(0, HeadH) };
-            UITheme.Strip(p);
-            var h = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-            h.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            h.OffsetLeft = 10; h.OffsetRight = -10;
-            p.AddChild(h);
-            h.AddChild(UITheme.Label(new Label { Text = name, VerticalAlignment = VerticalAlignment.Center, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill }, UITheme.FontBody, UITheme.TextDim));
-            h.AddChild(UITheme.Label(new Label { Text = $"{lv}/{cap}", VerticalAlignment = VerticalAlignment.Center }, UITheme.FontBody, UITheme.TextDim));
-            return p;
-        }
-
-        /// <summary>One skill: name, a level bar of `max` segments, the level readout, and the spend button.
-        ///
-        /// The bar is what makes a wide row work. Name and button are both fixed-width, so on a full-screen
-        /// panel every pixel between them would otherwise be dead air -- give that span to the levels and a
-        /// wider column reads BETTER, which is the difference between fitting the panel and filling it. It is
-        /// also what the source screen shows (PlayerDashboardSkillsUI draws level boxes, not a number).</summary>
-        Control SkillRow(PlayerSkills sk, int spec, int idx)
-        {
-            var skill = sk.skills[spec][idx];
-            bool maxed = skill.level >= skill.max;
-            bool afford = !maxed && sk.experience >= skill.Cost;
-
-            // NO GREEN EDGE, and that is the one place this screen deliberately departs from the crafting tile.
-            // Crafting outlines the craftable tile in Good because ONE recipe in sixty-nine is craftable and the
-            // edge is what makes it findable. Skills invert that ratio -- with any XP banked, nearly every row is
-            // affordable -- so the same device paints eighteen of twenty-two rows green and stops meaning
-            // anything. Rendered it to be sure, and it read as a wall. Affordability is carried by the button
-            // instead: UITheme.Button's primary face when it can be pressed, its disabled face and TextDisabled
-            // when it cannot, which is the token that already means "you cannot have this".
-            var row = new Panel { CustomMinimumSize = new Vector2(0, RowH) };
-            row.AddThemeStyleboxOverride("panel", UITheme.Box(maxed ? RowDone : RowC, UITheme.RadiusCell));
-
-            var h = new HBoxContainer();
-            h.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            h.OffsetLeft = 10; h.OffsetRight = -6; h.OffsetTop = 3; h.OffsetBottom = -3;
-            h.AddThemeConstantOverride("separation", 10);
-            row.AddChild(h);   // left at the container default (PASS) on purpose -- it holds the Up button
-
-            h.AddChild(UITheme.Label(new Label
+            /// <summary>Elbowed rather than straight: a diagonal across two columns reads as a scribble over the
+            /// boxes it passes, where a vertical-across-vertical stays legible however far it reaches.</summary>
+            void Link(Vector2 a, Vector2 b, bool live)
             {
-                Text = SkillNames[spec][idx],
-                VerticalAlignment = VerticalAlignment.Center,
-                CustomMinimumSize = new Vector2(NameW, 0),
-            }, UITheme.FontBody, maxed ? UITheme.TextDim : UITheme.Text));
-
-            var pips = new HBoxContainer
-            {
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-                SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-                CustomMinimumSize = new Vector2(0, PipH),
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-            };
-            pips.AddThemeConstantOverride("separation", PipGap);
-            for (int p = 0; p < skill.max; p++)
-            {
-                var seg = new Panel { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(8, PipH) };
-                // Selected (the lit-tab grey), NOT Accent: the accent is spent once per screen and it is spent
-                // on the XP total. Twenty rows of it would leave none of them meaning anything.
-                seg.AddThemeStyleboxOverride("panel", UITheme.Box(p < skill.level ? UITheme.Selected : UITheme.SlotEmpty, 2));
-                pips.AddChild(seg);
+                var c = live ? UITheme.Accent with { A = 0.85f } : new Color(1f, 1f, 1f, 0.16f);
+                float w = live ? 2.5f : 1.5f;
+                float mid = (a.Y + b.Y) * 0.5f;
+                DrawLine(a, new Vector2(a.X, mid), c, w);
+                DrawLine(new Vector2(a.X, mid), new Vector2(b.X, mid), c, w);
+                DrawLine(new Vector2(b.X, mid), b, c, w);
             }
-            h.AddChild(pips);
-
-            h.AddChild(UITheme.Label(new Label
-            {
-                Text = $"{skill.level}/{skill.max}",
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center,
-                CustomMinimumSize = new Vector2(LvlW, 0),
-            }, UITheme.FontSmall, UITheme.TextDim));
-
-            var btn = new Button { Text = maxed ? "MAX" : $"{skill.Cost} XP", CustomMinimumSize = new Vector2(BtnW, RowH - 8) };
-            UITheme.Button(btn, afford);   // primary face only when it can actually be pressed
-            btn.Disabled = !afford;
-            // MP: the spend is a REQUEST -- the server's TryUpgrade validates cost/cap and the
-            // owner skills echo re-levels (the _Process poll repaints). SP: the direct local spend.
-            int cSpec = spec, cIdx = idx;   // capture for the closure
-            btn.Pressed += () =>
-            {
-                if (Player != null && Player.RequestUpgradeSkill((byte)cSpec, (byte)cIdx)) return;
-                if (sk.TryUpgrade(cSpec, cIdx)) Refresh();
-            };
-            h.AddChild(btn);
-            return row;
         }
     }
 }
