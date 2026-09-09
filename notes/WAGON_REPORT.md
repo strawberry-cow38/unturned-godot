@@ -1,4 +1,61 @@
-# Wagon revision 3: straight sides, full-width ends, slanted roof front
+# Wagon final: A-pillar / hood junction cleanup
+
+Revision of `cbe0c3e0` on `astra-wagon`. The requested junction box now contains **4 faces total, 2 per side**, with a worst aspect ratio of **4.578729 on both sides**, down from **18.353145**. The measured triangles are exact mirrors across X = 0.
+
+## Local construction change
+
+Removed the redundant inner hood vertices at **(±0.98, 1.040479, −2.32)** and their outer shoulder splits. The shoulders now run directly between the existing nose and rear crease, and three mirrored hood triangles replace the asymmetric fan. One new point, **(0, 0.999953, −2.757828)**, lies at the midpoint of the existing nose edge.
+
+The adjoining upper fascia and outer side panels are retriangulated to keep their shared edges welded. Their surfaces, grille corners and lower sill corners are retained. The existing narrow cowl strip at Z **−1.406856…−1.250** keeps its original triangles. No retained vertex moves. **362 original body triangles retain their coordinates, UVs and normals**; only **26 front-patch triangles are replaced by 16**. All changed faces lie forward of the rear hood crease. Sampling the replaced surfaces in both directions at **882 points** gives a maximum difference of **0.000000305 m**, below OBJ coordinate precision.
+
+## Requested aspect-ratio scan
+
+Faces are selected by centroid: **−2.95 ≤ Z ≤ −2.10, 0.85 ≤ Y ≤ 1.45**. Positions are loaded as float32, matching the parser. Aspect ratio is **longest edge / altitude on that edge = longest edge² / (2 × triangle area)**. Left/right below refer to the centroid's X sign, not the shared fan vertex's X.
+
+| centroid side | old faces | old worst | final faces | final worst |
+| --- | ---: | ---: | ---: | ---: |
+| left, X < 0 | 4 | 5.507869 | **2** | **4.578729** |
+| right, X > 0 | 4 | 18.353145 | **2** | **4.578729** |
+| both sides | 8 | 18.353145 | **4** | **4.578729** |
+
+Each side contains one shoulder triangle at **4.578729** and one hood triangle at **2.106752**. `tools/verify_wagon.py` now enforces the box's four-face budget, maximum aspect 6 and mirrored triangles. It rejects the original body at zero-based **face 153**, aspect **18.353145**.
+
+## Preserved measurements
+
+The envelope remains **5.800 × 2.520 × 2.440 m** (length × width × height), with AABB **X [−1.26, 1.26], Y [−0.27, 2.17], Z [−2.90, 2.90]**. Width remains **2.520 m** at all 27 review stations and all 53 vertex/mid-span sections. All eight pillars remain flush with X = ±1.260.
+
+All pillar and roof triangles are unchanged, preserving the accepted rake and roofline. The windscreen/A-pillar endpoints remain **(Y,Z) = (1.125,−1.25) → (1.92,−0.80)**; the roof upper leading edge remains **(2.17,−0.658491)**. No roof, glass, rear body, wheel, seat, light, palette or vehicle registration changes. All **11 non-body wagon assets** are byte-identical to `cbe0c3e0`.
+
+| requested hood Y station | unchanged saved wagon Y |
+| ---: | ---: |
+| −0.159 | −0.158648 |
+| −0.125 | −0.125000 |
+| 0.101 | 0.100803 |
+| 0.125 | 0.125000 |
+| 0.875 | 0.874953 |
+| 1.000 | 1.000000 |
+| 1.125 | 1.125000 |
+
+The hood nose remains **(Y,Z) = (0.999953,−2.757828)**; its rear crease remains **(1.125,−1.406856)**. The sedan-derived slope and 0.125 m transverse shoulder rise are retained.
+
+## Final verification
+
+| check | result |
+| --- | --- |
+| saved body topology | **177 positions, 378 triangles; 0 / 567 boundary edges (0.0%)**; zero degenerate, duplicate or overused faces/edges; every face has exactly **3 corners**. |
+| surface audit | **PASS**: one connected, outward shell; no coplanar overlaps or triangle piercings among 4,718 candidate pairs. Signed volume **12.880944 m³**; minimum triangle area **0.000699999261 m²**. |
+| `python3 tools/verify_wagon.py` | **PASS**: all 11 OBJ assets, junction scan, hood stations, dimensions, width, roof/pillar rake, 91 closure probes, glass/cargo/lamp checks and registrations. |
+| `dotnet build game/UnturnedGodot.csproj` | **PASS — 0 warnings, 0 errors**. |
+| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS — 1 test, 13 checks**, 0 failures; its build also reports **0 warnings, 0 errors**. |
+| reproducibility | **PASS**: regenerating all 12 wagon assets produces identical bytes. |
+
+The commit contains only the body asset, its generator, the junction verifier and this report. Pre-existing tracked build artifacts are excluded. Nothing is pushed.
+
+---
+
+# Accepted revision 3 report (historical, `cbe0c3e0`)
+
+The measurements and runtime results below describe revision 3 before the final junction cleanup above.
 
 Revision of `7ad5819c` on `astra-wagon`. The body now has one **2.520 m plan width from Z −2.900 to +2.900**. Nose, doors, fenders, tail, roof sides and all A/B/C/D outer pillar faces share **X = ±1.260**. The roof front continues the existing windscreen/A-pillar plane through the roof thickness.
 

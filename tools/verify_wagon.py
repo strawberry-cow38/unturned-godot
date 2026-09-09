@@ -279,6 +279,37 @@ def check_roof_rake(mesh):
           f'rake {math.degrees(math.atan(slope)):.6f}° from vertical; tailgate rake unchanged')
 
 
+def check_cowl_junction(mesh):
+    """Review box, scored as longest edge / altitude using loaded positions."""
+    sides = {-1: [], 1: []}
+    for face_id,face in enumerate(mesh['faces']):
+        tri = tuple(tuple(f32(x) for x in mesh['vertices'][int(c.split('/')[0])-1]) for c in face)
+        assert len(tri) == 3
+        x,y,z = (sum(p[i] for p in tri)/3 for i in range(3))
+        if not (-2.95 <= z <= -2.10 and .85 <= y <= 1.45):
+            continue
+        a,b,c = tri
+        u,v = tuple(b[i]-a[i] for i in range(3)),tuple(c[i]-a[i] for i in range(3))
+        n = (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        area2 = math.sqrt(sum(t*t for t in n))
+        assert area2 > 1e-12, ('degenerate junction',face_id)
+        longest2 = max(sum((p[i]-q[i])**2 for i in range(3)) for p,q in ((a,b),(b,c),(c,a)))
+        aspect = longest2/area2
+        assert aspect <= 6, ('junction sliver',face_id,aspect)
+        assert x != 0, ('junction triangle crosses centre seam',face_id)
+        sides[-1 if x < 0 else 1].append((tri,aspect))
+    count = sum(len(rows) for rows in sides.values())
+    assert 0 < count <= 4, ('too many junction faces',count)
+    left = {tuple(sorted((-x,y,z) for x,y,z in tri)) for tri,_ in sides[-1]}
+    right = {tuple(sorted(tri)) for tri,_ in sides[1]}
+    assert left == right, 'junction triangulation is not mirrored'
+    for sign,label in ((-1,'left (X < 0)'),(1,'right (X > 0)')):
+        rows = sides[sign]
+        assert rows, ('missing junction',label)
+        print(f'PASS cowl/A-pillar-base box {label}: {len(rows)} faces, worst aspect {max(a for _,a in rows):.6f}')
+    print(f'PASS junction: {count} faces total, mirrored triangles, all aspects <= 6')
+
+
 def check():
     bounds = {p.name: validate(p) for p in sorted(CONTENT.glob("wagon_*.txt"))}
     specs = read_specs(("wagon", "sedan"))
@@ -297,6 +328,7 @@ def check():
     check_hood(sedan["mesh"], wagon["mesh"])
     check_straight_sides(wagon["mesh"])
     check_roof_rake(wagon["mesh"])
+    check_cowl_junction(wagon["mesh"])
     lo,hi = bounds["wagon_body.txt"]
     assert all(abs(x-y) < 0.000001 for x,y in zip(lo+hi,(-1.26,-.27,-2.90,1.26,2.17,2.90))), (lo,hi)
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
