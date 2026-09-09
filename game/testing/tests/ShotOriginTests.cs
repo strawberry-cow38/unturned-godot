@@ -177,6 +177,32 @@ namespace UnturnedGodot.Testing
             T.Check($"...from the camera, which IS the eyes there ({p.DebugLastShotOrigin.DistanceTo(p.Camera.GlobalPosition):0.###} m)",
                 p.DebugLastShotOrigin.DistanceTo(p.Camera.GlobalPosition) < 0.05f);
 
+            // ---- LEANING AND PITCHED, THE SHOT STILL LEAVES DOWN THE CROSSHAIR (strawberry 2026-09-09: "when
+            // leaning and shooting it doesnt feel like my bullets hitscans are coming from center screen").
+            //
+            // Measured against the CAMERA's own forward, because that is what "centre screen" means -- not against
+            // a reconstructed look axis, which is how this got through: the firing basis was Ry(yaw) * Rx(pitch)
+            // and the camera's real chain is Ry(yaw) * Rz(lean) * Rx(pitch), so any check that rebuilt the
+            // expectation the same wrong way agreed with itself perfectly.
+            //
+            // PITCHED ON PURPOSE. A Z-roll leaves the forward axis alone when you are level, so at pitch 0 the
+            // broken and fixed versions are identical and a level-lean probe certifies the bug as fine. Teeth:
+            // reverting the fix puts this at 6.8 deg.
+            p.ScriptedLean = 1;                 // hold a full lean
+            p.DebugSetPitch(20f);
+            yield return Ticks(90);             // the lean lerps in (LeanLerp 4/s)
+            T.Check($"the lean actually reached the rig ({p.DebugLeanAngle:0.0} of {PlayerController.LeanDegrees:0} deg)",
+                Mathf.Abs(p.DebugLeanAngle) > PlayerController.LeanDegrees * 0.8f);
+
+            p.Ammo = 60;
+            var crosshair = -p.Camera.GlobalTransform.Basis.Z;   // dead centre of the screen, by definition
+            T.Check("a leaning, pitched shot fired", p.Fire());
+            yield return Ticks(1);
+            float leanErr = AngleBetween(p.DebugLastShotDir, crosshair);
+            T.Check($"a shot while leaning goes down the crosshair, not beside it ({leanErr:0.##} deg off at {p.DebugLeanAngle:0.0} deg lean / {p.DebugPitch:0} deg pitch)",
+                leanErr < 0.6f);
+            p.ScriptedLean = null;
+
             yield break;
         }
     }

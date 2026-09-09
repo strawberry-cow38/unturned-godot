@@ -7043,7 +7043,24 @@ namespace UnturnedGodot
             // hit-shake (line 1223 sets _cam.Basis = flinch*look) or a frame where the cam basis wasn't the player's
             // -- firing the bullet off in a FIXED world direction regardless of where you aimed (the "stray tracer
             // flies straight south, any gun, any time" bug). Recoil is preserved (it drains into Rotation.Y/_pitchDeg).
-            Basis cb = new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg));  // X=right, Y=up, -Z=forward
+            // ...INCLUDING THE LEAN ROLL, which was missing and is a real aiming error rather than a nicety
+            // (strawberry 2026-09-09: "when leaning and shooting it doesnt feel like my bullets hitscans are
+            // coming from center screen. they hit walls and stuff that im leaning around").
+            //
+            // The camera hangs off _leanPivot, so its true chain is Ry(yaw) * Rz(lean) * Rx(pitch). The firing
+            // basis was Ry(yaw) * Rx(pitch) -- the roll simply absent. A Z-roll does not move the forward axis
+            // when you are looking level, so at pitch 0 the two agree exactly and the bug is invisible; the
+            // moment you are pitched, the roll swings the pitched forward vector SIDEWAYS by about
+            // sin(lean)*sin(pitch). Measured at the real LeanDegrees = 20: pitch 10 -> 3.5 deg off the crosshair,
+            // pitch 20 -> 6.8 deg (1.19 m at 10 m, 3.0 m at 25 m), pitch 30 -> 10.0 deg. Peeking a corner is
+            // exactly leaning AND pitched, and a metre of sideways error there is the wall you are leaning past.
+            //
+            // Built from _leanAngle rather than read off _cam.GlobalTransform.Basis on purpose -- the note below
+            // about flinch shake and stray tracers still stands. This reproduces the camera's chain from the same
+            // authoritative values the camera itself is written from, so aim and crosshair cannot drift apart.
+            Basis cb = new Basis(Vector3.Up, Rotation.Y)
+                     * new Basis(Vector3.Back, Mathf.DegToRad(_leanAngle))
+                     * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg));  // X=right, Y=up, -Z=forward
             Vector3 aim = -cb.Z;                                            // undeviated shot axis, from the real look angles
             // ...but in third person the eyes and the crosshair are in different places, so firing straight down the
             // look axis misses whatever the reticle is over by however far the camera is offset. Source converges them
