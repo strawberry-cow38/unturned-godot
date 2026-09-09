@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/tmp/snow/trailer/core/SDG.Compat/SDG.Compat.csproj": {}
+    "/tmp/snow/bigtrailer/core/SDG.Compat/SDG.Compat.csproj": {}
   },
   "projects": {
-    "/tmp/snow/trailer/core/SDG.Compat/SDG.Compat.csproj": {
+    "/tmp/snow/bigtrailer/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/tmp/snow/trailer/core/SDG.Compat/SDG.Compat.csproj",
+        "projectUniqueName": "/tmp/snow/bigtrailer/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "/tmp/snow/trailer/core/SDG.Compat/SDG.Compat.csproj",
+        "projectPath": "/tmp/snow/bigtrailer/core/SDG.Compat/SDG.Compat.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/tmp/snow/trailer/core/SDG.Compat/obj/",
+        "outputPath": "/tmp/snow/bigtrailer/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"

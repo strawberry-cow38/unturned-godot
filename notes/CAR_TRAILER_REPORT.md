@@ -386,3 +386,28 @@ Validation for this pass:
 geometry/spec checks and bakeicon poses do not establish loaded ride height, braking or reversing,
 pitch/roll contact, sustained towing stability, or network coupling/replication. The wider track and
 longer box are measured geometry changes; the previews are not driving evidence.
+
+## Sixth pass: no axle, wheels against the walls
+
+strawberry, on the render: *"fix the floor? looks inconsistent"*, then *"its the axle. remove the axle
+and have the wheels flush with the trailer walls"*.
+
+The floor itself measured fine — the deck reaches |X| .987 against sideboard inner faces at .862, so it
+covers the interior completely; the narrow visible strip is a 1.000-deep box occluding its own floor at
+isometric elevation. What was inconsistent was the **axle bar** reaching out under the deck to wheels
+standing .050 clear of it. Both are gone: no axle group, and the track is solved from the box instead
+of the box from the track.
+
+**"Flush" has two readings and only one of them is buildable.** Aligning the tyre's OUTER face with the
+wall — track 1.825 — puts the wheel **through the cargo bay**: the tyre tops out at Y .600
+against a deck floor at -0.023, so its inner half rises into the box. Rendered it to be sure, and it is
+as bad as it sounds. The only arrangement with a wheel inboard of the wall raises the bed over it,
+which needs `deck_y` **1.100** against today's -0.023 — a lorry-height floor on a car trailer.
+
+So flush means **against**: the tyre's inner face sits exactly on the sideboard's outer face, track
+2.625, gap closed to zero. That gap is what the axle bar was spanning, which is why removing the bar
+and closing the gap are one change rather than two.
+
+Body is **72 v / 108 tris**, down from 120 with the axle gone. The clearance check is not deleted — it now
+asserts the flush relationship instead, off the real mesh and the real spec, and its docstring records
+that the old gap rule is dead **by instruction** so nobody re-derives it.

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SDG.NetPak")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ea9cad43b830f26eceaac09420225d6d89d7dbdc")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5ea9a32905a4394ddcc65ca86bb80e322bd3f428")]
 [assembly: System.Reflection.AssemblyProductAttribute("SDG.NetPak")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SDG.NetPak")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

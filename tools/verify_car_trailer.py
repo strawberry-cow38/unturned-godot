@@ -51,10 +51,10 @@ def group_bounds(name):
     ps=group_points(name)
     return tuple(min(p[i] for p in ps) for i in range(3)),tuple(max(p[i] for p in ps) for i in range(3))
 
-def close(a,b):
+def close(a,b,eps=3e-6):
     if isinstance(a,(tuple,list)):
-        return len(a)==len(b) and all(close(x,y) for x,y in zip(a,b))
-    return abs(a-b)<3e-6
+        return len(a)==len(b) and all(close(x,y,eps) for x,y in zip(a,b))
+    return abs(a-b)<eps
 
 def require(ok,detail='relationship failed'):
     assert ok,detail
@@ -111,7 +111,8 @@ def expected():
     # The TYRES set the width, not the truck. Without arches, any flat-sided box wider than the tyre's
     # inner face (track/2 - tw/2) has the tyre buried in its sideboard; the bed's own 2.462 did exactly
     # that. The truck still governs the wall SECTION, which is what was actually asked for.
-    W=track-tw-2*t
+    W=track-tw-2*t                             # box width, from the widened Golf track
+    track=W+tw                                 # then the track is SOLVED so the tyre sits against it
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
@@ -201,12 +202,12 @@ def cases():
     # Rear datum is L/2, the DECK's back face. It used to be L/2+t, which was the tailgate hinge blocks
     # standing proud of it -- those went with the rest of the sub-centimetre hardware, so the deck is the
     # rearmost geometry now. Third mutation added because nothing was guarding the hi-Z corner.
-    # X extent is the AXLE, spanning the widened track to reach wheels that sit proud of the deck the way
-    # every car's do. Top is the sideboard, wall_h above the deck; front is the coupler, rear the
+    # X extent is the SIDEBOARD. It used to be the axle bar, spanning out to wheels that stood proud of
+    # the box; both are gone. Top is the sideboard, wall_h above the deck; front is the coupler, rear the
     # tailgate -- the deck no longer overhangs it.
     add('body AABB from deck, wall height, stand and tongue',
-        lambda:require(close(obj(BODY)['lo'],(-d['track']/2,d['ground'],k[2]-2*t)) and
-                       close(obj(BODY)['hi'],(d['track']/2,dy+d['wall_h'],L/2))),
+        lambda:require(close(obj(BODY)['lo'],(-W/2,d['ground'],k[2]-2*t)) and
+                       close(obj(BODY)['hi'],(W/2,dy+d['wall_h'],L/2))),
         (BODY,move_group('coupler',(0,0,-.1)),'grow nose'),(BODY,move_group('landing_stand',(0,-.1,0)),'lower stand'),
         (BODY,move_group('tailgate',(0,0,.1)),'stretch tail'))   # the TAILGATE owns the rear datum now, not the deck
     wt_=d['wall_t']
@@ -253,18 +254,26 @@ def cases():
         lambda:require(fields('car_trailer')['Wheel']==d['wheel'] and close(number(fields('car_trailer')['WheelRadius']),r)
                        and r==s['golf']['WheelRadius'] and r>s['quad']['WheelRadius']),
         fieldmut('Wheel','"quad_wheel.txt"'),fieldmut('WheelRadius','0.45f'))
-    def tyre_clear():
-        """No tyre buried in the bodywork -- read off the ACTUAL mesh and the ACTUAL spec, not off
-        expected()'s own arithmetic, which cannot disagree with itself. Widening the track must preserve
-        the same t gap; restoring the Golf track under the wider box must fail this check too."""
+    def tyre_flush():
+        """The tyre's OUTER face lands exactly on the sideboard's outer face (strawberry: "have the
+        wheels flush with the trailer walls"). Read off the real mesh and the real spec, never off
+        expected()'s own arithmetic, which cannot disagree with itself.
+
+        FLUSH MEANS AGAINST, NOT INSIDE. Aligning the tyre's OUTER face with the wall instead puts the
+        wheel through the cargo bay: the tyre tops out .620 above the deck floor, so its inner half
+        rises into the box. The only arrangement with a wheel inboard of the wall needs the bed raised
+        over it -- deck_y 1.100 against today's -.023, a lorry-height floor. This REPLACES an earlier
+        rule that required a t gap here; that gap is what the axle bar spanned, and closing it is why
+        the bar could go."""
         anchor=min(abs(float(q[0])) for q in re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields('car_trailer')['Wheels']))
-        inner=anchor-obj(CONTENT/fields('car_trailer')['Wheel'].strip('"'))['size'][0]/2
-        outer=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
-        require(inner-outer >= t-1e-6, f'tyre inner face {inner:.4f} vs sideboard outer {outer:.4f}: gap {inner-outer:+.4f}')
-    add('no tyre buried in the sideboard, which is why the box is not the bed width',tyre_clear,
-        (BODY,move_group('side_1',(.1,0,0)),'widen the box into the tyre'),
-        (BODY,move_group('side_-1',(-.1,0,0)),'widen the other side into the tyre'),
-        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.000000f, 0.250000f, 0.313712f, false), (1.000000f, 0.250000f, 0.313712f, false) }'),
+        inner_tyre=anchor-obj(CONTENT/fields('car_trailer')['Wheel'].strip('"'))['size'][0]/2
+        outer_wall=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
+        require(close(inner_tyre,outer_wall,1e-5),
+                f'tyre inner face {inner_tyre:.4f} does not meet the sideboard at {outer_wall:.4f}')
+    add('tyres flush against the sideboards, tyre inner face on the wall',tyre_flush,
+        (BODY,move_group('side_1',(.1,0,0)),'move the wall off the tyre'),
+        (BODY,move_group('side_-1',(-.1,0,0)),'move the other wall off the tyre'),
+        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.250000f, 0.313712f, false), (1.300000f, 0.250000f, 0.313712f, false) }'),
         (VEH,lambda x:x.replace(f"{d['track']/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false",
                                f"{s['golf']['tracks'][-1]/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false"),
          'restore Golf track under the wider box'))
@@ -274,16 +283,20 @@ def cases():
         require(close([tuple(map(float,q[:3])) for q in rows],[(-d['track']/2,d['wy'],d['az']),(d['track']/2,d['wy'],d['az'])]))
         actual_track=float(rows[1][0])-float(rows[0][0])
         actual_width=group_bounds('side_1')[1][0]-group_bounds('side_-1')[0][0]
-        proud=(actual_track+d['tw']-actual_width)/2
-        require(proud>0,'tyres are tucked inside the deck; every car in the fleet carries them proud')
-        require(close(actual_track-s['golf']['tracks'][-1],wt_/2),'track increase is not half a truck wall section')
-    add('one axle on the widened Golf track, tyres proud like a car, axle at 60% deck',wheels,
+        require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),
+                'tyre inner faces do not meet the sideboards')
+        require(actual_track > actual_width, 'wheels are not outboard of the box')
+    add('one axle, tyres flush with the box, axle at 60% deck',wheels,
         (VEH,lambda x:x.replace(f"{d['az']:.6f}f, false",'0f, true',1),'revert wheel anchor and steering'),
         (VEH,lambda x:x.replace(f"{d['track']/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false",
                                f"{s['golf']['tracks'][-1]/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false"),
          'revert track increase'))
-    add('axle mesh follows wheel rest centres',lambda:require(close(group_bounds('axle'),((-d['track']/2,d['wy']-.25-t,d['az']-t),(d['track']/2,d['wy']-.25+t,d['az']+t)))),
-        (BODY,move_group('axle',(0,0,.1)),'move axle'))
+    # The axle bar went with the outboard wheels -- it spanned out to them and was the thing that read
+    # as inconsistent under the deck. Asserted ABSENT from both mesh and generator, same as the arches.
+    add('no axle bar',
+        lambda:require(not any(l.startswith('g ') and 'axle' in l for l in BODY.read_text().splitlines())
+                       and "m.box('axle'" not in (ROOT/'tools/build_car_trailer.py').read_text()),
+        (BODY,lambda x:x.replace('g deck','g axle',1),'re-add an axle group'))
     # The mudguard clearance check went with the mudguards (strawberry: "remove the wheel arches").
     # Replaced by its negative: nothing arch-shaped may come back without this check coming back too.
     add('no wheel arches',

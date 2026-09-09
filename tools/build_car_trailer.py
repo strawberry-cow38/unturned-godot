@@ -137,7 +137,10 @@ def generate():
     m.box('deck',(-w+wt/2,y-wt,f+wt/2),(w-wt/2,y,b-wt/2),2)
     for sign,(a,bb) in zip((-1,1),drawbars):
         m.beam('drawbar_'+str(sign),a,bb,2*t,2*t,0)
-    m.box('axle',(-d['track']/2,cy-t,az-t),(d['track']/2,cy+t,az+t),3)
+    # NO AXLE BAR (strawberry: "its the axle. remove the axle"). With the wheels flush against the
+    # sideboards there is nothing for it to span, and a thin rod reaching out to outboard wheels was
+    # the thing that read as inconsistent under the deck.
+
     # Low solid sideboards with top rails. Tailgate has visible hinge blocks and latches.
     # WALL SECTION IS THE TRUCK'S BED, measured: .250 thick, standing 1.000 above the floor. Mine were
     # t = .050 and .450 -- five times too thin and under half the height, which is what made the box

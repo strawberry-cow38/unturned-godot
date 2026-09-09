@@ -92,13 +92,21 @@ def design(specs, rear):
     # thickness and size ... should also be bigger"). Its walls are .250 thick and stand 1.000 above
     # the floor; mine were t = .050 and .450, five times too thin and under half the height.
     wall_t, wall_h = bed['wall_t'], bed['wall_h']
-    # "Decently longer + slightly wider": add HALF the measured truck wall section to the track
-    # and box width together. +.125 overall (+.0625 per wheel) buys 6% more box width while retaining
-    # the full t tyre gap without arches or raising the bed. Total tyre width becomes 3.125 against
-    # the Golf's 3.000 (+4.2%); the truck's full 2.462 box width would need 3.362 overall (+12.1%).
-    track = golf['tracks'][-1]+wall_t/2
-    # The clearance constraint still sets the box width; widening the box alone would bury tyres.
-    deck_w = track-tyre_width-2*t
+    # BOX FIRST, THEN THE TRACK (strawberry: "remove the axle and have the wheels flush with the
+    # trailer walls"). The box keeps the width the previous pass sized it to -- the Golf track plus
+    # half a truck wall section, less the tyre and its clearance -- but the wheels no longer stand
+    # outboard of it. The track is now solved so the TYRE'S OUTER FACE lands exactly on the sideboard's
+    # outer face, which is what "flush" means here and what removes the outrigger look the axle bar
+    # was drawing attention to.
+    deck_w = (golf['tracks'][-1]+wall_t/2)-tyre_width-2*t
+    # FLUSH = the tyre sits AGAINST the sideboard's outer face, not inside it. Aligning the tyre's
+    # OUTER face with the wall instead puts the wheel through the box: the tyre tops out .620 above
+    # the deck floor, so at that track its inner half rises into the cargo bay. Nothing about removing
+    # the axle changes that -- the only way to have a wheel inboard of the wall is to raise the whole
+    # bed over it, which needs deck_y 1.100 against today's -.023, i.e. a lorry-height floor.
+    # So the wheel is hard against the wall with the gap closed, which is what the axle bar was
+    # spanning and why it can go.
+    track = deck_w+tyre_width
     deck_l = length*.75                         # 3/4 Golf body length; 25% longer than the previous .6
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
