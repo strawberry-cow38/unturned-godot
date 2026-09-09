@@ -594,13 +594,31 @@ def check():
     for field in ("Wheel", "WheelTex", "Engine", "SpeedMax", "Fuel", "Health"):
         assert wagon[field] == sedan[field], field
     assert wagon["Mass"] == 1650  # retained table: (sedan 1500 + police 1800)/2
-    # All full-body vertices, lamps and bumper parts must lie in the hull box.
+    # THE MAIN BOX IS A FITTED LOWER SHELL, NOT AN ENCLOSING ONE. Every roofed car in this fleet
+    # pairs a low main box with a separate RoofBox: sedan/police (2.5,0.916,5.656), hatchback
+    # (2.5,0.916,5.261), humvee (2.5,1.032,5.029) -- all stopping below the beltline. An earlier pass
+    # here asserted that the box must CONTAIN every vertex, which is the opposite of the intent and
+    # passes only for a box that swallows the greenhouse: that makes the window apertures solid and
+    # overlaps RoofBox("Station Wagon") at y 1.92..2.17. So assert the convention, not containment.
     box_lo = tuple(c-s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
     box_hi = tuple(c+s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
-    for name in ('body','headlights','taillights','bumper_front','bumper_rear'):
-        part = obj(CONTENT/f'wagon_{name}.txt')
-        assert all(box_lo[i]-1e-6 <= p[i] <= box_hi[i]+1e-6
-                   for p in part['vertices'] for i in range(3)), ('hull box misses mesh',name)
+    BELTLINE = 1.10   # window aperture bases; posts run 1.10 -> 1.92
+    assert box_hi[1] < BELTLINE, ('main box reaches the greenhouse', box_hi[1], BELTLINE)
+    assert box_lo[1] > -0.27, ('main box dips below the floor', box_lo[1])
+    # In family with the other roofed cars on both spent axes, so this cannot pass by going tiny.
+    for i,name,famlo,famhi in ((1,'height',0.90,1.10),(2,'length',5.0,5.7)):
+        assert famlo <= wagon['BoxSize'][i] <= famhi, ('main box out of fleet family',name,wagon['BoxSize'][i])
+    # It must still sit centred on the real extents rather than drifting off the mesh.
+    everything = [p for name in ('body','headlights','taillights','bumper_front','bumper_rear')
+                  for p in obj(CONTENT/f'wagon_{name}.txt')['vertices']]
+    zc = (min(p[2] for p in everything)+max(p[2] for p in everything))/2
+    assert abs(wagon['BoxCenter'][2]-zc) < 0.01, ('box centre off the mesh centre',wagon['BoxCenter'][2],zc)
+    # And the roof really is carried by the separate box, or the cabin has no collider at all.
+    roof_lo = min(p[1] for p in obj(CONTENT/'wagon_body.txt')['vertices'] if p[1] > 1.5)
+    assert roof_lo <= 1.93, ('roof slab not where RoofBox expects it', roof_lo)
+    print(f"PASS main box is a fitted lower shell: top {box_hi[1]:.3f} < beltline {BELTLINE}, "
+          f"Z {wagon['BoxSize'][2]:.3f} centred {wagon['BoxCenter'][2]:+.4f} on mesh centre {zc:+.4f}; "
+          f"roof left to RoofBox")
     assert (CONTENT / wagon["Palette"]).read_bytes() == (CONTENT / sedan["Palette"]).read_bytes()
     for asset in [wagon[k] for k in ("Body","Wheel","WheelTex","Palette")] + wagon["Parts"]:
         assert (CONTENT / asset).is_file(), asset

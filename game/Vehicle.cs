@@ -3150,7 +3150,13 @@ namespace UnturnedGodot
             GlassMesh = "wagon_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),
             Water = WaterMode.Car, RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            BoxSize = new Vector3(2.52f, 2.44f, 5.776f), BoxCenter = new Vector3(0f, 0.95f, -0.061034f),   // encloses the full body and donor bumpers; outward-rounded Z bounds
+            // FITTED LOWER SHELL, not a full-body box -- the fleet convention for every roofed car: sedan and
+            // police (2.5, 0.916, 5.656), hatchback (2.5, 0.916, 5.261), humvee (2.5, 1.032, 5.029), each
+            // stopping below the beltline with RoofBox("...") carrying the roof slab above it. A box that
+            // encloses the greenhouse makes the window apertures solid and doubles up with RoofBox("Station
+            // Wagon") at y 1.92..2.17. Top sits at 1.080, just under the 1.10 beltline. Z follows the new
+            // asymmetric extents (bumpers at -2.949 and +2.827, centre -0.061) at the sedan's ~95% inset.
+            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, -0.061f),
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
