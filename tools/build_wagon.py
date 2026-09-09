@@ -14,7 +14,14 @@ from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs, vector
 PAINT = (0.125, 0.75)
 DARK = (0.375, 0.25)
 HALF_WIDTH = 1.26  # One outer wall plane, including every post and bumper tip.
-FLOOR_Y = -.27
+# FLOOR_Y = the OUTER sill height, and it must match the fleet's visible flank, not its hidden belly.
+# Measured lowest point by width band: sedan, hatchback and golf all bottom at -0.159 on the outer
+# flank (|x| 1.1-1.3) -- the -0.273 they also have is INBOARD, tucked under the car where it is never
+# seen. The first flat-floor pass ran the sheet out to the wall at -0.270, so the wagon's visible sill
+# hung 0.111 lower than any other car and the bumper read as floating above it (strawberry: "the
+# bumpers need to be lower or the bottom needs to be higher. measure vs a sedan"). Still completely
+# flat and full width, just at the fleet's outer height, which also takes ground clearance 0.080 -> 0.191.
+FLOOR_Y = -.159
 REAR_Z = 2.68
 
 
@@ -147,7 +154,11 @@ def build_exhaust():
     def ring(radius, at_z):
         return [(x+radius*math.cos(i*math.tau/6), y+radius*math.sin(i*math.tau/6), at_z)
                 for i in range(6)]
-    root, lip, recess = ring(.06,z-.18), ring(.06,z), ring(.045,z-.04)
+    # A TAILPIPE READS AS A TUBE ONLY IF IT IS LONGER THAN IT IS WIDE. The first version was 0.120
+    # across and stood 0.050 proud of the valance -- wider than it was long, which is why strawberry
+    # called it "the sphere it added as an exhaust". Narrower bore, and ExhaustPos moved back so more
+    # of the pipe is outside the bodywork: 0.090 across, 0.140 proud, so length beats diameter 1.6:1.
+    root, lip, recess = ring(.045,z-.18), ring(.045,z), ring(.032,z-.05)
     mesh = Mesh()
     for i in range(6):
         j = (i+1)%6
@@ -156,7 +167,7 @@ def build_exhaust():
         outward_quad(mesh, [lip[i],lip[j],recess[j],recess[i]], (0,0,1), DARK)
     mesh.panel(recess, (0,0,1), DARK)
     mesh.write('wagon_exhaust.txt', weld_positions=True)
-    print(f'Exhaust: {len(mesh.f)} triangles; tip {tip}; 0.050 m beyond rear valance')
+    print(f'Exhaust: {len(mesh.f)} triangles; tip {tip}; {tip[2]-2.68:.3f} m beyond the rear valance; bore {2*.045:.3f}')
 
 
 def outward_quad(mesh, points, direction, uv=None):
@@ -252,9 +263,14 @@ def fit_bumpers(fascia):
         # Lower the finished part, including its attachment cap. Re-fitting at
         # the new Y would also change Z against the sloped fascia. Keep Z fixed.
         name = f'wagon_bumper_{label}.txt'
-        translate_asset(name, name, lambda p: (0, -.035, 0))
+        # Sit the lip FLUSH with the floor. On the sedan/hatchback/golf the bumper lip IS the lowest
+        # point of the outer flank -- same height, no step -- so derive the drop from FLOOR_Y rather
+        # than carrying a hand-tuned constant that silently goes wrong when the floor moves.
+        lip = min(v[1] for v in obj(CONTENT/name)['vertices'])
+        drop = FLOOR_Y - lip
+        translate_asset(name, name, lambda p, d=drop: (0, d, 0))
         print(f'Hatchback {label}: X scale {xscale:.9f}; Y {dy:+.6f}; Z {dz:+.6f}')
-        print('  Finished bumper lowered 0.035 m to floor +0.115; Z unchanged')
+        print(f'  Lip {lip:+.6f} -> {FLOOR_Y:+.6f} (drop {drop:+.6f}), flush with the floor; Z unchanged')
 
 
 def build():

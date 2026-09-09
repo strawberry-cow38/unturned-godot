@@ -43,7 +43,10 @@ namespace UnturnedGodot.Testing
             if (actual != null)
             {
                 var bounds = actual.GetAabb();
-                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.52f, 2.44f, 5.487996f)) < 0.00001f);
+                // Height 2.440 -> 2.329 and length 5.487996 -> 5.483611 because the floor came up from -0.270
+                // to the fleet's outer-flank height of -0.159; the nose meets the sloping fascia higher up,
+                // so it also loses 4.4 mm of length. Width is untouched at 2.520.
+                T.Check("body dimensions match measured design", bounds.Size.DistanceTo(new Vector3(2.52f, 2.329f, 5.483611f)) < 0.00001f);
             }
             Vehicle.GetBodyBox("wagon", out var size, out var center);
             var hull = new Aabb(center - size / 2f, size).Grow(0.00001f);
@@ -77,8 +80,12 @@ namespace UnturnedGodot.Testing
                 T.Check($"hull spans the {end} bumper in Z", bumper != null
                         && hull.Position.Z <= bumper.GetAabb().Position.Z + 0.15f
                         && hull.End.Z >= bumper.GetAabb().End.Z - 0.15f);
-                T.Check($"{end} bumper lip is floor plus fleet 0.115 m", bumper != null && actual != null
-                    && Mathf.Abs(bumper.GetAabb().Position.Y - actual.GetAabb().Position.Y - 0.115f) < 0.00001f);
+                // FLUSH with the floor, not floor + 0.115. The +0.115 offset came from measuring the
+                // sedan's hidden inboard belly (-0.273); its VISIBLE outer flank bottoms at -0.159,
+                // which is also where its bumper lip sits -- same height, no step. The wagon's floor is
+                // now at that outer height too, so the lip meets it.
+                T.Check($"{end} bumper lip sits flush with the floor", bumper != null && actual != null
+                    && Mathf.Abs(bumper.GetAabb().Position.Y - actual.GetAabb().Position.Y) < 0.00001f);
             }
             T.Check("sedan headlights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_headlights.txt")?.GetFaces().Length == 60);
             T.Check("sedan taillights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_taillights.txt")?.GetFaces().Length == 60);
@@ -105,14 +112,20 @@ namespace UnturnedGodot.Testing
                 T.Check("wheel-to-driver-seat reach stays in fleet band", reach >= 0.79f && reach <= 0.83f);
             }
             var pipe = ContentProvider.ParseObj("res://content/wagon_exhaust.txt");
-            var tip = new Vector3(0.95f, 0.28f, 2.73f);
+            // Derive the tip from the PIPE, not a literal: a hardcoded coordinate here goes stale the
+            // moment the outlet moves and fails as though the geometry were broken. What matters is the
+            // relationships -- smoke starts at the tip, the tip clears the valance, and the pipe is
+            // longer than it is wide (it read as a bulb when it was not).
+            var pipeBox = pipe?.GetAabb() ?? default;
+            var tip = new Vector3(pipeBox.GetCenter().X, pipeBox.GetCenter().Y, pipeBox.End.Z);
             T.Check("28-triangle exhaust loads on server and replica", pipe?.GetFaces().Length == 84
                 && wagon.GetNodeOrNull<MeshInstance3D>("wagon_exhaust")?.Mesh == pipe
                 && replica.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Mesh == pipe));
             T.Check("pipe ends at smoke origin beyond closed rear valance", pipe != null
                 && new Vector3(pipe.GetAabb().GetCenter().X, pipe.GetAabb().GetCenter().Y, pipe.GetAabb().End.Z).IsEqualApprox(tip)
                 && wagon.GetChildren().OfType<CpuParticles3D>().Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(tip))
-                && actual != null && tip.Z > actual.GetAabb().End.Z);
+                && actual != null && tip.Z > actual.GetAabb().End.Z
+                && tip.Z - actual.GetAabb().End.Z > Mathf.Max(pipeBox.Size.X, pipeBox.Size.Y));
             var defaultTip = new Vector3(sedanSize.X / 2f - 0.3f, Mathf.Max(0.22f, sedanCenter.Y - sedanSize.Y / 2f + 0.18f), sedanCenter.Z + sedanSize.Z / 2f - 0.05f);
             T.Check("CONTROL: sedan exhaust retains fleet formula", sedan.GetChildren().OfType<CpuParticles3D>()
                 .Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(defaultTip)));

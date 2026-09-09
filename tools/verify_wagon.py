@@ -11,6 +11,7 @@ import re
 import struct
 import subprocess
 
+from build_wagon import FLOOR_Y
 from measure_vehicles import ROOT, CONTENT, read_specs, uncomment, braced, vector, obj
 
 
@@ -443,7 +444,13 @@ def check_cowl_junction(mesh):
 def check_stripped_shell(mesh):
     triangles = [[mesh['vertices'][int(c.split('/')[0])-1] for c in f] for f in mesh['faces']]
     # Every sub-sill corner is now on the floor, including the former lip sites.
-    assert all(y == -.27 for x,y,z in mesh['vertices'] if y < -.12), 'sub-sill lip/bevel remains'
+    # EXTERIOR flank only. The interior passenger floor legitimately sits at -0.120, above the outer
+    # sill; the old form of this check excluded it by testing y < -.12 against a -0.270 floor, which
+    # worked only because -0.120 is not strictly less than -0.12 -- it would have started failing the
+    # moment the floor moved. Scope it to the outer wall, which is what a sub-sill lip means.
+    outer_low = [(x,y,z) for x,y,z in mesh['vertices'] if abs(x) >= 1.2 and y < 0]
+    assert outer_low and all(abs(y-FLOOR_Y) < 1e-9 for x,y,z in outer_low), \
+        ('sub-sill lip/bevel remains', sorted({round(y,4) for _,y,_ in outer_low}))
     assert not any(abs(y+.158647)<.00001 or abs(y+.125)<.00001 for x,y,z in mesh['vertices'])
     floor_area = 0
     floor_corners = set()
@@ -452,8 +459,8 @@ def check_stripped_shell(mesh):
     zv = min(z for x,y,z in mesh['vertices'] if y == .125)
     for f,tri in zip(mesh['faces'],triangles):
         n = mesh['normals'][int(f[0].split('/')[2])-1]
-        if n[1] < 0 and any(p[1] < -.12 for p in tri):
-            assert all(p[1] == -.27 for p in tri) and n == (0,-1,0), ('sloping underside',tri,n)
+        if n[1] < 0 and any(p[1] < FLOOR_Y+1e-9 for p in tri):
+            assert all(abs(p[1]-FLOOR_Y) < 1e-9 for p in tri) and n == (0,-1,0), ('sloping underside',tri,n)
             a,b,c = tri
             floor_area += abs((b[0]-a[0])*(c[2]-a[2])-(b[2]-a[2])*(c[0]-a[0]))/2
             floor_corners.update(tri)
@@ -469,19 +476,19 @@ def check_stripped_shell(mesh):
     assert abs(floor_area-2.52*(mesh['hi'][2]-mesh['lo'][2])) < 1e-6, ('incomplete flat floor',floor_area)
     for x in (-1.26,1.26):
         for z in (mesh['lo'][2],2.68):
-            assert (x,-.27,z) in floor_corners
+            assert (x,FLOOR_Y,z) in floor_corners
     for x in (-1.259,-1.12,-.99,0,.99,1.12,1.259):
         for z in (-2.8,-2.5,-1.56,0,1.46,2.65):
-            assert any(segment_hits((x,-.271,z),(x,-.269,z),tri) for tri in triangles), ('floor gap',x,z)
-    print(f'PASS painted fascia/tailgate, no body bumpers/latch/lip; full-width flat floor {floor_area:.6f} m² at Y -0.270')
+            assert any(segment_hits((x,FLOOR_Y-.001,z),(x,FLOOR_Y+.001,z),tri) for tri in triangles), ('floor gap',x,z)
+    print(f'PASS painted fascia/tailgate, no body bumpers/latch/lip; full-width flat floor {floor_area:.6f} m² at Y {FLOOR_Y:.3f}')
 
 
 def check_bumper_height(wagon):
     floor = wagon['mesh']['lo'][1]
     for end in ('front','rear'):
         lip = obj(CONTENT/f'wagon_bumper_{end}.txt')['lo'][1]
-        assert abs(lip-floor-.115)<1e-6, ('bumper lip must be floor +0.115',end,lip,floor)
-    print(f'PASS both bumper lips at floor +0.115: {floor+.115:.6f}')
+        assert abs(lip-floor)<1e-6, ('bumper lip must sit FLUSH with the floor, as on the sedan/hatchback/golf outer flank',end,lip,floor)
+    print(f'PASS both bumper lips flush with the floor at {floor:.6f} -- the sedan/hatchback/golf outer-flank convention')
 
 
 def check_cabin_fit(wagon, sedan):
@@ -545,17 +552,23 @@ def check_exhaust(wagon):
     tip = ((mesh['lo'][0]+mesh['hi'][0])/2, (mesh['lo'][1]+mesh['hi'][1])/2, mesh['hi'][2])
     emitter = vector(wagon['fields']['ExhaustPos'])
     assert all(abs(a-b)<1e-6 for a,b in zip(tip,emitter)), ('smoke must leave pipe tip',tip,emitter)
-    assert all(abs(a-b)<1e-6 for a,b in zip(tip,(.95,.28,2.73)))
     assert len(mesh['faces']) == 28
+    # IT MUST READ AS A TUBE, NOT A BULB. The first pipe was 0.120 across and stood 0.050 proud of the
+    # valance -- wider than it was long, and strawberry called it "the sphere it added as an exhaust".
+    # Assert the proportion, which is the property that failed, rather than a tip coordinate that says
+    # nothing about how it looks.
+    bore = max(mesh['hi'][0]-mesh['lo'][0], mesh['hi'][1]-mesh['lo'][1])
+    proud = tip[2]-wagon['mesh']['hi'][2]
+    assert proud > bore, ('tailpipe is wider than it is proud -- reads as a bulb', proud, bore)
+    assert proud >= .12, ('tailpipe barely clears the valance', proud)
     body_tris = [[wagon['mesh']['vertices'][int(c.split('/')[0])-1] for c in f] for f in wagon['mesh']['faces']]
     pipe_tris = [[mesh['vertices'][int(c.split('/')[0])-1] for c in f] for f in mesh['faces']]
     # Probe the mouth and smoke path; the decorative recess is 40 mm inboard.
     for dx,dy in ((0,0),(-.02,0),(.02,0),(0,-.02),(0,.02)):
-        a = (tip[0]+dx,tip[1]+dy,tip[2]-.039)
+        a = (tip[0]+dx,tip[1]+dy,tip[2]-.049)
         b = (a[0],a[1],tip[2]+.3)
         assert not any(segment_hits(a,b,t) for t in body_tris+pipe_tris), 'blocked pipe mouth/smoke path'
-    assert abs(tip[2]-wagon['mesh']['hi'][2]-.05)<1e-6
-    print(f'PASS 28-triangle exhaust: formula {formula}; actual tip/emitter {tip}, 0.050 m beyond valance; clear outlet')
+    print(f'PASS 28-triangle exhaust: formula {formula}; tip/emitter {tip}; bore {bore:.3f} vs {proud:.3f} proud of the valance ({proud/bore:.2f}:1, so a tube not a bulb); clear outlet')
 
 
 def check_donor_parts(wagon, sedan):
@@ -609,9 +622,9 @@ def check_donor_parts(wagon, sedan):
         donor = [[source['vertices'][int(c.split('/')[0])-1] for c in source['faces'][i]] for i in ids]
         ps = {p for tri in donor for p in tri}
         lo = tuple(min(p[i] for p in ps) for i in range(3)); hi = tuple(max(p[i] for p in ps) for i in range(3))
-        scale = 2.52/(hi[0]-lo[0]); dy = -.155-lo[1]
+        scale = 2.52/(hi[0]-lo[0]); dy = FLOOR_Y-lo[1]
         dz = part['lo'][2]-lo[2] if sign<0 else part['hi'][2]-hi[2]
-        assert part['lo'][0] == -1.26 and part['hi'][0] == 1.26 and part['lo'][1] == -.155
+        assert part['lo'][0] == -1.26 and part['hi'][0] == 1.26 and abs(part['lo'][1]-FLOOR_Y) < 1e-9
         assert abs((part['lo'][2] if sign<0 else part['hi'][2])-(-2.949005 if sign<0 else 2.826938)) < 1e-6, 'bumper Z moved'
         assert abs(part['size'][1]-(hi[1]-lo[1])) < 1e-6
         part_tris = [sorted(part['vertices'][int(c.split('/')[0])-1] for c in f) for f in part['faces']]
@@ -630,7 +643,12 @@ def check_donor_parts(wagon, sedan):
             tri = [part['vertices'][int(c.split('/')[0])-1] for c in f]
             # Attachment cap moves down with the entire part; its original Z
             # stays fixed, leaving 1.383 mm clearance at the sloping fascia.
-            distances = [sign*(z-(zv+(zn-zv)*(y+.035-.125)/(.999953-.125) if sign<0 else 2.68)) for x,y,z in tri]
+            # Undo the part's drop to find where the sloping fascia was when the bumper was fitted.
+            # The fitted lip is -0.120 and the finished lip is FLOOR_Y, so the drop -- and this
+            # correction -- follow the floor. Hard-coding 0.035 here silently mis-sited the fascia
+            # plane by 4 mm the moment the floor moved, and reported it as a bumper/body overlap.
+            undrop = -.120 - FLOOR_Y
+            distances = [sign*(z-(zv+(zn-zv)*(y+undrop-.125)/(.999953-.125) if sign<0 else 2.68)) for x,y,z in tri]
             assert min(distances) > -1e-6, 'bumper side overlaps body wall'
             if all(abs(d)<1e-6 for d in distances):
                 cap_count += 1
@@ -674,8 +692,8 @@ def check():
     vs = wagon['mesh']['vertices']
     zn = min(p[2] for p in vs if abs(p[1]-.999953)<1e-6)
     zv = min(p[2] for p in vs if p[1] == .125)
-    floor_z = zv+(zn-zv)*(-.27-.125)/(.999953-.125)
-    assert all(abs(x-y) < 1e-6 for x,y in zip(lo+hi,(-1.26,-.27,floor_z,1.26,2.17,2.68))), (lo,hi)
+    floor_z = zv+(zn-zv)*(FLOOR_Y-.125)/(.999953-.125)
+    assert all(abs(x-y) < 1e-6 for x,y in zip(lo+hi,(-1.26,FLOOR_Y,floor_z,1.26,2.17,2.68))), (lo,hi)
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
     assert abs(wagon["wheelbase"]-3.02)<1e-9 and wagon["tracks"] == [2.6,2.6]
     assert wagon["radii"] == sedan["radii"]
@@ -692,7 +710,7 @@ def check():
     box_hi = tuple(c+s/2 for c,s in zip(wagon['BoxCenter'],wagon['BoxSize']))
     BELTLINE = 1.10   # window aperture bases; posts run 1.10 -> 1.92
     assert box_hi[1] < BELTLINE, ('main box reaches the greenhouse', box_hi[1], BELTLINE)
-    assert box_lo[1] > -0.27, ('main box dips below the floor', box_lo[1])
+    assert box_lo[1] > FLOOR_Y, ('main box dips below the floor', box_lo[1])
     # In family with the other roofed cars on both spent axes, so this cannot pass by going tiny.
     for i,name,famlo,famhi in ((1,'height',0.90,1.10),(2,'length',5.0,5.7)):
         assert famlo <= wagon['BoxSize'][i] <= famhi, ('main box out of fleet family',name,wagon['BoxSize'][i])

@@ -3164,7 +3164,7 @@ namespace UnturnedGodot
             Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
             TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // Sedan emitters follow lens translations: front +0.150 m, rear +0.012 m in Z
-            ExhaustPos = new Vector3(0.95f, 0.28f, 2.73f),   // formula Z 2.649 is inside the closed gate at 2.680; follow the pipe tip 0.050 m outside it
+            ExhaustPos = new Vector3(0.95f, 0.28f, 2.82f),   // pipe tip, 0.140 proud of the rear valance at 2.680 -- the smoke follows the tip, and a tip only 0.050 out read as a bulb rather than a pipe
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.211f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
