@@ -15,6 +15,10 @@ namespace UnturnedGodot
     {
         public float Intensity;    // rint 0..1 (WeatherManager drives it)
         public float Shelter = 1f; // 1 = open sky .. 0 = fully under a roof (WeatherManager drives it)
+        /// <summary>Seconds for the muffle's CUTOFF to travel, independent of the level fade. Short on purpose --
+        /// see the note in HubProcess: a slow spectral move on hiss is heard as a sweep, a quick one as a door.</summary>
+        const float CutSnapSeconds = 0.07f;
+        float _cutShelter = 1f;
 
         /// <summary>The shelter low-pass knee actually in force, and the light bed's actual level in dB. Both
         /// are the APPLIED values rather than a re-derivation of the curve, so a test asserts what a player
@@ -98,7 +102,19 @@ namespace UnturnedGodot
             // Shelter is NOT muffle-only for a car: WeatherManager feeds a roofed vehicle's cabin through this same
             // Shelter input, so sitting in a car gets this curve too -- which is the point, since being inside one is
             // supposed to sound like rain on a car, not like no rain.
-            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(6000f), 1f - shelter));
+            // THE FILTER DOES NOT RIDE THE SAME CLOCK AS THE LEVEL (strawberry 2026-09-09: "when moving into a
+            // covered space, the rain sorta 'whooshes' for some reason as it gets muffled").
+            //
+            // That whoosh is not a bug in the curve, it IS the curve: WeatherManager eases Shelter over 0.35 s, and
+            // dragging a 24 dB/oct low-pass across log2(20500/6000) = 1.8 octaves of pure hiss over a third of a
+            // second is the textbook recipe for a sweep. Nothing about it is wrong except that it is audible AS a
+            // sweep. Log-domain (already done) fixes "wah"; it does not stop a slow glide being heard as motion.
+            //
+            // So the spectral move gets its own, much faster follow -- fast enough to read as a door closing rather
+            // than a glide -- while the LEVEL keeps the eased 0.35 s so nothing clicks. Two things were changing
+            // together that had no reason to: loudness wants a ramp, timbre wants a cut.
+            _cutShelter = Mathf.MoveToward(_cutShelter, shelter, dt / CutSnapSeconds);
+            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(6000f), 1f - _cutShelter));
             if (_lp != null && Mathf.Abs(cut - _lastCut) > 1f) { _lastCut = cut; _lp.CutoffHz = cut; }
         }
 

@@ -20,6 +20,26 @@ namespace UnturnedGodot
     public partial class ConnectionPort : StaticBody3D
     {
         public const uint PortLayer = 1u << 8;   // wire look-ray raycasts this layer only
+
+        // ---- VISIBLE ONLY WITH THE WIRE TOOL OUT (strawberry 2026-09-09: "hide power io ports unless we have a
+        // wire out") -------------------------------------------------------------------------------------------
+        // The ARROWS were already gated on the tool; the CUBES were not, so every generator, lamp and junction in
+        // the world wore a permanent row of little translucent blocks. They are a wiring UI, and a wiring UI has
+        // no business being on screen while you are doing anything else.
+        //
+        // A static default rather than only a group sweep: a port BUILT while the tool is stowed must come up
+        // hidden, or every deployable you place adds cubes the sweep already ran past.
+        public static bool ShowAll = true;
+        bool _retired;   // Deactivate()'d: a global show must not resurrect a dead owner's port
+
+        /// <summary>Show or hide every port in the world, and remember it for ones built later.</summary>
+        public static void SetAllVisible(SceneTree tree, bool show)
+        {
+            ShowAll = show;
+            if (tree == null) return;
+            foreach (var n in tree.GetNodesInGroup("ports"))
+                if (n is ConnectionPort p && GodotObject.IsInstanceValid(p) && !p._retired) p.Visible = show;
+        }
         const float CubeSize = 0.13f;
 
         public new IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump). `new`: intentionally shadows Node.Owner (domain owner, not the scene-tree owner)
@@ -69,6 +89,7 @@ namespace UnturnedGodot
             cp.AddChild(cp._cube);
             cp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One * CubeSize } });
             cp.BuildArrow(p.Kind);
+            cp.Visible = ShowAll;     // built while the tool is stowed -> comes up hidden, like every port already placed
             cp.AddToGroup("ports");   // PlayerController toggles all ports' arrows when the wire tool is out
             return cp;
         }
@@ -178,7 +199,7 @@ namespace UnturnedGodot
         };
 
         // the owning deployable was destroyed -> retire this cube: hide it + drop off the wire look-ray layer
-        public void Deactivate() { Visible = false; CollisionLayer = 0; }
+        public void Deactivate() { _retired = true; Visible = false; CollisionLayer = 0; }
 
         // The port cube's BASE fill colour. I/O ports (Role None) are grey, shading light (free) -> dark (Occupied) as a
         // wire attaches; switch trigger ports keep their green/red semantic.

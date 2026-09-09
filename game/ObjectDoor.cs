@@ -75,6 +75,12 @@ namespace UnturnedGodot
             pane.Name = "Glass";
             pane.Transform = new Transform3D(basis, -_pivotLocal + _glassCentre);
             pane.CullDistance = _cull;
+            // ALWAYS SHELTERED (strawberry 2026-09-09: "stop the cooler fridge's glass getting drops and runners,
+            // these are always indoors"). GlassPane defaults to uncovered, which is right for a standalone pane in
+            // the open and wrong for every prop that carries one: a display cooler lives in a shop. The wall-built
+            // panes get this from WallSurface's interior/exterior thickness convention; a prop has no wall to ask,
+            // so it states it.
+            pane.Covered = true;
             _pivot.AddChild(pane);
         }
         MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)

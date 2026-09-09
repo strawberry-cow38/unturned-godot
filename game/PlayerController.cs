@@ -6236,6 +6236,7 @@ namespace UnturnedGodot
         public PauseMenu PauseMenu;   // ESC viewmodel-tuning menu (set by BuildPlayable); null in demos
         public AttachmentMenu AttachMenu;   // T weapon-attachment menu (set by BuildPlayable); null in demos
         public AmmoRadial AmmoRadial;       // R-hold ammo-type radial for loose-shell shotguns (wired beside AttachMenu); null in demos
+        bool _portsShown = true;   // starts true so the first evaluation (tool stowed) fires the hide
         bool _rHolding; ulong _rHeldSince;  // R-hold tracking on a shotgun: a quick tap reloads, holding past AmmoRadialHoldMs opens the ammo radial
         bool _ctrlHolding; ulong _ctrlHeldSince; const ulong LightbarHoldMs = 220; LightbarRadial _lightbarRadial;   // Ctrl-hold -> lightbar pattern radial (emergency vehicles)
         const ulong AmmoRadialHoldMs = 220;
@@ -8301,6 +8302,11 @@ namespace UnturnedGodot
             // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
             // burning in your pocket. Costs one bool test per frame and cannot go stale.
+            // Power ports are a WIRING UI: on screen with the wire tool out, gone otherwise (strawberry
+            // 2026-09-09). Edge-triggered, so the group sweep runs on the two frames it changes rather than every
+            // frame; ConnectionPort.ShowAll carries the state to ports built later. Derived from what is in hand,
+            // like the held light directly below -- there is no equip site to remember to patch.
+            if (_portsShown != HoldingWireTool) { _portsShown = HoldingWireTool; ConnectionPort.SetAllVisible(GetTree(), _portsShown); }
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
             if ((_grassT += delta) >= 1.0 / 60.0) { UpdateGrassDisplacement(_grassT); _grassT = 0; }   // PERF: 60 Hz -- the lerp takes the accumulated delta, the bend is identical
             // ...and NOT while sat on furniture, which is the same exclusion for the same reason and whose

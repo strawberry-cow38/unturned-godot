@@ -135,6 +135,21 @@ namespace UnturnedGodot
         static readonly Dictionary<ulong, bool> _small = new();
         static readonly Dictionary<ulong, bool> _tiny = new();
 
+        /// <summary>A lamp head is not a roof (strawberry 2026-09-09: "prevent streetlights, traffic lights from
+        /// counting as roofs"). Judged by TYPE rather than by shrinking the footprint threshold: a streetlight's
+        /// arm reaches two or three metres out, so its collision footprint in plan is genuinely roof-sized, and
+        /// the number that would exclude it would also exclude real small canopies. What actually disqualifies it
+        /// is what it IS -- a post with a head on a stalk, with nothing under it but air.
+        ///
+        /// Walks up from the collider, because the shape that gets hit is usually a child body rather than the
+        /// StreetLight/TrafficLight node itself.</summary>
+        public static bool IsLampFixture(GodotObject o)
+        {
+            for (Node n = o as Node; n != null; n = n.GetParent())
+                if (n is StreetLight || n is TrafficLight) return true;
+            return false;
+        }
+
         /// <summary>Too small to be OVERHEAD COVER: judged on FOOTPRINT ONLY, never on thickness.
         ///
         /// This exists because sharing IsSmallProp with the shelter probe was wrong, and wrong in a way that read as
@@ -150,6 +165,7 @@ namespace UnturnedGodot
         public static bool IsTooSmallForCover(GodotObject o)
         {
             if (o is not CollisionObject3D body || body is Vehicle) return false;
+            if (IsLampFixture(o)) return true;   // a lamp head shelters nothing standing under it
             ulong id = body.GetInstanceId();
             if (_tiny.TryGetValue(id, out var known)) return known;
             var box = BodyAabb(body);
@@ -162,6 +178,7 @@ namespace UnturnedGodot
         public static bool IsSmallProp(GodotObject o)
         {
             if (o is not CollisionObject3D body || body is Vehicle) return false;
+            if (IsLampFixture(o)) return true;   // ...and casts no rain shadow either: same fixture, both rays
             ulong id = body.GetInstanceId();
             if (_small.TryGetValue(id, out var known)) return known;
             bool small = false;

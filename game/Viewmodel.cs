@@ -1490,6 +1490,52 @@ namespace UnturnedGodot
         }
         public static readonly Vector2 ViewportOversize = new Vector2(VpOverX, VpOverY);   // for a SCREEN_UV-sampling material drawn in the arms viewport
 
+        /// <summary>Light the arms with the WORLD's sun (strawberry 2026-09-09: "the lighting on the viewmodel
+        /// doesnt match the environment").
+        ///
+        /// The arms live in an isolated SubViewport, so none of the world's lighting reaches them -- they were lit
+        /// by a fixed key at energy 1.2 and a fixed pale-grey ambient, forever. That is daylight, so at midnight
+        /// the gun in your hands was the brightest thing on screen, and under a storm it stayed sunny.
+        ///
+        /// The sun's direction is taken into CAMERA space, which is exactly what this viewport's world is: its
+        /// camera sits at the origin with an identity basis, so a world direction run through the main camera's
+        /// inverse basis lands correctly with nothing to tune.
+        ///
+        /// A FLOOR, and it is a design decision rather than a fudge: the weapon in your hands is the one object
+        /// you must always be able to read, and a literal 0.015 midnight sun makes it a silhouette. The floor
+        /// keeps a rim on it while still letting the gun go obviously dark -- matching the environment means
+        /// following it, not being indistinguishable from it.</summary>
+        const float VmLightFloor = 0.22f, VmAmbientFloor = 0.18f;
+        void MatchWorldLight()
+        {
+            var dn = DayNightCycle.Current;
+            if (dn == null || !Godot.GodotObject.IsInstanceValid(dn) || dn.Sun == null || !Godot.GodotObject.IsInstanceValid(dn.Sun)) return;
+            var main = GetViewport()?.GetCamera3D();
+            if (main == null || _vpLight == null) return;
+
+            var sunDir = -dn.Sun.GlobalTransform.Basis.Z;                 // the way the sunlight travels, world space
+            var local = (main.GlobalTransform.Basis.Inverse() * sunDir).Normalized();
+            if (local.LengthSquared() > 1e-6f)
+            {
+                // LookingAt throws when the direction is parallel to up -- the sun is straight overhead at noon.
+                var up = Mathf.Abs(local.Y) > 0.995f ? Vector3.Forward : Vector3.Up;
+                _vpLight.Basis = Basis.LookingAt(local, up);
+            }
+            _vpLight.LightColor = dn.Sun.LightColor;
+            _vpLight.LightEnergy = Mathf.Max(VmLightFloor, dn.Sun.LightEnergy);
+
+            if (dn.Env != null && _vpEnv != null)
+            {
+                _vpEnv.AmbientLightColor = dn.Env.AmbientLightColor;
+                _vpEnv.AmbientLightEnergy = Mathf.Max(VmAmbientFloor, dn.Env.AmbientLightEnergy);
+            }
+            // The fills exist so faces away from the key are not solid black; they follow the key down so they do
+            // not become the dominant light at night, which would look like a torch nobody is holding.
+            float fill = Mathf.Clamp(_vpLight.LightEnergy / 1.2f, 0.25f, 1f);
+            if (_vpFill1 != null) _vpFill1.LightEnergy = 0.45f * fill;
+            if (_vpFill2 != null) _vpFill2.LightEnergy = 0.35f * fill;
+        }
+
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
@@ -1600,6 +1646,8 @@ namespace UnturnedGodot
                 _inputRoll.CurrentPosition = _inputRoll.CurrentPosition.Clamp(Vector3.One * -10f, Vector3.One * 10f);
                 _inputRollImpulse = Vector3.Zero;
             }
+            MatchWorldLight();
+
             // The head-look rides the viewport CAMERA rather than the arms: posing the arms would fight every
             // other thing on this transform (sway, bob, lean, ADS), and rotating the camera is the same picture
             // with none of that interaction.
