@@ -48,12 +48,9 @@ namespace UnturnedGodot.Testing
             T.Check("...and none of them rotated or rescaled",
                 xf[0].Basis.IsEqualApprox(before[0].Basis) && xf[1].Basis.IsEqualApprox(before[1].Basis));
 
-            // BOUNDED. Asked for twice now and raised twice (0.2 -> 0.5 -> 0.9, strawberry's "by like 30cm" then
-            // "by like 40cm"), so the band is a sanity rail rather than a spec: deep enough to swallow the trunk
-            // flare and trees read as growing out of a hole, and the felling geometry starts subtracting a bigger
-            // stump height than the stump has.
-            T.Check($"the sink is bounded ({ResourceField.TreeSink:0.##} m at unit scale)",
-                ResourceField.TreeSink > 0f && ResourceField.TreeSink < 1.2f);
+            // "A LITTLE BIT". A sink deep enough to swallow the trunk flare would read as trees growing out of a hole.
+            T.Check($"the sink is small ({ResourceField.TreeSink:0.##} m at unit scale)",
+                ResourceField.TreeSink > 0f && ResourceField.TreeSink < 0.6f);
 
             // ---- AND THE COLLIDER WENT WITH IT. The real claim. Built from the committed content, because the two
             // consumers only diverge in the production path -- the unit checks above cannot see it at all.

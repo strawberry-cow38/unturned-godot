@@ -426,10 +426,10 @@ namespace UnturnedGodot
         /// <summary>How far a tree is dropped below its spawn point, per unit of instance Y-scale (strawberry).
         /// SCALED rather than flat because these spawns run from saplings to full canopy at the same baked offset: a
         /// fixed nudge that seats a big pine leaves a small one hovering.</summary>
-        /// 0.9 since 2026-09-09 (master: "sink all trees everwhere by like 40cm") -- 40cm further down on top of
-        /// the 0.5 that 2026-09-06's "by like 30cm" left. Still SCALED, so a sapling sinks proportionally rather
-        /// than burying itself while a full canopy still hovers.
-        internal const float TreeSink = 0.9f;
+        /// 0.5 since 2026-09-06 (master: "sink all tree foliage down on their placed positions by like 30cm").
+        /// Was 0.2; +0.3 is that request, and it stays SCALED so a sapling sinks proportionally rather than
+        /// burying itself while a full canopy still hovers.
+        internal const float TreeSink = 0.5f;
 
         internal static void SinkTrees(List<Transform3D> xf)
         {
