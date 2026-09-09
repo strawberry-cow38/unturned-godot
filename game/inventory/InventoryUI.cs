@@ -97,7 +97,13 @@ void fragment() {
         // body and nothing above it, so anything worn on the head left the frame. 1.62 buys ~26 cm of headroom on a
         // 1.8 m character, which is hat-sized. Widening comes free with it: the horizontal extent is frameH times
         // the render aspect, so a taller view is a wider one at the same aspect, and PDWIDEN adds a little more.
-        const float PD_FRAME_H = 1.62f;
+        // 1.62 -> 1.28 (strawberry 2026-09-09: "scale up the paperdoll model to fit the frame its in without moving
+        // anything else"). This IS the model's scale in the frame -- the body occupies bodyHeight/PD_FRAME_H of the
+        // view, so 1.62 sat him at 62% of it with the rest empty. 1.28 puts him at 78%, and because the PANEL is
+        // taller now (440 -> 496) that is a bigger character AND more headroom in pixels than the original 1.36 at
+        // 440 gave: ~0.35 m of clear air above the head on a 1.8 m body, which is still hat-sized. Nothing else
+        // moves -- the panel, the widen and the camera all stay where they are.
+        const float PD_FRAME_H = 1.28f;
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
         Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
