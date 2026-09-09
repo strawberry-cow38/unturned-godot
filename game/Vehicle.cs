@@ -809,6 +809,20 @@ namespace UnturnedGodot
                 => h.X > 0f && Mathf.Abs(p.X - c.X) <= h.X && Mathf.Abs(p.Y - c.Y) <= h.Y && Mathf.Abs(p.Z - c.Z) <= h.Z;
         }
         public bool IsHeli => _heli;
+
+        // ---- FLARES (strawberry 2026-09-09: "add the ability to flare on rmb in military aircraft only. 1 minute
+        // between flares. kills targetting for a full barrage") ------------------------------------------------
+        /// <summary>A military airframe, DERIVED from being armed rather than kept as a list beside the specs.
+        /// In this fleet the two coincide exactly -- Hind, Orca and Huey all carry guns, Skycrane and Hummingbird
+        /// do not -- so a hand-maintained roster would be a second source of truth that could only go stale. If an
+        /// unarmed military airframe ever arrives this becomes a real flag; until then it maintains itself.</summary>
+        public bool IsMilitary => Turrets.Length > 0;
+        /// <summary>Seconds until flares are available again, and seconds of seeker blindness bought by the last
+        /// salvo. Both counted DOWN in PhysicsTick rather than compared against a wall clock -- Time.GetTicksMsec
+        /// makes an offline render non-deterministic, and these are gameplay, not cosmetics.</summary>
+        public float FlareCooldown, FlareBlind;
+        public bool FlaresReady => IsHeli && IsMilitary && FlareCooldown <= 0f;
+        public bool Flared => FlareBlind > 0f;
         public bool IsPlane => _plane;
         /// <summary>A closed passenger cell around the seats: a roofed car (RoofBox), a tracked hull, a cockpit canopy, the pod
         /// heli. The weather's shelter probe treats a seated player as under cover through this -- its up-ray starts INSIDE
@@ -8745,6 +8759,11 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         bool _interpOff, _interpNear = true; float _interpNearT, _creepT;   // PERF: physics interpolation opted out while parked / far-and-bobbing (see PhysicsTick); creep-sleep timer
         public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
         {
+            // FIRST, above every early-out below: a parked aircraft still has to cool its flares down, and a
+            // blinded one still has to stop being blind.
+            if (FlareCooldown > 0f) FlareCooldown = Mathf.Max(0f, FlareCooldown - (float)delta);
+            if (FlareBlind > 0f) FlareBlind = Mathf.Max(0f, FlareBlind - (float)delta);
+
             // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
             // VehicleBody3D::_update_process_mode enables INTERNAL_PROCESS on ITSELF just to interpolate the wheel
             // visuals, so all 88 PEI cars took NOTIFICATION_INTERNAL_PROCESS every rendered frame -- and every one of

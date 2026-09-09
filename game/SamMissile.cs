@@ -79,6 +79,15 @@ namespace UnturnedGodot
         /// <summary>Is a live round already warning this aircraft? The SITE asks, so its slower lock tone can get
         /// out of the way -- a tracking beep and a closure beep sounding together is two clocks in one cockpit,
         /// and the pilot cannot read either.</summary>
+        /// <summary>Flares: break every round currently homing on this aircraft. Called by Flares.Deploy rather
+        /// than left for each missile to notice next tick, so the warning tone stops on the frame the button is
+        /// pressed -- that silence IS the feedback that it worked.</summary>
+        public static void Decoy(Vehicle target)
+        {
+            if (target == null) return;
+            foreach (var m in Live) if (ReferenceEquals(m.Target, target)) m._lost = true;
+        }
+
         public static bool AnyWarning(Vehicle target)
         {
             if (target == null) return false;
@@ -175,6 +184,7 @@ namespace UnturnedGodot
             _life += dt;
 
             bool live = Target != null && IsInstanceValid(Target) && !Target.Exploded;
+            if (live && Target.Flared) _lost = true;   // flared mid-flight (a second salvo, or one fired after launch)
 
             // Has it been beaten? Measured on the RANGE, which is the only thing that says "this pass is over" --
             // an angle test fires early on any hard crossing shot the missile is still winning.

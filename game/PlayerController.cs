@@ -6371,6 +6371,11 @@ namespace UnturnedGodot
                 if (_driving != null)
                 {
                     if (Keybinds.IsDown(@event) && GunsightActive) CycleGunsightZoom();   // in the gunsight, an RMB TAP steps the zoom (master: "tapping rmb cycles zoom, clicking shoots")
+                    // FLARES in a military helicopter (strawberry 2026-09-09). Gated on the AIRFRAME, not on
+                    // readiness: if RMB toggled the lights whenever flares were cooling, the same button would do
+                    // two different things in the same aircraft depending on a timer you cannot see. L still
+                    // toggles the lights here, as it does everywhere.
+                    else if (Keybinds.IsDown(@event) && _driving.IsHeli && _driving.IsMilitary) Flares.Deploy(_driving);
                     else if (Keybinds.IsDown(@event) && !(OperatedTurret?.CrosshairAim ?? false)) _driving.ToggleHeadlights();
                 }   // RMB while driving: toggle lights -- unless this seat lays a cannon, where holding RMB IS the aim (TurretTick)
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1

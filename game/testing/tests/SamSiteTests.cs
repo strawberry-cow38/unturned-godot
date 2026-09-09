@@ -232,6 +232,47 @@ namespace UnturnedGodot.Testing
             T.Check($"...and it is picked up again the moment the ridge is gone (target {(ReferenceEquals(site.Target, hidden) ? "LOCKED" : "none")})",
                 ReferenceEquals(site.Target, hidden));
 
+            // ---- 11. FLARES (strawberry: "add the ability to flare on rmb in military aircraft only. 1 minute
+            // between flares. kills targetting for a full barrage").
+            //
+            // The blind TIMER is not exercised here on purpose: it counts down in Vehicle.PhysicsTick, and these
+            // helicopters are ProcessMode.Disabled so the aim probes above are not smeared by a drifting airframe.
+            // Clearing the flag by hand tests the GATE, which is the part with the logic in it; asserting the
+            // countdown would only be re-testing subtraction.
+            var civ = Vehicle.BuildByName("hummingbird");
+            World.AddChild(civ);
+            // civ.IsHeli is the TEETH: SpecFor falls through to the jeep on an unknown name, and a jeep is not
+            // military either -- so without this the check would pass for entirely the wrong reason.
+            T.Check($"only military airframes carry flares (hind {hidden.IsMilitary}, hummingbird heli={civ.IsHeli} military={civ.IsMilitary})",
+                hidden.IsMilitary && civ.IsHeli && !civ.IsMilitary && !civ.FlaresReady);
+            civ.QueueFree();
+
+            T.Check($"a full barrage of blindness is the SAM's own numbers ({Flares.BlindSeconds:0.00}s = {SamSite.LockTime:0.0} lock + {SamSite.Rack} x {SamSite.ShotDelay:0.00})",
+                Mathf.Abs(Flares.BlindSeconds - (SamSite.LockTime + SamSite.Rack * SamSite.ShotDelay)) < 0.001f);
+
+            // A round in the air, then flares: the missile has to be broken by the salvo, not merely un-re-locked.
+            var m3 = new SamMissile { Target = hidden };
+            World.AddChild(m3);
+            m3.GlobalPosition = new Vector3(0f, 60f, -60f);
+            m3.Fire((hidden.GlobalPosition - m3.GlobalPosition).Normalized());
+            m3.HubProcess(Dt);
+            T.Check($"a live round is warning the aircraft before the flare ({SamMissile.AnyWarning(hidden)})", SamMissile.AnyWarning(hidden));
+
+            T.Check($"flares deploy on a ready military heli (cooldown was {hidden.FlareCooldown:0}s)", Flares.Deploy(hidden));
+            T.Check($"...and set a {Flares.CooldownSeconds:0}s cooldown that refuses a second salvo (cooldown {hidden.FlareCooldown:0}s)",
+                Mathf.Abs(hidden.FlareCooldown - Flares.CooldownSeconds) < 0.01f && !Flares.Deploy(hidden));
+            T.Check($"the salvo breaks the round already homing on it (still warning: {SamMissile.AnyWarning(hidden)})",
+                !SamMissile.AnyWarning(hidden));
+
+            Drive(site, 0.5f);
+            T.Check($"and the site cannot lock a flared aircraft (target {(site.Target == null ? "none" : "LOCKED")}, lock {site.LockProgress:0.00})",
+                site.Target == null && site.LockProgress < 0.05f);
+
+            hidden.FlareBlind = 0f;   // the countdown would do this; here it is the GATE under test
+            Drive(site, 0.3f);
+            T.Check($"once the flares burn out it locks again (target {(ReferenceEquals(site.Target, hidden) ? "LOCKED" : "none")})",
+                ReferenceEquals(site.Target, hidden));
+
             yield return Ticks(1);
         }
     }

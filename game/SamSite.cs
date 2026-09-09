@@ -189,6 +189,7 @@ namespace UnturnedGodot
             foreach (var n in tree.GetNodesInGroup("vehicles"))
             {
                 if (n is not Vehicle v || !v.IsHeli || v.Exploded || !IsInstanceValid(v)) continue;
+                if (v.Flared) continue;                                        // countermeasures out: no lock while the seekers are chaff-blind
                 if (v.GlobalPosition.Y <= GlobalPosition.Y) continue;          // at or below the launcher: it does not depress
                 float d = GlobalPosition.DistanceSquaredTo(v.GlobalPosition);
                 if (d >= bestD) continue;
