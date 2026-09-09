@@ -668,7 +668,10 @@ namespace UnturnedGodot
         // ⚠ 84, not 90-something. Carrying the fall past 90 so the trunk finishes FLAT was tried (e6398305) and
         // rejected; see the pivot in _Process for why. Landing the trunk properly is still worth doing -- at 84 a
         // pine comes to rest with its tip about four metres up -- but not by moving where it swings about.
-        const float FallDeg = 84f;           // where it comes to rest
+        // 90, not 84 (strawberry 2026-09-09: "have it lay horizontal at the end of the animation"). 84 left the
+        // trunk nose-up by six degrees, which over a 22 m pine is 2.3 m of tip in the air. The hinge does NOT move
+        // for this -- it is still the base centre, the same rotation, just carried to horizontal.
+        const float FallDeg = 90f;           // where it comes to rest: flat
         // ...and it BOUNCES when it lands. A damped rebound about the landed angle, not a spring back up: the tip
         // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
         // 10 would read as rubber.
