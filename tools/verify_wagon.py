@@ -876,7 +876,7 @@ def check():
     lookup = braced(src, src.index("{", src.index("static Spec SpecFor")))
     names_text = braced(src, src.index("{", src.index("string[] SpecNames")))
     names = re.findall(r'"([^"]+)"', names_text)
-    assert names.count("wagon") == 1 and names[-1] == "wagon", "Append to preserve existing network TypeIds"
+    assert names.count("wagon") == 1, "Append to preserve existing network TypeIds"
     assert '"wagon" => BuildWagon(variant)' in build
     assert '"wagon" => _wagon' in lookup
     assert re.search(r'BuildWagon\(int variant = 0\)\s*=>\s*Build\(_wagon, variant, "wagon"\)', src)
@@ -946,7 +946,7 @@ def check():
         old_src = uncomment(subprocess.check_output(["git","show",revision],cwd=ROOT,text=True))
         old_names = re.findall(r'"([^"]+)"', braced(old_src, old_src.index("{",old_src.index("string[] SpecNames"))))
         if "wagon" not in old_names:
-            assert names[:-1] == old_names
+            assert names[:len(old_names)] == old_names and names[len(old_names)] == "wagon"
             print(f"PASS all {len(old_names)} pre-wagon network TypeIds retained; wagon TypeId {names.index('wagon')}")
             break
     print("Static verifier does not execute Godot/render/drive tests; see WAGON_REPORT.md for separate runtime results")
