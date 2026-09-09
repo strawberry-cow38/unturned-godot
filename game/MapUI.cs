@@ -41,6 +41,26 @@ namespace UnturnedGodot
         /// retail image rather than replacing it, so a bad bake is one file deletion away from undone.</summary>
         public static string BakedImageName => System.IO.Path.GetFileNameWithoutExtension(Info().img) + "_baked.png";
 
+        /// <summary>The bake writes the island twice: once whole (BakedImageName, the overview) and once as a
+        /// BakedChunks x BakedChunks grid of tiles at the SAME pixel count each, so the detail available when you
+        /// zoom in is BakedChunks times finer without any single texture being huge. Changing this number means
+        /// re-baking -- --bakemap reads it too, so the writer and the reader cannot disagree about the grid.</summary>
+        public const int BakedChunks = 4;
+
+        /// <summary>Zoom at which the tiles take over from the overview. 1 = the whole island fits the panel, so
+        /// the overview is already at its best there; the swap happens once you are magnifying past what it has.</summary>
+        const float ChunkZoom = 2f;
+
+        /// <summary>JPEG, not PNG, and the reason is history rather than disk (tinyclaw supplied the number: the
+        /// pack is 332 MiB, PNGs do not delta against their previous version, and a re-bake is a fresh copy that
+        /// stays forever). The 16 tiles are 67.3 MB as PNG and 10.2 MB at this quality -- 6.6x -- and the check
+        /// that mattered was NOT the byte count: JPEG rings on high-contrast hard edges, which is precisely what
+        /// a road is. Compared at 1:1 on a junction with lane dashes, a yellow centre line and zebra crossings,
+        /// q0.90 is indistinguishable from the PNG. The overview stays PNG: it is one small file and it is the
+        /// base layer every tile is drawn on top of.</summary>
+        public static string BakedChunkName(int row, int col)
+            => System.IO.Path.GetFileNameWithoutExtension(Info().img) + $"_baked_{row}_{col}.jpg";
+
         // THE SAME LAYER AS ITS SIBLING TABS, so the vitals sit over it exactly as they sit over the bag
         // (strawberry 2026-09-08: "cant see vitals on map"). It was 90, above the inventory family and above the
         // vitals' own layer 12 -- and this screen's backdrop is the opaque frosted blur, so it painted straight
@@ -76,6 +96,9 @@ namespace UnturnedGodot
         // ---- STATE THAT SURVIVES A CLOSE. Instance fields, not statics: they should outlive an open/close pair
         // but NOT outlive the world, and MapUI is built once per world.
         float _zoom = 1f;
+        Control _chunkLayer;
+        readonly TextureRect[,] _chunks = new TextureRect[BakedChunks, BakedChunks];
+        readonly bool[,] _chunkMissing = new bool[BakedChunks, BakedChunks];   // tried once and not there -- do not retry every frame
         Vector2 _pan;                 // top-left of the map image relative to the clip, in pixels
         float _baseSize = 1f;         // the un-zoomed square edge, from the last Layout
         readonly System.Collections.Generic.List<Marker> _markers = new();
@@ -128,6 +151,20 @@ namespace UnturnedGodot
             var tex = LoadMap();
             if (tex != null) _map.Texture = tex;
             _clip.AddChild(_map);
+
+            // The high-res tiles live in their own layer UNDER the pins. Added before the town dots below so it
+            // cannot draw over them, and sized in ApplyView off the same `s` everything else is placed against --
+            // one transform for the image and the things pinned to it, which is the invariant ApplyView exists
+            // to keep. Textures are loaded and freed by zoom (RefreshChunks); this is just the frame.
+            _chunkLayer = new Control { MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+            _map.AddChild(_chunkLayer);
+            for (int r = 0; r < BakedChunks; r++)
+                for (int c = 0; c < BakedChunks; c++)
+                {
+                    var t = new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale, MouseFilter = Control.MouseFilterEnum.Ignore };
+                    _chunkLayer.AddChild(t);
+                    _chunks[r, c] = t;
+                }
 
             foreach (var (name, pos) in MapNodes.Locations)
             {
@@ -314,6 +351,55 @@ namespace UnturnedGodot
             }
             foreach (var m in _markers) PlaceMarker(m, s);
             PlacePeers(s);
+            RefreshChunks(s);
+        }
+
+        /// <summary>Zoom LOD: the overview alone while it still has the pixels, the high-res tiles once it does
+        /// not -- and only the tiles actually on screen (strawberry 2026-09-09: "mipmap/LOD the high res chunks on
+        /// the map screen, so zooming keeps detail, and zooming out doesnt have a 50000x50000px texture").
+        ///
+        /// A tile is dropped the moment it leaves the view, so what is resident is bounded by how many fit on the
+        /// panel at once -- typically one or two -- rather than by the grid. Zooming back out frees the lot.
+        /// The overview stays underneath the whole time, so a tile that has not loaded yet shows the coarse
+        /// island rather than a hole.</summary>
+        void RefreshChunks(float s)
+        {
+            if (_chunkLayer == null) return;
+            bool on = _zoom >= ChunkZoom;
+            _chunkLayer.Visible = on;
+            _chunkLayer.Size = new Vector2(s, s);
+            float tile = s / BakedChunks;
+            // The visible window in map-local pixels: _map sits at _pan inside _clip, so the panel's top-left is
+            // at -_pan on the image.
+            var view = new Rect2(-_pan, _clip.Size);
+            for (int r = 0; r < BakedChunks; r++)
+                for (int c = 0; c < BakedChunks; c++)
+                {
+                    var t = _chunks[r, c];
+                    var rect = new Rect2(new Vector2(c * tile, r * tile), new Vector2(tile, tile));
+                    t.Position = rect.Position;
+                    t.Size = rect.Size;
+                    bool want = on && view.Intersects(rect);
+                    t.Visible = want;
+                    if (want && t.Texture == null && !_chunkMissing[r, c])
+                    {
+                        var ct = LoadChunk(r, c);
+                        if (ct == null) _chunkMissing[r, c] = true; else t.Texture = ct;
+                    }
+                    else if (!want && t.Texture != null) t.Texture = null;   // off screen -> let the texture go
+                }
+        }
+
+        static Texture2D LoadChunk(int row, int col)
+        {
+            string p = ProjectSettings.GlobalizePath("res://content/" + BakedChunkName(row, col));
+            if (!System.IO.File.Exists(p)) return null;
+            var img = ContentProvider.LoadImage(p);
+            if (img == null) return null;
+            // Mipmaps so a tile still minifies cleanly in the band just above ChunkZoom, where it is drawn
+            // smaller than its own pixel count.
+            img.GenerateMipmaps();
+            return ImageTexture.CreateFromImage(img);
         }
 
         void PlacePeers(float s)

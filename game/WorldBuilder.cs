@@ -127,6 +127,10 @@ namespace UnturnedGodot
         /// everything else on --objects keeps the lighter world it has always had.</summary>
         public static bool AerialRoadsFoliageTrees;
 
+        /// <summary>--bakemap: build the roads and trees but NOT the grass. A top-down camera sees grass quads
+        /// edge-on, so it is 612k instances of nothing.</summary>
+        public static bool AerialSkipFoliage;
+
         /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
         /// The model is Z-up here (raw Unity coords, ObjMesh CONV=1): the plinth is a closed box spanning Z -1.0
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
@@ -1685,7 +1689,11 @@ namespace UnturnedGodot
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
                 {
                     await Phase("Foliage");
-                    if (!SkipPhase("Foliage"))
+                    // NO GRASS IN A MAP PICTURE (strawberry 2026-09-09: "dont bake the millions of grass nodes
+                    // lol. doesnt make sense to do that"). Right: 612k instances of a quad that is EDGE-ON to a
+                    // camera looking straight down contributes almost nothing but costs 461 ms of the load and a
+                    // pile of draw calls. Trees and roads are the parts of the ground cover a map wants.
+                    if (!SkipPhase("Foliage") && !AerialSkipFoliage)
                     {
                         var ff = new FoliageField();
                         root.AddChild(ff);

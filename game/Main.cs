@@ -245,7 +245,7 @@ namespace UnturnedGodot
                 // per tree. Facing a camera that is looking straight DOWN means each one lies flat on the
                 // ground: 1.7k side-on tree sprites pasted over the real canopy. The real meshes are all the
                 // bake ever wanted.
-                else if (arg == "--bakemap" || arg.StartsWith("--bakemap=")) { objects = true; WorldBuilder.SkipBakeOmitted = true; _bakeMapRes = arg.Contains('=') && int.TryParse(arg.Split('=')[1], out var _bmr) && _bmr >= 256 ? _bmr : 2048; WorldBuilder.AerialRoadsFoliageTrees = true; ResourceField.TreeImpostors = false; }   // render OUR world from straight above into content/<map>_map_baked.png; props the editor flagged are not built at all
+                else if (arg == "--bakemap" || arg.StartsWith("--bakemap=")) { objects = true; WorldBuilder.SkipBakeOmitted = true; _bakeMapRes = arg.Contains('=') && int.TryParse(arg.Split('=')[1], out var _bmr) && _bmr >= 256 ? _bmr : 2048; WorldBuilder.AerialRoadsFoliageTrees = true; WorldBuilder.AerialSkipFoliage = true; ResourceField.TreeImpostors = false; }   // render OUR world from straight above into content/<map>_map_baked.png; props the editor flagged are not built at all
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
@@ -4908,6 +4908,7 @@ namespace UnturnedGodot
         // world +Z DOWN the image -- the same handedness WorldToNorm assumes. Getting that backwards would look
         // almost right and mirror the island.
         int _bakeMapRes; bool _bakeMapDone; int _bakeMapFrames;
+        Camera3D _bakeMapCam; int _bakeMapPass; float _bakeMapSize, _bakeMapY;
         bool _samTestDone;   // UG_SAMTEST: the site + NPC heli are placed once, after the world is up
         SubViewport _bakeMapVp;
 
@@ -4921,7 +4922,8 @@ namespace UnturnedGodot
                 // distance. UG_MAPSHOT dodges it by sitting low and shooting a small patch; a whole-map bake
                 // cannot, so the ranges come off instead. This process exists to take one picture and quit, so
                 // there is nothing to restore them for.
-                int cleared = ClearVisibilityRanges(this);
+                int lodHidden = 0;
+                int cleared = ClearVisibilityRanges(this, ref lodHidden);
 
                 // Flat noon light and NO FOG. The first bake came out as a near-white sheet -- the island was all
                 // there, at about 15% contrast under a grey wash -- because turning the fog off once does not
@@ -4971,7 +4973,7 @@ namespace UnturnedGodot
                     Msaa3D = Viewport.Msaa.Msaa4X,
                 };
                 AddChild(_bakeMapVp);
-                _bakeMapVp.AddChild(new Camera3D
+                _bakeMapCam = new Camera3D
                 {
                     Current = true,
                     Projection = Camera3D.ProjectionType.Orthogonal,
@@ -4979,35 +4981,109 @@ namespace UnturnedGodot
                     Near = 1f, Far = y + 4000f,
                     Position = new Vector3(0f, y, 0f),
                     RotationDegrees = new Vector3(-90f, 0f, 0f),   // straight down; +X right, +Z down, matching WorldToNorm
-                });
-                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared, {seas} water surface(s) flattened");
+                };
+                _bakeMapVp.AddChild(_bakeMapCam);
+                _bakeMapSize = size; _bakeMapY = y;
+                AimBakePass();
+                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared, {lodHidden} far-LOD instances hidden, {seas} water surface(s) flattened");
+                GD.Print($"[bakemap] overview + {MapUI.BakedChunks}x{MapUI.BakedChunks} chunks at {_bakeMapRes} px = {MapUI.BakedChunks * _bakeMapRes} px of detail across the island");
                 return;
             }
 
             // A viewport only has a texture the frame AFTER it renders, and the world is still settling behind
-            // us (streamed meshes, shader compiles), so give it a few rather than exactly one.
-            if (++_bakeMapFrames < 12) return;
-            _bakeMapDone = true;
+            // us (streamed meshes, shader compiles), so give it a few rather than exactly one. Only the FIRST
+            // pass waits the full settle: after that the world is built and the camera has merely moved.
+            if (++_bakeMapFrames < (_bakeMapPass == 0 ? 12 : 5)) return;
+
             var img = _bakeMapVp.GetTexture()?.GetImage();
-            if (img == null) { GD.PrintErr("[bakemap] the viewport produced no image"); GetTree().Quit(); return; }
-            string outPath = ProjectSettings.GlobalizePath("res://content/" + MapUI.BakedImageName);
-            var err = img.SavePng(outPath);
+            if (img == null) { GD.PrintErr("[bakemap] the viewport produced no image"); _bakeMapDone = true; GetTree().Quit(); return; }
+            string outPath = ProjectSettings.GlobalizePath("res://content/" + BakePassName(_bakeMapPass));
+            // Tiles go out as JPEG (see MapUI.BakedChunkName for why, and for the edge test that picked 0.90);
+            // the overview stays lossless.
+            var err = outPath.EndsWith(".jpg") ? img.SaveJpg(outPath, 0.90f) : img.SavePng(outPath);
             if (err != Error.Ok) GD.PrintErr($"[bakemap] SavePng failed: {err}");
-            else GD.Print($"[bakemap] wrote {outPath} ({img.GetWidth()}x{img.GetHeight()})");
-            GetTree().Quit();
+            else GD.Print($"[bakemap] wrote {System.IO.Path.GetFileName(outPath)} ({img.GetWidth()}x{img.GetHeight()})");
+
+            _bakeMapPass++;
+            if (_bakeMapPass > MapUI.BakedChunks * MapUI.BakedChunks) { _bakeMapDone = true; GD.Print("[bakemap] done"); GetTree().Quit(); return; }
+            _bakeMapFrames = 0;
+            AimBakePass();
+        }
+
+        /// <summary>Which file pass N writes: 0 is the whole-island overview, 1..chunks^2 are the tiles in
+        /// row-major order.</summary>
+        static string BakePassName(int pass)
+        {
+            if (pass == 0) return MapUI.BakedImageName;
+            int i = pass - 1;
+            return MapUI.BakedChunkName(i / MapUI.BakedChunks, i % MapUI.BakedChunks);
+        }
+
+        /// <summary>Frame the ortho camera for the current pass. CHUNKED ON PURPOSE (strawberry 2026-09-09: "bake
+        /// as several high resolution chunks and then mipmap/LOD the high res chunks on the map screen, so zooming
+        /// keeps detail, and zooming out doesnt have a 50000x50000px texture").
+        ///
+        /// One image cannot serve both ends of an 8x zoom: sized for the zoomed-in end it is a texture nothing
+        /// wants to hold, and sized to hold it is mush when you zoom. So the island is baked TWICE over -- once
+        /// whole, as the overview the map opens on, and once as a grid of tiles at the same pixel count EACH,
+        /// which is BakedChunks times the linear detail. The map screen then picks: overview when zoomed out,
+        /// only the tiles it can actually see when zoomed in.
+        ///
+        /// An orthographic camera's framing is Size alone, so a tile is just a smaller Size at an offset centre --
+        /// the height never changes and neither does anything about the lighting.</summary>
+        void AimBakePass()
+        {
+            if (_bakeMapCam == null) return;
+            int n = MapUI.BakedChunks;
+            if (_bakeMapPass == 0)
+            {
+                _bakeMapCam.Size = _bakeMapSize;
+                _bakeMapCam.Position = new Vector3(0f, _bakeMapY, 0f);
+                return;
+            }
+            int i = _bakeMapPass - 1, row = i / n, col = i % n;
+            float tile = _bakeMapSize / n;
+            // +X right and +Z down, matching WorldToNorm -- so column runs with X and ROW runs with Z, and the
+            // tiles land in the same order the map screen lays them out.
+            float cx = -_bakeMapSize * 0.5f + (col + 0.5f) * tile;
+            float cz = -_bakeMapSize * 0.5f + (row + 0.5f) * tile;
+            _bakeMapCam.Size = tile;
+            _bakeMapCam.Position = new Vector3(cx, _bakeMapY, cz);
         }
 
         /// <summary>Drop every per-instance distance cull in the subtree, and report how many there were.</summary>
-        static int ClearVisibilityRanges(Node n)
+        static int ClearVisibilityRanges(Node n) { int hidden = 0; return ClearVisibilityRanges(n, ref hidden); }
+
+        /// <summary>Drop every per-instance distance cull in the subtree, and report how many there were.
+        /// <paramref name="hidden"/> counts the far-LOD instances switched off rather than uncapped.</summary>
+        static int ClearVisibilityRanges(Node n, ref int hidden)
         {
             int k = 0;
-            if (n is GeometryInstance3D g && g.VisibilityRangeEnd > 0f)
+            if (n is GeometryInstance3D g)
             {
-                g.VisibilityRangeEnd = 0f;
-                g.VisibilityRangeEndMargin = 0f;
-                k++;
+                // A FAR-LOD INSTANCE IS THE ONE WITH A **BEGIN** -- and it must be HIDDEN, not uncapped
+                // (strawberry 2026-09-09, on the new bake: "lighting on some props looks black").
+                //
+                // Props LOD by band: level 0 runs [0, b), level 1 [b, e2), and so on, each level switching on
+                // exactly where the one before it switches off (WorldBuilder ~1097, PropBatcher ~144). Clearing
+                // only End -- which is what this did -- removed every switch-OFF while leaving every switch-ON in
+                // place. From 400 m up that puts the camera past every Begin at once, so LOD0, LOD1 and LOD2 all
+                // drew SIMULTANEOUSLY on the same coincident faces. That is z-fighting, and which level wins is
+                // arbitrary per pixel; on the road junction props the coarse level is far darker, so the
+                // intersections came out near-black. Pre-existing -- it is identical in the previous bake, the
+                // trees just made the rest of the map good enough to notice it.
+                //
+                // Hiding the far levels and uncapping only the base one leaves exactly LOD0, everywhere, which is
+                // what a map picture wants: the best mesh, at every distance, drawn once.
+                if (g.VisibilityRangeBegin > 0f) { g.Visible = false; hidden++; }
+                else if (g.VisibilityRangeEnd > 0f)
+                {
+                    g.VisibilityRangeEnd = 0f;
+                    g.VisibilityRangeEndMargin = 0f;
+                    k++;
+                }
             }
-            foreach (Node c in n.GetChildren()) k += ClearVisibilityRanges(c);
+            foreach (Node c in n.GetChildren()) k += ClearVisibilityRanges(c, ref hidden);
             return k;
         }
 
