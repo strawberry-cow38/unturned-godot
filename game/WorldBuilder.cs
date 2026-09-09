@@ -1711,7 +1711,7 @@ namespace UnturnedGodot
                         {
                             vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
                             {
-                                0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf is command-only, excluded)
+                                0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf and wagon are command-only, excluded)
                                 1 => "police",                                                              // Police
                                 2 => "firetruck",                                                           // Fire
                                 3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
@@ -1731,7 +1731,7 @@ namespace UnturnedGodot
                     }
                 }
                 if (_vehProf) VehProfDump();
-                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
+                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf/wagon command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
             }
 
             // DOORS / BEDS / DEADZONES: the three ported interactables, placed in the REAL world so they are
