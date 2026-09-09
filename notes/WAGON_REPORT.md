@@ -1,78 +1,124 @@
-# Wagon strip and fleet refit
+# Wagon revision 3 — lamps, bumpers, seating and exhaust
 
-Removed the grille material patch, baked front and rear bumpers, trunk handle, both underside bevels, front lower lip, and sedan-derived lamp generation. The fascia is now continuously painted and coplanar down to the floor; the tailgate is a closed painted panel down to the floor. All geometry changes are in `tools/build_wagon.py`; the OBJ files were regenerated.
+Implemented on `wagon-strip` from `18e58ac0`, after reading that commit's collider correction. Units are metres; +Y is up and forward is −Z. Measurements below were independently read from `game/content/*_body.txt`, the steering/seat/lamp meshes, and the literals in `game/Vehicle.cs` using `tools/measure_vehicles.py`. No appearance judgment is claimed.
 
-**Identification audit:** every identification in the request matches the shipped generator at `1d8bbd94`. Nothing remains unidentified. In particular, the follow-up about a completely flat underside identifies the full-length bevel from |X| = 0.99, Y = −0.270 to |X| = 1.26, Y = −0.120. The old front lip's actual Y stations were −0.158648 and −0.125000 (the request rounded the first to −0.159); neither exists in the regenerated body. The grille really was a UV/material patch, and the handle really was a protruding box. Neither required leaving an opening.
+The collider remains **BoxSize (2.5, 0.98, 5.52), BoxCenter (0, 0.59, −0.061)**: a fitted lower shell whose top is Y 1.080, below the 1.10 beltline. The separate `RoofBox("Station Wagon")` remains size (2.52, 0.25, 3.36), centre (0, 2.045, 0.88). The existing verifier assertions and runtime sedan control are retained. The previous report's full-body enclosure description was wrong and is superseded here.
 
-## Donors and refitting
+## Sedan lamps at both ends
 
-All dimensions below come from meshes in `game/content/`, in metres. Width includes the complete left/right pair. Shape descriptions describe source geometry, not an in-game appearance judgment.
+The pre-Golf generator (`f2ff4f3c^:tools/build_wagon.py`) confirms exactly **+0.150 Z for sedan headlights and +0.012 Z for sedan taillights**. Every saved wagon triangle position was compared against the pre-Golf wagon lamps and matches exactly. The new generator copies sedan records and translates only vertices; donor UVs, explicit normals and topology are retained.
 
-**Golf lamps selected as requested.** `golf_headlights.txt` has horizontally pointed hexagonal outlines: **2.111922 × 0.413821 × 0.125399**, **40 triangles**. `golf_taillights.txt` has wide rectangular outlines: **2.048478 × 0.254716 × 0.125398**, **20 triangles**. They replace the sedan's 20-triangle headlights (2.048 × 0.255) and taillights (2.227 × 0.329). Every donor triangle and UV is retained; only Z is translated and flat normals are recalculated from the saved float32 positions.
+| Part | Sedan dimensions X × Y × Z | Translation | Triangles | Wagon light anchors (X,Y,Z) |
+| --- | --- | --- | ---: | --- |
+| Headlights | 2.048475 × 0.254715 × 0.125399 | (0,0,+0.150) | 20 | Spots (±0.765,0.708,−2.819); omni (0,0.841,−2.795) |
+| Taillights | 2.226929 × 0.329078 × 0.189916 | (0,0,+0.012) | 20 | Tails (±0.979,0.688,2.853) |
 
-| Part | Golf-to-wagon translation | Final emitter positions (X,Y,Z) |
+`VehicleWagonTests` retains both lamp-count assertions, now at the sedan's 20 triangles each. Static checks compare every donor corner and UV, the exact translations and the matching emitters. Outward lens corners clear the fascia by at least 0.014028 and the rear panel by 0.120002; these are geometric clearances, not render results.
+
+## Bumpers lowered 0.035
+
+The supplied six-car statistic is correct to the stated precision. “Nose” here means body vertices forward of the front axle; the minima are on the donor bumper bands.
+
+| Body | Body Y minimum | Nose Y minimum | Nose minus floor |
+| --- | ---: | ---: | ---: |
+| sedan | −0.273431 | −0.158648 | 0.114783 |
+| hatchback | −0.273431 | −0.158648 | 0.114783 |
+| golf | −0.273431 | −0.158647 | 0.114784 |
+| police | −0.273431 | −0.158648 | 0.114783 |
+| van | −0.273432 | −0.158647 | 0.114785 |
+| humvee | −0.273431 | −0.158647 | 0.114784 |
+
+Thus +0.115 is the rounded fleet constant. Subtracting the separately rounded −0.273 and −0.159 would give 0.114; the unrounded coordinates explain the apparent discrepancy. The prescribed 0.035 drop is retained, rather than replacing it with a micrometre adjustment.
+
+Both finished hatchback-derived bumper parts move by **(0,−0.035,0)**, from lip Y −0.120 to **−0.155**, exactly **0.115 above wagon floor −0.270**. Every vertex was checked against `18e58ac0`; X/Z, faces, normals and UVs are unchanged. Each remains 44 triangles, with zero boundary edges.
+
+| Bumper | Final Y extent | Unchanged Z extent |
 | --- | --- | --- |
-| Headlights | (0,0,**−0.215180**) | Spots (±0.765,0.708,−2.803180); omni (0,0.841,−2.779180) |
-| Taillights | (0,0,**+0.332254**) | Tails (±0.765,0.787,2.756254) |
+| Front | −0.155000..0.104451 | −2.949005..−2.791821 |
+| Rear | −0.155000..0.104450 | 2.680000..2.826938 |
 
-The generator derives these deltas from the donor outward faces and wagon mounting planes, giving every outward lens corner at least 2 mm clearance. The spec uses the **Golf's** original emitter anchors plus exactly those deltas. The lens backs enter the closed body, as mounting geometry; the Golf taillights retain their donor's open backs. The body itself remains closed.
+The generator lowers the already fitted/capped parts. Re-fitting them against the sloped fascia at the new Y would move Z, contrary to the request. Consequently the front attachment cap now clears that plane by approximately **0.001383**; the rear attachment plane stays at Z 2.680.
 
-- **Humvee/jeep/offroad/truck/van alternative:** vertically pointed hexagonal, round-looking headlights, **2.309 × 0.405, 32 triangles**, wider-spaced than the Golf's; their **2.227 × 0.329, 20-triangle** near-square tails would largely restore the old rear shape (van tails also sit about 0.100 m higher).
-- **Ambulance alternative:** **2.048 × 0.255, 20-triangle** rectangular headlights and **2.227 × 0.329, 20-triangle** near-square tails; essentially the old sedan lamp silhouettes at different donor coordinates, with less headlight detail than the Golf. Both alternatives would need their own mounting translations and matching emitter updates.
+**Qualification to the brief:** the wagon's existing flat floor extends to its nose at Y −0.270. Its bumper lip therefore is not the lowest point of the wagon nose, even after lowering. Achieving that separate donor property would require changing the closed body floor. The requested lip-to-floor offset is satisfied and the body is unchanged.
 
-**Hatchback bumpers selected after measuring all three requested candidates.** The offroader spec uses `offroad_body.txt`; there is no `offroader_body.txt`. The bumper bands are geometrically tied to export precision, so there is no honest claim that van or offroader would require more shape distortion. Hatchback requires the least translation and is a civilian-car donor.
+## Steering wheel and front seats
 
-| Donor | Front band Z extent | Rear band Z extent | Width × height × depth, front / rear | Front / rear Z translation for this fit |
-| --- | --- | --- | --- | --- |
-| **Hatchback** | −2.724326..−2.309333 | 2.302789..2.717784 | 2.521863 × 0.259451 × 0.414993 / 2.521864 × 0.259450 × 0.414995 | **−0.224679 / +0.109154** |
-| Van | −2.517115..−2.102122 | 2.102120..2.517116 | 2.521863 × 0.259450 × 0.414993 / 2.521864 × 0.259450 × 0.414996 | −0.431890 / +0.309822 |
-| Offroader | −2.517115..−2.102122 | 2.102120..2.517116 | Same as van to the displayed precision | −0.431890 / +0.309822 |
+The supplied cabin-front and wheel-front figures match the files when rounded to three decimals. Export jitter across the donor cabin-front corners is at most 8 micrometres.
 
-Each source bumper has **28 triangles, 16 positions and 0/42 boundary edges**. Extraction selects triangles at the two measured Y levels (−0.158647 and +0.100803, within 3 μm export jitter) and at the appropriate end beyond |Z| > 2.1. It excludes valance, grille and exhaust geometry; no complete body is copied. The verifier independently identifies hatchback source faces 290–317 and 318–345, zero-based.
+| Car | Cabin-front Z, approximately | Wheel front Z | Forward poke-through |
+| --- | ---: | ---: | ---: |
+| sedan | −1.461164 | −1.572887 | 0.111723 |
+| hatchback | −1.128024 | −1.246196 | 0.118172 |
+| golf | −1.211164 | −1.335727 | 0.124563 |
+| wagon before | −1.250000 | −1.572887 | 0.322887 |
+| wagon revision 3 | −1.250000 | −1.367887 | **0.117887** |
 
-The selected bands are centered in X and reduced to **X = ±1.26** using scales **0.999261260 front / 0.999260864 rear**: a **0.0739% reduction**, not a stretch across an inset gap. Outer-tip jitter below 3 μm is snapped to the wall planes. They move up **0.038648 / 0.038646 m**, putting their bottom faces at the old sill Y = −0.120 without changing donor height. Van/offroader would cost the same width reduction, height and attachment trimming, plus **0.207211 m more forward translation and 0.200668 m more rearward translation**.
+`wagon_steer.txt` is the sedan's 122-triangle wheel translated **+0.205 Z**, now **Z −1.367887..−1.056433**. `SteerPivot` follows from (−0.464,0.894,−1.416) to **(−0.464,0.894,−1.211)**; the steering axis is unchanged. The wagon uses its own wheel asset so the sedan is unaffected.
 
-The outward donor contours sit at least **0.080 m** beyond their mounting planes. Buried backs are clipped at the fascia/tailgate planes to avoid overlapping exterior side walls, then closed with attachment caps. Those hidden caps are the only newly authored bumper surfaces. All six outward donor triangles per bumper survive intact within export precision; all other exposed triangles remain on donor surfaces. Final parts have **24 positions and 44 triangles each**, including the trimmed/capped attachment, and are listed in `Parts` as `wagon_bumper_front.txt` and `wagon_bumper_rear.txt`. They use dark solid colour RGB 58/255.
+Reach is measured from the steering mesh's **Z-bounds centre** to the driver seat-table Z, which reproduces the figures in the brief. It is not measured from the rounded `SteerPivot` literal.
 
-## Flat underside and bounds
+| Vehicle | Wheel-to-driver-seat reach |
+| --- | ---: |
+| sedan / police | 0.792160 |
+| roadster | 0.792094 |
+| van | 0.792042 |
+| hatchback | 0.791469 |
+| humvee | 0.791169 |
+| jeep | 0.806760 |
+| golf | 0.830000 |
+| wagon before / after | **0.792160 / 0.792160** |
+| wagon with wheel moved alone | 0.587160 |
 
-The external floor is one plane at **Y = −0.270**, spanning **X = −1.26..1.26**, from the fascia's floor intersection to **Z = 2.68**. Its area is **13.829750 m²**. Both side walls drop vertically onto it. There are no sloping lower bevels or intermediate sub-sill body stations. The internal passenger floor and raised cargo deck are retained.
+All supplied reach figures agree at three decimals. The front table positions are now **(±0.500,−0.079,−0.420)**; rear positions remain **(±0.500,−0.079,+0.772)**. Row spacing is **1.192**, compared with the verified Golf spacing **1.122**.
 
-This preserves the body's lowest Y and its geometric ground clearance. Flattening at **Y = −0.120** instead would raise the underside **0.150 m**, increasing body clearance by that amount. Relative to the unchanged authored wheel-bottom plane (0.25 − 0.60 = −0.35), the nominal body clearance remains **0.080 m**, rather than **0.230 m**; these are geometry measurements, not loaded suspension measurements.
+The new **`wagon_seats.txt`** derives from `sedan_seats.txt`: only the two front seats move +0.205 Z; the rear row is untouched. The sedan mesh has four disconnected geometric components, each with 16 welded positions; its front components have only negative Z and its rear components only positive Z. No triangle crosses that row split. All 96 triangles, UVs and donor normals survive. The verifier compares each vertex's translation against its corresponding driver/passenger/rear seat-table delta, and rejects a table-only or mesh-only move.
 
-The unchanged upper fascia stations give:
+There is also an absolute `SeatOf` anchor used for the driver body and camera. The wagon's anchor moves from **(−0.50,−0.04,−0.566)** to **(−0.50,−0.04,−0.361)**, preserving the sedan's body-to-seat offset on server and replica. Without this change, the visible player and camera would remain forward despite the corrected table. Rear passenger body positions remain unchanged.
 
-`Z(Y) = −2.792392 + (−2.757828 + 2.792392) × (Y − 0.125) / (0.999953 − 0.125)`.
-
-At Y = −0.270 this is **Z = −2.807996 m** after serialization. Thus the new body AABB is **(−1.26,−0.27,−2.807996)..(1.26,2.17,2.68)**, or **2.520 × 2.440 × 5.487996 m** (X/Y/Z). The separate bumper tips extend the assembled envelope to **Z = −2.949005..2.826938**, total length **5.775943 m**.
-
-`BoxSize = (2.52,2.44,5.776)` and `BoxCenter = (0,0.95,−0.061034)` enclose the full body, lamps and bumpers; Z is rounded outward. The old `(2.5,0.98,5.52)` lower-body box did not enclose even the shipped body. Roof/cabin registration remains intact. The larger full-body box's effects on driving and collisions have not been assessed.
-
-## Rear roof derivation
-
-The D-pillar's exterior rear edge is **(Y,Z) = (1.10,2.68) → (1.92,2.56)**. Its slope is:
-
-`dZ/dY = (2.56 − 2.68) / (1.92 − 1.10) = −0.1463414634`.
-
-Continuing to Y = 2.17 gives:
-
-`roof_rear_z = 2.56 + (2.17 − 1.92) × (2.56 − 2.68) / (1.92 − 1.10) = 2.523414634`.
-
-The generator reads those endpoints from `posts[3]` and derives the value, just as the front does. The serialized top rear edge is **Z = 2.523415**, **36.585 mm forward** of the former vertical cap. The roof top, both side edges and rear cap meet there. D-pillar endpoints, rear glass and the correct A-pillar roof continuation remain unchanged.
-
-## Verification and limits
-
-| Check | Result |
+| Saved seat geometry | Z extent / clearance |
 | --- | --- |
-| `python3 tools/verify_wagon.py` | **PASS** for all **13 OBJ assets**: three corners per face, positive indices in range, explicit unit normals agreeing with winding, V-flipped UVs, no degenerate or duplicate triangles. Also checks removals, full-width floor, both roof rakes, donor provenance, emitters, enclosure, retained hood, glass, seats, cargo and registrations. |
-| Body topology under float32 / ParseObj rules | **101 positions, 226 triangles; 0/339 boundary edges (0.0%)**, every edge used twice with opposite winding; one connected outward shell; no coplanar overlaps or triangle piercings across 3,288 candidate pairs. Signed volume 12.785812 m³. |
-| Bumper topology | Each has **0/66 boundary edges (0.0%)**, one connected outward shell, no overlaps or piercings. |
-| `dotnet build game/UnturnedGodot.csproj` | **Succeeded, 0 errors**, 57.97 s. First compile emitted **22 warnings from unchanged declarations/call sites** (including generated code); this was not a warning-free fresh compile. No unrelated warning fixes were made. |
-| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS: 1 test, 19 checks, 0 failures**, 0.98 s. Includes server/replica donor bumper loading and hull enclosure. Its incremental build reported 0 warnings and 0 errors. The headless engine logged its experimental separate-rendering-thread warning. |
-| Reproducibility | **PASS:** all **14 generated assets** (13 OBJ + palette) produce identical bytes on regeneration. Eight glass panes and the palette remain byte-identical to `1d8bbd94`. |
-| Regression sensitivity | The new floor/removal check rejects the shipped body's bevel/lip; the rear-roof check independently rejects its vertical rear cap. |
-| Registration | `BuildWagon`, `BuildByName`, `SpecFor`, seat tables and eight glass panes retained. All **32 preceding `SpecNames` entries** retain their exact ordering; wagon remains **TypeId 32**. |
+| Moved front row, both seats | −0.828915..0.166275 |
+| Unchanged rear row | 0.362069..1.357307 |
+| Clear separation between rows | **0.195794** |
+| Front seatback to load-floor step at 1.360 | **1.193725** |
+| Rear seatback to step | **0.002693** |
 
-**Not verified:** visual appearance, night lighting, an actual network session, driving, loaded suspension clearance, impacts or full regression suites. The targeted L1 test creates a replica locally; it is not a network-session test. No new visual captures were made, and the existing wagon PNGs document earlier revisions. I do not claim the revised car looks right in game. The body is closed independently of the separate parts; the original Golf taillight backs remain open inside it.
+Disjoint Z bounds prove the front seats intersect neither the rear seats nor the step; the rear row also remains before the step. The narrow existing rear clearance is reported rather than hidden by rounding.
 
-Current coordinates are also recorded in [wagon_dimensions.md](wagon_dimensions.md). Build artifacts are excluded from the commit. Work is committed on `wagon-strip`; nothing is pushed.
+## Exhaust pipe and emitter
+
+The formula in `Vehicle.cs` and the corrected box yield exactly **(0.95,0.28,2.649)**, as supplied. That point is **31 mm inside** the closed rear panel, whose outer face is Z 2.680. A pipe ending there would be buried.
+
+**I extended the outlet past the rear valance. The actual tip and smoke origin are (0.95,0.28,2.730)**, **50 mm outside the panel and 81 mm rearward of the formula point**. This is the explicit departure from the requested formula endpoint needed for an exposed outlet. The new nullable `Spec.ExhaustPos` is set only for the wagon; every other vehicle retains the existing formula. No collider or body surface was moved or opened. Runtime tests include a sedan control for the unchanged default formula.
+
+`wagon_exhaust.txt` is a short six-sided pipe: **28 triangles, 18 positions**, Z **2.550..2.730**, 0.120 across X, with a mouth recessed 0.040 from the tip. It uses the fleet's ordinary solid-part material in dark metal RGB **(0.16,0.17,0.18)** and is registered in `Parts`. The radius, length, recess depth and 50 mm projection are explicit construction choices, not claimed fleet constants: the existing road specs contain no separate pipe part to measure. This is a pipe end without a modelled muffler.
+
+Five static probes through the outlet and rearward smoke path clear both the pipe surface and the closed body. This proves the mouth is geometrically exposed; it does not establish how smoke or materials look in game.
+
+## Verification
+
+- `python3 tools/verify_wagon.py`: **PASS**, all **16 OBJ assets**. Triangles only; positive indices; explicit unit normals; V-flipped UVs; no duplicate or degenerate triangles. Authored faces have normals agreeing with winding. The translated sedan seats and wheel preserve the donor's smooth normals exactly, so those two use donor-normal equality plus outward-orientation checks rather than falsely requiring flat shading.
+- Body: **unchanged bytes**, **101 positions, 226 triangles, 0/339 boundary edges**; one connected outward shell, no overlapping coplanar triangles or triangle piercings. All eight glass panes and palette are unchanged. The original straight walls, flat underside, roof rakes and open window/cargo probes remain checked.
+- Network registration: all **32 preceding `SpecNames` entries retain their ordering; wagon remains TypeId 32**. Lower-shell and separate roof collider checks, including the sedan non-enclosure control, remain intact.
+- `dotnet build game/UnturnedGodot.csproj`: **succeeded, 0 errors**, 54.66 s. The compile emitted **22 warnings from unchanged code/declarations**, so this was not a warning-free compile. No unrelated warning fixes were made.
+- `./test.sh --l1 --only 'vehicle.wagon*'`: **PASS, 1 test, 34 checks, 0 failures**, 0.51 s in engine. Its build also succeeded with 0 errors and the same 22 warnings. Checks include server/replica seat, wheel and pipe loading; wheel pivot offsets; driver and rear passenger body anchors; both lamp counts; bumper heights; pipe/smoke alignment; and the retained collider controls.
+- Regeneration: **all 17 assets (16 OBJ plus palette) reproduce identical bytes**. No existing sedan or other fleet donor asset changed. `git diff --check` passes.
+
+**I tried reverting each new placement check's input**, ran the complete verifier, required a nonzero exit with the relevant assertion, and restored the saved file in `finally` before the next trial:
+
+| Temporary regression | Observed failure |
+| --- | --- |
+| Front bumper restored from `18e58ac0` | `bumper lip must be floor +0.115`, Y −0.120 |
+| Rear bumper restored separately | Same height assertion, rear Y −0.120 |
+| Steering mesh restored to sedan placement | `wheel poke-through outside fleet 0.11..0.13`, 0.322887 |
+| Front seat table restored to −0.625 only | `wheel-to-driver-seat reach outside fleet 0.79..0.83`, 0.587160 |
+| Seat mesh restored to sedan placement only | `seat mesh disagrees with seat table`, missing +0.205 driver translation |
+| Front passenger table restored alone | `seat mesh disagrees with seat table`, passenger delta mismatch |
+| Driver body/camera anchor restored | `driver body pose did not follow front row` |
+| Smoke override restored to formula point | `smoke must leave pipe tip`, 2.730 versus 2.649 |
+
+The complete verifier passes again after restoring the final files.
+
+**Not verified:** visual appearance, night lighting, smoke animation, actual seated-player rendering, an actual network session, driving, loaded suspension clearance, impacts or the full regression suites. The targeted L1 test builds a server vehicle and local replica; it is not an end-to-end network test. No new visual captures were made, and the existing wagon PNGs show earlier revisions. I do not claim the revised car looks right.
+
+Current coordinates are also recorded in [wagon_dimensions.md](wagon_dimensions.md). No push is performed.

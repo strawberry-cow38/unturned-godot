@@ -2033,6 +2033,7 @@ namespace UnturnedGodot
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public Color? GlassTint;   // GlassMesh albedo+alpha; null = the jet's golden canopy. Cars use GlassPane.DefaultHue so vehicle glass matches the building editor's windows.
+            public Vector3? ExhaustPos;   // authored outlet; null keeps the fleet's lower-shell formula
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -2863,7 +2864,7 @@ namespace UnturnedGodot
             ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
             ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
             ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
-            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // shared four-seat interior; original load deck begins behind the rear seatbacks
+            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.420f), new Vector3(0.500f, -0.079f, -0.420f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // front row follows wagon_steer +0.205 Z; wagon_seats matches; rear row retained
             ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
             ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
             ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
@@ -2901,7 +2902,8 @@ namespace UnturnedGodot
         };
         static Vector3 SeatOf(string name) => name switch
         {
-            "Sedan" or "Station Wagon" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Station Wagon" => new Vector3(-0.50f, -0.04f, -0.361f),   // front row +0.205 Z; retain sedan's body-to-seat offset
             "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
             "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),
             "Roadster" => new Vector3(-0.50f, -0.04f, 0.390f),
@@ -3160,17 +3162,19 @@ namespace UnturnedGodot
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
-            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.80318f), new Vector3(0.765f, 0.708f, -2.80318f) }, OmniPos = new Vector3(0f, 0.841f, -2.77918f),
-            TailPos = new[] { new Vector3(-0.765f, 0.787f, 2.756254f), new Vector3(0.765f, 0.787f, 2.756254f) },   // Golf emitters follow lens translations: front -0.215180 m, rear +0.332254 m in Z
-            SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // Sedan emitters follow lens translations: front +0.150 m, rear +0.012 m in Z
+            ExhaustPos = new Vector3(0.95f, 0.28f, 2.73f),   // formula Z 2.649 is inside the closed gate at 2.680; follow the pipe tip 0.050 m outside it
+            SteerPivot = new Vector3(-0.464f, 0.894f, -1.211f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
             Parts = new (string, Color)[]
             {
-                ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
-                ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("wagon_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("wagon_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("wagon_bumper_front.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
                 ("wagon_bumper_rear.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
+                ("wagon_exhaust.txt", new Color(0.16f, 0.17f, 0.18f)),   // short dark-metal tailpipe
                 ("wagon_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
                 ("wagon_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
             },
@@ -7077,7 +7081,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 v._exhaust = MakeSmoke("veh_smoke_1.png", new Color(0.66f, 0.66f, 0.64f, 0.8f), 1.3f, 1.3f, 14, false, 0.14f, 0.34f);
                 v._exhaust.Direction = new Vector3(0f, 0.35f, 1f); v._exhaust.Spread = 16f; v._exhaust.Gravity = new Vector3(0f, 0.7f, 0f);   // out the back, drifting up
-                v._exhaust.Position = new Vector3(+(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear-left, low: no per-vehicle pipe data, this is where a tailpipe sits on the ripped bodies   // RIGHT rear: the tailpipes are on the right now that the bodies are un-mirrored (master 2026-09-05 "exhaust emitters are on the opposite side")
+                v._exhaust.Position = s.ExhaustPos ?? new Vector3(+(s.BoxSize.X * 0.5f - 0.3f), Mathf.Max(0.22f, s.BoxCenter.Y - s.BoxSize.Y * 0.5f + 0.18f), s.BoxCenter.Z + s.BoxSize.Z * 0.5f - 0.05f);   // rear right, low; authored pipe tips override the default body-box estimate
                 v.AddChild(v._exhaust);
             }
             // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's

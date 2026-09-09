@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the stripped wagon shell, Golf lamps and extracted hatchback bumpers.
+"""Build the wagon shell, sedan interior/lamps and extracted hatchback bumpers.
 
 The sedan front stations are measured from its body; the cabin and axle rig
 retain the independently authored wagon coordinates. No Boolean overlapping
@@ -9,13 +9,28 @@ import math
 from pathlib import Path
 import shutil
 import struct
-from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs
+from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs, vector
 
 PAINT = (0.125, 0.75)
 DARK = (0.375, 0.25)
 HALF_WIDTH = 1.26  # One outer wall plane, including every post and bumper tip.
 FLOOR_Y = -.27
 REAR_Z = 2.68
+
+
+def translate_asset(source, target, offset):
+    """Translate position records only; keep donor topology, UVs and normals."""
+    lines = []
+    for line in (CONTENT/source).read_text().splitlines():
+        if line.startswith('v '):
+            p = tuple(map(float, line.split()[1:]))
+            delta = offset(p)
+            if any(delta):
+                line = 'v ' + ' '.join(fmt(x+d) for x,d in zip(p,delta))
+        elif line.startswith('g '):
+            line = 'g ' + Path(target).stem
+        lines.append(line)
+    (CONTENT/target).write_text('\n'.join(lines)+'\n')
 
 def sub(a, b):
     return tuple(x-y for x, y in zip(a, b))
@@ -125,6 +140,25 @@ class Mesh:
 
 
 
+def build_exhaust():
+    """Six-sided pipe with a recessed mouth, 28 triangles; no muffler."""
+    tip = vector(read_specs(('wagon',))['wagon']['fields']['ExhaustPos'])
+    x,y,z = tip
+    def ring(radius, at_z):
+        return [(x+radius*math.cos(i*math.tau/6), y+radius*math.sin(i*math.tau/6), at_z)
+                for i in range(6)]
+    root, lip, recess = ring(.06,z-.18), ring(.06,z), ring(.045,z-.04)
+    mesh = Mesh()
+    for i in range(6):
+        j = (i+1)%6
+        radial = (lip[i][0]+lip[j][0]-2*x, lip[i][1]+lip[j][1]-2*y, 0)
+        outward_quad(mesh, [root[i],root[j],lip[j],lip[i]], radial, DARK)
+        outward_quad(mesh, [lip[i],lip[j],recess[j],recess[i]], (0,0,1), DARK)
+    mesh.panel(recess, (0,0,1), DARK)
+    mesh.write('wagon_exhaust.txt', weld_positions=True)
+    print(f'Exhaust: {len(mesh.f)} triangles; tip {tip}; 0.050 m beyond rear valance')
+
+
 def outward_quad(mesh, points, direction, uv=None):
     n = cross(sub(points[1], points[0]), sub(points[2], points[0]))
     if sum(a*b for a,b in zip(n,direction)) < 0:
@@ -215,7 +249,12 @@ def fit_bumpers(fascia):
         cy = sum(p[1] for p in cut)/len(cut)
         part.panel(sorted(cut,key=lambda p:math.atan2(p[1]-cy,p[0]-cx)),(0,0,-sign),DARK)
         part.write(f'wagon_bumper_{label}.txt', weld_positions=True)
+        # Lower the finished part, including its attachment cap. Re-fitting at
+        # the new Y would also change Z against the sloped fascia. Keep Z fixed.
+        name = f'wagon_bumper_{label}.txt'
+        translate_asset(name, name, lambda p: (0, -.035, 0))
         print(f'Hatchback {label}: X scale {xscale:.9f}; Y {dy:+.6f}; Z {dz:+.6f}')
+        print('  Finished bumper lowered 0.035 m to floor +0.115; Z unchanged')
 
 
 def build():
@@ -342,27 +381,17 @@ def build():
         outward_quad(mesh,points,direction)
         mesh.write('wagon_glass_'+label+'.txt')
 
-    # Translate the Golf lenses, without scaling or changing their topology.
-    # Put each innermost outward lens corner 2 mm ahead of the body plane.
-    # The backs intentionally enter the closed shell, as on the donor.
-    for lamp,sign in [('headlights',-1),('taillights',1)]:
-        source=obj(CONTENT/('golf_'+lamp+'.txt'))
-        outward = [source['vertices'][int(c.split('/')[0])-1]
-                   for f in source['faces']
-                   if sign*source['normals'][int(f[0].split('/')[2])-1][2] > .5
-                   for c in f]
-        delta = (min(fascia(y)-z for x,y,z in outward)-.002 if sign < 0
-                 else REAR_Z-min(p[2] for p in outward)+.002)
-        delta = round(delta, 6)
-        lamps=Mesh()
-        for face in source['faces']:
-            assert len(face) == 3
-            cs=[tuple(int(i)-1 for i in c.split('/')) for c in face]
-            lamps.tri([(source['vertices'][v][0],source['vertices'][v][1],source['vertices'][v][2]+delta) for v,t,n in cs],
-                      [(source['uvs'][t][0],1-source['uvs'][t][1]) for v,t,n in cs])
-        lamps.write('wagon_'+lamp+'.txt')
-        print(f'Golf {lamp} Z delta: {delta:+.6f}')
+    # Original wagon lamp translations, with every sedan corner retained.
+    for lamp,delta in [('headlights',.150),('taillights',.012)]:
+        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p: (0,0,delta))
+        print(f'Sedan {lamp} Z delta: {delta:+.6f}')
+    translate_asset('sedan_steer.txt', 'wagon_steer.txt', lambda p: (0,0,.205))
+    seats = obj(CONTENT/'sedan_seats.txt')
+    assert all(len({seats['vertices'][int(c.split('/')[0])-1][2] < 0 for c in f}) == 1
+               for f in seats['faces']), 'source seat triangle crosses row split'
+    translate_asset('sedan_seats.txt', 'wagon_seats.txt', lambda p: (0,0,.205 if p[2]<0 else 0))
     fit_bumpers(fascia)
+    build_exhaust()
     saved=obj(CONTENT/'wagon_body.txt')
     assert saved['lo']==(-HALF_WIDTH,FLOOR_Y,floor_front_z) and saved['hi']==(HALF_WIDTH,2.17,REAR_Z)
     print(f'Roof rear Z: {roof_rear_z:.9f}')

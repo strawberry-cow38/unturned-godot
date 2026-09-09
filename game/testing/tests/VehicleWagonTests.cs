@@ -24,8 +24,13 @@ namespace UnturnedGodot.Testing
 
             T.Check("command vehicle resolves to wagon", wagon.SpecKey == "wagon" && wagon.DisplayName == "Station Wagon");
             T.Check("wagon is in console/network catalogue once", Vehicle.SpecNames.Count(n => n == "wagon") == 1);
-            T.Check("sedan's four seat positions retained", wagon.SeatCount == 4 && wagon.SeatLocals.SequenceEqual(sedan.SeatLocals));
-            T.Check("driver body offset retained on server and replica", wagon.SeatOffset == sedan.SeatOffset && replica.SeatOffset == wagon.SeatOffset);
+            var cabinShift = new Vector3(0f, 0f, 0.205f);
+            T.Check("front seat table follows steering; rear row retained", wagon.SeatCount == 4
+                && wagon.SeatLocals.Select((p, i) => p.IsEqualApprox(sedan.SeatLocals[i] + (i < 2 ? cabinShift : Vector3.Zero))).All(ok => ok));
+            T.Check("driver body and camera anchor follows front row on server and replica",
+                wagon.SeatOffset.IsEqualApprox(sedan.SeatOffset + cabinShift) && replica.SeatOffset == wagon.SeatOffset);
+            T.Check("rear passenger body positions retained", wagon.SeatBodyLocal(2).IsEqualApprox(sedan.SeatBodyLocal(2))
+                && wagon.SeatBodyLocal(3).IsEqualApprox(sedan.SeatBodyLocal(3)));
             T.Check("roof registers a cabin", wagon.HasCabin && wagon.GetNodeOrNull<CollisionShape3D>("RoofBox") != null);
             T.Check("all eight window apertures load", wagon.GlassCount == 8);
             T.Check("four real wheels and four replica wheels", wagon.GetChildren().OfType<VehicleWheel3D>().Count() == 4 && replica.Wheels.Length == 4);
@@ -72,12 +77,57 @@ namespace UnturnedGodot.Testing
                 T.Check($"hull spans the {end} bumper in Z", bumper != null
                         && hull.Position.Z <= bumper.GetAabb().Position.Z + 0.15f
                         && hull.End.Z >= bumper.GetAabb().End.Z - 0.15f);
+                T.Check($"{end} bumper lip is floor plus fleet 0.115 m", bumper != null && actual != null
+                    && Mathf.Abs(bumper.GetAabb().Position.Y - actual.GetAabb().Position.Y - 0.115f) < 0.00001f);
             }
-            T.Check("Golf headlights retain all 40 triangles", ContentProvider.ParseObj("res://content/wagon_headlights.txt")?.GetFaces().Length == 120);
-            T.Check("Golf taillights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_taillights.txt")?.GetFaces().Length == 60);
+            T.Check("sedan headlights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_headlights.txt")?.GetFaces().Length == 60);
+            T.Check("sedan taillights retain all 20 triangles", ContentProvider.ParseObj("res://content/wagon_taillights.txt")?.GetFaces().Length == 60);
+            var seats = ContentProvider.ParseObj("res://content/wagon_seats.txt");
+            T.Check("wagon's own seat mesh loads on server and replica", seats != null
+                && wagon.GetNodeOrNull<MeshInstance3D>("wagon_seats")?.Mesh == seats
+                && replica.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Mesh == seats));
+            T.Check("visible front seats follow seat table; rear mesh retained", TranslatedMeshMatches(
+                ContentProvider.ParseObj("res://content/sedan_seats.txt"), seats, 0.205f, frontOnly: true));
+            var steering = wagon.FindChild("wagon_steer", true, false) as MeshInstance3D;
+            T.Check("steering mesh moves back 0.205 m", TranslatedMeshMatches(
+                ContentProvider.ParseObj("res://content/sedan_steer.txt"), steering?.Mesh, 0.205f));
+            var pivot = new Vector3(-0.464f, 0.894f, -1.211f);
+            T.Check("steering pivots and baked mesh offsets agree on server and replica", steering != null
+                && steering.GetParent<Node3D>().Position.IsEqualApprox(pivot) && steering.Position.IsEqualApprox(-pivot)
+                && replica.SteerPivot != null && replica.SteerPivot.Position.IsEqualApprox(pivot)
+                && replica.SteerPivot.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Mesh == steering.Mesh && mi.Position.IsEqualApprox(-pivot)));
+            if (steering?.Mesh != null)
+            {
+                var wheelBounds = steering.Mesh.GetAabb();
+                float poke = -1.25f - wheelBounds.Position.Z;
+                float reach = wagon.SeatLocals[0].Z - wheelBounds.GetCenter().Z;
+                T.Check("steering wheel reaches cabin within fleet band", poke >= 0.11f && poke <= 0.13f);
+                T.Check("wheel-to-driver-seat reach stays in fleet band", reach >= 0.79f && reach <= 0.83f);
+            }
+            var pipe = ContentProvider.ParseObj("res://content/wagon_exhaust.txt");
+            var tip = new Vector3(0.95f, 0.28f, 2.73f);
+            T.Check("28-triangle exhaust loads on server and replica", pipe?.GetFaces().Length == 84
+                && wagon.GetNodeOrNull<MeshInstance3D>("wagon_exhaust")?.Mesh == pipe
+                && replica.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Mesh == pipe));
+            T.Check("pipe ends at smoke origin beyond closed rear valance", pipe != null
+                && new Vector3(pipe.GetAabb().GetCenter().X, pipe.GetAabb().GetCenter().Y, pipe.GetAabb().End.Z).IsEqualApprox(tip)
+                && wagon.GetChildren().OfType<CpuParticles3D>().Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(tip))
+                && actual != null && tip.Z > actual.GetAabb().End.Z);
+            var defaultTip = new Vector3(sedanSize.X / 2f - 0.3f, Mathf.Max(0.22f, sedanCenter.Y - sedanSize.Y / 2f + 0.18f), sedanCenter.Z + sedanSize.Z / 2f - 0.05f);
+            T.Check("CONTROL: sedan exhaust retains fleet formula", sedan.GetChildren().OfType<CpuParticles3D>()
+                .Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(defaultTip)));
             T.Check("capacities retained from sedan", wagon.FuelMax == sedan.FuelMax && wagon.HealthMax == sedan.HealthMax);
             T.Check("mass between sedan and police", Mathf.IsEqualApprox(wagon.Mass, 1650f));
             yield return Ticks(1);
+        }
+
+        static bool TranslatedMeshMatches(Mesh source, Mesh moved, float dz, bool frontOnly = false)
+        {
+            if (source == null || moved == null) return false;
+            var before = source.GetFaces();
+            var after = moved.GetFaces();
+            return before.Length == after.Length && before.Select((p, i) =>
+                (p + new Vector3(0f, 0f, !frontOnly || p.Z < 0f ? dz : 0f)).DistanceTo(after[i]) < 0.00001f).All(ok => ok);
         }
     }
 }

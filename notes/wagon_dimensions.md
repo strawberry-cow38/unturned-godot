@@ -2,7 +2,7 @@
 
 Metres; +Y up, forward −Z. This replaces the old sedan-extension derivation. The unchanged `vehicle_measurements.md` still contains a historical copy of that old derivation. Fleet references and the reasoning for the main dimensions are in [WAGON_REPORT.md](WAGON_REPORT.md) and the pre-authoring [vehicle_style.md](vehicle_style.md).
 
-Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revision 3 widens the lateral wall/post span to 0.28 m so every outer face is flush at X = ±1.26. Decimal rounding to 0.01–0.02 m is deliberate. Panel-detail choices below are subdivisions of that section and the chosen envelope, not additional empirical fleet statistics.
+Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. The preceding strip revision widened the lateral wall/post span to 0.28 m so every outer face is flush at X = ±1.26. Decimal rounding to 0.01–0.02 m is deliberate. Panel-detail choices below are subdivisions of that section and the chosen envelope, not additional empirical fleet statistics.
 
 | Part | Coordinates / construction | Source / rule |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revisio
 | Load floor | X ±0.98, Y0.18, Z1.36..2.53; vertical step from Y−0.12 at Z1.36 | Retains start after seatback maximum Z1.357307 and clear run 1.17 to gate. |
 | Sedan hood | Centre X ±0.98, (Y,Z): (0.999953,−2.757828) → (1.125,−1.25), directly to glass. Planar outer strips reach X ±1.26: (0.874953,−2.762766) → (0.994273,−1.323997) | Sedan nose height/drop and longitudinal nose scale 0.964159181; shelf removed. Bevel 24.352857° at the wider 0.28 m span. Both front and rear trim edges remain in the fascia and windscreen planes. |
 | Rear gate lower panel | Inner Z2.53, outer Z2.68; top Y1.10; inner lower edge Y0.18; exterior down to Y−0.27 | Full width X ±1.26; painted closed tailgate, without latch or baked bumper. |
-| Bumpers | Separate hatchback donor parts, X ±1.26; front Y−0.12..0.139451, Z−2.949005..−2.791821; rear Y−0.12..0.139450, Z2.68..2.826938 | Extract 28 triangles/end, refit width and translate, trim buried backs and cap; final 44 triangles/end. |
+| Bumpers | Separate hatchback donor parts, X ±1.26; front Y−0.155..0.104451, Z−2.949005..−2.791821; rear Y−0.155..0.104450, Z2.68..2.826938 | Extract 28 triangles/end, refit width and translate, trim buried backs and cap; final 44 triangles/end; finished parts lowered 0.035 without changing X/Z. |
 | Grille | Removed | Entire fascia uses the painted UV swatch. |
 | Latch | Removed | Its former cell is an ordinary painted tailgate surface. |
 | Roof | X ±1.26, Y1.92..2.17; front Z−0.80 at underside, −0.658491 at top; rear Z2.56 at underside, 2.523415 at top | Continue both A-post and D-post planes through roof thickness; top remains horizontal. |
@@ -29,10 +29,15 @@ Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revisio
 | Side front pane | Absolute X=1.256; bottom Z −1.00..0.12 at Y1.10; top Z −0.55..0.12 at Y1.92 | A-to-B aperture; common 0.004 side inset. |
 | Side rear-row pane | Same X/Y; Z 0.37..1.35 | B-to-C aperture. |
 | Side cargo pane (`mid1`) | Same X/Y; bottom Z 1.55..2.48; top Z 1.55..2.36 | C-to-D aperture; base/top lengths 0.93/0.81. |
-| Headlight mesh transform | golf_headlights + (0,0,−0.215180) | All 40 triangles retained; no scaling; outward lens vertices clear fascia. |
-| Taillight mesh transform | golf_taillights + (0,0,+0.332254) | All 20 triangles retained; no scaling; outward faces 2 mm past gate. |
-| Spot / omni / tail anchors | Spots (±0.765,0.708,−2.803180), omni (0,0.841,−2.779180); tails (±0.765,0.787,2.756254) | Golf emitter anchors translated by the same deltas as their lenses. |
-| Full-body collider | Size (2.52,2.44,5.776); centre (0,0.95,−0.061034) | Now encloses the entire body and donor bumpers, as requested; Z bounds rounded outward. |
+| Headlight mesh transform | sedan_headlights + (0,0,+0.150) | Original wagon fit; all 20 triangles retained, no scaling. |
+| Taillight mesh transform | sedan_taillights + (0,0,+0.012) | Original wagon fit; all 20 triangles retained, no scaling. |
+| Spot / omni / tail anchors | Spots (±0.765,0.708,−2.819), omni (0,0.841,−2.795); tails (±0.979,0.688,2.853) | Sedan emitter anchors translated by the same deltas as their lenses. |
+| Steering mesh / pivot | wagon_steer: Z −1.367887..−1.056433; pivot (−0.464,0.894,−1.211) | Sedan wheel/pivot +0.205 Z; 0.117887 cabin-front poke-through. |
+| Seat table | Front (±0.500,−0.079,−0.420); rear (±0.500,−0.079,0.772) | Front +0.205 Z; rear unchanged; driver reach 0.792160. |
+| Seat mesh | wagon_seats: front Z −0.828915..0.166275; rear Z 0.362069..1.357307 | Sedan front row +0.205 Z only; row clearance 0.195794; rear-to-step clearance 0.002693. |
+| Driver body/camera anchor | (−0.50,−0.04,−0.361) | Separate wagon SeatOf anchor +0.205 Z; body-to-seat offset retained on server/replica. |
+| Exhaust | Tip/emitter (0.95,0.28,2.730); root Z 2.550; six sides, 0.120 across X, mouth depth 0.040; 28 triangles | Formula point (0.95,0.28,2.649) is inside the closed panel; outlet extends 0.050 beyond Z 2.680. Wagon-only emitter override; pipe dimensions are construction choices. |
+| Lower-shell collider | Size (2.5,0.98,5.52); centre (0,0.59,−0.061) | Preserves 18e58ac0: fitted lower shell ending at Y 1.080, below 1.10 beltline; paired with separate roof box. |
 | Roof fitted collider | Size (2.52,0.25,3.36); centre (0,2.045,0.88) | Existing cabin/roof registration retained; encloses the revised slanted roof slab. |
 
-The full-body box replaces the historical lower-body-only box, which did not enclose the old body. Its effects on driving, suspension and impacts have not been evaluated. Static geometry and targeted runtime results are recorded in [WAGON_REPORT.md](WAGON_REPORT.md).
+The lower-shell box intentionally does not enclose the greenhouse, matching the sedan control. The earlier full-body enclosure description was wrong. Driving, suspension and impacts have not been evaluated. Static geometry and targeted runtime results are recorded in [WAGON_REPORT.md](WAGON_REPORT.md).

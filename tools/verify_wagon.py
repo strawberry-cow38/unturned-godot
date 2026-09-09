@@ -75,10 +75,12 @@ def validate(path):
         area2 = math.sqrt(sum(x*x for x in cross))
         assert area2 > 1e-12, (path.name, face, "zero-area triangle")
         min_area = min(min_area, area2/2)
-        # Each new face is flat-shaded; its stored normals must follow its actual winding.
+        # Authored faces are flat-shaded. Translated sedan seats/wheel retain
+        # the donor's smooth normals, checked against the donor below.
         for p in face:
             agreement = sum(x*y for x,y in zip(cross,normals[p[2]]))/area2
-            assert agreement > 0.99999, (path.name, face, agreement, "normal disagrees with winding")
+            threshold = 0 if path.name in ('wagon_seats.txt','wagon_steer.txt') else 0.99999
+            assert agreement > threshold, (path.name, face, agreement, "normal disagrees with winding")
     lo = tuple(min(v[i] for v in vertices) for i in range(3))
     hi = tuple(max(v[i] for v in vertices) for i in range(3))
     print(f"PASS {path.name}: {len(vertices)} v, {len(faces)} triangles; minimum area {min_area:.12g} m²")
@@ -474,25 +476,106 @@ def check_stripped_shell(mesh):
     print(f'PASS painted fascia/tailgate, no body bumpers/latch/lip; full-width flat floor {floor_area:.6f} m² at Y -0.270')
 
 
-def check_donor_parts(wagon, golf):
-    for lamp,field in (('headlights','SpotPos'),('taillights','TailPos')):
-        source = obj(CONTENT/f'golf_{lamp}.txt')
+def check_bumper_height(wagon):
+    floor = wagon['mesh']['lo'][1]
+    for end in ('front','rear'):
+        lip = obj(CONTENT/f'wagon_bumper_{end}.txt')['lo'][1]
+        assert abs(lip-floor-.115)<1e-6, ('bumper lip must be floor +0.115',end,lip,floor)
+    print(f'PASS both bumper lips at floor +0.115: {floor+.115:.6f}')
+
+
+def check_cabin_fit(wagon, sedan):
+    body = wagon['mesh']
+    firewall = []
+    for f in body['faces']:
+        ps = [body['vertices'][int(c.split('/')[0])-1] for c in f]
+        n = body['normals'][int(f[0].split('/')[2])-1]
+        if n[2] > .99999 and all(z<0 and abs(x)<=.980001 for x,y,z in ps):
+            firewall.extend(p[2] for p in ps)
+    assert firewall and max(firewall)-min(firewall)<1e-6, 'missing cabin-front plane'
+    plane = min(firewall)
+    wheel_name = next(p for p in wagon['Parts'] if '_steer.txt' in p)
+    wheel = obj(CONTENT/wheel_name)
+    poke = plane-wheel['lo'][2]
+    assert .11<=poke<=.13, ('wheel poke-through outside fleet 0.11..0.13',poke)
+    reach = wagon['Seats'][0][2]-(wheel['lo'][2]+wheel['hi'][2])/2
+    assert .79<=reach<=.83, ('wheel-to-driver-seat reach outside fleet 0.79..0.83',reach)
+
+    seat_name = next(p for p in wagon['Parts'] if '_seats.txt' in p)
+    seats = obj(CONTENT/seat_name)
+    source = obj(CONTENT/'sedan_seats.txt')
+    assert len(wagon['Seats']) == len(sedan['Seats']) == 4
+    assert len(seats['vertices']) == len(source['vertices'])
+    for v,s in zip(seats['vertices'],source['vertices']):
+        row = 0 if s[2]<0 else 2
+        seat = row+(1 if s[0]>0 else 0)
+        delta = tuple(w-d for w,d in zip(wagon['Seats'][seat],sedan['Seats'][seat]))
+        assert all(abs(v[i]-s[i]-delta[i])<1e-6 for i in range(3)), ('seat mesh disagrees with seat table',seat,v,s,delta)
+    for i,(w,s) in enumerate(zip(wagon['Seats'],sedan['Seats'])):
+        assert all(abs(w[k]-s[k]-(.205 if i<2 and k==2 else 0))<1e-6 for k in range(3)), ('seat table translation',i)
+    assert seat_name == 'wagon_seats.txt' and wheel_name == 'wagon_steer.txt', 'wagon must own its interior meshes'
+    for field in ('faces','uvs','normals'):
+        assert seats[field] == source[field], ('seat donor data changed',field)
+    front = [w for w,s in zip(seats['vertices'],source['vertices']) if s[2]<0]
+    rear = [w for w,s in zip(seats['vertices'],source['vertices']) if s[2]>0]
+    front_max = max(p[2] for p in front)
+    rear_min, rear_max = min(p[2] for p in rear), max(p[2] for p in rear)
+    # Disjoint Z bounds prove the rows cannot intersect, independent of X/Y.
+    step = min(z for x,y,z in body['vertices'] if y==.18 and abs(x)<=.98)
+    assert front_max < rear_min and front_max < step and rear_max < step, 'seats intersect rear row or load-floor step'
+    donor_wheel = obj(CONTENT/'sedan_steer.txt')
+    assert len(wheel['vertices']) == len(donor_wheel['vertices'])
+    for w,s in zip(wheel['vertices'],donor_wheel['vertices']):
+        assert all(abs(w[i]-s[i]-(.205 if i==2 else 0))<1e-6 for i in range(3)), 'steering mesh must translate +0.205 Z'
+    for field in ('faces','uvs','normals'):
+        assert wheel[field] == donor_wheel[field], ('wheel donor data changed',field)
+    for field in ('SteerPivot','SteerAxis'):
+        w,s = (vector(spec['fields'][field]) for spec in (wagon,sedan))
+        assert all(abs(w[i]-s[i]-(.205 if field=='SteerPivot' and i==2 else 0))<1e-6 for i in range(3)), ('steering pivot/axis',field)
+    print(f'PASS wheel poke-through {poke:.6f}, driver reach {reach:.6f}; front seat mesh/table agree +0.205 Z')
+    print(f'PASS seat row gap {rear_min-front_max:.6f}; front/rear clearance to load step {step-front_max:.6f}/{step-rear_max:.6f}')
+
+
+def check_exhaust(wagon):
+    assert 'wagon_exhaust.txt' in wagon['Parts'], 'exhaust missing from Parts'
+    mesh = obj(CONTENT/'wagon_exhaust.txt')
+    box, center = wagon['BoxSize'], wagon['BoxCenter']
+    formula = (box[0]/2-.3, max(.22,center[1]-box[1]/2+.18), center[2]+box[2]/2-.05)
+    assert all(abs(a-b)<1e-6 for a,b in zip(formula,(.95,.28,2.649))), ('default exhaust point',formula)
+    tip = ((mesh['lo'][0]+mesh['hi'][0])/2, (mesh['lo'][1]+mesh['hi'][1])/2, mesh['hi'][2])
+    emitter = vector(wagon['fields']['ExhaustPos'])
+    assert all(abs(a-b)<1e-6 for a,b in zip(tip,emitter)), ('smoke must leave pipe tip',tip,emitter)
+    assert all(abs(a-b)<1e-6 for a,b in zip(tip,(.95,.28,2.73)))
+    assert len(mesh['faces']) == 28
+    body_tris = [[wagon['mesh']['vertices'][int(c.split('/')[0])-1] for c in f] for f in wagon['mesh']['faces']]
+    pipe_tris = [[mesh['vertices'][int(c.split('/')[0])-1] for c in f] for f in mesh['faces']]
+    # Probe the mouth and smoke path; the decorative recess is 40 mm inboard.
+    for dx,dy in ((0,0),(-.02,0),(.02,0),(0,-.02),(0,.02)):
+        a = (tip[0]+dx,tip[1]+dy,tip[2]-.039)
+        b = (a[0],a[1],tip[2]+.3)
+        assert not any(segment_hits(a,b,t) for t in body_tris+pipe_tris), 'blocked pipe mouth/smoke path'
+    assert abs(tip[2]-wagon['mesh']['hi'][2]-.05)<1e-6
+    print(f'PASS 28-triangle exhaust: formula {formula}; actual tip/emitter {tip}, 0.050 m beyond valance; clear outlet')
+
+
+def check_donor_parts(wagon, sedan):
+    for lamp,field,delta in (('headlights','SpotPos',.150),('taillights','TailPos',.012)):
+        source = obj(CONTENT/f'sedan_{lamp}.txt')
         part = obj(CONTENT/f'wagon_{lamp}.txt')
-        delta = part['lo'][2]-source['lo'][2]
-        assert len(part['faces']) == len(source['faces']) == (40 if lamp == 'headlights' else 20)
+        assert len(part['faces']) == len(source['faces']) == 20
         # Check every corner and UV, not merely the same bounding box.
         for sf,pf in zip(source['faces'],part['faces']):
             for sc,pc in zip(sf,pf):
                 sv,st,_ = (int(i)-1 for i in sc.split('/'))
                 pv,pt,_ = (int(i)-1 for i in pc.split('/'))
-                assert all(abs(part['vertices'][pv][i]-source['vertices'][sv][i]-(delta if i==2 else 0))<1e-6 for i in range(3)), 'lamp is not a Golf translation'
+                assert all(abs(part['vertices'][pv][i]-source['vertices'][sv][i]-(delta if i==2 else 0))<1e-6 for i in range(3)), 'lamp is not the original sedan translation'
                 assert all(abs(a-b)<1e-6 for a,b in zip(part['uvs'][pt],source['uvs'][st])), 'donor lamp UV changed'
-        assert len(wagon[field]) == len(golf[field]) == 2
-        positions = list(zip(wagon[field],golf[field]))
+        assert len(wagon[field]) == len(sedan[field]) == 2
+        positions = list(zip(wagon[field],sedan[field]))
         if lamp == 'headlights':
-            positions.append((wagon['OmniPos'],golf['OmniPos']))
+            positions.append((wagon['OmniPos'],sedan['OmniPos']))
         for w,g in positions:
-            assert all(abs(w[i]-g[i]-(delta if i==2 else 0))<1e-6 for i in range(3)), ('emitter not translated with Golf lens',field)
+            assert all(abs(w[i]-g[i]-(delta if i==2 else 0))<1e-6 for i in range(3)), ('emitter not translated with sedan lens',field)
         sign = -1 if lamp == 'headlights' else 1
         for face in part['faces']:
             if sign*part['normals'][int(face[0].split('/')[2])-1][2] <= .5:
@@ -502,7 +585,7 @@ def check_donor_parts(wagon, golf):
                 # Independent plane from the retained, measured nose stations.
                 surface_z = -2.792392+.034564*(y-.125)/.874953 if sign<0 else 2.68
                 assert sign*(z-surface_z) >= .001998, ('buried outward lens corner',lamp,x,y,z)
-        print(f'PASS Golf {lamp}: complete donor topology/UVs and emitters translated Z {delta:+.6f}')
+        print(f'PASS sedan {lamp}: complete donor topology/UVs and emitters translated Z {delta:+.6f}')
 
     def on_triangle(p, tri):
         a,b,c = tri
@@ -526,9 +609,10 @@ def check_donor_parts(wagon, golf):
         donor = [[source['vertices'][int(c.split('/')[0])-1] for c in source['faces'][i]] for i in ids]
         ps = {p for tri in donor for p in tri}
         lo = tuple(min(p[i] for p in ps) for i in range(3)); hi = tuple(max(p[i] for p in ps) for i in range(3))
-        scale = 2.52/(hi[0]-lo[0]); dy = -.12-lo[1]
+        scale = 2.52/(hi[0]-lo[0]); dy = -.155-lo[1]
         dz = part['lo'][2]-lo[2] if sign<0 else part['hi'][2]-hi[2]
-        assert part['lo'][0] == -1.26 and part['hi'][0] == 1.26 and part['lo'][1] == -.12
+        assert part['lo'][0] == -1.26 and part['hi'][0] == 1.26 and part['lo'][1] == -.155
+        assert abs((part['lo'][2] if sign<0 else part['hi'][2])-(-2.949005 if sign<0 else 2.826938)) < 1e-6, 'bumper Z moved'
         assert abs(part['size'][1]-(hi[1]-lo[1])) < 1e-6
         part_tris = [sorted(part['vertices'][int(c.split('/')[0])-1] for c in f) for f in part['faces']]
         outer_count = 0
@@ -544,7 +628,9 @@ def check_donor_parts(wagon, golf):
         cap_count = donor_count = 0
         for f in part['faces']:
             tri = [part['vertices'][int(c.split('/')[0])-1] for c in f]
-            distances = [sign*(z-(zv+(zn-zv)*(y-.125)/(.999953-.125) if sign<0 else 2.68)) for x,y,z in tri]
+            # Attachment cap moves down with the entire part; its original Z
+            # stays fixed, leaving 1.383 mm clearance at the sloping fascia.
+            distances = [sign*(z-(zv+(zn-zv)*(y+.035-.125)/(.999953-.125) if sign<0 else 2.68)) for x,y,z in tri]
             assert min(distances) > -1e-6, 'bumper side overlaps body wall'
             if all(abs(d)<1e-6 for d in distances):
                 cap_count += 1
@@ -579,7 +665,10 @@ def check():
     check_roof_rake(wagon["mesh"])
     check_cowl_junction(wagon["mesh"])
     check_stripped_shell(wagon["mesh"])
-    check_donor_parts(wagon, specs["golf"])
+    check_bumper_height(wagon)
+    check_cabin_fit(wagon, sedan)
+    check_exhaust(wagon)
+    check_donor_parts(wagon, sedan)
     lo,hi = bounds["wagon_body.txt"]
     # Re-derive the front extent by continuing the saved fascia to floor Y.
     vs = wagon['mesh']['vertices']
@@ -590,7 +679,6 @@ def check():
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
     assert abs(wagon["wheelbase"]-3.02)<1e-9 and wagon["tracks"] == [2.6,2.6]
     assert wagon["radii"] == sedan["radii"]
-    assert wagon["Seats"] == sedan["Seats"] and len(wagon["Seats"]) == 4
     for field in ("Wheel", "WheelTex", "Engine", "SpeedMax", "Fuel", "Health"):
         assert wagon[field] == sedan[field], field
     assert wagon["Mass"] == 1650  # retained table: (sedan 1500 + police 1800)/2
@@ -636,7 +724,7 @@ def check():
     seats=obj(CONTENT/'sedan_seats.txt')
     assert seats['hi'][2] < 1.36, ('rear seatback intrudes into cargo deck',seats['hi'])
     print(f"PASS original body panels; rear seatback Z {seats['hi'][2]:.6f} < load floor start 1.36")
-    print("PASS AABB, new axle rig, shared seats/wheels, moved lamps, fitted colliders, palette and assets")
+    print("PASS AABB, new axle rig, fitted seats, shared wheels, moved lamps, fitted colliders, palette and assets")
 
     src = uncomment((ROOT / "game/Vehicle.cs").read_text())
     build = re.search(r"public static Vehicle BuildByName\([^;]+;", src)[0]
@@ -652,7 +740,9 @@ def check():
     size,center = vector(roof[1]),vector(roof[2])
     assert abs(center[1]+size[1]/2-hi[1]) < 1e-6
     assert size == (2.52,.25,3.36) and center == (0,2.045,.88)
-    assert '"Sedan" or "Station Wagon" => new Vector3' in src
+    sedan_pose = vector(re.search(r'"Sedan"\s*=>\s*(new Vector3\([^)]*\))',src)[1])
+    wagon_pose = vector(re.search(r'"Station Wagon"\s*=>\s*(new Vector3\([^)]*\))',src)[1])
+    assert all(abs(w-s-(.205 if i==2 else 0))<1e-6 for i,(w,s) in enumerate(zip(wagon_pose,sedan_pose))), 'driver body pose did not follow front row'
     assert 'name is "Sedan" or "Station Wagon"' in src
     labels = re.findall(r'"([^"]+)"', braced(src,src.index("{",src.index("string[] GlassPaneLabels"))))
     glass_base = wagon["GlassMesh"].removesuffix(".txt")
