@@ -92,22 +92,14 @@ def design(specs, rear):
     # thickness and size ... should also be bigger"). Its walls are .250 thick and stand 1.000 above
     # the floor; mine were t = .050 and .450, five times too thin and under half the height.
     wall_t, wall_h = bed['wall_t'], bed['wall_h']
-    # WHEELS SIT PROUD, THE WAY EVERY CAR'S DO (strawberry: "move wheels to the sides like cars are").
-    # Measured across the fleet, sedan/hatchback/golf/police/jeep/offroader/truck/van all share body
-    # half-width 1.261 against track/2 1.300 and tyre half-width .200 -- the tyre's outer face stands
-    # .239 outboard of the bodywork on every one of them. Tucking them under the deck was my own idea
-    # when the arches came off and it made the trailer read as a box on castors. Back to the fleet track.
-    track = golf['tracks'][-1]
-    # WIDTH IS SET BY THE TYRES, NOT BY THE TRUCK. I had this at the bed's own outer width 2.462, and
-    # it was wrong the moment the wheels went back on the fleet track without arches: the tyre's inner
-    # face sits at track/2 - tyre_width/2 = 1.100, so any flat-sided box wider than that has the tyre
-    # buried in its sideboard. At 2.462 the overlap was 131 mm of X through 550 mm of Y -- a tyre
-    # embedded in the bodywork, which is exactly the class of thing "fix the weird geom" was about.
-    # The fleet's cars get away with 1.261 because they have ARCHES cut into the body, and those are
-    # gone by instruction. So the box clears the tyres by t a side and the truck governs the wall
-    # SECTION (.250 thick, 1.000 tall) rather than the overall width.
+    # "Decently longer + slightly wider": add HALF the measured truck wall section to the track
+    # and box width together. +.125 overall (+.0625 per wheel) buys 6% more box width while retaining
+    # the full t tyre gap without arches or raising the bed. Total tyre width becomes 3.125 against
+    # the Golf's 3.000 (+4.2%); the truck's full 2.462 box width would need 3.362 overall (+12.1%).
+    track = golf['tracks'][-1]+wall_t/2
+    # The clearance constraint still sets the box width; widening the box alone would bury tyres.
     deck_w = track-tyre_width-2*t
-    deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
+    deck_l = length*.75                         # 3/4 Golf body length; 25% longer than the previous .6
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)

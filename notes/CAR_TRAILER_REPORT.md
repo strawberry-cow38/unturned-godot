@@ -284,3 +284,99 @@ requiring the two shifts to be exactly mirrored, which that asymmetry makes impo
 compared numbers `expected()` had derived itself, so no file mutation could fail them. They read the
 mesh and the spec now -- the deck group's underside against the spec's wheel anchor, and the lamp
 vertices against the sedan's.
+
+## Sixth pass: decently longer, slightly wider (astra-trailer-big)
+
+**Width decision: route 1, widen the track with the box.** The saved sideboards now end at
+**|X| 1.112497**, and the actual `Vehicle.cs` wheel anchors are **±1.362500**. The specified
+`jeep_wheel.txt` measures **.400006 wide**, so its inner faces are at **|X| 1.162497**: the original
+**.050000 m clearance per side is preserved**. The clearance assertion and its `t−1e-6` threshold
+are unchanged. Returning these wheels to the Golf's track puts **12.5 mm of tyre inside the wider
+sideboard**; that exact regression is now an additional failing mutation.
+
+“Slightly” means **half the truck's measured .250 wall thickness added to the total width**:
+**+.125 m / +5.95%** over the previous 2.099994 box. Each wall and wheel moves out **.0625 m**;
+the track becomes **2.725 m**, from the Golf's 2.600. Including the real wheel mesh, the trailer is
+**3.125006 m wide**, versus the Golf's **3.000006 m**: **4.17% wider overall**, just .0625 m beyond
+the Golf's tyre envelope on each side. Fresh Golf measurements are body **5.228553 long × 2.522099
+wide**, with no Body/Parts vertex farther out than |X| 1.261051; the wheels determine its total width.
+That is a modest increase next to its tow car, while keeping the low bed and exposed car-sized wheels.
+
+Rejected widths: one whole truck wall section extra would make a **2.349994 m box / 3.250006 m
+total**, an **11.90% box-width increase**; using the truck's full **2.462 m** box width would require
+**2.962006 track / 3.362012 total**, **12.07% wider overall than the Golf**. Both go farther than
+“slightly.” Keeping the original 2.600 track with the chosen wider box fails the clearance measurement
+above. Route 2, restoring arches, contradicts the author's explicit removal instruction.
+
+Route 3, putting the entire box above the tyres, is measurable and too high here. The wheel mesh
+spans Y **−.600000..+.582565** at the staged rotation and has a swept Y/Z radius **.600001**. With
+the wheel rest centre at local Y 0, nominal ground at −.600, the same .050 gap and a .250 floor
+section require a finished bed height of **1.500001 m above nominal ground even at rest**. Allowing
+the existing .250 rest drop to compress to the anchor requires **1.750001 m**. Those are increases
+of **.923432 / 1.173432 m** over the current .576569 bed. These are conservative clearance heights
+for a flat box entirely above the rotating wheel, not observed suspension or driving results.
+
+The new dimensions follow the existing measured donors. Fractions are design choices; dimensions
+are metres. The outer deck footprint includes its surrounding walls, as in the previous passes.
+
+| Feature | New value | Derivation |
+| --- | --- | --- |
+| Outer deck length | **3.921415** in spec; **3.921414** between saved end faces | **3/4 × Golf body length 5.228553**, from 3/5 previously: **+.784283 / +25%**; sub-micrometre endpoint rounding |
+| Outer deck width | **2.224994** | Golf track 2.600 + half truck wall section .125 − real tyre width .400006 − 2t .100 |
+| Wall / gate / floor section; wall height | **.250000; 1.000001** | Truck bed outer/inner X planes and floor-to-wall-top measurement; `t = wall_t/5 = .050000` |
+| Clear opening between walls | **3.421414 long × 1.724994 wide** | Saved outer length/width less two truck wall sections |
+| Floor slab | **3.671414 long × 1.974994 wide × .250000 thick** | Outer footprint inset half a wall section at each edge, preserving overlapping joints |
+| Finished deck Y / nominal height | **−.023431 / .576569** | Truck wall thickness minus Golf wheel-rest-centre-to-body-underside distance .273431; ground −.600 |
+| Sideboard top local Y | **.976570** | Deck Y + measured truck wall height |
+| Wheels / track / anchors | **jeep_wheel.txt, r .600000; 2.725000; (±1.362500,.250000,.392141)** | Golf wheel and anchor Y; Golf track + wall_t/2; axle stays 60% of outer deck length from its front (`Z = L/10`) |
+| Axle beam | **2.725000 × .100000 × .100000** | New track × 2t × 2t, at wheel rest Y 0 and axle Z |
+| Tyre outer envelope / sideboard gap | **±1.562503 / .050000** | Saved spec anchors ± actual wheel half-width; compare against saved sideboard faces ±1.112497 |
+| Free tongue, pin to front wall | **1.861050** | Golf body half-width 1.2610495 + Golf radius .600 |
+| Kingpin | **(0,−.028921,−3.821757)** | Golf rear-section Y midpoint; `Z = −L/2 − free tongue` |
+| Drawbar beam section / plan length | **.100000 square / 2.811301** | 2t; endpoints at `(±t, pinY, pinZ+4t)` and `(±(W/2−2t), deckY−wall_t/2, −L/4)` |
+| Drawbar collider height / yaw | **.219510 / ±20.021160°** | Absolute Y difference of those mesh endpoints + 2t; `atan2(dx,dz)` in plan |
+| Main box size / centre | **(2.224994,.250000,3.921415) / (0,−.148431,0)** | Outer footprint × truck floor section, centred half a section below deck Y |
+| Hitch yaw limit | **58.566199°**, formerly 59.988005° | `atan2(free tongue, W/2+t/2)`; complete saved-body sweep still clears the towing rear plane |
+| Stand Z / split-zone Z | **−2.891232 / −2.991232..−2.791232** | Midpoint of pin and front wall, with ±2t split clearance; existing support height remains .521079 |
+| Lamp outside | **|X| .964902; rear Z 1.984333** | Each original sedan lens rigidly translated to the sedan's .147595 side inset and .023626 tail-panel projection |
+| Saved body AABB | **(−1.362500,−.600000,−3.921757)..(1.362500,.976570,1.960707)** | Axle ends, parked stand bottom, pin−2t coupler nose, wall top, tailgate rear |
+| Complete static trailer envelope | **3.125006 wide × 1.576570 high × 5.906090 long** | Body + actual wheels + sedan lamps; lamps extend the body's 5.882464 length |
+| Empty mass / health | **300 / 450** | Existing quad spec donors; no new payload or tow rating |
+
+While following the enlarged drawbars into their colliders, I found an existing defect from the
+lowered ride height: the generator still used `deckY−3t` for the collider endpoint and a signed rise,
+emitting **negative .044510 m collider heights**. Both mesh and collider now use the same endpoint
+at the floor section's midpoint; collider height encloses the **absolute** rise. A new check transforms
+the saved beam vertices into each actual spec collider's frame and compares their bounds. Another
+checks the saved wall/socket geometry against all five `ExtraBoxes`, including the new length and
+width. Their mutations restore old dimensions, move real geometry or colliders, and remove yaw.
+
+The body remains **80 vertices / 120 triangles**, with explicit normals/UVs, triangle-only faces,
+closed components and overlapping joints. Sedan lamps remain **56 vertices / 20 triangles** with
+their original per-lens geometry. All eight car hitch assets and tow points, wheel radius, ride
+height, wall section, lamp inset, and `car_trailer` **TypeId 33** remain unchanged.
+
+Validation for this pass:
+
+- `python3 tools/verify_car_trailer.py --mutation-test`: **55 named checks, 222 rejected real-file
+  mutations**. All original 53 checks and 209 mutations remain represented; the track check now
+  requires the measured increase. Both original tyre-clearance mutations still fail, as do the new
+  opposite-side and restored-Golf-track mutations. Original bytes were restored and clean checks rerun.
+- `dotnet build game/UnturnedGodot.csproj`: **succeeded, zero errors, 22 warnings** (the warning count
+  already documented above). `./test.sh` and the gameplay test fixtures were not run.
+- A second generator run reproduced **all 11 mesh/palette assets and the spliced C# spec byte for
+  byte**. Saved preview wheel vertices also match the actual spec anchors and wheel mesh within
+  **one micrometre** in all three staged poses.
+- Re-rendered the three previews with Godot 4.6 Vulkan/llvmpipe, `UG_ISO=1`, Xvfb and
+  `--render-thread safe`, without `--headless`; all are 640 × 640 and were visually inspected. The
+  longer box keeps the low bed and simple silhouette. The comparison meshes retain the original
+  unscaled Golf; its opaque atlas paint/glass appearance is still not a gameplay material check.
+  The coupled view aligns the pins and hides the stand. All three renders exited without errors.
+
+[Standalone](car_trailer_alone.png), [beside the Golf](car_trailer_beside_golf.png),
+[coupled to the Golf](car_trailer_coupled_golf.png).
+
+**Towing stability, cargo retention and multiplayer hitch behaviour remain untested.** These static
+geometry/spec checks and bakeicon poses do not establish loaded ride height, braking or reversing,
+pitch/roll contact, sustained towing stability, or network coupling/replication. The wider track and
+longer box are measured geometry changes; the previews are not driving evidence.

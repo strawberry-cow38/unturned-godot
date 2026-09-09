@@ -36,12 +36,16 @@ def change_field(name,key,value):
         return s[:start]+changed+s[end:]
     return edit
 
-def group_bounds(name):
+def group_points(name):
     m=obj(BODY);ps=[];group=''
     for line in BODY.read_text().splitlines():
         if line.startswith('g '):group=line[2:]
         if group==name and line.startswith('f '):ps.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
     assert ps,('missing component',name)
+    return ps
+
+def group_bounds(name):
+    ps=group_points(name)
     return tuple(min(p[i] for p in ps) for i in range(3)),tuple(max(p[i] for p in ps) for i in range(3))
 
 def close(a,b):
@@ -99,8 +103,8 @@ def expected():
     wheel=g['fields']['Wheel'];tw=obj(CONTENT/wheel.strip('"'))['size'][0]
     wall_t,wall_h,bed_w=truck_wall()
     t=wall_t/5
-    track=g['tracks'][-1]
-    L=g['mesh']['size'][2]*.6                  # "should also be bigger"
+    track=g['tracks'][-1]+wall_t/2             # half a truck wall section wider than the Golf track
+    L=g['mesh']['size'][2]*.75                 # three quarters of the measured Golf body length
     # The TYRES set the width, not the truck. Without arches, any flat-sided box wider than the tyre's
     # inner face (track/2 - tw/2) has the tyre buried in its sideboard; the bed's own 2.462 did exactly
     # that. The truck still governs the wall SECTION, which is what was actually asked for.
@@ -161,6 +165,16 @@ def cases():
     result=[]
     def add(label,fn,*mutants):result.append(Case(label,fn,list(mutants)))
     def fieldmut(key,val,name='car_trailer'):return VEH,change_field(name,key,val),name+'.'+key
+    def boxmut(key,index,part,value,label):
+        """Replace one whole tuple member in a real spec array, keeping valid C# syntax."""
+        before=fields('car_trailer')[key]
+        rows=split_top(braced(before,before.index('{')))
+        members=split_top(rows[index][1:-1]);members[part]=value
+        after=before.replace(rows[index],'('+', '.join(members)+')',1)
+        return VEH,lambda src:src.replace(before,after,1),label
+    def boxes(key):
+        raw=fields('car_trailer')[key]
+        return [split_top(row[1:-1]) for row in split_top(braced(raw,raw.index('{')))]
     assets=[BODY,CONTENT/'car_trailer_taillights.txt']+[CONTENT/(n+'_hitch.txt') for n in TOW_CARS]
     LAMPS=CONTENT/'car_trailer_taillights.txt'
     for path in assets:
@@ -182,7 +196,7 @@ def cases():
     # Rear datum is L/2, the DECK's back face. It used to be L/2+t, which was the tailgate hinge blocks
     # standing proud of it -- those went with the rest of the sub-centimetre hardware, so the deck is the
     # rearmost geometry now. Third mutation added because nothing was guarding the hi-Z corner.
-    # X extent is the AXLE, spanning the fleet track to reach wheels that sit proud of the deck the way
+    # X extent is the AXLE, spanning the widened track to reach wheels that sit proud of the deck the way
     # every car's do. Top is the sideboard, wall_h above the deck; front is the coupler, rear the
     # tailgate -- the deck no longer overhangs it.
     add('body AABB from deck, wall height, stand and tongue',
@@ -229,25 +243,33 @@ def cases():
         fieldmut('Wheel','"quad_wheel.txt"'),fieldmut('WheelRadius','0.45f'))
     def tyre_clear():
         """No tyre buried in the bodywork -- read off the ACTUAL mesh and the ACTUAL spec, not off
-        expected()'s own arithmetic, which cannot disagree with itself. This is why the box is NOT the
-        truck bed's 2.462 outer width: without arches, a flat side wider than the tyre's inner face is
-        a tyre through the panel, and at 2.462 that was 131 mm of X through 550 mm of Y."""
+        expected()'s own arithmetic, which cannot disagree with itself. Widening the track must preserve
+        the same t gap; restoring the Golf track under the wider box must fail this check too."""
         anchor=min(abs(float(q[0])) for q in re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields('car_trailer')['Wheels']))
         inner=anchor-obj(CONTENT/fields('car_trailer')['Wheel'].strip('"'))['size'][0]/2
         outer=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
         require(inner-outer >= t-1e-6, f'tyre inner face {inner:.4f} vs sideboard outer {outer:.4f}: gap {inner-outer:+.4f}')
     add('no tyre buried in the sideboard, which is why the box is not the bed width',tyre_clear,
         (BODY,move_group('side_1',(.1,0,0)),'widen the box into the tyre'),
-        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.000000f, 0.250000f, 0.313712f, false), (1.000000f, 0.250000f, 0.313712f, false) }'))
+        (BODY,move_group('side_-1',(-.1,0,0)),'widen the other side into the tyre'),
+        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.000000f, 0.250000f, 0.313712f, false), (1.000000f, 0.250000f, 0.313712f, false) }'),
+        (VEH,lambda x:x.replace(f"{d['track']/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false",
+                               f"{s['golf']['tracks'][-1]/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false"),
+         'restore Golf track under the wider box'))
     def wheels():
         text=fields('car_trailer')['Wheels']; rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (false|true)\)',text)
         require(len(rows)==2 and all(q[3]=='false' for q in rows))
         require(close([tuple(map(float,q[:3])) for q in rows],[(-d['track']/2,d['wy'],d['az']),(d['track']/2,d['wy'],d['az'])]))
-        proud=d['track']/2+d['tw']/2-W/2
+        actual_track=float(rows[1][0])-float(rows[0][0])
+        actual_width=group_bounds('side_1')[1][0]-group_bounds('side_-1')[0][0]
+        proud=(actual_track+d['tw']-actual_width)/2
         require(proud>0,'tyres are tucked inside the deck; every car in the fleet carries them proud')
-        require(close(d['track'],s['golf']['tracks'][-1]),'trailer is not on the fleet track')
-    add('one axle on the fleet track, tyres proud like a car, axle at 60% deck',wheels,
-        (VEH,lambda x:x.replace(f"{d['az']:.6f}f, false",'0f, true',1),'revert wheel anchor and steering'))
+        require(close(actual_track-s['golf']['tracks'][-1],wt_/2),'track increase is not half a truck wall section')
+    add('one axle on the widened Golf track, tyres proud like a car, axle at 60% deck',wheels,
+        (VEH,lambda x:x.replace(f"{d['az']:.6f}f, false",'0f, true',1),'revert wheel anchor and steering'),
+        (VEH,lambda x:x.replace(f"{d['track']/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false",
+                               f"{s['golf']['tracks'][-1]/2:.6f}f, {d['wy']:.6f}f, {d['az']:.6f}f, false"),
+         'revert track increase'))
     add('axle mesh follows wheel rest centres',lambda:require(close(group_bounds('axle'),((-d['track']/2,d['wy']-.25-t,d['az']-t),(d['track']/2,d['wy']-.25+t,d['az']+t)))),
         (BODY,move_group('axle',(0,0,.1)),'move axle'))
     # The mudguard clearance check went with the mudguards (strawberry: "remove the wheel arches").
@@ -275,6 +297,45 @@ def cases():
     add('main collider follows deck, does not fill open load space',lambda:require(close(vector(fields('car_trailer')['BoxSize']),(W,wt_,L)) and close(vector(fields('car_trailer')['BoxCenter']),(0,dy-wt_/2,0)) and 'HullBoxes' in fields('car_trailer') and len(vectors(fields('car_trailer')['ExtraBoxes']))==10),
         fieldmut('BoxSize','new Vector3(3f, 2f, 16f)'),fieldmut('BoxCenter','Vector3.Zero'),
         (VEH,lambda x:x.replace('HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]','HullBands = new (Vector3 size, Vector3 center, float yawDeg)[]',1),'remove drawbar colliders'))
+    def drawbar_colliders():
+        rows=boxes('HullBoxes');require(len(rows)==3)
+        for row,group in zip(rows[:2],('drawbar_-1','drawbar_1')):
+            size,centre=map(vector,row[:2]);angle=math.radians(number(row[2]))
+            require(all(v>0 for v in size),'nonpositive drawbar collider size')
+            # Inverse of the runtime Y rotation. Read every beam vertex, then require the collider
+            # to be its tight enclosing box in that frame (including a descending beam's full height).
+            local=[]
+            for p in group_points(group):
+                x,y,z=(p[i]-centre[i] for i in range(3))
+                local.append((math.cos(angle)*x-math.sin(angle)*z,y,math.sin(angle)*x+math.cos(angle)*z))
+            for axis in range(3):
+                require(close(min(p[axis] for p in local),-size[axis]/2) and
+                        close(max(p[axis] for p in local),size[axis]/2),group+' escapes or does not fit its collider')
+        require(close(vector(rows[2][0]),vector(fields('car_trailer')['BoxSize'])) and
+                close(vector(rows[2][1]),vector(fields('car_trailer')['BoxCenter'])) and number(rows[2][2])==0)
+    add('drawbar colliders fit saved beams with positive sizes; hull deck matches main box',drawbar_colliders,
+        boxmut('HullBoxes',0,0,'new Vector3(0.1f, -0.044510f, 2.605695f)','restore old negative drawbar size'),
+        boxmut('HullBoxes',1,1,'Vector3.Zero','move drawbar collider'),
+        boxmut('HullBoxes',0,2,'0f','remove drawbar yaw'),
+        boxmut('HullBoxes',2,0,'new Vector3(2.099994f, 0.25f, 3.137132f)','restore old hull deck size'),
+        (BODY,move_group('drawbar_1',(0,.1,0)),'move beam outside its collider'))
+    def wall_colliders():
+        rows=boxes('ExtraBoxes');require(len(rows)==5)
+        floor=group_bounds('deck')[1][1]
+        for row,group in zip(rows,('side_-1','side_1','headboard','tailgate','coupler')):
+            size,centre=map(vector,row);require(all(v>0 for v in size),'nonpositive wall/socket collider size')
+            low,high=(list(v) for v in group_bounds(group))
+            if group!='coupler':low[1]=floor  # main slab covers the wall below the floor
+            if group in ('headboard','tailgate'):
+                low[0]=group_bounds('side_-1')[1][0];high[0]=group_bounds('side_1')[0][0]
+            require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and
+                    close(tuple(centre[i]+size[i]/2 for i in range(3)),high),group+' collider does not follow mesh')
+    add('wall and socket colliders follow saved mesh around the open cargo space',wall_colliders,
+        boxmut('ExtraBoxes',0,0,'new Vector3(0.25f, 1.000001f, 3.137132f)','restore old side collider length'),
+        boxmut('ExtraBoxes',1,1,'new Vector3(0.924997f, 0.476570f, 0f)','restore old side collider spacing'),
+        boxmut('ExtraBoxes',3,1,'new Vector3(0f, 0.476570f, 1.443566f)','restore old tailgate collider position'),
+        boxmut('ExtraBoxes',4,1,'Vector3.Zero','move socket collider'),
+        (BODY,move_group('headboard',(0,0,.1)),'move headboard outside its collider'))
     # The zone CONTAINS the leg, it does not equal it. Equality held only because the old foot pad
     # happened to be exactly 4t square; with the pad gone the leg is narrower, and asserting equality
     # against whatever mesh survives would have quietly re-fitted the check to the model instead of

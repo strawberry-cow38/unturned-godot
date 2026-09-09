@@ -122,6 +122,7 @@ def generate():
     specs,rear=measurements();d=design(specs,rear)
     t=d['t'];w=d['deck_w']/2;f=d['front'];b=d['back'];y=d['deck_y'];r=d['radius'];ky=d['king'][1];kz=d['king'][2];az=d['axle_z'];cy=d['wheel_center_y'];wt=d['wall_t'];wh=d['wall_h']
     m=Model()
+    drawbars=[((sign*t,ky,kz+4*t),(sign*(w-2*t),y-wt/2,f+d['deck_l']/4)) for sign in (-1,1)]
     # ONE SLAB, NOT PLANKS. The reference is the truck's own bed (strawberry: "too much detail. look
     # at the truck bed etc"), and that floor is TWO triangles -- a single 1.616 m2 quad at Y=0.125, no
     # board lines anywhere. Modelling nine separate boards with gaps cost 72 tris to say something the
@@ -134,8 +135,8 @@ def generate():
     # The deck is INSET half a section inside the walls rather than flush with them: sharing the outer
     # plane put two coplanar faces on |X| = w with an overlapping Y band, which z-fights.
     m.box('deck',(-w+wt/2,y-wt,f+wt/2),(w-wt/2,y,b-wt/2),2)
-    for sign in [-1,1]:
-        m.beam('drawbar_'+str(sign),(sign*t,ky,kz+4*t),(sign*(w-2*t),y-wt/2,f+d['deck_l']/4),2*t,2*t,0)
+    for sign,(a,bb) in zip((-1,1),drawbars):
+        m.beam('drawbar_'+str(sign),a,bb,2*t,2*t,0)
     m.box('axle',(-d['track']/2,cy-t,az-t),(d['track']/2,cy+t,az+t),3)
     # Low solid sideboards with top rails. Tailgate has visible hinge blocks and latches.
     # WALL SECTION IS THE TRUCK'S BED, measured: .250 thick, standing 1.000 above the floor. Mine were
@@ -152,9 +153,8 @@ def generate():
     # save(weld_positions=True) merges those into an edge carrying four faces.
     for label,z in [('headboard',f),('tailgate',b-wt)]:
         m.box(label,(-w+wt/2,y-wt,z),(w-wt/2,y+wh,z+wt),1)
-    # NO WHEEL ARCHES (strawberry: "remove the wheel arches"). The fenders and the derived
-    # segment-count machinery that sized them are both gone; the wheels now tuck flush under the deck
-    # edge instead, which is what the narrowed track in design() is for.
+    # NO WHEEL ARCHES (strawberry: "remove the wheel arches"). The widened track in design() keeps
+    # the tyres outboard of the wider box with the same construction-module clearance.
     m.box('coupler',(-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t),0)
     # Gone with the rest of the trim: mudflaps, the coupler's latch and handle, the stand's foot pad
     # and the amber reflectors. Every one was a box under ~8 cm; nothing else in the fleet models at
@@ -179,11 +179,11 @@ def generate():
     box((-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t))
     # Oriented drawbar collider boxes follow the two diagonal beams exactly in plan.
     hulls=[]
-    for sign in [-1,1]:
-        a=(sign*t,ky,kz+4*t);bb=(sign*(w-2*t),y-3*t,f+d['deck_l']/4)
-        # Extra hull encloses inclined beam in Y; no cargo volume is filled.
+    for a,bb in drawbars:
+        # Use the mesh endpoints and the absolute rise: the lowered bed makes these beams descend.
+        # Signed rise used to emit a negative collider height, and y-3*t missed the slab midpoint.
         dx,dz=bb[0]-a[0],bb[2]-a[2]
-        hulls.append(((2*t,bb[1]-a[1]+2*t,math.hypot(dx,dz)),tuple((a[i]+bb[i])/2 for i in range(3)),math.degrees(math.atan2(dx,dz))))
+        hulls.append(((2*t,abs(bb[1]-a[1])+2*t,math.hypot(dx,dz)),tuple((a[i]+bb[i])/2 for i in range(3)),math.degrees(math.atan2(dx,dz))))
     def v(p):return 'new Vector3('+', '.join(f'{x:.6f}f' for x in p)+')'
     spec=f'''        // Car-scale open trailer. Every value is derived in notes/CAR_TRAILER_REPORT.md.
         static readonly Spec _car_trailer = new()
