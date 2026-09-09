@@ -285,11 +285,42 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (!_open) return;
+            if (_debugTakeIdx < _debugTake.Length) DebugTakeTick();
             var sk = SkillsSource ?? Player?.Skills;
             long sig = ((long)(sk?.experience ?? 0u) * 397L) ^ Prog.Count;
             if (sig != _lastSig) { _lastSig = sig; Refresh(); }
         }
         long _lastSig = -1;
+
+        // UG_SKILLTAKE=id,id,... -- learn these nodes, in order, as soon as each becomes affordable. A render can
+        // show the tree but cannot CLICK it, so without this the whole unlock path (prerequisite gating, the XP
+        // spend, an advanced pillar opening, a two-parent node going live only once BOTH parents are in) ships on
+        // the strength of a screenshot of its resting state. Applied from _Process rather than at build: the XP
+        // grant it needs lands a frame or two after the screen is up.
+        readonly string[] _debugTake = (System.Environment.GetEnvironmentVariable("UG_SKILLTAKE") ?? "")
+            .Split(',', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries);
+        int _debugTakeIdx;
+
+        void DebugTakeTick()
+        {
+            var sk = SkillsSource ?? Player?.Skills;
+            if (sk == null) return;
+            while (_debugTakeIdx < _debugTake.Length)
+            {
+                var n = _tree.NodeOf(_debugTake[_debugTakeIdx]);
+                if (n == null) { GD.PrintErr($"[skilltake] no node '{_debugTake[_debugTakeIdx]}'"); _debugTakeIdx++; continue; }
+                uint cost = Prog.Take(_tree, n, sk.experience);
+                if (cost == 0u)
+                {
+                    Prog.CanTake(_tree, n, sk.experience, out string why);
+                    GD.Print($"[skilltake] holding at '{n.Id}': {why}");
+                    return;   // not yet -- try again next tick rather than skipping past it
+                }
+                sk.TrySpend(cost);
+                _debugTakeIdx++;
+                GD.Print($"[skilltake] learned '{n.Id}' for {cost} XP ({sk.experience} left)");
+            }
+        }
 
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Open() { _open = true; Visible = true; if (_root != null) _root.Visible = true; Refresh(); _swoop?.In(); }
