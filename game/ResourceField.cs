@@ -29,6 +29,8 @@ namespace UnturnedGodot
 
         sealed class InstanceRec
         {
+            public (MultiMesh Mm, int Slot) Canopy;   // the LEAF part's slot, for the per-instance axe shake
+            public float Shake;                        // 0..1, decaying; written into that slot's custom data
             public readonly List<(MultiMesh Mm, int Slot)> Slots = new();   // one entry per part-mesh
             public Transform3D Xf;
             public StaticBody3D Trunk;      // trees only
@@ -53,6 +55,53 @@ namespace UnturnedGodot
         /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
         /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
         /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>
+        // AXE-HIT LEAF SHAKE (strawberry 2026-09-09: "change the tree leaves to react when you hit it with an axe.
+        // have them shake with each hit").
+        //
+        // PER INSTANCE, through the MultiMesh's custom-data channel, because the canopy material is SHARED: one
+        // MakeSwayMat per part serves every cell's MultiMesh, so a uniform would shake every tree of that species
+        // on the map at once. INSTANCE_CUSTOM.x is the only per-tree channel there is here.
+        //
+        // ...and the decay lives on the FIELD, not on the trees. TreeTrunk._Ready deliberately turns its own
+        // _Process off -- an idle tree paid a full engine->C# dispatch per frame and it measured ~25% of the main
+        // thread across PEI (ETW 2026-09-02). Ticking every trunk again to fade a shudder would hand that straight
+        // back. One node ticks, over a list that is empty almost always, and it stops itself when the list drains.
+        const float HitShakeDecay = 5.5f;    // e-folds/s -- a chop's shudder is gone in well under a second
+        readonly List<int> _shaken = new();  // instance indices currently ringing; drives SetProcess
+        public void HitShake(int index)
+        {
+            if (index < 0 || index >= _instances.Count) return;
+            var r = _instances[index];
+            if (r.Canopy.Mm == null || !r.Alive) return;
+            if (r.Shake <= 0f) _shaken.Add(index);
+            r.Shake = 1f;                    // each hit re-arms it to full rather than accumulating
+            SetProcess(true);
+        }
+
+        public override void _Process(double delta)
+        {
+            if (_shaken.Count == 0) { SetProcess(false); return; }
+            float k = Mathf.Exp(-HitShakeDecay * (float)delta);
+            for (int i = _shaken.Count - 1; i >= 0; i--)
+            {
+                var r = _instances[_shaken[i]];
+                r.Shake *= k;
+                bool done = r.Shake < 0.01f;
+                if (done) { r.Shake = 0f; _shaken.RemoveAt(i); }
+                r.Canopy.Mm?.SetInstanceCustomData(r.Canopy.Slot, new Color(r.Shake, 0f, 0f, 0f));
+            }
+        }
+
+        /// <summary>Test seam: read the shake back OUT of the MultiMesh rather than off our own bookkeeping. The
+        /// claim is that the per-instance channel carries it to the shader; a value we merely remembered would
+        /// prove nothing about what actually got written. -1 = this instance has no leaf part.</summary>
+        internal float CanopyShakeForTest(int index)
+        {
+            if (index < 0 || index >= _instances.Count) return -1f;
+            var c = _instances[index].Canopy;
+            return c.Mm == null ? -1f : c.Mm.GetInstanceCustomData(c.Slot).R;
+        }
+
         public void SetAlive(int index, bool alive)
         {
             if (index < 0 || index >= _instances.Count) return;
@@ -202,11 +251,14 @@ namespace UnturnedGodot
                         foreach (var kv in byCell)
                         {
                             var lst = kv.Value;
-                            var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
+                            // UseCustomData BEFORE InstanceCount (same rule as TransformFormat) -- it is the
+                            // per-instance channel the axe-hit shake rides, and only the swaying leaf part needs it.
+                            var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = sways, InstanceCount = lst.Count };
                             for (int k = 0; k < lst.Count; k++)
                             {
                                 mm.SetInstanceTransform(k, xf[lst[k]]);
                                 recs[lst[k]].Slots.Add((mm, k));
+                                if (sways && i == 0) recs[lst[k]].Canopy = (mm, k);   // part 0 is the leaf mesh
                             }
                             var mmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
                                 CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
@@ -542,6 +594,7 @@ namespace UnturnedGodot
         public void Chop(float amount, Vector3 point, Vector3 dir)
         {
             if (Felled) return;
+            Field?.HitShake(Index);   // the leaves take every hit, not just the last one
             Health -= amount;
             if (Health > 0f) return;
             Felled = true;
@@ -673,9 +726,12 @@ namespace UnturnedGodot
         // for this -- it is still the base centre, the same rotation, just carried to horizontal.
         const float FallDeg = 90f;           // where it comes to rest: flat
         // ...and it BOUNCES when it lands. A damped rebound about the landed angle, not a spring back up: the tip
-        // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
-        // 10 would read as rubber.
-        const float SettleTime = 0.95f, SettleDeg = 3.5f;
+        // lifts a few degrees and stops. Amplitude is small on purpose -- a fall that rebounds 10 degrees would
+        // read as rubber.
+        // strawberry 2026-09-09: "make it settle much faster. less bounces." 0.95 s -> 0.40, and the |sin| goes
+        // from three humps to two, so it is two taps in under half a second rather than three over one.
+        const float SettleTime = 0.40f, SettleDeg = 3.5f;
+        const float SettleTaps = 2f;         // half-cycles of |sin| across the settle = how many times it bumps
         const double DebrisLife = 11.0;      // the fall got a second and a half longer, so this follows it: 9.0 was
                                             // set to leave ~3.8 s of the tree lying there after a 4.2 s fall, and
                                             // keeping that dwell is the point, not keeping the number
@@ -764,7 +820,7 @@ namespace UnturnedGodot
                 _settleT += dt;
                 float k = _settleT / SettleTime;
                 if (k >= 1f) { _settling = false; deg = FallDeg; }
-                else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
+                else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * SettleTaps * k));
                 LeafReact(deg, dt);   // the settle's own rocking drives the leaves too -- it is still trunk motion
             }
             var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
@@ -889,13 +945,13 @@ namespace UnturnedGodot
         //
         // ⚠ sway = 0 on this material. wind_sway's ambient term is height-weighted too, and left at its default a
         // felled trunk would waft in the wind like a fern.
-        // ⚠ TUNED AGAINST THE SETTLE, not in isolation. The rigid settle swings the whole log up to 3.5 degrees
-        // about its hinge, which at a pine's 21 m tip is 1.28 m of travel -- six times this flex. Ring the trunk
-        // down inside the settle's 0.95 s and it is masked by it exactly as the first leaf attempt was masked by
-        // the fall. So it is deliberately UNDER-damped: the rock dominates the first half second and the shudder
-        // outlives it, still going at ~27% a second after impact, with the trunk otherwise parked.
+        // ⚠ TUNED AGAINST THE SETTLE, not in isolation, and RE-tuned when the settle changed. The rigid settle
+        // swings the whole log about its hinge, which at a pine's 21 m tip dwarfs this flex, so the ring has to
+        // outlast it to be seen at all -- but only just. At zeta 0.07 it ran ~2 s, which was right against a 0.95 s
+        // settle and is the tree still bouncing long after a 0.40 s one. "Less bounces" is about the landing, not
+        // only the rock. Halved the ring to match: ~1 s, still comfortably past the settle.
         const float TrunkFreq = 3.0f;       // Hz -- stiffer than the canopy's 2.5, it is a log
-        const float TrunkZeta = 0.07f;      // rings for ~2 s: it has to outlast the settle to be seen at all
+        const float TrunkZeta = 0.14f;      // rings ~1 s; outlasts the settle without dragging on past it
         const float TrunkKick = 0.016f;     // peak offset per metre of local height: ~34 cm at a pine's tip
         const float TrunkUniform = 5.0f;    // ...times this as a UNIFORM push, ~8 cm along the whole log. The flex
                                             // alone is height-weighted off the mesh origin, so it is smallest at

@@ -36,14 +36,18 @@ void vertex() {
     float amp = h * sway * (0.4 + wind_vec.z) * (0.7 + 0.3 * gust);
     // Bend in the WORLD wind direction: build the world offset, rotate it into local (the instance may be Y-rotated).
     vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp + gust_dir * h + gust_base;
-    if (shake > 0.0) {
+    // PER-INSTANCE axe-hit shudder rides the MultiMesh custom-data channel: the canopy material is shared by
+    // every tree of a species, so a uniform would shake the whole map at once. INSTANCE_CUSTOM is zero for
+    // anything that is not a MultiMesh instance (the felled debris canopy), which keeps `shake` working there.
+    float hit = shake + INSTANCE_CUSTOM.x;
+    if (hit > 0.0) {
         // Leaf-BY-LEAF, so the canopy shudders instead of sliding about as one block. Layered sines off the vertex
         // position rather than fract(sin(dot(...))): this is twenty metres of geometry and that hash bands visibly
         // at this scale (the same reason the water shader dropped it).
         vec3 j = vec3(sin(VERTEX.x * 3.7 + VERTEX.y * 2.3),
                       sin(VERTEX.z * 4.1 - VERTEX.y * 1.9),
                       cos(VERTEX.x * 2.9 + VERTEX.z * 3.3));
-        world_off += j * (shake * h * SHAKE_AMP);
+        world_off += j * (hit * h * SHAKE_AMP);
     }
     VERTEX += inverse(mat3(MODEL_MATRIX)) * world_off;
 }
