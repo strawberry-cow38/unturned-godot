@@ -91,10 +91,12 @@ namespace UnturnedGodot.Testing
             // bare L1 host does not.
             ItemCatalog.RegisterAll();
 
-            // EVERY ammo id that carries a bundle, and the round count comes from the MANIFEST rather than
-            // from a list in here -- a hardcoded pair passed happily while nine other calibers had no bundle
-            // at all, and would go stale again the next time one is added.
-            int[] ammo = { 113, 381, 5000, 5001, 5002, 5003, 5004, 5005, 5006, 103, 108 };
+            // EVERY installed bundle, enumerated FROM THE MANIFEST. A hand-written id list has now gone
+            // stale twice: the first passed while nine calibers had no bundle at all, and the second would
+            // have missed the ten added after it. The floor below is the only hand-typed number left, and it
+            // is there so DELETING bundles fails too rather than trivially passing on an empty list.
+            var ammo = WorldItem.BundleIds();
+            T.Check($"every installed bundle is enumerated ({ammo.Count} found)", ammo.Count >= 21);
             foreach (int id in ammo)
             {
                 var asset = Assets.find((ushort)id);

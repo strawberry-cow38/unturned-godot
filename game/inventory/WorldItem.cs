@@ -219,6 +219,26 @@ namespace UnturnedGodot
             return ContentProvider.ParseObjPrefix(m.ObjPath, m.Rounds[n - 1]) ?? m.Mesh;
         }
 
+        /// <summary>Every id whose manifest entry carries `rounds` -- i.e. every multi-round bundle installed.
+        ///
+        /// Exists so the stack-visual test can enumerate what is ACTUALLY there. Its id list was hand-written
+        /// twice; the first version silently passed while nine calibers had no bundle at all, and the second
+        /// would have gone stale the moment ten more were added.</summary>
+        public static List<int> BundleIds()
+        {
+            var ids = new List<int>();
+            foreach (var key in Manifest().Keys)
+            {
+                string k = key.AsString();
+                if (!int.TryParse(k, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)) continue;
+                var e = Manifest()[key].AsGodotDictionary();
+                if (!e.ContainsKey("rounds")) continue;
+                if (e["rounds"].AsGodotArray().Count > 1) ids.Add(id);
+            }
+            ids.Sort();
+            return ids;
+        }
+
         /// <summary>The manifest's `rounds` for an id -- cumulative triangle counts, one per round -- or null
         /// for the great majority of items that are a single object. Public so a test can enumerate what is
         /// actually installed instead of carrying its own copy of the list, which is the copy that goes stale

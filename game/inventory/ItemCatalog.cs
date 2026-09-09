@@ -240,6 +240,32 @@ namespace SDG.Unturned
             { var b = SDG.Unturned.Assets.find(5005); if (b != null) { b.stackSize = 90; b.ammoType = "FMJ"; b.magRound = ".300 AAC Blackout"; } }
             Shell(5006, 203, 1);   // 7.62x51mm NATO -> SCAR-H body (group 203)
             { var b = SDG.Unturned.Assets.find(5006); if (b != null) { b.stackSize = 80; b.ammoType = "FMJ"; b.magRound = "7.62x51mm NATO"; } }
+            // The remaining player cartridges as loose rounds (strawberry 2026-09-09: "run through
+            // getting the rest of the calibers in"). Caliber group = the gun body group that chambers
+            // it; safe to make these isAmmo because FeedsLooseRounds gates on the GUN'S OWN magazine
+            // being ammo, so no magazine-fed rifle turns shell-fed just because a match now exists.
+            // 12.7x108 and 23x115 are deliberately absent: helicopter armament (yakb, gsh23), and both
+            // sit in caliber group 37 with .50 BMG, which ShellAsset resolves by scanning.
+            Shell(5007, 4, 1);
+            { var b = SDG.Unturned.Assets.find(5007); if (b != null) { b.stackSize = 180; b.ammoType = "FMJ"; b.magRound = "9x19mm Parabellum"; } }   // 9x19mm Parabellum
+            Shell(5008, 3, 1);
+            { var b = SDG.Unturned.Assets.find(5008); if (b != null) { b.stackSize = 150; b.ammoType = "FMJ"; b.magRound = ".45 ACP"; } }   // .45 ACP
+            Shell(5009, 26, 1);
+            { var b = SDG.Unturned.Assets.find(5009); if (b != null) { b.stackSize = 180; b.ammoType = "FMJ"; b.magRound = "9x18mm Makarov"; } }   // 9x18mm Makarov
+            Shell(5010, 9, 1);
+            { var b = SDG.Unturned.Assets.find(5010); if (b != null) { b.stackSize = 120; b.ammoType = "FMJ"; b.magRound = "7.62x39mm"; } }   // 7.62x39mm
+            Shell(5011, 21, 1);
+            { var b = SDG.Unturned.Assets.find(5011); if (b != null) { b.stackSize = 100; b.ammoType = "FMJ"; b.magRound = "9x39mm"; } }   // 9x39mm
+            Shell(5012, 35, 1);
+            { var b = SDG.Unturned.Assets.find(5012); if (b != null) { b.stackSize = 160; b.ammoType = "FMJ"; b.magRound = "7.62x25mm Tokarev"; } }   // 7.62x25mm Tokarev
+            Shell(5013, 24, 1);
+            { var b = SDG.Unturned.Assets.find(5013); if (b != null) { b.stackSize = 200; b.ammoType = "FMJ"; b.magRound = "5.7x28mm"; } }   // 5.7x28mm
+            Shell(5014, 18, 1);
+            { var b = SDG.Unturned.Assets.find(5014); if (b != null) { b.stackSize = 250; b.ammoType = "FMJ"; b.magRound = ".22 LR"; } }   // .22 LR
+            Shell(5015, 2, 1);
+            { var b = SDG.Unturned.Assets.find(5015); if (b != null) { b.stackSize = 60; b.ammoType = "FMJ"; b.magRound = ".338 Lapua Magnum"; } }   // .338 Lapua Magnum
+            Shell(5016, 13, 1);
+            { var b = SDG.Unturned.Assets.find(5016); if (b != null) { b.stackSize = 40; b.ammoType = "FMJ"; b.magRound = ".50 BMG"; } }   // .50 BMG
             DeriveMagazinesFromGuns();
             StripUnityRichText();   // last: after every overlay above has finished writing descriptions
         }
