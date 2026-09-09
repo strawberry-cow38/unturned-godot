@@ -639,11 +639,28 @@ namespace UnturnedGodot
         // rigidbody integrated at --fixed-fps 1 explodes + spins about its centre of mass, not the trunk base).
         Node3D _debris;
         bool _toppling;
-        float _topple;                       // 0..1 fall progress
+        float _toppleDeg;                    // the lean, integrated (was a 0..1 progress along a fixed curve)
+        float _toppleVel;                    // ...and its rate, rad/s
         // A TREE IS NOT A DROPPED PLANK (strawberry 2026-09-09: "have felled trees fall way more slowly"). 1.3 s
         // through 84 degrees is a fencepost being pushed over; a real trunk takes several seconds because the far
-        // end has metres to travel. The ease-in stays -- gravity does accelerate it -- it just starts from slow.
-        const float ToppleTime = 4.2f;
+        // end has metres to travel.
+        //
+        // ...and it is a ROD HINGED AT ITS BASE, not something on a schedule (strawberry, same day: "with the
+        // falling anim, start slow, then speed up until impact"). Gravity's torque on a leaning trunk goes as its
+        // lever arm -- sin(lean) -- so an upright tree barely moves and the last thirty degrees carry all of the
+        // speed. The old curve was `deg = FallDeg * t*t`: constant angular acceleration, which starts slow only in
+        // the sense a parabola does and arrives at 0.698 rad/s. Integrating the real torque instead arrives at
+        // 1.518 rad/s -- 2.2x the impact speed -- in the SAME 4.2 s, so the fall master already signed off on does
+        // not get shorter, it gets back-loaded.
+        //
+        // ToppleAccel is tuned to that 4.2 s rather than taken from the physics: a genuine 22 m rod is 3g/2L =
+        // 0.669 rad/s^2 and takes 5.8 s. The SHAPE here is the pendulum's, the RATE is the one that was approved.
+        const float ToppleKick = 1.5f;      // degrees of initial lean -- the chop's own push. sin(0) is 0, so a
+                                            // trunk released exactly upright would stand there forever.
+        const float ToppleAccel = 1.287f;   // rad/s^2; numerically solved so 1.5 deg -> FallDeg takes 4.2 s
+        const float ToppleStep = 1f / 60f;  // integration substep. FIXED, so the fall is identical at 30 fps
+                                            // offline and 200 fps live -- a scripted animation that varies with
+                                            // frame rate is one that renders differently from how it plays.
         // ⚠ 84, not 90-something. Carrying the fall past 90 so the trunk finishes FLAT was tried (e6398305) and
         // rejected; see the pivot in _Process for why. Landing the trunk properly is still worth doing -- at 84 a
         // pine comes to rest with its tip about four metres up -- but not by moving where it swings about.
@@ -652,7 +669,7 @@ namespace UnturnedGodot
         // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
         // 10 would read as rubber.
         const float SettleTime = 0.95f, SettleDeg = 3.5f;
-        const double DebrisLife = 9.0;       // long enough that a 4.2 s fall plus its settle is watched, not rushed
+        const double DebrisLife = 9.0;       // long enough that the 4.2 s fall plus its settle is watched, not rushed
         bool _settling;
         float _settleT;
         Vector3 _toppleAxis = Vector3.Right; // horizontal axis; set from the chop direction
@@ -679,7 +696,7 @@ namespace UnturnedGodot
             foreach (Node c in _debris.GetChildren())
                 if (c is MeshInstance3D mi && mi.Mesh != null) { box = any ? box.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); any = true; }
             if (any) _trunkLen = Mathf.Max(1f, box.Size.Y * Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y));
-            _topple = 0f; _toppling = true; _settling = false; SetProcess(true);
+            _toppleDeg = ToppleKick; _toppleVel = 0f; _toppling = true; _settling = false; SetProcess(true);
             // The logs arrive WITH the cleanup, not at the chop: you fell the tree, it lies there, and what it
             // leaves behind appears as it goes.
             GetTree().CreateTimer(DebrisLife).Timeout += () =>
@@ -706,10 +723,16 @@ namespace UnturnedGodot
             float deg;
             if (_toppling)
             {
-                _topple = Mathf.Min(1f, _topple + dt / ToppleTime);
-                deg = FallDeg * (_topple * _topple);                 // ease-in: gravity accelerates the fall
+                for (float rem = dt; rem > 0f; )                     // substepped: same curve at any frame rate
+                {
+                    float h = Mathf.Min(rem, ToppleStep); rem -= h;
+                    _toppleVel += ToppleAccel * Mathf.Sin(Mathf.DegToRad(_toppleDeg)) * h;   // torque ~ lever arm
+                    _toppleDeg += Mathf.RadToDeg(_toppleVel) * h;
+                    if (_toppleDeg >= FallDeg) { _toppleDeg = FallDeg; break; }
+                }
+                deg = _toppleDeg;
                 LeafReact(deg, dt);                                  // ...and the canopy drags against that sweep
-                if (_topple >= 1f) { _toppling = false; _settling = true; _settleT = 0f; }
+                if (_toppleDeg >= FallDeg) { _toppling = false; _settling = true; _settleT = 0f; }
             }
             else
             {
@@ -758,7 +781,12 @@ namespace UnturnedGodot
         // the fall's own lag so it cannot fly apart. The high-frequency per-leaf jitter now rides the spring's
         // SPEED, so the canopy flutters while it is moving instead of sliding as one block.
         const float CanopyLever = 0.75f;    // the leaves sit about three quarters of the way out
-        const float DragPerMps = 0.0016f;   // metres of leaf offset per metre of local height, per m/s of canopy speed
+        const float DragPerMps = 0.0010f;   // metres of leaf offset per metre of local height, per m/s of canopy
+                                            // speed. Was 0.0016, set against the old curve's 0.698 rad/s impact;
+                                            // the hinged-rod fall arrives at 1.518, which drove the lag into
+                                            // LeafMax and held it there for the last stretch -- a clamped drag is
+                                            // a constant one, and a constant offset is the thing that read as
+                                            // nothing the first time. Retuned so the cap stays a safety rail.
         const float LeafFreq = 2.5f;        // Hz -- the ring after it lands; slow enough to read at 30 fps
         const float LeafZeta = 0.12f;       // lightly damped ON PURPOSE: the ring has to outlive the 0.95 s settle,
                                             // because leaf motion only becomes visible once the TRUNK stops moving
