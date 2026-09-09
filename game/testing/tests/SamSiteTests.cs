@@ -90,8 +90,15 @@ namespace UnturnedGodot.Testing
             // Just short of the sixth shot's due time: five away, one still in the rack. This is the check that
             // separates "fires six" from "fires until you stop looking" -- an unbounded loop passes a count-6
             // assertion too, if you only ever look after the sixth.
-            Drive(site, SamSite.ShotDelay * 4f - 0.05f);
-            T.Check($"five are away and the sixth has not gone yet, {SamSite.ShotDelay * 4f - 0.05f:0.00}s after the first (fired {site.Fired})",
+            //
+            // FIVE delays, not four. Shots land at LockTime + k*ShotDelay, so with LockTime 1.8 and ShotDelay
+            // 0.55 they fall at 1.80, 2.35, 2.90, 3.45, 4.00, 4.55. The first Drive above already puts the clock
+            // at 1.85, so driving a further 4*ShotDelay - 0.05 lands on 4.00 -- EXACTLY the fifth shot's instant,
+            // not just short of the sixth. Whether that tick has fired the fifth round comes down to how 240
+            // additions of 1f/60f accumulate, and it lands under: the check read `fired 4` every run since it
+            // was written. 5*ShotDelay - 0.05 reaches 4.50, which is what the comment above always meant.
+            Drive(site, SamSite.ShotDelay * 5f - 0.05f);
+            T.Check($"five are away and the sixth has not gone yet, {SamSite.ShotDelay * 5f - 0.05f:0.00}s after the first (fired {site.Fired})",
                 site.Fired == 5 && site.Loaded == 1);
 
             Drive(site, 0.2f);
