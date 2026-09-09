@@ -596,10 +596,44 @@ def check_exhaust(wagon):
           f'tip flush at {rear:.6f}; outlet/emitter {tuple(round(c,4) for c in tip)}; clear path')
 
 
+def body_surface_z(mesh, x, y, front):
+    """Z where a ray down Z at (x,y) meets the body -- nearest face if `front`, else furthest. Vertex
+    proximity will not do: these bodies are low-poly and there is rarely a vertex near a lamp centre."""
+    V, hits = mesh['vertices'], []
+    for f in mesh['faces']:
+        a, b, c = (V[int(i.split('/')[0])-1] for i in f)
+        den = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1])
+        if abs(den) < 1e-12:
+            continue
+        u = ((b[1]-c[1])*(x-c[0]) + (c[0]-b[0])*(y-c[1])) / den
+        v = ((c[1]-a[1])*(x-c[0]) + (a[0]-c[0])*(y-c[1])) / den
+        if u < -1e-9 or v < -1e-9 or 1-u-v < -1e-9:
+            continue
+        hits.append(u*a[2] + v*b[2] + (1-u-v)*c[2])
+    assert hits, ('no body surface behind the lamp', x, y)
+    return min(hits) if front else max(hits)
+
+
 def check_donor_parts(wagon, sedan):
-    for lamp,field,delta in (('headlights','SpotPos',.150),('taillights','TailPos',.012)):
+    # THE OFFSET IS DERIVED, SO ASSERT THE PROPERTY IT SERVES, NOT THE NUMBER. The lenses are the sedan's
+    # meshes moved in Z until they stand as far PROUD of this body as they do of the sedan's -- which is
+    # what strawberry was reading as "thickness". Pinning .150/.012 here would re-pin the bug: those were
+    # the offsets that left the headlights 0.019 proud against the sedan's 0.064 and the taillights 0.120
+    # against 0.029, and they would have to be edited by hand every time the fascia or tailgate moves.
+    for lamp,field,front in (('headlights','SpotPos',True),('taillights','TailPos',False)):
         source = obj(CONTENT/f'sedan_{lamp}.txt')
         part = obj(CONTENT/f'wagon_{lamp}.txt')
+        delta = part['lo'][2]-source['lo'][2]
+        assert abs((part['hi'][2]-source['hi'][2]) - delta) < 1e-6, 'lamp scaled, not translated'
+        xs=[abs(v[0]) for v in source['vertices']]; ys=[v[1] for v in source['vertices']]
+        cx,cy=(min(xs)+max(xs))/2,(min(ys)+max(ys))/2
+        def proud(body, lens):
+            surf = body_surface_z(body, cx, cy, front)
+            return (surf-lens['lo'][2]) if front else (lens['hi'][2]-surf)
+        want = proud(obj(CONTENT/'sedan_body.txt'), source)
+        got  = proud(obj(CONTENT/'wagon_body.txt'), part)
+        assert abs(got-want) < 1e-4, (f'{lamp} stand-off does not match the sedan', got, want)
+        print(f'PASS {lamp}: {got:.4f} m proud, matching the sedan; Z {delta:+.6f} derived not pinned')
         assert len(part['faces']) == len(source['faces']) == 20
         # Check every corner and UV, not merely the same bounding box.
         for sf,pf in zip(source['faces'],part['faces']):
@@ -773,6 +807,51 @@ def check():
     print(f"PASS main box is a fitted lower shell: top {box_hi[1]:.3f} < beltline {BELTLINE}, "
           f"Z {wagon['BoxSize'][2]:.3f} centred {wagon['BoxCenter'][2]:+.4f} on mesh centre {zc:+.4f}; "
           f"roof left to RoofBox")
+    # INTERIOR COLOUR IS A TEXEL, NOT A PALETTE. Both cars ship the same palette bytes (asserted just
+    # below), so "the wagon's interior is a different colour to the sedan's" could only ever be which
+    # texel the faces sample. The SUV sat on (58,58,58), darker than any dark the sedan puts on its
+    # body; the sedan's own dominant non-paint tone is (82,82,82). Assert they agree, by sampling --
+    # comparing the UV pair would pass a palette edit that moved the colour out from under it.
+    from PIL import Image as _Img
+    _pal = _Img.open(CONTENT / sedan["Palette"]).convert("RGBA")
+    def _texel(uv):
+        # obj() ALREADY applies ParseObj's V flip (measure_vehicles.py: `1 - float(p[2])`), so do NOT
+        # flip again -- doing so sampled the other palette row and the check passed on (239,227,186),
+        # the cream headlight tone, which is on neither body's dark faces. A check that passes while
+        # reading the wrong texel is worse than no check.
+        u, v = uv
+        return _pal.getpixel((min(_pal.width-1, int(u*_pal.width)),
+                              min(_pal.height-1, int(v*_pal.height))))
+    def _darks(name):
+        m = obj(CONTENT / name)
+        c = Counter()
+        for f in m["faces"]:
+            t = f[0].split("/")
+            if len(t) > 1 and t[1]:
+                px = _texel(m["uvs"][int(t[1])-1])
+                if px[3] == 255:            # alpha 0 is the PAINTABLE flag, not a colour
+                    c[px] += 1
+        return c
+    _sd = _darks("sedan_body.txt").most_common(1)[0][0]
+    _wd = _darks("wagon_body.txt").most_common(1)[0][0]
+    assert _wd == _sd, ("interior tone does not match the sedan", _wd, _sd)
+    print(f"PASS interior tone {_wd[:3]} matches the sedan's dominant body grey")
+    # END GLASS TUCKS THE SAME 0.034 PAST THE INNER WALL AS THE SEDAN'S. Both cars put their inner cabin
+    # wall at 0.98 and their skin near 1.26; the sedan's windshield and rear pane run 0.034 OUTBOARD of
+    # that wall so the glass passes under the A-pillar rather than stopping flush against it. This car's
+    # ends were flush, 0.034 short at every edge. Assert the TUCK, not the coordinate -- and note the
+    # sedan's own pane is 1 mm right of centre (export jitter), which is why this compares half-widths
+    # rather than expecting the wagon to reproduce -1.014/+1.016.
+    _sw = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'sedan_body.txt')['vertices']} if x <= 1.0)
+    _st = max(abs(v[0]) for v in obj(CONTENT/'sedan_glass_windshield.txt')['vertices']) - _sw
+    _ww = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'wagon_body.txt')['vertices']} if x <= 1.0)
+    for _pane in ('windshield','rear'):
+        _v = obj(CONTENT/f'wagon_glass_{_pane}.txt')['vertices']
+        _lo, _hi = min(v[0] for v in _v), max(v[0] for v in _v)
+        assert abs(_lo + _hi) < 1e-6, (f'{_pane} pane is off-centre', _lo, _hi)
+        assert abs((_hi - _ww) - _st) < 1e-4, (f'{_pane} does not tuck under the pillar like the sedan',
+                                               _hi - _ww, _st)
+    print(f"PASS end glass tucks {_st:.4f} m past the 0.98 inner wall, matching the sedan; panes centred")
     assert (CONTENT / wagon["Palette"]).read_bytes() == (CONTENT / sedan["Palette"]).read_bytes()
     for asset in [wagon[k] for k in ("Body","Wheel","WheelTex","Palette")] + wagon["Parts"]:
         assert (CONTENT / asset).is_file(), asset

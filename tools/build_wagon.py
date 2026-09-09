@@ -12,7 +12,17 @@ import struct
 from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs, vector
 
 PAINT = (0.125, 0.75)
-DARK = (0.375, 0.25)
+# DARK = the SEDAN'S interior grey (strawberry 2026-09-09: "change the interior color to the sedan's").
+# Both cars share sedan_palette.png byte for byte, so this was never a palette difference -- it was the
+# TEXEL. Colour histogram of each body, by the texel its faces actually sample:
+#     sedan   (166,166,166,a=0) x272 paintable | (82,82,82) x56 | (166,166,166) x20 | (97,96,96) x10 |
+#             (142,142,142) x8
+#     SUV     (166,166,166,a=0) x186 paintable | (58,58,58) x40
+# (58,58,58) at uv (0.375,0.25) is darker than ANY dark the sedan puts on its body, which is why the
+# cabin read flatter and blacker. (0.625,0.25) is the sedan's own dominant interior grey.
+# The sedan spends three further shades on top of that; this uses the one, so the cabin matches its
+# main tone rather than inventing a scheme.
+DARK = (0.625, 0.25)
 HALF_WIDTH = 1.26  # One outer wall plane, including every post and bumper tip.
 # FLOOR_Y = the OUTER sill height, and it must match the fleet's visible flank, not its hidden belly.
 # Measured lowest point by width band: sedan, hatchback and golf all bottom at -0.159 on the outer
@@ -184,6 +194,27 @@ def build_exhaust():
     print(f'Exhaust: sedan duct, {len(mesh.f)} triangles, Z {dz:+.6f} -> tip flush at {dst_tip:.6f}; '
           f'outlet centre {tuple(round(c,4) for c in tip)}')
     return tip
+
+
+def body_surface_z(mesh, x, y, front):
+    """Z of the body surface a ray down Z hits at (x,y) -- the nearest face if `front`, else the furthest.
+
+    Vertex proximity will not do: these bodies are low-poly and there is usually no vertex anywhere near a
+    lamp centre, only a face spanning past it."""
+    V, hits = mesh['vertices'], []
+    for f in mesh['faces']:
+        a, b, c = (V[int(i.split('/')[0])-1] for i in f)
+        den = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1])
+        if abs(den) < 1e-12:
+            continue
+        u = ((b[1]-c[1])*(x-c[0]) + (c[0]-b[0])*(y-c[1])) / den
+        v = ((c[1]-a[1])*(x-c[0]) + (a[0]-c[0])*(y-c[1])) / den
+        w = 1 - u - v
+        if u < -1e-9 or v < -1e-9 or w < -1e-9:
+            continue
+        hits.append(u*a[2] + v*b[2] + w*c[2])
+    assert hits, ('no body surface behind the lamp', x, y)
+    return min(hits) if front else max(hits)
 
 
 def outward_quad(mesh, points, direction, uv=None):
@@ -398,9 +429,23 @@ def build():
     body.write('wagon_body.txt', weld_positions=True)
     shutil.copyfile(CONTENT/'sedan_palette.png',CONTENT/'wagon_palette.png')
 
+    # END GLASS TUCKS INTO THE PILLARS, THE WAY THE SEDAN'S DOES (strawberry 2026-09-09, picking the
+    # sedan as the reference after I measured all 17 windshields). Both cars have their inner cabin wall
+    # at 0.98 and their outer skin at ~1.26, but the sedan's windshield and rear pane span +/-1.015 --
+    # 0.034 OUTBOARD of that inner wall, so the glass runs under the A-pillar instead of stopping flush
+    # against it. Its side panes carry the same 0.034: 1.227 against a 1.261 skin. This car's ends were
+    # at +/-0.98 exactly, flush with the pillar face and 0.034 short at every edge.
+    # Derived from the sedan rather than pinned, and CENTRED: the sedan's own pane runs -1.014..+1.016,
+    # 1 mm right of centre, which is export jitter in the ripped mesh and not something to reproduce.
+    sedan_glass = obj(CONTENT/'sedan_glass_windshield.txt')['vertices']
+    sedan_wall = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'sedan_body.txt')['vertices']}
+                     if x <= 1.0)                       # the sedan's inner cabin wall, 0.981
+    tuck = max(abs(v[0]) for v in sedan_glass) - sedan_wall
+    xe = .98 + tuck
+    print(f'End glass: sedan tucks {tuck:.4f} m past its inner wall -> this car spans +/-{xe:.4f}')
     panes = {
-        'windshield': [(-.98,1.125,-1.25),(.98,1.125,-1.25),(.98,1.92,-.80),(-.98,1.92,-.80)],
-        'rear': [(-.98,1.10,2.68),(-.98,1.92,2.56),(.98,1.92,2.56),(.98,1.10,2.68)],
+        'windshield': [(-xe,1.125,-1.25),(xe,1.125,-1.25),(xe,1.92,-.80),(-xe,1.92,-.80)],
+        'rear': [(-xe,1.10,2.68),(-xe,1.92,2.56),(xe,1.92,2.56),(xe,1.10,2.68)],
     }
     for side,sign in [('l',-1),('r',1)]:
         x=sign*(HALF_WIDTH-.004)
@@ -413,10 +458,32 @@ def build():
         outward_quad(mesh,points,direction)
         mesh.write('wagon_glass_'+label+'.txt')
 
-    # Original wagon lamp translations, with every sedan corner retained.
-    for lamp,delta in [('headlights',.150),('taillights',.012)]:
-        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p: (0,0,delta))
-        print(f'Sedan {lamp} Z delta: {delta:+.6f}')
+    # MATCH THE SEDAN'S PROTRUSION, not a remembered Z offset (strawberry 2026-09-09: "reduce the
+    # thickness of tail lights to match sedan. and thicken headlights? to match sedan on the suv").
+    #
+    # The lenses ARE the sedan's meshes, identical to the micrometre -- what he was reading as thickness
+    # is how far they stand PROUD of the bodywork behind them, and this car's nose and tailgate are not
+    # where the sedan's are. Raycast down Z through each lens centre, on the sedan and on this body:
+    #     headlights  sedan 0.0641 proud   suv 0.0191   (sunk almost flush)
+    #     taillights  sedan 0.0288 proud   suv 0.1200   (stood off four times too far)
+    # So the offsets are DERIVED here rather than carried as .150/.012 constants: whatever the fascia or
+    # the tailgate does next, the lamps keep the sedan's stand-off instead of quietly drifting again.
+    for lamp, front in (('headlights', True), ('taillights', False)):
+        src = obj(CONTENT/f'sedan_{lamp}.txt')
+        sedan_body = obj(CONTENT/'sedan_body.txt')
+        xs = [abs(v[0]) for v in src['vertices']]; ys = [v[1] for v in src['vertices']]
+        x, y = (min(xs)+max(xs))/2, (min(ys)+max(ys))/2
+        lo_z, hi_z = min(v[2] for v in src['vertices']), max(v[2] for v in src['vertices'])
+        want = (body_surface_z(sedan_body, x, y, front) - lo_z) if front else \
+               (hi_z - body_surface_z(sedan_body, x, y, front))
+        here = body_surface_z(obj(CONTENT/'wagon_body.txt'), x, y, front)
+        delta = (here - want - lo_z) if front else (here + want - hi_z)
+        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p, d=delta: (0, 0, d))
+        got = obj(CONTENT/f'wagon_{lamp}.txt')
+        gz = min(v[2] for v in got['vertices']) if front else max(v[2] for v in got['vertices'])
+        actual = (here - gz) if front else (gz - here)
+        assert abs(actual - want) < 1e-6, (lamp, actual, want)
+        print(f'Sedan {lamp}: Z {delta:+.6f} -> {actual:.4f} m proud, matching the sedan\'s {want:.4f}')
     translate_asset('sedan_steer.txt', 'wagon_steer.txt', lambda p: (0,0,.205))
     seats = obj(CONTENT/'sedan_seats.txt')
     assert all(len({seats['vertices'][int(c.split('/')[0])-1][2] < 0 for c in f}) == 1
