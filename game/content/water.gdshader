@@ -20,6 +20,11 @@ uniform vec4 water_shallow : source_color = vec4(0.06, 0.26, 0.48, 0.36);  // sh
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
+// SILENCE BOTH FOAMS AT ONCE (strawberry 2026-09-09: "remove water reflections and foam in the bake").
+// crest_foam can be pushed out of reach, but SHORE foam has no uniform of its own -- its band is hardcoded
+// off the reconstructed depth below -- so a multiplier on the COMBINED foam is the only way to switch the
+// pair off from outside the shader. Defaults 1.0: every existing render is byte-identical.
+uniform float foam_amount : hint_range(0.0, 1.0) = 1.0;
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
 uniform float reflectivity = 0.45;    // how strongly the sky shows at grazing angles (Fresnel); lowered -> less white-out at grazing (master)
@@ -118,7 +123,7 @@ void fragment() {
     float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
     float crest = smoothstep(crest_foam, crest_foam + 0.20, sh) * gate;
 
-    float foam = clamp(max(crest, shore) * 0.8, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
+    float foam = clamp(max(crest, shore) * 0.8 * foam_amount, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
 
     // SEE-THROUGH depth-tinted water
     float dt = smoothstep(0.0, shore_depth * 4.0, depth_v);
@@ -165,7 +170,12 @@ void fragment() {
         vec2 rg = clamp(vec2(dFdx(ring), dFdy(ring)) * ring_normal_gain, vec2(-0.6), vec2(0.6));
         NORMAL = normalize(NORMAL + vec3(rg, 0.0));
     }
-    SPECULAR = 0.5;
+    // THE SUN'S OWN GLINT RIDES ON `reflectivity` TOO. The Fresnel blend above is only the SKY term; Godot's
+    // specular lobe is a separate path, and zeroing reflectivity for the map bake still left a sun streak
+    // burned across the middle of the sea. Scaling by the same uniform keeps "how reflective is this water"
+    // as ONE number instead of two that can disagree -- and at the default 0.45 this is exactly the 0.5 it
+    // has always been, so nothing else changes.
+    SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
     METALLIC = 0.0;
     // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment
     if (reflection_on && reflection_debug) { ALBEDO = texture(reflection_tex, SCREEN_UV).rgb; ALPHA = 1.0; ROUGHNESS = 1.0; }

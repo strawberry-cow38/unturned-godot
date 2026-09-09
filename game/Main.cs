@@ -4901,6 +4901,26 @@ namespace UnturnedGodot
                     if (dn.Env != null) { dn.Env.FogEnabled = false; dn.Env.VolumetricFogEnabled = false; }
                 }
 
+                // FLAT SEA (strawberry 2026-09-09: "remove water reflections and foam in the bake"). What is left
+                // is the depth tint alone -- water_shallow -> water_deep by how deep the bed is -- which is the
+                // part of our water that carries map information. Everything switched off here is view-dependent
+                // and therefore noise in a top-down diagram: the Fresnel sky blend put a sun glint across the
+                // middle of the first bake, and the foam speckled the whole sea with whitecaps.
+                //   reflectivity   the Fresnel sky/mirror blend, and the gate on the planar buffer's contribution
+                //   reflection_on  the planar mirror itself (only ever live under UG_REFLECT=1)
+                //   foam_amount    crest whitecaps AND the shore band, together
+                WaterReflection.Enabled = false;
+                int seas = 0;
+                foreach (var mi in FindAll<MeshInstance3D>(this))
+                {
+                    if (mi.MaterialOverride is not ShaderMaterial wm) continue;
+                    if (!(wm.Shader?.ResourcePath ?? "").EndsWith("water.gdshader")) continue;
+                    wm.SetShaderParameter("reflection_on", false);
+                    wm.SetShaderParameter("reflectivity", 0f);
+                    wm.SetShaderParameter("foam_amount", 0f);
+                    seas++;
+                }
+
                 float size = MapUI.LevelSize;
                 // AN ORTHOGRAPHIC CAMERA'S FRAMING DOES NOT DEPEND ON ITS HEIGHT -- only Size does. So there is
                 // nothing to buy by parking it 2 km up, and something to lose: every distance-based effect
@@ -4925,7 +4945,7 @@ namespace UnturnedGodot
                     Position = new Vector3(0f, y, 0f),
                     RotationDegrees = new Vector3(-90f, 0f, 0f),   // straight down; +X right, +Z down, matching WorldToNorm
                 });
-                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared");
+                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared, {seas} water surface(s) flattened");
                 return;
             }
 
