@@ -580,7 +580,6 @@ namespace UnturnedGodot
 
         Node3D _stump;
         StaticBody3D _stumpBody;
-        float _stumpTop;   // world-space height of the cut face above the tree's base
 
         // Retail stumpGameObject: the stump meshes stay where the tree stood until it regrows.
         void SpawnStump()
@@ -589,12 +588,6 @@ namespace UnturnedGodot
             AddChild(_stump);
             LoadParts(_stump, "stump");
             _stump.GlobalTransform = TreeXf;
-            // How high the CUT is. The falling trunk hinges on it, so it is measured off the stump's own mesh
-            // rather than assumed -- a pine's stump is not a birch's.
-            var sb = new Aabb(); bool anyS = false;
-            foreach (Node c in _stump.GetChildren())
-                if (c is MeshInstance3D mi && mi.Mesh != null) { sb = anyS ? sb.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); anyS = true; }
-            _stumpTop = anyS ? Mathf.Max(0f, sb.End.Y * Mathf.Max(0.01f, TreeXf.Basis.Scale.Y)) : 0f;
             SpawnStumpCollider();
         }
 
@@ -651,13 +644,9 @@ namespace UnturnedGodot
         // through 84 degrees is a fencepost being pushed over; a real trunk takes several seconds because the far
         // end has metres to travel. The ease-in stays -- gravity does accelerate it -- it just starts from slow.
         const float ToppleTime = 4.2f;
-        // ⚠ TRIED AND REJECTED, 2026-09-09, by strawberry watching it: carrying the fall PAST 90 degrees so the
-        // trunk finishes flat on the ground. The geometry was sound -- hinge on the stump to 90 + asin(cut/reach),
-        // then pivot on the grounded far end while the butt slips off the cut face -- and it did land the tree,
-        // which at 84 degrees never happens (a pine comes to rest with its tip about four metres up). But that
-        // SECOND pivot reads as the trunk detaching from the stump and sinking: "the hinge looks weird go back to
-        // the old fall animation". So the fall is one hinge again. Anything that puts the trunk on the deck has to
-        // do it without a visible change of pivot part-way down.
+        // ⚠ 84, not 90-something. Carrying the fall past 90 so the trunk finishes FLAT was tried (e6398305) and
+        // rejected; see the pivot in _Process for why. Landing the trunk properly is still worth doing -- at 84 a
+        // pine comes to rest with its tip about four metres up -- but not by moving where it swings about.
         const float FallDeg = 84f;           // where it comes to rest
         // ...and it BOUNCES when it lands. A damped rebound about the landed angle, not a spring back up: the tip
         // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
@@ -731,18 +720,18 @@ namespace UnturnedGodot
                 LeafReact(0f, dt);
             }
             var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
-            // HINGE ON THE STUMP, not on the base centre (strawberry 2026-09-09: "the falling tree should hinge
-            // better off the stump, theres a bit of a gap"). Rotating a trunk about the centre of its own base
-            // swings the butt end up and away -- half the cut face lifts clear while the other half would sweep
-            // through the stump, and the gap is that lift. A real tree pivots on the FAR EDGE of the cut: the
-            // side it is falling toward stays planted and the trunk rolls over it.
-            //
-            // So the pivot moves up to the cut face and out by the trunk's own radius along the fall direction.
-            // Both are measured -- the cut off the stump mesh, the radius off the same TrunkRadius the trunk
-            // collider uses -- so the hinge cannot disagree with the wood it is supposed to be touching.
-            Vector3 p = _toppleBase.Origin
-                      + Vector3.Up * _stumpTop
-                      + _fallDir * (TrunkRadius * Mathf.Max(0.01f, _toppleBase.Basis.Scale.X));
+            // PIVOT ABOUT THE BASE CENTRE -- and it stays there. ⚠ Two attempts to make this hinge "better" have
+            // now been rejected by strawberry watching them, both on 2026-09-09:
+            //   b8a24e68 moved the pivot to the FAR EDGE of the cut (up by the stump height, out by the trunk
+            //     radius), on the reasoning that a real tree rolls over that edge. Geometrically that is true and
+            //     it does close the gap at the butt -- but the whole trunk then swings out and down about a point
+            //     a metre and a half off the ground, which is what "the hinge looks weird" was about.
+            //   e6398305 kept that and added a SECOND pivot on the grounded far end so the trunk finished flat.
+            //     Worse: a pivot that changes part-way down reads as the trunk detaching from the stump.
+            // The base centre lifts the near edge of the cut a little, which is the "bit of a gap" that started
+            // all this -- known, and preferred to either of the above. Fix that by moving the DEBRIS, not the
+            // pivot: anything that shifts where the trunk swings about is the thing that looked wrong.
+            Vector3 p = _toppleBase.Origin;                          // pivot about the stump/base, in WORLD space
             _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
         }
 
