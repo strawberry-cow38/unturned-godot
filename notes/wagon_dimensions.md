@@ -8,22 +8,22 @@ Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revisio
 | --- | --- | --- |
 | Body envelope | X ±1.26, Y −0.27..2.17, Z ±2.90 | Rounded road dimensional medians; length between road median and sedan. |
 | Side shell ends | Hood nose Z −2.757828, rear gate Z 2.68; outer X ±1.26 throughout, including both bumper tips at Z ±2.90 | Constant 2.520 m plan width; front nose retains the measured sedan overhang scale. |
-| Side wall | Continuous sill at Y −0.12 through both axles; outer skin at X ±1.26 rises to Y1.00, then to rail Y1.10; inner cabin X ±0.98 | Joined shell with no arch openings, recess returns or interior backing solids. |
+| Side wall | Continuous sill at Y −0.12 through both axles; outer skin at X ±1.26 meets the hood bevel and A-post, then the rail at Y1.10; inner cabin X ±0.98 | Joined shell with no arch openings, recess returns or interior backing solids. |
 | Axles | (±1.30,0.25,−1.56), (±1.30,0.25,1.46); front steering | 3.02 wheelbase from three-specimen mean ratio, 2.60 median track, modal ride −0.35. |
 | Underfloor | X ±0.99, Y −0.27, Z −2.757828..2.90; bevels join the outer sill. Passenger floor X ±0.98, Y −0.12, Z −1.25..1.36 | One connected underside and cabin floor; no overlapping boxes or sill gaps. |
 | Load floor | X ±0.98, Y0.18, Z1.36..2.53; vertical step from Y−0.12 at Z1.36 | Retains start after seatback maximum Z1.357307 and clear run 1.17 to gate. |
-| Sedan hood | Across X ±1.26, (Y,Z): (0.999953,−2.757828) → (1.125,−1.406856), then level to Z −1.25; the 0.875 and 1.000 stations remain as flat side-wall seams | Source mesh profile, longitudinal scale 0.964159181; see measured comparison in WAGON_REPORT.md. |
+| Sedan hood | Centre X ±0.98, (Y,Z): (0.999953,−2.757828) → (1.125,−1.25), directly to glass. Planar outer strips reach X ±1.26: (0.874953,−2.762766) → (0.994273,−1.323997) | Sedan nose height/drop and longitudinal nose scale 0.964159181; shelf removed. Bevel 24.352857° at the wider 0.28 m span. Both front and rear trim edges remain in the fascia and windscreen planes. |
 | Rear gate lower panel | Inner Z2.53, outer Z2.68; top Y1.10; inner lower edge Y0.18; exterior joins bumper at Y0.16 | Full width X ±1.26; joined directly to deck, side walls and bumper; no sedan boot-lid recess. |
 | Bumpers | Front X ±1.26, Y−0.158648..0.100803, tip Z−2.90; rear X ±1.26, Y−0.12..0.16, Z2.76..2.90 | Sedan front height levels; rear Y/Z silhouette retained with full width. Both join the shell. |
 | Grille | X ±0.48, Y0.36..0.54, on the sloping front fascia (Z approximately −2.7831..−2.7760) | Dark material patch partitioned into the fascia; no overlapping backing face. |
 | Latch | X ±0.23, Y 0.89..0.96, Z 2.68..2.70 | Width ≈2t; height≈t/4; projection≈t/12. Below rear glass. |
 | Roof | X ±1.26, Y 1.92..2.17; front Z −0.80 at underside, −0.658491 at top; rear Z2.56 | Front face continues the unchanged windscreen/A-post plane; top stays flat. |
 | All pillar lateral spans | X ±[0.98,1.26] | Shared 0.28 lateral section; all outer faces on the wall plane; bases/roof junctions share edges, with no interior mating caps. |
-| A pillar (each side) | YZ (1.125,−1.25), (1.92,−0.80), (1.92,−0.55), (1.10,−1.00) | Front foot raised 25 mm for sedan cowl; side-window opening and upper endpoints retained. |
+| A pillar (each side) | Inner YZ (1.125,−1.25), (1.92,−0.80), (1.92,−0.55), (1.10,−1.00); outer front foot (0.994273,−1.323997), other outer endpoints equal inner | Outer foot extends down the same windscreen plane to the planar bevel. Side-window opening, glass and upper endpoints retained. |
 | B pillar | Y 1.10..1.92, Z 0.12..0.37 | 0.25 section; begins t/2 rounded behind the origin, between shared seat rows. |
 | C pillar | Y 1.10..1.92, Z 1.35..1.55 | 0.20=0.8t section; aligns with rear seatbacks near Z=1.357. |
 | D pillar | YZ (1.10,2.48), (1.92,2.36), (1.92,2.56), (1.10,2.68) | 0.20=0.8t section; 0.12 rake toward vertical rear gate. |
-| Belt rails | X ±[0.98,1.26], Y1.10, Z−1.00..2.68; front transition reaches Y1.125 at Z−1.25 | Joined wall top exists between posts; removes buried overlapping rail solids. |
+| Belt rails | X ±[0.98,1.26], Y1.10, Z−1.00..2.68 | Joined wall top exists between posts; front side wall meets the A-post's sloping base directly. |
 | Windshield | X ±0.98; bottom (Y,Z)=(1.125,−1.25), top (1.92,−0.80) | Lower edge raised 25 mm to meet cowl, with unchanged Z and top edge. |
 | Rear pane | X ±0.98; bottom (1.10,2.68), top (1.92,2.56) | D-post inner edges; 8.326° from vertical. |
 | Side front pane | Absolute X=1.256; bottom Z −1.00..0.12 at Y1.10; top Z −0.55..0.12 at Y1.92 | A-to-B aperture; common 0.004 side inset. |

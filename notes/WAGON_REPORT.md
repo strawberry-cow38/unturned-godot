@@ -1,115 +1,104 @@
-# Wagon: remove the hood / A-pillar crease
+# Wagon: remove the hood ledge and restore the nose bevels
 
-Revision of `13bd2151` on `astra-wagon`. The hood nose is now **Y = 0.999953 (1.000 to three decimals) across the entire 2.520 m width**, with one longitudinal hood plane continuing to one level cowl. The 0.125 m dropped outer top corners and twisted fascia wedges are removed. This supersedes the previous report's incorrect claim that an aspect-ratio scan established that the junction was fixed.
+Revision of `5044457d` on `astra-wagon`. The hood now meets the windscreen directly, with a flat centre and two planar bevelled outer strips reaching **X = ±1.260 m**. The front panel's top edge follows the bevel continuously. Its entire surface remains coplanar, without filler wedges.
 
-## Geometry change
+## Hood and A-pillar junction
 
-Carry the sedan's centre hood slope out to **X = ±1.260**: **(Y,Z) = (0.999953,−2.757828) → (1.125000,−1.406856)**. Continue a full-width level cowl at **Y = 1.125** to **Z = −1.250**, the unchanged A-pillar base. There is no transverse shoulder bevel or diagonal cowl corner facet. The existing longitudinal slope-to-level transition remains.
+All six original shelf faces **f16, f17, f72, f73, f146 and f147 are gone**, checked by their original coordinate signatures. There are **zero horizontal hood/cowl faces**. The centre hood runs from **(Y,Z) = (0.999953,−2.757828)** to the existing windscreen bottom **(1.125000,−1.250000)**, giving a **4.740799°** longitudinal tilt. The old slope-to-shelf edge at Z = −1.406856 no longer exists.
 
-All front fascia triangles now occupy the same plane, including the outer corners. Its profile is **Z(Y) = −2.792392 + 0.034564 × (Y − 0.125) / 0.874953**. The grille keeps its position, outline and palette. The sedan's **Y = 0.874953** and **Y = 1.000000** vertices remain as coplanar side-wall seams below the new hood; they do not form a fold. This is a surface change, not just retriangulation.
+The outer strips each contain two triangles, with normals **(±0.405374, 0.911023, −0.075553)** and a **24.352857°** tilt from horizontal. The sedan's approximately 26.9° uses a 0.25 m strip; the wagon's required 0.125 m drop across a **0.28 m** strip produces this shallower angle. The specified width and leading-edge heights take precedence over copying the sedan's exact angle.
 
-**341 triangles retain their coordinates, UVs and normals; 37 are replaced by 37.** All **283 triangles wholly at or behind Z = −1.250** are unchanged, including all pillars and roof faces. All **11 non-body wagon assets** are byte-identical to `13bd2151`.
+Each outer strip ends at **(X,Y,Z) = (±1.260000,0.994273,−1.323997)**, the intersection of its plane with the existing windscreen/A-pillar plane. The outer A-pillar foot extends down that same plane to meet it. This removes the shelf without adding a vertical cap or a second transition facet. The inner foot, windscreen glass, side-window apertures, roof and roof-front rake retain their geometry. The A-pillar/windscreen plane remains **60.488501° above horizontal**, and the roof-front upper edge remains **(Y,Z) = (2.170000,−0.658491)**.
 
-## Nose top edge
+## Front panel top edge
 
-Measured by intersecting the saved float32 fascia triangles with X planes and taking the highest point. All fascia vertex X stations and intervening midpoints are checked, not just these five values.
+Measurements below intersect the saved float32 fascia triangles with X planes and take the highest point. Both sides agree. The verifier checks all mesh vertex stations and midpoints, plus 101 samples along each bevel: **215 sections total**.
 
-| X (m) | nose top Y (m) | nose top Z (m) |
+| Absolute X (m) | top Y (m) | top Z (m) |
 | ---: | ---: | ---: |
-| −1.26 | **0.999953** | −2.757828 |
-| −0.98 | **0.999953** | −2.757828 |
 | 0.00 | **0.999953** | −2.757828 |
-| +0.98 | **0.999953** | −2.757828 |
-| +1.26 | **0.999953** | −2.757828 |
+| 0.48 | **0.999953** | −2.757828 |
+| 0.98 | **0.999953** | −2.757828 |
+| 1.05 | 0.968703 | −2.759062 |
+| 1.12 | 0.937453 | −2.760297 |
+| 1.19 | 0.906203 | −2.761531 |
+| 1.26 | **0.874953** | −2.762766 |
 
-## Every face in the requested boxes
+The centre stays flat across X; from |X| = 0.98 to 1.26 the top edge is a straight sloped line, with no vertical jump. The slight Z change keeps this line on the existing fascia plane:
 
-Boxes: **X [−1.35,−0.85] and [+0.85,+1.35], Y [0.80,1.30], Z [−2.90,−2.10]**. IDs are **zero-based**, matching the review's old f137/f138/f140/f141. All three vertices and the stored normal of each saved face are listed below. Selection clips each triangle against all six box planes; it includes crossings even when no vertex or centroid lies inside.
+`Z(Y) = −2.792392 + 0.034564 × (Y − 0.125) / 0.874953`.
 
-For the review's **centroid selection**, each side contains one upward hood face (**f10 / f66**) and one flat side-wall face (**f8 / f61**). There are **zero forward-facing fascia wedges** in that selection. The upward face has the same normal as the centre hood, so its edge cannot produce a shoulder shading crease. The side-wall face is coplanar with the rest of the wall.
+All **17 fascia triangles** satisfy this plane within 1 μm. The outer top corner moves forward by approximately **4.938 mm** as it drops, avoiding the twist that occurred when the lowered corner retained the centre nose's Z coordinate. Grille and lamp geometry are retained.
 
-A literal intersection selection also catches ordinary fascia triangles below the hood edge: **32 faces total**, listed without hiding them. Those fascia triangles have **N ≈ (0,0.039474,−0.999221)** and lie on one plane within 1 μm of serialization tolerance. They have no dropped top edge or extra fold. The sedan's quoted single face is likewise a centroid result: its **f158** (left) / **f162** (right); its forward-facing fascia also intersects these boxes. Thus “no −Z faces intersect the box” would not describe either closed nose.
+## Every face in the review boxes
 
-| side | face | centroid in box | normal (X,Y,Z) | all three vertices (X,Y,Z), m |
+Boxes: **X [−1.35,−0.85] / [+0.85,+1.35], Y [0.80,1.30], Z [−2.90,−2.10]**. Face IDs are zero-based. “Forward-facing” means −Z is the normal's dominant direction; the upward hood also has a small negative Z component due to its longitudinal slope.
+
+Using the existing report's **centroid convention**, the boxes contain only **f21 on the left and f64 on the right**, both upward bevel faces. **Forward-facing count: 0 on each side, 0 total.**
+
+Clipping every triangle against all six box planes gives **24 intersecting faces**, fully listed below. **10 of these are ordinary forward-facing fascia faces** with centroids below or inboard of the boxes. They occupy the same plane and contain no filler wedges. A literal requirement of zero forward-facing intersections is not satisfied: the required closed front panel occupies part of these boxes, as it does on the sedan. This report keeps that distinction explicit rather than claiming those faces are absent.
+
+| side | face | centroid in box | normal | all three vertices |
 | --- | ---: | --- | --- | --- |
-| left | f0 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.874953, -2.757828); (-1.260000, 0.999953, -2.757828); (-1.260000, 0.125000, -2.792392) |
-| left | f1 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.874953, -2.757828); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.100803, -2.786276) |
-| left | f2 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, -0.125000, -2.757828); (-1.260000, 0.874953, -2.757828); (-1.260000, 0.100803, -2.786276) |
-| left | f5 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.874953, -2.757828); (-1.260000, -0.125000, -2.757828); (-1.260000, -0.120000, -2.320000) |
-| left | f6 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.874953, -2.757828); (-1.260000, -0.120000, -2.320000); (-1.260000, -0.120000, -1.406856) |
-| left | f7 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.874953, -2.757828); (-1.260000, -0.120000, -1.406856); (-1.260000, 1.000000, -1.406856) |
-| left | f8 | yes | (-1.000000, 0.000000, -0.000000) | (-1.260000, 1.000000, -1.406856); (-1.260000, 0.999953, -2.757828); (-1.260000, 0.874953, -2.757828) |
-| left | f9 | no | (-1.000000, 0.000000, -0.000000) | (-1.260000, 0.999953, -2.757828); (-1.260000, 1.000000, -1.406856); (-1.260000, 1.125000, -1.406856) |
-| left | f10 | yes | (0.000000, 0.995744, -0.092167) | (-0.980000, 0.999953, -2.757828); (-1.260000, 0.999953, -2.757828); (-1.260000, 1.125000, -1.406856) |
-| left | f11 | no | (0.000000, 0.995744, -0.092167) | (-0.980000, 0.999953, -2.757828); (-1.260000, 1.125000, -1.406856); (-0.980000, 1.125000, -1.406856) |
-| left | f130 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.999953, -2.757828) |
-| left | f131 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.999953, -2.757828); (-0.980000, 0.999953, -2.757828) |
-| left | f132 | no | (-0.000003, 0.039472, -0.999221) | (-0.480000, 0.360000, -2.783109); (-0.480000, 0.125000, -2.792392); (-0.980000, 0.999953, -2.757828) |
-| left | f133 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998) |
-| left | f134 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998); (-0.480000, 0.360000, -2.783109) |
-| left | f142 | no | (0.000000, 0.995744, -0.092167) | (-0.480000, 0.999953, -2.757828); (-0.980000, 0.999953, -2.757828); (-0.980000, 1.125000, -1.406856) |
-| right | f58 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.757828); (1.260000, -0.125000, -2.757828); (1.260000, 0.100803, -2.786276) |
-| right | f59 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.757828); (1.260000, 0.100803, -2.786276); (1.260000, 0.125000, -2.792392) |
-| right | f60 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.125000, -2.792392); (1.260000, 0.999953, -2.757828); (1.260000, 0.874953, -2.757828) |
-| right | f61 | yes | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.757828); (1.260000, 0.999953, -2.757828); (1.260000, 1.000000, -1.406856) |
-| right | f62 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.757828); (1.260000, 1.000000, -1.406856); (1.260000, -0.120000, -1.406856) |
-| right | f63 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.757828); (1.260000, -0.120000, -1.406856); (1.260000, -0.120000, -2.320000) |
-| right | f64 | no | (1.000000, 0.000000, 0.000000) | (1.260000, -0.120000, -2.320000); (1.260000, -0.125000, -2.757828); (1.260000, 0.874953, -2.757828) |
-| right | f65 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 1.125000, -1.406856); (1.260000, 1.000000, -1.406856); (1.260000, 0.999953, -2.757828) |
-| right | f66 | yes | (0.000000, 0.995744, -0.092167) | (1.260000, 1.125000, -1.406856); (1.260000, 0.999953, -2.757828); (0.980000, 0.999953, -2.757828) |
-| right | f67 | no | (0.000000, 0.995744, -0.092167) | (0.980000, 1.125000, -1.406856); (1.260000, 1.125000, -1.406856); (0.980000, 0.999953, -2.757828) |
-| right | f136 | no | (0.000000, 0.039473, -0.999221) | (1.260000, 0.999953, -2.757828); (1.260000, 0.125000, -2.792392); (0.480000, 0.125000, -2.792392) |
-| right | f137 | no | (0.000000, 0.039473, -0.999221) | (0.980000, 0.999953, -2.757828); (1.260000, 0.999953, -2.757828); (0.480000, 0.125000, -2.792392) |
-| right | f138 | no | (0.000000, 0.039474, -0.999221) | (0.480000, 0.540000, -2.775998); (0.480000, 0.999953, -2.757828); (0.980000, 0.999953, -2.757828) |
-| right | f139 | no | (0.000003, 0.039472, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.125000, -2.792392); (0.480000, 0.360000, -2.783109) |
-| right | f140 | no | (0.000000, 0.039474, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.360000, -2.783109); (0.480000, 0.540000, -2.775998) |
-| right | f143 | no | (0.000000, 0.995744, -0.092167) | (0.980000, 1.125000, -1.406856); (0.980000, 0.999953, -2.757828); (0.480000, 0.999953, -2.757828) |
+| left | f0 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.100803, -2.786276) |
+| left | f1 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, -0.125000, -2.757828); (-1.260000, 0.874953, -2.762766); (-1.260000, 0.100803, -2.786276) |
+| left | f4 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, -0.125000, -2.757828); (-1.260000, -0.120000, -2.320000) |
+| left | f5 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, 0.874953, -2.762766); (-1.260000, -0.120000, -2.320000); (-1.260000, -0.120000, -1.323997) |
+| left | f6 | no | (-1.000000, 0.000000, 0.000000) | (-1.260000, -0.120000, -1.323997); (-1.260000, 0.994273, -1.323997); (-1.260000, 0.874953, -2.762766) |
+| left | f21 | yes | (-0.405374, 0.911023, -0.075553) | (-0.980000, 0.999953, -2.757828); (-1.260000, 0.874953, -2.762766); (-1.260000, 0.994273, -1.323997) |
+| left | f22 | no | (-0.405374, 0.911023, -0.075553) | (-0.980000, 0.999953, -2.757828); (-1.260000, 0.994273, -1.323997); (-0.980000, 1.125000, -1.250000) |
+| left | f104 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.125000, -2.792392); (-1.260000, 0.874953, -2.762766) |
+| left | f105 | no | (0.000000, 0.039473, -0.999221) | (-0.480000, 0.125000, -2.792392); (-1.260000, 0.874953, -2.762766); (-0.980000, 0.999953, -2.757828) |
+| left | f106 | no | (-0.000003, 0.039472, -0.999221) | (-0.480000, 0.360000, -2.783109); (-0.480000, 0.125000, -2.792392); (-0.980000, 0.999953, -2.757828) |
+| left | f107 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998) |
+| left | f108 | no | (0.000000, 0.039474, -0.999221) | (-0.980000, 0.999953, -2.757828); (-0.480000, 0.540000, -2.775998); (-0.480000, 0.360000, -2.783109) |
+| left | f116 | no | (0.000000, 0.996579, -0.082648) | (-0.480000, 0.999953, -2.757828); (-0.980000, 0.999953, -2.757828); (-0.980000, 1.125000, -1.250000) |
+| right | f45 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.874953, -2.762766); (1.260000, -0.125000, -2.757828); (1.260000, 0.100803, -2.786276) |
+| right | f46 | no | (1.000000, 0.000000, 0.000000) | (1.260000, 0.100803, -2.786276); (1.260000, 0.125000, -2.792392); (1.260000, 0.874953, -2.762766) |
+| right | f47 | no | (1.000000, 0.000000, 0.000000) | (1.260000, -0.125000, -2.757828); (1.260000, 0.874953, -2.762766); (1.260000, 0.994273, -1.323997) |
+| right | f64 | yes | (0.405374, 0.911023, -0.075553) | (1.260000, 0.994273, -1.323997); (1.260000, 0.874953, -2.762766); (0.980000, 0.999953, -2.757828) |
+| right | f65 | no | (0.405374, 0.911023, -0.075553) | (0.980000, 1.125000, -1.250000); (1.260000, 0.994273, -1.323997); (0.980000, 0.999953, -2.757828) |
+| right | f110 | no | (0.000000, 0.039473, -0.999221) | (1.260000, 0.874953, -2.762766); (1.260000, 0.125000, -2.792392); (0.480000, 0.125000, -2.792392) |
+| right | f111 | no | (0.000000, 0.039473, -0.999221) | (0.980000, 0.999953, -2.757828); (1.260000, 0.874953, -2.762766); (0.480000, 0.125000, -2.792392) |
+| right | f112 | no | (0.000000, 0.039474, -0.999221) | (0.480000, 0.540000, -2.775998); (0.480000, 0.999953, -2.757828); (0.980000, 0.999953, -2.757828) |
+| right | f113 | no | (0.000003, 0.039472, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.125000, -2.792392); (0.480000, 0.360000, -2.783109) |
+| right | f114 | no | (0.000000, 0.039474, -0.999221) | (0.980000, 0.999953, -2.757828); (0.480000, 0.360000, -2.783109); (0.480000, 0.540000, -2.775998) |
+| right | f117 | no | (0.000000, 0.996579, -0.082648) | (0.980000, 1.125000, -1.250000); (0.980000, 0.999953, -2.757828); (0.480000, 0.999953, -2.757828) |
 
-## Preserved measurements
+## Dimensions and topology
 
-Envelope **5.800 × 2.520 × 2.440 m** (length × width × height), AABB **X [−1.26,1.26], Y [−0.27,2.17], Z [−2.90,2.90]**. Width stays **2.520 m** at all **27 review stations** and **53 vertex/mid-span sections**. All **104 exterior side triangles** and all eight pillar exteriors are flush at **X = ±1.260**.
+Body envelope remains **5.800 × 2.520 × 2.440 m** (length × width × height): **X [−1.26,1.26], Y [−0.27,2.17], Z [−2.90,2.90]**. Body width is 2.520 m at all **27 review stations** and **55 vertex/mid-span sections**. All **82 exterior side triangles**, all eight pillar exteriors and both bumper tips lie at X = ±1.260.
 
-Pillar geometry is unchanged. Its saved front endpoints are **(Y,Z) = (1.125,−1.25) → (1.920,−0.80)**, which measure **60.488501° above horizontal / 29.511499° from vertical**. The request's 60.9° is not the exact angle in `13bd2151`; this revision preserves those endpoints rather than changing the accepted rake. The roof's upper front remains **(Y,Z) = (2.170,−0.658491)**. Tailgate rake and all glass are unchanged.
+The mesh has **163 positions and 350 triangles**, with **0 / 525 boundary edges (0.0%)**, **0 degenerate triangles**, no duplicate faces, no overused edges, and **exactly 3 corners on every face**. It is one connected outward shell, with no coplanar overlaps or triangle piercings across **4,595 candidate pairs**; signed volume is **12.854203 m³**.
 
-| requested sedan hood Y station | sedan and saved wagon Y |
-| ---: | ---: |
-| −0.159 | −0.158648 |
-| −0.125 | −0.125000 |
-| 0.101 | 0.100803 |
-| 0.125 | 0.125000 |
-| 0.875 | 0.874953 |
-| 1.000 | 1.000000 |
-| 1.125 | 1.125000 |
-
-The centre hood's Y/Z stations, longitudinal scale **0.964159181** and slope **5.2883°** remain intact. The two lower shoulder stations now describe flat side seams, as explained above. See [wagon_dimensions.md](wagon_dimensions.md).
+All **11 non-body wagon assets** are byte-identical to `5044457d`. Dimensions, wheels, seats, lights, glass, cargo clearance, palette and registrations pass the existing checks. Construction coordinates are updated in [wagon_dimensions.md](wagon_dimensions.md).
 
 ## Verification
 
-| check | result |
+| Check | Result |
 | --- | --- |
-| saved topology | **177 positions, 378 triangles; 0 / 567 boundary edges (0.0%)**; **0 degenerate**, duplicate or overused faces/edges; every face has exactly **3 corners**. |
-| surface audit | One connected outward shell; no coplanar overlaps or triangle piercings among **4,748 candidate pairs**; signed volume **12.930715 m³**. |
-| `python3 tools/verify_wagon.py` | **PASS**: all 11 OBJ meshes; nose/hood/cowl planes; complete junction listing; dimensions, width, sedan stations, pillar/roof rake, closure, glass, cargo, lamps and registrations. |
-| regression sensitivity | **PASS**: the new check rejects `13bd2151` directly for its nose top-edge step at **X = −1.26, Y = 0.874953**, expected **0.999953**. No aspect-ratio criterion is used. |
-| `dotnet build game/UnturnedGodot.csproj` | **PASS**, 0 errors, 55.46 s; compilation reports **22 existing C# warnings** in untouched code. |
-| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS — 1 test, 13 checks**, 0 failures, 0.88 s. Its incremental build is clean: **0 warnings / 0 errors**, 5.84 s. |
-| reproducibility | **PASS**: regenerating all **12 wagon assets** produces identical bytes. |
-| exterior bonnet-height renders | **PASS**: both sides rendered in Godot through the real vehicle harness and inspected; level leading edge and continuous hood/cowl at the pillar foot. See views below. |
+| `python3 tools/verify_wagon.py` | **PASS**: all 11 OBJ meshes, continuous nose trim, planar bevels, shelf removal, complete box listing, width, roof/A-pillar plane, closure, overlaps, glass, cargo, lamps and registrations. |
+| Regression sensitivity | **PASS**: rejects `5044457d` for its flattened outer top edge, and `13bd2151` for its dropped outer corner off the fascia plane. All six original shelf face signatures are absent. |
+| `dotnet build game/UnturnedGodot.csproj` | **PASS — 0 warnings, 0 errors**, 6.10 s. |
+| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS — 1 test, 13 checks**, 0 failures, 0.84 s. Its build also reports **0 warnings, 0 errors**, 5.82 s. |
+| Reproducibility | **PASS**: regenerating all **12 wagon assets** produces identical bytes. |
 
-## Exterior views at bonnet height
+## Exterior views
 
-Godot/Vulkan captures of the regenerated asset, frame 48, parked with `UG_VSTATIC=1`. Cameras and look targets are vehicle-local with **eye Y = target Y = 1.125**. Both cameras are outside **X = ±1.260**, aimed toward the hood and pillar base.
+Godot/Vulkan captures of this revision, frame 48, parked with `UG_VSTATIC=1`. Cameras and targets are vehicle-local; **eye Y = target Y = 1.125**. The views show the sloped outer nose and the direct hood-to-A-pillar junction.
 
-| view | eye (X,Y,Z) | target (X,Y,Z) | capture |
+| View | Eye (X,Y,Z) | Target (X,Y,Z) | Capture |
 | --- | --- | --- | --- |
-| left, nose through pillar foot | (−3.5,1.125,−3.8) | (−1.0,1.125,−1.95) | [wagon_hood_left.png](wagon_hood_left.png) |
-| right, nose through pillar foot | (+3.5,1.125,−3.8) | (+1.0,1.125,−1.95) | [wagon_hood_right.png](wagon_hood_right.png) |
-| left, pillar-foot close-up | (−2.7,1.125,−2.4) | (−1.2,1.125,−1.35) | [wagon_pillar_foot_left.png](wagon_pillar_foot_left.png) |
-| right, pillar-foot close-up | (+2.7,1.125,−2.4) | (+1.2,1.125,−1.35) | [wagon_pillar_foot_right.png](wagon_pillar_foot_right.png) |
+| Left nose and pillar | (−3.5,1.125,−3.8) | (−1.0,1.125,−1.95) | [wagon_hood_left.png](wagon_hood_left.png) |
+| Right nose and pillar | (+3.5,1.125,−3.8) | (+1.0,1.125,−1.95) | [wagon_hood_right.png](wagon_hood_right.png) |
+| Left pillar foot | (−2.7,1.125,−2.4) | (−1.2,1.125,−1.35) | [wagon_pillar_foot_left.png](wagon_pillar_foot_left.png) |
+| Right pillar foot | (+2.7,1.125,−2.4) | (+1.2,1.125,−1.35) | [wagon_pillar_foot_right.png](wagon_pillar_foot_right.png) |
 
-The full-width nose edge has no dropped corner. The hood-to-cowl transition is a single straight line; the side wall continues into the pillar without the former diagonal hood-corner facet. The render harness exits successfully but logs rain-shader global warnings and a renderer-thread shutdown error after capture; these images verify appearance, not a warning-free render harness.
+The capture harness logs shader/render synchronization warnings and a renderer-thread shutdown error after saving; these images verify appearance. The build and targeted L1 results above are the clean automated checks.
 
-Reproduce a left-side capture (`UG_VCAM` mirrors X for the right):
+The [static geometry overview](wagon_geometry.png) is also regenerated from the saved mesh with `python3 tools/preview_wagon.py`.
+
+Reproduce a left-side capture (mirror camera and target X for the right):
 
 ```sh
 mkdir -p /tmp/wagon-hood-shot
@@ -120,7 +109,7 @@ xvfb-run -a ~/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_
   --fixed-fps 30 -- --vehicle=/tmp/wagon-hood-shot --gun=wagon
 ```
 
-Reproduce the geometry and runtime checks:
+Reproduce the asset and automated checks:
 
 ```sh
 python3 tools/build_wagon.py

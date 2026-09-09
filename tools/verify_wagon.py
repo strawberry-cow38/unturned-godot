@@ -178,22 +178,21 @@ def check_hood(sedan, wagon):
     sn=station(sv,.999953,.98096); sc=station(sv,1.125,.98096)
     wn=station(wv,.999953,.98); wc=station(wv,1.125,.98)
     scale=1.34/1.389812
-    for s,w in ((sn,wn),(sc,wc)):
-        assert abs(s[0]-w[0])<2e-6
-        assert abs((-1.56+(s[1]+1.62)*scale)-w[1])<2e-6
-    assert any(abs(p[1]-1.125)<1e-6 and p[2]==-1.25 for p in wv)
-    levels=(-.159,-.125,.101,.125,.875,1.,1.125)
+    assert abs(sn[0]-wn[0])<2e-6
+    assert abs((-1.56+(sn[1]+1.62)*scale)-wn[1])<2e-6
+    assert wc == (1.125,-1.25), ('hood must meet windscreen directly',wc)
+    levels=(-.159,-.125,.101,.125,.875,.999953,1.125)
     print('| front Y station | sedan | wagon |')
     print('| --- | ---: | ---: |')
     for y in levels:
         found=[]
         for vs in (sv,wv):
-            vals=[p[1] for p in vs if p[2]<-1.25 and abs(p[1]-y)<.0005]
+            vals=[p[1] for p in vs if p[2]<=-1.25 and abs(p[1]-y)<.0005]
             assert vals, ('missing front Y level',y)
             found.append(min(vals,key=lambda value:abs(value-y)))
         assert abs(found[0]-found[1])<2e-6,(y,found)
         print(f'| {y:.3f} | {found[0]:.6f} | {found[1]:.6f} |')
-    print(f'PASS sedan hood: centre (Y,Z) {sn} → {sc}; wagon {wn} → {wc}; Z scale {scale:.9f}')
+    print(f'PASS sedan hood: centre (Y,Z) {sn} → {sc}; wagon {wn} → {wc}; nose Z scale {scale:.9f}, rear extended to glass')
 
 
 def check_straight_sides(mesh):
@@ -262,7 +261,7 @@ def check_roof_rake(mesh):
     for face in mesh['faces']:
         tri = [mesh['vertices'][int(c.split('/')[0])-1] for c in face]
         n = mesh['normals'][int(face[0].split('/')[2])-1]
-        if all(p[1] >= 1.125 and p[2] < 0 for p in tri) and n[2] < -.1 and abs(n[0]) < 1e-6:
+        if all(p[1] >= .99 and p[2] < 0 for p in tri) and n[2] < -.5 and abs(n[0]) < 1e-5:
             (front if all(p[1] >= 1.92 for p in tri) else posts).append(tri)
             for x,y,z in tri:
                 assert abs(z-(z0+(y-y0)*slope)) < 1e-6, ('roof front breaks A-pillar plane',x,y,z)
@@ -311,7 +310,7 @@ def junction_faces(mesh):
 
 
 def check_cowl_junction(mesh):
-    """Measure the fold itself: fascia planarity and full-width hood/cowl."""
+    """Measure continuous fascia trim, planar bevels and the shelf-free join."""
     triangles = []
     fascia = []
     for face_id,face in enumerate(mesh['faces']):
@@ -339,9 +338,14 @@ def check_cowl_junction(mesh):
         return max(points,key=lambda p:p[1])
 
     xs = sorted({p[0] for _,tri,_ in fascia for p in tri})
-    for x in xs + [(a+b)/2 for a,b in zip(xs,xs[1:])]:
+    # Include both sides of the break, the whole strip, and all mesh stations.
+    probes = xs + [(a+b)/2 for a,b in zip(xs,xs[1:])]
+    probes += [sign*(.98+.28*i/100) for sign in (-1,1) for i in range(101)]
+    for x in probes:
         _,y,z = nose_at(x)
-        assert abs(y-yn) < 1e-6 and abs(z-zn) < 1e-6, ('nose top edge steps',x,y,z,yn,zn)
+        expected_y = yn-.125*max(0,(abs(x)-.98)/.28)
+        expected_z = zv+(zn-zv)*(expected_y-yv)/(yn-yv)
+        assert abs(y-expected_y) < 1e-6 and abs(z-expected_z) < 1e-6, ('nose top edge steps',x,y,z,expected_y,expected_z)
     for face_id,tri,n in fascia:
         assert abs(n[0]) < 1e-5, ('twisted fascia normal',face_id,n)
         for x,y,z in tri:
@@ -349,25 +353,53 @@ def check_cowl_junction(mesh):
             assert abs(z-expected) < 1e-6, ('nonplanar fascia wedge',face_id,(x,y,z),expected)
     print('| nose X | top Y | top Z |')
     print('| ---: | ---: | ---: |')
-    for x in (-1.26,-.98,0,.98,1.26):
+    for x in (-1.26,-.98,-.48,0,.48,.98,1.26):
         _,y,z = nose_at(x)
         print(f'| {x:+.2f} | {y:.6f} | {z:.6f} |')
-    print(f'PASS one fascia plane ({len(fascia)} triangles); level nose across all {len(xs)*2-1} vertex/mid-span sections')
+    print(f'PASS one fascia plane ({len(fascia)} triangles); continuous bevel top edge across {len(probes)} sections')
 
-    hood_count = cowl_count = 0
+    rear_y,rear_z = 1.125,-1.25
+    hood_slope = (rear_y-yn)/(rear_z-zn)
+    outer_y = yn-.125
+    outer_z = zv+(zn-zv)*(outer_y-yv)/(yn-yv)
+    bevel_slope = (yn+hood_slope*(outer_z-zn)-outer_y)/.28
+    hood_count = 0
+    strips = {-1: [], 1: []}
+    shelf = []
     for face_id,tri,n in triangles:
-        if n[1] <= .5:
+        if n[1] <= .5 or not all(p[1] >= .8 and zn-.01 <= p[2] <= rear_z+1e-6 for p in tri):
             continue
-        if all(zn-1e-6 <= p[2] <= -1.406856+1e-6 for p in tri):
-            for x,y,z in tri:
-                expected = yn+(1.125-yn)*(z-zn)/(-1.406856-zn)
-                assert abs(y-expected) < 1e-6, ('hood folds across width',face_id,(x,y,z),expected)
+        if n[1] > .999999:
+            shelf.append(face_id)
+        for x,y,z in tri:
+            expected = yn+hood_slope*(z-zn)-bevel_slope*max(0,abs(x)-.98)
+            assert abs(y-expected) < 1e-6, ('hood/bevel plane mismatch',face_id,(x,y,z),expected)
+        if all(abs(p[0]) <= .98+1e-6 for p in tri):
             hood_count += 1
-        elif all(-1.406856-1e-6 <= p[2] <= -1.25+1e-6 for p in tri):
-            assert all(abs(p[1]-1.125) < 1e-6 for p in tri), ('raised cowl corner',face_id,tri)
-            cowl_count += 1
-    assert hood_count and cowl_count, 'missing hood or cowl'
-    print(f'PASS full-width planar hood ({hood_count} triangles) and level cowl ({cowl_count} triangles)')
+        else:
+            sign = -1 if tri[0][0] < 0 else 1
+            assert all(sign*p[0] >= .98-1e-6 for p in tri), ('triangle crosses hood crease',face_id)
+            strips[sign].append((face_id,tri,n))
+    assert hood_count and all(strips.values()), 'missing centre hood or outer strips'
+    assert not shelf, ('horizontal hood shelf remains',shelf)
+    # Each strip must have area spanning the entire nose-to-A-post quadrilateral.
+    # Its rear edge is in the same windscreen plane as the inner hood endpoint.
+    screen_slope = (1.92-rear_y)/(-.8-rear_z)
+    for sign,faces in strips.items():
+        corners = {p for _,tri,_ in faces for p in tri}
+        rear = [p for p in corners if p[2] > -1.5]
+        assert any(abs(abs(p[0])-1.26)<1e-6 for p in rear), ('bevel stops short of wall',sign)
+        assert any(abs(p[0]-sign*.98)<1e-6 and abs(p[2]-rear_z)<1e-6 for p in rear)
+        for x,y,z in rear:
+            assert abs(y-(rear_y+screen_slope*(z-rear_z))) < 2e-6, ('bevel does not meet A-post plane',sign,(x,y,z))
+        expected_n = (sign*bevel_slope,1,-hood_slope)
+        length = math.sqrt(sum(v*v for v in expected_n))
+        expected_n = tuple(v/length for v in expected_n)
+        for face_id,_,n in faces:
+            assert sum(a*b for a,b in zip(n,expected_n)) > .999999, ('nonplanar bevel',face_id,n)
+        tilt = math.degrees(math.acos(expected_n[1]))
+        print(f'PASS {"left" if sign<0 else "right"} planar outer strip: {len(faces)} triangles, tilt {tilt:.6f}°, normal {expected_n}; full width to A-post plane')
+    print(f'PASS centre hood ({hood_count} triangles, tilt {math.degrees(math.atan(hood_slope)):.6f}°) reaches windscreen; horizontal shelf faces {len(shelf)}')
 
     rows = junction_faces(mesh)
     print('Review boxes: X [-1.35,-0.85] / [0.85,1.35], Y [0.80,1.30], Z [-2.90,-2.10]; zero-based face IDs')
@@ -380,9 +412,11 @@ def check_cowl_junction(mesh):
     for sign in (-1,1):
         selected = [r for r in rows if r[0] == sign and r[4]]
         assert selected, ('empty review box',sign)
-        assert not any(r[3][2] < -.99 for r in selected), ('forward-facing wedge in centroid box',sign)
+        assert not any(-r[3][2] > max(abs(r[3][0]),abs(r[3][1])) for r in selected), ('forward-facing wedge in centroid box',sign)
         assert sum(r[3][1] > .5 for r in selected) == 1, ('expected one hood surface in centroid box',sign)
-    print(f'PASS {len(rows)} intersecting faces listed; no forward-facing wedges in centroid boxes; intersecting fascia is coplanar')
+    forward = [r for r in rows if -r[3][2] > max(abs(r[3][0]),abs(r[3][1]))]
+    print(f'PASS {len(rows)} intersecting faces listed; forward-facing centroid count 0; '
+          f'forward-facing intersection count {len(forward)} (ordinary coplanar fascia, all listed)')
 
 
 def check():

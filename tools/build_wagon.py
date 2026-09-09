@@ -165,7 +165,7 @@ def build():
     body = Mesh()
     panel = body.panel
     hood = sedan_front()
-    yn,zn=hood['nose']; yc,zc=hood['crease']
+    yn,zn=hood['nose']; yc,zc=1.125,-1.25  # Hood ends at the windscreen, with no shelf.
     ys,_=hood['shoulder']; yv,zv=hood['valance']
     yl,zl=hood['lower']; blo,bhi=hood['bumper_lo'],hood['bumper_hi']
     # Where the sedan's lower valance meets the top of its bumper.
@@ -178,12 +178,19 @@ def build():
     def fascia(y):
         return zv+(zn-zv)*(y-yv)/(yn-yv)
 
+    # Both leading edges share the fascia plane. Dropping Y at constant Z
+    # would twist the outer fascia into the old forward-facing wedges.
+    shoulder_nose_z = fascia(ys)
+    hood_slope = (yc-yn)/(zc-zn)
+    bevel_slope = (hood_y(shoulder_nose_z)-ys)/(HALF_WIDTH-.98)
+    # Intersect the planar bevel with the existing windscreen/A-post plane.
+    # The outer foot extends down that plane; the inner foot and glass stay put.
+    screen_slope = (1.92-yc)/(-.80-zc)
+    shoulder_cowl_z = zc-bevel_slope*(HALF_WIDTH-.98)/(screen_slope-hood_slope)
+    shoulder_cowl_y = yc+screen_slope*(shoulder_cowl_z-zc)
+
     # Longitudinal side stations have no wheel-dependent coordinates at all.
-    zs = [zn,-2.32,zc,-1.25,-1.00,2.32,2.68]
-    def shoulder(z):
-        return yn if z == zn else 1.0
-    def rail(z):
-        return 1.125 if z == -1.25 else 1.10
+    zs = [zn,-2.32,shoulder_cowl_z,zc,-1.00,2.32,2.68]
     def sill(z):
         return yl if z == zn else -.12
 
@@ -191,33 +198,20 @@ def build():
         side=(sign,0,0)
         # Full-width nose side and stepped sedan bumper profile.
         panel([(sign*HALF_WIDTH,y,z) for y,z in front]+
-              [(sign*HALF_WIDTH,yn,zn),(sign*HALF_WIDTH,ys,zn)],side)
-        # The old -2.32 shoulder split forced a thin fan across the hood.
-        # Keep its lower sill corner, but run the upper edge straight to the
-        # crease so the inner hood edge has no unnecessary junction vertex.
-        upper_zs = [z for z in zs if z != -2.32]
-        for z0,z1 in zip(upper_zs,upper_zs[1:]):
+              [(sign*HALF_WIDTH,ys,shoulder_nose_z)],side)
+        # One side wall runs up to the bevel, then to the pillar/window bases.
+        # Retain lower sill subdivisions without introducing hood-edge fans.
+        upper_zs = [zn,shoulder_cowl_z,-1.00,2.32,2.68]
+        upper = [(ys,shoulder_nose_z),(shoulder_cowl_y,shoulder_cowl_z),
+                 (1.10,-1.00),(1.10,2.32),(1.10,2.68)]
+        for i,(z0,z1) in enumerate(zip(upper_zs,upper_zs[1:])):
             x0=x1=sign*HALF_WIDTH
             panel([(x0,sill(z),z) for z in zs if z0 <= z <= z1]+
-                  [(x1,shoulder(z1),z1),(x0,shoulder(z0),z0)],side)
-            if z1 <= zc:
-                # Carry the sedan's centre slope across the full width. Keep
-                # its 1.000 station as a coplanar side seam below the hood.
-                a,b=(sign*.98,hood_y(z0),z0),(x0,hood_y(z0),z0)
-                c,d=(x1,hood_y(z1),z1),(sign*.98,hood_y(z1),z1)
-                panel([b,(x1,shoulder(z1),z1),c],side)
-                panel([a,b,c],(0,1,0))
-                panel([a,c,d],(0,1,0))
-            elif z0 == zc:
-                # The full-width hood meets one level cowl; the old raised
-                # corner and its diagonal roof-facing transition are gone.
-                a,b,c=(x0,1.,z0),(x1,1.,z1),(x1,1.125,z1)
-                d,e,f=(x0,yc,z0),(sign*.98,1.125,z1),(sign*.98,yc,z0)
-                panel([a,b,c,d],side)
-                panel([d,c,e,f],(0,1,0))
-            else:
-                panel([(x0,1.,z0),(x1,1.,z1),
-                       (sign*HALF_WIDTH,rail(z1),z1),(sign*HALF_WIDTH,rail(z0),z0)],side)
+                  [(x1,*upper[i+1]),(x0,*upper[i])],side)
+        a,b=(sign*.98,yn,zn),(sign*HALF_WIDTH,ys,shoulder_nose_z)
+        c,d=(sign*HALF_WIDTH,shoulder_cowl_y,shoulder_cowl_z),(sign*.98,yc,zc)
+        panel([a,b,c],(0,1,0))
+        panel([a,c,d],(0,1,0))
         # A single underside bevel joins the sill to the bottom sheet.
         for z0,z1 in zip(zs,zs[1:]):
             panel([(sign*HALF_WIDTH,sill(z0),z0),(sign*.99,-.27,z0),
@@ -229,8 +223,7 @@ def build():
             panel([(sign*w0,-.12,z0),(sign*.99,-.27,z0),
                    (sign*.99,-.27,z1),(sign*w1,-.12,z1)],(sign,-1,0),DARK)
 
-    # Across the stepped front. The hood centre is one longitudinal slope
-    # followed by the sedan's level cowl (shortened to the accepted A-post).
+    # Across the stepped bumper; the hood above runs straight to the glass.
     for (y0,z0),(y1,z1) in zip(front,front[1:]):
         panel([(-HALF_WIDTH,y0,z0),(HALF_WIDTH,y0,z0),(HALF_WIDTH,y1,z1),(-HALF_WIDTH,y1,z1)],(0,z1-z0,y0-y1),DARK if y0 in (blo,bhi) and y1 in (blo,bhi) else PAINT)
     panel([(-.99,-.27,zn),(.99,-.27,zn),(HALF_WIDTH,yl,zn),(-HALF_WIDTH,yl,zn)],(0,0,-1),DARK)
@@ -240,13 +233,12 @@ def build():
         panel([(-.48,y0,fascia(y0)),(.48,y0,fascia(y0)),
                (.48,y1,fascia(y1)),(-.48,y1,fascia(y1))],(0,0,-1),
               DARK if y0==.36 else PAINT)
-    # One fascia plane from edge to edge. The sedan's 0.875 station remains
-    # on the flat side wall, no longer a dropped top corner at the hood.
+    # One fascia plane, trimmed by the continuous centre-to-outer bevel edge.
     panel([(-.48,.54,fascia(.54)),(.48,.54,fascia(.54)),(0,yn,zn)],(0,0,-1))
     for sign in (-1,1):
         panel([(sign*.48,.54,fascia(.54)),(0,yn,zn),(sign*.48,yn,zn)],(0,0,-1))
         a,b=(sign*.48,yv,zv),(sign*HALF_WIDTH,yv,zv)
-        d=(sign*HALF_WIDTH,yn,zn)
+        d=(sign*HALF_WIDTH,ys,shoulder_nose_z)
         e,f=(sign*.98,yn,zn),(sign*.48,yn,zn)
         panel([a,b,d],(0,0,-1))
         panel([a,d,e],(0,0,-1))
@@ -256,9 +248,8 @@ def build():
         a,b=(0,yn,zn),(sign*.98,yn,zn)
         c=(sign*.98,yc,zc)
         panel([a,b,c],(0,1,0))
-    # Meet the existing cowl edge without subdividing its narrow strip.
+    # Meet the windscreen directly; there is no horizontal cowl strip.
     panel([(-.98,yc,zc),(.98,yc,zc),(0,yn,zn)],(0,1,0))
-    panel([(-.98,yc,zc),(.98,yc,zc),(.98,1.125,-1.25),(-.98,1.125,-1.25)],(0,1,0))
     # Firewall, passenger floor, raised load deck, and inside of the tailgate.
     panel([(-.98,-.12,-1.25),(.98,-.12,-1.25),(.98,1.125,-1.25),(-.98,1.125,-1.25)],(0,0,1),DARK)
     panel([(-.98,-.12,-1.25),(.98,-.12,-1.25),(.98,-.12,1.36),(-.98,-.12,1.36)],(0,1,0),DARK)
@@ -301,11 +292,13 @@ def build():
     roof_front_z=top_z+(2.17-top_y)*(top_z-base_z)/(top_y-base_y)
     for sign in (-1,1):
         xo,xi=sign*HALF_WIDTH,sign*.98
-        for post in posts:
-            panel([(xo,y,z) for y,z in post],(sign,0,0))
+        for post_id,post in enumerate(posts):
+            outer = ([(shoulder_cowl_y,shoulder_cowl_z)]+post[1:]) if post_id == 0 else post
+            panel([(xo,y,z) for y,z in outer],(sign,0,0))
             panel([(xi,y,z) for y,z in post],(-sign,0,0))
-            for a,b in ((post[0],post[1]),(post[2],post[3])):
-                panel([(xo,*a),(xo,*b),(xi,*b),(xi,*a)],(0,b[1]-a[1],a[0]-b[0]))
+            for i,j in ((0,1),(2,3)):
+                a,b=post[i],post[j]
+                panel([(xo,*outer[i]),(xo,*outer[j]),(xi,*b),(xi,*a)],(0,b[1]-a[1],a[0]-b[0]))
         for a,b in zip(posts,posts[1:]):
             z0,z1=a[3][1],b[0][1]
             panel([(xi,1.10,z0),(xo,1.10,z0),(xo,1.10,z1),(xi,1.10,z1)],(0,1,0))
