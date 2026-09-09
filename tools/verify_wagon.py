@@ -836,6 +836,22 @@ def check():
     _wd = _darks("wagon_body.txt").most_common(1)[0][0]
     assert _wd == _sd, ("interior tone does not match the sedan", _wd, _sd)
     print(f"PASS interior tone {_wd[:3]} matches the sedan's dominant body grey")
+    # END GLASS TUCKS THE SAME 0.034 PAST THE INNER WALL AS THE SEDAN'S. Both cars put their inner cabin
+    # wall at 0.98 and their skin near 1.26; the sedan's windshield and rear pane run 0.034 OUTBOARD of
+    # that wall so the glass passes under the A-pillar rather than stopping flush against it. This car's
+    # ends were flush, 0.034 short at every edge. Assert the TUCK, not the coordinate -- and note the
+    # sedan's own pane is 1 mm right of centre (export jitter), which is why this compares half-widths
+    # rather than expecting the wagon to reproduce -1.014/+1.016.
+    _sw = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'sedan_body.txt')['vertices']} if x <= 1.0)
+    _st = max(abs(v[0]) for v in obj(CONTENT/'sedan_glass_windshield.txt')['vertices']) - _sw
+    _ww = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'wagon_body.txt')['vertices']} if x <= 1.0)
+    for _pane in ('windshield','rear'):
+        _v = obj(CONTENT/f'wagon_glass_{_pane}.txt')['vertices']
+        _lo, _hi = min(v[0] for v in _v), max(v[0] for v in _v)
+        assert abs(_lo + _hi) < 1e-6, (f'{_pane} pane is off-centre', _lo, _hi)
+        assert abs((_hi - _ww) - _st) < 1e-4, (f'{_pane} does not tuck under the pillar like the sedan',
+                                               _hi - _ww, _st)
+    print(f"PASS end glass tucks {_st:.4f} m past the 0.98 inner wall, matching the sedan; panes centred")
     assert (CONTENT / wagon["Palette"]).read_bytes() == (CONTENT / sedan["Palette"]).read_bytes()
     for asset in [wagon[k] for k in ("Body","Wheel","WheelTex","Palette")] + wagon["Parts"]:
         assert (CONTENT / asset).is_file(), asset

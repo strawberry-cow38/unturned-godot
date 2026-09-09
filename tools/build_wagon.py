@@ -429,9 +429,23 @@ def build():
     body.write('wagon_body.txt', weld_positions=True)
     shutil.copyfile(CONTENT/'sedan_palette.png',CONTENT/'wagon_palette.png')
 
+    # END GLASS TUCKS INTO THE PILLARS, THE WAY THE SEDAN'S DOES (strawberry 2026-09-09, picking the
+    # sedan as the reference after I measured all 17 windshields). Both cars have their inner cabin wall
+    # at 0.98 and their outer skin at ~1.26, but the sedan's windshield and rear pane span +/-1.015 --
+    # 0.034 OUTBOARD of that inner wall, so the glass runs under the A-pillar instead of stopping flush
+    # against it. Its side panes carry the same 0.034: 1.227 against a 1.261 skin. This car's ends were
+    # at +/-0.98 exactly, flush with the pillar face and 0.034 short at every edge.
+    # Derived from the sedan rather than pinned, and CENTRED: the sedan's own pane runs -1.014..+1.016,
+    # 1 mm right of centre, which is export jitter in the ripped mesh and not something to reproduce.
+    sedan_glass = obj(CONTENT/'sedan_glass_windshield.txt')['vertices']
+    sedan_wall = max(x for x in {round(abs(v[0]),3) for v in obj(CONTENT/'sedan_body.txt')['vertices']}
+                     if x <= 1.0)                       # the sedan's inner cabin wall, 0.981
+    tuck = max(abs(v[0]) for v in sedan_glass) - sedan_wall
+    xe = .98 + tuck
+    print(f'End glass: sedan tucks {tuck:.4f} m past its inner wall -> this car spans +/-{xe:.4f}')
     panes = {
-        'windshield': [(-.98,1.125,-1.25),(.98,1.125,-1.25),(.98,1.92,-.80),(-.98,1.92,-.80)],
-        'rear': [(-.98,1.10,2.68),(-.98,1.92,2.56),(.98,1.92,2.56),(.98,1.10,2.68)],
+        'windshield': [(-xe,1.125,-1.25),(xe,1.125,-1.25),(xe,1.92,-.80),(-xe,1.92,-.80)],
+        'rear': [(-xe,1.10,2.68),(-xe,1.92,2.56),(xe,1.92,2.56),(xe,1.10,2.68)],
     }
     for side,sign in [('l',-1),('r',1)]:
         x=sign*(HALF_WIDTH-.004)
