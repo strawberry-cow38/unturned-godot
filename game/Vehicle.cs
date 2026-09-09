@@ -2008,6 +2008,7 @@ namespace UnturnedGodot
         static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
         {
             "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
+            "Station Wagon"     => (new Vector3(2.52f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // full-width roof bounds; front face follows A-post rake; notes/WAGON_REPORT.md
             "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
             "Humvee"            => (new Vector3(2.5f, 0.254f, 2.815f), new Vector3(0f, 2.0f, 0.050f)),
             "Roadster"          => (new Vector3(2.5f, 0.254f, 1.367f), new Vector3(0f, 2.0f, 0.672f)),
@@ -2862,6 +2863,7 @@ namespace UnturnedGodot
             ["quad"] = new[] { new Vector3(-0.000f, 0.163f, 0.557f), new Vector3(-0.000f, 0.439f, 1.645f) },   // quad: 2 seats, verbatim from the prefab
             ["bus"] = new[] { new Vector3(-0.800f, -0.081f, -2.651f), new Vector3(-0.800f, -0.081f, -1.056f), new Vector3(0.800f, -0.081f, -1.056f), new Vector3(-0.800f, -0.081f, 0.449f), new Vector3(0.800f, -0.081f, 0.449f), new Vector3(-0.800f, -0.081f, 1.866f), new Vector3(0.800f, -0.081f, 1.866f), new Vector3(-0.800f, -0.081f, 3.366f), new Vector3(0.800f, -0.081f, 3.366f), new Vector3(0.000f, -0.081f, 3.366f) },   // bus: 10 seats, verbatim from the prefab
             ["sedan"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // sedan: 4 seats, verbatim from the prefab
+            ["wagon"] = new[] { new Vector3(-0.500f, -0.079f, -0.625f), new Vector3(0.500f, -0.079f, -0.625f), new Vector3(-0.500f, -0.079f, 0.772f), new Vector3(0.500f, -0.079f, 0.772f) },   // shared four-seat interior; original load deck begins behind the rear seatbacks
             ["hatchback"] = new[] { new Vector3(-0.500f, -0.079f, -0.299f), new Vector3(0.500f, -0.079f, -0.299f), new Vector3(-0.500f, -0.079f, 1.240f), new Vector3(0.500f, -0.079f, 1.240f) },   // hatchback: 4 seats, verbatim from the prefab
             ["humvee"] = new[] { new Vector3(-0.500f, -0.033f, -0.480f), new Vector3(0.500f, -0.033f, -0.480f), new Vector3(-0.500f, -0.033f, 0.858f), new Vector3(0.500f, -0.033f, 0.858f) },   // humvee: 4 seats, verbatim from the prefab
             ["roadster"] = new[] { new Vector3(-0.500f, -0.079f, 0.331f), new Vector3(0.500f, -0.079f, 0.331f) },   // roadster: 2 seats, verbatim from the prefab
@@ -2899,7 +2901,7 @@ namespace UnturnedGodot
         };
         static Vector3 SeatOf(string name) => name switch
         {
-            "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Sedan" or "Station Wagon" => new Vector3(-0.50f, -0.04f, -0.566f),
             "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
             "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),
             "Roadster" => new Vector3(-0.50f, -0.04f, 0.390f),
@@ -2919,7 +2921,7 @@ namespace UnturnedGodot
         /// (strawberry 2026-09-03: "theres still a lot of vehicle seating positions that arent accurate. fix them
         /// all"). Mirrors the identical BuildByName/SpecFor gap fixed 2026-08-16 one level up (whole SPEC, not
         /// just the seat) -- same shape of bug, in the sibling table nobody re-checked when that one was found.</summary>
-        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Hatchback" or "Humvee" or "Roadster"
+        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Station Wagon" or "Hatchback" or "Humvee" or "Roadster"
             or "Bus" or "Quad" or "Ambulance" or "Firetruck" or "Tractor" or "Ural" or "Police" or "Jeep";
         /// <summary>Average of the 11 hand-tuned deltas above against their own real Seat_0 (Y +0.04 to +0.10,
         /// Z from -0.005 to +0.09 with no consistent sign -- not touching Z avoids guessing the wrong direction).
@@ -3138,6 +3140,34 @@ namespace UnturnedGodot
                 ("sedan_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
             },
         };
+
+        // Original wagon authored from fleet proportions, not a sedan-body extension.
+        // Body AABB 5.80 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
+        static readonly Spec _wagon = new()
+        {
+            Mass = 1650f,   // midpoint of sedan 1500 and police 1800 kg (same measured footprint)
+            Body = "wagon_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "wagon_palette.png",
+            GlassMesh = "wagon_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),
+            Water = WaterMode.Car, RandomHueGray = true,
+            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 0.98f, 5.52f), BoxCenter = new Vector3(0f, 0.59f, 0f),   // fitted lower shell; separate roof above
+            ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 50_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "Station Wagon", Horn = "carhorn_02.ogg",
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // sedan lenses shifted +0.012 m; exposed beyond the rear side-wall ends
+            SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("wagon_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("wagon_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
+            },
+        };
+        public static Vehicle BuildWagon(int variant = 0) => Build(_wagon, variant, "wagon");
 
         // Hatchback.dat: Speed 15, steer 24->12, front-steered, RandomHueOrGrayscale. Compact 4-seat car (~5.5m).
         static readonly Spec _hatchback = new()
@@ -4502,8 +4532,9 @@ namespace UnturnedGodot
             return seen.ToArray();
         }
 
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        // Append new keys: indices are replicated TypeIds, so inserting would renumber existing vehicles.
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = Station Wagon, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
         /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
@@ -4522,7 +4553,7 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "tank" => _tank,
+            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "tank" => _tank,
             // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
             // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
             // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast
