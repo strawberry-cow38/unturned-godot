@@ -186,6 +186,37 @@ namespace UnturnedGodot
         int[] _lowerBonesTorso;                     // the above + Spine + Skull -> also preserved while CROUCHED/PRONE, so the stance's torso posture survives the gun overlay instead of the arms' standing pose overwriting it (master: "crouch and crawl states aren't being set correctly")
         bool _stancePreserveTorso;                  // current stance lays the torso down/low (crouch/prone) -> preserve the torso from locomotion too
         int _spineBone = -1;                        // Spine index -> the crouch/prone gun-aim counter reads its stance-vs-gun pitch delta
+        /// <summary>1P BODY (strawberry 2026-09-09: "show legs in 1p when looking down"). The body is the SAME
+        /// model third person draws, so first person has to lose the head, chest and arms while keeping the legs.
+        ///
+        /// Done as a camera-distance DISCARD in clothes.gdshader, not by hiding bones. Bones were the obvious
+        /// route and this rig refuses them: measured off content/rig.json, the hips are weighted to Spine and the
+        /// torso shares weights across Spine/Skull/hands, so zeroing a bone stretches the half-weighted vertices
+        /// into spikes rather than removing anything. The clip also stays on the BODY -- moving the camera's near
+        /// plane out instead would clip the world and let you see through walls you stood against.</summary>
+        public bool FirstPersonTrim
+        {
+            get => _fpTrim;
+            set { if (_fpTrim == value) return; _fpTrim = value; ApplyFirstPersonTrim(); }
+        }
+        bool _fpTrim;
+
+        /// <summary>Metres from the eye at which the body starts being drawn. The chest sits ~0.25-0.75 m from the
+        /// eye and the hips ~0.75-1.0, so this lands just below the waist.</summary>
+        public static float FirstPersonClip =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _fpc) && _fpc >= 0f ? _fpc : 0.7f;   // UG_FPCLIP tunes it without a rebuild
+
+        void ApplyFirstPersonTrim()
+        {
+            if (_clothesMat != null) _clothesMat.SetShaderParameter("fp_clip", _fpTrim ? FirstPersonClip : 0f);
+            // The face is its OWN quad on a StandardMaterial3D, so the shader clip never touches it -- leaving a
+            // pair of eyes and a mouth hanging in mid-air where the head used to be. It is a decal on a head that
+            // is not being drawn, so it just goes away.
+            if (_faceQuad != null && GodotObject.IsInstanceValid(_faceQuad)) _faceQuad.Visible = !_fpTrim;
+        }
+
         int[] _armRootBones;                        // the two shoulders -> re-aimed forward after the torso restore so the barrel doesn't tilt down with the pitched stance spine (master: crouch pointed 45deg down, prone into the ground)
         Quaternion[] _lbRot; Vector3[] _lbPos;      // per-frame preserved-bone snapshot (sized to the larger torso set)
         Node3D _muzzle, _flash;                     // 3P: muzzle marker (at the gun's MuzzleHook) + the flash on the held gun
@@ -1209,6 +1240,7 @@ namespace UnturnedGodot
                 cm.SetShaderParameter("skin_color", tint);
                 mi.MaterialOverride = cm;
                 root._clothesMat = cm;
+                root.ApplyFirstPersonTrim();   // the flag can be set before the material exists; make it stick either way
             }
 
             // Unturned's face is a shader-painted decal, NOT in the mesh UV (the head-front UV0 is a skin-only

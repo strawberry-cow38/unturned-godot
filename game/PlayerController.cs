@@ -8558,12 +8558,20 @@ namespace UnturnedGodot
                 _viewmodel.AltLookDeg = _fp ? new Vector2(_fpLookPitch, _fpLookYaw) : Vector2.Zero;
             }
             if (_body == null) return;
-            _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
+            // VISIBLE IN FIRST PERSON TOO (strawberry 2026-09-09: "show legs in 1p when looking down"). The head
+            // and arms are collapsed instead of the whole body being hidden -- see RiggedCharacter.FirstPersonTrim
+            // for why those two and nothing else. No pitch gate: the body is simply THERE, so looking down finds
+            // it exactly the way looking down finds your legs.
+            _body.Visible = !_dead;   // dead -> the corpse ragdoll handles the body
+            _body.FirstPersonTrim = _fp;
+            // SEATED in first person the body still gets posed + animated: the 1P vehicle camera sits on ITS eyes
+            // (strawberry 2026-09-03: "if it was exactly where the model's eyes would be, and the pm invisible,
+            // would be perfect"), so the skull bone has to be where the seated clip puts it.
+            //
+            // The on-foot 1P skip that used to sit here is GONE. It existed because nothing read the body in that
+            // case, which stopped being true the moment the body became the thing you look down at -- skipping the
+            // pose would leave your own legs frozen mid-stride while you walked.
             if (_dead) return;
-            // SEATED in first person the body still gets posed + animated (invisible): the 1P vehicle camera sits on ITS eyes now
-            // (strawberry 2026-09-03: "if it was exactly where the model's eyes would be, and the pm invisible, would be perfect"),
-            // so the skull bone has to be where the seated clip puts it. On foot in 1P nothing reads the body -> skip as before.
-            if (_fp && _driving == null && (_riding == null || !IsInstanceValid(_riding))) return;
             if (_driving != null)   // in the driver seat (best-effort idle pose)
             {
                 // The seat you are ACTUALLY in (strawberry 2026-08-16: "make the different seats actually move the

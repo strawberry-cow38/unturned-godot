@@ -29,6 +29,16 @@ shader_type spatial;
 render_mode cull_front;
 
 uniform vec4 skin_color : source_color = vec4(0.82, 0.66, 0.52, 1.0);
+// FIRST-PERSON BODY CLIP (strawberry 2026-09-09: "show legs in 1p when looking down"). 0 = off. Above 0, any
+// fragment nearer than this many metres to the camera is thrown away, which removes the head, chest and arms
+// while leaving everything further down the body intact -- so looking down finds legs.
+//
+// A DISTANCE CLIP RATHER THAN HIDDEN BONES. Collapsing the bones was the obvious idea and it does not work on
+// this rig: the hips are weighted to Spine and the torso shares weights across Spine/Skull/hands, so zeroing a
+// bone stretches half-weighted vertices into spikes instead of removing them. And a clip belongs to the BODY's
+// material, not to the camera's near plane -- pushing the near plane out to 0.7 m would clip the world too, and
+// you would see through any wall you stood against.
+uniform float fp_clip = 0.0;
 uniform bool flip_shirt = false;   // left-handed model mirror (SP single body: false)
 
 uniform bool has_shirt_albedo = false;
@@ -46,6 +56,8 @@ uniform sampler2D pants_emission : source_color, filter_nearest;
 uniform sampler2D pants_metallic : hint_default_black, filter_nearest;
 
 void fragment() {
+	// Before any texturing work: this fragment may not exist at all.
+	if (fp_clip > 0.0 && length(VERTEX) < fp_clip) discard;
 	// Shirt sub-atlas flip (front of shirt = upper-left 1/4, back = next 1/4). Ported verbatim from the
 	// source; a no-op when flip_shirt=false (the SP single-body default).
 	vec2 shirtUV = UV;
