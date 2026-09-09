@@ -37,16 +37,18 @@ namespace UnturnedGodot
 
         const float Dawn = 0.25f, Dusk = 0.75f;   // DayNightCycle.Time: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
 
-        // BIRDS TURN IN BEFORE THE LIGHT DOES (strawberry 2026-09-09: "fade out birds sooner in the evening").
-        // The DAY bed is the dawn chorus, and it was riding the same crossfade as everything else -- full until
-        // 0.70 and only silent at 0.80, i.e. singing right through sunset. It now runs out on its own earlier
-        // edge: at Dusk 0.75 = 18:00 these put the birds fading from ~16:05 and gone by ~17:31, while the general
-        // day/night crossfade still runs 16:48 -> 19:12 underneath.
+        // BIRDS TURN IN BEFORE THE LIGHT DOES (strawberry 2026-09-09: "fade out birds sooner in the evening",
+        // then "after 7pm should be silent"). The DAY bed is the dawn chorus, and it was riding the same crossfade
+        // as everything else -- full until 0.70 and only silent at 0.80, singing right through sunset.
+        //
+        // Stated as CLOCK TIMES rather than as offsets from Dusk, because the requirement is a clock time and an
+        // offset chain is how you end up quietly missing it: silent from 19:00, having faded over the 90 minutes
+        // before. The general day/night crossfade still runs 16:48 -> 19:12 underneath.
         //
         // The pair no longer sums to 1 across that window, and that is the POINT rather than an oversight: birds
         // stopping before the night bed is fully up is the evening hush. It is a few dB and it is deliberate.
-        public static float BirdDuskLead = 0.02f;   // silent this far before the crossfade's midpoint
-        public static float BirdDuskFade = 0.06f;   // ...having taken this long to get there
+        public static float BirdQuietBy = 19f / 24f;     // 19:00 -- silent from here on, by definition
+        public static float BirdFadeHours = 1.5f;        // ...having started to go this long before
 
         // ...AND THEY STOP IN RAIN, well before a downpour (strawberry: "fade out bird ambience when its
         // raining"). WeatherDuck already scaled both beds by 1-rint, which is retail's
@@ -102,14 +104,14 @@ namespace UnturnedGodot
         public static float BirdShare(float t)
         {
             t = Mathf.PosMod(t, 1f);
-            float outEnd = Dusk - BirdDuskLead;            // gone by here
-            float outStart = outEnd - BirdDuskFade;        // started going here
+            float outEnd = Mathf.PosMod(BirdQuietBy, 1f);            // gone by here (19:00)
+            float outStart = outEnd - BirdFadeHours / 24f;           // started going here
             float rise = t >= Dawn + Transition ? 1f
                        : t >= Dawn - Transition ? (t - (Dawn - Transition)) / (2f * Transition)
                        : 0f;
             float fall = t <= outStart ? 1f
                        : t >= outEnd ? 0f
-                       : 1f - (t - outStart) / Mathf.Max(0.0001f, BirdDuskFade);
+                       : 1f - (t - outStart) / Mathf.Max(0.0001f, outEnd - outStart);
             return Mathf.Min(rise, fall);
         }
 
