@@ -84,8 +84,20 @@ void fragment() {
         const int GUTTER = 20;       // gap between the character panel and the storage box
         const int PDTOP = 88;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
-        const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
+        const int PDH = 496;         // paperdoll display height (portrait, fills the upper panel). 440 -> 496,
+                                     // strawberry 2026-09-09: "slightly wider and a decently taller (for tall hats)".
+        // ⚠ THE ELEMENT GROWING IS NOT THE VIEW GROWING, and master said so explicitly: "the actual viewport view
+        // size. not just making the element itself bigger." A perspective camera framed by FramePaperdoll fits a
+        // fixed WORLD height (frameH) whatever resolution it renders at, so enlarging the panel alone re-renders
+        // the identical framing on more pixels and a tall hat stays just as cropped. The view grows below, in
+        // PD_FRAME_H; these two only decide how much screen it lands on.
+        const int PDWIDEN = 28;      // extra render+display width over PDW: "slightly wider" (kept inside CHARW)
         const float PD_ASPECT = 0.585f;  // paperdoll viewport w/h -- wide enough his arm span clears the frame (measured off the widened render)
+        // How much WORLD the camera frames vertically, as a multiple of the body's own AABB height. 1.36 fitted the
+        // body and nothing above it, so anything worn on the head left the frame. 1.62 buys ~26 cm of headroom on a
+        // 1.8 m character, which is hat-sized. Widening comes free with it: the horizontal extent is frameH times
+        // the render aspect, so a taller view is a wider one at the same aspect, and PDWIDEN adds a little more.
+        const float PD_FRAME_H = 1.62f;
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
         Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
@@ -547,7 +559,7 @@ void fragment() {
             {
                 if (_pdDragging)
                 {
-                    _pdYaw -= mm.Relative.X * 0.012f;                          // horizontal drag spins the rig around Y
+                    _pdYaw += mm.Relative.X * 0.012f;                          // horizontal drag spins the rig around Y; INVERTED 2026-09-09 (strawberry) -- dragging right now turns his right shoulder toward you, i.e. the model follows the cursor rather than opposing it
                     if (_pdBody != null) _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);   // _pdYaw stays authoritative even pre-rig
                     GetViewport().SetInputAsHandled();
                 }
@@ -1913,14 +1925,17 @@ void fragment() {
             // LOCKED size (so the render aspect is deterministic regardless of layout timing). Dragging its surface spins the rig.
             var vpc = new SubViewportContainer
             {
-                Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH),
+                // ⚠ Stretch = false, so this container CROPS the viewport rather than scaling it -- widening the
+                // render without widening this would have thrown the extra view straight away. 8 + 548 = 556 still
+                // fits inside CHARW (560).
+                Position = new Vector2(8, PDTOP), Size = new Vector2(PDW + PDWIDEN, PDH),
                 Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
             };
             _pdHit = vpc;   // this rect IS the equip drop target (PointToClothSlot) AND the click-spin hit-rect (OverPaperdoll in _Input)
             box.AddChild(vpc);
             _pdVp = new SubViewport
             {
-                Size = new Vector2I(PDW, PDH),                        // LOCK the render aspect (0.75 portrait)
+                Size = new Vector2I(PDW + PDWIDEN, PDH),              // LOCK the render aspect; the widen is on BOTH render and display so nothing stretches
                 OwnWorld3D = true,                                    // isolated from the game world (like the viewmodel)
                 TransparentBg = true,
                 Msaa3D = Viewport.Msaa.Msaa4X,                        // antialias the character edges
@@ -1971,7 +1986,7 @@ void fragment() {
             Aabb ab = mi.GlobalTransform * mi.GetAabb();          // world-space bounds of the body mesh
             if (ab.Size.Y < 0.1f) return;                         // not skinned/built yet -> wait a frame
             float cy = ab.Position.Y + ab.Size.Y * 0.5f;          // vertical centre of the body
-            float frameH = ab.Size.Y * 1.36f;                     // master 2026-08-26: reverted the +padding (was 1.51f). Arms fit via the WIDER viewport now, not by shrinking him.
+            float frameH = ab.Size.Y * PD_FRAME_H;                // the WORLD height the camera fits -- this is the view size, and the only thing that decides whether a hat is cropped
             float dist = frameH * 0.5f / Mathf.Tan(Mathf.DegToRad(_pdCam.Fov * 0.5f));
             float aimY = cy - 0.15f;
             _pdCam.Position = new Vector3(0f, aimY, dist);

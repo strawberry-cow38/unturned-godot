@@ -210,7 +210,7 @@ namespace UnturnedGodot
         public static float FirstPersonClip =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _fpc) && _fpc >= 0f ? _fpc : 0.45f;
+                           out float _fpc) && _fpc >= 0f ? _fpc : PlayerController.FirstPersonBodyBack + 0.20f;
         // BACK ON, 2026-09-09: strawberry, "seeing the full legs playermodel inside myself when crouched or prone".
         // It was switched off on the theory that moving the body back 0.42 m replaced it -- which holds STANDING,
         // where the torso is upright behind you, and does not hold at all once the stance pitches that torso
@@ -219,8 +219,14 @@ namespace UnturnedGodot
         // A fixed offset cannot fix a stance-dependent intrusion, but this clip does not have to know about
         // stances: it is measured from the EYE (Godot's fragment VERTEX is view-space), so it removes exactly
         // whatever is too close and nothing else. Standing, with the body already pushed back, nothing is inside
-        // 0.45 and it does nothing at all; crouched or prone it takes the chest and leaves the legs, which sit
-        // 0.75-1.0 m out. UG_FPCLIP still overrides it without a rebuild.
+        // it does nothing at all; crouched or prone it takes the chest and leaves the legs, which sit 0.75-1.0 m out.
+        //
+        // ⚠ DERIVED FROM THE BODY-BACK OFFSET, not typed. The body is pushed FirstPersonBodyBack (0.42 m) BEHIND the
+        // camera, so its head and neck sit at roughly 0.42-0.6 m -- and the flat 0.45 I first shipped lands in the
+        // MIDDLE of that neck, cutting it open instead of removing it. That is precisely "just looking down i can
+        // see inside my neck" (strawberry, same evening). +0.20 clears head and neck as a unit and still stops short
+        // of the hips. Tying the two together means tuning UG_FPBACK moves the clip with it rather than silently
+        // re-opening this. UG_FPCLIP still overrides outright, without a rebuild.
 
         void ApplyFirstPersonTrim()
         {
