@@ -143,6 +143,7 @@ def design(specs, rear, cls='small'):
     hitch_projection = 3*t   # was radius/3, which would now drag all eight cars' tow balls back 50 mm
     ground = rear['golf']['ground']
     wheel_y = ground+radius+.25
+    wheel_center_y = wheel_y-.25        # the RESTING centre: the tyre touches `ground` here
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
     # TANDEM SPACING is derived, not chosen: two tyres of radius r on one side must not intersect in
     # Z, so their centres are at least 2r apart; plus t of clearance. Single-axle classes ignore it.
@@ -157,14 +158,15 @@ def design(specs, rear, cls='small'):
     ride = (golf['Wheels'][0][1]-.25) - obj(CONTENT/golf['fields']['Body'].strip('"'))['lo'][1]
     deck_y = wall_t-ride
     if C['wide']:
-        # THE DECK HAS TO CLEAR THE TYRE, because the wheels are now under it. Clearance is taken at
-        # FULL COMPRESSION (wheel_y + radius), not at rest: a bed sized to the resting tyre has the
-        # wheel through its own floor on every bump. This is the price of the unlimited width and it is
-        # what a real flatbed does -- deck over the wheels, higher floor.
-        deck_y = wheel_y+radius+t+wall_t   # +t so a bottomed suspension does not touch its own floor
+        # THE DECK CLEARS THE TYRE AT REST, not at full compression. Clearing compression first put the
+        # deck .300 above the resting tyre, and the render showed exactly what that is: daylight under
+        # the bed with the wheels hanging in it, unattached to anything. That gap is the whole of
+        # "fix the wheel positions". A bottomed suspension now meets the deck underside, which is what
+        # a bump stop is for and what the fleet's own cars do inside their arches.
+        deck_y = wheel_center_y+radius+t+wall_t
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
-                king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
+                king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_center_y,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
                 cls=cls, axles=C['axles'], axle_zs=axle_zs, axle_spacing=axle_spacing,

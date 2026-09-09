@@ -159,7 +159,9 @@ def expected(cls='dinky'):
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
                     # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
-                    dy=(rr['golf']['ground']+radius+.25)+radius+t+wall_t if C['wide']
+                    # wide: the deck clears the RESTING tyre by t. Resting centre is ground+radius,
+                    # so the floor is ground + 2r + t + one wall section.
+                    dy=rr['golf']['ground']+2*radius+t+wall_t if C['wide']
                        else wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
                     ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
                     # the sedan's own lamp inset from its body side -- re-measured here, not imported
@@ -334,14 +336,16 @@ def cases(cls='dinky'):
         require(close(inner_tyre,outer_wall,1e-5),
                 f'tyre inner face {inner_tyre:.4f} does not meet the sideboard at {outer_wall:.4f}')
     def deck_clears_tyre():
-        """WIDE CLASSES: the wheels are under the deck, so the invariant is vertical, not lateral --
-        the deck's underside must sit above the tyre at FULL COMPRESSION, or the wheel comes through
-        its own floor on every bump. Read off the mesh and the spec."""
+        """WIDE CLASSES: the wheels are under the deck, so the invariant is vertical, not lateral.
+        The deck's underside sits just above the RESTING tyre -- about one t. Clearing the fully
+        COMPRESSED tyre instead leaves .300 of daylight and the wheels hang in it looking detached,
+        which is what the render showed. A bottomed suspension meeting the deck is what a bump stop is
+        for, and is what the fleet's own cars do inside their arches. Read off the mesh and the spec."""
         rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields(KEY)['Wheels'])
-        top=max(float(q[1]) for q in rows)+number(fields(KEY)['WheelRadius'])
+        rest=max(float(q[1]) for q in rows)-.25+number(fields(KEY)['WheelRadius'])
         under=group_bounds('deck')[0][1]
-        require(under >= top, f'deck underside {under:.4f} is below the compressed tyre top {top:.4f}')
-        require(under-top < 4*t, f'deck floats {under-top:.4f} above the tyre; clearance should be about t')
+        require(under >= rest, f'deck underside {under:.4f} is below the resting tyre top {rest:.4f}')
+        require(under-rest <= 2*t, f'deck floats {under-rest:.4f} above the resting tyre; should be about t')
         # PER SIDE. Taking max() over both sideboards meant pulling ONE of them inside the wheels
         # changed nothing, and the audit caught that mutation surviving -- a check that can only see
         # the wider half is blind to exactly the asymmetric mistake a hand edit makes.
@@ -352,6 +356,7 @@ def cases(cls='dinky'):
     if d['wide']:
         add('wide class: deck clears the compressed tyre and overhangs the wheels',deck_clears_tyre,
             (BODY,move_group('deck',(0,-.3,0)),'drop the deck onto the tyre'),
+            (BODY,move_group('deck',(0,.3,0)),'float the deck above the tyre'),
             (BODY,move_group('side_1',(-.6,0,0)),'pull the box inside the wheels'),
             fieldmut('WheelRadius','1.2f'))
     else:

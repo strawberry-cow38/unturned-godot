@@ -459,8 +459,8 @@ width limit"*.
 |---|---|---|---|---|---|---|
 | dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 1 | -0.023 | beside the box |
 | small | `small_trailer` | 3.921 x 2.225 | 2.625 | 1 | -0.023 | beside the box |
-| medium | `medium_trailer` | 4.967 x 2.850 | 2.600 | 2 | +1.150 | under the deck |
-| large | `large_trailer` | 6.013 x 3.100 | 2.600 | 2 | +1.150 | under the deck |
+| medium | `medium_trailer` | 4.967 x 2.850 | 2.600 | 2 | +0.900 | under the deck |
+| large | `large_trailer` | 6.013 x 3.100 | 2.600 | 2 | +0.900 | under the deck |
 
 **Two width modes, and that is what lifting the limit actually means.** The small classes still solve
 the box out of the track so the tyre lands flush against the sideboard — the limit. The big two do not:
@@ -482,3 +482,21 @@ classes, and the wide ones get their own invariant instead: the deck's underside
 tyre, clearance about one t, and **each sideboard individually** overhanging the wheel centres. That
 last word matters — the first version took `max()` over both sides, so pulling ONE sideboard inside the
 wheels changed nothing and the mutation survived. **222 named checks, 910 mutations**, all caught.
+
+### Correction within the eighth pass: the deck sat too high
+
+strawberry, on the render: *"fix the wheel positions"*.
+
+Clearance was taken at **full compression** (`wheel_y + radius` = .850), which put the deck's underside
+at .900 against a **resting** tyre top of .600 — **300 mm of daylight with the wheels hanging in it**,
+unattached to anything. That is the whole of the complaint, and it is only visible in a render; every
+number involved was individually correct.
+
+Clearance is taken at rest now, plus one t: floor **+0.900** rather than +1.150, underside .650 against
+a .600 tyre, gap **50 mm**. A bottomed suspension meets the deck underside, which is what a bump stop
+is for and what the fleet's own cars do inside their arches. Walls top out at 1.900, comfortably under
+the Golf's 2.185 roof rather than level with it.
+
+The wide-class check moved with it — deck underside above the RESTING tyre, within 2t — and gained a
+second mutation, `float the deck above the tyre`, because the old rule had only ever been able to catch
+a deck that was too LOW. The defect it missed was a deck that was too high.
