@@ -25,12 +25,21 @@ namespace UnturnedGodot
         public const float Radius = 260f;          // lock range, metres
         public const int   Rack = 6;               // "launches 6 missiles"
         public const float ShotDelay = 0.55f;      // "delay between each one"
+        // A LOCK IS NOT INSTANT (strawberry 2026-09-09: "give the sam a short targetting time before firing").
+        // The head has to hold the target this long before the first missile leaves, and losing the target resets
+        // it -- so flying through the edge of the radius costs you nothing, and the site cannot ambush something
+        // that was never really in its arc. It is also the window the pilot gets: the tubes are visibly tracking
+        // before anything is in the air.
+        public const float LockTime = 1.8f;
         public const float ReloadDelay = 9f;       // "a longer delay while it reloads"
         public const float YawRateDeg = 90f;       // how fast the head slews
         public const float PitchRateDeg = 60f;
         public const float MinPitchDeg = -5f, MaxPitchDeg = 82f;
 
         public enum State { Idle, Tracking, Firing, Reloading }
+        /// <summary>How much of the lock has been earned, 0..1. Reads as a light/HUD later if wanted; the suite
+        /// asserts on it because "a short targetting time" is a claim about a clock.</summary>
+        public float LockProgress => Mathf.Clamp(_lockT / LockTime, 0f, 1f);
         public State Mode { get; private set; } = State.Idle;
         public int Loaded { get; private set; } = Rack;      // tubes still holding a missile
         public Vehicle Target { get; private set; }          // the heli currently locked
@@ -46,6 +55,7 @@ namespace UnturnedGodot
         readonly MeshInstance3D[] _tubes = new MeshInstance3D[Rack];
         readonly Node3D[] _muzzles = new Node3D[Rack];
         float _timer;         // seconds until the next shot / the end of the reload
+        float _lockT;         // seconds of continuous track earned toward LockTime
         float _yawDeg, _pitchDeg;
 
         public override void _Ready()
@@ -110,19 +120,25 @@ namespace UnturnedGodot
             if (Target != null && IsInstanceValid(Target)) AimAt(Target.GlobalPosition, dt);
             else Park(dt);   // no target: keep the bearing, bring the tubes back down
 
+            // The lock builds while a target is held and DROPS TO ZERO the moment it is not. Decaying it slowly
+            // would let a helicopter be picked apart by a site that only ever half-saw it, which is the opposite
+            // of "possible to evade".
+            if (Target != null) _lockT += dt; else _lockT = 0f;
+
             _timer -= dt;
             switch (Mode)
             {
                 case State.Idle:
                 case State.Tracking:
                     Mode = Target == null ? State.Idle : State.Tracking;
-                    if (Target != null && Loaded > 0) { Mode = State.Firing; _timer = 0f; }
+                    if (Target != null && Loaded > 0 && _lockT >= LockTime) { Mode = State.Firing; _timer = 0f; }
                     break;
 
                 case State.Firing:
                     // LOSING THE TARGET DOES NOT ABORT THE BARRAGE, it pauses it. The missiles already in the air
                     // are still homing, and a heli that ducks behind a hill for a second has not escaped a launcher
-                    // that is still holding six tubes.
+                    // that is still holding six tubes. It DOES cost the lock, so the pause is a real one -- coming
+                    // back into the arc buys another LockTime before the next round leaves.
                     if (Loaded <= 0) { Mode = State.Reloading; _timer = ReloadDelay; break; }
                     if (Target == null) { Mode = State.Tracking; break; }
                     if (_timer <= 0f) { Launch(Target); _timer = ShotDelay; }

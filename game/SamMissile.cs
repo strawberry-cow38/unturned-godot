@@ -22,7 +22,22 @@ namespace UnturnedGodot
         public const float LaunchSpeed = 34f;      // off the rail
         public const float MaxSpeed = 118f;
         public const float Accel = 90f;            // m/s^2 while the motor burns
-        public const float TurnRateDeg = 155f;     // seeker authority -- the whole character of the weapon
+        // SEEKER AUTHORITY AS A LATERAL ACCELERATION, not a fixed angular rate (strawberry 2026-09-09: "make it
+        // possible to evade the missiles"). A flat degrees-per-second is what made it inescapable: it turned just
+        // as hard at 118 m/s as at 34, so speed cost it nothing and there was no manoeuvre that beat it. A real
+        // seeker is limited by the g it can pull, and rad/s = a / v falls as it accelerates -- so the missile is
+        // nimble on the way off the rail and committed by the time it arrives, which is exactly the window a
+        // helicopter breaks into. At the 118 m/s cap this is 0.72 rad/s (41 deg/s) and a 164 m turn radius.
+        public const float LatAccel = 85f;         // m/s^2, about 8.7 g
+        public const float MaxTurnRateDeg = 150f;  // ...and a ceiling for the slow launch phase, so it cannot pirouette off the rail
+        // ONCE BEATEN, STAY BEATEN. A missile that sails past and swings round for another go means the break
+        // that defeated it did not matter -- with a 14 s life and 118 m/s it has 1.6 km to keep trying, so
+        // "evadable" would only mean "delayed". The test is CLOSEST APPROACH, not a frame-to-frame range
+        // comparison: a hard break can add 40 m to the range in a single frame, which sails straight past any
+        // fixed "am I close AND opening" gate and leaves the seeker happily re-attacking. Having once come within
+        // MissRange, opening MissMargin beyond the closest point it ever managed means the pass is over.
+        public const float MissRange = 120f;
+        public const float MissMargin = 15f;
         public const float MaxLife = 14f;
         public const float FuseRadius = 6.5f;      // proximity fuse: a SAM does not need to touch the airframe
         public const float BlastRadius = 11f;
@@ -38,7 +53,15 @@ namespace UnturnedGodot
         Vector3 _vel;
         float _life;
         bool _spent;
+        bool _lost;             // overshot: the seeker is off and this round is now a dumb rocket
+        float _minDist = float.MaxValue;   // closest it has ever been to the target
+        float _beepT;           // seconds until this missile's next warning beep
         CpuParticles3D _trail;
+
+        // Every missile in the air. The WARNING is per aircraft, not per missile: six rounds each beeping their
+        // own rate is a wall of noise that tells the pilot nothing, so only the closest missile to a given target
+        // sounds, and its rate is the one that matters anyway.
+        static readonly System.Collections.Generic.List<SamMissile> Live = new();
 
         public void Fire(Vector3 dir)
         {
@@ -50,6 +73,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
+            Live.Add(this);
 
             // THE GAME'S OWN ROCKET, not a primitive of my own (strawberry asked whether this fires the existing
             // projectile). The FLIGHT cannot be the existing one -- the launcher and the tank cannon are Action
@@ -117,7 +141,7 @@ namespace UnturnedGodot
             AddChild(_trail);
         }
 
-        public override void _ExitTree() => TickHub.RemoveProcess(this);
+        public override void _ExitTree() { TickHub.RemoveProcess(this); Live.Remove(this); }
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready)
 
@@ -128,15 +152,28 @@ namespace UnturnedGodot
             _life += dt;
 
             bool live = Target != null && IsInstanceValid(Target) && !Target.Exploded;
-            if (_life > BoostTime && live)
+
+            // Has it been beaten? Measured on the RANGE, which is the only thing that says "this pass is over" --
+            // an angle test fires early on any hard crossing shot the missile is still winning.
+            if (live && !_lost)
             {
-                // PURSUIT, rate-limited. Rotating the velocity toward the bearing (rather than snapping it) is what
-                // makes TurnRateDeg mean anything: a missile that can turn 155 deg/s will still be out-turned by a
-                // heli that breaks hard across it late, which is the behaviour worth having.
+                float d = GlobalPosition.DistanceTo(Target.GlobalPosition);
+                if (d < _minDist) _minDist = d;
+                if (_minDist < MissRange && d > _minDist + MissMargin) _lost = true;
+            }
+
+            Warn(live, dt);
+
+            if (_life > BoostTime && live && !_lost)
+            {
+                // PURSUIT, acceleration-limited. Rotating the velocity toward the bearing (rather than snapping it)
+                // is what makes the g-limit mean anything: the faster it goes the wider it has to turn, so a heli
+                // that breaks hard and late across the nose gets outside the circle the missile can fly.
                 var want = (Target.GlobalPosition - GlobalPosition).Normalized();
                 var cur = _vel.LengthSquared() > 1e-6f ? _vel.Normalized() : want;
                 float ang = cur.AngleTo(want);
-                float maxStep = Mathf.DegToRad(TurnRateDeg) * dt;
+                float sp0 = Mathf.Max(1f, _vel.Length());
+                float maxStep = Mathf.Min(LatAccel / sp0, Mathf.DegToRad(MaxTurnRateDeg)) * dt;
                 // The rotation axis is cur x want, which VANISHES when the two are parallel OR anti-parallel --
                 // normalising a zero vector there would hand Rotated a NaN axis and the missile would disappear.
                 // Parallel is the ang<=maxStep case; anti-parallel needs any perpendicular, and a 180 deg error
@@ -158,8 +195,30 @@ namespace UnturnedGodot
                 LookAt(GlobalPosition + _vel, Mathf.Abs(fwd.Y) > 0.995f ? Vector3.Forward : Vector3.Up);
             }
 
-            if (live && GlobalPosition.DistanceTo(Target.GlobalPosition) <= FuseRadius) { Detonate(); return; }
+            if (live && !_lost && GlobalPosition.DistanceTo(Target.GlobalPosition) <= FuseRadius) { Detonate(); return; }
             if (_life >= MaxLife || GlobalPosition.Y < -50f) { Detonate(); return; }
+        }
+
+        /// <summary>The cockpit warning: retail's general_beep, played AT the aircraft so anyone aboard hears it
+        /// without this having to work out which PlayerController is the local one. The interval is the range --
+        /// a second out at 220 m, a tenth of a second when it is about to go off -- so the pilot hears the closure
+        /// rate rather than a fact. A missile that has been shaken off stops beeping, which is the whole point of
+        /// letting it be shaken off.</summary>
+        void Warn(bool live, float dt)
+        {
+            _beepT -= dt;
+            if (!live || _lost || _spent) return;
+            float dist = GlobalPosition.DistanceTo(Target.GlobalPosition);
+            // Only the closest round to this aircraft sounds. Six overlapping trains at six rates is noise.
+            foreach (var o in Live)
+            {
+                if (o == this || o._spent || o._lost || !ReferenceEquals(o.Target, Target)) continue;
+                if (o.GlobalPosition.DistanceTo(Target.GlobalPosition) < dist) return;
+            }
+            if (_beepT > 0f) return;
+            _beepT = Mathf.Clamp(dist / 220f, 0.11f, 1.1f);
+            var clip = GameAudio.Pick("misc", "general_beep");
+            if (clip != null) GameAudio.PlayAt(GetParent() ?? this, clip, Target.GlobalPosition, 2f, 8f, 140f, Mathf.Lerp(1.25f, 0.95f, Mathf.Clamp(dist / 220f, 0f, 1f)));
         }
 
         /// <summary>Flash and fireball. Local rather than reaching for PlayerController.SpawnBlastFx, which is
@@ -207,6 +266,7 @@ namespace UnturnedGodot
         {
             if (_spent) return;
             _spent = true;
+            Live.Remove(this);
             Vector3 p = GlobalPosition;
             var tree = GetTree();
             // The PARENT, not this node: QueueFree() is three lines down, and a one-shot parented to a node that

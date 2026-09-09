@@ -60,22 +60,38 @@ namespace UnturnedGodot.Testing
             far.QueueFree();
             yield return Ticks(2);
 
-            // ---- 3. THE BARRAGE. Six missiles, one per ShotDelay.
+            // ---- 3. THE LOCK IS A REAL WAIT. Sampled just inside and just outside it: a targetting time that
+            // merely EXISTS is not the ask, it has to be long enough to fly out of.
             var near = Heli(new Vector3(0f, 70f, -140f));
             yield return Ticks(2);
+            Drive(site, SamSite.LockTime - 0.2f);
+            T.Check($"nothing is launched during the {SamSite.LockTime:0.0}s lock (fired {site.Fired}, lock {site.LockProgress:0.00})",
+                site.Fired == 0 && site.LockProgress > 0.7f);
+
+            // ...and it RESETS when the target goes, so skimming the radius costs nothing. Teeth: with a decaying
+            // or persistent lock this passes anyway, because the second pass would inherit the first one's credit.
+            near.GlobalPosition = new Vector3(SamSite.Radius + 200f, 70f, 0f);
+            Drive(site, 0.5f);
+            T.Check($"losing the target zeroes the lock rather than banking it (lock {site.LockProgress:0.00})",
+                site.LockProgress < 0.35f && site.Fired == 0);
+            near.GlobalPosition = new Vector3(0f, 70f, -140f);
+
+            // ---- 4. THE BARRAGE. Six missiles, one per ShotDelay, once the lock is earned.
+            Drive(site, SamSite.LockTime + 0.05f);
+            T.Check($"the first missile goes as soon as the lock completes (fired {site.Fired})", site.Fired == 1);
 
             // Just short of the sixth shot's due time: five away, one still in the rack. This is the check that
             // separates "fires six" from "fires until you stop looking" -- an unbounded loop passes a count-6
             // assertion too, if you only ever look after the sixth.
-            Drive(site, SamSite.ShotDelay * 5f - 0.05f);
-            T.Check($"five missiles are away and the sixth has not gone yet at t={SamSite.ShotDelay * 5f - 0.05f:0.00}s (fired {site.Fired})",
+            Drive(site, SamSite.ShotDelay * 4f - 0.05f);
+            T.Check($"five are away and the sixth has not gone yet, {SamSite.ShotDelay * 4f - 0.05f:0.00}s after the first (fired {site.Fired})",
                 site.Fired == 5 && site.Loaded == 1);
 
             Drive(site, 0.2f);
             T.Check($"the sixth completes the barrage and the rack is empty (fired {site.Fired}, loaded {site.Loaded}, mode {site.Mode})",
                 site.Fired == SamSite.Rack && site.Loaded == 0 && site.Mode == SamSite.State.Reloading);
 
-            // ---- 4. THE RELOAD IS THE LONGER DELAY, and it is a real wait rather than a formality. Sampled just
+            // ---- 5. THE RELOAD IS THE LONGER DELAY, and it is a real wait rather than a formality. Sampled just
             // inside and just outside it, because a reload that is merely SHORTER than ShotDelay would still leave
             // the rack refilling "eventually" and the film would look fine.
             Drive(site, SamSite.ReloadDelay - 0.4f);
@@ -86,11 +102,12 @@ namespace UnturnedGodot.Testing
             T.Check($"after {SamSite.ReloadDelay:0}s the rack is back and it is shooting again (loaded {site.Loaded}, mode {site.Mode})",
                 site.Loaded > 0 && site.Mode != SamSite.State.Reloading);
 
-            Drive(site, SamSite.ShotDelay * 6f + 0.1f);
+            // The second barrage has to earn its lock again, so it is LockTime + five gaps behind the reload.
+            Drive(site, SamSite.LockTime + SamSite.ShotDelay * 6f + 0.2f);
             T.Check($"the second barrage is another {SamSite.Rack} (fired {site.Fired} total)",
                 site.Fired == SamSite.Rack * 2);
 
-            // ---- 4b. THE HEAD POINTS AT THE TARGET, MEASURED ON THREE BEARINGS. This is a sign check, not an
+            // ---- 6. THE HEAD POINTS AT THE TARGET, MEASURED ON THREE BEARINGS. This is a sign check, not an
             // accuracy check: a yaw derivation that is inverted produces a launcher facing the MIRROR bearing,
             // which is completely plausible in any single screenshot and is what I wrote first (atan2(x, -z)
             // rather than atan2(-x, -z)). Off-axis probes are the teeth -- straight ahead, a yaw sign is
@@ -112,12 +129,14 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"the head points where it was aimed on four bearings (worst {worstDeg:0.0} deg)", worstDeg < 6f);
 
-            // ---- 5. THE SEEKER. A missile launched 60 deg off the bearing has to close on the target rather
-            // than fly the heading it left the tube on. Driven at the same fixed dt, for the same reason.
+            // ---- 7. THE SEEKER. A missile launched off the bearing has to close on the target rather than fly
+            // the heading it left the tube on. 45 deg rather than something heroic, because the seeker is now
+            // g-limited and a large error at long range is genuinely beyond it -- which is the point of the
+            // evasion check below, not a weakness to hide here. Driven at the same fixed dt, for the same reason.
             var m = new SamMissile { Target = near };
             World.AddChild(m);
             m.GlobalPosition = new Vector3(0f, 8f, 0f);
-            var off = (near.GlobalPosition - m.GlobalPosition).Normalized().Rotated(Vector3.Up, Mathf.DegToRad(60f));
+            var off = (near.GlobalPosition - m.GlobalPosition).Normalized().Rotated(Vector3.Up, Mathf.DegToRad(45f));
             m.Fire(off);
             float startDist = m.GlobalPosition.DistanceTo(near.GlobalPosition);
             float best = startDist;
@@ -132,8 +151,32 @@ namespace UnturnedGodot.Testing
             }
             // The missile FREES itself on detonation, so "gone" is the pass condition and the closest approach is
             // the diagnostic. Boosting straight off a 60 deg error would leave it well over 100 m wide.
-            T.Check($"a missile launched 60 deg off the bearing still homes to the fuse (start {startDist:0} m, closest {best:0.0} m, fuse {SamMissile.FuseRadius:0.0} m)",
+            T.Check($"a missile launched 45 deg off the bearing still homes to the fuse (start {startDist:0} m, closest {best:0.0} m, fuse {SamMissile.FuseRadius:0.0} m)",
                 best <= SamMissile.FuseRadius + 0.5f);
+
+            // ---- 8. AND IT CAN BE BEATEN (strawberry: "make it possible to evade the missiles"). A missile that
+            // is always dodgeable is as bad as one that never is, so this is the paired claim to the check above:
+            // the SAME seeker, given a target that breaks hard across its nose at close range, misses AND STAYS
+            // MISSED. The break is 90 deg at 45 m -- inside the missile's own turn radius (v^2/a = 164 m at the
+            // speed cap), which is the geometry that makes evasion a manoeuvre rather than a dice roll.
+            near.GlobalPosition = new Vector3(0f, 40f, -300f);
+            var m2 = new SamMissile { Target = near };
+            World.AddChild(m2);
+            m2.GlobalPosition = new Vector3(0f, 40f, 0f);
+            m2.Fire(Vector3.Forward);
+            float closest2 = float.MaxValue;
+            bool broke = false;
+            for (int i = 0; i < 900 && GodotObject.IsInstanceValid(m2); i++)
+            {
+                float d = m2.GlobalPosition.DistanceTo(near.GlobalPosition);
+                // Break hard sideways once it is committed and close: the classic beam manoeuvre.
+                if (!broke && d < 45f) { broke = true; near.GlobalPosition += new Vector3(70f, 0f, 0f); }
+                m2.HubProcess(Dt);
+                if (!GodotObject.IsInstanceValid(m2)) break;
+                closest2 = Mathf.Min(closest2, m2.GlobalPosition.DistanceTo(near.GlobalPosition));
+            }
+            T.Check($"a hard break inside its turn radius defeats it (closest after the break {closest2:0.0} m vs {SamMissile.FuseRadius:0.0} m fuse)",
+                broke && closest2 > SamMissile.FuseRadius);
 
             yield return Ticks(1);
         }
