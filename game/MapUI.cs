@@ -168,13 +168,9 @@ namespace UnturnedGodot
 
             foreach (var (name, pos) in MapNodes.Locations)
             {
-                var dot = new ColorRect { Color = UITheme.Accent, Size = new Vector2(5, 5), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var dot = Pip(UITheme.Accent, TownPip);
                 _map.AddChild(dot);
-                var lbl = new Label { Text = name, MouseFilter = Control.MouseFilterEnum.Ignore };
-                lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
-                lbl.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
-                lbl.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
-                lbl.AddThemeConstantOverride("outline_size", 4);
+                var lbl = MapLabel(name, new Color(1f, 1f, 1f));
                 _map.AddChild(lbl);
                 _towns.Add((WorldToNorm(pos), dot, lbl));
             }
@@ -182,6 +178,7 @@ namespace UnturnedGodot
             _arrow = new Polygon2D { Color = new Color(0.25f, 0.9f, 1f) };
             _arrow.Polygon = new Vector2[] { new(0, -11), new(7, 8), new(0, 3), new(-7, 8) };   // points up (north) at rotation 0
             _map.AddChild(_arrow);
+            _arrow.AddChild(Halo(_arrow.Polygon, 2f));
 
             BuildPlayersPanel();
 
@@ -225,7 +222,7 @@ namespace UnturnedGodot
                         if (xy.Length == 2 && float.TryParse(xy[0], out float nx) && float.TryParse(xy[1], out float ny))
                             AddMarker(new Vector2(nx, ny));
                     }
-                GD.Print($"[mapdbg] folder={MapFolder} levelSize={Info().size} nodes={MapNodes.Locations.Count} zoom={_zoom:0.00} pan=({_pan.X:0},{_pan.Y:0}) marks={_markers.Count} base={_baseSize:0} clip={_clip.Position}+{_clip.Size} mapPos={_map.Position} mapSize={_map.Size}");
+                GD.Print($"[mapdbg] folder={MapFolder} levelSize={Info().size} nodes={MapNodes.Locations.Count} zoom={_zoom:0.00} pan=({_pan.X:0},{_pan.Y:0}) marks={_markers.Count} labels={LabelsShown}/{LabelsTotal} base={_baseSize:0} clip={_clip.Position}+{_clip.Size} mapPos={_map.Position} mapSize={_map.Size}");
                 foreach (var m in _markers) GD.Print($"[mapmark] norm=({m.Norm.X:0.000},{m.Norm.Y:0.000}) pin={m.Pin.Position} vis={m.Pin.Visible}");
                 foreach (var (nm, pos) in MapNodes.Locations)
                 {
@@ -344,13 +341,10 @@ namespace UnturnedGodot
             ClampPan(s);
             _map.Position = _pan;
             _map.Size = new Vector2(s, s);
-            foreach (var (norm, dot, lbl) in _towns)
-            {
-                dot.Position = norm * s - new Vector2(2.5f, 2.5f);
-                lbl.Position = norm * s + new Vector2(5f, -7f);
-            }
+            foreach (var (norm, dot, _) in _towns) dot.Position = norm * s - new Vector2(TownPip, TownPip) * 0.5f;
             foreach (var m in _markers) PlaceMarker(m, s);
             PlacePeers(s);
+            LayoutLabels(s);
             RefreshChunks(s);
         }
 
@@ -414,8 +408,7 @@ namespace UnturnedGodot
                 _peerDots[i].dot.Visible = used;
                 _peerDots[i].lbl.Visible = used;
                 if (!used) continue;
-                _peerDots[i].dot.Position = _peerNorms[i] * s - new Vector2(3.5f, 3.5f);
-                _peerDots[i].lbl.Position = _peerNorms[i] * s + new Vector2(7f, -8f);
+                _peerDots[i].dot.Position = _peerNorms[i] * s - new Vector2(PeerPip, PeerPip) * 0.5f;
             }
         }
 
@@ -428,10 +421,112 @@ namespace UnturnedGodot
             _pan = new Vector2(Mathf.Clamp(_pan.X, minX, 0f), Mathf.Clamp(_pan.Y, minY, 0f));
         }
 
+        // ---- MAP FURNITURE: ONE SIZE, EVERY ZOOM (strawberry 2026-09-09: "work on the scale of all of that stuff
+        // and how it should respond to zooming in/out").
+        //
+        // The answer is that the SIZE does not respond, and the DENSITY does. A name scaled with the map is
+        // unreadable at 1x and absurd at 8x, and a pip is a pointer AT a place rather than a thing standing in it,
+        // so both stay a constant number of screen pixels. What zoom changes is how much room there is between
+        // anchors -- so labels are placed greedily and any that would collide with one already down is dropped.
+        // Zoom in and the anchors spread and the names appear; zoom out and the island stays legible instead of
+        // turning into 21 overlapping words. The PIPS never drop, only their labels, so no information ever
+        // disappears -- the dot is still there to hover or read off the roster.
+        // Sized so the FILL matches the old flat dot (5 px town / 7 px peer) and the ring is added OUTSIDE it.
+        // First attempt kept the old 7 px overall and put a 2 px ring inside that, which leaves 3 px of colour and
+        // reads as a black square at map scale -- less legible than the un-ringed dot it replaced, not more.
+        const float PipRing = 2f;
+        const float TownPip = 5f + 2f * PipRing, PeerPip = 7f + 2f * PipRing;
+        static Color PeerColor => new(1f, 0.55f, 0.2f);
+
+        /// <summary>A map pip: a round dot with a dark ring, so it reads on sand, grass, asphalt and water alike.
+        /// The flat un-ringed squares this replaced vanished against any surface close to their own colour.</summary>
+        static Panel Pip(Color fill, float d)
+        {
+            var p = new Panel { Size = new Vector2(d, d), MouseFilter = Control.MouseFilterEnum.Ignore };
+            p.AddThemeStyleboxOverride("panel", UITheme.Box(fill, Mathf.RoundToInt(d * 0.5f), new Color(0f, 0f, 0f, 0.85f), Mathf.RoundToInt(PipRing)));
+            return p;
+        }
+
+        /// <summary>Map label styling in one place, so towns, peers and markers cannot drift apart. Outline 3, not
+        /// the 4 these used to carry: at FontSmall a 4 px outline is thicker than the strokes it is outlining.</summary>
+        /// <summary>A dark copy of a polygon, grown outward from its own centroid and drawn behind it -- the
+        /// Polygon2D equivalent of the ring the pips get. Added as a CHILD with ZIndex -1 so it follows the shape
+        /// it outlines without anything having to keep two positions in step. The cyan arrow on pale sand and the
+        /// gold pin on a road were the two that needed it.</summary>
+        static Polygon2D Halo(Vector2[] poly, float grow)
+        {
+            Vector2 c = Vector2.Zero;
+            foreach (var v in poly) c += v;
+            c /= poly.Length;
+            var outp = new Vector2[poly.Length];
+            for (int i = 0; i < poly.Length; i++)
+            {
+                var d = poly[i] - c;
+                outp[i] = c + d + (d.LengthSquared() > 1e-6f ? d.Normalized() * grow : Vector2.Zero);
+            }
+            return new Polygon2D { Polygon = outp, Color = new Color(0f, 0f, 0f, 0.85f), ZIndex = -1 };
+        }
+
+        static Label MapLabel(string text, Color c)
+        {
+            var l = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore };
+            // FontBody, not FontSmall. 11 px is the size for a dense list read at arm's length; these are names
+            // scattered over a full-screen map panel, and at 11 they were specks next to the detail the tiles now
+            // carry. Bigger names collide sooner, which is the point -- the pass below is what keeps that neat.
+            l.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+            l.AddThemeColorOverride("font_color", c);
+            l.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
+            l.AddThemeConstantOverride("outline_size", 3);
+            return l;
+        }
+
+        readonly System.Collections.Generic.List<(Label lbl, Vector2 anchor, float pip)> _labelPass = new();
+        readonly System.Collections.Generic.List<Rect2> _labelPlaced = new();
+
+        /// <summary>Place every label on the map in ONE pass, so they can be tested against each other. Ordered by
+        /// what the player would miss most: markers they placed themselves, then live people, then scenery.</summary>
+        void LayoutLabels(float s)
+        {
+            _labelPass.Clear();
+            _labelPlaced.Clear();
+            foreach (var m in _markers) _labelPass.Add((m.Tag, m.Norm * s + new Vector2(0f, -9f), 12f));   // beside the pin BODY, not its tip
+            for (int i = 0; i < _peerDots.Count && i < _peerNorms.Count; i++) _labelPass.Add((_peerDots[i].lbl, _peerNorms[i] * s, PeerPip));
+            foreach (var (norm, _, lbl) in _towns) _labelPass.Add((lbl, norm * s, TownPip));
+
+            // Tested against what you can SEE, not against the whole island: a name must not run off the panel,
+            // and a name scrolled off it must not go on blocking one that is on it.
+            var view = new Rect2(-_pan, _clip.Size);
+            int inView = 0;
+            foreach (var (lbl, anchor, pip) in _labelPass)
+            {
+                var sz = lbl.GetMinimumSize();
+                float gap = pip * 0.5f + 4f;
+                var pos = new Vector2(anchor.X + gap, anchor.Y - sz.Y * 0.5f);
+                if (pos.X + sz.X > view.End.X) pos.X = anchor.X - gap - sz.X;   // near the right edge, hang it off the other side
+                var r = new Rect2(pos, sz);
+                bool onScreen = view.Intersects(r);
+                if (onScreen) inView++;
+                bool clear = onScreen;
+                if (clear)
+                    foreach (var q in _labelPlaced)
+                        if (q.Intersects(r)) { clear = false; break; }
+                lbl.Visible = clear;
+                if (clear) { lbl.Position = pos; _labelPlaced.Add(r.Grow(3f)); }   // a little air, so survivors are not touching
+            }
+            // Counted against what is ON SCREEN, not against every label on the island: a name scrolled out of the
+            // panel is not a name this dropped, and lumping the two together would report a collision rate of 22
+            // when the real answer is zero.
+            LabelsShown = _labelPlaced.Count; LabelsTotal = inView;
+        }
+
+        /// <summary>How many labels survived the last pass, and how many were offered. The pair IS the zoom
+        /// response -- it should climb as you zoom in -- so it is worth being able to read rather than squint at.</summary>
+        public int LabelsShown { get; private set; }
+        public int LabelsTotal { get; private set; }
+
         void PlaceMarker(Marker m, float s)
         {
-            m.Pin.Position = m.Norm * s;
-            m.Tag.Position = m.Norm * s + new Vector2(7f, -8f);
+            m.Pin.Position = m.Norm * s;   // the TIP is the marked spot; the tag is placed by LayoutLabels
         }
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
@@ -506,7 +601,7 @@ namespace UnturnedGodot
             int need = rows.Count - 1;
             while (_peerDots.Count < need)
             {
-                var d = new ColorRect { Color = new Color(1f, 0.55f, 0.2f), Size = new Vector2(7, 7), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var d = Pip(PeerColor, PeerPip);
                 _map.AddChild(d);
                 var t = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
                 t.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
@@ -598,15 +693,17 @@ namespace UnturnedGodot
             var pin = new Polygon2D { Color = new Color(1f, 0.85f, 0.2f) };
             pin.Polygon = new Vector2[] { new(0, 0), new(-6, -14), new(0, -19), new(6, -14) };   // a teardrop pin whose TIP is the marked spot
             _map.AddChild(pin);
-            var tag = new Label { Text = $"M{++_markerSeq}", MouseFilter = Control.MouseFilterEnum.Ignore };
-            tag.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
-            tag.AddThemeColorOverride("font_color", new Color(1f, 0.9f, 0.5f));
-            tag.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
-            tag.AddThemeConstantOverride("outline_size", 4);
+            pin.AddChild(Halo(pin.Polygon, 2f));
+            var tag = MapLabel($"M{++_markerSeq}", new Color(1f, 0.9f, 0.5f));
             _map.AddChild(tag);
             var m = new Marker { Norm = norm, Pin = pin, Tag = tag };
             _markers.Add(m);
             PlaceMarker(m, s);
+            // The whole label set has to be re-run, not just this one: labels are placed against EACH OTHER, so a
+            // new pin can legitimately displace a town name that was sitting where its tag now goes. Placing the
+            // tag alone would also leave it at the origin until the next pan, which is what a player would see as
+            // "my marker has no number on it".
+            LayoutLabels(s);
         }
 
         public static MapUI Current;   // the live map screen (one per world); PlayerController routes the Information tab here
