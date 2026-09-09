@@ -196,6 +196,89 @@ def check_hood(sedan, wagon):
     print(f'PASS sedan hood: centre (Y,Z) {sn} → {sc}; wagon {wn} → {wc}; Z scale {scale:.9f}')
 
 
+def check_straight_sides(mesh):
+    """Intersect saved triangles with Z planes, including between vertex stations."""
+    tris = [tuple(tuple(f32(x) for x in mesh['vertices'][int(c.split('/')[0])-1])
+                  for c in face) for face in mesh['faces']]
+
+    def width(z):
+        xs = []
+        for tri in tris:
+            for a,b in zip(tri,tri[1:]+tri[:1]):
+                if abs(a[2]-z) < 1e-6:
+                    xs.append(a[0])
+                if min(a[2],b[2]) < z < max(a[2],b[2]):
+                    t = (z-a[2])/(b[2]-a[2])
+                    xs.append(a[0]+t*(b[0]-a[0]))
+        assert xs, ('empty body section',z)
+        return max(xs)-min(xs)
+
+    # Include every change in the mesh and the spans between them, in addition
+    # to the review's displayed stations. Sparse vertex bands can miss panels.
+    stations = sorted({p[2] for tri in tris for p in tri})
+    probes = stations + [(a+b)/2 for a,b in zip(stations,stations[1:])]
+    for z in probes:
+        assert abs(width(z)-2.52) < 1e-6, ('body width varies',z,width(z))
+    print('| Z (m) | body X extent (m) |')
+    print('| ---: | ---: |')
+    for i in range(27):
+        z = round((i-13)*5.80/26,2)
+        w = width(z)
+        assert abs(w-2.52) < 1e-6, ('review width station',z,w)
+        print(f'| {z:+.2f} | {w:.3f} |')
+
+    # Full extent alone would allow inset doors below a wide roof. Check every
+    # exterior side face as well, then probe the four actual pillar surfaces.
+    sides = 0
+    for face,tri in zip(mesh['faces'],tris):
+        n = mesh['normals'][int(face[0].split('/')[2])-1]
+        if abs(n[0]) > .99999 and all(n[0]*p[0] > 1.0 for p in tri):
+            assert all(abs(abs(p[0])-1.26) < 1e-6 for p in tri), ('inset outer wall/post',tri)
+            sides += 1
+    assert sides > 0
+    for sign in (-1,1):
+        for label,z in (('A',-.91),('B',.245),('C',1.45),('D',2.52)):
+            assert any(segment_hits((sign*1.259,1.5,z),(sign*1.261,1.5,z),t) for t in tris), ('pillar off wall',label,sign)
+    # The gate itself must fill the rear at full width, even if the bumper
+    # would hide a boot-lid notch from the plan-envelope measurement.
+    for x in (-1.25,-1.10,-.5,0,.5,1.10,1.25):
+        for y in (.3,.7,1.05):
+            assert any(segment_hits((x,y,2.679),(x,y,2.681),t) for t in tris), ('recessed/missing tailgate',x,y)
+    for path in sorted(CONTENT.glob('wagon_glass_[lr]_*.txt')):
+        assert all(abs(abs(p[0])-1.256) < 1e-6 for p in obj(path)['vertices']), ('side glass off wall',path)
+    print(f'PASS constant width at {len(probes)} vertex/mid-span sections plus 27 review stations; '
+          f'{sides} flush side triangles, all eight posts, 21 full-width gate probes, six side panes')
+
+
+def check_roof_rake(mesh):
+    glass = obj(CONTENT/'wagon_glass_windshield.txt')
+    yz = sorted({p[1:] for p in glass['vertices']})
+    assert yz == [(1.125,-1.25),(1.92,-.8)], ('windscreen rake/layout changed',yz)
+    (y0,z0),(y1,z1) = yz
+    slope = (z1-z0)/(y1-y0)
+    expected_top = z1+(2.17-y1)*slope
+    # Find the roof's forward-facing triangles independently of their index.
+    front, posts = [], []
+    for face in mesh['faces']:
+        tri = [mesh['vertices'][int(c.split('/')[0])-1] for c in face]
+        n = mesh['normals'][int(face[0].split('/')[2])-1]
+        if all(p[1] >= 1.125 and p[2] < 0 for p in tri) and n[2] < -.1 and abs(n[0]) < 1e-6:
+            (front if all(p[1] >= 1.92 for p in tri) else posts).append(tri)
+            for x,y,z in tri:
+                assert abs(z-(z0+(y-y0)*slope)) < 1e-6, ('roof front breaks A-pillar plane',x,y,z)
+            assert sum(a*b for a,b in zip(n,glass['normals'][0])) > .999999, ('roof/glass normal mismatch',n)
+    assert front, 'missing slanted roof front'
+    assert len(posts) == 4, ('missing A-pillar forward faces',len(posts))
+    corners = {p for tri in front for p in tri}
+    for x in (-1.26,1.26):
+        for y,z in ((1.92,-.8),(2.17,round(expected_top,6))):
+            assert (x,y,z) in corners, ('roof edge endpoint',x,y,z)
+    rear = obj(CONTENT/'wagon_glass_rear.txt')
+    assert sorted({p[1:] for p in rear['vertices']}) == [(1.1,2.68),(1.92,2.56)], 'tailgate rake changed'
+    print(f'PASS roof front coplanar with unchanged windscreen/A-post: top Z {expected_top:.6f}; '
+          f'rake {math.degrees(math.atan(slope)):.6f}° from vertical; tailgate rake unchanged')
+
+
 def check():
     bounds = {p.name: validate(p) for p in sorted(CONTENT.glob("wagon_*.txt"))}
     specs = read_specs(("wagon", "sedan"))
@@ -208,10 +291,12 @@ def check():
         boundary = sum(n == 1 for n in edges.values())
         print(f"| {name} | {len(mesh['vertices'])} | {welded} | {len(mesh['faces'])} | {boundary} / {len(edges)} | {100*boundary/len(edges):.1f}% |")
         if name == 'wagon':
-            assert boundary/len(edges) <= .046, 'wagon exceeds the 4.6% boundary-edge limit'
+            assert boundary == 0, 'wagon must have 0.0% boundary edges'
             assert all(n == 2 for n in edges.values()), 'wagon has an open or overused welded edge'
     surface_audit(wagon["mesh"])
     check_hood(sedan["mesh"], wagon["mesh"])
+    check_straight_sides(wagon["mesh"])
+    check_roof_rake(wagon["mesh"])
     lo,hi = bounds["wagon_body.txt"]
     assert all(abs(x-y) < 0.000001 for x,y in zip(lo+hi,(-1.26,-.27,-2.90,1.26,2.17,2.90))), (lo,hi)
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
@@ -264,7 +349,7 @@ def check():
     assert roof, "Missing roof/cabin registration"
     size,center = vector(roof[1]),vector(roof[2])
     assert abs(center[1]+size[1]/2-hi[1]) < 1e-6
-    assert size == (2.46,.25,3.36) and center == (0,2.045,.88)
+    assert size == (2.52,.25,3.36) and center == (0,2.045,.88)
     assert '"Sedan" or "Station Wagon" => new Vector3' in src
     assert 'name is "Sedan" or "Station Wagon"' in src
     labels = re.findall(r'"([^"]+)"', braced(src,src.index("{",src.index("string[] GlassPaneLabels"))))

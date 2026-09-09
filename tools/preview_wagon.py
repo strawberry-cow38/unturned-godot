@@ -13,7 +13,7 @@ from PIL import Image
 from measure_vehicles import CONTENT, ROOT, obj, read_specs
 
 
-def scene(key):
+def scene(key, body_only=False):
     spec = read_specs((key,))[key]
     faces, colors = [], []
     palette = Image.open(CONTENT / spec["Palette"]).convert("RGBA")
@@ -45,6 +45,8 @@ def scene(key):
             colors.append(color)
 
     add(spec["mesh"],atlas=palette)
+    if body_only:
+        return faces,colors
     wheel = obj(CONTENT / spec["Wheel"])
     wheel_atlas = Image.open(CONTENT / spec["WheelTex"]).convert("RGBA")
     for i,(x,y,z,steer) in enumerate(spec["Wheels"]):
@@ -58,14 +60,13 @@ def scene(key):
     return faces,colors
 
 
-def raster_view(faces, colors, elev, azim):
+def raster_view(faces, colors, elev, azim, extent=(-3.8,3.8,-1.25,3.2)):
     """Orthographic depth buffer: painter sorting exposes hidden cabin faces."""
     elev,azim=np.radians([elev,azim])
     toward=np.array([np.cos(elev)*np.cos(azim),np.cos(elev)*np.sin(azim),np.sin(elev)])
     right=np.array([-np.sin(azim),np.cos(azim),0])
     up=np.cross(toward,right)
     width,height=912,534
-    extent=(-3.8,3.8,-1.25,3.2)
     pixels=np.tile(np.array([243.,243.,238.])/255,(height,width,1))
     depth=np.full((height,width),-np.inf)
     projected=[]
@@ -101,19 +102,23 @@ def raster_view(faces, colors, elev, azim):
 
 def main():
     fig = plt.figure(figsize=(18,10),facecolor="#f3f3ee")
-    views = [("sedan","Sedan • fleet reference",0,-90),
-             ("hatchback","Hatchback • fleet reference",0,-90),
-             ("van","Van • fleet reference",0,-90),
-             ("wagon","Original wagon • front quarter",14,-116),
-             ("wagon","Original wagon • side (−Z is front)",0,-90),
-             ("wagon","Original wagon • rear quarter",16,58)]
+    views = [("sedan","Sedan • hood reference",0,-90),
+             ("wagon","Wagon • body plan, constant 2.520 m",90,-90),
+             ("wagon","Wagon • continuous A-pillar / roof front",0,-90),
+             ("wagon","Wagon • front quarter",14,-116),
+             ("wagon","Wagon • side (−Z is front)",0,-90),
+             ("wagon","Wagon • rear quarter",16,58)]
     for i,(key,title,elev,azim) in enumerate(views,1):
         ax = fig.add_subplot(2,3,i)
-        faces,colors = scene(key)
-        pixels,extent=raster_view(faces,colors,elev,azim)
+        faces,colors = scene(key,body_only=i==2)
+        extent = (-3.8,3.8,-2.225,2.225) if i==2 else (-1.55,.65,1.0,2.29) if i==3 else (-3.8,3.8,-1.25,3.2)
+        pixels,extent=raster_view(faces,colors,elev,azim,extent)
         ax.imshow(pixels,extent=extent)
-        ax.set(xlabel="Z (m)" if elev==0 else "Projected horizontal (m)",
-               ylabel="Y (m)" if elev==0 else "Projected vertical (m)")
+        ax.set(xlabel="Z (m)" if elev in (0,90) else "Projected horizontal (m)",
+               ylabel="X (m)" if i==2 else "Y (m)" if elev==0 else "Projected vertical (m)")
+        if i==2:
+            for x in (-1.26,1.26):
+                ax.plot([-2.9,2.9],[x,x],color="#b44729",linestyle="--",linewidth=.8)
         ax.set_title(title,loc="left",fontweight="bold")
         ax.set_facecolor("#f3f3ee")
     fig.suptitle("OBJ geometry preview — static mesh inspection, not a Godot render",fontsize=17,y=.98)

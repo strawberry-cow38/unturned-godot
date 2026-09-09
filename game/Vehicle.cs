@@ -1981,7 +1981,7 @@ namespace UnturnedGodot
         static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
         {
             "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
-            "Station Wagon"     => (new Vector3(2.46f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // original flat roof; notes/WAGON_REPORT.md
+            "Station Wagon"     => (new Vector3(2.52f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // full-width roof bounds; front face follows A-post rake; notes/WAGON_REPORT.md
             "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
             "Humvee"            => (new Vector3(2.5f, 0.254f, 2.815f), new Vector3(0f, 2.0f, 0.050f)),
             "Roadster"          => (new Vector3(2.5f, 0.254f, 1.367f), new Vector3(0f, 2.0f, 0.672f)),

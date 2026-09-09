@@ -13,6 +13,7 @@ from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs
 
 PAINT = (0.125, 0.75)
 DARK = (0.375, 0.25)
+HALF_WIDTH = 1.26  # One outer wall plane from bumper to bumper, including every post.
 
 def sub(a, b):
     return tuple(x-y for x, y in zip(a, b))
@@ -171,13 +172,6 @@ def build():
     zj = round(zl+(zv-zl)*(bhi-yl)/(yv-yl),6)
     front = [(yl,zn),(blo,-2.90),(bhi,-2.90),(bhi,zj),(yv,zv)]
 
-    def width(z):
-        if z <= zn:
-            return 1.16
-        if z < -2.32:
-            return 1.16+.10*(z-zn)/(-2.32-zn)
-        return 1.26-max(0.,z-2.32)*(.10/.44)
-
     def hood_y(z):
         return yn+(yc-yn)*(z-zn)/(zc-zn)
 
@@ -192,28 +186,34 @@ def build():
 
     for sign in (-1,1):
         side=(sign,0,0)
-        # Compact nose side and stepped bumper; no closed boxes inside it.
-        panel([(sign*1.16,y,z) for y,z in front]+[(sign*1.16,ys,zn)],side)
+        # Full-width nose side and stepped sedan bumper profile.
+        panel([(sign*HALF_WIDTH,y,z) for y,z in front]+[(sign*HALF_WIDTH,ys,zn)],side)
         for z0,z1 in zip(zs,zs[1:]):
-            x0,x1=sign*width(z0),sign*width(z1)
+            x0=x1=sign*HALF_WIDTH
             panel([(x0,sill(z0),z0),(x1,sill(z1),z1),
                    (x1,shoulder(z1),z1),(x0,shoulder(z0),z0)],side)
             if z1 <= zc:
-                # Sedan's transverse 0.125 m hood shoulder, blended to wagon width.
+                # Sedan's transverse 0.125 m hood shoulder, at full wagon width.
                 panel([(x0,shoulder(z0),z0),(x1,shoulder(z1),z1),
                        (sign*.98,hood_y(z1),z1),(sign*.98,hood_y(z0),z0)],(0,1,0))
             elif z0 == zc:
-                panel([(x0,1.,z0),(x1,1.,z1),(sign*1.23,1.125,z1),
-                       (sign*.98,1.125,z1),(sign*.98,yc,z0)],(0,1,0))
+                # Split the shoulder-to-cowl transition into planar facets.
+                # Its outer rise is now on the wall, so it cannot be projected
+                # as one roof-facing polygon without collapsing an edge.
+                a,b,c=(x0,1.,z0),(x1,1.,z1),(x1,1.125,z1)
+                d,e=(sign*.98,1.125,z1),(sign*.98,yc,z0)
+                panel([a,b,c],side)
+                panel([a,c,e],(0,1,0))
+                panel([c,d,e],(0,1,0))
             else:
                 panel([(x0,1.,z0),(x1,1.,z1),
-                       (sign*1.23,rail(z1),z1),(sign*1.23,rail(z0),z0)],side)
+                       (sign*HALF_WIDTH,rail(z1),z1),(sign*HALF_WIDTH,rail(z0),z0)],side)
         # A single underside bevel joins the sill to the bottom sheet.
         for z0,z1 in zip(zs,zs[1:]):
-            panel([(sign*width(z0),sill(z0),z0),(sign*.99,-.27,z0),
-                   (sign*.99,-.27,z1),(sign*width(z1),sill(z1),z1)],(sign,-1,0),DARK)
+            panel([(sign*HALF_WIDTH,sill(z0),z0),(sign*.99,-.27,z0),
+                   (sign*.99,-.27,z1),(sign*HALF_WIDTH,sill(z1),z1)],(sign,-1,0),DARK)
         for z0,z1 in ((2.68,2.76),(2.76,2.90)):
-            w0,w1=width(z0),width(z1) if z1<2.9 else 1.16
+            w0=w1=HALF_WIDTH
             panel([(sign*w0,-.12,z0),(sign*w1,-.12,z1),
                    (sign*w1,.16,z1),(sign*w0,.16,z0)],side,DARK)
             panel([(sign*w0,-.12,z0),(sign*.99,-.27,z0),
@@ -222,8 +222,8 @@ def build():
     # Across the stepped front. The hood centre is one longitudinal slope
     # followed by the sedan's level cowl (shortened to the accepted A-post).
     for (y0,z0),(y1,z1) in zip(front,front[1:]):
-        panel([(-1.16,y0,z0),(1.16,y0,z0),(1.16,y1,z1),(-1.16,y1,z1)],(0,z1-z0,y0-y1),DARK if y0 in (blo,bhi) and y1 in (blo,bhi) else PAINT)
-    panel([(-.99,-.27,zn),(.99,-.27,zn),(1.16,yl,zn),(-1.16,yl,zn)],(0,0,-1),DARK)
+        panel([(-HALF_WIDTH,y0,z0),(HALF_WIDTH,y0,z0),(HALF_WIDTH,y1,z1),(-HALF_WIDTH,y1,z1)],(0,z1-z0,y0-y1),DARK if y0 in (blo,bhi) and y1 in (blo,bhi) else PAINT)
+    panel([(-.99,-.27,zn),(.99,-.27,zn),(HALF_WIDTH,yl,zn),(-HALF_WIDTH,yl,zn)],(0,0,-1),DARK)
     # The central fascia is partitioned around the grille, which is a material
     # patch on this surface; it has no coincident hidden backing or floating box.
     def fascia(y):
@@ -234,7 +234,7 @@ def build():
                    (x1,y1,fascia(y1)),(x0,y1,fascia(y1))],(0,0,-1),
                   DARK if x0==-.48 and y0==.36 else PAINT)
     for sign in (-1,1):
-        panel([(sign*.98,yv,zv),(sign*1.16,yv,zv),(sign*1.16,ys,zn),(sign*.98,yn,zn)],(0,0,-1))
+        panel([(sign*.98,yv,zv),(sign*HALF_WIDTH,yv,zv),(sign*HALF_WIDTH,ys,zn),(sign*.98,yn,zn)],(0,0,-1))
     panel([(-.98,yn,zn),(.98,yn,zn),(.98,yc,zc),(-.98,yc,zc)],(0,1,0))
     panel([(-.98,yc,zc),(.98,yc,zc),(.98,1.125,-1.25),(-.98,1.125,-1.25)],(0,1,0))
     # Firewall, passenger floor, raised load deck, and inside of the tailgate.
@@ -246,13 +246,13 @@ def build():
     panel([(-.98,1.10,2.53),(.98,1.10,2.53),(.98,1.10,2.68),(-.98,1.10,2.68)],(0,1,0))
     panel([(-.99,-.27,zn),(.99,-.27,zn),(.99,-.27,2.90),(-.99,-.27,2.90)],(0,-1,0),DARK)
 
-    # Rear bumper joins the lower tailgate at Y=.16. The latch is inset into a
-    # partitioned rear surface, with its back face omitted.
+    # Wagon-specific full-width tailgate and bumper: no sedan boot-lid recess.
+    # The latch joins a partitioned rear surface, with its back face omitted.
     for z0,z1 in ((2.68,2.76),(2.76,2.90)):
-        w0,w1=width(z0),width(z1) if z1<2.9 else 1.16
+        w0=w1=HALF_WIDTH
         panel([(-w0,.16,z0),(w0,.16,z0),(w1,.16,z1),(-w1,.16,z1)],(0,1,0),DARK)
-    panel([(-1.16,-.12,2.90),(1.16,-.12,2.90),(1.16,.16,2.90),(-1.16,.16,2.90)],(0,0,1),DARK)
-    panel([(-.99,-.27,2.90),(.99,-.27,2.90),(1.16,-.12,2.90),(-1.16,-.12,2.90)],(0,0,1),DARK)
+    panel([(-HALF_WIDTH,-.12,2.90),(HALF_WIDTH,-.12,2.90),(HALF_WIDTH,.16,2.90),(-HALF_WIDTH,.16,2.90)],(0,0,1),DARK)
+    panel([(-.99,-.27,2.90),(.99,-.27,2.90),(HALF_WIDTH,-.12,2.90),(-HALF_WIDTH,-.12,2.90)],(0,0,1),DARK)
     for x0,x1 in zip((-.98,-.23,.23),(-.23,.23,.98)):
         for y0,y1 in zip((.16,.89,.96),(.89,.96,1.10)):
             if x0==-.23 and y0==.89:
@@ -264,8 +264,8 @@ def build():
             else:
                 panel([(x0,y0,2.68),(x1,y0,2.68),(x1,y1,2.68),(x0,y1,2.68)],(0,0,1))
     for sign in (-1,1):
-        panel([(sign*.98,.16,2.68),(sign*width(2.68),.16,2.68),
-               (sign*width(2.68),1.,2.68),(sign*1.23,1.10,2.68),(sign*.98,1.10,2.68)],(0,0,1))
+        panel([(sign*.98,.16,2.68),(sign*HALF_WIDTH,.16,2.68),
+               (sign*HALF_WIDTH,1.,2.68),(sign*HALF_WIDTH,1.10,2.68),(sign*.98,1.10,2.68)],(0,0,1))
 
     # The accepted four posts, three apertures, and flat roof. Their bases and
     # tops join the wall/roof directly; there are no mating caps inside solids.
@@ -273,8 +273,12 @@ def build():
              [(1.10,.12),(1.92,.12),(1.92,.37),(1.10,.37)],
              [(1.10,1.35),(1.92,1.35),(1.92,1.55),(1.10,1.55)],
              [(1.10,2.48),(1.92,2.36),(1.92,2.56),(1.10,2.68)]]
+    # Continue the actual A-post/windscreen plane through the roof thickness.
+    # The glass and post endpoints stay fixed; only the former vertical cap moves.
+    (base_y,base_z),(top_y,top_z)=posts[0][:2]
+    roof_front_z=top_z+(2.17-top_y)*(top_z-base_z)/(top_y-base_y)
     for sign in (-1,1):
-        xo,xi=sign*1.23,sign*.98
+        xo,xi=sign*HALF_WIDTH,sign*.98
         for post in posts:
             panel([(xo,y,z) for y,z in post],(sign,0,0))
             panel([(xi,y,z) for y,z in post],(-sign,0,0))
@@ -287,11 +291,14 @@ def build():
             panel([(xi,1.92,z0),(xo,1.92,z0),(xo,1.92,z1),(xi,1.92,z1)],(0,-1,0))
         panel([(xi,-.12,-1.25),(xi,-.12,1.36),(xi,.18,1.36),(xi,.18,2.53),
                (xi,1.10,2.53),(xi,1.10,-1.),(xi,1.125,-1.25)],(-sign,0,0),DARK)
-        panel([(xo,1.92,-.80),(xo,2.17,-.80),(xo,2.17,2.56),(xo,1.92,2.56)],(sign,0,0))
-    panel([(-1.23,2.17,-.80),(1.23,2.17,-.80),(1.23,2.17,2.56),(-1.23,2.17,2.56)],(0,1,0))
+        panel([(xo,1.92,-.80),(xo,2.17,roof_front_z),(xo,2.17,2.56),(xo,1.92,2.56)],(sign,0,0))
+    panel([(-HALF_WIDTH,2.17,roof_front_z),(HALF_WIDTH,2.17,roof_front_z),
+           (HALF_WIDTH,2.17,2.56),(-HALF_WIDTH,2.17,2.56)],(0,1,0))
     panel([(-.98,1.92,-.80),(.98,1.92,-.80),(.98,1.92,2.56),(-.98,1.92,2.56)],(0,-1,0))
-    for z in (-.80,2.56):
-        panel([(-1.23,1.92,z),(1.23,1.92,z),(1.23,2.17,z),(-1.23,2.17,z)],(0,0,z))
+    panel([(-HALF_WIDTH,1.92,-.80),(HALF_WIDTH,1.92,-.80),
+           (HALF_WIDTH,2.17,roof_front_z),(-HALF_WIDTH,2.17,roof_front_z)],(0,1,-1))
+    panel([(-HALF_WIDTH,1.92,2.56),(HALF_WIDTH,1.92,2.56),
+           (HALF_WIDTH,2.17,2.56),(-HALF_WIDTH,2.17,2.56)],(0,0,1))
     body.write('wagon_body.txt', weld_positions=True)
     shutil.copyfile(CONTENT/'sedan_palette.png',CONTENT/'wagon_palette.png')
 
@@ -300,7 +307,7 @@ def build():
         'rear': [(-.98,1.10,2.68),(-.98,1.92,2.56),(.98,1.92,2.56),(.98,1.10,2.68)],
     }
     for side,sign in [('l',-1),('r',1)]:
-        x=sign*1.226
+        x=sign*(HALF_WIDTH-.004)
         panes[side+'_front']=[(x,1.10,-1.00),(x,1.10,.12),(x,1.92,.12),(x,1.92,-.55)]
         panes[side+'_rear']=[(x,1.10,.37),(x,1.10,1.35),(x,1.92,1.35),(x,1.92,.37)]
         panes[side+'_mid1']=[(x,1.10,1.55),(x,1.10,2.48),(x,1.92,2.36),(x,1.92,1.55)]
