@@ -404,3 +404,4 @@ C:/claude-workspace/unturned-godot/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Comp
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Compat.dll
+/tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.sourcelink.json

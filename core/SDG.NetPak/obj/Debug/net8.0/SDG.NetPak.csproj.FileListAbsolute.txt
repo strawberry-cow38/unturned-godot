@@ -540,3 +540,4 @@ C:/claude-workspace/unturned-godot/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.c
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/refint/SDG.NetPak.dll
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.pdb
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/ref/SDG.NetPak.dll
+/tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.sourcelink.json

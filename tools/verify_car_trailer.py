@@ -133,6 +133,30 @@ def truck_wall():
     return outer-inner, top-floor, 2*outer
 
 # Expected dimensions are recomputed from donors, independently of the asset generator.
+
+
+def _shift_axles(src,name,dz):
+    """Move every wheel row of one spec along Z."""
+    start=src.index('static readonly Spec _'+name+' = new()'); end=src.index('};',start)
+    body=re.sub(r'(\(-?[\d.]+f, [\d.]+f, )(-?[\d.]+)(f, (?:false|true)\))',
+                lambda m:m.group(1)+f'{float(m.group(2))+dz:.6f}'+m.group(3), src[start:end])
+    return src[:start]+body+src[end:]
+
+
+def _axle_centre(g,wall_t,radius,t,cls):
+    """Axle-set centre for a class: 60% of the deck, unless the class pins its REAR axle to another
+    class's setback from the tailgate, in which case the set hangs forward of that."""
+    C=CLASSES[cls]; L=g['mesh']['size'][2]*C['length']
+    ref=C.get('rear_setback_from')
+    if not ref: return L/10
+    R=CLASSES[ref]; RL=g['mesh']['size'][2]*R['length']; spacing=2*radius+t
+    rear_last=RL/10+(spacing/2 if R['axles']>1 else 0)
+    setback=RL/2-rear_last
+    last=L/2-setback
+    zs=[last-spacing*i for i in range(C['axles']-1,-1,-1)]
+    return sum(zs)/len(zs)
+
+
 def expected(cls='dinky'):
     s,rr=measurements();g=s['golf']
     radius=g['WheelRadius']                    # the CAR's wheel, not the quad's
@@ -154,7 +178,8 @@ def expected(cls='dinky'):
     track=W+tw
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
-                    ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
+                    ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,tw=tw,
+                    az=_axle_centre(g,wall_t,radius,t,cls),
                     # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
                     dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
                     ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
@@ -357,6 +382,20 @@ def cases(cls='dinky'):
         actual_width=group_bounds('side_1')[1][0]-group_bounds('side_-1')[0][0]
         require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),'tyre inner faces do not meet the sideboards')
         require(actual_track > actual_width,'wheels are not outboard of the box')
+    if CLASSES[cls].get('rear_setback_from'):
+        def setback():
+            """This class's REAR axle sits the same distance in from its tailgate as the referenced
+            class's does. Read off both real specs and both real meshes -- a cross-class invariant, so
+            moving the reference's wheels and not this one's is a failure rather than a divergence."""
+            ref=CLASSES[cls]['rear_setback_from']+'_trailer'
+            def rear_of(k,body):
+                zs=[float(q[2]) for q in re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields(k)['Wheels'])]
+                return obj(CONTENT/body)['hi'][2]-max(zs)
+            mine=rear_of(KEY,KEY+'_body.txt'); theirs=rear_of(ref,ref+'_body.txt')
+            require(close(mine,theirs,1e-4),f'rear axle sits {mine:.4f} from the tailgate, {ref} puts its own at {theirs:.4f}')
+        add(f'rear axle setback matches the {CLASSES[cls]["rear_setback_from"]}',setback,
+            (VEH,lambda x:_shift_axles(x,KEY,.4),'walk the axles forward'),
+            (VEH,lambda x:_shift_axles(x,CLASSES[cls]['rear_setback_from']+'_trailer',.4),'move the reference instead'))
     add('axles: one row per wheel, passive, flush with the box, centred on 60% deck',wheels,
         # Same trap as the track mutation: the medium's wheels are not at az, so matching that literal
         # edited nothing. Steer the FIRST wheel row of this class's spec whatever its Z happens to be.

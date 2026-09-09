@@ -90,7 +90,11 @@ CLASSES = {
     'dinky':  dict(length=.60, width_steps=0, axles=1, wide=False, display='Dinky Trailer'),
     'small':  dict(length=.75, width_steps=1, axles=1, wide=False, display='Small Trailer'),
     'medium': dict(length=.95, width_steps=2, axles=2, wide=True,  display='Medium Trailer'),
-    'large':  dict(length=1.15, width_steps=4, axles=2, wide=True, display='Large Trailer'),
+    'large':  dict(length=1.15, width_steps=4, axles=2, wide=True, display='Large Trailer',
+                   # strawberry: "move the large trailer wheels back. same distance from the back as
+                   # the medium trailer's wheels-back distance". Derived from that class, not typed --
+                   # move the medium's axles and the large's follow.
+                   rear_setback_from='medium'),
 }
 
 
@@ -148,6 +152,15 @@ def design(specs, rear, cls='small'):
     # Z, so their centres are at least 2r apart; plus t of clearance. Single-axle classes ignore it.
     axle_spacing = 2*radius+t
     axle_zs = [axle_z] if C['axles']==1 else [axle_z-axle_spacing/2, axle_z+axle_spacing/2]
+    if C.get('rear_setback_from'):
+        # Put the REAR axle the same distance in from the tailgate as the referenced class puts its
+        # own, then hang the rest of the set forward of it. On a longer deck the 60%-of-length rule
+        # walks the wheels forward; this pins them to the back end instead.
+        ref = design(specs, rear, C['rear_setback_from'])
+        setback = ref['back'] - max(ref['axle_zs'])
+        last = back - setback
+        axle_zs = [last-axle_spacing*i for i in range(C['axles']-1, -1, -1)]
+        axle_z = sum(axle_zs)/len(axle_zs)
     # WHEELS SIT HIGHER ON THE BODY, at the fleet's own relationship (strawberry: "move the wheels
     # higher up on the trailer"). Measured: golf, sedan, hatchback, jeep, truck and van ALL rest their
     # wheel centre .2734 above the body's lowest point. The trailer's sat at .0000 -- centre exactly

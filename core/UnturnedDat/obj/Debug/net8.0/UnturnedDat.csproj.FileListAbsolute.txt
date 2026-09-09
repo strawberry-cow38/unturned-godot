@@ -540,3 +540,4 @@ C:/claude-workspace/unturned-godot/core/UnturnedDat/obj/Debug/net8.0/ref/Unturne
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/refint/UnturnedDat.dll
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.pdb
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/ref/UnturnedDat.dll
+/tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.sourcelink.json

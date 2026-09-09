@@ -3188,7 +3188,7 @@ namespace UnturnedGodot
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Large Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.750003f, 0.250000f, -0.023716f, false), (1.750003f, 0.250000f, -0.023716f, false), (-1.750003f, 0.250000f, 1.226284f, false), (1.750003f, 0.250000f, 1.226284f, false) },
+            { (-1.750003f, 0.250000f, 0.394568f, false), (1.750003f, 0.250000f, 0.394568f, false), (-1.750003f, 0.250000f, 1.644568f, false), (1.750003f, 0.250000f, 1.644568f, false) },
             TailPos = new[] { new Vector3(-1.237866f, 0.476570f, 2.948646f), new Vector3(1.237865f, 0.476570f, 2.948654f) },
             Parts = new (string, Color)[] { ("large_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };

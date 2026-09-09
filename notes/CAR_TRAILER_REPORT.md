@@ -526,3 +526,24 @@ line: whether the width budget has the tyre subtracted from it.
 
 The wide-class-only checks went with the arrangement: no deck-clears-tyre rule, no gating of the ride
 rule, one flush rule covering all four. **224 named checks, 916 mutations.**
+
+### Third correction: the large's axles pinned to the medium's setback
+
+strawberry: *"move the large trailer wheels back. same distance from the back as the medium trailer's
+wheels-back distance"*.
+
+`axle_z` was 60% of the deck length in every class, which walks the wheels **forward** as the deck grows
+— the large's rear axle sat 1.781 in from its tailgate against the medium's 1.362. The large now takes
+its rear-axle setback **from the medium**, and the rest of its axle set hangs forward of that:
+
+- dinky   back +1.569, axles at [0.314], rear setback **1.255**
+- small   back +1.961, axles at [0.392], rear setback **1.569**
+- medium  back +2.484, axles at [-0.128, 1.122], rear setback **1.362**
+- large   back +3.006, axles at [0.395, 1.645], rear setback **1.362**
+
+Derived, not typed: `rear_setback_from='medium'` in the class table, so moving the medium's wheels moves
+the large's with them. The check is the cross-class invariant read off **both** real specs and **both**
+real meshes, with two mutations — walk this class's axles forward, and move the reference's instead.
+The second is the one that matters: it fails if the two ever stop tracking each other.
+
+**225 named checks, 918 mutations.**
