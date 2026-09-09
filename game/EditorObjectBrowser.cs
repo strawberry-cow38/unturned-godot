@@ -16,6 +16,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.Dictionary<string, int> _rowOf = new();   // prop name -> its row, for attaching a thumbnail when it finishes
         OptionButton _tableDrop;   // loot-crate table picker (shown only when a loot crate is selected)
         Control _crateBox;
+        Control _omitBox; CheckBox _omitCheck;   // "omit from map bake" -- shown for ANY selection, not one prop type
         OptionButton _presetDrop;  // grid-power preset picker (shown only when a grid box is selected)
         LineEdit _gridNameEdit, _gridWattEdit;
         Control _gridBox;
@@ -105,6 +106,21 @@ namespace UnturnedGodot
             cbox.AddChild(_tableDrop);
             box.AddChild(cbox);
 
+            // OMIT FROM MAP BAKE -- appears for ANY selection, unlike the three type-specific tweaks below it
+            // (strawberry 2026-09-09). A prop can be flagged whether it is one the editor placed or one of the
+            // map's own, so the only condition is that something is selected.
+            var obox = new VBoxContainer { Visible = false };
+            _omitBox = obox;
+            var ol = new Label { Text = "▼ MAP BAKE" };
+            ol.AddThemeFontSizeOverride("font_size", 13);
+            ol.AddThemeColorOverride("font_color", new Color(0.65f, 0.9f, 0.65f));
+            obox.AddChild(ol);
+            _omitCheck = new CheckBox { Text = "Omit from map bake", CustomMinimumSize = new Vector2(CTRL, 30), FocusMode = Control.FocusModeEnum.None };
+            _omitCheck.AddThemeFontSizeOverride("font_size", 13);
+            _omitCheck.Toggled += on => _objects.SetSelectedOmitFromBake(on);
+            obox.AddChild(_omitCheck);
+            box.AddChild(obox);
+
             // grid-power config -- appears when a placed ⚡ Grid Power box is selected
             var gbox = new VBoxContainer { Visible = false };
             _gridBox = gbox;
@@ -137,6 +153,7 @@ namespace UnturnedGodot
             pbox.AddChild(_stationEdit);
             box.AddChild(pbox);
 
+            _objects.SelectionChanged += SyncOmitToggle;
             _objects.SelectionChanged += SyncCratePicker;
             _objects.SelectionChanged += SyncGridPicker;
             _objects.SelectionChanged += SyncPumpPicker;
@@ -215,6 +232,17 @@ namespace UnturnedGodot
         {
             _preview.ShowOnStage(name);
             if (_stageName != null) _stageName.Text = name ?? "—";
+        }
+
+        void SyncOmitToggle()   // selection changed: show the omit checkbox for ANY selection + reflect the primary's flag
+        {
+            if (_omitBox == null) return;
+            _omitBox.Visible = _objects.AnySelected;
+            if (!_objects.AnySelected || _omitCheck == null) return;
+            // SetPressedNoSignal, or reflecting the selection re-fires Toggled and writes the flag straight back
+            // onto the props -- which would push an undo entry for a selection change and, worse, stamp the
+            // primary's value across a mixed multi-selection the moment you clicked it.
+            _omitCheck.SetPressedNoSignal(_objects.SelectedOmitFromBake);
         }
 
         void SyncCratePicker()   // selection changed: show the table dropdown for a selected loot crate + reflect its table

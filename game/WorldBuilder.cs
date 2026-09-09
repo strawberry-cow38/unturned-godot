@@ -152,6 +152,43 @@ namespace UnturnedGodot
         public static (int, int) SideRoadKey(Vector3 gpos)
             => (Mathf.RoundToInt(gpos.X * 10f), Mathf.RoundToInt(-gpos.Z * 10f));
 
+        // ---- OMIT FROM MAP BAKE ------------------------------------------------------------------------
+        // strawberry 2026-09-09: "give all props in the editor an 'omit from map bake' toggle tweak".
+        //
+        // A SIDECAR KEYED BY POSITION, exactly like traffic_side_roads.txt above -- the shape master already
+        // accepted for "a per prop flag" -- and for the same reasons plus one more. placements.txt already spends
+        // its eleventh token on the material-variant name (see PlaceNote), so there is no free column; and a
+        // position key covers RETAIL map props as well as editor-placed ones, which a flag living in the editor's
+        // own save file could not. Rounded to 0.1 m: the file is written FROM the same placements, so it only has
+        // to survive float formatting.
+        //
+        // The prop is not hidden at bake time, it is NEVER BUILT. Props batch into MultiMeshes, and an instance
+        // inside a batch has no node of its own to hide -- so "skip it in the bake camera" is not a thing that can
+        // be expressed once batching has happened. Skipping the placement is both simpler and total.
+        public static string BakeOmitFile(string mapFolder)
+            => string.IsNullOrEmpty(mapFolder) || mapFolder == "PEI"
+                ? "bake_omit.txt"
+                : "bake_omit_" + System.Text.RegularExpressions.Regex.Replace(mapFolder, "[^A-Za-z0-9]", "") + ".txt";
+
+        /// <summary>Set by --bakemap only. Off everywhere else, so a flagged prop is a normal prop in the game.</summary>
+        public static bool SkipBakeOmitted;
+
+        /// <summary>The flagged placements, keyed as SideRoadKey does. Empty when the sidecar is absent.</summary>
+        public static System.Collections.Generic.HashSet<(int, int)> LoadBakeOmit(string dir, string mapFolder)
+        {
+            var set = new System.Collections.Generic.HashSet<(int, int)>();
+            string path = dir + BakeOmitFile(mapFolder);
+            if (!System.IO.File.Exists(path)) return set;
+            foreach (var line in System.IO.File.ReadLines(path))
+            {
+                if (line.Length == 0 || line[0] == '#') continue;
+                var q = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (q.Length >= 2 && float.TryParse(q[0], out var ox) && float.TryParse(q[1], out var oz))
+                    set.Add((Mathf.RoundToInt(ox * 10f), Mathf.RoundToInt(oz * 10f)));
+            }
+            return set;
+        }
+
         // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
         // trunk distance is per-prop instead of constant.
         const float FoliageCullFraction = 0.75f;
@@ -1571,10 +1608,20 @@ namespace UnturnedGodot
                 placed++;
             }
             StationFuel.Reset();   // fresh shared station tanks for this world build (before any gas pumps attach)
+            // Props the editor flagged "omit from map bake" -- read only when a bake is what we are doing, so the
+            // set is empty and the lookup below is free in every normal build.
+            var bakeOmit = SkipBakeOmitted ? LoadBakeOmit(dir, MapUI.MapFolder) : null;
+            int bakeOmitted = 0;
             foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
+                // BEFORE the destructible index, the holiday branch and the container/note branches, so a flagged
+                // prop is not built as any of them either. Only a bake ever takes this path.
+                if (bakeOmit != null && bakeOmit.Count > 0
+                    && float.TryParse(p[1], out var _bx) && float.TryParse(p[3], out var _bz)
+                    && bakeOmit.Contains((Mathf.RoundToInt(_bx * 10f), Mathf.RoundToInt(_bz * 10f))))
+                { bakeOmitted++; continue; }
                 // reserve the destructible index HERE (before the holiday/container branch) so every peer assigns
                 // the same index to the same placement regardless of holiday deferral -- the wire id must agree.
                 int destIdx = rubbleCat.ContainsKey(p[0].ToLowerInvariant()) ? destN++ : -1;
@@ -1593,6 +1640,7 @@ namespace UnturnedGodot
             // path, since their groups would never be flushed.
             propBatch.Flush(root);
             batchOpen = false;
+            if (bakeOmitted > 0) GD.Print($"[bakemap] {bakeOmitted} prop placement(s) omitted by {BakeOmitFile(MapUI.MapFolder)}");
             if (propBatch.Batched > 0)
                 // NODES, not simultaneous draws -- the LOD levels of one prop are separate groups but their
                 // distance bands do not overlap, so at most one of them can draw at a time, and frustum +

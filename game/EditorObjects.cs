@@ -103,6 +103,7 @@ namespace UnturnedGodot
                 LoadCustomPlaceables();
             }
             else LoadSaved();   // blank map: restore session placements (main objects + custom placeables) from the sidecars
+            LoadBakeOmitFlags();   // ...then re-apply the omit-from-bake flags to whichever set just landed in _placed
             if (_catalog.Count > 0) PlaceName = _catalog[0];   // default to placing the first prop
         }
 
@@ -367,6 +368,79 @@ namespace UnturnedGodot
             string prefix = container.HasMeta("store_shelf") ? "Store Shelf" : "Loot Crate";
             foreach (var c in container.GetChildren()) if (c is Label3D lbl) lbl.Text = ContainerLabelText(prefix, tbl);
         }
+        // ---- OMIT FROM MAP BAKE (strawberry 2026-09-09: "give all props in the editor an 'omit from map bake'
+        // toggle tweak") -------------------------------------------------------------------------------------
+        // Every prop, not a prop TYPE, which is what makes this different from the loot-table / grid-power /
+        // gas-pump tweaks beside it: those appear for one kind of placeable, this applies to anything selectable
+        // -- including the map's own retail props, since IngestLoadedObjects put them in _placed too.
+        public const string OmitMeta = "bake_omit";
+        public bool AnySelected => _selection.Count > 0;
+        public bool SelectedOmitFromBake => Primary != null && Primary.HasMeta(OmitMeta) && (bool)Primary.GetMeta(OmitMeta);
+
+        /// <summary>Set the flag on the WHOLE selection, not just the gizmo's primary. Marking a treeline or a
+        /// row of fences out of the bake is the actual use, and doing it one prop at a time is the version of
+        /// this feature nobody would use.</summary>
+        public void SetSelectedOmitFromBake(bool on)
+        {
+            if (_selection.Count == 0) return;
+            var before = new List<(Node3D n, bool was)>();
+            foreach (var n in _selection)
+            {
+                if (!IsInstanceValid(n)) continue;
+                before.Add((n, n.HasMeta(OmitMeta) && (bool)n.GetMeta(OmitMeta)));
+                n.SetMeta(OmitMeta, on);
+            }
+            if (before.Count == 0) return;
+            _editor?.PushUndo(on ? "omit from bake" : "include in bake", () =>
+            {
+                foreach (var (n, was) in before) if (IsInstanceValid(n)) n.SetMeta(OmitMeta, was);
+                SelectionChanged?.Invoke();
+            });
+            SelectionChanged?.Invoke();
+        }
+
+        string BakeOmitPath => Dir + WorldBuilder.BakeOmitFile(_editor.MapName);
+
+        /// <summary>Write the flagged props' placement positions, in the same file-space X/Z and the same 0.1 m
+        /// rounding the world loader keys on. Deliberately deleted when nothing is flagged rather than left as an
+        /// empty file: an absent sidecar is the "no omissions" state everywhere else in this pipeline.</summary>
+        void SaveBakeOmit()
+        {
+            var rows = new List<Node3D>();
+            foreach (var p in _placed) if (IsInstanceValid(p) && p.HasMeta(OmitMeta) && (bool)p.GetMeta(OmitMeta)) rows.Add(p);
+            if (rows.Count == 0)
+            {
+                if (System.IO.File.Exists(BakeOmitPath)) System.IO.File.Delete(BakeOmitPath);
+                return;
+            }
+            using var w = new System.IO.StreamWriter(BakeOmitPath, false);
+            w.WriteLine("# props omitted from the map bake (--bakemap): placement X and Z, file-space, 0.1 m");
+            foreach (var p in rows)
+            {
+                var gp = p.GlobalPosition;
+                w.WriteLine($"{gp.X:0.#} {(-gp.Z):0.#}");   // -Z back to file space, matching Save() above
+            }
+            GD.Print($"[editor] {rows.Count} prop(s) omitted from the map bake -> {BakeOmitPath}");
+        }
+
+        /// <summary>Re-apply the saved flags to whatever is in _placed, by the same position key. Runs after both
+        /// ingest paths, so a reopened editor shows the toggles it was left with.</summary>
+        void LoadBakeOmitFlags()
+        {
+            var set = WorldBuilder.LoadBakeOmit(Dir, _editor.MapName);
+            if (set.Count == 0) return;
+            int n = 0;
+            foreach (var p in _placed)
+            {
+                if (!IsInstanceValid(p)) continue;
+                var gp = p.GlobalPosition;
+                if (!set.Contains((Mathf.RoundToInt(gp.X * 10f), Mathf.RoundToInt(-gp.Z * 10f)))) continue;
+                p.SetMeta(OmitMeta, true);
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] {n} prop(s) flagged omit-from-bake");
+        }
+
         public bool CrateSelected => Primary != null && Primary.HasMeta("loot_table");   // any loot container (crate OR shelf) -> the table dropdown applies
         public System.Action SelectionChanged;   // the browser watches this to show/sync the loot-table dropdown
         public int SelectedCrateTable => CrateSelected && Primary.HasMeta("loot_table") ? (int)Primary.GetMeta("loot_table") : 0;
@@ -791,6 +865,7 @@ namespace UnturnedGodot
             SaveStoreShelves();
             SaveGridPower();
             SaveGasPump();
+            SaveBakeOmit();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
