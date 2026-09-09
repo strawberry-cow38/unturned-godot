@@ -33,6 +33,26 @@ namespace UnturnedGodot.Testing
             return Mathf.RadToDeg(Mathf.Atan2(rel.Dot(up), rel.Dot(back)));
         }
 
+        /// <summary>The camera placement as it was BEFORE cb5fc99e -- flattened heading, world-vertical height --
+        /// reproduced here for one purpose: to be REJECTED. tinyclaw, 2026-09-09: "'fails on the old camera by
+        /// construction' is still reasoning ... if the check is vacuous it comes back PASS and tells you nothing",
+        /// and once the fix is committed the old camera is not around to fail against.
+        ///
+        /// Running the check once in a scratch worktree would answer that once. A CONTROL answers it every night:
+        /// the assertions below are applied to this too, and must reject it. If someone later widens the tolerance
+        /// until the check no longer discriminates, that shows up here rather than as a quiet PASS. Same shape as
+        /// the control pairs in PlaneDiveTests, and it does not need the no-tests rule bent to get the evidence.
+        ///
+        /// Its fidelity does not have to be perfect to do its job. It only has to be top-down at a dive, which was
+        /// the complaint; a criterion that cannot separate this from the fix is not measuring anything.</summary>
+        static Vector3 LegacyChaseCamPos(Transform3D vt, float size)
+        {
+            float dist = Mathf.Clamp(size * 0.62f, 6.5f, 20f);
+            var pf = -vt.Basis.Z; pf.Y = 0f;
+            pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;
+            return vt.Origin - pf * (dist * 0.9f) + Vector3.Up * (dist * 0.34f + size * 0.05f);
+        }
+
         public override IEnumerable<Step> Run()
         {
             var v = Vehicle.BuildByName("fighterjet");
@@ -78,6 +98,19 @@ namespace UnturnedGodot.Testing
             var rolled = samples.Find(x => Mathf.IsEqualApprox(x.roll, 50f));
             T.Check($"a 50 degree roll does not swing the chase angle ({rolled.deg:0.0} vs {level:0.0} deg)",
                 Mathf.Abs(rolled.deg - level) < 4f);
+
+            // ---- THE CONTROL. Everything above passes on the shipped camera; none of it means anything unless the
+            // same criteria REJECT the camera this replaced. Run them against the old placement and require failure.
+            float size = v.WorldMeshAabb().Size.Length();
+            var diveXf = new Transform3D(Basis.FromEuler(new Vector3(Mathf.DegToRad(-60f), 0f, 0f), EulerOrder.Yxz),
+                                         new Vector3(0f, 400f, 0f));
+            var levelXf = new Transform3D(Basis.Identity, new Vector3(0f, 400f, 0f));
+            float oldLevel = AboveAxisDeg(levelXf, LegacyChaseCamPos(levelXf, size));
+            float oldDive = AboveAxisDeg(diveXf, LegacyChaseCamPos(diveXf, size));
+            GD.Print($"[planecam] CONTROL old camera: level {oldLevel:0.0}, 60 deg dive {oldDive:0.0}");
+            T.Check($"the control reproduces the bug -- the old camera DID track pitch ({oldDive:0.0} vs {oldLevel:0.0} deg)",
+                Mathf.Abs(oldDive - oldLevel) > 20f);
+            T.Check($"...and this test's own criterion rejects it ({oldDive:0.0} deg is not < 40)", !(oldDive < 40f));
             yield break;
         }
     }
