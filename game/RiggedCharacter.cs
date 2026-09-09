@@ -109,6 +109,10 @@ namespace UnturnedGodot
         MeshInstance3D _faceQuad;
         public int Face { get; private set; } = -1;
         public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, 31)}.png";
+
+        /// <summary>Render-harness seam: the face decal itself, so a camera can be framed on where the face
+        /// ACTUALLY is instead of on where the head is assumed to be.</summary>
+        public MeshInstance3D FaceQuadForTest => _faceQuad;
         public void SetFace(int face)
         {
             face = Mathf.Clamp(face, 0, 31);
@@ -1218,7 +1222,15 @@ namespace UnturnedGodot
                 {
                     // Bone-attach to the Skull so the face TRACKS the head through animation + ragdoll (not a fixed
                     // root child, which floats at rest-pose height). Skull rest = pos(0,1.32,0), basis maps
-                    // world=(localY,-localX,localZ); the head-front world (0,1.75,-0.25) -> bone-local (-0.43,0,-0.25).
+                    // world=(localY,-localX,localZ); the head-front world (0,1.75,-0.212) -> bone-local (-0.43,0,-0.212).
+                    //
+                    // THE -0.212 IS MEASURED, and the -0.25 it replaces was not (strawberry 2026-09-09: "the player
+                    // face floats in front of the face a decent distance"). These heads are BOXES: every vertex in
+                    // the eye band (y 1.68-1.82 of rig.json) sits on one flat plane at z = -0.2077, spanning
+                    // x +/-0.1994. So the front of the head is at -0.2077 exactly, the old -0.25 hung the decal
+                    // 4.2 cm off the front of the face, and 0.212 puts it 4 mm proud -- clear of z-fighting with a
+                    // coplanar surface, far too little to read as a gap. (The 0.38 quad is already sized to that
+                    // 0.399 wide plane, and Y was never the problem, so neither moves.)
                     var att = new BoneAttachment3D { BoneName = "Skull" };
                     skel.AddChild(att);
                     var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) }, VisibilityRangeEnd = 45f, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // tiny transparent decal: cull its overdraw past ~45m + it never needs a shadow
@@ -1233,7 +1245,7 @@ namespace UnturnedGodot
                     att.AddChild(fq);
                     root._faceQuad = fq;
                     { var fm = System.Text.RegularExpressions.Regex.Match(faceTexPath, @"face_(\d+)"); if (fm.Success && int.TryParse(fm.Groups[1].Value, out int fi)) root.SetFace(fi); }   // picks up the emission map for faces that have one
-                    fq.Position = new Vector3(-0.43f, 0f, -0.25f);
+                    fq.Position = new Vector3(-0.43f, 0f, -0.212f);
                     fq.Basis = new Basis(new Vector3(0f, -1f, 0f), new Vector3(-1f, 0f, 0f), new Vector3(0f, 0f, -1f));
                 }
             }

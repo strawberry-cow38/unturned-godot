@@ -1017,7 +1017,11 @@ namespace UnturnedGodot
             gbody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(gbody);
 
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+            // The face decal is OFF in the normal --rig strip and always has been, which is its own small lesson:
+            // the harness for "look at the character" could not show the one part of the character most likely to
+            // be placed wrong. UG_RIGHEAD turns it on rather than changing what every existing --rig run renders.
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null,
+                System.Environment.GetEnvironmentVariable("UG_RIGHEAD") == "1" ? RiggedCharacter.FacePath(PlayerProfile.Face) : null);
             if (rc == null) { GD.PrintErr("[rig] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
@@ -1074,7 +1078,22 @@ namespace UnturnedGodot
             // 3/4 front view, framed on a ~1.9m character (pulled back for --gun so the whole holding pose reads)
             var cam = new Camera3D { Fov = string.IsNullOrEmpty(gun) ? 42f : 52f };
             AddChild(cam);
-            if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+            // UG_RIGHEAD=1: a tight 3/4 on the head instead. The body framing puts the head at a few dozen pixels,
+            // which is why the face decal could hang 4 cm off the front of the face without any render showing it
+            // (strawberry 2026-09-09: "the player face floats in front of the face a decent distance"). Anything
+            // about the face, hair or a hat wants this view; the whole-body one cannot answer it.
+            if (System.Environment.GetEnvironmentVariable("UG_RIGHEAD") == "1")
+            {
+                // Framed off the face quad's ACTUAL world position rather than an assumed head height -- the first
+                // attempt hard-coded (0,1.75,-0.10) and put the camera inside the shoulder, which tells you nothing
+                // except that guessing at a subject's position is how you photograph the wrong thing.
+                var fq = _rc?.FaceQuadForTest;
+                Vector3 head = fq != null && GodotObject.IsInstanceValid(fq) ? fq.GlobalPosition : new Vector3(0f, 1.75f, -0.21f);
+                GD.Print($"[righead] face quad at {head} (local z should be about -0.212 off the body centreline)");
+                cam.Fov = 26f;
+                cam.LookAtFromPosition(head + new Vector3(-1.25f, 0.18f, -1.65f), head, Vector3.Up);
+            }
+            else if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
             else cam.LookAtFromPosition(new Vector3(4.5f, 1.7f, -6.5f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
         }
 
