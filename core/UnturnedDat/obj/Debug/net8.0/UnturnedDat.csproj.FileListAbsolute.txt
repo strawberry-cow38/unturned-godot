@@ -535,7 +535,6 @@ C:/claude-workspace/unturned-godot/core/UnturnedDat/obj/Debug/net8.0/ref/Unturne
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.AssemblyInfoInputs.cache
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.AssemblyInfo.cs
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.csproj.CoreCompileInputs.cache
-/tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.sourcelink.json
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/Unturned.72FBA0C2.Up2Date
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/UnturnedDat.dll
 /tmp/snow/bigtrailer/core/UnturnedDat/obj/Debug/net8.0/refint/UnturnedDat.dll

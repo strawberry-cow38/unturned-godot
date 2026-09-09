@@ -120,14 +120,13 @@ def design(specs, rear, cls='small'):
     # outer face, which is what "flush" means here and what removes the outrigger look the axle bar
     # was drawing attention to.
     C = CLASSES[cls]
-    if C['wide']:
-        # NO WIDTH LIMIT: the box is set straight off the Golf track plus its wall-section steps and
-        # the track is left alone, so the deck simply overhangs the wheels instead of being bounded by
-        # them. Nothing is typed -- it is still the Golf's measured track and the truck's wall section.
-        deck_w = golf['tracks'][-1]+wall_t/2*C['width_steps']
-        track = golf['tracks'][-1]
-    else:
-        deck_w = (golf['tracks'][-1]+wall_t/2*C['width_steps'])-tyre_width-2*t
+    # NO WIDTH LIMIT ON THE BIG TWO -- but the wheels still mount on the SIDES (strawberry: "the medium
+    # and large trailers are sitting on TOP of the wheels. wheels should attach to the sides"). Lifting
+    # the limit means the box stops being capped by the tyre; the TRACK simply follows it outward. The
+    # first attempt kept the track on the Golf's and put the deck over the wheels, which is a different
+    # vehicle -- a flatbed -- and not what was asked for.
+    budget = golf['tracks'][-1]+wall_t/2*C['width_steps']
+    deck_w = budget if C['wide'] else budget-tyre_width-2*t
     # FLUSH = the tyre sits AGAINST the sideboard's outer face, not inside it. Aligning the tyre's
     # OUTER face with the wall instead puts the wheel through the box: the tyre tops out .620 above
     # the deck floor, so at that track its inner half rises into the cargo bay. Nothing about removing
@@ -135,7 +134,7 @@ def design(specs, rear, cls='small'):
     # bed over it, which needs deck_y 1.100 against today's -.023, i.e. a lorry-height floor.
     # So the wheel is hard against the wall with the gap closed, which is what the axle bar was
     # spanning and why it can go.
-        track = deck_w+tyre_width
+    track = deck_w+tyre_width
     deck_l = length*C['length']
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
@@ -157,13 +156,6 @@ def design(specs, rear, cls='small'):
     # have to keep meeting the ground.
     ride = (golf['Wheels'][0][1]-.25) - obj(CONTENT/golf['fields']['Body'].strip('"'))['lo'][1]
     deck_y = wall_t-ride
-    if C['wide']:
-        # THE DECK CLEARS THE TYRE AT REST, not at full compression. Clearing compression first put the
-        # deck .300 above the resting tyre, and the render showed exactly what that is: daylight under
-        # the bed with the wheels hanging in it, unattached to anything. That gap is the whole of
-        # "fix the wheel positions". A bottomed suspension now meets the deck underside, which is what
-        # a bump stop is for and what the fleet's own cars do inside their arches.
-        deck_y = wheel_center_y+radius+t+wall_t
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_center_y,

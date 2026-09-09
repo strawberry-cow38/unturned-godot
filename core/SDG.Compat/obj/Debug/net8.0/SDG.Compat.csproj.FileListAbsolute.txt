@@ -400,7 +400,6 @@ C:/claude-workspace/unturned-godot/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Comp
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfoInputs.cache
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfo.cs
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.csproj.CoreCompileInputs.cache
-/tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.sourcelink.json
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.dll
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
 /tmp/snow/bigtrailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb

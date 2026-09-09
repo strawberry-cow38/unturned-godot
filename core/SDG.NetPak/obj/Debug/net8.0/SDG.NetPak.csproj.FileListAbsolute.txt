@@ -535,7 +535,6 @@ C:/claude-workspace/unturned-godot/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.c
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.AssemblyInfoInputs.cache
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.AssemblyInfo.cs
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.csproj.CoreCompileInputs.cache
-/tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.sourcelink.json
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.csproj.Up2Date
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/SDG.NetPak.dll
 /tmp/snow/bigtrailer/core/SDG.NetPak/obj/Debug/net8.0/refint/SDG.NetPak.dll

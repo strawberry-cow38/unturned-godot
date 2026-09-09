@@ -148,21 +148,15 @@ def expected(cls='dinky'):
     # The TYRES set the width, not the truck. Without arches, any flat-sided box wider than the tyre's
     # inner face (track/2 - tw/2) has the tyre buried in its sideboard; the bed's own 2.462 did exactly
     # that. The truck still governs the wall SECTION, which is what was actually asked for.
-    if C['wide']:
-        # NO WIDTH LIMIT: box set straight off the track plus its steps, track left on the Golf's, so
-        # the deck overhangs the wheels instead of being bounded by them.
-        W=track; track=g['tracks'][-1]
-    else:
-        W=track-tw-2*t                         # box width, from the widened Golf track
-        track=W+tw                             # then the track is SOLVED so the tyre sits against it
+    # Uncapped for the wide classes -- the box stops being bounded by the tyre -- but the wheels still
+    # mount on the SIDES in every class, so the track follows the box outward either way.
+    W=track if C['wide'] else track-tw-2*t
+    track=W+tw
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,tw=tw,
                     # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
-                    # wide: the deck clears the RESTING tyre by t. Resting centre is ground+radius,
-                    # so the floor is ground + 2r + t + one wall section.
-                    dy=rr['golf']['ground']+2*radius+t+wall_t if C['wide']
-                       else wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
+                    dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
                     ride=(g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1],
                     # the sedan's own lamp inset from its body side -- re-measured here, not imported
                     lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
@@ -294,7 +288,7 @@ def cases(cls='dinky'):
         anchor=float(re.search(r'\(-?[\d.]+f, ([-\d.]+)f,',fields(KEY)['Wheels']).group(1))
         require(close(anchor-.25-group_bounds('deck')[0][1], d['ride']),
                 f'wheel rest {anchor-.25:.4f} sits {anchor-.25-group_bounds("deck")[0][1]:.4f} above the deck underside, fleet is {d["ride"]:.4f}')
-    if not d['wide']: add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
+    add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
         (BODY,move_group('deck',(0,.3,0)),'lift the body off its wheels'),
         fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.900000f, 0.313712f, false), (1.300000f, 0.900000f, 0.313712f, false) }'))
     add('sideboard section = the truck bed wall, measured',sideboard,
@@ -335,39 +329,16 @@ def cases(cls='dinky'):
         outer_wall=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
         require(close(inner_tyre,outer_wall,1e-5),
                 f'tyre inner face {inner_tyre:.4f} does not meet the sideboard at {outer_wall:.4f}')
-    def deck_clears_tyre():
-        """WIDE CLASSES: the wheels are under the deck, so the invariant is vertical, not lateral.
-        The deck's underside sits just above the RESTING tyre -- about one t. Clearing the fully
-        COMPRESSED tyre instead leaves .300 of daylight and the wheels hang in it looking detached,
-        which is what the render showed. A bottomed suspension meeting the deck is what a bump stop is
-        for, and is what the fleet's own cars do inside their arches. Read off the mesh and the spec."""
-        rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields(KEY)['Wheels'])
-        rest=max(float(q[1]) for q in rows)-.25+number(fields(KEY)['WheelRadius'])
-        under=group_bounds('deck')[0][1]
-        require(under >= rest, f'deck underside {under:.4f} is below the resting tyre top {rest:.4f}')
-        require(under-rest <= 2*t, f'deck floats {under-rest:.4f} above the resting tyre; should be about t')
-        # PER SIDE. Taking max() over both sideboards meant pulling ONE of them inside the wheels
-        # changed nothing, and the audit caught that mutation surviving -- a check that can only see
-        # the wider half is blind to exactly the asymmetric mistake a hand edit makes.
-        anchor=max(abs(float(q[0])) for q in rows)
-        for sg in (-1,1):
-            edge=max(abs(group_bounds('side_'+str(sg))[i][0]) for i in (0,1))
-            require(edge > anchor, f'side {sg} at {edge:.4f} does not overhang the wheel centre {anchor:.4f}')
-    if d['wide']:
-        add('wide class: deck clears the compressed tyre and overhangs the wheels',deck_clears_tyre,
-            (BODY,move_group('deck',(0,-.3,0)),'drop the deck onto the tyre'),
-            (BODY,move_group('deck',(0,.3,0)),'float the deck above the tyre'),
-            (BODY,move_group('side_1',(-.6,0,0)),'pull the box inside the wheels'),
-            fieldmut('WheelRadius','1.2f'))
-    else:
-        add('tyres flush against the sideboards, tyre inner face on the wall',tyre_flush,
+    # The wide classes' deck-over-the-wheels arrangement is gone: it was a flatbed, not what was asked
+    # for. Every class mounts its wheels on the sides, so one flush rule covers all four again.
+    add('tyres flush against the sideboards, tyre inner face on the wall',tyre_flush,
         (BODY,move_group('side_1',(.1,0,0)),'move the wall off the tyre'),
         (BODY,move_group('side_-1',(-.1,0,0)),'move the other wall off the tyre'),
         fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.250000f, 0.313712f, false), (1.300000f, 0.250000f, 0.313712f, false) }'),
         # Widen the track back to the Golf's on EVERY wheel row of this class. Matching one row by its
         # literal Z stopped working the moment a class had two axles -- the medium's wheels are not at
         # az -- and an unmatched pattern is an ineffective mutation, not a passing check.
-        (VEH,lambda x:_retrack(x,KEY,d['track']/2,s['golf']['tracks'][-1]/2),'restore Golf track under the wider box'))
+        (VEH,lambda x:_retrack(x,KEY,d['track']/2,d['track']/2+.3),'shove the track off the sideboard'))
     def wheels():
         """One row per wheel: every axle, both sides, all passive. The medium is the only tandem, and
         its two axles must sit at DISTINCT Z -- four wheels stacked on one Z passes a bare count."""
@@ -384,13 +355,8 @@ def cases(cls='dinky'):
             require(zs[-1]-zs[0] >= 2*d['r'],f'tandem tyres overlap in Z: {zs[-1]-zs[0]:.4f} < {2*d["r"]:.4f}')
         actual_track=float(rows[1][0])-float(rows[0][0])
         actual_width=group_bounds('side_1')[1][0]-group_bounds('side_-1')[0][0]
-        if d['wide']:
-            # The box overhangs the wheel CENTRES, not necessarily the whole tyre -- the medium's tyres
-            # stand 75 mm proud each side, which is the same relationship every car in the fleet has.
-            require(actual_track < actual_width+1e-6,'wide class: the box should overhang the wheel centres')
-        else:
-            require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),'tyre inner faces do not meet the sideboards')
-            require(actual_track > actual_width,'wheels are not outboard of the box')
+        require(close((actual_track-d['tw'])/2, actual_width/2, 1e-5),'tyre inner faces do not meet the sideboards')
+        require(actual_track > actual_width,'wheels are not outboard of the box')
     add('axles: one row per wheel, passive, flush with the box, centred on 60% deck',wheels,
         # Same trap as the track mutation: the medium's wheels are not at az, so matching that literal
         # edited nothing. Steer the FIRST wheel row of this class's spec whatever its Z happens to be.

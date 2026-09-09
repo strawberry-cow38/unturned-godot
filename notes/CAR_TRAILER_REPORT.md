@@ -450,7 +450,7 @@ rather than passing, which is the only reason they were visible at all.
 Renders: `car_trailer_family.png` puts all three beside the Golf on one ground plane at true scale.
 Unverified as ever: towing stability, cargo retention, multiplayer hitch behaviour.
 
-## Eighth pass: a large class, and the width limit lifted
+## Eighth pass: a large class, and the width limit lifted (see the correction below)
 
 strawberry: *"now do a large one. twin axle. wider! ignore the limit on width. redo the medium with no
 width limit"*.
@@ -500,3 +500,29 @@ the Golf's 2.185 roof rather than level with it.
 The wide-class check moved with it — deck underside above the RESTING tyre, within 2t — and gained a
 second mutation, `float the deck above the tyre`, because the old rule had only ever been able to catch
 a deck that was too LOW. The defect it missed was a deck that was too high.
+
+### Second correction: the wheels belong on the SIDES, not under the deck
+
+strawberry: *"they arent fixed. the medium and large trailers are sitting on TOP of the wheels. wheels
+should attach to the sides."*
+
+That is a correction of my reading, not of an arithmetic slip. I took *"ignore the limit on width"* to
+mean the box should stop being tied to the track at all — so I froze the track on the Golf's and let
+the deck overhang the wheels, which makes a **flatbed**. Widening the box *and* letting the track follow
+it out is what was actually wanted, and I had explicitly rejected that in the eighth pass as "the same
+rule with bigger numbers". It is not: the rule was the box being **capped** by the tyre, and lifting the
+cap while keeping the wheels on the sides is exactly the thing.
+
+So there is one arrangement again, in every class — tyre inner face flush on the sideboard's outer
+face, floor back at **−0.023**. The only difference between narrow and wide classes is now a single
+line: whether the width budget has the tyre subtracted from it.
+
+| class | key | deck | track | overall | axles |
+|---|---|---|---|---|---|
+| dinky | `dinky_trailer` | 3.137 x 2.100 | 2.500 | 2.900 | 1 |
+| small | `small_trailer` | 3.921 x 2.225 | 2.625 | 3.025 | 1 |
+| medium | `medium_trailer` | 4.967 x 2.850 | 3.250 | 3.650 | 2 |
+| large | `large_trailer` | 6.013 x 3.100 | 3.500 | 3.900 | 2 |
+
+The wide-class-only checks went with the arrangement: no deck-clears-tyre rule, no gating of the ride
+rule, one flush rule covering all four. **224 named checks, 916 mutations.**
