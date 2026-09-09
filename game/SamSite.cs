@@ -67,6 +67,11 @@ namespace UnturnedGodot
         public int Loaded { get; private set; } = Rack;      // tubes still holding a missile
         public Vehicle Target { get; private set; }          // the heli currently locked
         public int Fired { get; private set; }               // lifetime count, for the harness/tests
+        /// <summary>Test seam: track normally, never launch. The aim probes need a site that HOLDS a target for
+        /// several seconds per bearing, and a live one empties two full racks into it over that time -- which
+        /// eventually destroys the target and makes the aim check fail for a reason that has nothing to do with
+        /// aiming. A test that can fail for the wrong reason is worse than no test.</summary>
+        public bool DebugHoldFire;
         /// <summary>Lock tones emitted. Counted rather than inferred so the suite can assert the warning starts
         /// at acquisition -- there is no other way to test a sound.</summary>
         public int Warnings { get; private set; }
@@ -224,7 +229,7 @@ namespace UnturnedGodot
                 case State.Idle:
                 case State.Tracking:
                     Mode = Target == null ? State.Idle : State.Tracking;
-                    if (Target != null && Loaded > 0 && _lockT >= LockTime) { Mode = State.Firing; _timer = 0f; }
+                    if (Target != null && Loaded > 0 && _lockT >= LockTime && !DebugHoldFire) { Mode = State.Firing; _timer = 0f; }
                     break;
 
                 case State.Firing:

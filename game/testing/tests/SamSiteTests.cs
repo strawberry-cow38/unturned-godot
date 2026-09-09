@@ -114,6 +114,11 @@ namespace UnturnedGodot.Testing
             T.Check($"the second barrage is another {SamSite.Rack} (fired {site.Fired} total)",
                 site.Fired == SamSite.Rack * 2);
 
+            // Everything from here to the destructible section is about TRACKING, not shooting -- and a live site
+            // holding one target for six seconds a bearing empties two full racks into it, which would eventually
+            // blow the target up and fail these checks for a reason that has nothing to do with what they test.
+            site.DebugHoldFire = true;
+
             // ---- 6. THE HEAD POINTS AT THE TARGET, MEASURED ON THREE BEARINGS. This is a sign check, not an
             // accuracy check: a yaw derivation that is inverted produces a launcher facing the MIRROR bearing,
             // which is completely plausible in any single screenshot and is what I wrote first (atan2(x, -z)
@@ -277,6 +282,8 @@ namespace UnturnedGodot.Testing
             // halves worth separating: partial damage must NOT stop it -- a launcher that goes cold on the first
             // bullet is not destructible, it is fragile -- and a dead one must go completely quiet rather than
             // merely stop launching.
+            site.DebugHoldFire = false;   // firing is the subject again: "a destroyed site launches nothing" has no
+                                          // teeth against a site that was not going to launch anyway.
             T.Check($"a fresh site is alive and shootable ({site.Health:0}/{SamSite.MaxHealth:0} hp, collides on layer {site.CollisionLayer})",
                 !site.Destroyed && site.Health > 0f && site.CollisionLayer != 0u);
 
