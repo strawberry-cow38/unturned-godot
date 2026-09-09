@@ -58,7 +58,7 @@ The fractions below are explicit design choices applied to measured donors, not 
 
 The mesh is an open green-sided utility trailer with a timber deck, single axle, A-frame drawbar, coupler/locking handle, faceted mudguards, mudflaps, rear lamps, hinges and latches. It is not a trailer for carrying a whole car.
 
-The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **96 position records, 144 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
+The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **80 position records, 120 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
 
 All 11 authored mesh/palette assets were also regenerated and compared byte for byte; there was no drift.
 
@@ -94,7 +94,7 @@ One small system extension is necessary for this shape: `Spec.HitchYawLimit`, de
 Spawn with the canonical vehicle name **`car_trailer`** wherever the existing vehicle command accepts `golf` or `wagon`. Added `BuildCarTrailer`, `BuildByName`, `SpecFor` (including the MP puppet path), and an **append at SpecNames TypeId 33**. Every old key and index from `1f7f106d` remains unchanged, including SUV at 32. It is command-only; the natural spawn pool is unchanged. The wagon verifier was updated to allow later appended vehicles while still comparing its entire original index prefix.
 
 - `dotnet build game/UnturnedGodot.csproj`: passed. Both the final build and a control build with the original `1f7f106d` Vehicle.cs (new test omitted) reported **22 identical pre-existing warnings, zero errors**. Warning messages were compared as sets; there are no new warnings.
-- `python3 tools/verify_car_trailer.py --mutation-test`: **51 named checks, 203 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
+- `python3 tools/verify_car_trailer.py --mutation-test`: **51 named checks, 204 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
 - `python3 tools/verify_wagon.py`: passed, retaining the original 32 pre-wagon TypeIds and wagon TypeId 32.
 - Godot 4.6 `--headless --path game -- --tests=vehicle.car_trailer`: **46 checks passed** in the construction/coupling fixture: actual server/replica mesh loading, canonical identity, two passive wheels, all eight hitch Parts, attach/detach and PinJoint presence, coincident anchors, retracted/redeployed support, and imported yaw limit. Headless was used for this fixture only, not for the renders.
 
@@ -192,3 +192,38 @@ Everything else -- ParseObj rules, indices, per-corner normals and UVs, degenera
 
 **Bigger:** deck **3.1371 x 2.4620** (was 2.6143 x 2.1000), from `golf length * .6` and the truck bed's
 own outer width. Body is **96 v / 144 tris**, down again from 232.
+
+## Third pass: one section throughout, wheels proud, lens flush
+
+strawberry: *"fix the weird geom. make edges consistent. move wheels to the sides like cars are. move
+tail lights so they stick out the same as sedan"*.
+
+**One section for the whole cargo box.** Deck, both sideboards and both gates are all `wall_t` = the
+truck bed's .250; nothing in the box is a different thickness now. The separate chassis rails are gone
+with the mixture -- they were t = .050 members under a .0875 deck, and a .250 slab **is** the
+under-frame, which is exactly how the truck carries its own bed (floor at Y .125 over structure down to
+-.125, precisely .250).
+
+**The weird geometry was a lip.** The deck used to overhang the tailgate by `wall_t`/4 and the
+headboard by the same, so the trailer ended in a thin shelf standing proud of the panel that was
+supposed to be its back. The gates own the ends now -- their outer faces are the deck's front and rear
+planes -- and the deck is inset half a section inside all four walls, which also removes a coplanar
+pair on |X| = w that would have z-fought.
+
+**Wheels sit proud, like every car's.** Measured across the fleet: sedan, hatchback, golf, police,
+jeep, offroader, truck and van all share body half-width 1.261 against track/2 1.300 and tyre
+half-width .200 -- **the tyre's outer face stands .239 outboard of the bodywork on every one of them**.
+Tucking the wheels under the deck was my own idea when the arches came off, and it made the trailer
+read as a box on castors. Track is back to the fleet's 2.600.
+
+**The lens is nearly flush, not hanging off the back.** Both obvious readings are wrong. Against the
+sedan's rear-most point (2.9424) the lens is **154 mm recessed** -- but that point is the bumper, down
+at Y -.27..1.00. And there is no body vertex inside the lens's own Y band at all, so sampling by height
+finds nothing to compare against. What the sedan actually has is a stack of tail planes -- 2.7265,
+2.7562, 2.7644, 2.7993, 2.8662, 2.9424 -- with the lens rear at 2.7880 sitting *between* two of them:
+**24 mm proud of the one behind it, 11 mm inside the one in front**. So the honest relationship is
+"flush to within a couple of centimetres". The trailer's lens now stands .0236 proud of the tailgate,
+derived from that nearest plane. It previously stood its full 190 mm depth out in the air, six times
+the sedan's relationship, because I had seated its *front* face on the rear plane.
+
+Body is **80 v / 120 tris**, down from 144.

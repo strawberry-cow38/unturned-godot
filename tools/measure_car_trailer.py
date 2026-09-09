@@ -89,10 +89,12 @@ def design(specs, rear):
     wall_t, wall_h = bed['wall_t'], bed['wall_h']
     deck_w = bed['outer_w']                     # the bed's own outer width, up from 2.100
     deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
-    # The wheels tuck UNDER the deck now the arches are gone. Leaving them on the Golf's 2.600 track
-    # would hang the tyres 270 mm outboard of a deck with nothing over them, which reads as broken
-    # rather than as a design. Flush with the deck edge instead.
-    track = deck_w-tyre_width
+    # WHEELS SIT PROUD, THE WAY EVERY CAR'S DO (strawberry: "move wheels to the sides like cars are").
+    # Measured across the fleet, sedan/hatchback/golf/police/jeep/offroader/truck/van all share body
+    # half-width 1.261 against track/2 1.300 and tyre half-width .200 -- the tyre's outer face stands
+    # .239 outboard of the bodywork on every one of them. Tucking them under the deck was my own idea
+    # when the arches came off and it made the trailer read as a box on castors. Back to the fleet track.
+    track = golf['tracks'][-1]
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)

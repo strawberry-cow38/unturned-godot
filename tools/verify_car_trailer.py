@@ -102,7 +102,7 @@ def expected():
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,dy=g['Wheels'][0][1],tw=tw,
-                    wall_t=wall_t,wall_h=wall_h,track=W-tw)
+                    wall_t=wall_t,wall_h=wall_h,track=g['tracks'][-1])
 
 def source_names(src):
     src=uncomment(src);return re.findall(r'"([^"]+)"',braced(src,src.index('{',src.index('string[] SpecNames'))))
@@ -171,16 +171,19 @@ def cases():
     # Rear datum is L/2, the DECK's back face. It used to be L/2+t, which was the tailgate hinge blocks
     # standing proud of it -- those went with the rest of the sub-centimetre hardware, so the deck is the
     # rearmost geometry now. Third mutation added because nothing was guarding the hi-Z corner.
-    # X extent is the DECK now, not the mudguards -- they were the widest thing on the trailer and
-    # they are gone. Top is the sideboard, which stands wall_h above the deck instead of the old r.
+    # X extent is the AXLE, spanning the fleet track to reach wheels that sit proud of the deck the way
+    # every car's do. Top is the sideboard, wall_h above the deck; front is the coupler, rear the
+    # tailgate -- the deck no longer overhangs it.
     add('body AABB from deck, wall height, stand and tongue',
-        lambda:require(close(obj(BODY)['lo'],(-W/2,d['ground'],k[2]-2*t)) and
-                       close(obj(BODY)['hi'],(W/2,dy+d['wall_h'],L/2))),
+        lambda:require(close(obj(BODY)['lo'],(-d['track']/2,d['ground'],k[2]-2*t)) and
+                       close(obj(BODY)['hi'],(d['track']/2,dy+d['wall_h'],L/2))),
         (BODY,move_group('coupler',(0,0,-.1)),'grow nose'),(BODY,move_group('landing_stand',(0,-.1,0)),'lower stand'),
-        (BODY,move_group('deck',(0,0,.1)),'stretch tail'))
-    add('deck = half Golf length, between tracks minus tyre envelopes',
-        lambda:require(close(group_bounds('deck'),((-W/2,dy-2*t,-L/2),(W/2,dy-t/4,L/2))) and L<s['golf']['mesh']['size'][2]<s['trailer']['mesh']['size'][2]),
-        (BODY,move_group('deck',(.1,0,0)),'shift deck'))
+        (BODY,move_group('tailgate',(0,0,.1)),'stretch tail'))   # the TAILGATE owns the rear datum now, not the deck
+    wt_=d['wall_t']
+    add('deck is one wall section thick, inset inside the walls',
+        lambda:require(close(group_bounds('deck'),((-W/2+wt_/2,dy-wt_,-L/2+wt_/2),(W/2-wt_/2,dy,L/2-wt_/2)))
+                       and L<s['golf']['mesh']['size'][2]<s['trailer']['mesh']['size'][2]),
+        (BODY,move_group('deck',(.1,0,0)),'shift deck'),(BODY,move_group('deck',(0,.1,0)),'raise deck'))
     def sideboard():
         lo,hi=group_bounds('side_1')
         require(close(hi[1],dy+d['wall_h']),'sideboard top is not the truck bed wall height')
@@ -203,8 +206,10 @@ def cases():
         text=fields('car_trailer')['Wheels']; rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (false|true)\)',text)
         require(len(rows)==2 and all(q[3]=='false' for q in rows))
         require(close([tuple(map(float,q[:3])) for q in rows],[(-d['track']/2,d['wy'],d['az']),(d['track']/2,d['wy'],d['az'])]))
-        require(close(d['track']/2+d['tw']/2,W/2),'tyres are not flush with the deck edge')
-    add('one axle, tyres flush under the deck edge, axle at 60% deck',wheels,
+        proud=d['track']/2+d['tw']/2-W/2
+        require(proud>0,'tyres are tucked inside the deck; every car in the fleet carries them proud')
+        require(close(d['track'],s['golf']['tracks'][-1]),'trailer is not on the fleet track')
+    add('one axle on the fleet track, tyres proud like a car, axle at 60% deck',wheels,
         (VEH,lambda x:x.replace(f"{d['az']:.6f}f, false",'0f, true',1),'revert wheel anchor and steering'))
     add('axle mesh follows wheel rest centres',lambda:require(close(group_bounds('axle'),((-d['track']/2,d['wy']-.25-t,d['az']-t),(d['track']/2,d['wy']-.25+t,d['az']+t)))),
         (BODY,move_group('axle',(0,0,.1)),'move axle'))
@@ -230,7 +235,7 @@ def cases():
             require(fields(name).get('FifthWheel','Vector3.Zero')==( 'new Vector3(0f, 0.62f, 3.0f)' if name=='semi' else 'Vector3.Zero'))
     add('specialised fleet tow eligibility unchanged',tow_policy,
         (VEH,lambda x:x.replace('static readonly Spec _quad = new()\n        {','static readonly Spec _quad = new()\n        {\n            FifthWheel = new Vector3(0f, 0f, 3f),'),'enable quad'))
-    add('main collider follows deck, does not fill open load space',lambda:require(close(vector(fields('car_trailer')['BoxSize']),(W,2*t,L)) and close(vector(fields('car_trailer')['BoxCenter']),(0,dy-t,0)) and 'HullBoxes' in fields('car_trailer') and len(vectors(fields('car_trailer')['ExtraBoxes']))==10),
+    add('main collider follows deck, does not fill open load space',lambda:require(close(vector(fields('car_trailer')['BoxSize']),(W,wt_,L)) and close(vector(fields('car_trailer')['BoxCenter']),(0,dy-wt_/2,0)) and 'HullBoxes' in fields('car_trailer') and len(vectors(fields('car_trailer')['ExtraBoxes']))==10),
         fieldmut('BoxSize','new Vector3(3f, 2f, 16f)'),fieldmut('BoxCenter','Vector3.Zero'),
         (VEH,lambda x:x.replace('HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]','HullBands = new (Vector3 size, Vector3 center, float yawDeg)[]',1),'remove drawbar colliders'))
     # The zone CONTAINS the leg, it does not equal it. Equality held only because the old foot pad
@@ -277,7 +282,10 @@ def cases():
         require(len(deltas)==1,f'lamps are not a rigid translation of the sedan: {len(deltas)} distinct offsets')
         dx,dy_,dz=deltas.pop()
         require(dx==0,'lamp transplant moved in X; the sedan spacing is what makes it fit')
-        require(close(min(v[2] for v in dst['vertices']),L/2),'lamp front face is not on the trailer rear')
+        body=obj(CONTENT/'sedan_body.txt'); rear=src['hi'][2]
+        proud=rear-max(v[2] for v in body['vertices'] if 1.5 < v[2] <= rear+1e-6)
+        require(close(max(v[2] for v in dst['vertices']),L/2+proud),
+                f'lens should stand {proud:.4f} m proud of the tailgate, the way it does on the sedan')
     add('tail lamps are the sedan mesh, translated',transplant,
         (LAMPS,lambda x:x.replace('v -1.113','v -1.000',1),'reshape a lens'))
     add('tail lamps and palette load through Parts',lambda:require('"car_trailer_taillights.txt"' in fields('car_trailer')['Parts'] and fields('car_trailer')['Palette']=='"car_trailer_palette.png"' and close(vectors(fields('car_trailer')['TailPos']),lenses())),
