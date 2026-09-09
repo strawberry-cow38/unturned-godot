@@ -30,6 +30,11 @@ namespace UnturnedGodot
 
         public Vehicle Target;
 
+        // Loaded once for every missile ever fired -- a barrage must not re-parse an .obj six times, and a site
+        // that reloads every nine seconds would do it forever.
+        static ArrayMesh _rocketMesh; static bool _rocketTried;
+        static AudioStream _fireSnd; static bool _fireTried;
+
         Vector3 _vel;
         float _life;
         bool _spent;
@@ -46,14 +51,46 @@ namespace UnturnedGodot
         {
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
 
-            var body = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.3f, Roughness = 0.45f };
-            AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.09f, BottomRadius = 0.11f, Height = 1.5f }, MaterialOverride = body, RotationDegrees = new Vector3(90f, 0f, 0f) });
-            AddChild(new MeshInstance3D
+            // THE GAME'S OWN ROCKET, not a primitive of my own (strawberry asked whether this fires the existing
+            // projectile). The FLIGHT cannot be the existing one -- the launcher and the tank cannon are Action
+            // Rocket rounds that go through SpawnBullet as stepped BALLISTIC bullets with a cosmetic mesh riding
+            // along, and a bullet cannot be told to turn, which is the entire job here. But the LOOK and the SOUND
+            // are shared retail assets (projectile.prefab: content/rocket_projectile.txt, its olive _Color, and the
+            // looping projectile_fire roar the launcher and the cannon both carry), and there is no reason for a
+            // SAM round to be the one rocket in the game that looks different. Primitive only if the rip is missing.
+            if (_rocketMesh == null && !_rocketTried)
             {
-                Mesh = new CylinderMesh { TopRadius = 0.0f, BottomRadius = 0.11f, Height = 0.4f },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.16f, 0.13f), Roughness = 0.6f },
-                RotationDegrees = new Vector3(-90f, 0f, 0f), Position = new Vector3(0f, 0f, -0.95f),
-            });
+                _rocketTried = true;
+                try { _rocketMesh = ContentProvider.ParseObj("res://content/rocket_projectile.txt"); } catch { _rocketMesh = null; }
+            }
+            if (_rocketMesh != null)
+            {
+                AddChild(new MeshInstance3D
+                {
+                    Mesh = _rocketMesh,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f },   // projectile.prefab _Color + _Glossiness 0.25
+                });
+            }
+            else
+            {
+                var body = new StandardMaterial3D { AlbedoColor = new Color(0.72f, 0.72f, 0.74f), Metallic = 0.3f, Roughness = 0.45f };
+                AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.09f, BottomRadius = 0.11f, Height = 1.5f }, MaterialOverride = body, RotationDegrees = new Vector3(90f, 0f, 0f) });
+                AddChild(new MeshInstance3D
+                {
+                    Mesh = new CylinderMesh { TopRadius = 0.0f, BottomRadius = 0.11f, Height = 0.4f },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.16f, 0.13f), Roughness = 0.6f },
+                    RotationDegrees = new Vector3(-90f, 0f, 0f), Position = new Vector3(0f, 0f, -0.95f),
+                });
+            }
+
+            // ...and its roar. Rides the missile, so it dies with the round exactly as it does on a launcher shot.
+            if (_fireSnd == null && !_fireTried)
+            {
+                _fireTried = true;
+                string fp = ProjectSettings.GlobalizePath("res://content/projectile_fire.ogg");
+                if (System.IO.File.Exists(fp)) { _fireSnd = AudioStreamOggVorbis.LoadFromFile(fp); if (_fireSnd is AudioStreamOggVorbis ov) ov.Loop = true; }
+            }
+            if (_fireSnd != null) AddChild(new AudioStreamPlayer3D { Stream = _fireSnd, UnitSize = 12f, MaxDistance = 320f, VolumeDb = 2f, Autoplay = true });
 
             _trail = new CpuParticles3D
             {
