@@ -12,7 +12,7 @@ Let **t=0.25 m**, the original sampled longitudinal pillar/roof section. Revisio
 | Axles | (±1.30,0.25,−1.56), (±1.30,0.25,1.46); front steering | 3.02 wheelbase from three-specimen mean ratio, 2.60 median track, modal ride −0.35. |
 | Underfloor | X ±0.99, Y −0.27, Z −2.757828..2.90; bevels join the outer sill. Passenger floor X ±0.98, Y −0.12, Z −1.25..1.36 | One connected underside and cabin floor; no overlapping boxes or sill gaps. |
 | Load floor | X ±0.98, Y0.18, Z1.36..2.53; vertical step from Y−0.12 at Z1.36 | Retains start after seatback maximum Z1.357307 and clear run 1.17 to gate. |
-| Sedan hood | Centre (Y,Z): (0.999953,−2.757828) → (1.125,−1.406856), then level to Z−1.25; X ±0.98; outer shoulders 0.125 lower along the slope | Source mesh profile, longitudinal scale 0.964159181; see measured comparison in WAGON_REPORT.md. |
+| Sedan hood | Across X ±1.26, (Y,Z): (0.999953,−2.757828) → (1.125,−1.406856), then level to Z −1.25; the 0.875 and 1.000 stations remain as flat side-wall seams | Source mesh profile, longitudinal scale 0.964159181; see measured comparison in WAGON_REPORT.md. |
 | Rear gate lower panel | Inner Z2.53, outer Z2.68; top Y1.10; inner lower edge Y0.18; exterior joins bumper at Y0.16 | Full width X ±1.26; joined directly to deck, side walls and bumper; no sedan boot-lid recess. |
 | Bumpers | Front X ±1.26, Y−0.158648..0.100803, tip Z−2.90; rear X ±1.26, Y−0.12..0.16, Z2.76..2.90 | Sedan front height levels; rear Y/Z silhouette retained with full width. Both join the shell. |
 | Grille | X ±0.48, Y0.36..0.54, on the sloping front fascia (Z approximately −2.7831..−2.7760) | Dark material patch partitioned into the fascia; no overlapping backing face. |

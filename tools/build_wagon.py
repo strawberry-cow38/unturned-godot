@@ -175,10 +175,13 @@ def build():
     def hood_y(z):
         return yn+(yc-yn)*(z-zn)/(zc-zn)
 
+    def fascia(y):
+        return zv+(zn-zv)*(y-yv)/(yn-yv)
+
     # Longitudinal side stations have no wheel-dependent coordinates at all.
     zs = [zn,-2.32,zc,-1.25,-1.00,2.32,2.68]
     def shoulder(z):
-        return hood_y(z)-.125 if z <= zc else 1.0
+        return yn if z == zn else 1.0
     def rail(z):
         return 1.125 if z == -1.25 else 1.10
     def sill(z):
@@ -187,7 +190,8 @@ def build():
     for sign in (-1,1):
         side=(sign,0,0)
         # Full-width nose side and stepped sedan bumper profile.
-        panel([(sign*HALF_WIDTH,y,z) for y,z in front]+[(sign*HALF_WIDTH,ys,zn)],side)
+        panel([(sign*HALF_WIDTH,y,z) for y,z in front]+
+              [(sign*HALF_WIDTH,yn,zn),(sign*HALF_WIDTH,ys,zn)],side)
         # The old -2.32 shoulder split forced a thin fan across the hood.
         # Keep its lower sill corner, but run the upper edge straight to the
         # crease so the inner hood edge has no unnecessary junction vertex.
@@ -197,20 +201,20 @@ def build():
             panel([(x0,sill(z),z) for z in zs if z0 <= z <= z1]+
                   [(x1,shoulder(z1),z1),(x0,shoulder(z0),z0)],side)
             if z1 <= zc:
-                # Sedan's transverse 0.125 m hood shoulder, at full wagon width.
-                a,b=(sign*.98,hood_y(z0),z0),(x0,shoulder(z0),z0)
-                c,d=(x1,shoulder(z1),z1),(sign*.98,hood_y(z1),z1)
+                # Carry the sedan's centre slope across the full width. Keep
+                # its 1.000 station as a coplanar side seam below the hood.
+                a,b=(sign*.98,hood_y(z0),z0),(x0,hood_y(z0),z0)
+                c,d=(x1,hood_y(z1),z1),(sign*.98,hood_y(z1),z1)
+                panel([b,(x1,shoulder(z1),z1),c],side)
                 panel([a,b,c],(0,1,0))
                 panel([a,c,d],(0,1,0))
             elif z0 == zc:
-                # Split the shoulder-to-cowl transition into planar facets.
-                # Its outer rise is now on the wall, so it cannot be projected
-                # as one roof-facing polygon without collapsing an edge.
+                # The full-width hood meets one level cowl; the old raised
+                # corner and its diagonal roof-facing transition are gone.
                 a,b,c=(x0,1.,z0),(x1,1.,z1),(x1,1.125,z1)
-                d,e=(sign*.98,1.125,z1),(sign*.98,yc,z0)
-                panel([a,b,c],side)
-                panel([a,c,e],(0,1,0))
-                panel([c,d,e],(0,1,0))
+                d,e,f=(x0,yc,z0),(sign*.98,1.125,z1),(sign*.98,yc,z0)
+                panel([a,b,c,d],side)
+                panel([d,c,e,f],(0,1,0))
             else:
                 panel([(x0,1.,z0),(x1,1.,z1),
                        (sign*HALF_WIDTH,rail(z1),z1),(sign*HALF_WIDTH,rail(z0),z0)],side)
@@ -232,23 +236,22 @@ def build():
     panel([(-.99,-.27,zn),(.99,-.27,zn),(HALF_WIDTH,yl,zn),(-HALF_WIDTH,yl,zn)],(0,0,-1),DARK)
     # The central fascia is partitioned around the grille, which is a material
     # patch on this surface; it has no coincident hidden backing or floating box.
-    def fascia(y):
-        return zv+(zn-zv)*(y-yv)/(yn-yv)
-    for x0,x1 in zip((-.98,-.48,.48),(-.48,.48,.98)):
-        for y0,y1 in zip((yv,.36),(.36,.54)):
-            panel([(x0,y0,fascia(y0)),(x1,y0,fascia(y0)),
-                   (x1,y1,fascia(y1)),(x0,y1,fascia(y1))],(0,0,-1),
-                  DARK if x0==-.48 and y0==.36 else PAINT)
-    # Retriangulate only the adjoining upper fascia to weld the hood's new
-    # nose midpoint; grille corners below it and the fascia surface stay fixed.
+    for y0,y1 in zip((yv,.36),(.36,.54)):
+        panel([(-.48,y0,fascia(y0)),(.48,y0,fascia(y0)),
+               (.48,y1,fascia(y1)),(-.48,y1,fascia(y1))],(0,0,-1),
+              DARK if y0==.36 else PAINT)
+    # One fascia plane from edge to edge. The sedan's 0.875 station remains
+    # on the flat side wall, no longer a dropped top corner at the hood.
     panel([(-.48,.54,fascia(.54)),(.48,.54,fascia(.54)),(0,yn,zn)],(0,0,-1))
     for sign in (-1,1):
-        a,b=(sign*.98,.54,fascia(.54)),(sign*.48,.54,fascia(.54))
-        c,d=(0,yn,zn),(sign*.98,yn,zn)
-        panel([a,b,c],(0,0,-1))
-        panel([a,c,d],(0,0,-1))
+        panel([(sign*.48,.54,fascia(.54)),(0,yn,zn),(sign*.48,yn,zn)],(0,0,-1))
+        a,b=(sign*.48,yv,zv),(sign*HALF_WIDTH,yv,zv)
+        d=(sign*HALF_WIDTH,yn,zn)
+        e,f=(sign*.98,yn,zn),(sign*.48,yn,zn)
+        panel([a,b,d],(0,0,-1))
+        panel([a,d,e],(0,0,-1))
+        panel([a,e,f],(0,0,-1))
     for sign in (-1,1):
-        panel([(sign*.98,yv,zv),(sign*HALF_WIDTH,yv,zv),(sign*HALF_WIDTH,ys,zn),(sign*.98,yn,zn)],(0,0,-1))
         # Explicit mirrored triangles avoid ear-clipping a fan from one side.
         a,b=(0,yn,zn),(sign*.98,yn,zn)
         c=(sign*.98,yc,zc)

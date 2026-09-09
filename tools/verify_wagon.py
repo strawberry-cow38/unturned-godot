@@ -279,35 +279,110 @@ def check_roof_rake(mesh):
           f'rake {math.degrees(math.atan(slope)):.6f}° from vertical; tailgate rake unchanged')
 
 
+def junction_faces(mesh):
+    """All triangles intersecting either review box, not just their centroids."""
+    rows = []
+    for sign in (-1,1):
+        lo = (-1.35 if sign < 0 else .85, .80, -2.90)
+        hi = (-.85 if sign < 0 else 1.35, 1.30, -2.10)
+        for face_id,face in enumerate(mesh['faces']):
+            tri = tuple(tuple(f32(x) for x in mesh['vertices'][int(c.split('/')[0])-1]) for c in face)
+            clipped = list(tri)
+            # Clip the actual polygon against all six box planes. This also
+            # includes triangles crossing the box with no vertex inside it.
+            for axis in range(3):
+                for bound,direction in ((lo[axis],1),(hi[axis],-1)):
+                    result = []
+                    for a,b in zip(clipped,clipped[1:]+clipped[:1]):
+                        da,db = direction*(a[axis]-bound),direction*(b[axis]-bound)
+                        if da >= 0:
+                            result.append(a)
+                        if (da < 0 < db) or (db < 0 < da):
+                            t = da/(da-db)
+                            result.append(tuple(a[i]+t*(b[i]-a[i]) for i in range(3)))
+                    clipped = result
+            if not clipped:
+                continue
+            normal = mesh['normals'][int(face[0].split('/')[2])-1]
+            centroid = tuple(sum(p[i] for p in tri)/3 for i in range(3))
+            inside = all(lo[i] <= centroid[i] <= hi[i] for i in range(3))
+            rows.append((sign,face_id,tri,normal,inside))
+    return rows
+
+
 def check_cowl_junction(mesh):
-    """Review box, scored as longest edge / altitude using loaded positions."""
-    sides = {-1: [], 1: []}
+    """Measure the fold itself: fascia planarity and full-width hood/cowl."""
+    triangles = []
+    fascia = []
     for face_id,face in enumerate(mesh['faces']):
         tri = tuple(tuple(f32(x) for x in mesh['vertices'][int(c.split('/')[0])-1]) for c in face)
-        assert len(tri) == 3
-        x,y,z = (sum(p[i] for p in tri)/3 for i in range(3))
-        if not (-2.95 <= z <= -2.10 and .85 <= y <= 1.45):
+        n = mesh['normals'][int(face[0].split('/')[2])-1]
+        triangles.append((face_id,tri,n))
+        if n[2] < -.99 and all(p[2] < -2.7 and p[1] >= .125-1e-6 for p in tri):
+            fascia.append((face_id,tri,n))
+    assert fascia, 'missing front fascia'
+    yn = max(p[1] for _,tri,_ in fascia for p in tri)
+    zn = min(p[2] for _,tri,_ in fascia for p in tri if abs(p[1]-yn) < 1e-6)
+    yv = min(p[1] for _,tri,_ in fascia for p in tri)
+    zv = min(p[2] for _,tri,_ in fascia for p in tri)
+
+    def nose_at(x):
+        points = []
+        for _,tri,_ in fascia:
+            for a,b in zip(tri,tri[1:]+tri[:1]):
+                if abs(a[0]-x) < 1e-6:
+                    points.append(a)
+                if min(a[0],b[0]) < x < max(a[0],b[0]):
+                    t = (x-a[0])/(b[0]-a[0])
+                    points.append(tuple(a[i]+t*(b[i]-a[i]) for i in range(3)))
+        assert points, ('missing nose section',x)
+        return max(points,key=lambda p:p[1])
+
+    xs = sorted({p[0] for _,tri,_ in fascia for p in tri})
+    for x in xs + [(a+b)/2 for a,b in zip(xs,xs[1:])]:
+        _,y,z = nose_at(x)
+        assert abs(y-yn) < 1e-6 and abs(z-zn) < 1e-6, ('nose top edge steps',x,y,z,yn,zn)
+    for face_id,tri,n in fascia:
+        assert abs(n[0]) < 1e-5, ('twisted fascia normal',face_id,n)
+        for x,y,z in tri:
+            expected = zv+(zn-zv)*(y-yv)/(yn-yv)
+            assert abs(z-expected) < 1e-6, ('nonplanar fascia wedge',face_id,(x,y,z),expected)
+    print('| nose X | top Y | top Z |')
+    print('| ---: | ---: | ---: |')
+    for x in (-1.26,-.98,0,.98,1.26):
+        _,y,z = nose_at(x)
+        print(f'| {x:+.2f} | {y:.6f} | {z:.6f} |')
+    print(f'PASS one fascia plane ({len(fascia)} triangles); level nose across all {len(xs)*2-1} vertex/mid-span sections')
+
+    hood_count = cowl_count = 0
+    for face_id,tri,n in triangles:
+        if n[1] <= .5:
             continue
-        a,b,c = tri
-        u,v = tuple(b[i]-a[i] for i in range(3)),tuple(c[i]-a[i] for i in range(3))
-        n = (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
-        area2 = math.sqrt(sum(t*t for t in n))
-        assert area2 > 1e-12, ('degenerate junction',face_id)
-        longest2 = max(sum((p[i]-q[i])**2 for i in range(3)) for p,q in ((a,b),(b,c),(c,a)))
-        aspect = longest2/area2
-        assert aspect <= 6, ('junction sliver',face_id,aspect)
-        assert x != 0, ('junction triangle crosses centre seam',face_id)
-        sides[-1 if x < 0 else 1].append((tri,aspect))
-    count = sum(len(rows) for rows in sides.values())
-    assert 0 < count <= 4, ('too many junction faces',count)
-    left = {tuple(sorted((-x,y,z) for x,y,z in tri)) for tri,_ in sides[-1]}
-    right = {tuple(sorted(tri)) for tri,_ in sides[1]}
-    assert left == right, 'junction triangulation is not mirrored'
-    for sign,label in ((-1,'left (X < 0)'),(1,'right (X > 0)')):
-        rows = sides[sign]
-        assert rows, ('missing junction',label)
-        print(f'PASS cowl/A-pillar-base box {label}: {len(rows)} faces, worst aspect {max(a for _,a in rows):.6f}')
-    print(f'PASS junction: {count} faces total, mirrored triangles, all aspects <= 6')
+        if all(zn-1e-6 <= p[2] <= -1.406856+1e-6 for p in tri):
+            for x,y,z in tri:
+                expected = yn+(1.125-yn)*(z-zn)/(-1.406856-zn)
+                assert abs(y-expected) < 1e-6, ('hood folds across width',face_id,(x,y,z),expected)
+            hood_count += 1
+        elif all(-1.406856-1e-6 <= p[2] <= -1.25+1e-6 for p in tri):
+            assert all(abs(p[1]-1.125) < 1e-6 for p in tri), ('raised cowl corner',face_id,tri)
+            cowl_count += 1
+    assert hood_count and cowl_count, 'missing hood or cowl'
+    print(f'PASS full-width planar hood ({hood_count} triangles) and level cowl ({cowl_count} triangles)')
+
+    rows = junction_faces(mesh)
+    print('Review boxes: X [-1.35,-0.85] / [0.85,1.35], Y [0.80,1.30], Z [-2.90,-2.10]; zero-based face IDs')
+    print('| side | face | centroid in box | normal | all three vertices |')
+    print('| --- | ---: | --- | --- | --- |')
+    def fmt_point(p):
+        return '('+', '.join(f'{v:.6f}' for v in p)+')'
+    for sign,face_id,tri,n,inside in rows:
+        print(f"| {'left' if sign < 0 else 'right'} | f{face_id} | {'yes' if inside else 'no'} | {fmt_point(n)} | {'; '.join(fmt_point(p) for p in tri)} |")
+    for sign in (-1,1):
+        selected = [r for r in rows if r[0] == sign and r[4]]
+        assert selected, ('empty review box',sign)
+        assert not any(r[3][2] < -.99 for r in selected), ('forward-facing wedge in centroid box',sign)
+        assert sum(r[3][1] > .5 for r in selected) == 1, ('expected one hood surface in centroid box',sign)
+    print(f'PASS {len(rows)} intersecting faces listed; no forward-facing wedges in centroid boxes; intersecting fascia is coplanar')
 
 
 def check():
