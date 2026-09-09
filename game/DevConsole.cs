@@ -66,12 +66,12 @@ namespace UnturnedGodot
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
         // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
         // the note above this list warns about. Found by running the verb rather than by reading it.
-        static readonly string[] NoArgVerbs = { "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
+        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
         bool _resultHooked;
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -678,6 +678,12 @@ namespace UnturnedGodot
                 var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
                 if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
                 Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
+            }
+            else if (verb == "sam")
+            {
+                var site = SamSite.Spawn(Player?.GetParent() ?? GetTree().Root, WorldTerrain, at);
+                if (site == null) { Log("could not place a SAM site here"); return; }
+                Log($"SAM site placed -- locks any helicopter inside {SamSite.Radius:0} m, {SamSite.Rack} missiles at {SamSite.ShotDelay:0.00}s, {SamSite.ReloadDelay:0}s to reload");
             }
             else if (verb == "spawntrain")
             {

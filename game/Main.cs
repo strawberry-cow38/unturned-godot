@@ -4874,6 +4874,7 @@ namespace UnturnedGodot
         // world +Z DOWN the image -- the same handedness WorldToNorm assumes. Getting that backwards would look
         // almost right and mirror the island.
         int _bakeMapRes; bool _bakeMapDone; int _bakeMapFrames;
+        bool _samTestDone;   // UG_SAMTEST: the site + NPC heli are placed once, after the world is up
         SubViewport _bakeMapVp;
 
         void BakeMapTick()
@@ -8621,6 +8622,29 @@ namespace UnturnedGodot
                     GD.Print($"[holditem] {ha.itemName} ({hid}) -> hands: {_pdPlayer.EquipItemAsset(ha, new SDG.Unturned.Item(hid))} (movie frame {Engine.GetFramesDrawn()})");
             }
             if (_bakeMapRes > 0 && _worldReady && !_bakeMapDone) BakeMapTick();
+            // UG_SAMTEST=1: a SAM site ahead of the spawn plus an NPC helicopter flying at it, so the lock ->
+            // barrage -> reload cycle can be filmed. Both need the world up, hence a tick rather than the boot path.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_samTestDone && System.Environment.GetEnvironmentVariable("UG_SAMTEST") == "1")
+            {
+                _samTestDone = true;
+                var fwd = -_pdPlayer.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                var terrs = FindAll<Terrain>(this);
+                var terr = terrs.Count > 0 ? terrs[0] : null;
+                var site = SamSite.Spawn(_pdPlayer.GetParent(), terr, _pdPlayer.GlobalPosition + fwd * 30f);
+                var heli = NpcHeli.Spawn(_pdPlayer.GetParent(), System.Environment.GetEnvironmentVariable("UG_SAMHELI") ?? "hind", terr, _pdPlayer.GlobalPosition);
+                // NpcHeli.Spawn starts it at a MAP EDGE and flies it to the nearest named node, which is right for
+                // the game and useless for a film -- PEI is 1.9 km across, so the interesting part would begin a
+                // minute and a half in. Drop it straight into the engagement instead: UG_SAMDIST metres out, at the
+                // clearance it flies at anyway, still flown by the same AI on the same route.
+                if (heli?.Heli != null && IsInstanceValid(heli.Heli))
+                {
+                    float dist = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAMDIST"), out var sd) && sd > 20f ? sd : 210f;
+                    var at = (site?.GlobalPosition ?? _pdPlayer.GlobalPosition) + fwd * dist;
+                    float gy = terr != null ? terr.SampleHeight(at.X, at.Z) : at.Y;
+                    heli.Heli.GlobalPosition = new Vector3(at.X, gy + NpcHeli.CanopyClearance, at.Z);
+                }
+                GD.Print($"[samtest] site={(site != null ? "ok" : "FAILED")} heli={(heli != null ? heli.TargetName : "FAILED")} radius={SamSite.Radius:0}m rack={SamSite.Rack} shotDelay={SamSite.ShotDelay:0.00}s reload={SamSite.ReloadDelay:0}s");
+            }
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_menuXpDone) MenuXpTick();
             if (_peiPlayable && _pdPlayer != null && _holdItemDone && int.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDTHROW"), out var thf) && ++_holdThrowT == thf)   // UG_HOLDTHROW=N: LMB N frames after the equip (the throw swing on camera)
             { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
