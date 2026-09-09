@@ -37,6 +37,24 @@ namespace UnturnedGodot
 
         const float Dawn = 0.25f, Dusk = 0.75f;   // DayNightCycle.Time: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
 
+        // BIRDS TURN IN BEFORE THE LIGHT DOES (strawberry 2026-09-09: "fade out birds sooner in the evening").
+        // The DAY bed is the dawn chorus, and it was riding the same crossfade as everything else -- full until
+        // 0.70 and only silent at 0.80, i.e. singing right through sunset. It now runs out on its own earlier
+        // edge: at Dusk 0.75 = 18:00 these put the birds fading from ~16:05 and gone by ~17:31, while the general
+        // day/night crossfade still runs 16:48 -> 19:12 underneath.
+        //
+        // The pair no longer sums to 1 across that window, and that is the POINT rather than an oversight: birds
+        // stopping before the night bed is fully up is the evening hush. It is a few dB and it is deliberate.
+        public static float BirdDuskLead = 0.02f;   // silent this far before the crossfade's midpoint
+        public static float BirdDuskFade = 0.06f;   // ...having taken this long to get there
+
+        // ...AND THEY STOP IN RAIN, well before a downpour (strawberry: "fade out bird ambience when its
+        // raining"). WeatherDuck already scaled both beds by 1-rint, which is retail's
+        // customWeatherVolumeMultiplier -- but linear means light rain leaves birds at 70%, and birds do not sing
+        // at 70% through drizzle, they stop. The day bed gets its own steeper curve; the night bed keeps retail's.
+        public static float BirdRainIn = 0.05f;     // rain intensity where the birds start to go
+        public static float BirdRainOut = 0.35f;    // ...and where they are gone entirely
+
         AudioStreamPlayer _day, _night;
         string _busName;
         bool _busAdded;
@@ -79,6 +97,26 @@ namespace UnturnedGodot
             return 0f;
         }
 
+        /// <summary>The DAY bed's share, on the birds' own curve: retail's dawn edge, but an evening edge that
+        /// starts earlier and finishes before the general crossfade's midpoint.</summary>
+        public static float BirdShare(float t)
+        {
+            t = Mathf.PosMod(t, 1f);
+            float outEnd = Dusk - BirdDuskLead;            // gone by here
+            float outStart = outEnd - BirdDuskFade;        // started going here
+            float rise = t >= Dawn + Transition ? 1f
+                       : t >= Dawn - Transition ? (t - (Dawn - Transition)) / (2f * Transition)
+                       : 0f;
+            float fall = t <= outStart ? 1f
+                       : t >= outEnd ? 0f
+                       : 1f - (t - outStart) / Mathf.Max(0.0001f, BirdDuskFade);
+            return Mathf.Min(rise, fall);
+        }
+
+        /// <summary>How much of the bird bed survives this much rain. 1 = dry, 0 = gone.</summary>
+        public static float BirdRainShare(float rint)
+            => 1f - Mathf.SmoothStep(BirdRainIn, BirdRainOut, Mathf.Clamp(rint, 0f, 1f));
+
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine callback is off (SetProcess(false))
         public void HubProcess(double delta)
         {
@@ -86,7 +124,9 @@ namespace UnturnedGodot
             float t = (GetTree()?.GetFirstNodeInGroup("daynight") as DayNightCycle)?.Time ?? 0.5f;
             float day = DayShare(t);
             float duck = 1f - Mathf.Clamp(WeatherDuck, 0f, 1f);
-            SlewTo(_day, ref _dayDb, day * duck, (float)delta);
+            // The night bed keeps retail's curve and retail's linear duck; only the birds get the earlier evening
+            // edge and the steeper rain response.
+            SlewTo(_day, ref _dayDb, BirdShare(t) * BirdRainShare(WeatherDuck), (float)delta);
             SlewTo(_night, ref _nightDb, (1f - day) * duck, (float)delta);
         }
 
