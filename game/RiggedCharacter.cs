@@ -210,7 +210,17 @@ namespace UnturnedGodot
         public static float FirstPersonClip =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _fpc) && _fpc >= 0f ? _fpc : 0f;   // OFF by default: moving the body back replaced it (UG_FPCLIP re-enables)
+                           out float _fpc) && _fpc >= 0f ? _fpc : 0.45f;
+        // BACK ON, 2026-09-09: strawberry, "seeing the full legs playermodel inside myself when crouched or prone".
+        // It was switched off on the theory that moving the body back 0.42 m replaced it -- which holds STANDING,
+        // where the torso is upright behind you, and does not hold at all once the stance pitches that torso
+        // forward: crouched and prone the chest arrives at the camera regardless of where the model's feet are.
+        //
+        // A fixed offset cannot fix a stance-dependent intrusion, but this clip does not have to know about
+        // stances: it is measured from the EYE (Godot's fragment VERTEX is view-space), so it removes exactly
+        // whatever is too close and nothing else. Standing, with the body already pushed back, nothing is inside
+        // 0.45 and it does nothing at all; crouched or prone it takes the chest and leaves the legs, which sit
+        // 0.75-1.0 m out. UG_FPCLIP still overrides it without a rebuild.
 
         void ApplyFirstPersonTrim()
         {
@@ -648,26 +658,70 @@ namespace UnturnedGodot
         ///
         /// Re-applied after the pose advance because the clips write bone scale; also applied on toggle, since a
         /// body with nothing playing never reaches the advance at all.</summary>
+        /// <summary>Which arms the first-person trim removes. strawberry 2026-09-09: "only delete the arm on the
+        /// 'legs' model thats relevant to each animation. ie something that uses one hand only deletes that hand
+        /// from the legs model." So this is no longer a single flag -- a one-handed hold leaves the OTHER arm on
+        /// the body, where you can look down and see it, which is the point of having a body at all.</summary>
+        public void SetTrimmedArms(bool left, bool right)
+        {
+            if (_trimLeft == left && _trimRight == right) return;
+            _trimLeft = left; _trimRight = right;
+            ApplyArmTrim();
+        }
+        bool _trimLeft = true, _trimRight = true;   // both, until something says otherwise (the old behaviour)
+
         void ApplyArmTrim()
         {
             if (Skeleton == null) return;
-            if (!_fpTrim && !_armTrimApplied) return;   // do not stomp an animated scale for a value that is One
+            bool wantL = _fpTrim && _trimLeft, wantR = _fpTrim && _trimRight;
+            if (!wantL && !wantR && !_armTrimApplied) return;   // do not stomp an animated scale for a value that is One
             if (_trimShoulders == null)
                 _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
-            var sc = _fpTrim ? Vector3.Zero : Vector3.One;
-            foreach (int b in _trimShoulders) if (b >= 0) Skeleton.SetBonePoseScale(b, sc);
-            _armTrimApplied = _fpTrim;
+            if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], wantL ? Vector3.Zero : Vector3.One);
+            if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], wantR ? Vector3.Zero : Vector3.One);
+            // The weapon does NOT hang in the air off a collapsed arm (strawberry: "chainsaw gets stuck to my 3p
+            // and 'legs' playermodel hand"). Both attachments ride Right_Hook, so they go with the RIGHT arm --
+            // a BoneAttachment3D follows the bone's position whether or not the arm around it still has any size.
+            var held = Skeleton.GetNodeOrNull<Node3D>("MeleeAttach"); if (held != null) held.Visible = !wantR;
+            var gun = Skeleton.GetNodeOrNull<Node3D>("GunAttach"); if (gun != null) gun.Visible = !wantR;
+            _armTrimApplied = wantL || wantR;
             // Does the write STICK? Read it straight back, and again a second later after the clips have run.
             if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1" && _trimShoulders[0] >= 0)
             {
                 _armDbgT += 1;
                 if (_armDbgT == 1 || _armDbgT == 120)
-                    GD.Print($"[armtrim] frame {_armDbgT}: wrote {sc}, reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
+                    GD.Print($"[armtrim] frame {_armDbgT}: clip={CurrentClip} trimL={wantL} trimR={wantR}, left reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
             }
         }
         int[] _trimShoulders;
         bool _armTrimApplied;
         int _armDbgT;
+
+        /// <summary>The clip the base player is on right now -- what the viewmodel arms are actually doing.</summary>
+        public string CurrentClip => _ap?.CurrentAnimation;
+
+        /// <summary>Which arm chains a clip POSES, read off its own tracks rather than a hand-written table per
+        /// item. "Relevant to each animation" is literally what the animation touches, so a one-handed hold
+        /// reports one hand without anyone having to remember to classify it. Cached: the answer is a property of
+        /// the clip, and this is asked every frame.</summary>
+        public (bool Left, bool Right) HandsInClip(string clip)
+        {
+            if (string.IsNullOrEmpty(clip) || _ap == null) return (true, true);   // unknown -> trim both, the old behaviour
+            if (_handsInClip.TryGetValue(clip, out var hit)) return hit;
+            var anim = _ap.HasAnimation(clip) ? _ap.GetAnimation(clip) : null;
+            bool l = false, r = false;
+            if (anim != null)
+                for (int i = 0; i < anim.GetTrackCount(); i++)
+                {
+                    string path = anim.TrackGetPath(i).ToString();
+                    if (path.Contains("Left_Arm") || path.Contains("Left_Hand") || path.Contains("Left_Shoulder")) l = true;
+                    if (path.Contains("Right_Arm") || path.Contains("Right_Hand") || path.Contains("Right_Shoulder")) r = true;
+                }
+            if (!l && !r) { l = true; r = true; }   // a clip that poses neither tells us nothing; do not un-hide both arms on it
+            _handsInClip[clip] = (l, r);
+            return (l, r);
+        }
+        readonly System.Collections.Generic.Dictionary<string, (bool, bool)> _handsInClip = new();
 
         void PushPitch()
         {

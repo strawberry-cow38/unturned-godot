@@ -8630,6 +8630,22 @@ namespace UnturnedGodot
             // it exactly the way looking down finds your legs.
             _body.Visible = !_dead;   // dead -> the corpse ragdoll handles the body
             _body.FirstPersonTrim = _fp;
+            // ONLY THE ARM THE ANIMATION USES (strawberry 2026-09-09: "only delete the arm on the 'legs' model
+            // thats relevant to each animation. ie something that uses one hand only deletes that hand"). Read off
+            // the viewmodel's CURRENT clip, not the held item's category: a table of which item is one-handed is a
+            // table someone has to remember to update, and the clip already knows. Driving poses both hands on the
+            // wheel and so trims both; a one-handed hold leaves your other arm on the body to look down at.
+            // AT THE WHEEL both hands are on it, whatever the held item's hold clip happens to pose -- the driving
+            // arms are placed by SetDrivingWheel rather than by a clip, so asking the clip would answer about the
+            // rifle you are still carrying. This is the case master actually reported ("seeing the legs model's
+            // arms on the steering wheel when driving"), so it is stated rather than inferred.
+            if (_fp && (_driving != null || _riding != null)) _body.SetTrimmedArms(true, true);
+            else if (_fp && _viewmodel?.ArmsRig is RiggedCharacter armsRig)
+            {
+                var (usesL, usesR) = armsRig.HandsInClip(armsRig.CurrentClip);
+                _body.SetTrimmedArms(usesL, usesR);
+            }
+            else _body.SetTrimmedArms(true, true);
             // The arms rig is rebuilt whenever the held item changes, so this is pushed every frame rather than
             // once at construction; the setter early-outs on the same reference and re-paints on a new one.
             if (_clothing != null && _viewmodel != null) _clothing.Arms = _viewmodel.ArmsRig;
