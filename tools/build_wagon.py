@@ -12,7 +12,17 @@ import struct
 from measure_vehicles import CONTENT, ROOT, obj, fmt, read_specs, vector
 
 PAINT = (0.125, 0.75)
-DARK = (0.375, 0.25)
+# DARK = the SEDAN'S interior grey (strawberry 2026-09-09: "change the interior color to the sedan's").
+# Both cars share sedan_palette.png byte for byte, so this was never a palette difference -- it was the
+# TEXEL. Colour histogram of each body, by the texel its faces actually sample:
+#     sedan   (166,166,166,a=0) x272 paintable | (82,82,82) x56 | (166,166,166) x20 | (97,96,96) x10 |
+#             (142,142,142) x8
+#     SUV     (166,166,166,a=0) x186 paintable | (58,58,58) x40
+# (58,58,58) at uv (0.375,0.25) is darker than ANY dark the sedan puts on its body, which is why the
+# cabin read flatter and blacker. (0.625,0.25) is the sedan's own dominant interior grey.
+# The sedan spends three further shades on top of that; this uses the one, so the cabin matches its
+# main tone rather than inventing a scheme.
+DARK = (0.625, 0.25)
 HALF_WIDTH = 1.26  # One outer wall plane, including every post and bumper tip.
 # FLOOR_Y = the OUTER sill height, and it must match the fleet's visible flank, not its hidden belly.
 # Measured lowest point by width band: sedan, hatchback and golf all bottom at -0.159 on the outer

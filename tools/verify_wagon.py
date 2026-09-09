@@ -807,6 +807,35 @@ def check():
     print(f"PASS main box is a fitted lower shell: top {box_hi[1]:.3f} < beltline {BELTLINE}, "
           f"Z {wagon['BoxSize'][2]:.3f} centred {wagon['BoxCenter'][2]:+.4f} on mesh centre {zc:+.4f}; "
           f"roof left to RoofBox")
+    # INTERIOR COLOUR IS A TEXEL, NOT A PALETTE. Both cars ship the same palette bytes (asserted just
+    # below), so "the wagon's interior is a different colour to the sedan's" could only ever be which
+    # texel the faces sample. The SUV sat on (58,58,58), darker than any dark the sedan puts on its
+    # body; the sedan's own dominant non-paint tone is (82,82,82). Assert they agree, by sampling --
+    # comparing the UV pair would pass a palette edit that moved the colour out from under it.
+    from PIL import Image as _Img
+    _pal = _Img.open(CONTENT / sedan["Palette"]).convert("RGBA")
+    def _texel(uv):
+        # obj() ALREADY applies ParseObj's V flip (measure_vehicles.py: `1 - float(p[2])`), so do NOT
+        # flip again -- doing so sampled the other palette row and the check passed on (239,227,186),
+        # the cream headlight tone, which is on neither body's dark faces. A check that passes while
+        # reading the wrong texel is worse than no check.
+        u, v = uv
+        return _pal.getpixel((min(_pal.width-1, int(u*_pal.width)),
+                              min(_pal.height-1, int(v*_pal.height))))
+    def _darks(name):
+        m = obj(CONTENT / name)
+        c = Counter()
+        for f in m["faces"]:
+            t = f[0].split("/")
+            if len(t) > 1 and t[1]:
+                px = _texel(m["uvs"][int(t[1])-1])
+                if px[3] == 255:            # alpha 0 is the PAINTABLE flag, not a colour
+                    c[px] += 1
+        return c
+    _sd = _darks("sedan_body.txt").most_common(1)[0][0]
+    _wd = _darks("wagon_body.txt").most_common(1)[0][0]
+    assert _wd == _sd, ("interior tone does not match the sedan", _wd, _sd)
+    print(f"PASS interior tone {_wd[:3]} matches the sedan's dominant body grey")
     assert (CONTENT / wagon["Palette"]).read_bytes() == (CONTENT / sedan["Palette"]).read_bytes()
     for asset in [wagon[k] for k in ("Body","Wheel","WheelTex","Palette")] + wagon["Parts"]:
         assert (CONTENT / asset).is_file(), asset
