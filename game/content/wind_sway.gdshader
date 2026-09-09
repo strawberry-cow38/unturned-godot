@@ -21,6 +21,11 @@ uniform float sway : hint_range(0.0, 0.4) = 0.05;   // metres of lateral sway pe
 // canopy's own travel while the trunk swings; `shake` is the landing shudder, spiked on impact and decayed CPU-side
 // so the whole animation stays deterministic. A standing tree leaves both at zero and renders exactly as before.
 uniform vec3 gust_dir = vec3(0.0);
+// ...and a UNIFORM push, not height-weighted. gust_dir alone is a cantilever: it pins the end nearest the mesh
+// origin and grows outward, which is right for a canopy hanging off a swinging trunk and wrong for a landed log,
+// where the visible section is the butt -- the end with almost no lever. A felled trunk shudders along its whole
+// length. Left at zero for the leaves, which want the cantilever.
+uniform vec3 gust_base = vec3(0.0);
 uniform float shake : hint_range(0.0, 1.0) = 0.0;
 const float SHAKE_AMP = 0.018;   // metres of shudder per metre of local height at shake = 1
 
@@ -30,7 +35,7 @@ void vertex() {
     float gust = sin(wind_vec.w * 1.3 + wp.x * 0.16 + wp.z * 0.14);
     float amp = h * sway * (0.4 + wind_vec.z) * (0.7 + 0.3 * gust);
     // Bend in the WORLD wind direction: build the world offset, rotate it into local (the instance may be Y-rotated).
-    vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp + gust_dir * h;
+    vec3 world_off = vec3(wind_vec.x, 0.0, wind_vec.y) * amp + gust_dir * h + gust_base;
     if (shake > 0.0) {
         // Leaf-BY-LEAF, so the canopy shudders instead of sliding about as one block. Layered sines off the vertex
         // position rather than fract(sin(dot(...))): this is twenty metres of geometry and that hash bands visibly

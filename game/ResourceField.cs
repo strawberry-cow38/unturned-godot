@@ -653,11 +653,15 @@ namespace UnturnedGodot
         // 1.518 rad/s -- 2.2x the impact speed -- in the SAME 4.2 s, so the fall master already signed off on does
         // not get shorter, it gets back-loaded.
         //
-        // ToppleAccel is tuned to that 4.2 s rather than taken from the physics: a genuine 22 m rod is 3g/2L =
-        // 0.669 rad/s^2 and takes 5.8 s. The SHAPE here is the pendulum's, the RATE is the one that was approved.
+        // ...and then the whip was too much (strawberry, same day again: "slow down the 'fast' part of the fall").
+        // The first pass held the approved 4.2 s and put the pendulum shape inside it, which needed 1.287 rad/s^2 --
+        // nearly twice a real tree's -- and arrived at 1.518 rad/s. Slowing the fast part while KEEPING the shape
+        // means the fall has to get longer, because peak speed and duration are the same dial. So it now runs at the
+        // honest constant for a 22 m rod, 3g/2L = 0.669 rad/s^2: 5.8 s end to end, arriving at 1.094 rad/s. Still
+        // well up on the old constant-acceleration curve's 0.698, so it is still back-loaded -- just not a whipcrack.
         const float ToppleKick = 1.5f;      // degrees of initial lean -- the chop's own push. sin(0) is 0, so a
                                             // trunk released exactly upright would stand there forever.
-        const float ToppleAccel = 1.287f;   // rad/s^2; numerically solved so 1.5 deg -> FallDeg takes 4.2 s
+        const float ToppleAccel = 0.669f;   // rad/s^2 = 3g/2L for a 22 m rod; 1.5 deg -> FallDeg in 5.83 s
         const float ToppleStep = 1f / 60f;  // integration substep. FIXED, so the fall is identical at 30 fps
                                             // offline and 200 fps live -- a scripted animation that varies with
                                             // frame rate is one that renders differently from how it plays.
@@ -669,7 +673,9 @@ namespace UnturnedGodot
         // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
         // 10 would read as rubber.
         const float SettleTime = 0.95f, SettleDeg = 3.5f;
-        const double DebrisLife = 9.0;       // long enough that the 4.2 s fall plus its settle is watched, not rushed
+        const double DebrisLife = 11.0;      // the fall got a second and a half longer, so this follows it: 9.0 was
+                                            // set to leave ~3.8 s of the tree lying there after a 4.2 s fall, and
+                                            // keeping that dwell is the point, not keeping the number
         bool _settling;
         float _settleT;
         Vector3 _toppleAxis = Vector3.Right; // horizontal axis; set from the chop direction
@@ -711,13 +717,20 @@ namespace UnturnedGodot
         {
             if (!GodotObject.IsInstanceValid(_debris)) { SetProcess(false); return; }
             float dt = (float)delta;
+            // ⚠ BEFORE THE EARLY RETURN BELOW. The trunk's ring outlives the settle on purpose -- that is the whole
+            // point of it -- so a per-frame write placed after the "nothing is animating" guard runs while the tree
+            // is falling and stops the instant it lands, freezing the trunk mid-flex. Which is exactly what it did:
+            // measured, the butt moved at PSNR 45 and adding a 5x uniform push changed the render in the FOURTH
+            // decimal, because the value being pushed was frozen. Same shape as the 92e9a364 arm trim.
+            TrunkReverb(dt);
             if (!_toppling && !_settling)
             {
                 // The trunk is parked at FallDeg -- pass that, not 0, so the leaf spring sees zero angular rate
                 // and rings DOWN from wherever the landing left it. Passing 0 here would read as another
                 // instantaneous stop and kick off a second, unearned wobble.
                 LeafReact(FallDeg, dt);
-                if (_leafOff.Length() < 1e-4f && _leafVel.Length() < 1e-3f) SetProcess(false);
+                if (_leafOff.Length() < 1e-4f && _leafVel.Length() < 1e-3f
+                    && _trunkOff.Length() < 1e-4f && _trunkVel.Length() < 1e-3f) SetProcess(false);   // BOTH springs
                 return;
             }
             float deg;
@@ -732,7 +745,13 @@ namespace UnturnedGodot
                 }
                 deg = _toppleDeg;
                 LeafReact(deg, dt);                                  // ...and the canopy drags against that sweep
-                if (_toppleDeg >= FallDeg) { _toppling = false; _settling = true; _settleT = 0f; }
+                if (_toppleDeg >= FallDeg)
+                {
+                    // IT HITS. Kick the trunk's own flex here, off the speed it actually arrived at, so a big
+                    // trunk landing fast rings harder than a sapling tipping over.
+                    _trunkVel = Vector3.Up * (TrunkKick * Mathf.Tau * TrunkFreq * Mathf.Min(1f, _toppleVel / 1.094f));
+                    _toppling = false; _settling = true; _settleT = 0f;
+                }
             }
             else
             {
@@ -781,12 +800,12 @@ namespace UnturnedGodot
         // the fall's own lag so it cannot fly apart. The high-frequency per-leaf jitter now rides the spring's
         // SPEED, so the canopy flutters while it is moving instead of sliding as one block.
         const float CanopyLever = 0.75f;    // the leaves sit about three quarters of the way out
-        const float DragPerMps = 0.0010f;   // metres of leaf offset per metre of local height, per m/s of canopy
-                                            // speed. Was 0.0016, set against the old curve's 0.698 rad/s impact;
-                                            // the hinged-rod fall arrives at 1.518, which drove the lag into
-                                            // LeafMax and held it there for the last stretch -- a clamped drag is
-                                            // a constant one, and a constant offset is the thing that read as
-                                            // nothing the first time. Retuned so the cap stays a safety rail.
+        const float DragPerMps = 0.0014f;   // metres of leaf offset per metre of local height, per m/s of canopy
+                                            // speed. ⚠ THIS TRACKS THE FALL'S PEAK RATE and has been retuned twice
+                                            // for it (0.0016 at 0.698 rad/s, 0.0010 at 1.518, 0.0014 at 1.094), to
+                                            // land the lag near 0.018 each time -- under LeafMax, because a clamped
+                                            // drag is a CONSTANT one and a constant offset is exactly what read as
+                                            // nothing the first time round. Change ToppleAccel and check it again.
         const float LeafFreq = 2.5f;        // Hz -- the ring after it lands; slow enough to read at 30 fps
         const float LeafZeta = 0.12f;       // lightly damped ON PURPOSE: the ring has to outlive the 0.95 s settle,
                                             // because leaf motion only becomes visible once the TRUNK stops moving
@@ -831,6 +850,42 @@ namespace UnturnedGodot
             _leafMat.SetShaderParameter("shake", Mathf.Min(1f, _leafVel.Length() * ShakeGain));
         }
 
+        // THE WHOLE TRUNK REVERBS WHEN IT LANDS (strawberry 2026-09-09: "the whole trunk should reverb when it
+        // lands"). The settle already rocks the trunk about its hinge, but that is the whole log swinging rigidly;
+        // a landing trunk BENDS -- the butt is pinned by the ground and the far end keeps going, then whips back.
+        //
+        // Which is the same shader the leaves use, pointed at the other mesh. wind_sway displaces by the world
+        // vector `gust_dir` scaled by LOCAL HEIGHT, and the trunk mesh is authored along its own Y from the cut
+        // outward, so height IS distance from the stump: the butt barely moves, the tip moves most. That is a
+        // cantilever, for free. Kicked vertically on impact and left to ring down.
+        //
+        // ⚠ sway = 0 on this material. wind_sway's ambient term is height-weighted too, and left at its default a
+        // felled trunk would waft in the wind like a fern.
+        // ⚠ TUNED AGAINST THE SETTLE, not in isolation. The rigid settle swings the whole log up to 3.5 degrees
+        // about its hinge, which at a pine's 21 m tip is 1.28 m of travel -- six times this flex. Ring the trunk
+        // down inside the settle's 0.95 s and it is masked by it exactly as the first leaf attempt was masked by
+        // the fall. So it is deliberately UNDER-damped: the rock dominates the first half second and the shudder
+        // outlives it, still going at ~27% a second after impact, with the trunk otherwise parked.
+        const float TrunkFreq = 3.0f;       // Hz -- stiffer than the canopy's 2.5, it is a log
+        const float TrunkZeta = 0.07f;      // rings for ~2 s: it has to outlast the settle to be seen at all
+        const float TrunkKick = 0.016f;     // peak offset per metre of local height: ~34 cm at a pine's tip
+        const float TrunkUniform = 5.0f;    // ...times this as a UNIFORM push, ~8 cm along the whole log. The flex
+                                            // alone is height-weighted off the mesh origin, so it is smallest at
+                                            // the butt -- which is the only part of a felled trunk you can still
+                                            // see, the rest being under its own canopy. Measured: butt-only crop
+                                            // moved at PSNR 45 on flex alone, against 33 for the whole frame.
+        ShaderMaterial _trunkMat;
+        Vector3 _trunkOff, _trunkVel;
+        void TrunkReverb(float dt)
+        {
+            if (_trunkMat == null || !LeafOn || dt <= 0.0001f) return;
+            float w = Mathf.Tau * TrunkFreq;
+            _trunkVel += (-w * w * _trunkOff - 2f * TrunkZeta * w * _trunkVel) * dt;   // free ring: no driving term
+            _trunkOff += _trunkVel * dt;
+            _trunkMat.SetShaderParameter("gust_dir", _trunkOff);
+            _trunkMat.SetShaderParameter("gust_base", _trunkOff * TrunkUniform);
+        }
+
         // Load <ResDir>/<TreeName>_<suffix>_<i>.obj + _tex.png as MeshInstance3D children of `parent`, until a part is missing.
         void LoadParts(Node parent, string suffix)
         {
@@ -850,6 +905,13 @@ namespace UnturnedGodot
                 {
                     _leafMat = ResourceField.MakeSwayMat(texP);
                     parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = _leafMat });
+                    continue;
+                }
+                if (suffix == "debris" && i == 1)   // the TRUNK: same shader, driven by TrunkReverb, ambient sway OFF
+                {
+                    _trunkMat = ResourceField.MakeSwayMat(texP);
+                    _trunkMat.SetShaderParameter("sway", 0f);   // a log does not waft
+                    parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = _trunkMat });
                     continue;
                 }
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
