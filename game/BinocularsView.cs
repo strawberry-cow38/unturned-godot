@@ -33,7 +33,27 @@ namespace UnturnedGodot
         {
             Layer = 6;
             ProcessPriority = 200;   // after the player has placed the main camera for this frame
-            _world = new SubViewport { OwnWorld3D = false, RenderTargetUpdateMode = SubViewport.UpdateMode.Always, HandleInputLocally = false };
+            // ⚠ INPUT: this viewport is a RENDER TARGET and nothing else, so it must not take part in input routing
+            // at all (strawberry 2026-09-09: "holding binoculars kills my mouse input until i pause and unpause" --
+            // cursor still hidden, camera frozen, i.e. the mode was fine and the MOTION EVENTS were being eaten).
+            //
+            // It carried HandleInputLocally = false, and that is the whole story: of the ten SubViewports in this
+            // project -- the arms, the scope, the water mirror, the outline pass, the paperdoll, the prop
+            // thumbnails, the info billboards, the resource icons, the map bake -- this was the ONLY one that set
+            // it. False means the viewport defers input to its parent rather than keeping it, so an events pass
+            // ran through here on the way to the player, and the player's look lives in _UnhandledInput, which is
+            // downstream of anything that marks an event handled. Nothing else about the binoculars is unusual;
+            // this one flag was.
+            //
+            // GuiDisableInput on top, because it is free and true: there is not a single Control inside this
+            // viewport, only a Camera3D, so there is no GUI here to feed.
+            _world = new SubViewport
+            {
+                OwnWorld3D = false,
+                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                HandleInputLocally = true,   // the default every other viewport in this project uses
+                GuiDisableInput = true,
+            };
             AddChild(_world);
             _cam = new Camera3D { Current = true };
             _world.AddChild(_cam);
