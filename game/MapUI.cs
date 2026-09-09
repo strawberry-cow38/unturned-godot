@@ -91,7 +91,7 @@ namespace UnturnedGodot
         static Color RosterRowC => new(0.22f, 0.22f, 0.23f, 0.98f);   // CraftingMenu's TileC, the same row face the skills page uses
         VBoxContainer _playersList;
         Label _playersHead;
-        readonly System.Collections.Generic.List<(Vector2 norm, Control dot, Label lbl)> _towns = new();
+        readonly System.Collections.Generic.List<(Vector2 norm, Control dot, Control lbl)> _towns = new();
 
         // ---- STATE THAT SURVIVES A CLOSE. Instance fields, not statics: they should outlive an open/close pair
         // but NOT outlive the world, and MapUI is built once per world.
@@ -109,13 +109,13 @@ namespace UnturnedGodot
         {
             public Vector2 Norm;      // map-normalised 0..1, so it is zoom/pan independent
             public Polygon2D Pin;
-            public Label Tag;
+            public Control Tag;   // the pill, not the Label inside it
         }
 
         // Other players plotted on the map -- rebuilt only when the roster changes, not every frame. Their
         // NORMALISED positions are kept alongside the nodes so a pan or a zoom can re-place them immediately;
         // without that they sit at the old transform until the next roster tick and visibly lag the map.
-        readonly System.Collections.Generic.List<(Control dot, Label lbl)> _peerDots = new();
+        readonly System.Collections.Generic.List<(Control dot, Control box, Label lbl)> _peerDots = new();
         readonly System.Collections.Generic.List<Vector2> _peerNorms = new();
 
         public override void _Ready()
@@ -170,15 +170,15 @@ namespace UnturnedGodot
             {
                 var dot = Pip(UITheme.Accent, TownPip);
                 _map.AddChild(dot);
-                var lbl = MapLabel(name, new Color(1f, 1f, 1f));
+                var lbl = MapLabel(name, new Color(1f, 1f, 1f), out _);
                 _map.AddChild(lbl);
                 _towns.Add((WorldToNorm(pos), dot, lbl));
             }
 
             _arrow = new Polygon2D { Color = new Color(0.25f, 0.9f, 1f) };
-            _arrow.Polygon = new Vector2[] { new(0, -11), new(7, 8), new(0, 3), new(-7, 8) };   // points up (north) at rotation 0
+            _arrow.Polygon = new Vector2[] { new(0, -17), new(11, 12), new(0, 5), new(-11, 12) };   // points up (north) at rotation 0
             _map.AddChild(_arrow);
-            _arrow.AddChild(Halo(_arrow.Polygon, 2f));
+            _arrow.AddChild(Halo(_arrow.Polygon, 3f));
 
             BuildPlayersPanel();
 
@@ -406,7 +406,7 @@ namespace UnturnedGodot
             {
                 bool used = i < _peerNorms.Count;
                 _peerDots[i].dot.Visible = used;
-                _peerDots[i].lbl.Visible = used;
+                _peerDots[i].box.Visible = used;
                 if (!used) continue;
                 _peerDots[i].dot.Position = _peerNorms[i] * s - new Vector2(PeerPip, PeerPip) * 0.5f;
             }
@@ -434,8 +434,9 @@ namespace UnturnedGodot
         // Sized so the FILL matches the old flat dot (5 px town / 7 px peer) and the ring is added OUTSIDE it.
         // First attempt kept the old 7 px overall and put a 2 px ring inside that, which leaves 3 px of colour and
         // reads as a black square at map scale -- less legible than the un-ringed dot it replaced, not more.
-        const float PipRing = 2f;
-        const float TownPip = 5f + 2f * PipRing, PeerPip = 7f + 2f * PipRing;
+        const float PipRing = 3f;
+        const float TownPip = 9f + 2f * PipRing, PeerPip = 12f + 2f * PipRing;
+        const int MapFont = 18;   // deliberately above FontHeading: this is a full-screen chart, not a list
         static Color PeerColor => new(1f, 0.55f, 0.2f);
 
         /// <summary>A map pip: a round dot with a dark ring, so it reads on sand, grass, asphalt and water alike.
@@ -467,20 +468,28 @@ namespace UnturnedGodot
             return new Polygon2D { Polygon = outp, Color = new Color(0f, 0f, 0f, 0.85f), ZIndex = -1 };
         }
 
-        static Label MapLabel(string text, Color c)
+        /// <summary>A map name on its own dark pill (strawberry 2026-09-09: "the text and markers and blobs need
+        /// to be bigger and clearer"). An outline alone was doing all the legibility work and losing: over a busy
+        /// tile -- treetops, road markings, orange dirt -- white-on-anything needs a ground of its own, and a
+        /// translucent plate reads at a glance where a 3 px stroke does not. The outline stays, thinner, just to
+        /// keep the glyph edges off the plate.</summary>
+        static PanelContainer MapLabel(string text, Color c, out Label inner)
         {
-            var l = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore };
-            // FontBody, not FontSmall. 11 px is the size for a dense list read at arm's length; these are names
-            // scattered over a full-screen map panel, and at 11 they were specks next to the detail the tiles now
-            // carry. Bigger names collide sooner, which is the point -- the pass below is what keeps that neat.
-            l.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            l.AddThemeColorOverride("font_color", c);
-            l.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
-            l.AddThemeConstantOverride("outline_size", 3);
-            return l;
+            var box = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            var sb = UITheme.Box(new Color(0f, 0f, 0f, 0.55f), 5);
+            sb.ContentMarginLeft = sb.ContentMarginRight = 7;
+            sb.ContentMarginTop = sb.ContentMarginBottom = 3;
+            box.AddThemeStyleboxOverride("panel", sb);
+            inner = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore };
+            inner.AddThemeFontSizeOverride("font_size", MapFont);
+            inner.AddThemeColorOverride("font_color", c);
+            inner.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
+            inner.AddThemeConstantOverride("outline_size", 2);
+            box.AddChild(inner);
+            return box;
         }
 
-        readonly System.Collections.Generic.List<(Label lbl, Vector2 anchor, float pip)> _labelPass = new();
+        readonly System.Collections.Generic.List<(Control lbl, Vector2 anchor, float pip)> _labelPass = new();
         readonly System.Collections.Generic.List<Rect2> _labelPlaced = new();
 
         /// <summary>Place every label on the map in ONE pass, so they can be tested against each other. Ordered by
@@ -489,8 +498,8 @@ namespace UnturnedGodot
         {
             _labelPass.Clear();
             _labelPlaced.Clear();
-            foreach (var m in _markers) _labelPass.Add((m.Tag, m.Norm * s + new Vector2(0f, -9f), 12f));   // beside the pin BODY, not its tip
-            for (int i = 0; i < _peerDots.Count && i < _peerNorms.Count; i++) _labelPass.Add((_peerDots[i].lbl, _peerNorms[i] * s, PeerPip));
+            foreach (var m in _markers) _labelPass.Add((m.Tag, m.Norm * s + new Vector2(0f, -15f), 20f));   // beside the pin BODY, not its tip
+            for (int i = 0; i < _peerDots.Count && i < _peerNorms.Count; i++) _labelPass.Add((_peerDots[i].box, _peerNorms[i] * s, PeerPip));
             foreach (var (norm, _, lbl) in _towns) _labelPass.Add((lbl, norm * s, TownPip));
 
             // Tested against what you can SEE, not against the whole island: a name must not run off the panel,
@@ -603,13 +612,9 @@ namespace UnturnedGodot
             {
                 var d = Pip(PeerColor, PeerPip);
                 _map.AddChild(d);
-                var t = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
-                t.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
-                t.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.5f));
-                t.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
-                t.AddThemeConstantOverride("outline_size", 4);
-                _map.AddChild(t);
-                _peerDots.Add((d, t));
+                var box = MapLabel("", new Color(1f, 0.78f, 0.55f), out var t);
+                _map.AddChild(box);
+                _peerDots.Add((d, box, t));
             }
             _peerNorms.Clear();
             for (int i = 0; i < need; i++)
@@ -691,10 +696,10 @@ namespace UnturnedGodot
         {
             float s = _baseSize * _zoom;
             var pin = new Polygon2D { Color = new Color(1f, 0.85f, 0.2f) };
-            pin.Polygon = new Vector2[] { new(0, 0), new(-6, -14), new(0, -19), new(6, -14) };   // a teardrop pin whose TIP is the marked spot
+            pin.Polygon = new Vector2[] { new(0, 0), new(-10, -22), new(0, -30), new(10, -22) };   // a teardrop pin whose TIP is the marked spot
             _map.AddChild(pin);
-            pin.AddChild(Halo(pin.Polygon, 2f));
-            var tag = MapLabel($"M{++_markerSeq}", new Color(1f, 0.9f, 0.5f));
+            pin.AddChild(Halo(pin.Polygon, 3f));
+            var tag = MapLabel($"M{++_markerSeq}", new Color(1f, 0.9f, 0.5f), out _);
             _map.AddChild(tag);
             var m = new Marker { Norm = norm, Pin = pin, Tag = tag };
             _markers.Add(m);
