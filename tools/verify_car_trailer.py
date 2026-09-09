@@ -94,15 +94,21 @@ def truck_wall():
 
 # Expected dimensions are recomputed from donors, independently of the asset generator.
 def expected():
-    s,rr=measurements();g=s['golf'];q=s['quad'];radius=min(r for v in s.values() for r in v['radii'])
-    t=(g['WheelRadius']-radius)/3;tw=obj(CONTENT/q['Wheel'])['size'][0]
+    s,rr=measurements();g=s['golf']
+    radius=g['WheelRadius']                    # the CAR's wheel, not the quad's
+    wheel=g['fields']['Wheel'];tw=obj(CONTENT/wheel.strip('"'))['size'][0]
     wall_t,wall_h,bed_w=truck_wall()
-    L=g['mesh']['size'][2]*.6                  # was /2 -- "should also be bigger"
-    W=bed_w                                    # the truck bed's own outer width, not the old track fit
+    t=wall_t/5
+    track=g['tracks'][-1]
+    L=g['mesh']['size'][2]*.6                  # "should also be bigger"
+    # The TYRES set the width, not the truck. Without arches, any flat-sided box wider than the tyre's
+    # inner face (track/2 - tw/2) has the tyre buried in its sideboard; the bed's own 2.462 did exactly
+    # that. The truck still governs the wall SECTION, which is what was actually asked for.
+    W=track-tw-2*t
     draw=g['mesh']['size'][0]/2+radius
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
                     ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,az=L/10,dy=g['Wheels'][0][1],tw=tw,
-                    wall_t=wall_t,wall_h=wall_h,track=g['tracks'][-1])
+                    wall_t=wall_t,wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w)
 
 def source_names(src):
     src=uncomment(src);return re.findall(r'"([^"]+)"',braced(src,src.index('{',src.index('string[] SpecNames'))))
@@ -200,8 +206,22 @@ def cases():
         (BODY,move_group('coupler',(0,0,.3)),'bury socket'))
     add('spec routes authored body and shared fleet wheel texture',lambda:require(fields('car_trailer')['Body']=='"car_trailer_body.txt"' and fields('car_trailer')['WheelTex']==s['quad']['fields']['WheelTex']),
         fieldmut('Body','"trailer_0.txt"'),fieldmut('WheelTex','"missing.png"'))
-    add('trailer wheel donor and effective radius are quad',lambda:require(fields('car_trailer')['Wheel']=='"quad_wheel.txt"' and close(number(fields('car_trailer')['WheelRadius']),r)),
-        fieldmut('Wheel','"jeep_wheel.txt"'),fieldmut('WheelRadius','0.6f'))
+    add('wheel donor and radius are the car\'s, not the quad\'s',
+        lambda:require(fields('car_trailer')['Wheel']==d['wheel'] and close(number(fields('car_trailer')['WheelRadius']),r)
+                       and r==s['golf']['WheelRadius'] and r>s['quad']['WheelRadius']),
+        fieldmut('Wheel','"quad_wheel.txt"'),fieldmut('WheelRadius','0.45f'))
+    def tyre_clear():
+        """No tyre buried in the bodywork -- read off the ACTUAL mesh and the ACTUAL spec, not off
+        expected()'s own arithmetic, which cannot disagree with itself. This is why the box is NOT the
+        truck bed's 2.462 outer width: without arches, a flat side wider than the tyre's inner face is
+        a tyre through the panel, and at 2.462 that was 131 mm of X through 550 mm of Y."""
+        anchor=min(abs(float(q[0])) for q in re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (?:false|true)\)',fields('car_trailer')['Wheels']))
+        inner=anchor-obj(CONTENT/fields('car_trailer')['Wheel'].strip('"'))['size'][0]/2
+        outer=max(abs(group_bounds('side_'+str(sg))[i][0]) for sg in (-1,1) for i in (0,1))
+        require(inner-outer >= t-1e-6, f'tyre inner face {inner:.4f} vs sideboard outer {outer:.4f}: gap {inner-outer:+.4f}')
+    add('no tyre buried in the sideboard, which is why the box is not the bed width',tyre_clear,
+        (BODY,move_group('side_1',(.1,0,0)),'widen the box into the tyre'),
+        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.000000f, 0.250000f, 0.313712f, false), (1.000000f, 0.250000f, 0.313712f, false) }'))
     def wheels():
         text=fields('car_trailer')['Wheels']; rows=re.findall(r'\(([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f, (false|true)\)',text)
         require(len(rows)==2 and all(q[3]=='false' for q in rows))
@@ -224,7 +244,7 @@ def cases():
         and all(number(fields('car_trailer')[a])==0 for a in ['Engine','SteerMax','SteerMin','SpeedMax','SpeedMin','Brake']) and fields('car_trailer')['Sound']=='null'),
         *[fieldmut(key,'1f') for key in ['Mass','Health','Engine','SteerMax','SteerMin','SpeedMax','SpeedMin','Brake']],fieldmut('Sound','"engine_small.ogg"'))
     for name in TOW_CARS:
-        exp=(0,rr[name]['y'],rr[name]['rear']+r/3)
+        exp=(0,rr[name]['y'],rr[name]['rear']+3*t)
         add(name+' hitch from its own measured rear',lambda n=name,e=exp:require(close(vector(fields(n)['FifthWheel']),e)),fieldmut('FifthWheel','Vector3.Zero',name))
         add(name+' visible hitch registered and reaches its pin',lambda n=name,e=exp:require('"'+n+'_hitch.txt"' in fields(n)['Parts'] and close(obj(CONTENT/(n+'_hitch.txt'))['hi'][2],e[2]+t)),
             (VEH,lambda x,n=name:x.replace('"'+n+'_hitch.txt"','"missing_hitch.txt"',1),'revert part registration'),
@@ -260,7 +280,7 @@ def cases():
         # Entire body clears each car's global rear plane throughout the allowed yaw range.
         for degree in [angle*i/100 for i in range(-100,101)]:
             a=math.radians(degree)
-            require(min(r/3+(p[2]-k[2])*math.cos(a)-p[0]*math.sin(a) for p in points)>0)
+            require(min(3*t+(p[2]-k[2])*math.cos(a)-p[0]*math.sin(a) for p in points)>0)
     add('yaw limit derived from front rail; full swept body clears bumper',yaw,fieldmut('HitchYawLimit','90f'))
     add('yaw spec reaches runtime clamp',lambda:require('v.HitchYawLimit = s.HitchYawLimit > 0f ? s.HitchYawLimit : JackknifeLimit;' in uncomment(VEH.read_text()) and 'Mathf.Min(JackknifeLimit, trailer.HitchYawLimit)' in uncomment(VEH.read_text())),
         (VEH,lambda x:x.replace('v.HitchYawLimit = s.HitchYawLimit > 0f ? s.HitchYawLimit : JackknifeLimit;',''),'revert spec transfer'),

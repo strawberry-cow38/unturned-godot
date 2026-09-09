@@ -79,25 +79,39 @@ def design(specs, rear):
     row = next(l for l in (ROOT/'notes/vehicle_measurements.md').read_text().splitlines() if l.startswith('| golf /'))
     cols = [x.strip() for x in row.split('|')]
     length, car_width = float(cols[2]),float(cols[3])
-    radius = quad['WheelRadius']; car_radius = golf['WheelRadius']
-    t = (car_radius-radius)/3
-    tyre_width = obj(CONTENT/quad['Wheel'])['size'][0]
+    # THE CAR'S WHEEL (strawberry: "scale the wheels to be the same size as the car's"). Every road
+    # vehicle runs jeep_wheel.txt at WheelRadius .600; the trailer was on the quad's .450.
+    radius = golf['WheelRadius']
+    wheel_mesh = golf['fields']['Wheel']; wheel_tex = golf['fields']['WheelTex']
+    tyre_width = obj(CONTENT/wheel_mesh.strip('"'))['size'][0]
     bed = truck_bed()
+    # t was (car radius - quad radius)/3, which is meaningless once the trailer runs the car's wheel --
+    # it would be zero. Same .050 value, now taken off the section that is actually load-bearing here.
+    t = bed['wall_t']/5
     # SIZE AND WALL SECTION FROM THE TRUCK'S BED (strawberry: "the truck bed walls/body measure the
     # thickness and size ... should also be bigger"). Its walls are .250 thick and stand 1.000 above
     # the floor; mine were t = .050 and .450, five times too thin and under half the height.
     wall_t, wall_h = bed['wall_t'], bed['wall_h']
-    deck_w = bed['outer_w']                     # the bed's own outer width, up from 2.100
-    deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
     # WHEELS SIT PROUD, THE WAY EVERY CAR'S DO (strawberry: "move wheels to the sides like cars are").
     # Measured across the fleet, sedan/hatchback/golf/police/jeep/offroader/truck/van all share body
     # half-width 1.261 against track/2 1.300 and tyre half-width .200 -- the tyre's outer face stands
     # .239 outboard of the bodywork on every one of them. Tucking them under the deck was my own idea
     # when the arches came off and it made the trailer read as a box on castors. Back to the fleet track.
     track = golf['tracks'][-1]
+    # WIDTH IS SET BY THE TYRES, NOT BY THE TRUCK. I had this at the bed's own outer width 2.462, and
+    # it was wrong the moment the wheels went back on the fleet track without arches: the tyre's inner
+    # face sits at track/2 - tyre_width/2 = 1.100, so any flat-sided box wider than that has the tyre
+    # buried in its sideboard. At 2.462 the overlap was 131 mm of X through 550 mm of Y -- a tyre
+    # embedded in the bodywork, which is exactly the class of thing "fix the weird geom" was about.
+    # The fleet's cars get away with 1.261 because they have ARCHES cut into the body, and those are
+    # gone by instruction. So the box clears the tyres by t a side and the truck governs the wall
+    # SECTION (.250 thick, 1.000 tall) rather than the overall width.
+    deck_w = track-tyre_width-2*t
+    deck_l = length*.6                          # was length/2; longer than the bed, which a trailer is
     front,back = -deck_l/2,deck_l/2
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)
+    hitch_projection = 3*t   # was radius/3, which would now drag all eight cars' tow balls back 50 mm
     ground = rear['golf']['ground']
     wheel_y = ground+radius+.25
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
@@ -106,7 +120,8 @@ def design(specs, rear):
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_y-.25,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
-                hitch_projection=radius/3, mass=quad['Mass'])
+                hitch_projection=hitch_projection, mass=quad['Mass'],
+                wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)
 
 def write():
     specs,rear = measurements(); d=design(specs,rear)

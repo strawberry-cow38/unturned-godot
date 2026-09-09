@@ -94,7 +94,7 @@ One small system extension is necessary for this shape: `Spec.HitchYawLimit`, de
 Spawn with the canonical vehicle name **`car_trailer`** wherever the existing vehicle command accepts `golf` or `wagon`. Added `BuildCarTrailer`, `BuildByName`, `SpecFor` (including the MP puppet path), and an **append at SpecNames TypeId 33**. Every old key and index from `1f7f106d` remains unchanged, including SUV at 32. It is command-only; the natural spawn pool is unchanged. The wagon verifier was updated to allow later appended vehicles while still comparing its entire original index prefix.
 
 - `dotnet build game/UnturnedGodot.csproj`: passed. Both the final build and a control build with the original `1f7f106d` Vehicle.cs (new test omitted) reported **22 identical pre-existing warnings, zero errors**. Warning messages were compared as sets; there are no new warnings.
-- `python3 tools/verify_car_trailer.py --mutation-test`: **51 named checks, 204 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
+- `python3 tools/verify_car_trailer.py --mutation-test`: **52 named checks, 206 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
 - `python3 tools/verify_wagon.py`: passed, retaining the original 32 pre-wagon TypeIds and wagon TypeId 32.
 - Godot 4.6 `--headless --path game -- --tests=vehicle.car_trailer`: **46 checks passed** in the construction/coupling fixture: actual server/replica mesh loading, canonical identity, two passive wheels, all eight hitch Parts, attach/detach and PinJoint presence, coincident anchors, retracted/redeployed support, and imported yaw limit. Headless was used for this fixture only, not for the renders.
 
@@ -227,3 +227,35 @@ derived from that nearest plane. It previously stood its full 190 mm depth out i
 the sedan's relationship, because I had seated its *front* face on the rear plane.
 
 Body is **80 v / 120 tris**, down from 144.
+
+## Fourth pass: the car's wheel, and what that forces
+
+strawberry: *"scale the wheels to be the same size as the car's"*.
+
+The trailer ran the quad's `quad_wheel.txt` at WheelRadius .450. Every road vehicle in the fleet runs
+`jeep_wheel.txt` at **.600**, so that is what it runs now, with the matching `jeep_wheel_albedo.png`.
+
+**Two derivations had to move out of the way first**, because both were defined in terms of the wheel
+and would have changed things nobody asked to change:
+
+- `t` was `(car_radius - quad_radius)/3`. With the trailer on the car's wheel that is **zero**. Same
+  .050 value now comes off `wall_t/5` -- the section that is actually load-bearing in this model.
+- `hitch_projection` was `radius/3`. Left alone it would have dragged **all eight cars' tow balls**
+  50 mm further back as a side effect of scaling the trailer's tyre. Pinned to `3*t`, same .150.
+
+**And the wheel scale exposed a defect I had shipped last pass.** Putting the wheels back on the fleet
+track without arches left the tyre *buried in the sideboard*: inner face at 1.100 against a sideboard
+outer face at 1.231, so **131 mm of X through 550 mm of Y of tyre inside the bodywork**. It was there
+at .450 and it gets worse at .600. The fleet's cars live with that overlap because they have ARCHES cut
+into the body, and those are gone by instruction.
+
+So the deck's outer width is **2.100**, not the truck bed's 2.462: `track - tyre_width - 2t`, clearing
+each tyre by t. The truck still governs the wall **section** (.250 thick, 1.000 tall), which is what
+"the truck bed walls/body measure the thickness and size" actually asks for; its overall width is not
+available to a trailer that has no arches and car-sized wheels. Deck is 3.137 x 2.100; body 80 v / 120 tris.
+
+**The render was lying, and that is worth recording.** `preview_car_trailer.py` staged the trailer's
+wheels from the literal `'quad_wheel.txt'` rather than from the spec, so the first re-bake after the
+change came back showing the old .450 wheel and looked exactly like a change that had not landed. It
+reads `d['wheel_mesh']` now. Verified by measuring the staged mesh rather than by eye: the vertices at
+the trailer's axle span 1.1826 in Y, which is the jeep wheel's height, not the quad's .8869.

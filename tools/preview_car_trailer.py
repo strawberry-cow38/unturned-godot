@@ -49,7 +49,10 @@ def generate():
             for x,y,z,_ in car['Wheels']:add(car['Wheel'],car['WheelTex'],(x+car_off[0],y-.25+car_off[1],z+car_off[2]),x<0)
         else:trailer_off=(0,-d['ground'],0)
         for name in ['car_trailer_body.txt','car_trailer_taillights.txt']:add(name,'car_trailer_palette.png',trailer_off,hide_stand=kind=='coupled')
-        for sign in [-1,1]:add('quad_wheel.txt','jeep_wheel_albedo.png',(sign*d['track']/2+trailer_off[0],d['wheel_center_y']+trailer_off[1],d['axle_z']+trailer_off[2]),sign<0)
+        # Read the wheel from the design, never a literal: this said 'quad_wheel.txt' and went on
+        # rendering the old .450 wheel after the trailer moved to the car's .600, so the picture
+        # disagreed with the spec and looked like the change had not landed.
+        for sign in [-1,1]:add(d['wheel_mesh'].strip('"'),d['wheel_tex'].strip('"'),(sign*d['track']/2+trailer_off[0],d['wheel_center_y']+trailer_off[1],d['axle_z']+trailer_off[2]),sign<0)
         lines=['# Generated static comparison: original coordinates, no scaling. Nominal rest suspension, +Y up / -Z forward.']
         for tag,values in [('v',vs),('vt',ts),('vn',ns)]:lines.extend(tag+' '+' '.join(f'{x:.8f}' for x in p) for p in values)
         lines.extend('f '+' '.join('/'.join(map(str,c)) for c in f) for f in fs)

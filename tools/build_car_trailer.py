@@ -177,7 +177,7 @@ def generate():
         static readonly Spec _car_trailer = new()
         {{
             Mass = {d['mass']:.6f}f,
-            Body = "car_trailer_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            Body = "car_trailer_body.txt", Wheel = {d['wheel_mesh']}, WheelTex = {d['wheel_tex']}, Palette = "car_trailer_palette.png",
             WheelRadius = {r:.6f}f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
             BoxSize = {v((2*w,wt,b-f))}, BoxCenter = {v((0,y-wt/2,0))},   // the deck slab itself; the load space above it stays open
             ExtraBoxes = new (Vector3, Vector3)[]
