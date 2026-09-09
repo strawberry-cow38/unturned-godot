@@ -31,16 +31,16 @@ The fractions below are explicit design choices applied to measured donors, not 
 | Deck outer width | 2.099996 m | Car track − native quad tyre width − 2t = 2.6 − .400004 − .1 |
 | Deck Z range | −1.307138..+1.307138 | Centred half-Golf deck |
 | Deck finished local Y / nominal height | .250000 / .850000 m | Golf wheel mount Y; add the common .600000 origin-to-ground distance |
-| Deck total thickness | .100000 m | 2t; steel base .075 = 1.5t plus .025 = t/2 board thickness |
-| Timber floor | Six boards; .010000 gaps; .050000 edge inset | Count = floor(deck length / quad tyre width); gaps t/5, inset t; equal widths across the remaining deck |
-| Sideboards / rails | .450000 total height above deck; rail top Y .700000 | Quad radius r; panels .400 = r−t, top rails .050 = t; side panel thickness t, rail width 2t |
-| End boards / tailgate | Width 1.999996, thickness .050000; inset .010000 from deck ends | Deck width − 2t; t; t/5. Separate hinged-looking tailgate geometry, fixed in gameplay |
+| Deck total thickness | .087500 m | 2t less t/4, so the slab's top sits under the sideboards' base rather than exactly on it |
+| Timber floor | One slab, full deck width | Matches the truck's own bed, whose floor is a single 1.616 m2 quad in two triangles with no board lines. Nine modelled boards cost 72 tris to say what a flat surface and a palette colour already say |
+| Sideboards | .450000 total height above deck; top Y .700000 | Quad radius r, reached by the board itself. The separate capping rail and the six stake posts are gone: 96 tris of trim at a scale nothing else in the fleet models |
+| End boards / tailgate | Width 1.999996, thickness .050000; inset .010000 from deck ends | Deck width − 2t; t; t/5. Fixed in gameplay; the hinge blocks and latches that used to stand proud of the deck are removed, so the rear datum is now the deck at L/2 |
 | Wheel centres | (±1.300000,.100000,.261428) | Car half-track; Y adjusted by r−R from car mount Y; axle at 60% of deck length from its front (Z = length/10) |
 | Wheel centre at rest | Local Y −.150000 | Mount Y − .250000 rest drop; bottom = −.600000, matching cars |
 | Physical tyre lateral envelope | X ±1.500002 | Car half-track + quad tyre half-width; car tyres reach ±1.500003 |
 | Mudguard lateral envelope | X ±1.550002; each .500004 wide | Native tyre width + 2t clearance. The tyres stay in car tracks; guards add .050000 per side beyond the tyres |
 | Mudguard crown | Inner .750000 / outer .800000 radial envelope about rest wheel centre | r + full .250000 rest compression + t clearance; add t sheet thickness; six half-circle facets |
-| Fender compression clearance | At least .024444 m under the conservative enclosing circle | .750 cos(15°) − (.450+.250); checks facet midpoints, not only crown vertices |
+| Fender compression clearance | At least .013279 m under the conservative enclosing circle | Segment count is DERIVED: the smallest n whose facets clear, at the standoff the fleet already uses. Five here. Coarsening to three pulls the facet midpoints 5 cm INSIDE the envelope even though no vertex moves, and buying that back by inflating the radius (.750 to .858) turned the fender into three plates tented over the wheel |
 | Axle beam | .100000 × .100000, across 2.600000 track | 2t cross-section; beam centred on wheel rest Y and measured-design axle Z |
 | Chassis beams | .100000 × .100000 along deck | 2t sections; X centres ±(deck half-width−2t), Y .100 = deck Y−3t |
 | Free tongue: pin to deck front | 1.711050 m | Golf half-body width + quad radius = 1.2610495+.450 |
@@ -58,7 +58,7 @@ The fractions below are explicit design choices applied to measured donors, not 
 
 The mesh is an open green-sided utility trailer with a timber deck, single axle, A-frame drawbar, coupler/locking handle, faceted mudguards, mudflaps, rear lamps, hinges and latches. It is not a trailer for carrying a whole car.
 
-The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **338 position records, 572 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
+The body is an assembly of closed solid components, with ordinary overlapping structural joints. It is not a Boolean-unioned single skin. It has **144 position records, 232 triangles, zero boundary edges, zero non-manifold geometric edges and consistent opposite edge winding**. Rear lights are 16 v / 24 tris. Each of the eight hitch meshes is 24 v / 40 tris. All authored files have explicit per-corner UVs/normals and exactly three corners per face. No zero-area triangles or out-of-range indices; smallest body triangle area approximately .000625 m².
 
 All 11 authored mesh/palette assets were also regenerated and compared byte for byte; there was no drift.
 
@@ -94,7 +94,7 @@ One small system extension is necessary for this shape: `Spec.HitchYawLimit`, de
 Spawn with the canonical vehicle name **`car_trailer`** wherever the existing vehicle command accepts `golf` or `wagon`. Added `BuildCarTrailer`, `BuildByName`, `SpecFor` (including the MP puppet path), and an **append at SpecNames TypeId 33**. Every old key and index from `1f7f106d` remains unchanged, including SUV at 32. It is command-only; the natural spawn pool is unchanged. The wagon verifier was updated to allow later appended vehicles while still comparing its entire original index prefix.
 
 - `dotnet build game/UnturnedGodot.csproj`: passed. Both the final build and a control build with the original `1f7f106d` Vehicle.cs (new test omitted) reported **22 identical pre-existing warnings, zero errors**. Warning messages were compared as sets; there are no new warnings.
-- `python3 tools/verify_car_trailer.py --mutation-test`: **49 named checks, 197 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
+- `python3 tools/verify_car_trailer.py --mutation-test`: **49 named checks, 199 deliberately failing real-file regressions**. I actually reverted/corrupted each checked behavior (including all eight own-rear tow points, mesh corner/index/normal/UV/topology failures, palette V compensation, registrations, TypeId insertion, radius/track/axle, support, and yaw spec/transfer/clamp). Each failed the corresponding check. The verifier restores exact original bytes in `finally`, then reruns the unmodified checks. No check is presented without an exercised failing mutation.
 - `python3 tools/verify_wagon.py`: passed, retaining the original 32 pre-wagon TypeIds and wagon TypeId 32.
 - Godot 4.6 `--headless --path game -- --tests=vehicle.car_trailer`: **46 checks passed** in the construction/coupling fixture: actual server/replica mesh loading, canonical identity, two passive wheels, all eight hitch Parts, attach/detach and PinJoint presence, coincident anchors, retracted/redeployed support, and imported yaw limit. Headless was used for this fixture only, not for the renders.
 
@@ -130,3 +130,25 @@ Substitute `alone` or `coupled` for the other inputs. The `--` separator is requ
 Server and puppet construction were exercised, but actual network spawning, multiplayer hitch interaction and replication of the coupled relationship were not. The existing system does not distinguish ball hitches from semi fifth wheels, so it still permits geometrically incompatible car/semi pairings if brought within coupling reach. I did not add a hitch-class protocol or change that existing behavior.
 
 The geometry sweep is level/static; the existing pair ghosting and anti-clip behavior under real contact remains unverified. The attachment test exercises construction and lifecycle, not a car driving with a trailer. No result above should be read as a successful road test.
+
+## Detail pass (strawberry: "redo. too much detail. look at the truck bed etc")
+
+The first body was **572 triangles** -- 5th busiest of the fleet's 31 bodies, above every car, above
+the truck's whole 390 and the van's 422, for an object that is a flat deck on one axle. The reference
+named in the note settles what the fleet's vocabulary actually is: the truck's bed floor is **two
+triangles**, one 1.616 m2 quad at Y=0.125, with no board lines anywhere.
+
+Removed, with what each cost: nine modelled deck boards (72), six stake posts (72), two capping rails
+(24), two gate rails (24), tailgate hinges (24) and latches (24), mudflaps (24), amber reflectors (24),
+the coupler's latch (12) and handle (12), the landing foot pad (12), and six fender segments cut to
+five (16). Everything on that list is a box under about 8 cm, which is below the scale anything else in
+the fleet models -- they read as noise on the silhouette rather than as detail.
+
+**572 -> 232 triangles, 366 -> 144 vertices.** That lands between the wagon (226) and the jeep (232),
+in the fleet's lower third, which is where a trailer belongs.
+
+Two things this pass changed that are not just deletions. The deck is one slab whose top sits t/4 under
+the sideboards' base: coplanar faces with coincident corners get welded by `save(weld_positions=True)`
+and the shared edge then carries four faces, which the verifier correctly calls non-manifold. And the
+fender's segment count is now derived rather than chosen -- see the clearance row above for why three
+segments is wrong at this radius and why inflating the radius to rescue it is worse.

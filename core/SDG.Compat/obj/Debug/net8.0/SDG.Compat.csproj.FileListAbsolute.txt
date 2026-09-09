@@ -381,3 +381,15 @@ C:/claude-workspace/unturned-godot/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Comp
 /home/ec2-user/ug-mp-wt/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
 /home/ec2-user/ug-mp-wt/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb
 /home/ec2-user/ug-mp-wt/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Compat.dll
+/tmp/snow/trailer/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.deps.json
+/tmp/snow/trailer/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.dll
+/tmp/snow/trailer/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.pdb
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.GeneratedMSBuildEditorConfig.editorconfig
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfoInputs.cache
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfo.cs
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.csproj.CoreCompileInputs.cache
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.sourcelink.json
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.dll
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb
+/tmp/snow/trailer/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Compat.dll

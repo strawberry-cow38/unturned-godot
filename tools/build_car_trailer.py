@@ -52,11 +52,11 @@ def generate():
     specs,rear=measurements();d=design(specs,rear)
     t=d['t'];w=d['deck_w']/2;f=d['front'];b=d['back'];y=d['deck_y'];r=d['radius'];ky=d['king'][1];kz=d['king'][2];az=d['axle_z'];cy=d['wheel_center_y']
     m=Model()
-    m.box('deck',(-w,y-2*t,f),(w,y-t/2,b),0)
-    # Board count = floor(length / quad tyre width), gaps are t/5.
-    count=math.floor(d['deck_l']/d['tyre_width']); step=(2*w-2*t)/count
-    for i in range(count):
-        m.box('board_'+str(i),(-w+t+i*step+t/10,y-t/2,f+t),(-w+t+(i+1)*step-t/10,y,b-t),2)
+    # ONE SLAB, NOT PLANKS. The reference is the truck's own bed (strawberry: "too much detail. look
+    # at the truck bed etc"), and that floor is TWO triangles -- a single 1.616 m2 quad at Y=0.125, no
+    # board lines anywhere. Modelling nine separate boards with gaps cost 72 tris to say something the
+    # fleet says with a flat surface and a palette colour, so the deck is one box like the truck's.
+    m.box('deck',(-w,y-2*t,f),(w,y-t/4,b),2)
     for sign in [-1,1]:
         x=sign*(w-2*t)
         m.box('chassis_'+str(sign),(x-t,y-4*t,f),(x+t,y-2*t,b),3)
@@ -65,27 +65,33 @@ def generate():
     # Low solid sideboards with top rails. Tailgate has visible hinge blocks and latches.
     for sign in [-1,1]:
         x=sign*(w-t/2)
-        m.box('side_'+str(sign),(x-t/2,y,f),(x+t/2,y+r-t,b),1)
-        m.box('side_rail_'+str(sign),(x-t,y+r-t,f),(x+t,y+r,b),0)
-        for z in [f+t/2,az,b-t/2]:
-            m.box('stake_'+str(sign)+'_'+str(z),(x-.75*t,y,z-t/2),(x+.75*t,y+r-t/2,z+t/2),0)
+        # One sideboard, full height -- no separate capping rail and no stake posts. Both were
+        # sub-centimetre trim (24 and 72 tris) at a scale nothing else in the fleet models.
+        m.box('side_'+str(sign),(x-t/2,y-t/2,f),(x+t/2,y+r,b),1)
     for label,z in [('headboard',f+t/5),('tailgate',b-t-t/5)]:
-        m.box(label,(-w+t,y,z),(w-t,y+r-t+t/5,z+t),1)
-        m.box(label+'_rail',(-w+t,y+r-t,z),(w-t,y+r,z+t),0)
-    for sign in [-1,1]:
-        x=sign*w*.65
-        m.box('hinge_'+str(sign),(x-2*t,y-t/2,b),(x+2*t,y+t/2,b+t),0)
-        m.box('latch_'+str(sign),(sign*(w-2*t)-t/2,y+r-3*t,b),(sign*(w-2*t)+t/2,y+r-t,b+t/2),3)
-    # Six flat crown segments. Extrude each annular segment as a closed prism.
+        m.box(label,(-w+t,y-t/2,z),(w-t,y+r,z+t),1)
+    # Tailgate hinges and latches deleted: 48 tris of hardware smaller than the truck's door handles,
+    # which the truck does not model either.
+    # THREE crown segments, not six. The arch still reads as an arch at three; the second three were
+    # 48 tris buying smoothness on a part the fleet renders as flat facets anyway. SEG is the one knob.
+    # SEGMENT COUNT DERIVED, RADIUS FIXED -- and it is worth saying why round this way. A flat facet's
+    # closest approach to the axle is inner*cos(half-segment), so coarsening the arch pulls the facet
+    # MIDPOINTS inward even though its vertices do not move: at three segments they land 5 cm inside the
+    # compressed wheel envelope, the tyre through the guard on every bump. Inflating the radius to buy
+    # that back does satisfy the maths and looks awful -- 0.75 m to 0.86 m turned the fender into three
+    # plates tented over the wheel, which is a worse answer than the one it replaced. So hold the
+    # standoff the fleet already uses and spend the triangles on the smallest segment count that clears
+    # it. Five, here; it re-derives if the wheel or the standoff ever changes.
     inner=r+.25+t; outer=inner+t
+    SEG=next(n for n in range(3,13) if inner*math.cos(math.pi/n/2)>r+.25)
     for sign in [-1,1]:
         x=sign*d['track']/2; half=d['tyre_width']/2+t
         # Continuous annulus with explicit triangulated caps (concave outline must not fan across wheel).
         m.component('mudguard_'+str(sign))
-        inn=[(cy+inner*math.sin(i*math.pi/6),az+inner*math.cos(i*math.pi/6)) for i in range(7)]
-        out=[(cy+outer*math.sin(i*math.pi/6),az+outer*math.cos(i*math.pi/6)) for i in range(7)]
+        inn=[(cy+inner*math.sin(i*math.pi/SEG),az+inner*math.cos(i*math.pi/SEG)) for i in range(SEG+1)]
+        out=[(cy+outer*math.sin(i*math.pi/SEG),az+outer*math.cos(i*math.pi/SEG)) for i in range(SEG+1)]
         def quad(ps): m.quad(ps,uv(0))
-        for i in range(6):
+        for i in range(SEG):
             for xx,reverse in [(x-half,True),(x+half,False)]:
                 ps=[(xx,*inn[i]),(xx,*inn[i+1]),(xx,*out[i+1]),(xx,*out[i])]
                 # normal sign audited below; X+ should face +X
@@ -96,21 +102,17 @@ def generate():
                 ps=[(x-half,*ring[i]),(x+half,*ring[i]),(x+half,*ring[i+1]),(x-half,*ring[i+1])]
                 if reverse: ps.reverse()
                 quad(ps)
-        for j,rev in [(0,False),(6,True)]:
+        for j,rev in [(0,False),(SEG,True)]:
             ps=[(x-half,*inn[j]),(x+half,*inn[j]),(x+half,*out[j]),(x-half,*out[j])]
             if rev:ps.reverse()
             quad(ps)
-        m.box('mudflap_'+str(sign),(x-half,cy-r/2,az+outer),(x+half,cy+2*t,az+outer+t/2),3)
     m.box('coupler',(-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t),0)
-    m.box('coupler_latch',(-t/2,ky+t,kz-t),(t/2,ky+2*t,kz+2*t),3)
-    m.box('coupler_handle',(-t,ky+2*t,kz),(t,ky+2.5*t,kz+3*t),6)
+    # Gone with the rest of the trim: mudflaps, the coupler's latch and handle, the stand's foot pad
+    # and the amber reflectors. Every one was a box under ~8 cm; nothing else in the fleet models at
+    # that scale, so they read as noise on the silhouette rather than as detail.
     # Retractable stand is a separate closed component inside an exact split zone.
     stand_z=(kz+f)/2; stand_x=3*t
-    m.box('landing_stand',(stand_x-t,d['ground']+t,stand_z-t/2),(stand_x+t,ky-t,stand_z+t/2),0)
-    m.box('landing_foot',(stand_x-2*t,d['ground'],stand_z-2*t),(stand_x+2*t,d['ground']+t,stand_z+2*t),3)
-    for sign in [-1,1]:
-        x=sign*(w-3*t)
-        m.box('amber_reflector_'+str(sign),(x-t,y+r-3*t,f-t/2),(x+t,y+r-t,f),5)
+    m.box('landing_stand',(stand_x-t,d['ground'],stand_z-t/2),(stand_x+t,ky-t,stand_z+t/2),0)
     m.save('car_trailer_body.txt')
     lamps=Model()
     for sign in [-1,1]:

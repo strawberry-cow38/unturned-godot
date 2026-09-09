@@ -116,15 +116,19 @@ def cases():
                    ('unused position',lambda x:x+'v 8 8 8\n'),
                    ('open surface',edit_line('f',lambda l:'# removed face'))]
         add('mesh '+path.name,lambda p=path:geometry(p),*[(path,fn,label) for label,fn in mutations])
+    # Rear datum is L/2, the DECK's back face. It used to be L/2+t, which was the tailgate hinge blocks
+    # standing proud of it -- those went with the rest of the sub-centimetre hardware, so the deck is the
+    # rearmost geometry now. Third mutation added because nothing was guarding the hi-Z corner.
     add('body AABB from deck, car track, wheel width, stand and tongue',
         lambda:require(close(obj(BODY)['lo'],(-s['golf']['tracks'][0]/2-d['tw']/2-t,d['ground'],k[2]-2*t)) and
-                       close(obj(BODY)['hi'],(s['golf']['tracks'][0]/2+d['tw']/2+t,dy+r,L/2+t))),
-        (BODY,move_group('coupler',(0,0,-.1)),'grow nose'),(BODY,move_group('landing_foot',(0,-.1,0)),'lower stand'))
+                       close(obj(BODY)['hi'],(s['golf']['tracks'][0]/2+d['tw']/2+t,dy+r,L/2))),
+        (BODY,move_group('coupler',(0,0,-.1)),'grow nose'),(BODY,move_group('landing_stand',(0,-.1,0)),'lower stand'),
+        (BODY,move_group('deck',(0,0,.1)),'stretch tail'))
     add('deck = half Golf length, between tracks minus tyre envelopes',
-        lambda:require(close(group_bounds('deck'),((-W/2,dy-2*t,-L/2),(W/2,dy-t/2,L/2))) and L<s['golf']['mesh']['size'][2]<s['trailer']['mesh']['size'][2]),
+        lambda:require(close(group_bounds('deck'),((-W/2,dy-2*t,-L/2),(W/2,dy-t/4,L/2))) and L<s['golf']['mesh']['size'][2]<s['trailer']['mesh']['size'][2]),
         (BODY,move_group('deck',(.1,0,0)),'shift deck'))
-    add('low rails = quad radius above deck',lambda:require(close(group_bounds('side_rail_1')[1][1],dy+r)),
-        (BODY,move_group('side_rail_1',(0,.1,0)),'raise rail'))
+    add('sideboard top = quad radius above deck',lambda:require(close(group_bounds('side_1')[1][1],dy+r)),
+        (BODY,move_group('side_1',(0,.1,0)),'raise sideboard'))
     add('kingpin on measured coupler, car ground datum',lambda:require(close(vector(fields('car_trailer')['Kingpin']),k)),fieldmut('Kingpin','Vector3.Zero'))
     add('socket encloses kingpin and follows drawbar',lambda:require(close(group_bounds('coupler'),((-2*t,k[1]-t,k[2]-2*t),(2*t,k[1]+t,k[2]+4*t)))),
         (BODY,move_group('coupler',(0,0,.3)),'bury socket'))
@@ -144,9 +148,22 @@ def cases():
         for sign in [-1,1]:
             lo,hi=group_bounds('mudguard_'+str(sign));center=sign*s['golf']['tracks'][0]/2
             require(close((lo[0],hi[0]),(center-d['tw']/2-t,center+d['tw']/2+t)))
-            require(close(hi[1],d['wy']-.25+r+.25+2*t))
-        # Inscribed polygon clears the entire compressed wheel, even at segment midpoints.
-        require((r+.25+t)*math.cos(math.pi/12)>r+.25)
+            require(hi[1]>=d['wy']-.25+r+.25)          # crown clears the fully compressed tyre
+        # CLEARANCE MEASURED OFF THE MESH, not recomputed from the generator's own formula -- a check
+        # that mirrors the rule it is checking passes whenever the rule is self-consistently wrong.
+        # Every point on every mudguard face, midpoints included, must sit outside the compressed
+        # envelope; the flat facets between the arch's vertices are exactly what a vertex-only check
+        # misses. Segment count is free: this holds or it does not, whatever SEG is set to.
+        m=obj(BODY); axis=(d['wy']-.25,d['az']); worst=1e9; group=''
+        for line in BODY.read_text().splitlines():
+            if line.startswith('g '):group=line[2:]
+            if group.startswith('mudguard') and line.startswith('f '):
+                ps=[m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4]]
+                for a,b in [(ps[i],ps[(i+1)%3]) for i in range(3)]:   # sample each edge, midpoints too
+                    for j in range(11):
+                        q=[a[i]+(b[i]-a[i])*j/10 for i in range(3)]
+                        worst=min(worst,math.hypot(q[1]-axis[0],q[2]-axis[1]))
+        require(worst>r+.25,f'mudguard passes {worst:.4f} m from the axle, inside the {r+.25:.4f} m compressed envelope')
     add('mudguards cover tyre width and full suspension compression',guards,
         (BODY,move_group('mudguard_1',(.1,0,0)),'move mudguard off tyre'))
     add('quad mass/health, no engine/steer/speed/brake/audio',lambda:require(
@@ -168,11 +185,21 @@ def cases():
     add('main collider follows deck, does not fill open load space',lambda:require(close(vector(fields('car_trailer')['BoxSize']),(W,2*t,L)) and close(vector(fields('car_trailer')['BoxCenter']),(0,dy-t,0)) and 'HullBoxes' in fields('car_trailer') and len(vectors(fields('car_trailer')['ExtraBoxes']))==10),
         fieldmut('BoxSize','new Vector3(3f, 2f, 16f)'),fieldmut('BoxCenter','Vector3.Zero'),
         (VEH,lambda x:x.replace('HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]','HullBands = new (Vector3 size, Vector3 center, float yawDeg)[]',1),'remove drawbar colliders'))
-    add('landing collider and retractable split cover authored support',lambda:require(
-        close(vector(fields('car_trailer')['LandingLegZoneMin']),group_bounds('landing_foot')[0]) and
-        close(vector(fields('car_trailer')['LandingLegZoneMax']),(5*t,k[1]-t,(k[2]-L/2)/2+2*t)) and
-        close(vector(fields('car_trailer')['LandingGearSize']),(4*t,k[1]-t-d['ground'],4*t))),
-        fieldmut('LandingLegZoneMin','Vector3.Zero'),fieldmut('LandingLegZoneMax','Vector3.Zero'),fieldmut('LandingGearSize','Vector3.Zero'))
+    # The zone CONTAINS the leg, it does not equal it. Equality held only because the old foot pad
+    # happened to be exactly 4t square; with the pad gone the leg is narrower, and asserting equality
+    # against whatever mesh survives would have quietly re-fitted the check to the model instead of
+    # testing it. Pin the authored zone AND require it to swallow the leg -- the second half is what
+    # notices if the leg is ever moved or grown out of its own collider.
+    def landing():
+        zmin=vector(fields('car_trailer')['LandingLegZoneMin']);zmax=vector(fields('car_trailer')['LandingLegZoneMax'])
+        require(close(zmin,(t,d['ground'],(k[2]-L/2)/2-2*t)) and close(zmax,(5*t,k[1]-t,(k[2]-L/2)/2+2*t)))
+        require(close(vector(fields('car_trailer')['LandingGearSize']),(4*t,k[1]-t-d['ground'],4*t)))
+        lo,hi=group_bounds('landing_stand')
+        require(all(zmin[i]<=lo[i]+1e-6 and hi[i]<=zmax[i]+1e-6 for i in range(3)),
+                f'landing leg {lo}..{hi} escapes its zone {zmin}..{zmax}')
+    add('landing collider and retractable split cover authored support',landing,
+        fieldmut('LandingLegZoneMin','Vector3.Zero'),fieldmut('LandingLegZoneMax','Vector3.Zero'),
+        fieldmut('LandingGearSize','Vector3.Zero'),(BODY,move_group('landing_stand',(.4,0,0)),'leg out of its zone'))
     def yaw():
         angle=number(fields('car_trailer')['HitchYawLimit']);want=math.degrees(math.atan2(d['draw'],W/2+t/2))
         require(close(angle,want))
@@ -199,7 +226,7 @@ def cases():
                     ti=int(line.split()[1].split('/')[1])-1;u,v=m['uvs'][ti]
                     return im.getpixel((int(u*im.width),int(v*im.height)))
             raise AssertionError('missing material group')
-        steel=sample(BODY,'deck');wood=sample(BODY,'board_0');green=sample(BODY,'side_1')
+        steel=sample(BODY,'coupler');wood=sample(BODY,'deck');green=sample(BODY,'side_1')
         red=sample(CONTENT/'car_trailer_taillights.txt','tail_lens_1')
         require(max(steel[:3])-min(steel[:3])<20 and steel[3]==255)
         require(wood[0]>wood[1]>wood[2] and green[1]>green[0] and green[1]>green[2])
