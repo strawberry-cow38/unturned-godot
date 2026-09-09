@@ -78,14 +78,24 @@ void fragment(){
     // scales the mask instead, via the upness argument -- under a roof there is no puddle either way.
     float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0), upness * sheltered, prange) * puddle_amount;
     float sp = 0.0, crown = 0.0;
-    if (rint > 0.0 && impact_amount > 0.0 && pud > 0.01) {
+    // RING AND CROWN NO LONGER SHARE A GATE (strawberry 2026-09-09: "allow the splashback (but not the ripple)
+    // effect on any 'hard' surface"). They used to be computed under one `pud > 0.01` test, so a splash could
+    // only exist where standing water already was -- which is right for a RIPPLE, since a ring in nothing is a
+    // ring on dry stone, and wrong for the SPLASHBACK, which is rain hitting a hard surface and bouncing. Every
+    // paved thing does that, puddle or not.
+    //
+    // The distance gate survives, and has to: rain_impacts is ~800 ALU of voronoi, and `pud > 0.01` was doing
+    // double duty as the far cull. prange takes that job so the cost stays bounded now the crown is not
+    // puddle-limited. `sheltered` moves onto the crown explicitly -- it used to arrive for free inside pud.
+    if (rint > 0.0 && impact_amount > 0.0 && prange > 0.01) {
         // The crown leans away from the VIEWER, so it needs the camera on the ground plane. A degenerate direction
         // (camera exactly overhead) disables the crown rather than feeding normalize() a zero vector.
         vec2 aw = world_pos.xz - INV_VIEW_MATRIX[3].xz;
         float awl = length(aw);
-        float m = rint * upness * impact_amount * pud;
-        rain_impacts(world_pos.xz, TIME, rint, splash_scale, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);   // gate the ~800-ALU voronoi -- zero in clear weather, off a puddle, or on impact-disabled surfaces (terrain)
-        sp *= m; crown *= m * splashback_amount;
+        float m = rint * upness * impact_amount;
+        rain_impacts(world_pos.xz, TIME, rint, splash_scale, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
+        sp *= m * pud;                                                  // RIPPLE: standing water only, unchanged
+        crown *= m * splashback_amount * sheltered * prange;            // SPLASHBACK: any hard surface the sky can reach
     }
     // Standing water: MORE reflective than the damp around it (master: "puddles of more reflective blobs"). The damp
     // surface stays deliberately dull -- the contrast between the two is the whole effect.

@@ -148,12 +148,37 @@ namespace UnturnedGodot
             var q = PhysicsRayQueryParameters3D.Create(gp + Vector3.Up * 0.3f, gp + Vector3.Down * 0.6f, 1u << 0, exclude.IsValid ? new Godot.Collections.Array<Rid> { exclude } : null);
             var hit = space.IntersectRay(q);
             if (hit.Count == 0) return PlayerController.Surf.Concrete;
+            var surf = PlayerController.Surf.Concrete;
             if (hit["collider"].As<GodotObject>() is Node c)
             {
-                if (Terrain.Active != null && c.IsInGroup("terrain")) return Terrain.Active.SurfAt(gp.X, gp.Z);
-                if (c.HasMeta(PlayerController.SurfMeta)) return (PlayerController.Surf)(int)c.GetMeta(PlayerController.SurfMeta);
+                if (Terrain.Active != null && c.IsInGroup("terrain")) surf = Terrain.Active.SurfAt(gp.X, gp.Z);
+                else if (c.HasMeta(PlayerController.SurfMeta)) surf = (PlayerController.Surf)(int)c.GetMeta(PlayerController.SurfMeta);
             }
-            return PlayerController.Surf.Concrete;
+            return Puddled(n, gp, surf) ? PlayerController.Surf.Water : surf;
+        }
+
+        /// <summary>How much standing water before footsteps splash. At this level the puddle shader is already
+        /// reading as wet, so the sound arrives WITH the look rather than ahead of it.</summary>
+        public const float PuddleAudioLevel = 0.35f;
+
+        /// <summary>Is there standing water underfoot? (strawberry 2026-09-09: "change the walk sound on puddles to
+        /// the beach splash footstep sound".) Surf.Water already maps to the shore bank, so a puddle just reports
+        /// as water and every consumer -- the local shell and the remote puppets both -- follows for free.
+        ///
+        /// Three conditions, and the third is the one that keeps it honest: hard ground (puddles do not stand on
+        /// grass), enough accumulated water to see, and OPEN SKY. The puddle level is a GLOBAL, so without the sky
+        /// test the moment it rained you would splash your way across a warehouse floor.
+        ///
+        /// ⚠ KNOWN OVER-REACH, flagged rather than buried: the puddle SHADER paints road props only, while this
+        /// says yes on any unsheltered hard surface -- so a bare concrete yard can splash with no visible puddle
+        /// on it. Closing that needs the road props' colliders tagged at build time, which is a bigger change than
+        /// the ask; this is the audible half, and it errs toward "it rained and the ground is wet".</summary>
+        static bool Puddled(Node3D n, Vector3 gp, PlayerController.Surf surf)
+        {
+            if (WeatherManager.PuddleLevel < PuddleAudioLevel) return false;
+            if (surf != PlayerController.Surf.Concrete && surf != PlayerController.Surf.Metal) return false;   // hard ground only
+            var w = n.GetWorld3D();
+            return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);
         }
         public static string MeleeSurface(PlayerController.Surf s) => s switch { PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass", _ => null };
 

@@ -167,6 +167,9 @@ namespace UnturnedGodot
         /// Polled on a timer because a raycast per frame per viewer is exactly the "million rebuilds each
         /// frame" cost strawberry_cow warned about, and shelter changes at walking pace.</summary>
         float _puddleLevel, _lastPuddle = -1f;                     // standing water, integrated (see HubProcess)
+        /// <summary>Standing water, 0..1, published for the CPU side -- the shaders already read it as the
+        /// `rain_puddle` global, and footsteps need the same number to know whether there is water to splash in.</summary>
+        public static float PuddleLevel;
         bool _puddleSeeded;                                        // UG_PUDDLE start level, applied once (harness)
         const float PuddleFillSeconds = 150f, PuddleDrainSeconds = 420f;   // ~2.5 min to fill in steady rain, ~7 min to dry out
         float _shelter = 1f, _shelterPoll;
@@ -245,6 +248,7 @@ namespace UnturnedGodot
             float pTarget = rint > 0.02f ? Mathf.Min(1f, rint * 1.3f) : 0f;   // heavier rain -> deeper standing water, capped
             float pRate = pTarget > _puddleLevel ? 1f / PuddleFillSeconds : 1f / PuddleDrainSeconds;
             _puddleLevel = Mathf.MoveToward(_puddleLevel, pTarget, pRate * dt);
+            PuddleLevel = _puddleLevel;
             if (Mathf.Abs(_puddleLevel - _lastPuddle) > 0.002f) { _lastPuddle = _puddleLevel; RenderingServer.GlobalShaderParameterSet("rain_puddle", _puddleLevel); }
             if (rint != _lastRint)   // push only on change -- else a fresh StringName per literal every frame forever, even in clear weather (tinyclaw)
             {
