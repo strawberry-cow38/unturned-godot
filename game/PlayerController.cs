@@ -287,6 +287,28 @@ namespace UnturnedGodot
         public bool DebugBodyHasGun => _bodyGunName != null && (_body?.GunLayerOn ?? false);
         /// <summary>Test seam: the looping seated clip the body is playing (driving mime vs plain sit).</summary>
         public string DebugBodyLoopClip => _body?.CurrentLoopClip ?? "";
+        /// <summary>World Y of the LOWEST posed foot bone, or NaN if there is no visible body. The seated body's
+        /// feet are placed by the ANIMATION, not by the seat anchor: the body root is the feet only in the rest
+        /// pose, and Idle_Drive rotates the leg bones away from it. So a seat rise derived from root-to-hip
+        /// arithmetic predicts the wrong foot height, which is exactly how the minicopter ended up with a pilot
+        /// whose legs hung through the airframe after a rise that the arithmetic said was correct. Measure the
+        /// bone.</summary>
+        public float DebugFootWorldY
+        {
+            get
+            {
+                var sk = _body?.Skeleton;
+                if (sk == null) return float.NaN;
+                float lo = float.PositiveInfinity;
+                foreach (var n in new[] { "Left_Foot", "Right_Foot" })
+                {
+                    int b = sk.FindBone(n);
+                    if (b < 0) continue;
+                    lo = Mathf.Min(lo, (sk.GlobalTransform * sk.GetBoneGlobalPose(b)).Origin.Y);
+                }
+                return float.IsInfinity(lo) ? float.NaN : lo;
+            }
+        }
 
         public Vector3? DebugSeatedBodyLocal =>
             _body != null && _driving != null ? _driving.ToLocal(_body.GlobalPosition) : (Vector3?)null;
@@ -3939,6 +3961,9 @@ namespace UnturnedGodot
             GD.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
         }
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+        /// <summary>L1: is the cooker's on/off button DRAWN, as opposed to merely knowable? See
+        /// OnReplicatedStorageOpened -- those were two different answers, and the player only gets the drawn one.</summary>
+        public bool DebugCookerButtonShown => _invUI != null && IsInstanceValid(_invUI) && _invUI.DebugHasCookerButton;
 
         /// <summary>Is any UI up that wants the cursor? Asked before ANYTHING recaptures the mouse, because
         /// recapturing under an open panel is worse than leaving it free: every polled input in here gates on
@@ -3951,9 +3976,26 @@ namespace UnturnedGodot
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
         /// CRATE grid itself arrives via the owner-block echo (the server loads it into STORAGE page 7,
         /// the SP OpenNearestCrate mechanic), so there's nothing to copy here.</summary>
-        public void OnReplicatedStorageOpened(uint netId)
+        public void OnReplicatedStorageOpened(uint netId) => OnReplicatedStorageOpened(netId, null, false, 0);
+
+        /// <summary>The server's StorageOpened fact, cooker facts INCLUDED, applied in the one order that works.
+        ///
+        /// ONE CALL RATHER THAN TWO, and that is the fix rather than a tidy-up. Both call sites used to do
+        /// `OnReplicatedStorageOpened(id)` and then `NoteOpenCooker(...)`, in that order -- and Open() builds the
+        /// whole panel, creating the on/off button only `if (Player?.OpenCookerKind is ECookerKind ck)`. So the
+        /// panel was built one line before the facts it is built from arrived: no button. Nothing rebuilds the
+        /// panel on its own, and RefreshCookerBar only repaints a button that already exists, so it stayed
+        /// missing until something ELSE forced a Refresh -- which is why strawberry found that moving an item
+        /// made it appear (2026-09-07: "sometimes i have to move an item to even get the on/off button to show").
+        ///
+        /// Two lines whose ORDER is load-bearing, duplicated across MpLoopback and ClientWorldSession, is a
+        /// standing invitation to transpose one -- and this exact pair has already gone wrong once here, when the
+        /// loopback handler claimed to mirror ClientWorldSession and simply omitted the cooker line. Folding them
+        /// into a single ordered operation makes the order un-gettable-wrong instead of merely correct today.</summary>
+        public void OnReplicatedStorageOpened(uint netId, ECookerKind? cookerKind, bool cookerOn, byte cookerFuel)
         {
             _openCrateNetId = netId;
+            NoteOpenCooker(cookerKind, cookerOn, cookerFuel);   // BEFORE Open(): the panel is built from these
             _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
@@ -4189,12 +4231,17 @@ namespace UnturnedGodot
         /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
         /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
         /// -- one rule, so a floor that sounds like metal underfoot cannot sound like concrete to everyone else.</summary>
-        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf)
+        /// <param name="up">How far above <paramref name="pos"/> the probe ray starts.</param>
+        /// <param name="down">How far below it the ray ends. The defaults are a foot-height span; a VEHICLE
+        /// asks from its body origin, which sits most of a metre above its contact patch, so it widens the
+        /// span rather than duplicating this rule with a ray of its own -- one surface authority, or a floor
+        /// that sounds like metal underfoot grips like grass.</param>
+        public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf, float up = 0.3f, float down = 0.6f)
         {
             surf = Surf.Concrete;
             if (Terrain.HasWater && pos.Y < Terrain.SeaLevelY + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it
             var space = ctx?.GetWorld3D()?.DirectSpaceState; if (space == null) return false;
-            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * 0.3f, pos + Vector3.Down * 0.6f, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
+            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * up, pos + Vector3.Down * down, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
             var hit = space.IntersectRay(q);
             if (hit.Count == 0) return false;
             if (hit["collider"].As<GodotObject>() is Node n)
@@ -4379,6 +4426,7 @@ namespace UnturnedGodot
         public System.Action<uint, bool> NetSetDoorLocked;           // (door NetId, locked) -> Client.SendSetDoorLocked
         public System.Action<uint> NetClaimBed;                      // bed NetId -> Client.SendClaimBed
         public System.Action<uint> NetSitSeat;                       // seat NetId (0 = stand) -> Client.SendSitSeat
+        public System.Action<uint> NetToggleObjectDoor;              // prop-door assembly NetId -> Client.SendToggleObjectDoor
 
         VehiclePuppet NearestPuppet()
         {
@@ -5169,7 +5217,7 @@ namespace UnturnedGodot
             float sp = Skills.DexterityReloadSpeed();
             _viewmodel?.SetReloading(true, sp);   // play the swap anim (the instant swap already happened)...
             _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // ...clear it when the anim ends so ADS/fire un-block (master's ADS bug)
-            _magSwapAutoRack = !chambered && HasChamber && Ammo > 0;   // seated into an EMPTY chamber -> auto-rack the first round when the anim ends (master)
+            _magSwapAutoRack = !chambered && HasChamber && Ammo > 0 && !(_viewmodel?.ReloadIncludesChambering ?? false);   // SKS Reload already chambers; other empty chambers rack afterward
             SaveGunState();
         }
         // Remove the loaded magazine to the bag WITH its rounds, LEAVING the chambered round (master); mag-out anim.
@@ -5441,6 +5489,13 @@ namespace UnturnedGodot
         public bool RequestToggleObjectDoor(ObjectDoor d)
         {
             if (d == null || !IsInstanceValid(d)) return false;
+            // MP (v37): ASK. Before this the toggle was purely local, so a shipping container someone opened
+            // stayed shut on every other screen -- and its leaf keeps a solid collider, so you also walked
+            // into a door nobody else could see. Addressed by the door ASSEMBLY (GroupLead), never a leaf:
+            // SetOpen brings a multi-leaf prop's siblings along, so one bit per assembly is the only shape
+            // that cannot contradict itself. Null in SP/loopback -> the direct path below is unchanged.
+            var lead = d.GroupLead;
+            if (lead.NetId != 0 && NetToggleObjectDoor != null) { NetToggleObjectDoor(lead.NetId); return true; }
             return d.Toggle();
         }
 
@@ -6811,7 +6866,7 @@ namespace UnturnedGodot
             _hammerActive = false;
             // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
             // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
-            _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false);   // rack after an empty reload only on chambered (mag-fed) guns -- neither shotgun racks on reload
+            _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false) && !_viewmodel.ReloadIncludesChambering;   // SKS closes its bolt within Reload; other chambered guns rack afterward
             float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
             _reloadSpeed = rspeed;
             _viewmodel?.SetReloading(true, rspeed);
@@ -8934,6 +8989,15 @@ namespace UnturnedGodot
         }
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
+        /// <summary>Test hook: (pitch, roll) on the CYCLIC, instead of the mouse stick. ScriptedDrive already
+        /// carries a helicopter's collective and yaw -- it is (steer, throttle), and DriveHeli reads those as
+        /// (yaw, collective) -- so this is the other half, and with both set a harness flies the aircraft
+        /// THROUGH THE PLAYER rather than beside them. That distinction is the whole point: calling
+        /// Vehicle.DriveHeli directly while a player sits in the seat gives TWO writers on the same controls
+        /// every tick, and the render would show whichever ran last, not what the pilot did.
+        /// Injected at the stick rather than at DriveHeli so the cross-axis deadzone still applies -- the
+        /// scripted input is worth exactly what a human's would be, not a privileged channel around it.</summary>
+        public Vector2? ScriptedCyclic;
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
         /// <summary>The third-person camera is live: on foot (or the puppet), not first-person, not dead. The HUD shows
         /// a centre crosshair here (master) since there is no viewmodel reticle to mark where the shot goes; the 3P view
@@ -9054,6 +9118,7 @@ namespace UnturnedGodot
                 if (magNow && !_slingShiftPrev) _driving.ToggleSlingMagnet();
                 _slingShiftPrev = magNow;
                 float sp = _heliStickP, sr = _heliStickR;
+                if (ScriptedCyclic.HasValue) { sp = ScriptedCyclic.Value.X; sr = ScriptedCyclic.Value.Y; }
                 float fp = Mathf.Max(0f, Mathf.Abs(sp) - HeliStickCrossDeadzone * Mathf.Abs(sr)) * Mathf.Sign(sp);
                 float fr = Mathf.Max(0f, Mathf.Abs(sr) - HeliStickCrossDeadzone * Mathf.Abs(sp)) * Mathf.Sign(sr);
                 _driving.DriveHeli(throttle, steer, fp, fr, delta);

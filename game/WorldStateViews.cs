@@ -153,6 +153,10 @@ namespace UnturnedGodot
             // so a seat missing from the table means the server has not registered it YET, and QueueFreeing
             // on that would delete good chairs over a startup race -- the exact failure the _knownDoors note
             // above describes. If furniture ever becomes breakable this needs the same treatment doors got.
+            // v37: prop doors -- the join answer. A client that connected after somebody opened a shipping
+            // container would otherwise draw it shut and walk into a leaf nobody else can see.
+            foreach (var kv in Client.InteractableState.ReplicaObjectDoors)
+                if (ObjectDoor.TryGetByNetId(kv.Key, out var od)) od.ApplyReplicatedOpen(kv.Value);
             foreach (var kv in Client.InteractableState.ReplicaSeats)
                 if (PropSeat.TryGetByNetId(kv.Key, out var seat))
                 {
@@ -204,7 +208,7 @@ namespace UnturnedGodot
         {
             var root = WorldRoot ?? GetParent();
             if (root == null) return;
-            uint doorId = InteractableNetSync.FirstId, bedId = InteractableNetSync.FirstId, seatId = InteractableNetSync.FirstId;
+            uint doorId = InteractableNetSync.FirstId, bedId = InteractableNetSync.FirstId, seatId = InteractableNetSync.FirstId, objDoorId = InteractableNetSync.FirstId;
             // The SAME walk order and the SAME three counters as InteractableNetSync.RegisterWorld. That is
             // the whole id scheme: nothing is transmitted, so if these two ever diverge every id after the
             // divergence points at a different object on each machine and people sit in each other's chairs.
@@ -212,6 +216,7 @@ namespace UnturnedGodot
             {
                 if (n is Door d) d.NetId = doorId++;
                 else if (n is Bed b) b.NetId = bedId++;
+                else if (n is ObjectDoor od) { if (od.GroupLead == od) od.NetId = objDoorId++; }   // lead leaves only -- the SAME test RegisterWorld uses, or every id after a wardrobe points at a different door
                 else if (n is PropSeat ps) ps.NetId = seatId++;
             }
         }

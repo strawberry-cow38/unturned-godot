@@ -35,6 +35,12 @@ namespace UnturnedGodot
         public Camera3D Cam;      // listener position (the player camera)
         public float CanopyShelter = 1f;   // 1 = open sky .. 0 = under the nearest canopy's centre (WeatherManager reads it for the muffle)
 
+        /// <summary>Is the CAR layer actually sounding? The emitters are private and a dead one is silent, which
+        /// is indistinguishable from "no car nearby" -- the exact ambiguity that let the collision-layer move
+        /// kill this layer unnoticed. Exposed so a test can stand a jeep next to the listener and demand noise.</summary>
+        public bool DebugCarPlaying => _car != null && GodotObject.IsInstanceValid(_car) && _car.Playing;
+        public Vector3 DebugCarPosition => _car != null && GodotObject.IsInstanceValid(_car) ? _car.GlobalPosition : Vector3.Zero;
+
         const float Radius = 16f;         // "a radius where the material sound is produced from" (master) -- audible range per prop
         const float PineRadius = 28f;     // pines carry a bigger canopy -> a wider foliage radius (master: expand the pine's foliage rain radius)
         const float PollSeconds = 0.25f;  // re-scan for the nearest material prop 4x/sec (props don't teleport; cheap)
@@ -75,8 +81,44 @@ namespace UnturnedGodot
             if (_poll > 0f) return;
             _poll = PollSeconds;
 
-            if (Cam.GetWorld3D()?.DirectSpaceState is not PhysicsDirectSpaceState3D space) return;
             Vector3 at = Cam.GlobalPosition;
+
+            // CARS COME OFF Vehicle.Live, NOT THE SPHERE QUERY BELOW (strawberry 2026-09-07 "wire up the car
+            // rain sound when near or inside a car" -- it had stopped working entirely).
+            //
+            // It was found by the query, on collision bit 0, and that was correct when this file was written.
+            // Then the mesh hitbox landed: Vehicle.FinaliseHitboxLayers moves the chassis OFF bit 0 and bit 5
+            // onto ChassisBit, and the hull mesh that replaces it sits on HitMeshBit -- so a vehicle is on
+            // neither of the bits this mask names, and the car layer has been silently dead since. Nothing
+            // failed; the emitter simply never had a position to play from, which sounds exactly like rain
+            // that has no car in it.
+            //
+            // Widening the mask would fix today and rot the same way tomorrow, and it would also spend the
+            // 48-hit cap on vehicle panes, turret bodies and door bodies -- several colliders per car. The
+            // live list is the same answer this file already reached for the map's props: a registry that
+            // cannot be invalidated by a collision-layer change, scanned in O(vehicles in the world).
+            //
+            // Distance is to the vehicle's ORIGIN, which is inside its hull, so "inside a car" is ~0 m and
+            // plays loudest -- the other half of what was asked for. A car's own length sits well inside
+            // Radius, so a long body is not worth an AABB here.
+            Vector3? carPos = null;
+            float carD = float.MaxValue;
+            foreach (var veh in Vehicle.Live)
+            {
+                if (veh == null || !GodotObject.IsInstanceValid(veh)) continue;
+                float d = veh.GlobalPosition.DistanceTo(at);
+                if (d < carD) { carD = d; carPos = veh.GlobalPosition; }
+            }
+            if (carD > Radius) { carPos = null; carD = float.MaxValue; }
+
+            // The rest of the materials still need the physics query. If there is no space state (a headless
+            // harness with no physics world), the car layer must still run -- it no longer depends on one.
+            if (Cam.GetWorld3D()?.DirectSpaceState is not PhysicsDirectSpaceState3D space)
+            {
+                Drive(_car, carPos, rint);
+                Silence(_foliage); Silence(_metal); Silence(_tarp);
+                return;
+            }
 
             // one sphere query for everything nearby on the world layer, classified by node type -> nearest per material
             var q = new PhysicsShapeQueryParameters3D
@@ -86,15 +128,15 @@ namespace UnturnedGodot
                 CollisionMask = 1u << 0, CollideWithBodies = true, CollideWithAreas = false,
             };
             var hits = space.IntersectShape(q, 48);
-            Vector3? carPos = null, folPos = null, metalPos = null, tarpPos = null;
-            float carD = float.MaxValue, folD = float.MaxValue, metalD = float.MaxValue, tarpD = float.MaxValue;
+            Vector3? folPos = null, metalPos = null, tarpPos = null;
+            float folD = float.MaxValue, metalD = float.MaxValue, tarpD = float.MaxValue;
             TreeTrunk folTree = null;
             foreach (var h in hits)
             {
                 if (h["collider"].As<GodotObject>() is not Node3D n) continue;
                 float d = n.GlobalPosition.DistanceTo(at);
-                if (FindAncestor<Vehicle>(n) != null) { if (d < carD) { carD = d; carPos = n.GlobalPosition; } }
-                else if (StructureManager.Instance?.PieceForCollider(n) is StructureManager.Piece piece)
+                if (FindAncestor<Vehicle>(n) != null) continue;   // cars are handled off Vehicle.Live above; skip so one on bit0 (mesh hitbox off) is not classified as something else
+                if (StructureManager.Instance?.PieceForCollider(n) is StructureManager.Piece piece)
                 {
                     // A player-built METAL ROOF. Construct AND tier both matter: rain falls from above, so a
                     // metal wall next to you is not this sound, and a wooden roof is not this sound either.

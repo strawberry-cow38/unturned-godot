@@ -285,6 +285,14 @@ namespace UnturnedGodot.Net
                 // removed under them. Anything else is a real seat and takes the same reach + occupancy test
                 // an enter-vehicle does, because two clients each deciding they took the same chair is the
                 // failure CommandEnterVehicle's occupancy check exists to stop.
+                // v37: prop doors. Reach and nothing else -- a shipping container has no owner and no lock,
+                // and the re-toggle cooldown is ObjectDoor's own, client-side, where it belongs (a second one
+                // enforced here would fight it at a different rate and eat legitimate presses).
+                commands.Register<ToggleObjectDoorCommand>(ReplicationIds.CommandToggleObjectDoor, ToggleObjectDoorCommand.TryRead,
+                    OnToggleObjectDoor,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _interactables.CanToggleObjectDoor(cmd.NetId, pos));
+
                 commands.Register<SitSeatCommand>(ReplicationIds.CommandSitSeat, SitSeatCommand.TryRead,
                     OnSitSeat,
                     validate: (sender, cmd) => cmd.NetId == 0
@@ -310,6 +318,13 @@ namespace UnturnedGodot.Net
                 OnPickupItem,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _inventories.TryGet(sender, out _)
+                                        // ALIVE, like every other acting command. A corpse is still a peer with an
+                                        // inventory for the whole respawn delay, and its own death drops land within
+                                        // the radius where the facing check is skipped -- so without this a dead
+                                        // player picks his kit back up off his own body before respawning, which
+                                        // both voids the death penalty and takes the loot away from whoever earned
+                                        // it. OnFire has checked cs.Alive since it was written; this never did.
+                                        && _combat.TryGet(sender, out var ce) && ce.Alive
                                         && _worldItems.TryGet(cmd.NetId, out var e)
                                         && (e.Pos - pos).magnitude <= PickupReach
                                         && SenderFacingItem(sender, e.Pos));
@@ -692,6 +707,13 @@ namespace UnturnedGodot.Net
                 new BedClaimedEvent { NetId = cmd.NetId, Owner = sender }.Write));
         }
 
+        void OnToggleObjectDoor(ushort sender, ToggleObjectDoorCommand cmd)
+        {
+            if (!_interactables.ToggleObjectDoor(cmd.NetId, out bool open)) return;
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventObjectDoorState,
+                new ObjectDoorStateEvent { NetId = cmd.NetId, Open = open }.Write));
+        }
+
         void OnSitSeat(ushort sender, SitSeatCommand cmd)
         {
             if (cmd.NetId == 0)
@@ -894,7 +916,12 @@ namespace UnturnedGodot.Net
                 string held = MagRules.EffectiveRound(magJar.item, magAsset);
                 // The client names the cartridge it expects out; if the server's magazine holds a different
                 // one the two have diverged and guessing would hand the player the wrong ammunition.
-                if (magJar.item.amount <= 0 || roundAsset == null || held == null || held != roundAsset.magRound)
+                // The output must be LOOSE AMMUNITION. Matching magRound alone is not enough: a magazine
+                // declares the cartridge it ACCEPTS in the same field, so a client naming a second magazine
+                // of the same calibre passed this check and the server built it one round at a time --
+                // spending one round per magazine body created. That is an item printer, not an unload.
+                if (magJar.item.amount <= 0 || roundAsset == null || roundAsset.IsMagazine
+                    || held == null || held != roundAsset.magRound)
                 { Diag.MagLoadsRejected++; return; }
 
                 // ADD FIRST, DECREMENT ONLY IF IT LANDED. A full bag must abort before the magazine loses a
@@ -1057,11 +1084,63 @@ namespace UnturnedGodot.Net
             if (!IsClothingType(want)) { Diag.ClothingRejected++; return; }
             var old = WornIn(inv, want);
             if (old == null) { Diag.ClothingRejected++; return; }
-            // Clear the slot FIRST: taking a bag off resizes its page to 0x0 and discards whatever was in it, so
-            // asking for room before that would measure a grid that is about to shrink.
+
+            // EMPTY THE GARMENT BEFORE TAKING IT OFF. Wear(.., null) resizes the storage page to 0x0 and
+            // Items.loadSize drops every jar that no longer fits, so unwearing a full backpack DESTROYED its
+            // contents on this path -- including when the removal was then REJECTED for lack of room, which
+            // re-wore an emptied bag and left the player looking like nothing had happened.
+            //
+            // The singleplayer path (InventoryUI.UnwearTo) has done this correctly since 2026-09-03: pull the
+            // jars out first, unwear, then find each one a home and drop what does not fit. This is the same
+            // sequence server-side. One more instance of the SP/MP seam -- the local path was fixed and the
+            // authoritative one kept the old behaviour, so the bug only showed in multiplayer.
+            byte spillPage = want switch
+            {
+                EItemType.BACKPACK => PlayerInventory.BACKPACK, EItemType.VEST => PlayerInventory.VEST,
+                EItemType.SHIRT => PlayerInventory.SHIRT, EItemType.PANTS => PlayerInventory.PANTS,
+                _ => byte.MaxValue,
+            };
+            var spill = new List<Item>();
+            if (spillPage != byte.MaxValue && spillPage < inv.items.Length)
+            {
+                var pg = inv.items[spillPage];
+                for (int i = pg.getItemCount() - 1; i >= 0; i--)
+                {
+                    var j = pg.getItem((byte)i);
+                    if (j?.item != null) spill.Add(j.item);
+                    pg.removeItem((byte)i);
+                }
+            }
+
             Wear(inv, want, null);
-            if (!inv.tryAddItem(old)) { Wear(inv, want, old); Diag.ClothingRejected++; return; }   // no room -> put it back on
+            if (!inv.tryAddItem(old))
+            {
+                // No room for the garment: put it back ON, and put its contents back IN. Restoring the garment
+                // alone is what turned a rejected request into permanent item loss.
+                Wear(inv, want, old);
+                if (spillPage != byte.MaxValue && spillPage < inv.items.Length)
+                {
+                    var pg = inv.items[spillPage];
+                    foreach (var it in spill) if (!pg.tryAddItem(it)) DropAtSender(sender, it);
+                }
+                else foreach (var it in spill) DropAtSender(sender, it);
+                Diag.ClothingRejected++;
+                return;
+            }
+
+            // The garment is off and in the grid. Everything that was inside it now looks for a page of its
+            // own, and anything that does not fit lands at the player's feet rather than ceasing to exist --
+            // the same fate ReturnToGrid gives it in singleplayer.
+            foreach (var it in spill) if (!inv.tryAddItem(it)) DropAtSender(sender, it);
             Diag.ClothingApplied++;
+        }
+
+        /// <summary>Put an item on the ground at the sender, for the overflow that has nowhere left to go.
+        /// Deleting it instead is silent and permanent, which is the failure this exists to avoid.</summary>
+        void DropAtSender(ushort sender, Item it)
+        {
+            Vector3 at = TryGetSenderPos(sender, out var pos) ? pos + Vector3.up * 0.5f : Vector3.zero;
+            SpawnWorldItem(it, at, Vector3.zero);
         }
 
         static bool IsClothingType(EItemType t)

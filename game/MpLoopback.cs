@@ -150,6 +150,15 @@ namespace UnturnedGodot
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
                 Player.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);
+                // THE COOKER SWITCH, and its absence is why nothing cooked in singleplayer (strawberry
+                // 2026-09-07: "stuff isnt getting cooked. anywhere. ever"). v28 added the button and wired this
+                // seam in ClientWorldSession -- the JOINED-CLIENT path -- and only there. SP runs on this
+                // loopback, where the seam stayed null, so TogglePlayerCooker flipped `OpenCookerOn` locally,
+                // invoked a null delegate, and sent nothing. The button read ON, the server's Cooker.On never
+                // moved, and no appliance in the world ever cooked. It also explains "it doesnt stay on when i
+                // close the ui": the close clears the local flag and the reopen is told the server's real state,
+                // which was OFF the whole time. One missing line, three symptoms.
+                Player.NetSetCookerOn = (netId, on) => Client.SendSetCookerOn(netId, on);
                 // B9: the server's StorageOpened fact must open the dashboard on the loopback HOST too (mirrors
                 // ClientWorldSession) -- the host SENDS the open request (above) but must also RECEIVE the
                 // confirmation, else a replicated container's F-open sends but never opens the grid. Latched on
@@ -162,8 +171,8 @@ namespace UnturnedGodot
                 Client.StorageOpened += e =>
                 {
                     if (Player == null || !IsInstanceValid(Player)) return;
-                    Player.OnReplicatedStorageOpened(e.NetId);
-                    Player.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                    Player.OnReplicatedStorageOpened(e.NetId,
+                        e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
                 };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };

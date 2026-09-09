@@ -255,11 +255,30 @@ namespace UnturnedGodot
                     var toaster = Toaster.Make(mi);
                     if (toaster != null)
                     {
+                        _toaster = toaster;   // the lever rides the open/close state -- see SetDoorsOpen
                         AddChild(toaster);
                         // the look/shoot ray resolves through the body's meta, exactly as SmartProps.TagBody does
                         foreach (var _child in mi.GetChildren())
                             if (_child is StaticBody3D _tb) _tb.SetMeta(Toaster.HitMeta, toaster);
                     }
+                }
+                // SMOKE, for the appliances that BURN something (strawberry 2026-09-07: "both bbqs should emit
+                // smoke when on"). Gated on NeedsFuel rather than on the two barbecue meshes by name: a campfire
+                // smokes for the same reason and an electric oven must not, so the rule is "is there a fire in
+                // it", which Cooking already answers. Built once and parked at the top face of the prop's own
+                // stood bounding box -- measured off the mesh like the interior glow above, not typed, so the
+                // plume leaves the lid rather than the middle of the box.
+                //
+                // Vehicle.MakeSmoke rather than a second particle recipe: it is already the shared one (wrecks,
+                // rotor fires), CpuParticles3D so it survives the offline movie renderer, and a private copy here
+                // would drift from it the first time either is tuned.
+                if (ContainerNetSync.IsCooker(MeshName, out var smokeKind) && Cooking.NeedsFuel(smokeKind))
+                {
+                    var sbox = StoodAabb(mesh);
+                    _smoke = Vehicle.MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 1.6f, 0.55f, 10, false, 0.10f, 0.28f);
+                    _smoke.Emitting = false;   // lit by SetCookerOn, which is the server's bit
+                    _smoke.Position = sbox.Position + new Vector3(sbox.Size.X * 0.5f, sbox.Size.Y, sbox.Size.Z * 0.5f);
+                    AddChild(_smoke);
                 }
                 _shelfGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(_upright, Vector3.Zero));   // whole-shelf outline silhouette (hidden until looked at)
                 AddChild(_shelfGlow);
@@ -392,10 +411,42 @@ namespace UnturnedGodot
           : IsDisplayCooler(mesh) ? new Color(0.45f, 0.72f, 1.0f)       // cold blue
           : (Color?)null;
 
+        Toaster _toaster;   // Toaster_0 only: its lever is this container's "door" (strawberry 2026-09-07)
+        bool _cookerOn;     // v38: this appliance is LIT -- holds the lid up and runs the smoke
+        CpuParticles3D _smoke;
+
+        /// <summary>The leaf is up if ANYONE wants it up: somebody is rummaging inside, OR it is alight
+        /// (strawberry 2026-09-07: "make the red bbq lid stay open when its on"). Two independent reasons for
+        /// one hinge, so it is an OR and both writers go through here -- pushing the leaf directly from either
+        /// caller means the other one closes it. Closing a lit barbecue's lid because you shut its panel is
+        /// exactly the bug that shape produces.</summary>
+        void ApplyLeaves()
+        {
+            bool up = _doorsOpen || _cookerOn;
+            foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(up);
+            if (_toaster != null && IsInstanceValid(_toaster)) _toaster.SetLeverUp(up);
+        }
+
+        /// <summary>Is this appliance alight? Drives the lid and the smoke; server-derived, arriving on the
+        /// container entity (v38) so it is right for every player looking at it, not just its opener.</summary>
+        public void SetCookerOn(bool on)
+        {
+            if (_cookerOn == on) return;
+            _cookerOn = on;
+            if (_smoke != null && IsInstanceValid(_smoke)) _smoke.Emitting = on;
+            ApplyLeaves();
+        }
+        public bool DebugCookerOn => _cookerOn;
+        public bool DebugSmoking => _smoke != null && IsInstanceValid(_smoke) && _smoke.Emitting;
+
         public void SetDoorsOpen(bool open)
         {
-            foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
+            // THE TOASTER'S LEVER IS ITS DOOR. It has no leaf, but it rides this exact signal, which is why the
+            // feature needed no new state and no wire change: OpenCrate/CloseCrate already call this for ANY
+            // StoreShelf in SP-direct, and StorageReplicaView drives it from the server's door bit in MP -- the
+            // bit cow tools derived as "the viewer set is not empty", which is per-container and not per-leaf.
             _doorsOpen = open;
+            ApplyLeaves();   // ...OR'd with the lit state: a barbecue you close the panel on stays open if it is cooking
             RefreshGlow();
         }
 
@@ -412,7 +463,15 @@ namespace UnturnedGodot
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
         public float DebugDoorSwing() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugSwing : -1f;
-        public void TickDoorsForTest(double delta) { foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta); }
+        /// <summary>Where the first leaf actually sits right now, in prop space -- lets a test assert the OPEN
+        /// pose and not just that the swing counter reached 1. See ObjectDoor.DebugLeafAabb.</summary>
+        public Aabb DebugDoorLeafAabb() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugLeafAabb : new Aabb();
+        public void TickDoorsForTest(double delta)
+        {
+            foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta);
+            if (_toaster != null && IsInstanceValid(_toaster)) _toaster.TickLeverForTest(delta);
+        }
+        public Toaster DebugToaster => _toaster;
         /// <summary>Stop the leaves animating so a settled PART-WAY pose survives to the screenshot. Ticking by hand
         /// only pre-advances the swing: the engine keeps calling _PhysicsProcess for the frames between the tick loop
         /// and the shot, which finishes it -- so every "mid-swing" still came out fully open and matched the open

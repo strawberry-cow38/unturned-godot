@@ -3,7 +3,11 @@ using Godot;
 namespace UnturnedGodot
 {
     // An openable PROP door -- retail's InteractableObjectBinaryState (Binary_State objects: fridges,
-    // cabinets, lockers), not a building Door. MVP: Fridge_0 only, SP-local, no power/owner/lock/MP -- see
+    // cabinets, lockers), not a building Door. 24 props carry one now, not the Fridge_0 the original MVP
+    // note claimed; and since wire v37 a prop door REPLICATES -- the server owns the open bit, keyed on
+    // the door ASSEMBLY rather than the leaf (GroupLead). Still no power, owner or lock: a shipping
+    // container has none of those, and DoorLogic's rule set stays where it belongs, on the building
+    // Door. See
     // Door.cs for the full-featured building door this steals its swing state machine from (_PhysicsProcess
     // + Mathf.MoveToward a 0..1 _swing toward target). Unlike Door, there is no whole-body swing: a retail
     // Binary_State door leaf is a SINGLE-BONE skinned rig (one "Hinge" bone, weight 1.0 on every vertex), which
@@ -103,6 +107,50 @@ namespace UnturnedGodot
         /// instance to every leaf of one prop (this leaf may or may not be included in it -- both are
         /// handled).</summary>
         public void SetGroup(System.Collections.Generic.List<ObjectDoor> group) => _group = group;
+
+        /// <summary>The leaf that SPEAKS FOR this prop's whole door assembly -- the first of its group, or
+        /// itself when it has none. Replication is keyed on this and not on each leaf, and that is a
+        /// correctness requirement rather than a saving: SetOpen group-syncs its siblings, so a table holding
+        /// one bit per LEAF would have a wardrobe's second leaf recorded shut while the first is open, and
+        /// applying the two entries in either order would then fight -- open leaf 1 (syncs 2 open), apply
+        /// leaf 2 shut (syncs 1 shut). One id per assembly makes that state unrepresentable.</summary>
+        public ObjectDoor GroupLead => _group != null && _group.Count > 0 ? _group[0] : this;
+
+        /// <summary>Replication id, 0 in singleplayer or on a non-lead leaf. Assigned by InteractableNetSync
+        /// from world-build order, like Door/Bed/PropSeat.</summary>
+        public uint NetId
+        {
+            get => _netId;
+            set
+            {
+                if (_netId != 0) _byNetId.Remove(_netId);
+                _netId = value;
+                if (value != 0) _byNetId[value] = this;
+            }
+        }
+        uint _netId;
+        static readonly System.Collections.Generic.Dictionary<uint, ObjectDoor> _byNetId = new();
+
+        public static bool TryGetByNetId(uint netId, out ObjectDoor door)
+        {
+            if (_byNetId.TryGetValue(netId, out door) && IsInstanceValid(door)) return true;
+            _byNetId.Remove(netId);
+            door = null;
+            return false;
+        }
+
+        public static void ResetNetIds() => _byNetId.Clear();
+
+        public override void _EnterTree() { if (_netId != 0) _byNetId[_netId] = this; }
+        public override void _ExitTree()
+        {
+            if (_netId != 0 && _byNetId.TryGetValue(_netId, out var held) && held == this) _byNetId.Remove(_netId);
+        }
+
+        /// <summary>Adopt the server's open state. Distinct from SetOpen only in name -- the point of having
+        /// it is that the replication path reads as an adoption at the call site rather than as another
+        /// caller deciding to swing a door.</summary>
+        public void ApplyReplicatedOpen(bool open) => SetOpen(open);
 
         /// <summary>Build a door on prop <paramref name="propXform"/> (the SAME placement Transform3D the
         /// prop's own body mesh uses -- pivot/leaf/collider are all expressed in that prop-local space, matching
@@ -359,6 +407,26 @@ namespace UnturnedGodot
 
         // --- test/debug seams ---
         public float DebugSwing => _swing;
+
+        /// <summary>The leaf's CURRENT AABB in this door's local (prop) space -- where the lid actually IS at
+        /// the swing it is at, measured off the live node rather than re-derived from the catalog numbers.
+        ///
+        /// Every other check on a hinge is about the CLOSED pose, and an AABB cannot see which way a leaf
+        /// swings: flip the sign of the angle and the closed pose is untouched while the lid sweeps down
+        /// through the body instead of up off it. Reading the open pose back and comparing it to the pose the
+        /// prop was MODELLED in closes that, and it is a round trip -- split the lid out, fold it shut, swing
+        /// it open, and it has to land back where the artist put it.</summary>
+        public Aabb DebugLeafAabb
+        {
+            get
+            {
+                if (_pivot == null) return new Aabb();
+                foreach (var c in _pivot.GetChildren())
+                    if (c is MeshInstance3D mi && mi.Mesh == _leafMesh)
+                        return _pivot.Transform * (mi.Transform * mi.Mesh.GetAabb());
+                return new Aabb();
+            }
+        }
         public float DebugSampleEasing(float swing) => SampleEasing(swing);
         public bool DebugHasAudio => _audio != null;   // test: the catalog's sound field resolved to a WAV that actually parsed
     }

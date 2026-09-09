@@ -19,7 +19,7 @@ namespace UnturnedGodot
         public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public NetWorldClient Client;
 
-        struct Entry { public StoreShelf Node; public ulong DisplaySig; public bool DoorsOpen; }
+        struct Entry { public StoreShelf Node; public ulong DisplaySig; public bool DoorsOpen; public bool CookerOn; }
         readonly Dictionary<uint, Entry> _nodes = new();
 
         public int NodeCount => _nodes.Count;
@@ -49,7 +49,7 @@ namespace UnturnedGodot
                                                 e.YawDegrees, kind.Display, kind.Label, renderMesh: true, serverOwned: true);
                     node.NetId = e.NetIdValue;             // the shell's F-open request addresses the server entity by this (B9)
                     node.ResetPhysicsInterpolation();      // don't smear from (0,0,0) to the placement (the WorldItem.Spawn lesson)
-                    entry = new Entry { Node = node, DisplaySig = ulong.MaxValue, DoorsOpen = false };   // MaxValue forces the first ApplyDisplay
+                    entry = new Entry { Node = node, DisplaySig = ulong.MaxValue, DoorsOpen = false, CookerOn = false };   // MaxValue forces the first ApplyDisplay
                     _nodes[e.NetIdValue] = entry;
                 }
                 ulong sig = DisplaySig(e.Display);
@@ -67,6 +67,15 @@ namespace UnturnedGodot
                 {
                     entry.Node.SetDoorsOpen(e.DoorsOpen);
                     entry.DoorsOpen = e.DoorsOpen;
+                    _nodes[e.NetIdValue] = entry;
+                }
+                // ...and whether it is LIT (v38), compared the same way and for the same joiner reason: someone
+                // walking up to a barbecue that has been burning for a minute must arrive to a raised lid and a
+                // plume, not watch them start as they get there.
+                if (e.CookerOn != entry.CookerOn)
+                {
+                    entry.Node.SetCookerOn(e.CookerOn);
+                    entry.CookerOn = e.CookerOn;
                     _nodes[e.NetIdValue] = entry;
                 }
             }

@@ -544,16 +544,48 @@ namespace UnturnedGodot.Testing
 
             // THE HUB IS THE BULLET TARGET, the disc is not. Shooting the tip of a 5 m blade should not kill a
             // rotor; hitting the machinery at the mast should.
+            // EVERY PROBE COMES OFF THE AIRCRAFT, none is typed in. All four used to be literals -- the
+            // minicopter's hubs as they stood on 2026-09-07, (0, 1.22, 0.55) and (0.09, 0.02, 2.46) -- and
+            // scaling the model 1.25x on 2026-09-08 moved the hubs out from under them. Two checks went red,
+            // which is the HALF THAT WORKED. The other two expect Body, and they went on passing: a probe that
+            // has fallen off the machine entirely returns Body for exactly the same reason a correct miss does,
+            // so their pass had stopped depending on anything. A check whose PASS survives its own subject
+            // moving is not a check. The geometry is now read from the same fields the resolver reads, so the
+            // next rescale carries these with it.
             var hb = Spawn(World, "minicopter", new Vector3(-880f, 4f, 0f));
-            Vector3 hubWorld = hb.ToGlobal(new Vector3(0f, 1.22f, 0.55f));
-            T.Check($"a hit at the main mast resolves to the main rotor ({hb.ResolveHitPart(hubWorld)})",
-                hb.ResolveHitPart(hubWorld) == Vehicle.HeliPart.MainRotor);
-            T.Check($"a hit at the tail rotor resolves to the tail ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(0.09f, 0.02f, 2.46f)))})",
-                hb.ResolveHitPart(hb.ToGlobal(new Vector3(0.09f, 0.02f, 2.46f))) == Vehicle.HeliPart.TailRotor);
-            T.Check($"a hit out on the blade tip is NOT a rotor hit ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(2.4f, 1.22f, 0.55f)))})",
-                hb.ResolveHitPart(hb.ToGlobal(new Vector3(2.4f, 1.22f, 0.55f))) == Vehicle.HeliPart.Body);
-            T.Check($"a hit on the seat is airframe, not a rotor ({hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f)))})",
-                hb.ResolveHitPart(hb.ToGlobal(new Vector3(0f, 0.02f, 0.18f))) == Vehicle.HeliPart.Body);
+            Vector3 mainHub = hb.DebugMainHub, mainHalf = hb.DebugMainHubHalf;
+            Vector3 tailHub = hb.DebugTailHub, tailHalf = hb.DebugTailHubHalf;
+            T.Check($"a hit at the main mast resolves to the main rotor ({hb.ResolveHitPart(hb.ToGlobal(mainHub))})",
+                hb.ResolveHitPart(hb.ToGlobal(mainHub)) == Vehicle.HeliPart.MainRotor);
+            T.Check($"a hit at the tail rotor resolves to the tail ({hb.ResolveHitPart(hb.ToGlobal(tailHub))})",
+                hb.ResolveHitPart(hb.ToGlobal(tailHub)) == Vehicle.HeliPart.TailRotor);
+
+            // THE BOX HAS TO BE THE RIGHT SIZE, and that cannot be checked by probing at a fraction of its own
+            // half-extent: a point at 0.85x the half is inside it BY CONSTRUCTION and a point at 1.6x is outside
+            // it by construction, whatever the box measures. Such a pair tests InBox's arithmetic and nothing
+            // about this aircraft. So compare the box against an INDEPENDENT quantity instead -- the rotor
+            // radius, which the resolver never reads -- and bound it from both sides. Too big and the whole disc
+            // becomes a critical hit; too small and the mast is unhittable and the rotor cannot be shot off at all.
+            T.Check($"the mast box is small against the disc it sits in (half {mainHalf.X:0.000}m vs r {hb.DebugRotorRadius:0.00}m)",
+                mainHalf.X < hb.DebugRotorRadius * 0.25f);
+            T.Check($"...but big enough to actually hit (half {mainHalf.X:0.000}m >= 0.05m)", mainHalf.X >= 0.05f);
+            T.Check($"the tail box likewise (half {tailHalf.Z:0.000}m, tail r {hb.DebugTailHub.Z:0.00}m aft)",
+                tailHalf.Z >= 0.04f && tailHalf.Z < 0.30f);
+
+            // OUT ON THE BLADE, at 84% of the real rotor radius: unambiguously inside the swept disc and
+            // unambiguously off the machinery. Taken from the radius rather than a fixed 2.4 m so it stays on
+            // the blade -- 2.4 m was 84% of a 2.85 m rotor and is 67% of the 3.5625 m one.
+            Vector3 bladeTip = new Vector3(hb.DebugRotorRadius * 0.84f, mainHub.Y, mainHub.Z);
+            T.Check($"a hit out on the blade tip is NOT a rotor hit ({hb.ResolveHitPart(hb.ToGlobal(bladeTip))}, r={hb.DebugRotorRadius:0.00}m)",
+                hb.ResolveHitPart(hb.ToGlobal(bladeTip)) == Vehicle.HeliPart.Body);
+            T.Check($"...and that tip really is out past the hub box ({bladeTip.X:0.00}m > {mainHalf.X:0.00}m)",
+                bladeTip.X > mainHalf.X * 1.5f);
+
+            // THE SEAT, taken from the seat table rather than guessed, so it tracks the cushion the pilot
+            // actually sits on. A shot into the chair is airframe damage, not a rotor kill.
+            Vector3 seatLocal = hb.SeatLocal(0);
+            T.Check($"a hit on the seat is airframe, not a rotor ({hb.ResolveHitPart(hb.ToGlobal(seatLocal))})",
+                hb.ResolveHitPart(hb.ToGlobal(seatLocal)) == Vehicle.HeliPart.Body);
 
             // ---- 8h. THE WHOLE RETAIL FLEET FLIES. Every one is a real .dat with real numbers, built on the
             // shared model -- so the check is that each ACTUALLY LIFTS OFF, not merely that its spec parses.

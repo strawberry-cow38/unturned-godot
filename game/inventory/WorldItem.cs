@@ -89,7 +89,16 @@ namespace UnturnedGodot
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
         // ---- shared item-model cache: parse each id's mesh/tex/box ONCE, reuse across its many spawns/despawns ----
-        class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Color? Palette; public Vector3 Box; public Vector3 Center; public bool Ok; }
+        class Model
+        {
+            public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Color? Palette;
+            public Vector3 Box; public Vector3 Center; public bool Ok;
+            /// <summary>Cumulative triangle counts, one per sub-object, from the manifest's `rounds`. Null for
+            /// the 1919 items that are a single object. Set only on the ammo bundles, whose triangles are
+            /// contiguous per round and ordered with the top round LAST.</summary>
+            public int[] Rounds;
+            public string ObjPath;   // kept so a prefix mesh can be parsed on demand
+        }
         static readonly Dictionary<int, Model> _cache = new();
         static Godot.Collections.Dictionary _manifest;
         const string ItemsRoot = "res://content/items";
@@ -116,10 +125,21 @@ namespace UnturnedGodot
             if (man.ContainsKey(key))
             {
                 var e = man[key].AsGodotDictionary();
-                var mesh = ContentProvider.ParseObj($"{ItemsRoot}/{e["obj"].AsString()}");
+                string objPath = $"{ItemsRoot}/{e["obj"].AsString()}";
+                var mesh = ContentProvider.ParseObj(objPath);
                 if (mesh != null && mesh.GetSurfaceCount() > 0)
                 {
                     m.Mesh = mesh;
+                    m.ObjPath = objPath;
+                    if (e.ContainsKey("rounds"))
+                    {
+                        var r = e["rounds"].AsGodotArray();
+                        if (r.Count > 0)
+                        {
+                            m.Rounds = new int[r.Count];
+                            for (int i = 0; i < r.Count; i++) m.Rounds[i] = r[i].AsInt32();
+                        }
+                    }
                     var box = e["box"].AsGodotArray(); var ctr = e["center"].AsGodotArray();
                     m.Box = new Vector3(box[0].AsSingle(), box[1].AsSingle(), box[2].AsSingle());
                     m.Center = new Vector3(ctr[0].AsSingle(), ctr[1].AsSingle(), ctr[2].AsSingle());
@@ -162,6 +182,82 @@ namespace UnturnedGodot
             return m;
         }
 
+        /// <summary>How many of a bundle's sub-objects a stack of `amount` shows (strawberry 2026-09-08:
+        /// "stacks will show visually, 1/4-2/4 1 round 2/4-3/4 2 round 3/4-4/4 3 rounds. the stack shape stays
+        /// the same just hide rounds in the stack").
+        ///
+        /// The bands are quarters of the item's OWN stackSize, so 5.56 (128) and buckshot (32) both read as
+        /// thirds-of-a-pile without a per-item table. Below a quarter shows ONE round rather than none: a
+        /// dropped item that renders nothing is indistinguishable from a bug, and the single most common case
+        /// -- the one round the gun ejects on rack -- lands there.</summary>
+        public static int VisibleRounds(int amount, int stackSize, int rounds)
+        {
+            if (rounds <= 1 || stackSize <= 0) return rounds;
+            // ONE MORE BAND THAN ROUNDS, which is the rule his 3-round example already describes: quarters
+            // for three rounds ("1/4-2/4 1 round 2/4-3/4 2 round 3/4-4/4 3 rounds"). Generalised that way a
+            // 5-round pile reads in SIXTHS, and the 3-round case still lands exactly where he specified --
+            // a plain "one round per 1/rounds of the stack" would have quietly re-banded the 3-round pile
+            // into thirds and contradicted the spec it was derived from.
+            // FLOOR, not ceil-1: his bands are inclusive at the LOW edge ("2/4-3/4 2 round" means exactly
+            // half a stack already shows two). ceil(frac*(rounds+1))-1 is the same rule shifted one texel
+            // over and gets every boundary exactly wrong -- 16/32 came out as 1 round instead of 2.
+            float frac = (float)amount / stackSize;
+            int n = Mathf.FloorToInt(frac * (rounds + 1));
+            return Mathf.Clamp(n, 1, rounds);
+        }
+
+        /// <summary>The mesh a dropped stack of this id and amount should draw. The full mesh for every
+        /// ordinary item; a triangle PREFIX for a bundle, which drops the top round(s) and leaves the rest
+        /// resting on the ground (the installers assert that ordering, since a wrong one floats a round).</summary>
+        static ArrayMesh MeshForAmount(Model m, int itemId, int amount)
+        {
+            if (m?.Rounds == null || m.Rounds.Length <= 1 || amount <= 0) return m?.Mesh;
+            int stack = Assets.find((ushort)itemId)?.stackSize ?? 0;
+            if (stack <= 0) return m.Mesh;
+            int n = VisibleRounds(amount, stack, m.Rounds.Length);
+            if (n >= m.Rounds.Length) return m.Mesh;
+            return ContentProvider.ParseObjPrefix(m.ObjPath, m.Rounds[n - 1]) ?? m.Mesh;
+        }
+
+        /// <summary>Every id whose manifest entry carries `rounds` -- i.e. every multi-round bundle installed.
+        ///
+        /// Exists so the stack-visual test can enumerate what is ACTUALLY there. Its id list was hand-written
+        /// twice; the first version silently passed while nine calibers had no bundle at all, and the second
+        /// would have gone stale the moment ten more were added.</summary>
+        public static List<int> BundleIds()
+        {
+            var ids = new List<int>();
+            foreach (var key in Manifest().Keys)
+            {
+                string k = key.AsString();
+                if (!int.TryParse(k, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)) continue;
+                var e = Manifest()[key].AsGodotDictionary();
+                if (!e.ContainsKey("rounds")) continue;
+                if (e["rounds"].AsGodotArray().Count > 1) ids.Add(id);
+            }
+            ids.Sort();
+            return ids;
+        }
+
+        /// <summary>The manifest's `rounds` for an id -- cumulative triangle counts, one per round -- or null
+        /// for the great majority of items that are a single object. Public so a test can enumerate what is
+        /// actually installed instead of carrying its own copy of the list, which is the copy that goes stale
+        /// the moment a caliber is added.</summary>
+        public static int[] RoundsFor(int itemId)
+        {
+            var m = itemId > 0 ? GetModel(itemId) : null;
+            return m != null && m.Ok ? m.Rounds : null;
+        }
+
+        /// <summary>The mesh a dropped stack of `itemId` x `amount` draws, resolved through the real manifest
+        /// and the real obj on disk. Public so the stack-visual test can assert on the MESH -- its triangle
+        /// count and its height -- rather than on a re-statement of the band arithmetic.</summary>
+        public static ArrayMesh MeshForStack(int itemId, int amount)
+        {
+            var m = itemId > 0 ? GetModel(itemId) : null;
+            return m != null && m.Ok ? MeshForAmount(m, itemId, amount) : null;
+        }
+
         /// <summary>The item's own body colour, read off its extracted palette strip (pixel 0) -- see the note
         /// in GetModel. Null when the id has no model or no texture. Cached with the model, so a smoke grenade
         /// asking for its colour on every throw costs one dictionary lookup.</summary>
@@ -175,13 +271,16 @@ namespace UnturnedGodot
         /// joined client's WorldItemReplicaView -- the same mesh/texture/flat-colour the physical prop
         /// shows, with the rarity marker box fallback for ids without a model. No RigidBody3D, no
         /// collider, no pickup -- the replica view owns transform + lifecycle.</summary>
-        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity)
+        /// <param name="amount">Stack size of the drop, so a bundle shows the right number of rounds.
+        /// 0 (the default) means "not a stack" and draws the full mesh -- the Grenade/StoreShelf callers,
+        /// which show a single object rather than a pile.</param>
+        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity, byte amount = 0)
         {
             var model = itemId > 0 ? GetModel(itemId) : null;
             if (model != null && model.Ok)
                 return new MeshInstance3D
                 {
-                    Mesh = model.Mesh,
+                    Mesh = MeshForAmount(model, itemId, amount),
                     MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? rarity, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
                 };
             return new MeshInstance3D
@@ -196,10 +295,10 @@ namespace UnturnedGodot
         /// Mirrors the real WorldItem's look-at highlight so the joined client can see + aim at replicated drops --
         /// a bare replica node (WorldItemReplicaView's old shape) is invisible to the look-ray. Bit 7 + mask 0 ->
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
-        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name)
+        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name, byte amount = 0)
         {
             var p = new WorldItemPuppet { ItemId = itemId };
-            var visual = BuildReplicaVisual(itemId, rarity);
+            var visual = BuildReplicaVisual(itemId, rarity, amount);
             p.AddChild(visual);
 
             var model = itemId > 0 ? GetModel(itemId) : null;
@@ -266,8 +365,11 @@ namespace UnturnedGodot
             Vector3 boxSize, boxCenter;
             if (model != null && model.Ok)
             {
-                _mesh.Mesh = model.Mesh;
+                _mesh.Mesh = MeshForAmount(model, id, Item?.amount ?? 0);
                 _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? _rar, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                // The COLLIDER stays the full pile's box even when the stack draws one round. Pickup reach and
+                // the look-at hitbox are gameplay, and shrinking them would make a nearly-empty stack harder to
+                // pick up than a full one -- a difficulty gradient nobody asked for, hidden inside a visual change.
                 boxSize = model.Box; boxCenter = model.Center;
             }
             else

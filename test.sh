@@ -133,15 +133,29 @@ run_suite() {  # $1 = suite dir under tests/
   fi
 }
 
-run_l1() {  # batched in-engine tests: build the game once, boot headless godot, run every GameTest, parse its report
-  echo "== L1: in-engine tests (headless godot, one boot) =="
+GAME_BUILT=0
+build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tiers need it: L1 boots the engine and
+  # L2 renders through it, and godot mono does NOT rebuild on boot -- so whatever assembly is on disk is what runs.
+  # This used to live inside run_l1 alone, which made `--visual` (and any bare `tools/visual_tests.py`, which never
+  # builds at all) render the PREVIOUS commit's code and say nothing: on 2026-09-07 two goldens were baked off a dll
+  # built an hour earlier at another sha and shipped as renders of a commit that had never been compiled. It fails in
+  # the PASSING direction, so nothing in the report looks wrong.
+  [ $GAME_BUILT -eq 1 ] && return 0
   # 9>&- closes the LOCK fd for this child. Without it the Roslyn compiler server (VBCSCompiler) inherits fd 9,
   # outlives the script, and keeps holding the run lock -- so the NEXT run is refused by a daemon belonging to a
   # suite that finished minutes ago. MSBUILDDISABLENODEREUSE/DOTNET_CLI_USE_MSBUILD_SERVER above cover the MSBuild
   # daemons but not this one; observed 2026-08-07, lock held by a VBCSCompiler whose test.sh had long since died.
-  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/l1_build.log" 2>&1 9>&-; then
-    echo "[SUITE] L1 | ERROR | game build failed (see $RESULTS/l1_build.log)"
-    grep -E 'error|Build FAILED' "$RESULTS/l1_build.log" | head -3 | sed 's/^/         /'
+  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then
+    return 1
+  fi
+  GAME_BUILT=1; return 0
+}
+
+run_l1() {  # batched in-engine tests: build the game once, boot headless godot, run every GameTest, parse its report
+  echo "== L1: in-engine tests (headless godot, one boot) =="
+  if ! build_game; then
+    echo "[SUITE] L1 | ERROR | game build failed (see $RESULTS/game_build.log)"
+    grep -E 'error|Build FAILED' "$RESULTS/game_build.log" | head -3 | sed 's/^/         /'
     INFRA_FAIL=1; return
   fi
   if [ ! -x "$GODOT" ]; then
@@ -195,6 +209,11 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
 
 run_visual() {  # L2 golden-image tests: render each manifest scene via xvfb+lavapipe, diff vs the committed golden
   echo "== L2: visual golden tests (xvfb + lavapipe, ~30s/scene) =="
+  if ! build_game; then   # a render is only as valid as the assembly on disk -- see build_game
+    echo "[SUITE] L2 visual | ERROR | game build failed (see $RESULTS/game_build.log)"
+    grep -E 'error|Build FAILED' "$RESULTS/game_build.log" | head -3 | sed 's/^/         /'
+    INFRA_FAIL=1; return
+  fi
   local only=(); [ "$ONLY" != "*" ] && only=(--only "$ONLY")
   local log="$RESULTS/visual.log"
   GODOT="$GODOT" python3 tools/visual_tests.py "${only[@]}" | tee "$log"

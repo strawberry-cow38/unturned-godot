@@ -162,6 +162,13 @@ namespace UnturnedGodot.Net
             // off), not a stream you can resample: a dropped one leaves the bar stuck at the wrong height.
             Cooking.StateChanged = (netId, on, fuel) =>
             {
+                // THE LIT BIT GOES TO EVERYONE, and it has to be published BEFORE the opener-only guard below
+                // rather than inside it. The fuel BAR is a panel readout and rightly costs nothing for an
+                // appliance nobody has open; a lit barbecue's raised lid and smoke are things you are meant to
+                // see from across a field, and gating them on "somebody has this open" would mean an appliance
+                // only smokes while a player is standing in its inventory -- which is the one moment nobody is
+                // looking at it from a distance (master 2026-09-07: "so make cooking state serverside").
+                Containers.ServerSetCookerOn(netId, on, Session.CurrentTick);
                 if (!Inventories.TryGetCrate(netId, out var crate) || !crate.IsOpen) return;
                 var evt = new CookerStateEvent { NetId = netId, On = on, Fuel = fuel };
                 var pak = NetMessagePak.Pack(ReplicationIds.EventCookerState, evt.Write);
@@ -711,6 +718,9 @@ namespace UnturnedGodot.Net
         /// <summary>A furniture seat's occupant changed (0 = freed). The game side moves the player or the
         /// puppet; core only carries the fact.</summary>
         public event System.Action<SeatOccupiedEvent> SeatOccupied;
+        /// <summary>A prop door swung (shipping container, crossing arm). The game side owns the ObjectDoor
+        /// nodes; core only carries the bit.</summary>
+        public event System.Action<ObjectDoorStateEvent> ObjectDoorState;
 
         /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
         /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
@@ -815,6 +825,8 @@ namespace UnturnedGodot.Net
             // out. The snapshot's seat table is the join answer; this is the low-latency path.
             Events.Register<SeatOccupiedEvent>(ReplicationIds.EventSeatOccupied, SeatOccupiedEvent.TryRead,
                 e => SeatOccupied?.Invoke(e));
+            Events.Register<ObjectDoorStateEvent>(ReplicationIds.EventObjectDoorState, ObjectDoorStateEvent.TryRead,
+                e => ObjectDoorState?.Invoke(e));
             // Avatar bytes. ClientAcceptAvatar RE-VALIDATES the header and RECOMPUTES the hash rather than
             // believing either: this is the last point before something hands the bytes to an image decoder,
             // and a client that trusts whatever a server sends is a client a hostile server owns.
@@ -1150,6 +1162,12 @@ namespace UnturnedGodot.Net
         /// strength of having sent this: the answer is EventSeatOccupied, because the seat may have been
         /// taken between the ask and the arrival, and a client that sat optimistically would have to be
         /// yanked back out of a chair someone else is already in.</summary>
+        /// <summary>Ask to swing a prop door. The client does NOT swing it locally on the strength of having
+        /// sent this -- ObjectDoorState comes back and the node adopts it, so one truth reaches every screen
+        /// including the sender's.</summary>
+        public bool SendToggleObjectDoor(uint netId)
+            => SendCommand(ReplicationIds.CommandToggleObjectDoor, new ToggleObjectDoorCommand { NetId = netId }.Write);
+
         public bool SendSitSeat(uint netId)
             => SendCommand(ReplicationIds.CommandSitSeat, new SitSeatCommand { NetId = netId }.Write);
 

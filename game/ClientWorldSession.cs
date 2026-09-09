@@ -259,10 +259,11 @@ namespace UnturnedGodot
             Client.StorageOpened += e =>
             {
                 if (Shell == null || !IsInstanceValid(Shell)) return;
-                Shell.OnReplicatedStorageOpened(e.NetId);
                 // v28: the server says whether what you just opened cooks, so the inventory can draw the on/off
                 // button. The client never decides this for itself -- it would have to guess from a mesh name.
-                Shell.NoteOpenCooker(e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                // Passed INTO the open rather than set after it: the panel is built from these (see the overload).
+                Shell.OnReplicatedStorageOpened(e.NetId,
+                    e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
             };
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
@@ -284,6 +285,9 @@ namespace UnturnedGodot
             // v35: seat occupancy. Applied for EVERY seat change, not just our own -- a chair someone else
             // took has to stop reading as free here or F would offer it. Only the entry naming us moves this
             // shell, which is what ApplySeatOccupied's `me` argument decides.
+            // v37: a prop door swung. Applied to the group LEAD, whose SetOpen brings the rest of the
+            // assembly along -- so a container's two leaves can never disagree.
+            Client.ObjectDoorState += e => { if (ObjectDoor.TryGetByNetId(e.NetId, out var od)) od.ApplyReplicatedOpen(e.Open); };
             Client.SeatOccupied += e =>
             {
                 if (Shell != null && IsInstanceValid(Shell)) Shell.ApplySeatOccupied(e.NetId, e.Occupant, Client.PlayerId);
@@ -606,6 +610,7 @@ namespace UnturnedGodot
             shell.NetSetDoorLocked = (netId, locked) => Client.SendSetDoorLocked(netId, locked);
             shell.NetClaimBed = netId => Client.SendClaimBed(netId);
             shell.NetSitSeat = netId => Client.SendSitSeat(netId);
+            shell.NetToggleObjectDoor = netId => Client.SendToggleObjectDoor(netId);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
             // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))

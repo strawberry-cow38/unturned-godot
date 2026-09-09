@@ -153,6 +153,14 @@ namespace UnturnedGodot.Testing
                         Mathf.Abs(hoverLocal.X) < 11.5f && hoverLocal.Y > 11f && hoverLocal.Y < 17f && Mathf.Abs(hoverLocal.Z) < 33.25f);
                 T.Check($"a HOVERING aircraft over the deck is NOT dragged along ({hoverMoved:0.0} m against the ship's {shipMoved2:0.0} m)",
                         hoverMoved < shipMoved2 * 0.25f);
+                // FREE IT HERE, and this is a correctness fix rather than tidiness. It carries GravityScale = 0,
+                // so left in the world it hangs at y ~16 FOREVER -- squarely inside the carry box's 11..17 band --
+                // while later legs sail the hull back and forth underneath it. Whether the box happens to sweep
+                // over it during the alongside leg below then varies run to run, and it did: the same fixture
+                // read peak riders 3 on main and 2 on Staging-Tinyclaw within the hour, which is a control leg
+                // reporting on where a leftover prop drifted rather than on the boat it is supposed to be about.
+                World.RemoveChild(hover); hover.QueueFree();
+                yield return Ticks(2);
 
                 // ---- LANDING ON A MOVING SHIP (strawberry asked for "considerations for landing on a moving
                 // ship"). The hard version of it: the approach is deliberately NOT speed-matched. The lander is
@@ -206,6 +214,8 @@ namespace UnturnedGodot.Testing
                         rooferLocal.Y > 20f);
                 T.Check($"a vehicle on the bridge roof has no effect on the hull either ({roofSank:0.00} m)",
                         Mathf.Abs(roofSank) < 0.10f);
+                World.RemoveChild(roofer); roofer.QueueFree();   // same reason as the hover: the leg is done with it, and the count below is exact
+                yield return Ticks(2);
 
                 // ---- ALONGSIDE, NOT ABOARD. The hovering-heli control only covers things directly OVER the
                 // deck. The other way "aboard" could misfire is a boat sitting against the hull SIDE at the
@@ -238,8 +248,13 @@ namespace UnturnedGodot.Testing
 
                 T.Check($"the ship moved during the alongside leg ({alongShipMoved:0.0} m) -- else it was never a chance to tow anything",
                         alongShipMoved > 15f);
-                T.Check($"a boat ALONGSIDE the hull is never counted as cargo (peak riders {alongMaxRiders}, expected 2 -- the parked heli and the lander)",
-                        alongMaxRiders <= 2);
+                // EXACTLY 2, not "at most 2". With the two throwaway aircraft freed above, the only things
+                // aboard are the deliberate pair -- the parked heli and the lander -- so the count is knowable
+                // rather than bounded. That matters both ways: >2 means the boat got counted, which is the bug;
+                // <2 means the rider counter has stopped seeing things that ARE aboard, and a "<=" would have
+                // called that a pass. A control whose success case includes the counter being broken is not one.
+                T.Check($"a boat ALONGSIDE the hull is never counted as cargo (peak riders {alongMaxRiders}, expected exactly 2 -- the parked heli and the lander)",
+                        alongMaxRiders == 2);
                 T.Check($"...and is not towed along by it ({alongMoved:0.0} m against the ship's {alongShipMoved:0.0} m)",
                         alongMoved < alongShipMoved * 0.3f);
             }

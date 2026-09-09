@@ -72,6 +72,7 @@ namespace UnturnedGodot
         bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
         string _glEquipClip, _glReloadClip, _glHammerClip;   // resolved overlay clips for the gun-layer test (+ the empty-reload rack)
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
+        bool _vmInspected;                           // UG_INSPECT_AT fires PlayInspect once
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
@@ -80,6 +81,8 @@ namespace UnturnedGodot
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
         bool _heliTest;    // UG_HELITEST (with --vehicle --gun=minicopter|huey): scripted ROTARY flight -- see the loop in _PhysicsProcess for why this exists
+        PlayerController _htPilot; bool _htPilotSeated;   // UG_HELIPILOT=1: a VISIBLE pilot in the seat, and the scripted flight routed through their controls
+        Vector3? _heliCamLocal;   // UG_HELICAM="x,y,z": fixed vehicle-local inspection camera instead of the 12 m chase
         System.Collections.Generic.List<Vector3> _trP; System.Collections.Generic.List<float> _trD;
         System.Collections.Generic.List<(MeshInstance3D body, MeshInstance3D bf, MeshInstance3D bb, float off)> _trUnits;
         float _trS, _trRailY = 1.4f; bool _trAnim;
@@ -816,8 +819,10 @@ namespace UnturnedGodot
                     : new[] { 10, 66, 89, 92, 95, 120 };        // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
                 _vmTest = true;
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_VMSMALL") == "1" ? new Vector2I(1280, 720) : new Vector2I(2560, 1440);
+                if (System.Environment.GetEnvironmentVariable("UG_VM_NATIVE_SIZE") == "1") GetWindow().ContentScaleSize = GetWindow().Size;
                 BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
                 if (_vmAttach) _rigCaptureFrames = new[] { 40, 50, 60, 70, 80, 90 };   // menu open (post-equip) for each frame
+                ConfigureViewmodelCapture();
                 return;
             }
 
@@ -2216,6 +2221,29 @@ namespace UnturnedGodot
                 // Long enough to climb out, translate, and come round -- render at --fixed-fps 50 to match the
                 // 50 Hz physics tick so every movie frame is exactly one tick (no 30/50 sampling judder).
                 _rigCaptureFrames = new[] { 40, 150, 300, 450, 600, 750 };
+
+                // UG_HELIPILOT=1: put a PLAYER in the seat and fly the sequence THROUGH them (VoX 2026-09-07:
+                // "render a video of it in the game with a player flying it"). Without this the clip is an
+                // empty airframe flying itself, which on an open-frame aircraft like the minicopter is the
+                // most conspicuous thing in the shot.
+                //
+                // Spawned here, SEATED on the first physics tick (below) rather than now: EnterVehicle moves
+                // the body onto a seat anchor, and doing that before the tree has ticked once puts it on a
+                // transform nothing has resolved yet.
+                var camEnv = System.Environment.GetEnvironmentVariable("UG_HELICAM");
+                if (!string.IsNullOrEmpty(camEnv))
+                {
+                    var parts = camEnv.Split(',');
+                    if (parts.Length == 3 && float.TryParse(parts[0], out var cx) && float.TryParse(parts[1], out var cy) && float.TryParse(parts[2], out var cz))
+                        _heliCamLocal = new Vector3(cx, cy, cz);
+                    else GD.PrintErr($"[helicam] could not parse UG_HELICAM='{camEnv}' -- want x,y,z; using the chase cam");
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_HELIPILOT") == "1")
+                {
+                    _htPilot = new PlayerController { CaptureMouse = false };
+                    AddChild(_htPilot);
+                    _htPilot.GlobalPosition = _veh.GlobalPosition + new Vector3(1.5f, 0f, 0f);   // beside it; the seating below teleports them in
+                }
             }
 
             if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VFOCUS")))   // preview the vehicle look-at outline + info panel
@@ -2226,7 +2254,7 @@ namespace UnturnedGodot
 
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
             if (_demo) { _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f; }   // --demo: varied gauge levels (else full/spawn)
-            AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
+            AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD. Its Player field is left unset, which is what hides the on-foot HUD -- HUD never looks one up, so UG_HELIPILOT putting a real PlayerController in the scene does not bring the vitals back.
             if (_night)
             {
                 _veh.ToggleHeadlights();                // headlights on for the night demo
@@ -8726,6 +8754,15 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
+                // UG_INSPECT_AT=<frame>: play the gun's inspect once at that frame. The scripted sequence above is
+                // ADS -> hip-fire -> reload and never inspects, so before this there was NO WAY to render the pose
+                // at all -- and "show me inspect" is a normal thing to ask of a new gun. Deliberately outside the
+                // UG_NOADS gate so it can be captured on a quiet hip hold instead of fighting the aim script.
+                if (TickViewmodelActionCapture(delta)) { }
+                else if (_vmTest && _vm != null && !_vmMelee && !_vmInspected
+                    && int.TryParse(System.Environment.GetEnvironmentVariable("UG_INSPECT_AT"), out var insAt) && _frame >= insAt
+                    && _vm.IsEquipComplete)
+                { _vm.PlayInspect(); _vmInspected = true; GD.Print($"[vm] inspect fired at frame {_frame}"); }
                 else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings). UG_NOADS=1 skips the whole sequence so the gun HOLDS at hip -> a late frame shows a fully-ramped sprint/safety pose (which ADS would otherwise fade out).
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
@@ -8814,8 +8851,57 @@ namespace UnturnedGodot
                             rollIn = Mathf.Clamp((0f - rollDeg) * 0.06f, -0.4f, 0.4f);
                             break;
                     }
-                    _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
+                    // ONE WRITER ON THE CONTROLS. With a pilot in the seat, PlayerController calls DriveHeli
+                    // every tick from its own sticks; calling it here as well would give two writers and the
+                    // aircraft would fly on whichever ran last -- so the pilot path REPLACES this one rather
+                    // than joining it, and the maneuver script becomes their stick instead of a bypass.
+                    if (_htPilot != null)
+                    {
+                        if (!_htPilotSeated)
+                        {
+                            // EnterVehicle REFUSES SILENTLY. It returns void and simply does not seat you when a
+                            // remote driver holds the seat or every seat is taken, so "I called it" is not "he is
+                            // in it" -- and the first version of this set the flag unconditionally, never retried,
+                            // and skipped the direct DriveHeli path forever. The result was a helicopter sitting on
+                            // the ground at full collective for the whole clip: no error, no warning, a render that
+                            // completed and showed nothing. Take IsDriving as the post-condition instead.
+                            _htPilot.EnterVehicle(_veh, 0);
+                            _htPilotSeated = _htPilot.IsDriving;
+                            if (_htPilotSeated)
+                            {
+                                _htPilot.DebugSetFirstPerson(false);          // draw the seated body for the outside camera
+                                if (_vehCam != null) _vehCam.Current = true;  // seating builds a ride camera; the chase cam stays the shot
+                                GD.Print($"[helipilot] seated on tick {_frame}; chase cam re-asserted");
+                            }
+                            else if (_frame > 25)
+                            {
+                                // Degrade to the EMPTY-SEAT clip rather than to no flight at all. A pilotless video
+                                // is a worse deliverable; a grounded one is a broken one.
+                                GD.PrintErr($"[helipilot] could NOT seat the pilot by tick {_frame} -- flying the sequence directly instead");
+                                _htPilot = null;   // and the null check below hands the controls straight back
+                            }
+                        }
+                        if (_htPilot != null)
+                        {
+                            _htPilot.ScriptedDrive  = new Vector2(yawIn, coll);        // (steer, throttle) == (yaw, collective)
+                            _htPilot.ScriptedCyclic = new Vector2(pitchIn, rollIn);
+                        }
+                    }
+                    // The pilot flies it if there IS one and he is in the seat. Until he is (the first tick or
+                    // two) and if he never gets there, the harness flies it directly -- so the aircraft is never
+                    // left with nobody on the controls, which is the one outcome that renders a clip of nothing.
+                    if (_htPilot == null || !_htPilotSeated) _veh.DriveHeli(coll, yawIn, pitchIn, rollIn, delta);
 
+                    // ONE-SHOT SEAT MEASUREMENT: where the posed feet actually ended up against the
+                    // airframe underside. Printed rather than asserted because the right rise is an art
+                    // call; the point is that it is a MEASURED number and not another eyeballed one.
+                    if (_htPilot != null && _htPilotSeated && _frame == 40)
+                    {
+                        float footY = _htPilot.DebugFootWorldY;
+                        var vb = _veh.DebugWorldMeshAabb();
+                        GD.Print($"[seatcheck] posed foot world Y {footY:0.0000}; airframe underside {vb.Position.Y:0.0000}; "
+                               + $"foot is {(footY - vb.Position.Y):+0.0000;-0.0000} vs it (negative = THROUGH the machine); clip={_htPilot.DebugBodyLoopClip}");
+                    }
                     if (_frame % 60 == 0)
                         GD.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");
 
@@ -8827,8 +8913,20 @@ namespace UnturnedGodot
                         var ht = _veh.GetGlobalTransformInterpolated();
                         var fwdH = -ht.Basis.Z; fwdH.Y = 0f;
                         fwdH = fwdH.LengthSquared() > 0.001f ? fwdH.Normalized() : Vector3.Forward;
-                        _vehCam.GlobalPosition = ht.Origin - fwdH * 12f + Vector3.Up * 4.5f;
-                        _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                        // UG_HELICAM="x,y,z": park the camera at that VEHICLE-LOCAL offset and look at the
+                        // aircraft instead of chasing it. The chase shot is 12 m behind, which is right for the
+                        // flight and useless for inspecting anything on the machine -- a seated pilot's legs are
+                        // a dozen pixels at that range. Local, so it holds its angle as the aircraft manoeuvres.
+                        if (_heliCamLocal.HasValue)
+                        {
+                            _vehCam.GlobalPosition = ht * _heliCamLocal.Value;
+                            _vehCam.LookAt(ht.Origin, Vector3.Up);
+                        }
+                        else
+                        {
+                            _vehCam.GlobalPosition = ht.Origin - fwdH * 12f + Vector3.Up * 4.5f;
+                            _vehCam.LookAt(ht.Origin + fwdH * 3f, Vector3.Up);
+                        }
                     }
                     return;
                 }
@@ -9213,6 +9311,7 @@ namespace UnturnedGodot
                         if (g != null)
                         {
                             g.SavePng($"{_rigDir}/vpraw_{_rigShot:D2}.png");   // DEBUG: the raw SubViewport capture (does it hold the gun?)
+                            _vm.DumpSksCapture($"{_rigDir}/sks_state_{_rigShot:D2}.json");
                             if (im.GetFormat() != Image.Format.Rgba8) im.Convert(Image.Format.Rgba8);
                             if (g.GetFormat() != Image.Format.Rgba8) g.Convert(Image.Format.Rgba8);
                             if (g.GetSize() != im.GetSize()) g.Resize(im.GetWidth(), im.GetHeight());

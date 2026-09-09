@@ -1,0 +1,85 @@
+GUID 859b5526ac234192b48cee288a2428c8
+Type Gun
+Rarity Rare
+Useable Gun
+Slot Primary
+ID 9154
+
+Size_X 4
+Size_Y 2
+Size_Z 0.375
+Size2_Z 0.6
+
+Sight 124
+Magazine 123
+
+Hook_Sight
+Hook_Tactical
+Hook_Grip
+Hook_Barrel
+
+Ammo_Min 10
+Ammo_Max 10
+
+Safety
+Semi
+
+Caliber 9
+Caliber_Name "7.62x39mm"
+Real_Weapon "SKS"
+
+Range 220
+Firerate 3
+Action Trigger
+
+Damage 28
+Player_Leg_Multiplier 0.6
+Player_Arm_Multiplier 0.6
+Player_Spine_Multiplier 0.8
+Player_Skull_Multiplier 1.1
+
+Zombie_Leg_Multiplier 0.3
+Zombie_Arm_Multiplier 0.3
+Zombie_Spine_Multiplier 0.6
+Zombie_Skull_Multiplier 1.1
+
+Animal_Damage 40
+Animal_Leg_Multiplier 0.6
+Animal_Spine_Multiplier 0.8
+Animal_Skull_Multiplier 1.1
+
+Barricade_Damage 20
+Structure_Damage 15
+Vehicle_Damage 35
+Resource_Damage 15
+Object_Damage 25
+
+Durability 0.125
+
+Aim_In_Duration 0.28
+Spread_Aim 0.028
+Spread_Angle_Degrees 3.6
+
+Recoil_Min_X 1.25
+Recoil_Min_Y 3.10
+Recoil_Max_X 1.25
+Recoil_Max_Y 5.10
+
+Recover_X 0.7
+Recover_Y 0.5
+
+Shake_Min_X -0.0025
+Shake_Min_Y 0.0025
+Shake_Min_Z -0.01
+Shake_Max_X 0.0025
+Shake_Max_Y -0.0025
+Shake_Max_Z -0.02
+
+Muzzle 3
+
+Ballistic_Travel 15.6
+Ballistic_Steps 147
+Bullet_Gravity_Multiplier 1.35
+Damage_Falloff_Start 130
+Damage_Falloff_End 240
+Damage_Falloff_Min 0.70

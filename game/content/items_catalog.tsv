@@ -1942,3 +1942,14 @@
 5004	5.56mm FMJ	Supply	Common	1	1	A loose 5.56x45mm full-metal-jacket round. Ejected when you rack the chamber.	959d361bcb4840328ffae0d47e2da9b7
 5005	.300 Blackout	Supply	Uncommon	1	1	A loose .300 AAC Blackout subsonic round. Feeds STANAG-pattern magazines.	c1d2e3f405a6b7c8d9e0f1a2b3c40300
 5006	7.62mm NATO	Supply	Uncommon	1	1	A loose 7.62x51mm NATO rifle round.	b7a6c5d4e3f201a0b9c8d7e6f5040762
+9154	SKS	Gun	Rare	4	2	Soviet semi-automatic carbine chambered in Ranger ammunition.	859b5526ac234192b48cee288a2428c8
+5007	9x19mm Parabellum	Supply	Common	1	1	A loose 9x19mm Parabellum pistol round.	0e32a595950e15689d4551a4c0c633af
+5008	.45 ACP	Supply	Common	1	1	A loose .45 ACP pistol round.	10b0f95bba310dae923183ff9daa30e8
+5009	9x18mm Makarov	Supply	Common	1	1	A loose 9x18mm Makarov pistol round.	45fe732f35e52584512ac35a1e47cdc1
+5010	7.62x39mm	Supply	Uncommon	1	1	A loose 7.62x39mm intermediate rifle round.	624bb9bb763352efaae1d3e81a8892c8
+5011	9x39mm	Supply	Rare	1	1	A loose 9x39mm subsonic rifle round.	ce80fc0a4b9b88e7dc4e600fee6dc53e
+5012	7.62x25mm Tokarev	Supply	Uncommon	1	1	A loose 7.62x25mm Tokarev pistol round.	95bbd5c261e5592b5979c1bc1884c42a
+5013	5.7x28mm	Supply	Rare	1	1	A loose 5.7x28mm armour-piercing round.	7cab792d42de68e1cce8c3bfc192746e
+5014	.22 LR	Supply	Common	1	1	A loose .22 Long Rifle rimfire round.	b081b2ead97cc50489b2e0ace31c3ea4
+5015	.338 Lapua Magnum	Supply	Rare	1	1	A loose .338 Lapua Magnum anti-materiel round.	0c8901fe7d48a7a56f81e2fa75673b2a
+5016	.50 BMG	Supply	Epic	1	1	A loose .50 BMG round.	0d4a51d2cbc738cd160d6a5e922f140a

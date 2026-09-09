@@ -82,11 +82,13 @@ namespace UnturnedGodot
             // CHILD, so InteractableNetSync's world walk finds it right after this bed and gives it an id in
             // the same deterministic order on every peer -- no separate registration to keep in step.
             //
-            // Coverage note, said plainly: this inherits the bed system's existing limit. Beds are registered
-            // with the server by the world-build walk only, so a bed a player DEPLOYS mid-game is not
-            // server-registered today -- its claim is not either, and that gap is older than this. Such a bed
-            // still works in singleplayer; in multiplayer it simply has no NetId, which SitDown already reads
-            // as "not replicated" and handles by sitting locally.
+            // CORRECTION to what this comment said when the seat landed. It warned that a bed a player
+            // DEPLOYS mid-game would have no NetId and so no replicated occupancy -- an honest-sounding
+            // caveat about a case that does not exist. Bed.Spawn has exactly one non-test caller
+            // (WorldBuilder), beds are not in the deployable catalog, and there is no place-a-bed path at
+            // all: every bed in the game is a map fixture the world-build walk registers. A stated
+            // limitation that cannot be reached is worse than no note, because the next person plans around
+            // it -- so it is retracted rather than softened.
             _seat = PropSeat.Spawn(this, GlobalTransform, new Vector3(0f, MattressY, BedHalfLength),
                                    Vector3.Forward, recline: true);
             _seat.GroundY = _spawnPos.Y;
@@ -199,6 +201,7 @@ namespace UnturnedGodot
             _byNetId.Clear();     // a new world's server ids must not resolve to the old world's nodes
             Door.ResetNetIds();   // doors have no claim table of their own to hang this off
             PropSeat.ResetNetIds();   // ...nor do seats, and a stale seat 1 would take an arriving occupancy event meant for the new world's chair
+            ObjectDoor.ResetNetIds();   // ...nor prop doors
         }
 
         /// <summary>Tests share one static table; this keeps one case from inheriting another's claims.</summary>

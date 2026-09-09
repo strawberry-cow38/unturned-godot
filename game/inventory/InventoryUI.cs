@@ -316,6 +316,12 @@ void fragment() {
             PaintCookerBar();
         }
 
+        /// <summary>L1: is the appliance on/off button actually on the panel? The button is only ever CREATED by
+        /// a full Refresh, so "the player can see it" is a different question from "the player knows it is a
+        /// cooker" -- and the gap between those two is where it went missing.</summary>
+        public bool DebugHasCookerButton => _cookBtn != null && IsInstanceValid(_cookBtn);
+        public string DebugCookerButtonText => DebugHasCookerButton ? _cookBtn.Text : null;
+
         void PaintCookerBar()
         {
             if (_cookFuelTrack == null || !IsInstanceValid(_cookFuelTrack) || _cookFuelFill == null || !IsInstanceValid(_cookFuelFill)) return;

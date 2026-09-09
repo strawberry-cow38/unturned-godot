@@ -73,7 +73,7 @@ namespace UnturnedGodot
             var rarity = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
             // focusable puppet: replica visual + a look-detection box + a glow silhouette + name tag, so the client's
             // look-ray can highlight AND name the drop (a bare Node3D was invisible to the raycast -> no outline in MP)
-            var node = WorldItem.BuildItemPuppet(e.ItemId, rarity, asset?.itemName);
+            var node = WorldItem.BuildItemPuppet(e.ItemId, rarity, asset?.itemName, e.Amount);   // Amount is already on the wire (WorldItemReplication: "replicas carry only what rendering needs") -- no protocol bump for the stack visual
             node.NetId = e.NetIdValue;   // pickup requests address the server entity by this id
             // the SP drop pose (+90 X lays the model flat right-side-up) with a NetId-derived yaw for
             // variety -- deterministic, since the server's actual rest orientation never crosses the wire

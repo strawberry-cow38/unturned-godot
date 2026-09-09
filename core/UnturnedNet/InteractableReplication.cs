@@ -73,6 +73,21 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Swing a PROP's door: a shipping container, a crossing gate arm. One id per door ASSEMBLY,
+    /// not per leaf -- see ObjectDoor.GroupLead for why a per-leaf table is unrepresentable.</summary>
+    public struct ToggleObjectDoorCommand
+    {
+        public uint NetId;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); }
+        public static bool TryRead(NetPakReader r, out ToggleObjectDoorCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            cmd = new ToggleObjectDoorCommand { NetId = id };
+            return true;
+        }
+    }
+
     // ---- events (server -> client, ReliableOrdered facts) ----
 
     /// <summary>A door's full observable state, not just the swing. Locking used to be invisible to
@@ -128,6 +143,23 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>A prop door's open bit. No lock, because a prop door has none -- that is the whole reason
+    /// this is not DoorStateEvent.</summary>
+    public struct ObjectDoorStateEvent
+    {
+        public uint NetId;
+        public bool Open;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(Open); }
+        public static bool TryRead(NetPakReader r, out ObjectDoorStateEvent e)
+        {
+            e = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadBit(out bool open)) return false;
+            e = new ObjectDoorStateEvent { NetId = id, Open = open };
+            return true;
+        }
+    }
+
     /// <summary>
     /// The server's authoritative door and bed state, engine-free.
     ///
@@ -157,6 +189,18 @@ namespace UnturnedGodot.Net
             public Vector3 Pos;
             public ushort Occupant;
         }
+
+        /// <summary>A PROP's door assembly: where it is, and whether it is swung open. Deliberately thinner
+        /// than ServerDoor -- no owner, no lock, no toggle cooldown -- because a shipping container has none
+        /// of those and inventing them would mean a second rule set to keep in step with DoorLogic.</summary>
+        public struct ServerObjectDoor
+        {
+            public uint NetId;
+            public Vector3 Pos;
+            public bool Open;
+        }
+
+        readonly Dictionary<uint, ServerObjectDoor> _objectDoors = new Dictionary<uint, ServerObjectDoor>();
 
         readonly Dictionary<uint, ServerSeat> _seats = new Dictionary<uint, ServerSeat>();
         readonly Dictionary<ushort, uint> _seatByPlayer = new Dictionary<ushort, uint>();   // the reverse index, so standing up and disconnecting are O(1) and cannot miss a seat
@@ -263,6 +307,62 @@ namespace UnturnedGodot.Net
                 foreach (var id in ids)
                     yield return new KeyValuePair<uint, ulong>(id, _beds.OwnerOf(_bedIdByNet[id]));
             }
+        }
+
+        // ---- prop doors ----
+
+        public int ObjectDoorCount => _objectDoors.Count;
+
+        public void RegisterObjectDoor(uint netId, Vector3 pos, bool open = false)
+        {
+            if (netId == 0) return;
+            if (_objectDoors.TryGetValue(netId, out var had)) { had.Pos = pos; _objectDoors[netId] = had; return; }   // a re-register must not slam a door someone opened
+            _objectDoors[netId] = new ServerObjectDoor { NetId = netId, Pos = pos, Open = open };
+            Stamp();
+        }
+
+        public void RemoveObjectDoor(uint netId) { if (_objectDoors.Remove(netId)) Stamp(); }
+
+        public bool IsObjectDoorOpen(uint netId) => _objectDoors.TryGetValue(netId, out var d) && d.Open;
+
+        /// <summary>Every prop door as (netId, open), NetId-ordered so the wire and the hash do not depend on
+        /// dictionary iteration order.</summary>
+        public IEnumerable<KeyValuePair<uint, bool>> ObjectDoors
+        {
+            get
+            {
+                var ids = new List<uint>(_objectDoors.Keys);
+                ids.Sort();
+                foreach (var id in ids) yield return new KeyValuePair<uint, bool>(id, _objectDoors[id].Open);
+            }
+        }
+
+        /// <summary>Reach only. There is nothing else to ask: a prop door has no owner to check and no lock
+        /// to respect, and adding a cooldown here would be a SECOND cooldown -- ObjectDoor already swallows
+        /// key-repeat client-side, and one enforced server-side would fight it at a different rate.</summary>
+        public bool CanToggleObjectDoor(uint netId, Vector3 senderPos)
+            => _objectDoors.TryGetValue(netId, out var d) && (d.Pos - senderPos).magnitude <= InteractReach;
+
+        public bool ToggleObjectDoor(uint netId, out bool open)
+        {
+            open = false;
+            if (!_objectDoors.TryGetValue(netId, out var d)) return false;
+            d.Open = !d.Open;
+            _objectDoors[netId] = d;
+            open = d.Open;
+            Stamp();
+            return true;
+        }
+
+        /// <summary>Put a prop door back to a saved state (the world-restore path), without the reach check a
+        /// PLAYER's toggle carries -- rebuilding a world is not somebody standing next to it.</summary>
+        public bool ServerRestoreObjectDoor(uint netId, bool open)
+        {
+            if (!_objectDoors.TryGetValue(netId, out var d)) return false;
+            d.Open = open;
+            _objectDoors[netId] = d;
+            Stamp();
+            return true;
         }
 
         // ---- seats ----
@@ -449,6 +549,7 @@ namespace UnturnedGodot.Net
         readonly Dictionary<uint, DoorView> _doors = new Dictionary<uint, DoorView>();
         readonly Dictionary<uint, ushort> _bedOwners = new Dictionary<uint, ushort>();
         readonly Dictionary<uint, ushort> _seatOccupants = new Dictionary<uint, ushort>();
+        readonly Dictionary<uint, bool> _objectDoors = new Dictionary<uint, bool>();
 
         public struct DoorView { public bool Open, Locked; }
 
@@ -462,6 +563,9 @@ namespace UnturnedGodot.Net
         public int SeatCount => _seatOccupants.Count;
         public ushort SeatOccupant(uint netId) => _seatOccupants.TryGetValue(netId, out var o) ? o : (ushort)0;
         public IEnumerable<KeyValuePair<uint, ushort>> ReplicaSeats => _seatOccupants;
+        public int ObjectDoorCount => _objectDoors.Count;
+        public bool ObjectDoorOpen(uint netId) => _objectDoors.TryGetValue(netId, out var o) && o;
+        public IEnumerable<KeyValuePair<uint, bool>> ReplicaObjectDoors => _objectDoors;
         public IEnumerable<KeyValuePair<uint, DoorView>> ReplicaDoors => _doors;
         public IEnumerable<KeyValuePair<uint, ushort>> ReplicaBeds => _bedOwners;
 
@@ -479,7 +583,7 @@ namespace UnturnedGodot.Net
 
         void WriteTable(NetPakWriter w)
         {
-            if (Source == null) { w.WriteUInt16(0); w.WriteUInt16(0); w.WriteUInt16(0); return; }
+            if (Source == null) { w.WriteUInt16(0); w.WriteUInt16(0); w.WriteUInt16(0); w.WriteUInt16(0); return; }
             var doors = new List<ServerInteractables.ServerDoor>(Source.Doors);
             w.WriteUInt16((ushort)doors.Count);
             foreach (var d in doors)
@@ -504,6 +608,15 @@ namespace UnturnedGodot.Net
             {
                 w.WriteUInt32(st.Key);
                 w.WriteUInt16(st.Value);   // 0 = free
+            }
+            // v37: PROP doors (shipping containers, crossing arms) -- the join answer, without which a client
+            // that connected after somebody opened a container renders it shut AND collides with the leaf.
+            var odoors = new List<KeyValuePair<uint, bool>>(Source.ObjectDoors);
+            w.WriteUInt16((ushort)odoors.Count);
+            foreach (var d in odoors)
+            {
+                w.WriteUInt32(d.Key);
+                w.WriteBit(d.Value);
             }
         }
 
@@ -541,6 +654,14 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt16(out ushort who)) return;
                 _seatOccupants[netId] = who;
             }
+            if (!r.ReadUInt16(out ushort odoorCount)) return;
+            _objectDoors.Clear();
+            for (int i = 0; i < odoorCount; i++)
+            {
+                if (!r.ReadUInt32(out uint netId)) return;
+                if (!r.ReadBit(out bool open)) return;
+                _objectDoors[netId] = open;
+            }
             Version++;
         }
 
@@ -555,6 +676,8 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixUInt32(h, b.Key ^ ((uint)b.Value << 8));
                 foreach (var st in Source.SeatOccupants)
                     h = NetHash.MixUInt32(h, st.Key ^ ((uint)st.Value << 16));   // <<16, not <<8: a bed and a seat sharing a NetId space must not hash alike
+                foreach (var d in Source.ObjectDoors)
+                    h = NetHash.MixUInt32(h, d.Key ^ (d.Value ? 0x4000u : 0u));   // its own bit again, for the same reason
                 return h;
             }
             var doorIds = new List<uint>(_doors.Keys); doorIds.Sort();
@@ -566,6 +689,9 @@ namespace UnturnedGodot.Net
             var seatIds = new List<uint>(_seatOccupants.Keys); seatIds.Sort();
             foreach (var id in seatIds)
                 h = NetHash.MixUInt32(h, id ^ ((uint)_seatOccupants[id] << 16));
+            var odoorIds = new List<uint>(_objectDoors.Keys); odoorIds.Sort();
+            foreach (var id in odoorIds)
+                h = NetHash.MixUInt32(h, id ^ (_objectDoors[id] ? 0x4000u : 0u));
             return h;
         }
     }

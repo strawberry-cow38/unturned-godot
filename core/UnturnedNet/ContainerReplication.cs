@@ -48,6 +48,22 @@ namespace UnturnedGodot.Net
             /// player who walked away never shut for anyone. Derived, never asserted by a client: it is exactly
             /// "the crate's viewer set is not empty", which only the server knows.</summary>
             public bool DoorsOpen;
+            /// <summary>Is this appliance LIT -- burning, cooking, smoking -- on every screen (master
+            /// 2026-09-07: "make the red bbq lid stay open when its on. both bbqs should emit smoke when on
+            /// too"). Not the same question as DoorsOpen and not derivable from it: a barbecue with its lid up
+            /// because somebody is rummaging in it is a different thing from one that is alight, and the one
+            /// the player cares about at fifty metres is the second.
+            ///
+            /// A BIT RATHER THAN THE EXISTING CookerStateEvent, and that is the whole reason this needed the
+            /// wire at all. That event is UNICAST to whoever has the appliance open ("a campfire burning in an
+            /// empty forest changes state constantly and is worth exactly zero packets") -- which is the right
+            /// call for a fuel BAR, drawn in a panel only its opener can see, and exactly wrong for smoke you
+            /// are meant to spot from across a field. Same reasoning as the door bit one version earlier:
+            /// anything the world can SEE has to ride the entity, not the panel.
+            ///
+            /// Server-derived like DoorsOpen -- it is ServerCooking's Cooker.On, which no client may assert:
+            /// a client that could say "I am cooking" is a client that cooks without fuel.</summary>
+            public bool CookerOn;
             public long LastChangedTick;
         }
 
@@ -103,6 +119,18 @@ namespace UnturnedGodot.Net
         {
             if (!TryGet(netId, out var e) || e.DoorsOpen == open) return;
             e.DoorsOpen = open;
+            e.LastChangedTick = Stamp(tick);
+        }
+
+        /// <summary>Light or douse this appliance for everyone. Driven off ServerCooking's own switch, and
+        /// early-returning on no-change is load-bearing rather than tidy: an appliance that is merely BURNING
+        /// changes its fuel every tick, and stamping LastChangedTick on each of those would re-send the whole
+        /// container entity -- display digest and all -- fifty times a second for every lit barbecue on the map.
+        /// The bit moves twice per cook: once when it lights and once when it goes out.</summary>
+        public void ServerSetCookerOn(uint netId, bool on, long tick)
+        {
+            if (!TryGet(netId, out var e) || e.CookerOn == on) return;
+            e.CookerOn = on;
             e.LastChangedTick = Stamp(tick);
         }
 
@@ -184,6 +212,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.YawDegrees);
                 h = NetHash.MixByte(h, e.Width); h = NetHash.MixByte(h, e.Height);
                 h = NetHash.MixByte(h, e.DoorsOpen ? (byte)1 : (byte)0);
+                h = NetHash.MixByte(h, e.CookerOn ? (byte)1 : (byte)0);
                 h = NetHash.MixUInt32(h, (uint)e.Display.Length);
                 foreach (var d in e.Display) { h = NetHash.MixByte(h, d.Cell); h = NetHash.MixUInt32(h, d.ItemId); h = NetHash.MixByte(h, d.Rot); }
             }
@@ -199,6 +228,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(e.Width);
             w.WriteUInt8(e.Height);
             w.WriteBit(e.DoorsOpen);                // v36: somebody has it open -> its door is swung, on every screen
+            w.WriteBit(e.CookerOn);                 // v38: it is LIT -> lid up + smoke, on every screen (not just the opener's panel)
             w.WriteUInt8((byte)e.Display.Length);   // a shelf's visible tiers are few (<= 255 cells)
             foreach (var d in e.Display) { w.WriteUInt8(d.Cell); w.WriteUInt16(d.ItemId); w.WriteUInt8(d.Rot); }
         }
@@ -213,6 +243,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte width)) return false;
             if (!r.ReadUInt8(out byte height)) return false;
             if (!r.ReadBit(out bool doorsOpen)) return false;
+            if (!r.ReadBit(out bool cookerOn)) return false;
             if (!r.ReadUInt8(out byte dcount)) return false;
             var display = new ContainerDisplayCell[dcount];
             for (int i = 0; i < dcount; i++)
@@ -222,7 +253,7 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt8(out byte rot)) return false;
                 display[i] = new ContainerDisplayCell { Cell = cell, ItemId = itemId, Rot = rot };
             }
-            e = new ContainerEntity { NetIdValue = id, KindId = kindId, Pos = pos, YawDegrees = yaw, Width = width, Height = height, DoorsOpen = doorsOpen, Display = display };
+            e = new ContainerEntity { NetIdValue = id, KindId = kindId, Pos = pos, YawDegrees = yaw, Width = width, Height = height, DoorsOpen = doorsOpen, CookerOn = cookerOn, Display = display };
             return true;
         }
 

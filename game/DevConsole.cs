@@ -5,7 +5,7 @@ using SDG.Unturned;
 namespace UnturnedGodot
 {
     // Dev console (master). Press ` (backquote) to open a command bar at the top of the screen:
-    //   give <item id|name>      -> spawns a WorldItem at the player's look-orb
+    //   give <item id|name> [n]  -> spawns n of it (stacked to the asset's stackSize) at the player's look-orb
     //   vehicle <id|name>        -> spawns that vehicle at the look-orb
     // TAB autocompletes (verb first, then the item/vehicle name); ENTER runs; ESC / ` closes.
     // While it's open the mouse is freed, which gates player look/movement the same way the inventory UI does.
@@ -609,12 +609,53 @@ namespace UnturnedGodot
             }
             else if (verb == "give")
             {
+                // give <item id|name> [quantity]   (strawberry 2026-09-09)
+                //
+                // The quantity is split off the END rather than parsed positionally, because `arg` is the whole
+                // rest of the line and item names have spaces in them -- `give 12 Gauge Buckshot` has to keep
+                // working. A trailing integer only counts as a quantity when what is LEFT still resolves to an
+                // item, so `give 113` reads as the id (remainder would be empty) and an item whose name happens
+                // to end in a number still resolves whole.
                 var asset = ResolveItem(arg);
+                int want = 0;
+                if (asset == null)
+                {
+                    int sp = arg.LastIndexOf(' ');
+                    if (sp > 0 && int.TryParse(arg[(sp + 1)..], System.Globalization.NumberStyles.Integer,
+                                               System.Globalization.CultureInfo.InvariantCulture, out int q) && q > 0)
+                    {
+                        var head = ResolveItem(arg[..sp].Trim());
+                        if (head != null) { asset = head; want = q; }
+                    }
+                }
                 if (asset == null) { Log($"no item matching '{arg}'"); return; }
-                var item = SDG.Unturned.Assets.makeLoot(asset.id);   // magazines come full, etc.
-                if (Player?.Inventory != null && Player.Inventory.tryAddItem(item))   // into the bag if there's room (master)
-                    Log($"gave {asset.itemName} (#{asset.id}) -> bag");
-                else { Player?.DropWorldItem(item, at + Vector3.Up * 2f); Log($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }   // else spawn it in the air over the look-orb
+
+                if (want <= 0)   // no quantity given -> exactly the old behaviour, one makeLoot item
+                {
+                    var one = SDG.Unturned.Assets.makeLoot(asset.id);   // magazines come full, etc.
+                    if (Player?.Inventory != null && Player.Inventory.tryAddItem(one)) Log($"gave {asset.itemName} (#{asset.id}) -> bag");
+                    else { Player?.DropWorldItem(one, at + Vector3.Up * 2f); Log($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }
+                    return;
+                }
+
+                // Hand out `want` UNITS, packed into stacks. Item.amount is a BYTE, so the per-stack cap is
+                // min(stackSize, 255) whatever the asset claims -- a bigger stackSize would silently wrap.
+                int cap = Mathf.Clamp(asset.stackSize, 1, 255);
+                int left = Mathf.Clamp(want, 1, 10000);
+                int bagged = 0, dropped = 0, stacks = 0;
+                while (left > 0)
+                {
+                    int take = Mathf.Min(left, cap);
+                    var it = SDG.Unturned.Assets.makeLoot(asset.id);   // keeps food quality / fluid / mag fill
+                    if (!asset.IsMagazine) it.amount = (byte)take;     // a magazine's amount IS its loaded rounds -- leave it
+                    int units = asset.IsMagazine ? 1 : take;
+                    if (Player?.Inventory != null && Player.Inventory.tryAddItem(it)) bagged += units;
+                    else { Player?.DropWorldItem(it, at + Vector3.Up * 2f); dropped += units; }
+                    left -= units; stacks++;
+                    if (stacks > 400) break;                            // guard: never loop forever on a weird asset
+                }
+                Log($"gave {bagged + dropped}x {asset.itemName} (#{asset.id}) in {stacks} stack(s) of up to {cap}"
+                    + (dropped > 0 ? $" -- {bagged} to the bag, {dropped} dropped above the orb" : " -> bag"));
             }
             else if (verb == "fridge")   // demo: a Refrigerator wired + powered by its own generator + a plain Crate, each seeded with perishables, to see preservation
             {

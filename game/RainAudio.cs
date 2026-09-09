@@ -16,6 +16,13 @@ namespace UnturnedGodot
         public float Intensity;    // rint 0..1 (WeatherManager drives it)
         public float Shelter = 1f; // 1 = open sky .. 0 = fully under a roof (WeatherManager drives it)
 
+        /// <summary>The shelter low-pass knee actually in force, and the light bed's actual level in dB. Both
+        /// are the APPLIED values rather than a re-derivation of the curve, so a test asserts what a player
+        /// would hear and not that the formula equals itself. This pair exists because "indoors is muted" has
+        /// been reported twice and neither the cutoff nor the trim had anything watching it.</summary>
+        public float DebugCutoffHz => _lp?.CutoffHz ?? 0f;
+        public float DebugLightDb => _lightDb;
+
         AudioStreamPlayer _light, _heavy, _retail;   // _retail = retail's own defaultrainambience bed (ripped 2026-09-03), under the two freesound layers
         AudioEffectLowPassFilter _lp;
         string _busName;           // the name AudioServer ACTUALLY gave us (it dedupes "Rain"->"Rain 2"); own it for the players + the removal
@@ -67,7 +74,7 @@ namespace UnturnedGodot
             float heavyAmt = Mathf.Clamp((rint - 0.5f) / 0.5f, 0f, 1f);
             float heavyTgt = Mathf.Lerp(-26f, -9f, heavyAmt);   // -6dB global trim to match the light bed
 
-            float shelterDb = Mathf.Lerp(-7f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle. Depth is ROOF-correct -- a permeable CANOPY is softened by capping its Shelter contribution in WeatherManager (tinyclaw), not by weakening this shared curve.
+            float shelterDb = Mathf.Lerp(-3f, 0f, shelter);   // the roof cuts direct rain a touch; the low-pass does the muffle. Was -7; see the cutoff note below -- asked twice for indoor rain to stay audible, and on the second pass the level trim had to give as well as the filter. Depth is ROOF-correct -- a permeable CANOPY is softened by capping its Shelter contribution in WeatherManager (tinyclaw), not by weakening this shared curve.
 
             // NO thunder duck (master dropped it): the claps clear the rain bed by ~8-9dB on their own, so dipping the
             // rain under them was pure impact-polish that read as a mixer glitch. Rain level tracks intensity + shelter only.
@@ -77,12 +84,21 @@ namespace UnturnedGodot
 
             // shelter low-pass: sweep the cutoff in LOG domain (a linear sweep sounds like a wah) -- ~20kHz open
             // outdoors, ~900Hz fully under cover. Change-guarded so it's not rewritten every idle frame.
-            // 2200 Hz floor, was 900 (strawberry 2026-09-05 "change the muffle effect in buildings to not mute rain,
-            // but make it still audible"). 900 with a 24 dB/oct slope puts the whole hiss of rain -- which lives well
-            // above 2 kHz -- below the knee, so indoors read as silence rather than as shelter. 2200 keeps the body of
-            // the sound present and still audibly dulled. The -7 dB shelter trim below is untouched; it was never the
-            // part doing the swallowing.
-            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(2200f), 1f - shelter));
+            // 6000 Hz floor. Third value here, and the arithmetic is why: at 24 dB/oct the knee costs
+            // 24 dB per octave ABOVE it, and rain is hiss -- its audible character lives at 4-8 kHz.
+            //   900 Hz  -> 8 kHz is log2(8000/900) = 3.15 oct = ~76 dB down. Silence.
+            //   2200 Hz -> 8 kHz is 1.86 oct = ~45 dB down. Still silence, which is why asking once did not fix it.
+            //   6000 Hz -> 8 kHz is 0.42 oct = ~10 dB down. Dulled, clearly still rain.
+            // strawberry asked twice -- 2026-09-05 "change the muffle effect in buildings to not mute rain, but make
+            // it still audible", then 2026-09-07 "when inside a building dont mute the rain sounds". The first pass
+            // moved 900 to 2200 and explicitly left the -7 dB trim alone on the grounds that the filter was doing the
+            // swallowing. Half right: 2200 was still 45 dB down at the top, so the complaint came back unchanged.
+            // Both levers move this time (the trim is now -3, above).
+            //
+            // Shelter is NOT muffle-only for a car: WeatherManager feeds a roofed vehicle's cabin through this same
+            // Shelter input, so sitting in a car gets this curve too -- which is the point, since being inside one is
+            // supposed to sound like rain on a car, not like no rain.
+            float cut = Mathf.Exp(Mathf.Lerp(Mathf.Log(20500f), Mathf.Log(6000f), 1f - shelter));
             if (_lp != null && Mathf.Abs(cut - _lastCut) > 1f) { _lastCut = cut; _lp.CutoffHz = cut; }
         }
 

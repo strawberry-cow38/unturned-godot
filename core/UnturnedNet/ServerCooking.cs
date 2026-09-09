@@ -80,6 +80,12 @@ namespace UnturnedGodot.Net
 
         public int Count => _cookers.Count;
         public bool TryGet(uint netId, out Cooker c) => _cookers.TryGetValue(netId, out c);
+        /// <summary>L1: every registered appliance and its kind, so a test can find "the oven in this world"
+        /// without the game layer having to hand it the NetId the container manifest happened to mint.</summary>
+        public IEnumerable<KeyValuePair<uint, ECookerKind>> AllForTest()
+        {
+            foreach (var kv in _cookers) yield return new KeyValuePair<uint, ECookerKind>(kv.Key, kv.Value.Kind);
+        }
 
         /// <summary>The game layer names which crates are cookers -- it is the side that knows a prop's mesh
         /// is an Oven_0 rather than a Fridge_0.</summary>
