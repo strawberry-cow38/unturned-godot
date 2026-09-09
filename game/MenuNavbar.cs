@@ -54,6 +54,12 @@ namespace UnturnedGodot
                 nb._tabs[i] = (bg, lbl, hit);
             }
             nb.SetActive(active);
+            // A hidden Control does not reliably deliver mouse_exited, and these menus swoop in and out
+            // constantly -- so closing one with the cursor resting on a tab can leave _hover pointing at it and
+            // that tab comes back lit on the next open, with the mouse somewhere else entirely. Dropping the
+            // hover whenever the strip is shown or hidden costs nothing and cannot go stale: the cursor sitting
+            // on a tab re-enters and re-lights it immediately.
+            nb.VisibilityChanged += () => { if (nb._hover != -1) { nb._hover = -1; nb.Restyle(); } };
             nb.Resized += nb.Layout;
             nb.Layout();
             return nb;
