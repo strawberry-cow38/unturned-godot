@@ -12,6 +12,10 @@ namespace UnturnedGodot
     // time-of-day colours + the sun/moon directions each frame.
     public partial class DayNightCycle : Node
     {
+        /// <summary>The live cycle, so anything that has to match the world's light can find it without walking
+        /// the tree every frame. Same idiom as MapUI.Current / RemotePlayers.Current.</summary>
+        public static DayNightCycle Current;
+
         public DirectionalLight3D Sun;
         public Godot.Environment Env;
         /// <summary>Seconds in ONE FULL CYCLE -- midnight through noon and back, not the daylight half. 24 real
@@ -208,6 +212,7 @@ void sky() {
 
         public override void _Ready()
         {
+            Current = this;
             AddToGroup("daynight");   // so the dev console (time/timeSpeed/dayLength/date cmds) can find it
             BlackoutDay = (int)GD.RandRange(14, 31);   // [14..30] inclusive; the day the grid dies for good
             for (int d = BlackoutDay - 2; d <= BlackoutDay - 1; d++)
