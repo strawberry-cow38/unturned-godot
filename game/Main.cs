@@ -239,7 +239,13 @@ namespace UnturnedGodot
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
-                else if (arg == "--bakemap" || arg.StartsWith("--bakemap=")) { objects = true; WorldBuilder.SkipBakeOmitted = true; _bakeMapRes = arg.Contains('=') && int.TryParse(arg.Split('=')[1], out var _bmr) && _bmr >= 256 ? _bmr : 2048; }   // render OUR world from straight above into content/<map>_map_baked.png; props the editor flagged are not built at all
+                // TREE IMPOSTORS OFF FOR THE BAKE. The billboards are added ASYNCHRONOUSLY, after the world is
+                // ready -- which is after BakeMapTick has already stripped the distance culls -- so they keep
+                // their VisibilityRangeBegin and switch ON for a camera 400 m up, drawing a camera-facing quad
+                // per tree. Facing a camera that is looking straight DOWN means each one lies flat on the
+                // ground: 1.7k side-on tree sprites pasted over the real canopy. The real meshes are all the
+                // bake ever wanted.
+                else if (arg == "--bakemap" || arg.StartsWith("--bakemap=")) { objects = true; WorldBuilder.SkipBakeOmitted = true; _bakeMapRes = arg.Contains('=') && int.TryParse(arg.Split('=')[1], out var _bmr) && _bmr >= 256 ? _bmr : 2048; WorldBuilder.AerialRoadsFoliageTrees = true; ResourceField.TreeImpostors = false; }   // render OUR world from straight above into content/<map>_map_baked.png; props the editor flagged are not built at all
                 else if (arg == "--zombietier") zombieTier = true;   // zombie AI rewrite phase-1 verify: chunk grid + tier classification (logs tiers as an anchor sweeps out of a town)
                 else if (arg == "--zflow") zflow = true;             // zombie AI rewrite phase-2 verify: flow field routes a horde AROUND a wall (log split; --write-movie for the visual)
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)

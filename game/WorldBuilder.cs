@@ -122,6 +122,11 @@ namespace UnturnedGodot
         }
         public static bool SkipPhase(string name) { var v = System.Environment.GetEnvironmentVariable("UG_SKIP"); return v != null && v.Contains(name); }
 
+        /// <summary>Aerial worlds skip the roads/foliage/trees extraction (it is called from the Playable and
+        /// Client branches only). --bakemap sets this so the map picture has road ribbons and tree canopy;
+        /// everything else on --objects keeps the lighter world it has always had.</summary>
+        public static bool AerialRoadsFoliageTrees;
+
         /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
         /// The model is Z-up here (raw Unity coords, ObjMesh CONV=1): the plinth is a closed box spanning Z -1.0
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
@@ -2045,6 +2050,14 @@ namespace UnturnedGodot
             }
             else
             {
+                // ROADS + FOLIAGE + TREES IN AN AERIAL WORLD (strawberry 2026-09-09: "show roads and foliage on the
+                // map gps bake render"). They were missing from the bake because Aerial never built them -- the
+                // shared extraction is called from Playable and Client only, so the bake was rendering a PEI with
+                // no road ribbons and not one tree. Nothing was being culled; there was nothing there to cull.
+                // OPT-IN rather than always-on: --objects is the survey/harness mode and a lot of renders go
+                // through it, so quietly adding 1.7k trees and 612k grass instances to all of them would move
+                // every picture anyone bakes from it. Only --bakemap asks for this.
+                if (AerialRoadsFoliageTrees) await BuildRoadsFoliageTrees();
                 // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
                 Vector3 sumAll = Vector3.Zero; foreach (var v in cellSum.Values) sumAll += v;
                 var ctr = placed > 0 ? sumAll / placed : Vector3.Zero;
