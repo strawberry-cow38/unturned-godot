@@ -7,7 +7,6 @@ wheel centres use anchors minus WheelRestDrop, without simulated suspension.
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 from PIL import Image
 
@@ -59,6 +58,47 @@ def scene(key):
     return faces,colors
 
 
+def raster_view(faces, colors, elev, azim):
+    """Orthographic depth buffer: painter sorting exposes hidden cabin faces."""
+    elev,azim=np.radians([elev,azim])
+    toward=np.array([np.cos(elev)*np.cos(azim),np.cos(elev)*np.sin(azim),np.sin(elev)])
+    right=np.array([-np.sin(azim),np.cos(azim),0])
+    up=np.cross(toward,right)
+    width,height=912,534
+    extent=(-3.8,3.8,-1.25,3.2)
+    pixels=np.tile(np.array([243.,243.,238.])/255,(height,width,1))
+    depth=np.full((height,width),-np.inf)
+    projected=[]
+    for triangle,color in zip(faces,colors):
+        p=np.array(triangle)@np.array([right,up,toward]).T
+        p[:,0]=(p[:,0]-extent[0])/(extent[1]-extent[0])*width
+        p[:,1]=(extent[3]-p[:,1])/(extent[3]-extent[2])*height
+        projected.append((p,np.array(color)))
+    opaque=[item for item in projected if item[1][3]>=1]
+    glass=sorted((item for item in projected if item[1][3]<1),key=lambda item:item[0][:,2].mean())
+    for p,color in opaque+glass:
+        x0,y0=np.maximum(np.floor(p[:,:2].min(axis=0)).astype(int),0)
+        x1,y1=np.minimum(np.ceil(p[:,:2].max(axis=0)).astype(int),(width-1,height-1))
+        if x0>x1 or y0>y1:
+            continue
+        x,y=np.meshgrid(np.arange(x0,x1+1)+.5,np.arange(y0,y1+1)+.5)
+        a,b,c=p
+        det=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1])
+        if abs(det)<1e-8:
+            continue
+        u=((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/det
+        v=((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/det
+        w=1-u-v
+        z=u*a[2]+v*b[2]+w*c[2]
+        patch=depth[y0:y1+1,x0:x1+1]
+        visible=(u>=0)&(v>=0)&(w>=0)&(z>patch)
+        rgb=pixels[y0:y1+1,x0:x1+1]
+        rgb[visible]=color[:3]*color[3]+rgb[visible]*(1-color[3])
+        if color[3]>=1:
+            patch[visible]=z[visible]
+    return pixels,extent
+
+
 def main():
     fig = plt.figure(figsize=(18,10),facecolor="#f3f3ee")
     views = [("sedan","Sedan • fleet reference",0,-90),
@@ -68,18 +108,14 @@ def main():
              ("wagon","Original wagon • side (−Z is front)",0,-90),
              ("wagon","Original wagon • rear quarter",16,58)]
     for i,(key,title,elev,azim) in enumerate(views,1):
-        ax = fig.add_subplot(2,3,i,projection="3d",computed_zorder=False)
+        ax = fig.add_subplot(2,3,i)
         faces,colors = scene(key)
-        ax.add_collection3d(Poly3DCollection(faces,facecolors=colors,edgecolors=(.1,.1,.1,.12),linewidths=.2,zsort="average"))
-        ax.set(xlim=(-3.6,3.6),ylim=(-1.8,1.8),zlim=(-.7,2.5),xlabel="Z (m)",ylabel="X (m)",zlabel="Y (m)")
-        ax.set_box_aspect((7.2,3.6,3.2))
-        ax.set_proj_type("ortho")
-        ax.view_init(elev=elev,azim=azim)
+        pixels,extent=raster_view(faces,colors,elev,azim)
+        ax.imshow(pixels,extent=extent)
+        ax.set(xlabel="Z (m)" if elev==0 else "Projected horizontal (m)",
+               ylabel="Y (m)" if elev==0 else "Projected vertical (m)")
         ax.set_title(title,loc="left",fontweight="bold")
         ax.set_facecolor("#f3f3ee")
-        if elev == 0:
-            ax.set_yticks([])
-            ax.set_ylabel("")
     fig.suptitle("OBJ geometry preview — static mesh inspection, not a Godot render",fontsize=17,y=.98)
     fig.text(.5,.025,"Approximate palette colours and inspection lighting. No Godot materials, physics, transparency sorting or gameplay verification.",ha="center",fontsize=10)
     fig.subplots_adjust(top=.91,bottom=.08,wspace=.04,hspace=.1)

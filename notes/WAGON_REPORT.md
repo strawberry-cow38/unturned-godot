@@ -1,112 +1,92 @@
-# Original station wagon: measured style and implementation
+# Wagon revision: continuous sides, joined geometry, sedan hood
 
-The road fleet's body budget is **229–1,936 OBJ vertices / 111–986 triangles**, with medians **522.5 / 368**. Its common enclosed-body vocabulary is **0.25 m thick pillars and roof skins, open window apertures, a belt near Y=1.01–1.13 m, and a roof rising 0.417–0.467 of body height above that belt**. The replacement wagon was authored from these proportions. Its **648 vertices / 380 triangles** describe new lower panels, arches, bonnet, roof, pillars and tailgate.
+Revision of the accepted design at `3bfe4468`, on `astra-wagon`. The body retains **5.800 × 2.520 × 2.440 m** (length × width × height), three side windows per side, the flat roof, the accepted near-vertical tailgate, and the existing wheel/seat rig. This revision removes the wheel openings, replaces overlapping construction pieces with one joined shell, and takes the hood profile from the sedan mesh.
 
-All dimensions below are metres, in the files' existing frame: **forward −Z, +Y up**. Body height excludes wheels. [vehicle_measurements.md](vehicle_measurements.md) is unchanged and was not regenerated. Its old wagon entries and embedded sedan-extension discussion are historical; this report and [wagon_dimensions.md](wagon_dimensions.md) supersede those wagon-only values. The current brief replaces the old sedan-extension/ambulance-ceiling brief.
+Coordinates are metres, **+Y up, forward −Z**. The body AABB remains exactly **X [−1.26, 1.26], Y [−0.27, 2.17], Z [−2.90, 2.90]**. Wheel-well removal changes none of those extrema. [wagon_dimensions.md](wagon_dimensions.md) records the current construction; [vehicle_style.md](vehicle_style.md) preserves the original fleet/style analysis. Historical wagon values in `vehicle_measurements.md` are superseded here.
 
-## Style analysis, established before authoring
+## Wheel-area measurements and removal
 
-[vehicle_style.md](vehicle_style.md) contains the complete 20-road-vehicle count distribution, derived axle/overhang ratios for every road vehicle, selected body landmarks, and per-pane counts and extents. `tools/analyze_vehicle_style.py` calculates fleet statistics from the **retained table**, then reads only sedan/hatchback/van geometry for the additional greenhouse analysis. It does not rerun the fleet survey.
+Both `van_body.txt` and `truck_body.txt` have continuous outer side surfaces at approximately **|X| = 1.23096**, extending down to **Y = −0.125** across both axle positions (**Z = ±1.40**). Their side panels include a subdivision at **Y = 0.125**, with upper levels around **1.000–1.125**. There is no raised arch contour above either wheel.
 
-| Body complexity | Minimum | Q1 | Median | Q3 | Maximum | New wagon |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| OBJ `v` records | 229, tank | 420.25 | 522.5 | 618.25 | 1,936, bus | **648** |
-| Loaded triangles | 111, trailer | 280.5 | 368 | 418 | 986, bus | **380** |
+For example, the van's rear panel spans Z **0.231439..2.120542**, and the truck's spans **0.372843..2.120542**, both crossing the rear axle at **1.40**. Their lower corners remain at Y **−0.125**. Measurements used actual face coordinates, not minimum heights elsewhere on the body. As a second check, both bodies block **48/48** exterior-skin rays at axle Z plus **−0.4, 0, +0.4**, Y **−0.1, 0.2, 0.5, 0.7**, on both sides (rays cross |X| **1.1..1.4**).
 
-Population includes the 20 baseline road specs, including APC, tank and trailer; wagon, aircraft and boats are excluded. Quartiles use Python's exclusive method. The wagon is inside both distributions: its triangles are in the middle 50%; its vertices are 29.75 above Q3, with quad (730), semi (817) and bus (1,936) above it. The body has **232 unique positions**. Its OBJ position records split at flat-normal/UV seams, all are referenced, and none were added to pad the count. OBJ vertex count is sensitive to exporter serialization; it is not the expanded GPU buffer size.
+The wagon now follows that construction: continuous side panels reach the retained **Y = −0.12 sill**, including over both axles. The former **Y = 0.50 / 0.72** arch contour, recess returns and separate inner wall pieces are removed. There are no replacement wheel-well backings. Wheels remain separate meshes at the unchanged spec anchors **(±1.30, 0.25, −1.56)** and **(±1.30, 0.25, 1.46)**.
 
-The three enclosed bodies share measurable construction conventions:
+## Welded topology and geometry cleanup
 
-- Sedan and hatchback have **three pillars per side (A/B/C), two open side apertures per side, and six panes total**. The van has **one front side aperture per side, a solid cargo side, a rear corner post, and four panes total**. Its rear cargo volume is not a second side-window aperture.
-- Pillar longitudinal sections and lateral wall sections measure **0.250 m**. Outer side skins are near |X|=1.23096, inner skins near 0.98096. The independently attached side glass is about **0.004 m inside** the outer skin. Window apertures are missing body faces, with thick edge returns; glass is not painted onto a solid box.
-- Each roof has a **top skin and an underside 0.250 m apart inside the body asset**. No separate roof asset is referenced. Sedan and hatchback use several longitudinal roof facets; their top-skin height variations are **0.035082 / 0.120001 m**. The van roof is flat within **0.000001 m**. Thus a thick flat roof belongs to the sampled vocabulary; making every roof a thin flat plane would not.
-- The belt is the upper edge of the thick lower side wall. Sedan/van belt Y is **1.125**, hatchback **1.005861**. Sedan B-pillar Z edges are **0.0797/0.3297**, hatchback **0.7756/1.0256**, van **−0.0186/0.2314**: each is a **0.25 m** section. These landmarks establish dimensions, not copied panel coordinates.
-- The extracted side glass outlines have **10/7 vertices** for sedan front/rear, **9/9** for hatchback, and **6** for van front; windshield and rear panes each have **4**. Near-collinear outline points explain the larger side counts. The new planar apertures use four corners/two triangles each.
+Positions are welded by their loaded **float32 XYZ** before counting undirected edges. UV/normal seams do not split the measurement. A boundary edge has exactly one incident triangle.
 
-Definitions: roof rise/H = (roof-top Y − belt Y)/body AABB height; slab/H = roof thickness/body height. Glasshouse length is the envelope from windshield minimum Z to rear-glass maximum Z, including the van's solid cargo sides. Roof run is the top-skin Z envelope. Tail slope is rear-pane inclination from vertical. Ride is **anchor Y − radius**, not loaded ground clearance.
+| body | raw position records | welded verts | tris | boundary edges | % |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| wagon before (`3bfe4468`) | 648 | 232 | 380 | **60 / 598** | **10.0%** |
+| **wagon revised** | **182** | **182** | **388** | **0 / 582** | **0.0%** |
+| sedan | 515 | 182 | 366 | 4 / 551 | 0.7% |
+| hatchback | 408 | 172 | 346 | 4 / 521 | 0.8% |
+| van | 589 | 224 | 422 | 30 / 648 | 4.6% |
+| truck | 530 | 208 | 390 | 30 / 600 | 5.0% |
 
-| Relationship | Sedan | Hatchback | Van | Wagon |
-| --- | ---: | ---: | ---: | ---: |
-| Roof rise/H | 0.425345 | 0.466805 | 0.416939 | **0.438525** |
-| Roof slab/H | 0.102732 | 0.104197 | 0.104235 | **0.102459** |
-| Glasshouse length/body length | 0.488367 | 0.637307 | 0.715050 | **0.677586** |
-| Roof run/body length | 0.336788 | 0.445382 | 0.639433 | **0.579310** |
-| Wheelbase/body length | 0.504016 | 0.507408 | 0.547907 | **0.520690** |
-| Front/rear overhang ratio | 0.889549 | 0.936189 | 0.936201 | **0.930556** |
-| Anchor Y − radius | −0.350000 | −0.350000 | −0.350000 | **−0.350000** |
-| Rear pane slope from vertical | 23.249° | 28.452° | 0.000° | **8.326°** |
+The result is one connected, consistently outward-oriented shell. Every welded edge has **exactly two oppositely directed uses**; there are **zero open or overused edges**. Pillars join the belt and roof without buried mating caps. The inner walls, passenger floor, cargo step/deck, gate and underside share their junctions. There are no separate closed solids hidden inside the body. The grille is a partitioned material patch on the fascia; the projecting rear latch shares an opening in the gate and has no buried back face.
 
-The complete road table is useful for the budget and dimensional medians, but its tank barrel and trailer rear bogie make the extremes unsuitable passenger-car axle templates. The three enclosed specimens supply the cabin and axle proportions. These are observed ranges, not a claim that all road vehicles have one universal silhouette.
+The generator splits shared panel edges at their corners before triangulation, preventing T-junctions. The saved mesh has **zero duplicate or degenerate triangles**, **zero unused positions**, and no positive-area coplanar overlaps or triangle piercings detected by the pairwise audit (**4,819 candidate pairs after bounding-box rejection**). Coplanarity uses a **2 μm** distance tolerance; projected overlap areas must be below **10⁻⁹ m²**. Signed shell volume is **12.704918 m³**. Minimum body triangle area is **0.000699999261 m²**.
 
-## Wagon dimensions and their sources
+Welded positions decrease **232 → 182 (21.6%)**. The complete closures and joined seams bring triangles to **388**, eight above the old open assembly and below the van's **422**. OBJ `v` records are now fully shared; explicit per-corner `vn` and `vt` indices preserve flat shading and palette seams. `ContentProvider.ParseObjUncached` calls `SetNormal`/`SetUV` for each corner before `AddVertex`, so sharing position records does not smooth the mesh. This also avoids padding the asset to meet an exporter-dependent raw-vertex minimum. The loaded triangle budget remains within the measured fleet range.
 
-| Dimension | Authored value | Fleet statistic or construction rule |
-| --- | --- | --- |
-| Body length | **5.80**, Z −2.90..2.90 | Between road median **5.735214** and sedan **5.952190**; no source panel stretched. |
-| Body width | **2.52**, X −1.26..1.26 | Road median **2.522099**, rounded to 0.01 m. |
-| Body height | **2.44**, Y −0.27..2.17 | Road median **2.446013**, rounded to a 0.02 m grid. Minimum Y rounds the dominant **−0.273431/−0.273432** lower bound. |
-| Wheelbase | **3.02** | 5.80 × mean of sedan/hatchback/van wheelbase-length ratios = **3.014707**, rounded to 0.02 m. Road median wheelbase is **2.952**. |
-| Front/rear overhang | **1.34 / 1.44** | Sum = length − wheelbase = **2.78**; ratio **0.930556** is inside sampled **0.889549–0.936201**. Front axle Z **−1.56**, rear **1.46** follow from those overhangs. |
-| Front and rear track | **2.60** | Road per-axle median **2.60**; track/width **1.031746**, close to the three bodies' **1.030889**. Anchors are |X|=1.30, **0.04** outboard of body sides, matching the fleet relationship. |
-| Wheel radius / axle Y | **0.60 / 0.25** | Same sedan wheel asset/radius and modal enclosed-car ride **−0.35**. With shared rest drop **0.25**, static preview wheel centres are at Y=0.00 and tyre bottoms −0.60. Suspension travel is not a clearance guarantee. |
-| Belt / shoulder Y | **1.10 / 1.00** | Belt lies inside sampled **1.005861–1.125**; **0.10** shoulder bevel is 0.4 × the shared 0.25 section. |
-| Roof underside / top Y | **1.92 / 2.17** | Top follows total height and minimum Y; subtract the sampled **0.25** roof section. Roof rise/H **0.438525** lies within **0.416939–0.466805**. |
-| Roof width / run | **2.46 / 3.36**, Z **−0.80..2.56** | Width rounds sampled outer roof span **≈2.46192**. Run/body length **0.579310** lies between hatchback **0.445382** and van **0.639433**. Flatness uses the van roof vocabulary. |
-| Glasshouse envelope | **3.93**, Z **−1.25..2.68** | Fraction **0.677586** lies between hatchback **0.637307** and van **0.715050**. Front bonnet allocation **1.65/5.80=0.284483** remains near sedan **0.289536**, above van **0.231068**. |
-| Glazing vertical span / side X | Y **1.10..1.92**, |X|=**1.226** | Span is between belt and roof underside; side glass is **0.004** inside the 1.23 outer pillar face, matching the sampled inset. |
-| A/B/C/D sections | A/B **0.25**, C/D **0.20** in Z; **0.25** in X | A/B use sampled section; cargo posts use **0.8 × 0.25**, an authored variation to preserve the third aperture. See construction coordinates below. |
-| Tailgate slope | **0.12** rearward run over **0.82** rise | **8.326°** is between van vertical and hatchback **28.452°**, toward the vertical end for a wagon tail. Run is about half the shared 0.25 section. |
-| Seat rows | 4 seats; Z **−0.625 / 0.772**, Y **−0.079**, X **±0.50** | Retain the shared sedan/police two-row interior and body pose. Seats are shared parts, independent of body design. |
-| Load area | Floor Y **0.18**, begins Z **1.36**; clear run **1.17** to inner tailgate Z **2.53** | Retained rear seat mesh ends at **1.357307**; floor begins after it. The new tailgate is **0.15** thick (0.6 × common section). A clear width **1.88** fits inside tapered side returns. No third seat row. |
+## Sedan hood measurements and transfer
 
-These choices define the **body AABB X [−1.26,1.26], Y [−0.27,2.17], Z [−2.90,2.90]**. The shared wheels are allowed to extend beyond it as on the fleet; it is not the complete assembled-vehicle envelope. Finer dimensions are deliberate subdivisions of the shared section, not independent fleet measurements. [wagon_dimensions.md](wagon_dimensions.md) records every panel, aperture, lamp transform and fitted box for review.
+`tools/build_wagon.py` now reads `sedan_body.txt` for the front stations and the two specs for the overhang scale. It averages bilateral export jitter in longitudinal coordinates and removes approximately 1 μm noise around exact height levels. The independently authored wagon cabin coordinates remain the basis for the rest of the body.
 
-## How it differs from hatchback and van
+The seven requested front height levels are present in both saved meshes:
 
-| Feature | Hatchback | Original wagon | Van |
-| --- | --- | --- | --- |
-| Length | 5.518237 | **5.80** | 5.110358 |
-| Width / body height | 2.522097 / 2.399293 | **2.52 / 2.44** | 2.522099 / 2.398433 |
-| Roof run / height variation | 2.457724 / 0.120001 | **3.36 / 0.00** | 3.267730 / 0.000001 |
-| Roof run as length fraction | 0.445382 | **0.579310** | 0.639433 |
-| Rear pane inclination | 28.452° | **8.326°** | 0.000° |
-| Side glass apertures per side | 2 | **3: front row, rear row, load area** | 1; cargo sides solid |
-| Seats | 4; rear row Z 1.240 | **4; rear row Z 0.772, deck behind seatbacks** | 5; rear-most seat Z 1.707 |
-| Front/rear overhang | 1.314326 / 1.403911 | **1.34 / 1.44** | 1.117115 / 1.193243 |
+| front feature / Y station | sedan Y | wagon Y |
+| --- | ---: | ---: |
+| bumper bottom | −0.158648 | −0.158648 |
+| lower valance | −0.125000 | −0.125000 |
+| bumper top | 0.100803 | 0.100803 |
+| upper valance | 0.125000 | 0.125000 |
+| outer hood nose | 0.874953 | 0.874953 |
+| outer hood rear crease | 1.000000 | 1.000000 |
+| centre hood rear / cowl | 1.125000 | 1.125000 |
 
-The wagon adds **0.902276 m of flat roof run** over the hatchback, reduces tail slope by **20.126°**, and dedicates a separately glazed load area behind the second row. Against the van, it has a lower roof-run fraction, a longer bonnet allocation, and three open side apertures instead of a solid cargo wall. It remains in the same height/width class; making it much taller would undermine that distinction. These are geometric differences, not a claim that its rendered appearance is correct.
+The centre hood nose is **Y = 0.999953** in both bodies: it rounds to the requested **1.000** station but is distinct from the outer rear crease. The actual hood has a centre slope, lower outer shoulders, and a level cowl; the old wagon's single wedge at **0.91 → 1.10** is gone.
 
-## Original authorship, shared parts and registration
+| profile measurement | sedan | wagon |
+| --- | ---: | ---: |
+| foremost body Z | −3.009812 | −2.900000 |
+| front axle Z | −1.620000 | −1.560000 |
+| front overhang | 1.389812 | 1.340000 |
+| hood nose Z | −2.862356 | −2.757828 |
+| centre height at nose | 0.999953 | 0.999953 |
+| rear crease Z | −1.461164 | −1.406856 |
+| centre height at crease | 1.125000 | 1.125000 |
+| sloped hood run | 1.401192 | 1.350972 |
+| centre rise | 0.125047 | 0.125047 |
+| slope angle | 5.0997° | 5.2883° |
+| end of flat cowl Z | −1.122904 | −1.250000 |
+| flat cowl run | 0.338260 | 0.156856 |
 
-`tools/build_wagon.py` no longer loads any source body or spec/axle array. It constructs the side walls, four-edge arch openings, wedge bonnet, underfloor, raised load floor, belt rails, eight pillar sections, flat roof and rear gate from new coordinates. It neither clips nor transforms sedan panels. The verifier also finds **zero matching complete triangles** between the saved wagon and sedan bodies.
+Longitudinal transfer is **Z_w = −1.56 + (Z_s + 1.62) × 0.964159181**, where the factor is **1.34 / 1.389812**. Heights remain unchanged, so the shorter overhang produces the small, expected increase in slope angle. The flat cowl ends early at the wagon's accepted windscreen position, rather than relocating the greenhouse. The centre hood is **1.96 m wide**; its shoulders stay **0.125 m lower** along the slope while their widths blend into the accepted wagon nose/body taper.
 
-The palette stays byte-identical to `sedan_palette.png`. Painted faces use OBJ UV **(0.125,0.75)**, loaded as **(0.125,0.25)**; fixed dark faces use **(0.375,0.25)**, loaded as **(0.375,0.75)**. All faces are explicit `f v/vt/vn` triangles with normals calculated from the float32 positions the loader consumes. The eight glass assets retain the existing tint **(0.62,0.73,0.78,0.26)** and independent breakable-pane labels.
+To meet the cowl, only the windscreen's two lower vertices and the adjoining A-post front feet rise **25 mm**, from **Y = 1.10 to 1.125**, at unchanged **Z = −1.25**. The windscreen top, all six side panes, rear pane, roof and B/C/D profiles keep their accepted coordinates. The seven other glass assets, both lamps and palette remain byte-identical to `3bfe4468`. Some additional vertices lie along the hood slope at the width break (Z **−2.32**), along the grille divisions (Y **0.36 / 0.54**), and at panel junctions; these subdivide the measured surfaces and do not introduce extra hood profile steps.
 
-`Wheel=sedan_wheel.txt`, `WheelTex=jeep_wheel_albedo.png`: both references exactly match the sedan. Seat and steering meshes, seat registrations, driving coefficients, capacities, sounds and colours remain shared as before. Mass remains **1,650 kg**, midway between retained sedan **1,500** and police **1,800**; fuel **50 L**, Spec.Health **600**, engine coefficient **700**, SpeedMax **16.5 m/s**. These are configured choices, not measured driving performance.
+## Verification
 
-The existing lens meshes remain shared by translation: new `wagon_headlights.txt` is sedan headlights **+0.150 Z**, and wagon taillights are sedan taillights **+0.012 Z**, with matching light-anchor translations. Those deltas place outward lens faces beyond the new fascia/side-wall ends. This revision needed its own front-lens asset because the new nose has different dimensions.
-
-Registration is preserved in `_wagon`, `BuildWagon`, `BuildByName`, `SpecNames`, `SpecFor`, `SeatTable`, `SeatOf`, `HandTunedSeatOf`, `RoofBox` and existing pane labels. **Wagon remains TypeId 32; all previous 32 IDs retain their order.** DevConsole uses the existing catalogue (`vehicle wagon` or `veh wagon`). MP factories resolve the wagon body. WorldBuilder still treats it as command-only, like Golf. `VehicleWagonTests.cs` is retained; only its body-size and fitted-box expectations change.
-
-## Verification and limitations
-
-| Check | Result |
+| check | result |
 | --- | --- |
-| `dotnet build game/UnturnedGodot.csproj` | PASS, **0 errors / 22 warnings**. Final build after lamp-anchor correction: **1 min 11.43 s**. |
-| `python3 tools/verify_wagon.py` | PASS for **11 OBJ assets**: triangles only, required UV/normal fields, indices in range, finite float32 coordinates, valid UVs, unit normals aligned to winding, no unused vertices or duplicate/degenerate triangles. |
-| AABB / minimum triangle | Claimed bounds agree within **0.000001 m**. Smallest body triangle **0.000699999261 m²**. |
-| Aperture/load/lamp probes | **64** glass-interior probes and **9** vertical load-area probes encounter no body face. **4 outward faces per lamp mesh** have clear paths past the body. These are static sample checks, not an exhaustive intersection proof. |
-| Shared assets and integration | Exact wheel/texture/seat references, palette bytes, changed axle positions, lamp shifts, fitted boxes, glass labels and prior TypeIds verified. |
-| `./test.sh --l1 --only 'vehicle.wagon*'` | PASS, **1 test / 13 checks**: real and replica factories, actual ParseObj resource/AABB, four wheels, four seats, cabin, eight panes, capacities and mass. Final run: **0.99 s**, Godot 4.6 in headless mode. |
-| Geometry preview | [wagon_geometry.png](wagon_geometry.png) regenerated and inspected: fleet side views and three wagon views. Matplotlib geometry inspection with approximate paint/lighting, **not a Godot render**. |
-| Reproducibility | Generator outputs checked byte-for-byte after a second run; retained measurement notes checked against `f9970da8`. |
+| `dotnet build game/UnturnedGodot.csproj` | **PASS — 0 warnings, 0 errors**, 5.86 s. |
+| `./test.sh --l1 --only 'vehicle.wagon*'` | **PASS — 1 test, 13 checks**, 0.90 s; its build also had 0 warnings/errors. |
+| `python3 tools/verify_wagon.py` | **PASS** for all 11 OBJ assets: exactly 3 corners per face, explicit position/UV/normal indices in range, finite float32 values, unit normals following winding, valid UVs, no degenerate or duplicate triangles. |
+| shell audit | **0/582 boundary edges**, no overused edges, consistent winding, one component, no detected coplanar overlaps or triangle piercings. |
+| lower body | **91/91** continuous-side, sill/floor and rear-underside probes hit the shell; 80 of these sample the exterior across the former wheel openings. |
+| windows / cargo / lamps | **64** glass-interior probes and **9** cargo probes clear; all **4 outward faces per lamp mesh** visible past the body. |
+| integration | Real/replica factories, loaded mesh/AABB, four wheels, four seats, cabin, eight panes, capacities and mass pass. Wagon remains **TypeId 32**, preserving all older IDs. Specs, fitted boxes, shared wheel/seat/steering assets and light anchors are unchanged. |
+| reproducibility | A second generator run produces identical bytes for all wagon assets. |
+| preview | [wagon_geometry.png](wagon_geometry.png) regenerated and inspected. The inspection renderer now uses a depth buffer so long side triangles cannot incorrectly reveal hidden cabin faces through painter sorting. |
 
-**Not verified:** final appearance in Godot, interactive driving, suspension through its travel, road/contact behavior, occupant clipping in play, nighttime lighting, glass damage, or a live multiplayer session. The actual render of the rejected body (`wagon_godot.png`) was removed to avoid presenting it as evidence for this mesh. The headless factory test exercises assembly, not visual judgment. The final headless run generated **7 convex hulls** and disabled **2 fitted boxes** for physics (retaining them for look-focus); the fitted boxes documented in the dimension sheet are not a complete description of active collision. The existing MP puppet path omits the separate glass/roof attachments; this shared behavior remains outside this body task.
+The preview is static geometry inspection with approximate lighting, **not a Godot render**. The in-engine test exercises assembly and loading; the author's visual review is pending. The test generated **7 convex hulls** and took **2 fitted boxes** out of active physics, retaining them for look-focus. Driving, suspension travel and a live multiplayer session were not exercised by this geometry revision.
 
-Reproduce without resurveying the fleet:
+Reproduce:
 
 ```sh
-python3 tools/analyze_vehicle_style.py
 python3 tools/build_wagon.py
 python3 tools/verify_wagon.py
 dotnet build game/UnturnedGodot.csproj
@@ -114,4 +94,4 @@ dotnet build game/UnturnedGodot.csproj
 python3 tools/preview_wagon.py
 ```
 
-The analysis/build/verifier use the Python standard library. Preview additionally uses numpy, matplotlib and Pillow. Changes are committed on `astra-wagon`; nothing is pushed. Pre-existing tracked build-artifact edits are preserved and excluded from the commit.
+Build/verifier use the Python standard library; preview additionally uses numpy, matplotlib and Pillow. The commit contains the wagon body, windscreen, generator/verifier/preview and these notes. Pre-existing tracked build-artifact edits are excluded. Nothing is pushed.

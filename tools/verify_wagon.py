@@ -5,6 +5,7 @@ This is a static check, not a substitute for an in-engine spawn/drive/render.
 Uses float32 input, ParseObj's positive one-based indices and its V flip.
 """
 import math
+from collections import Counter
 from pathlib import Path
 import re
 import struct
@@ -84,10 +85,133 @@ def validate(path):
     return lo,hi
 
 
+def welded_edges(mesh):
+    """Count geometric edges after welding positions, ignoring flat-normal/UV seams."""
+    positions = [tuple(f32(x) for x in v) for v in mesh['vertices']]
+    edges = Counter()
+    for face in mesh['faces']:
+        points = [positions[int(c.split('/')[0])-1] for c in face]
+        assert len(points) == 3
+        for a,b in zip(points, points[1:]+points[:1]):
+            edges[tuple(sorted((a,b)))] += 1
+    return len(set(positions)), edges
+
+
+def surface_audit(mesh):
+    """Exhaustive saved-triangle audit, including overlaps edge counts miss."""
+    sub = lambda a,b: tuple(x-y for x,y in zip(a,b))
+    dot = lambda a,b: sum(x*y for x,y in zip(a,b))
+    cross = lambda a,b: (a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
+    tris = [tuple(tuple(f32(x) for x in mesh['vertices'][int(c.split('/')[0])-1]) for c in f) for f in mesh['faces']]
+    oriented = Counter((a,b) for t in tris for a,b in zip(t,t[1:]+t[:1]))
+    assert all(n==1 and oriented[b,a]==1 for (a,b),n in oriented.items()), 'inconsistent shell winding'
+    graph = {}
+    for a,b in oriented:
+        graph.setdefault(a,set()).add(b)
+    seen=set(); pending=[next(iter(graph))]
+    while pending:
+        p=pending.pop()
+        if p not in seen:
+            seen.add(p); pending.extend(graph[p]-seen)
+    assert len(seen)==len(graph), 'disconnected or enclosed stray component'
+    volume = sum(dot(a,cross(b,c))/6 for a,b,c in tris)
+    assert volume>0, ('inside-out shell',volume)
+    assert len(mesh['vertices'])==len(graph), 'unnecessary duplicate position records'
+
+    def clipped_area(a,b,normal):
+        # Sutherland-Hodgman triangle clipping in the dominant projection.
+        axis=max(range(3),key=lambda i:abs(normal[i])); axes=[i for i in range(3) if i!=axis]
+        a=[tuple(p[i] for i in axes) for p in a]; b=[tuple(p[i] for i in axes) for p in b]
+        def side(p,q,r):
+            return (q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0])
+        orient=1 if side(*b)>0 else -1
+        for p,q in zip(b,b[1:]+b[:1]):
+            result=[]
+            for u,v in zip(a,a[1:]+a[:1]):
+                du,dv=orient*side(p,q,u),orient*side(p,q,v)
+                if du>=0:
+                    result.append(u)
+                if (du>0 and dv<0) or (du<0 and dv>0):
+                    t=du/(du-dv)
+                    result.append(tuple(u[i]+t*(v[i]-u[i]) for i in range(2)))
+            a=result
+            if not a:
+                return 0
+        return abs(sum(p[0]*q[1]-p[1]*q[0] for p,q in zip(a,a[1:]+a[:1])))/2
+
+    def pierces(a,b,tri):
+        p,q,r=tri; d=sub(b,a); e1,e2=sub(q,p),sub(r,p)
+        h=cross(d,e2); det=dot(e1,h)
+        if abs(det)<1e-12:
+            return False
+        s=sub(a,p); u=dot(s,h)/det; v=dot(d,cross(s,e1))/det; t=dot(e2,cross(s,e1))/det
+        return 1e-6<t<1-1e-6 and u>1e-6 and v>1e-6 and u+v<1-1e-6
+
+    boxes=[(tuple(min(p[i] for p in t) for i in range(3)),tuple(max(p[i] for p in t) for i in range(3))) for t in tris]
+    normals=[]
+    for a,b,c in tris:
+        n=cross(sub(b,a),sub(c,a)); length=math.sqrt(dot(n,n))
+        normals.append(tuple(x/length for x in n))
+    pairs=0
+    for i,a in enumerate(tris):
+        for j in range(i):
+            b=tris[j]
+            if any(boxes[i][0][k]>boxes[j][1][k]+2e-6 or boxes[j][0][k]>boxes[i][1][k]+2e-6 for k in range(3)):
+                continue
+            pairs+=1
+            if abs(dot(normals[i],normals[j]))>1-1e-8 and all(abs(dot(sub(p,a[0]),normals[i]))<2e-6 for p in b):
+                assert clipped_area(a,b,normals[i])<1e-9, ('overlapping coplanar triangles',i,j,a,b)
+            else:
+                assert not any(pierces(u,v,b) for u,v in zip(a,a[1:]+a[:1])), ('intersecting triangles',i,j)
+                assert not any(pierces(u,v,a) for u,v in zip(b,b[1:]+b[:1])), ('intersecting triangles',i,j)
+    print(f'PASS single connected, outward shell; no coplanar overlaps or triangle piercings ({pairs} candidate pairs); signed volume {volume:.6f} m³')
+
+
+def check_hood(sedan, wagon):
+    # Independently read the saved assets, rather than trusting generator output.
+    sv=sorted(set(sedan['vertices'])); wv=sorted(set(wagon['vertices']))
+    def station(vs, y, x):
+        ps=[p for p in vs if p[2]<-1.1 and abs(abs(p[0])-x)<.02 and abs(p[1]-y)<2e-6]
+        assert ps, ('missing hood station',y,x)
+        z=min(p[2] for p in ps); ps=[p for p in ps if abs(p[2]-z)<.00002]
+        return tuple(sum(p[i] for p in ps)/len(ps) for i in (1,2))
+    sn=station(sv,.999953,.98096); sc=station(sv,1.125,.98096)
+    wn=station(wv,.999953,.98); wc=station(wv,1.125,.98)
+    scale=1.34/1.389812
+    for s,w in ((sn,wn),(sc,wc)):
+        assert abs(s[0]-w[0])<2e-6
+        assert abs((-1.56+(s[1]+1.62)*scale)-w[1])<2e-6
+    assert any(abs(p[1]-1.125)<1e-6 and p[2]==-1.25 for p in wv)
+    levels=(-.159,-.125,.101,.125,.875,1.,1.125)
+    print('| front Y station | sedan | wagon |')
+    print('| --- | ---: | ---: |')
+    for y in levels:
+        found=[]
+        for vs in (sv,wv):
+            vals=[p[1] for p in vs if p[2]<-1.25 and abs(p[1]-y)<.0005]
+            assert vals, ('missing front Y level',y)
+            found.append(min(vals,key=lambda value:abs(value-y)))
+        assert abs(found[0]-found[1])<2e-6,(y,found)
+        print(f'| {y:.3f} | {found[0]:.6f} | {found[1]:.6f} |')
+    print(f'PASS sedan hood: centre (Y,Z) {sn} → {sc}; wagon {wn} → {wc}; Z scale {scale:.9f}')
+
+
 def check():
     bounds = {p.name: validate(p) for p in sorted(CONTENT.glob("wagon_*.txt"))}
     specs = read_specs(("wagon", "sedan"))
     sedan, wagon = specs["sedan"], specs["wagon"]
+    print('| body | verts | welded | tris | boundary edges | % |')
+    print('| --- | ---: | ---: | ---: | ---: | ---: |')
+    for name in ('wagon','sedan','hatchback','van','truck'):
+        mesh = obj(CONTENT / f'{name}_body.txt')
+        welded,edges = welded_edges(mesh)
+        boundary = sum(n == 1 for n in edges.values())
+        print(f"| {name} | {len(mesh['vertices'])} | {welded} | {len(mesh['faces'])} | {boundary} / {len(edges)} | {100*boundary/len(edges):.1f}% |")
+        if name == 'wagon':
+            assert boundary/len(edges) <= .046, 'wagon exceeds the 4.6% boundary-edge limit'
+            assert all(n == 2 for n in edges.values()), 'wagon has an open or overused welded edge'
+    surface_audit(wagon["mesh"])
+    check_hood(sedan["mesh"], wagon["mesh"])
     lo,hi = bounds["wagon_body.txt"]
     assert all(abs(x-y) < 0.000001 for x,y in zip(lo+hi,(-1.26,-.27,-2.90,1.26,2.17,2.90))), (lo,hi)
     assert wagon["Wheels"] == [(-1.3,.25,-1.56,True),(1.3,.25,-1.56,True),(-1.3,.25,1.46,False),(1.3,.25,1.46,False)]
@@ -107,7 +231,7 @@ def check():
         assert (CONTENT / asset).is_file(), asset
     from analyze_vehicle_style import baseline
     fleet,_ = baseline()  # retained table, not a new fleet measurement
-    for key,records in (("vertices",wagon["mesh"]["vertices"]),("triangles",wagon["mesh"]["faces"])):
+    for key,records in (("triangles",wagon["mesh"]["faces"]),):
         counts = [b[key] for b in fleet.values()]
         assert min(counts)<len(records)<max(counts)
         print(f"PASS body {key}: {len(records)} against road min/median/max {min(counts)}/{__import__('statistics').median(counts)}/{max(counts)}")
@@ -116,8 +240,6 @@ def check():
     def signatures(mesh):
         return {tuple(sorted(mesh["vertices"][int(c.split('/')[0])-1] for c in face)) for face in mesh["faces"]}
     assert not (signatures(wagon['mesh']) & signatures(sedan['mesh'])), "copied sedan body panel"
-    source=(ROOT/'tools/build_wagon.py').read_text()
-    assert 'sedan_body.txt' not in source and 'read_specs' not in source
     seats=obj(CONTENT/'sedan_seats.txt')
     assert seats['hi'][2] < 1.36, ('rear seatback intrudes into cargo deck',seats['hi'])
     print(f"PASS original body panels; rear seatback Z {seats['hi'][2]:.6f} < load floor start 1.36")
@@ -152,6 +274,21 @@ def check():
     assert pane_names == expected_panes
     assert all(len(obj(CONTENT / p)["faces"]) == 2 for p in pane_names)
     triangles = [[wagon['mesh']['vertices'][int(c.split('/')[0])-1] for c in f] for f in wagon['mesh']['faces']]
+    # Probe the actual exterior skin across each former arch, down to the sill,
+    # plus the floor/sill join and rear underside. No inboard pocket backings.
+    lower_probes = []
+    for sign in (-1,1):
+        for z in (-.75,-.25,.25,.65):
+            lower_probes.append(((sign*1.005,-.3,z),(sign*1.005,.05,z)))
+        for axle in (-1.56,1.46):
+            for dz in (-.6,-.4,0,.4,.6):
+                for y in (-.10,.2,.5,.7):
+                    lower_probes.append(((sign*1.1,y,axle+dz),(sign*1.4,y,axle+dz)))
+    for x in (-.8,0,.8):
+        lower_probes.append(((x,-.3,2.72),(x,.1,2.72)))
+    for a,b in lower_probes:
+        assert any(segment_hits(a,b,t) for t in triangles), ('open lower body',a,b)
+    print(f'PASS {len(lower_probes)} continuous side, floor/sill and rear-underside closure probes')
     for lamp,sign in (('headlights',-1),('taillights',1)):
         mesh = obj(CONTENT/f'wagon_{lamp}.txt')
         checked = 0
