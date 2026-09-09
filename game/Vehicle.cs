@@ -1882,6 +1882,7 @@ namespace UnturnedGodot
         // the trailer swings behind on the pin like a real rig). A PinJoint3D pins the cab's fifth-wheel to the trailer
         // kingpin -> a ball joint that lets the trailer articulate (yaw through turns) around the coupling point. ---
         public Vector3 FifthWheelLocal, KingpinLocal;   // local coupling points (cab plate / trailer kingpin); Zero = none
+        public float HitchYawLimit = 90f; // car trailer has a geometry-derived limit; existing semi retains 90 degrees
         public bool CanTow => FifthWheelLocal != Vector3.Zero;
         public bool IsTrailer => KingpinLocal != Vector3.Zero;
         public Vehicle CoupledTrailer, CoupledCab;       // partner when hitched (cab -> trailer, trailer -> cab)
@@ -2164,6 +2165,7 @@ namespace UnturnedGodot
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
+            public float HitchYawLimit; // maximum relative yaw for this trailer; zero retains the existing 90-degree limit
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
             public Vector3 LandingLegZoneMin, LandingLegZoneMax;  // trailer: mesh-space AABB enclosing the landing-leg triangles -> split them into a toggleable MeshInstance so they VANISH when coupled. Min==Max = no split
@@ -2934,6 +2936,7 @@ namespace UnturnedGodot
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.743243f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 1700f,   // kerb mass, kg
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
             GlassMesh = "jeep_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py -- open-bodied: a windscreen and nothing else (--skip=rear; the tub has no back window)
@@ -2951,6 +2954,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("jeep_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("jeep_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // seats: dark grey (real _Color)
                 ("jeep_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel: dark brown
                 ("jeep_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // headlights: cream
@@ -3050,6 +3054,41 @@ namespace UnturnedGodot
             LandingLegScaleY = 1.44f, LandingLegPivotY = 1.13f,   // stretch the legs down ~0.5 (anchored at the deck ~Y1.13) so they reach the ground with the nose propped up 0.5
         };
 
+        // Car-scale open trailer. Every value is derived in notes/CAR_TRAILER_REPORT.md.
+        static readonly Spec _car_trailer = new()
+        {
+            Mass = 300.000000f,
+            Body = "car_trailer_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "car_trailer_palette.png",
+            WheelRadius = 0.600000f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,
+            BoxSize = new Vector3(2.099994f, 0.250000f, 3.137132f), BoxCenter = new Vector3(0.000000f, -0.148431f, 0.000000f),   // the deck slab itself; the load space above it stays open
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(0.250000f, 1.000001f, 3.137132f), new Vector3(-0.924997f, 0.476570f, 0.000000f)),
+                (new Vector3(0.250000f, 1.000001f, 3.137132f), new Vector3(0.924997f, 0.476570f, 0.000000f)),
+                (new Vector3(1.599994f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, -1.443566f)),
+                (new Vector3(1.599994f, 1.000001f, 0.250000f), new Vector3(0.000000f, 0.476570f, 1.443566f)),
+                (new Vector3(0.200000f, 0.100000f, 0.300000f), new Vector3(0.000000f, -0.028921f, -3.379615f)),
+            },
+            HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
+            {
+                (new Vector3(0.100000f, -0.044510f, 2.605695f), new Vector3(-0.499999f, -0.101176f, -2.006949f), -20.205981f),
+                (new Vector3(0.100000f, -0.044510f, 2.605695f), new Vector3(0.499999f, -0.101176f, -2.006949f), 20.205981f),
+                (new Vector3(2.099994f, 0.250000f, 3.137132f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
+            },
+            Kingpin = new Vector3(0.000000f, -0.028921f, -3.429615f),
+            HitchYawLimit = 59.988005f, // front rail corner remains behind pivot at full yaw
+            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.499091f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.599091f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.399091f),
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Car Trailer",
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            Wheels = new (float, float, float, bool)[]
+            { (-1.300000f, 0.250000f, 0.313713f, false), (1.300000f, 0.250000f, 0.313713f, false) },
+            TailPos = new[] { new Vector3(-0.737863f, 0.476570f, 1.510794f), new Vector3(0.737862f, 0.476570f, 1.510802f) },
+            Parts = new (string, Color)[] { ("car_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
+        };
+        public static Vehicle BuildCarTrailer(int variant = 0) => Build(_car_trailer, variant, "car_trailer");
+
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
@@ -3120,6 +3159,7 @@ namespace UnturnedGodot
         // Sedan.dat: Speed 16.5 (fastest so far), steer 28->14, front-steered, RandomHueOrGrayscale. 4-seat road car, ~6m long.
         static readonly Spec _sedan = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 3.092378f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 1500f,   // kerb mass, kg
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             GlassMesh = "sedan_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // window panes fitted to the greenhouse apertures; tint = GlassPane.DefaultHue @ its 0.26 alpha (strawberry: "the same glass as windows in the building editor")
@@ -3136,6 +3176,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },   // X +-1.30, front Z -1.62, rear 1.38
             Parts = new (string, Color)[]
             {
+                ("sedan_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // 4 grey seats
                 ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel brown
                 ("sedan_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
@@ -3147,6 +3188,7 @@ namespace UnturnedGodot
         // Body AABB 5.487996 L x 2.52 W x 2.44 H m; derivation: notes/WAGON_REPORT.md.
         static readonly Spec _wagon = new()
         {
+            FifthWheel = new Vector3(0f, -0.029275f, 2.976938f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 1850f,   // SUV class, between the jeep's 1700 and the off-roader's 2000 (strawberry 2026-09-09:
                             // "its a damn good suv lol. should probably just rebrand and balance it as one")
             Body = "wagon_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "wagon_palette.png",
@@ -3179,6 +3221,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.56f, true), (1.30f, 0.25f, -1.56f, true), (-1.30f, 0.25f, 1.46f, false), (1.30f, 0.25f, 1.46f, false) },
             Parts = new (string, Color)[]
             {
+                ("wagon_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("wagon_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("wagon_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("wagon_bumper_front.txt", new Color(0.227451f, 0.227451f, 0.227451f)),
@@ -3193,6 +3236,7 @@ namespace UnturnedGodot
         // Hatchback.dat: Speed 15, steer 24->12, front-steered, RandomHueOrGrayscale. Compact 4-seat car (~5.5m).
         static readonly Spec _hatchback = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.943911f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 1100f,   // kerb mass, kg
             Body = "hatchback_body.txt", Wheel = "hatchback_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "hatchback_palette.png",
             GlassMesh = "hatchback_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
@@ -3209,6 +3253,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.41f, true), (1.30f, 0.25f, -1.41f, true), (-1.30f, 0.25f, 1.39f, false), (1.30f, 0.25f, 1.39f, false) },
             Parts = new (string, Color)[]
             {
+                ("hatchback_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("hatchback_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("hatchback_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("hatchback_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
@@ -3417,6 +3462,7 @@ namespace UnturnedGodot
         // Shares the jeep chassis: identical wheel/headlight/taillight/steer layout (source vehicle.prefab positions match).
         static readonly Spec _offroader = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.743243f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 2000f,   // kerb mass, kg
             Body = "offroad_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "offroad_palette.png",
             GlassMesh = "offroader_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
@@ -3434,6 +3480,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("offroader_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("offroad_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // seats: dark grey
                 ("offroad_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel: dark brown
                 ("offroad_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // headlights: cream
@@ -3444,6 +3491,7 @@ namespace UnturnedGodot
         // Truck.dat: Speed -6..13.5, steer 12->24, AWD 4-wheel pickup, RandomHueOrGrayscale, Health 550, CarHorn_01. Jeep chassis; round headlights.
         static readonly Spec _truck = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.743243f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 2300f,   // kerb mass, kg
             Body = "truck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "truck_palette.png",
             GlassMesh = "truck_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
@@ -3460,6 +3508,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("truck_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("truck_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("truck_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("truck_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
@@ -3470,6 +3519,7 @@ namespace UnturnedGodot
         // Van.dat: Speed -5..14.5, steer 12->24, AWD 4-wheel van, RandomHueOrGrayscale, Health 600, CarHorn_01. Jeep chassis; round headlights.
         static readonly Spec _van = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.743243f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 2100f,   // kerb mass, kg
             Body = "van_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "van_palette.png",
             GlassMesh = "van_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
@@ -3486,6 +3536,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("van_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("van_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("van_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("van_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
@@ -3496,6 +3547,7 @@ namespace UnturnedGodot
         // VW_Golf.dat: Speed -6..16.5 (fast), steer 14->28, FWD 4-wheel hatch, RandomHueOrGrayscale, Health 600, CarHorn_02. Rect headlights. Curated vehicle: 256x256 Albedo_Base (alpha-0 body regions paint via the shared shader). COMMAND-ONLY (no natural PEI spawn).
         static readonly Spec _golf = new()
         {
+            FifthWheel = new Vector3(0f, -0.028921f, 2.709203f), // own measured rear + quad radius/3; notes/car_trailer_measurements.md
             Mass = 400f,   // kerb mass, kg
             Body = "golf_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "golf_palette.png",
             GlassMesh = "golf_glass.txt", GlassTint = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // panes derived from this body by tools/gen_vehicle_glass.py
@@ -3512,6 +3564,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },
             Parts = new (string, Color)[]
             {
+                ("golf_hitch.txt", new Color(0.59f, 0.62f, 0.62f)),
                 ("golf_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
                 ("golf_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
                 ("golf_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
@@ -4553,9 +4606,9 @@ namespace UnturnedGodot
             return seen.ToArray();
         }
 
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "car_trailer" => BuildCarTrailer(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
         // Append new keys: indices are replicated TypeIds, so inserting would renumber existing vehicles.
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = Station Wagon, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon", "car_trailer" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = SUV and "car_trailer" = Car Trailer, command-only, no natural spawn; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
         /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
@@ -4574,7 +4627,7 @@ namespace UnturnedGodot
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
-            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "suv" => _wagon, "tank" => _tank,
+            "golf" => _golf, "vw_golf" => _golf, "wagon" => _wagon, "car_trailer" => _car_trailer, "suv" => _wagon, "tank" => _tank,
             // The heli fleet, the APC and the runabout were missing here while being present in SpecNames and in
             // BuildByName, so the MP puppet path resolved all nine to _jeep and built a jeep-shaped replica --
             // silently, because _jeep builds perfectly. WorldBuilder spawns three real runabouts on the PEI coast
@@ -6289,7 +6342,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v._swampBuoys = vox;
                 v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());
             }
-            v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
+            v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin; v.HitchYawLimit = s.HitchYawLimit > 0f ? s.HitchYawLimit : JackknifeLimit;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             SetupDrivetrain(v, s);   // MUST run after the line above: it REPLACES _gears/_speedMax/_speedMin for a driven hull, and a trailer keeps the spec's
@@ -8637,7 +8690,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (cabF.LengthSquared() < 1e-4f || trlF.LengthSquared() < 1e-4f) return;
             cabF = cabF.Normalized(); trlF = trlF.Normalized();
             float yaw = cabF.SignedAngleTo(trlF, Vector3.Up);
-            float lim = Mathf.DegToRad(JackknifeLimit);
+            float lim = Mathf.DegToRad(Mathf.Min(JackknifeLimit, trailer.HitchYawLimit));
             if (Mathf.Abs(yaw) <= lim) return;
             float excess = yaw - Mathf.Sign(yaw) * lim;
             Vector3 pivot = trailer.KingpinWorld;

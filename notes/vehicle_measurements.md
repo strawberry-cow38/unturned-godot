@@ -356,3 +356,7 @@ Population A = all existing road specs, including tank/APC and the trailer (whos
 | B road + boat | mass | 22 | 300.000000 | quad | 2350.000000 | 60000.000000 | ship |
 | B road + boat | top speed m/s | 22 | 0.000000 | trailer | 14.000000 | 19.000000 | roadster |
 | B road + boat | top speed km/h | 22 | 0.000000 | trailer | 50.400000 | 68.400000 | roadster |
+
+## Car trailer supplement (2026-09-09)
+
+The fleet tables above are the wagon job's historical measurements, not regenerated for this task. See [car_trailer_measurements.md](car_trailer_measurements.md) for every current road rear section, ground datum, confirmed tracks/effective radii, the semi trailer spec audit, and a correction for the subsequently rebuilt SUV: its body now ends at Z 2.680000, its separate bumper at Z 2.826938 (not the old 3.192378). Use that supplement for tow attachments.
