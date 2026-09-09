@@ -1507,6 +1507,11 @@ namespace UnturnedGodot
                 cam.LookAtFromPosition(_ce, _ct, Vector3.Up);
                 GetWindow().Size = new Vector2I(1280, 800);
             }
+            else if (System.Environment.GetEnvironmentVariable("UG_TREECAM") == "1")
+                // UG_TREECAM=1: side-on to the FELLED tree, so a movie shows the topple arc, the landing bounce
+                // and the line of logs down the trunk. The default view is 62 m back framing BOTH trees, which is
+                // right for the before/after still and useless for watching one of them fall.
+                cam.LookAtFromPosition(new Vector3(28.8f, 9f, 15.6f), new Vector3(11.6f, 2f, -4.8f), Vector3.Up);
             else
                 cam.LookAtFromPosition(new Vector3(0f, 15f, 62f), new Vector3(0f, 10f, 0f), Vector3.Up);
         }

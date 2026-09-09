@@ -548,7 +548,8 @@ namespace UnturnedGodot
             Field?.SetAlive(Index, false);   // zero-scale the tree out of its MultiMesh + drop the trunk collider to layer 0
             SpawnStump();                     // retail stumpGameObject: a stump is left where the tree stood
             SpawnDebris(dir);                 // retail debrisGameObject: a falling tree that topples + is cleaned up
-            DropRewards();
+            // NO LOGS YET (strawberry 2026-09-09: "only produce logs once theyve despawned"). They are dropped by
+            // the debris cleanup timer instead, along the trunk that is lying there -- see SpawnDebris.
             GetTree().CreateTimer(Reset).Timeout += Regrow;   // retail asset.reset: it grows back
             GD.Print($"[tree] felled #{Index}");
         }
@@ -566,8 +567,14 @@ namespace UnturnedGodot
             {
                 uint hi = h + (uint)(i + 1) * 2246822519u; hi ^= hi >> 13;
                 ushort item = (hi % 100u) < 60u ? LogItem : StickItem;   // retail 60% log / 40% stick
-                float ang = (hi >> 7) % 628u / 100f, rad = 0.4f + ((hi >> 3) % 100u) / 100f;   // scatter ~0.4-1.4 m around the stump
-                WorldItem.Spawn(parent, new SDG.Unturned.Item(item), basePos + new Vector3(Mathf.Cos(ang) * rad, 0.8f, Mathf.Sin(ang) * rad));
+                // ALONG THE TRUNK, not round the stump (strawberry: "produce logs along the length of where the
+                // trunk landed instead of at the stump"). The wood is where the tree is lying, so the drop walks
+                // the fallen length with a little lateral scatter -- which also means the direction you felled it
+                // in decides where you go to pick it up.
+                float along = (0.12f + 0.82f * ((hi >> 5) % 1000u) / 1000f) * _trunkLen;
+                float side = (((hi >> 17) % 200u) / 100f - 1f) * 0.55f;
+                Vector3 lat = new Vector3(-_fallDir.Z, 0f, _fallDir.X) * side;   // perpendicular, horizontal
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(item), basePos + _fallDir * along + lat + new Vector3(0f, 0.5f, 0f));
             }
         }
 
@@ -633,8 +640,21 @@ namespace UnturnedGodot
         Node3D _debris;
         bool _toppling;
         float _topple;                       // 0..1 fall progress
-        const float ToppleTime = 1.3f;       // seconds to lie down
+        // A TREE IS NOT A DROPPED PLANK (strawberry 2026-09-09: "have felled trees fall way more slowly"). 1.3 s
+        // through 84 degrees is a fencepost being pushed over; a real trunk takes several seconds because the far
+        // end has metres to travel. The ease-in stays -- gravity does accelerate it -- it just starts from slow.
+        const float ToppleTime = 4.2f;
+        const float FallDeg = 84f;           // where it comes to rest
+        // ...and it BOUNCES when it lands. A damped rebound about the landed angle, not a spring back up: the tip
+        // lifts a few degrees, twice, and stops. Amplitude is small on purpose -- an 84 degree fall that rebounds
+        // 10 would read as rubber.
+        const float SettleTime = 0.95f, SettleDeg = 3.5f;
+        const double DebrisLife = 9.0;       // long enough that a 4.2 s fall plus its settle is watched, not rushed
+        bool _settling;
+        float _settleT;
         Vector3 _toppleAxis = Vector3.Right; // horizontal axis; set from the chop direction
+        Vector3 _fallDir = Vector3.Forward;  // the horizontal direction the TOP falls toward
+        float _trunkLen = 8f;                // measured off the debris mesh, so logs land along the real trunk
         Transform3D _toppleBase;             // the debris' upright world transform (== TreeXf)
 
         void SpawnDebris(Vector3 dir)
@@ -646,20 +666,51 @@ namespace UnturnedGodot
             _toppleBase = TreeXf;
             Vector3 fall = new Vector3(dir.X, 0f, dir.Z);
             fall = fall.LengthSquared() > 0.01f ? fall.Normalized() : Vector3.Forward;
+            _fallDir = fall;
             _toppleAxis = Vector3.Up.Cross(fall).Normalized();   // top topples toward `fall`
-            _topple = 0f; _toppling = true; SetProcess(true);
-            GetTree().CreateTimer(7.0).Timeout += () => { if (GodotObject.IsInstanceValid(_debris)) _debris.QueueFree(); };   // clean up the fallen tree
+            // How long the thing lying on the ground actually IS, measured off its own mesh rather than assumed:
+            // the logs are scattered down its length, and a constant would put a birch's logs where a pine's tip
+            // is. The debris is authored upright, so its Y extent is the trunk length once the placement scale is
+            // applied.
+            var box = new Aabb(); bool any = false;
+            foreach (Node c in _debris.GetChildren())
+                if (c is MeshInstance3D mi && mi.Mesh != null) { box = any ? box.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); any = true; }
+            if (any) _trunkLen = Mathf.Max(1f, box.Size.Y * Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y));
+            _topple = 0f; _toppling = true; _settling = false; SetProcess(true);
+            // The logs arrive WITH the cleanup, not at the chop: you fell the tree, it lies there, and what it
+            // leaves behind appears as it goes.
+            GetTree().CreateTimer(DebrisLife).Timeout += () =>
+            {
+                if (!GodotObject.IsInstanceValid(this)) return;
+                DropRewards();
+                if (GodotObject.IsInstanceValid(_debris)) _debris.QueueFree();
+            };
         }
 
         public override void _Process(double delta)
         {
-            if (!_toppling || !GodotObject.IsInstanceValid(_debris)) { SetProcess(false); return; }
-            _topple = Mathf.Min(1f, _topple + (float)delta / ToppleTime);
-            float ang = Mathf.DegToRad(84f) * (_topple * _topple);   // ease-in: gravity accelerates the fall
-            var rot = new Basis(_toppleAxis, ang);
+            if ((!_toppling && !_settling) || !GodotObject.IsInstanceValid(_debris)) { SetProcess(false); return; }
+            float deg;
+            if (_toppling)
+            {
+                _topple = Mathf.Min(1f, _topple + (float)delta / ToppleTime);
+                deg = FallDeg * (_topple * _topple);                 // ease-in: gravity accelerates the fall
+                if (_topple >= 1f) { _toppling = false; _settling = true; _settleT = 0f; }
+            }
+            else
+            {
+                // Landed. A decaying rebound: |sin| gives repeated taps rather than a sine wave rolling THROUGH
+                // the ground, and subtracting it means the trunk always lifts off the floor and drops back --
+                // never sinks below where it came to rest.
+                _settleT += (float)delta;
+                float k = _settleT / SettleTime;
+                if (k >= 1f) { _settling = false; deg = FallDeg; }
+                else deg = FallDeg - SettleDeg * Mathf.Exp(-4f * k) * Mathf.Abs(Mathf.Sin(Mathf.Pi * 3f * k));
+            }
+            var rot = new Basis(_toppleAxis, Mathf.DegToRad(deg));
             Vector3 p = _toppleBase.Origin;                          // pivot about the stump/base, in WORLD space
             _debris.GlobalTransform = new Transform3D(rot, p - rot * p) * _toppleBase;
-            if (_topple >= 1f) { _toppling = false; SetProcess(false); }
+            if (!_toppling && !_settling) SetProcess(false);
         }
 
         // Load <ResDir>/<TreeName>_<suffix>_<i>.obj + _tex.png as MeshInstance3D children of `parent`, until a part is missing.
