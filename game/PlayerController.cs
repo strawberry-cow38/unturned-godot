@@ -9324,6 +9324,17 @@ namespace UnturnedGodot
 
         bool _slingShiftPrev;   // Shift edge for the sky-crane magnet toggle (see the heli branch above)
 
+        /// <summary>Test seam: aim the chase camera at a given vehicle ATTITUDE without a world, a seat or an input
+        /// frame, so PositionDriveCam's plane branch can be asserted against the camera node it actually moves.
+        /// Exists because there is no flying harness -- and because computing the expected angle from the same
+        /// expressions the code evaluates would restate the design rather than test it.</summary>
+        internal void PositionDriveCamForTest(Vehicle v, Transform3D vt)
+        {
+            _driving = v; _fp = false; _seatIndex = 0;
+            PositionDriveCam(vt);
+        }
+        internal Camera3D CamForTest => _cam;
+
         void PositionDriveCam(Transform3D vt)   // SP driving: the cam math below, fed by the driven Vehicle's eye + size
         {
             float size = 0f;
