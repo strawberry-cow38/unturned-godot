@@ -209,6 +209,7 @@ namespace UnturnedGodot
                 {
                     var exclude = IsInstanceValid(av.Hull) ? av.Hull.GetRid() : default;
                     bool grounded = PlayerController.TryFootSurfaceAt(this, av.Body.GlobalPosition, exclude, out var psurf);
+                    psurf = GameAudio.PuddleAudio(this, av.Body.GlobalPosition, psurf);   // a puppet in a puddle splashes like you do
                     if (grounded && av.Speed > 0.3f)
                     {
                         float stride = stance switch { SDG.Unturned.EPlayerStance.SPRINT => 2.0f, SDG.Unturned.EPlayerStance.CROUCH => 1.0f, SDG.Unturned.EPlayerStance.PRONE => 0.9f, _ => 1.5f };

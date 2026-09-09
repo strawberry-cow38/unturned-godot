@@ -138,24 +138,17 @@ namespace UnturnedGodot
         }
         /// <summary>UI click: retail sounds/popup/ui_menu_popup_N (2D).</summary>
         public static void UiPopup(Node scene, float db = -6f) => Play2D(scene, Pick("misc", "popup_ui_menu_popup"), db);
-        /// <summary>Material under a node's feet: water when below sea level, else a short down-ray to the terrain splatmap
-        /// or a prop's SurfMeta. Shared by the local player and the remote puppets.</summary>
-        public static PlayerController.Surf SurfaceUnder(Node3D n, Rid exclude)
-        {
-            var gp = n.GlobalPosition;
-            if (Terrain.HasWater && gp.Y < Terrain.SeaLevelY + 0.1f) return PlayerController.Surf.Water;
-            var space = n.GetWorld3D()?.DirectSpaceState; if (space == null) return PlayerController.Surf.Concrete;
-            var q = PhysicsRayQueryParameters3D.Create(gp + Vector3.Up * 0.3f, gp + Vector3.Down * 0.6f, 1u << 0, exclude.IsValid ? new Godot.Collections.Array<Rid> { exclude } : null);
-            var hit = space.IntersectRay(q);
-            if (hit.Count == 0) return PlayerController.Surf.Concrete;
-            var surf = PlayerController.Surf.Concrete;
-            if (hit["collider"].As<GodotObject>() is Node c)
-            {
-                if (Terrain.Active != null && c.IsInGroup("terrain")) surf = Terrain.Active.SurfAt(gp.X, gp.Z);
-                else if (c.HasMeta(PlayerController.SurfMeta)) surf = (PlayerController.Surf)(int)c.GetMeta(PlayerController.SurfMeta);
-            }
-            return Puddled(n, gp, surf) ? PlayerController.Surf.Water : surf;
-        }
+        /// <summary>AUDIO ONLY: hard ground under standing water splashes instead of clacking. Applied to a
+        /// surface that has ALREADY been resolved by PlayerController.TryFootSurfaceAt, rather than re-raycasting
+        /// or being folded into that probe -- Vehicle reads the very same probe for GRIP
+        /// (_surfaceGrip = GripFor(surf)), and a car must not get water traction because the road is wet.
+        ///
+        /// This replaces a SurfaceUnder() that duplicated the whole probe, applied the puddle rule at the end of
+        /// its own copy, and was called by NOTHING (strawberry 2026-09-09: "i dont hear the puddle step" -- they
+        /// were right, the feature never ran). Writing a parallel implementation of a thing that already exists is
+        /// how you ship a green build of dead code; the rule now lives ON the path the footsteps actually take.</summary>
+        public static PlayerController.Surf PuddleAudio(Node3D n, Vector3 gp, PlayerController.Surf surf)
+            => n != null && Puddled(n, gp, surf) ? PlayerController.Surf.Water : surf;
 
         /// <summary>How much standing water before footsteps splash. At this level the puddle shader is already
         /// reading as wet, so the sound arrives WITH the look rather than ahead of it.</summary>

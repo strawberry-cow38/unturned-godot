@@ -4237,6 +4237,10 @@ namespace UnturnedGodot
             return TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var s) ? s : Surf.Concrete;
         }
 
+        /// <summary>The same surface, for SOUND: standing water on hard ground splashes. Separate from
+        /// FootSurfaceUnderFeet because that one also feeds Vehicle's grip, which must not hear about puddles.</summary>
+        Surf FootAudioSurface() => GameAudio.PuddleAudio(this, GlobalPosition, FootSurfaceUnderFeet());
+
         /// <summary>The shared footstep/landing surface probe: water when wading, else the terrain splatmap or a
         /// prop's SurfMeta under <paramref name="pos"/>. Returns FALSE when nothing is underfoot at all. Static and
         /// position-taking so the remote puppets in RemotePlayers resolve ground the SAME way the local shell does
@@ -9588,7 +9592,7 @@ namespace UnturnedGodot
                     _casingSurfT = 0.2f;
                     if (_driving != null || _riding != null) _viewmodel.CasingSurface = "metal";
                     else if (IsSwimming) _viewmodel.CasingSurface = "water";
-                    else if (IsOnFloor()) _viewmodel.CasingSurface = CasingBank(FootSurfaceUnderFeet());
+                    else if (IsOnFloor()) _viewmodel.CasingSurface = CasingBank(FootAudioSurface());
                 }
             }
             if (!NetAvatar && !_dead && _driving == null && _riding == null && _ridingTrain == null && _ridingCrane == null && IsOnFloor() && !IsSwimming)
@@ -9601,7 +9605,7 @@ namespace UnturnedGodot
                     if (_strideAcc >= stride)
                     {
                         _strideAcc = 0f;
-                        var sf = FootSurfaceUnderFeet();
+                        var sf = FootAudioSurface();
                         bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
                         if (_viewmodel != null) _viewmodel.CasingSurface = CasingBank(sf);
                         var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
@@ -9630,7 +9634,7 @@ namespace UnturnedGodot
             {
                 CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
                 if (!NetAvatar && vy < -2.5f)   // retail bipedland/<surface>: a real drop, not a curb -- louder the harder
-                    GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(FootSurfaceUnderFeet())), GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
+                    GameAudio.PlayAt(this, GameAudio.Pick("landing", GameAudio.LandSurface(FootAudioSurface())), GlobalPosition, Mathf.Clamp(-9f + (-vy - 2.5f) * 1.2f, -9f, 2f), 5f, 40f);
             }
         }
 
