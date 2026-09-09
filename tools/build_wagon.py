@@ -148,26 +148,42 @@ class Mesh:
 
 
 def build_exhaust():
-    """Six-sided pipe with a recessed mouth, 28 triangles; no muffler."""
-    tip = vector(read_specs(('wagon',))['wagon']['fields']['ExhaustPos'])
-    x,y,z = tip
-    def ring(radius, at_z):
-        return [(x+radius*math.cos(i*math.tau/6), y+radius*math.sin(i*math.tau/6), at_z)
-                for i in range(6)]
-    # A TAILPIPE READS AS A TUBE ONLY IF IT IS LONGER THAN IT IS WIDE. The first version was 0.120
-    # across and stood 0.050 proud of the valance -- wider than it was long, which is why strawberry
-    # called it "the sphere it added as an exhaust". Narrower bore, and ExhaustPos moved back so more
-    # of the pipe is outside the bodywork: 0.090 across, 0.140 proud, so length beats diameter 1.6:1.
-    root, lip, recess = ring(.045,z-.18), ring(.045,z), ring(.032,z-.05)
+    """THE SEDAN'S OWN EXHAUST, lifted out of its body mesh (strawberry: "REMOVE the exhaust! take the
+    one from the sedan and put it where it should go").
+
+    No vehicle ships an exhaust as a part file -- the sedan's is baked into sedan_body.txt: a tapered
+    square duct, 0.197 x 0.197 in section, running 2.0 m from z 0.942 under the car back to a tip at
+    z 2.942, on the right at x 0.695..0.892. Ten triangles. Its tip is flush with the sedan's rearmost
+    point (2.942378), so the wagon's is placed flush with the wagon's rearmost point in turn.
+
+    Y and X are carried over untouched. On the sedan the duct's lowest point (-0.273) sits below its
+    own bumper lip (-0.159), so keeping Y gives the wagon the same relationship and the same silhouette
+    rather than a re-invented one.
+    """
+    sedan = obj(CONTENT/'sedan_body.txt')
+    verts = sedan['vertices']
+    seed = {i for i,(x,y,z) in enumerate(verts) if .68 <= x <= .90 and -.28 <= y <= -.06 and z >= 2.75}
+    faces = [f for f in sedan['faces']
+             if any(int(c.split('/')[0])-1 in seed for c in f)]
+    assert len(faces) == 10, ('sedan exhaust is not 10 triangles', len(faces))
+    src_tip = max(z for _,_,z in verts)
+    dst_tip = max(max(z for _,_,z in obj(CONTENT/f'wagon_{n}.txt')['vertices'])
+                  for n in ('body','bumper_rear'))
+    dz = dst_tip - src_tip
     mesh = Mesh()
-    for i in range(6):
-        j = (i+1)%6
-        radial = (lip[i][0]+lip[j][0]-2*x, lip[i][1]+lip[j][1]-2*y, 0)
-        outward_quad(mesh, [root[i],root[j],lip[j],lip[i]], radial, DARK)
-        outward_quad(mesh, [lip[i],lip[j],recess[j],recess[i]], (0,0,1), DARK)
-    mesh.panel(recess, (0,0,1), DARK)
+    for f in faces:
+        tri = [verts[int(c.split('/')[0])-1] for c in f]
+        moved = [(x, y, z+dz) for x,y,z in tri]
+        n = cross(sub(moved[1],moved[0]), sub(moved[2],moved[0]))
+        mesh.panel(moved, n, DARK)
     mesh.write('wagon_exhaust.txt', weld_positions=True)
-    print(f'Exhaust: {len(mesh.f)} triangles; tip {tip}; {tip[2]-2.68:.3f} m beyond the rear valance; bore {2*.045:.3f}')
+    out = obj(CONTENT/'wagon_exhaust.txt')
+    tip = ((out['lo'][0]+out['hi'][0])/2, 0, out['hi'][2])
+    at_tip = [v for v in out['vertices'] if abs(v[2]-out['hi'][2]) < 1e-6]
+    tip = (tip[0], sum(v[1] for v in at_tip)/len(at_tip), tip[2])
+    print(f'Exhaust: sedan duct, {len(mesh.f)} triangles, Z {dz:+.6f} -> tip flush at {dst_tip:.6f}; '
+          f'outlet centre {tuple(round(c,4) for c in tip)}')
+    return tip
 
 
 def outward_quad(mesh, points, direction, uv=None):

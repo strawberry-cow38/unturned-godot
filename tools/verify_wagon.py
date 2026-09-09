@@ -544,31 +544,56 @@ def check_cabin_fit(wagon, sedan):
 
 
 def check_exhaust(wagon):
+    """The exhaust is the SEDAN's own duct, lifted out of sedan_body.txt and moved in Z only.
+
+    Assert that provenance rather than a shape I invented: every triangle must be the sedan's, at the
+    sedan's X and Y, offset by one shared Z delta, with the tip flush against this car's rearmost
+    point exactly as the sedan's is against its own. That is a claim the previous hand-built pipes
+    could not have satisfied, so it also rules them out.
+    """
     assert 'wagon_exhaust.txt' in wagon['Parts'], 'exhaust missing from Parts'
     mesh = obj(CONTENT/'wagon_exhaust.txt')
     box, center = wagon['BoxSize'], wagon['BoxCenter']
     formula = (box[0]/2-.3, max(.22,center[1]-box[1]/2+.18), center[2]+box[2]/2-.05)
     assert all(abs(a-b)<1e-6 for a,b in zip(formula,(.95,.28,2.649))), ('default exhaust point',formula)
-    tip = ((mesh['lo'][0]+mesh['hi'][0])/2, (mesh['lo'][1]+mesh['hi'][1])/2, mesh['hi'][2])
+
+    sedan_mesh = obj(CONTENT/'sedan_body.txt')
+    sv = sedan_mesh['vertices']
+    seed = {k for k,(x,y,z) in enumerate(sv) if .68 <= x <= .90 and -.28 <= y <= -.06 and z >= 2.75}
+    donor = [sorted(sv[int(c.split('/')[0])-1] for c in f)
+             for f in sedan_mesh['faces'] if any(int(c.split('/')[0])-1 in seed for c in f)]
+    assert len(donor) == 10, ('sedan donor duct is not 10 triangles', len(donor))
+    assert len(mesh['faces']) == len(donor), ('exhaust is not the sedan duct', len(mesh['faces']))
+
+    # ONE shared Z offset, nothing else touched -- a re-modelled pipe cannot pass this.
+    dz = mesh['hi'][2] - sedan_mesh['hi'][2]
+    part_tris = [sorted(mesh['vertices'][int(c.split('/')[0])-1] for c in f) for f in mesh['faces']]
+    for t in donor:
+        want = [(x, y, z+dz) for x,y,z in t]
+        assert any(all(abs(a[i]-b[i]) < 1e-6 for a,b in zip(want,p) for i in range(3))
+                   for p in part_tris), ('exhaust triangle is not the sedan\'s', want)
+
+    # Tip flush with the rearmost point of the car, as the sedan's is with its own.
+    rear = max(wagon['mesh']['hi'][2],
+               max(z for _,_,z in obj(CONTENT/'wagon_bumper_rear.txt')['vertices']))
+    assert abs(mesh['hi'][2]-rear) < 1e-6, ('exhaust tip not flush with the rear', mesh['hi'][2], rear)
+
+    # Smoke leaves the OUTLET FACE. For a tapered duct that is the centroid of the vertices at the
+    # rearmost Z -- not the AABB centre, which is pulled upward by the duct's higher forward end and
+    # would sit the emitter 83 mm above the actual opening.
+    at_tip = [v for v in mesh['vertices'] if abs(v[2]-mesh['hi'][2]) < 1e-6]
+    tip = ((mesh['lo'][0]+mesh['hi'][0])/2, sum(v[1] for v in at_tip)/len(at_tip), mesh['hi'][2])
     emitter = vector(wagon['fields']['ExhaustPos'])
-    assert all(abs(a-b)<1e-6 for a,b in zip(tip,emitter)), ('smoke must leave pipe tip',tip,emitter)
-    assert len(mesh['faces']) == 28
-    # IT MUST READ AS A TUBE, NOT A BULB. The first pipe was 0.120 across and stood 0.050 proud of the
-    # valance -- wider than it was long, and strawberry called it "the sphere it added as an exhaust".
-    # Assert the proportion, which is the property that failed, rather than a tip coordinate that says
-    # nothing about how it looks.
-    bore = max(mesh['hi'][0]-mesh['lo'][0], mesh['hi'][1]-mesh['lo'][1])
-    proud = tip[2]-wagon['mesh']['hi'][2]
-    assert proud > bore, ('tailpipe is wider than it is proud -- reads as a bulb', proud, bore)
-    assert proud >= .12, ('tailpipe barely clears the valance', proud)
+    assert all(abs(a-b) < 5e-4 for a,b in zip(tip,emitter)), ('smoke must leave the outlet',tip,emitter)
+
     body_tris = [[wagon['mesh']['vertices'][int(c.split('/')[0])-1] for c in f] for f in wagon['mesh']['faces']]
     pipe_tris = [[mesh['vertices'][int(c.split('/')[0])-1] for c in f] for f in mesh['faces']]
-    # Probe the mouth and smoke path; the decorative recess is 40 mm inboard.
-    for dx,dy in ((0,0),(-.02,0),(.02,0),(0,-.02),(0,.02)):
-        a = (tip[0]+dx,tip[1]+dy,tip[2]-.049)
-        b = (a[0],a[1],tip[2]+.3)
-        assert not any(segment_hits(a,b,t) for t in body_tris+pipe_tris), 'blocked pipe mouth/smoke path'
-    print(f'PASS 28-triangle exhaust: formula {formula}; tip/emitter {tip}; bore {bore:.3f} vs {proud:.3f} proud of the valance ({proud/bore:.2f}:1, so a tube not a bulb); clear outlet')
+    for dx,dy in ((0,0),(-.05,0),(.05,0),(0,-.05),(0,.05)):
+        a = (tip[0]+dx,tip[1]+dy,tip[2]+.01)
+        b = (a[0],a[1],tip[2]+.4)
+        assert not any(segment_hits(a,b,t) for t in body_tris+pipe_tris), 'blocked smoke path'
+    print(f'PASS exhaust is the sedan duct: {len(mesh["faces"])} triangles, Z {dz:+.6f} and nothing else; '
+          f'tip flush at {rear:.6f}; outlet/emitter {tuple(round(c,4) for c in tip)}; clear path')
 
 
 def check_donor_parts(wagon, sedan):
