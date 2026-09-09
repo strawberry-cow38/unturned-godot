@@ -35,6 +35,17 @@ namespace UnturnedGodot
         public const float YawRateDeg = 90f;       // how fast the head slews
         public const float PitchRateDeg = 60f;
         public const float MinPitchDeg = -5f, MaxPitchDeg = 82f;
+        // WHAT COUNTS AS A TARGET (strawberry 2026-09-09: "if target is grounded, or below the SAM, ignore it").
+        // Two separate rules, and both are cheap: a helicopter at or under the launcher's own base cannot be
+        // engaged by a launcher that only elevates, and one sitting on the ground is not flying. Height is taken
+        // from a ray to the world layer under the aircraft rather than from a Terrain sampler, so it is right on
+        // a rooftop or a bridge too -- and a heli parked on a helipad reads as landed, which it is.
+        public const float MinAltitude = 8f;   // metres of clear air under it before it is airborne enough to shoot at
+        // LINE OF SIGHT (strawberry 2026-09-09: "make sam require LOS"). Terrain and props only -- NOT vehicles,
+        // or the target's own hull is the thing blocking the view of it. This is the third and best way to beat a
+        // site, and it composes with the lock rather than duplicating it: breaking sight drops the target, which
+        // zeroes the lock, so a ridge does not merely delay the launch, it resets the clock.
+        public const uint SightMask = (1u << 0) | (1u << 6);
 
         public enum State { Idle, Tracking, Firing, Reloading }
         /// <summary>How much of the lock has been earned, 0..1. Reads as a light/HUD later if wanted; the suite
@@ -163,13 +174,40 @@ namespace UnturnedGodot
             if (tree == null) return null;
             Vehicle best = null;
             float bestD = Radius * Radius;
+            var space = GetWorld3D()?.DirectSpaceState;
             foreach (var n in tree.GetNodesInGroup("vehicles"))
             {
                 if (n is not Vehicle v || !v.IsHeli || v.Exploded || !IsInstanceValid(v)) continue;
+                if (v.GlobalPosition.Y <= GlobalPosition.Y) continue;          // at or below the launcher: it does not depress
                 float d = GlobalPosition.DistanceSquaredTo(v.GlobalPosition);
-                if (d < bestD) { bestD = d; best = v; }
+                if (d >= bestD) continue;
+                if (Grounded(space, v)) continue;                              // sitting on something is not flying
+                if (!SightClear(space, v)) continue;                           // a ridge between us is a ridge
+                bestD = d; best = v;
             }
             return best;
+        }
+
+        /// <summary>Is this aircraft on the ground? A ray straight down to the world layer -- shorter than
+        /// MinAltitude means something solid is right under it. Checked LAST in the target scan, after range and
+        /// the height test, so the cost is one ray for the leader rather than one per helicopter per frame.</summary>
+        static bool Grounded(PhysicsDirectSpaceState3D space, Vehicle v)
+        {
+            if (space == null) return false;   // no physics world (a harness): treat everything as flying rather than nothing
+            var from = v.GlobalPosition;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * MinAltitude, 1u << 0,
+                                                       new Godot.Collections.Array<Rid> { v.GetRid() });
+            return space.IntersectRay(q).Count > 0;
+        }
+
+        /// <summary>Can the launcher actually see it? Ray from the HEAD, not the base -- the base is buried in
+        /// its own plinth and on any slope would report itself blocked by the hill it is standing on.</summary>
+        bool SightClear(PhysicsDirectSpaceState3D space, Vehicle v)
+        {
+            if (space == null || _pitch == null) return true;   // no physics world (a harness): do not blind the site entirely
+            var q = PhysicsRayQueryParameters3D.Create(_pitch.GlobalPosition, v.GlobalPosition, SightMask,
+                                                       new Godot.Collections.Array<Rid> { v.GetRid() });
+            return space.IntersectRay(q).Count == 0;
         }
 
         /// <summary>Idle: hold the last bearing and lower the tubes to level. Written directly rather than by

@@ -39,6 +39,9 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            // A ground plane at Y=0, because two of the rules below are ABOUT the ground: without a world layer
+            // to ray against, "is it landed" answers no for everything and the check would certify nothing.
+            Rigs.Ground(World);
             var site = new SamSite();
             World.AddChild(site);
             site.GlobalPosition = Vector3.Zero;
@@ -151,8 +154,13 @@ namespace UnturnedGodot.Testing
             }
             // The missile FREES itself on detonation, so "gone" is the pass condition and the closest approach is
             // the diagnostic. Boosting straight off a 60 deg error would leave it well over 100 m wide.
-            T.Check($"a missile launched 45 deg off the bearing still homes to the fuse (start {startDist:0} m, closest {best:0.0} m, fuse {SamMissile.FuseRadius:0.0} m)",
-                best <= SamMissile.FuseRadius + 0.5f);
+            // Detonating ON the airframe counts, and is in fact the better outcome -- the missile is swept against
+            // the world now, so it goes off on the hull rather than flying into the middle of the model and
+            // waiting for a 6.5 m proximity fuse. A Hind is ~17 m long, so a hull strike lands a good few metres
+            // from the vehicle's own origin; measuring against the origin alone would score a direct hit as a
+            // miss. `Spent` is what separates "went off on it" from "sailed past".
+            T.Check($"a missile launched 45 deg off the bearing still reaches the target (start {startDist:0} m, closest {best:0.0} m, spent {m.Spent})",
+                m.Spent && best <= 14f);
 
             // ---- 8. AND IT CAN BE BEATEN (strawberry: "make it possible to evade the missiles"). A missile that
             // is always dodgeable is as bad as one that never is, so this is the paired claim to the check above:
@@ -177,6 +185,48 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"a hard break inside its turn radius defeats it (closest after the break {closest2:0.0} m vs {SamMissile.FuseRadius:0.0} m fuse)",
                 broke && closest2 > SamMissile.FuseRadius);
+
+            // ---- 9. WHAT IS NOT A TARGET (strawberry: "if target is grounded, or below the SAM, ignore it").
+            // Both rules get their own heli rather than one moved twice, because they are separate reasons and a
+            // single probe cannot tell which one did the work.
+            near.QueueFree();
+            yield return Ticks(2);
+
+            var landed = Heli(new Vector3(40f, 3f, -60f));   // above the launcher's base, but 3 m over the ground
+            yield return Ticks(2);
+            Drive(site, SamSite.LockTime + 1f);
+            T.Check($"a helicopter sitting on the ground is ignored (target {(site.Target == null ? "none" : "LOCKED")}, lock {site.LockProgress:0.00})",
+                site.Target == null && site.LockProgress < 0.05f);
+            landed.QueueFree();
+            yield return Ticks(2);
+
+            site.GlobalPosition = new Vector3(0f, 90f, 0f);   // put the launcher on a clifftop
+            var below = Heli(new Vector3(30f, 45f, -60f));    // flying, but 45 m BELOW it
+            yield return Ticks(2);
+            Drive(site, SamSite.LockTime + 1f);
+            T.Check($"a helicopter below the launcher is ignored (target {(site.Target == null ? "none" : "LOCKED")})",
+                site.Target == null);
+            below.QueueFree();
+            yield return Ticks(2);
+
+            // ---- 10. LINE OF SIGHT (strawberry: "make sam require LOS"). Both directions, because "never locks"
+            // passes the blocked half on its own -- the ridge has to come away and the lock has to return.
+            site.GlobalPosition = Vector3.Zero;
+            var hidden = Heli(new Vector3(0f, 70f, -140f));
+            var ridge = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ridge.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(120f, 120f, 4f) } });
+            World.AddChild(ridge);
+            ridge.GlobalPosition = new Vector3(0f, 35f, -70f);   // straddles the sightline halfway out
+            yield return Ticks(2);
+            Drive(site, SamSite.LockTime + 1f);
+            T.Check($"a helicopter behind a ridge is not locked (target {(site.Target == null ? "none" : "LOCKED")}, lock {site.LockProgress:0.00})",
+                site.Target == null && site.LockProgress < 0.05f);
+
+            ridge.QueueFree();
+            yield return Ticks(2);
+            Drive(site, 0.4f);
+            T.Check($"...and it is picked up again the moment the ridge is gone (target {(ReferenceEquals(site.Target, hidden) ? "LOCKED" : "none")})",
+                ReferenceEquals(site.Target, hidden));
 
             yield return Ticks(1);
         }

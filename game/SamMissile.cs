@@ -38,10 +38,19 @@ namespace UnturnedGodot
         // MissRange, opening MissMargin beyond the closest point it ever managed means the pass is over.
         public const float MissRange = 120f;
         public const float MissMargin = 15f;
+        // WARNING CADENCE (strawberry 2026-09-09: "increase frequency of beeps by a LOT. when its close it should
+        // be SPAMMING"). Interval = dist / BeepRange, clamped. That is roughly half a second out at the edge of a
+        // launch and 22 beeps a SECOND inside 22 m -- past the point where separate beeps are audible as separate
+        // beeps, which is the intent: at that range it is not a warning any more, it is the last second of one.
+        public const float BeepRange = 500f, BeepFastest = 0.045f, BeepSlowest = 0.6f;
         public const float MaxLife = 14f;
         public const float FuseRadius = 6.5f;      // proximity fuse: a SAM does not need to touch the airframe
         public const float BlastRadius = 11f;
         public const float BlastDamage = 145f;
+        // WHAT IT CAN HIT (strawberry 2026-09-09: "make sure the missiles cant noclip through props"). The same
+        // layers StepBullets sweeps, minus the two the zombie removal left behind: world (bit0, terrain AND tree
+        // trunks), vehicles (bit5), props (bit6), water surface (bit9).
+        public const uint HitMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 9);
 
         public Vehicle Target;
 
@@ -55,6 +64,10 @@ namespace UnturnedGodot
         bool _spent;
         bool _lost;             // overshot: the seeker is off and this round is now a dumb rocket
         float _minDist = float.MaxValue;   // closest it has ever been to the target
+        PhysicsRayQueryParameters3D _sweep;   // reused: one allocation per missile, not one per frame
+        /// <summary>Has it gone off? The suite reads it, because "detonated on the airframe" and "flew past" are
+        /// the two outcomes worth telling apart and a distance alone cannot.</summary>
+        public bool Spent => _spent;
         float _beepT;           // seconds until this missile's next warning beep
         CpuParticles3D _trail;
 
@@ -186,7 +199,25 @@ namespace UnturnedGodot
 
             float sp = Mathf.Min(MaxSpeed, _vel.Length() + Accel * dt);
             _vel = (_vel.LengthSquared() > 1e-6f ? _vel.Normalized() : Vector3.Up) * sp;
-            GlobalPosition += _vel * dt;                 // integrate; never direction * total-elapsed
+            // SWEPT, NOT TELEPORTED. At 118 m/s a frame is nearly 2 m, so a missile advanced by a bare position
+            // add walks straight through a wall thinner than its own step -- and every prop in this game is
+            // thinner than 2 m. Raycast the segment it is about to cross and go off on the first thing in it.
+            var from = GlobalPosition;
+            var to = from + _vel * dt;                   // integrate; never direction * total-elapsed
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space != null)
+            {
+                _sweep ??= new PhysicsRayQueryParameters3D { CollisionMask = HitMask };
+                _sweep.From = from; _sweep.To = to;
+                var swept = space.IntersectRay(_sweep);
+                if (swept.Count > 0)
+                {
+                    GlobalPosition = (Vector3)swept["position"];
+                    Detonate();   // a hull strike, a tree, a wall or the ground -- all the same answer
+                    return;
+                }
+            }
+            GlobalPosition = to;
             // LookAt throws when the look direction is parallel to the up vector, and a SAM launched at 82 deg
             // is close enough to straight up that a couple of frames of seeker correction can reach it.
             if (_vel.LengthSquared() > 1e-6f)
@@ -200,10 +231,10 @@ namespace UnturnedGodot
         }
 
         /// <summary>The cockpit warning: retail's general_beep, played AT the aircraft so anyone aboard hears it
-        /// without this having to work out which PlayerController is the local one. The interval is the range --
-        /// a second out at 220 m, a tenth of a second when it is about to go off -- so the pilot hears the closure
-        /// rate rather than a fact. A missile that has been shaken off stops beeping, which is the whole point of
-        /// letting it be shaken off.</summary>
+        /// without this having to work out which PlayerController is the local one. The interval is the RANGE, so
+        /// the pilot hears the closure rate rather than a fact -- and it ends in a solid stutter rather than a
+        /// countdown, because the useful signal at 20 m is "now". A missile that has been shaken off stops
+        /// beeping, which is the whole point of letting it be shaken off.</summary>
         void Warn(bool live, float dt)
         {
             _beepT -= dt;
@@ -216,9 +247,12 @@ namespace UnturnedGodot
                 if (o.GlobalPosition.DistanceTo(Target.GlobalPosition) < dist) return;
             }
             if (_beepT > 0f) return;
-            _beepT = Mathf.Clamp(dist / 220f, 0.11f, 1.1f);
+            _beepT = Mathf.Clamp(dist / BeepRange, BeepFastest, BeepSlowest);
             var clip = GameAudio.Pick("misc", "general_beep");
-            if (clip != null) GameAudio.PlayAt(GetParent() ?? this, clip, Target.GlobalPosition, 2f, 8f, 140f, Mathf.Lerp(1.25f, 0.95f, Mathf.Clamp(dist / 220f, 0f, 1f)));
+            // Pitch climbs with closure too. The rate is the information, but a rising tone is what makes it read
+            // as panic rather than as a metronome running fast.
+            float near01 = 1f - Mathf.Clamp(dist / BeepRange, 0f, 1f);
+            if (clip != null) GameAudio.PlayAt(GetParent() ?? this, clip, Target.GlobalPosition, 3f, 8f, 160f, Mathf.Lerp(0.95f, 1.45f, near01));
         }
 
         /// <summary>Flash and fireball. Local rather than reaching for PlayerController.SpawnBlastFx, which is
