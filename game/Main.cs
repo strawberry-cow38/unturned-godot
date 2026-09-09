@@ -4935,6 +4935,7 @@ namespace UnturnedGodot
         // almost right and mirror the island.
         int _bakeMapRes; bool _bakeMapDone; int _bakeMapFrames;
         Camera3D _bakeMapCam; int _bakeMapPass; float _bakeMapSize, _bakeMapY;
+        bool _pdWearDone;    // UG_PDWEAR applied once
         bool _samTestDone;   // UG_SAMTEST: the site + NPC heli are placed once, after the world is up
         SubViewport _bakeMapVp;
 
@@ -8823,6 +8824,19 @@ namespace UnturnedGodot
             // ground shot -- UG_SPAWNAT already aims the body along the road, and this is the one axis it cannot set.
             if (_peiPlayable && _pdPlayer != null && _worldReady && float.TryParse(System.Environment.GetEnvironmentVariable("UG_PDPITCH"), out float _pdp))
                 _pdPlayer.DebugSetPitch(_pdp);
+            // UG_PDWEAR=<id>[,<id>...]: dress the live player once the world is up (3 = Orange Hoodie,
+            // 209 = Cargo Pants). --wearcloth builds its OWN scene with its own body, so it could never answer
+            // "does the player's viewmodel wear the player's shirt".
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_pdWearDone)
+            {
+                var wear = System.Environment.GetEnvironmentVariable("UG_PDWEAR");
+                if (!string.IsNullOrEmpty(wear))
+                {
+                    _pdWearDone = true;
+                    foreach (var one in wear.Split(',', System.StringSplitOptions.RemoveEmptyEntries))
+                        if (int.TryParse(one.Trim(), out int wid)) { _pdPlayer.DebugWear(wid); GD.Print($"[pdwear] wore item {wid}"); }
+                }
+            }
             // UG_TP=1 outside a vehicle too. It used to be set only inside the UG_ENTERCAR block, so "third person"
             // silently did nothing unless you also spawned a car -- which is why a held-item shot kept coming back
             // first-person with the barrel across the corner of frame. Any harness that wants to SEE what the player

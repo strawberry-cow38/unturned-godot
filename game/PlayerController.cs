@@ -9123,6 +9123,12 @@ namespace UnturnedGodot
         public bool ThirdPersonActive => !_fp && !_dead && _driving == null && _riding == null;
         /// <summary>Test hook: aim the view without a mouse. Clamped like the real look, so a test cannot ask for a
         /// pitch the player could never reach and get an answer that does not apply in play.</summary>
+        /// <summary>Render-harness seam: dress the LIVE player. Everything that wears clothes in anger goes
+        /// through the inventory, and the only existing wear harness (--wearcloth) builds its own scene with its
+        /// own body -- so there was no way to see the real player in a shirt, which is exactly the check the
+        /// viewmodel-arms clothing needed.</summary>
+        public void DebugWear(int id) => _clothing?.Wear(id);
+
         public void DebugSetPitch(float deg)
         {
             _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
