@@ -880,6 +880,11 @@ namespace UnturnedGodot
         // A LISSAJOUS, not a circle: x rides sin(0.75*t) and y rides sin(1.0*t). The mismatched frequencies are the
         // whole trick -- the figure never quite repeats, so the drift reads as a hand rather than as a loop. Getting
         // both axes onto one frequency gives a clean diagonal oscillation that looks mechanical immediately.
+        /// <summary>1P ALT head-look, degrees (x = pitch, y = yaw). Applied to THIS viewport's camera, so the
+        /// arms -- which are fixed in it -- swing out of frame as the head turns, instead of riding the screen.
+        /// Zero when not alt-looking, which is also how they come back.</summary>
+        public Vector2 AltLookDeg;
+
         float _swayTime;
         Vector3 _scopeSway;
         /// <summary>The scope's current sway, DEGREES (x=pitch, y=yaw). Read by PlayerController and folded into
@@ -1595,6 +1600,12 @@ namespace UnturnedGodot
                 _inputRoll.CurrentPosition = _inputRoll.CurrentPosition.Clamp(Vector3.One * -10f, Vector3.One * 10f);
                 _inputRollImpulse = Vector3.Zero;
             }
+            // The head-look rides the viewport CAMERA rather than the arms: posing the arms would fight every
+            // other thing on this transform (sway, bob, lean, ADS), and rotating the camera is the same picture
+            // with none of that interaction.
+            if (_cam != null && Godot.GodotObject.IsInstanceValid(_cam))
+                _cam.RotationDegrees = new Vector3(AltLookDeg.X, AltLookDeg.Y, 0f);   // Yxz, matching the main camera's own look basis
+
             _inputRoll.TargetPosition = Vector3.Zero;
             _inputRoll.Update((float)delta);
 
@@ -1670,7 +1681,13 @@ namespace UnturnedGodot
             // opposite on both axes (+X = nose UP, +Z = counter-clockwise). Applied raw they pitched the muzzle UP toward the
             // face while walking forward and rolled the ADS picture against the strafe (master 2026-09-03).
             armRot.X -= _swayTilt.CurrentPosition.X;   // fwd/back sway -> PITCH
-            armRot.Z -= _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
+            // SIGN FLIPPED AGAIN, and deliberately only this one (strawberry 2026-09-09: "when ads-ing and moving
+            // left or right, the direction my gun sways is inverted"). The fwd/back term above is untouched
+            // because the report was specifically left/right. Why it reads as an ADS bug when the maths has no
+            // ADS branch: the strafe term is the one the source quirk leaves WITHOUT swayMul, so aiming shrinks
+            // the fwd/back sway to a tenth and leaves this one at full size -- ADS is simply where it becomes
+            // legible, not where it starts.
+            armRot.Z += _swayTilt.CurrentPosition.Y;   // strafe sway -> ROLL (source :1468, NOT yaw)
             if (Driving && _wheelKnown && _wheelAxisCam.LengthSquared() > 0.5f)
             {
                 // hands turn WITH the wheel: rotate the arm pair about the wheel pivot, around the wheel's own axis, by the steer angle

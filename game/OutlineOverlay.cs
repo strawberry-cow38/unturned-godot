@@ -86,6 +86,12 @@ namespace UnturnedGodot
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
+            // Layer 50 is ABOVE the nightvision pass at 6, so the outline is never amplified by the tube -- it
+            // paints full-brightness colour over a green picture and reads as a UI bug rather than as something
+            // in the world. Wearing the tube's tint puts it back inside the image. White when the goggles are
+            // off. On the TextureRect, not the CanvasLayer: Modulate is a CanvasItem property and a CanvasLayer
+            // is not one -- it only carries a transform.
+            if (_tr != null && Godot.GodotObject.IsInstanceValid(_tr)) _tr.Modulate = NightVision.OverlayTint;
             var cam = GetViewport().GetCamera3D();
             if (cam == null) return;
             // While driving, disable the whole pass (no second cull, no dilate, no stale mask on screen) --

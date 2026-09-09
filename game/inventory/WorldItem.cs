@@ -451,7 +451,15 @@ namespace UnturnedGodot
             _focused = on;
             if (on) FocusColor = _rar;                            // OutlineOverlay tints the rim with the focused item's rarity
             if (_glow != null) _glow.Visible = on && _shown;
-            if (_label != null) _label.Visible = on || ShowLabels;
+            // A Label3D is IN THE WORLD, so the nightvision pass AMPLIFIES it: white text at gain 2.6 saturates
+            // into a blob and takes the surrounding image with it (strawberry 2026-09-09: "make sure we dont NUKE
+            // the nightvision on dropped item labels and outlines"). Dim it going IN, and MULTIPLY the authored
+            // rarity tint rather than replacing it, so a rare drop still reads as its own colour through a tube.
+            if (_label != null)
+            {
+                _label.Visible = on || ShowLabels;
+                _label.Modulate = _rar.Lerp(Colors.White, 0.35f) * NightVision.OverlayDim;
+            }
         }
 
         public override void _PhysicsProcess(double delta)
@@ -594,6 +602,7 @@ namespace UnturnedGodot
             if (_label != null && IsInstanceValid(_label))
             {
                 _label.Visible = on;
+                _label.Modulate = _rar.Lerp(Colors.White, 0.35f) * NightVision.OverlayDim;   // the puppet's tag is the same Label3D in the same world: same tube treatment (see WorldItem.SetFocused)
                 if (on) _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;   // TopLevel -> place it in world space (a settled drop doesn't move)
             }
         }

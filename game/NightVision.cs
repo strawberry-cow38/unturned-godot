@@ -17,6 +17,29 @@ namespace UnturnedGodot
         /// <summary>Glow while the goggles are on: (intensity multiplier, bloom, threshold multiplier) -- light sources bloom harder.</summary>
         public static (float intensity, float bloom, float threshold) Glow => Military ? (2.2f, 0.45f, 0.55f) : (1.7f, 0.30f, 0.70f);
 
+        // ---- OVERLAY ART UNDER THE TUBE (strawberry 2026-09-09: "make sure we dont NUKE the nightvision on
+        // dropped item labels and outlines"). Two adaptors, not one, because the two pieces of art sit on
+        // OPPOSITE sides of the tube pass and are ruined by opposite problems:
+        //
+        //   * an item's name tag is a Label3D IN THE WORLD, so the tube AMPLIFIES it. White text at gain 2.6
+        //     saturates to a featureless blob and takes the surrounding image with it. It needs to be DIMMER
+        //     going in, so that gain x brightness lands back inside range.
+        //   * the focus outline is a CanvasLayer at 50, ABOVE the pass at 6, so it is never amplified -- it just
+        //     paints full-brightness colour straight over a green picture and reads like a UI bug. It needs the
+        //     tube's TINT, so it belongs to the image instead of sitting on top of it.
+        /// <summary>Brightness multiplier for in-world overlay art the tube amplifies. Chosen from the gain: 0.32
+        /// x 2.6 lands at ~0.85, bright enough to read and short of clipping.</summary>
+        public static float OverlayDim => !Active ? 1f : Military ? 0.32f : 0.42f;
+        /// <summary>Tint for screen-space art drawn ABOVE the tube pass, so it reads as part of the tube image.</summary>
+        public static Color OverlayTint => !Active ? Colors.White : Military ? new Color(0.34f, 0.95f, 0.40f) : new Color(0.88f, 0.90f, 0.88f);
+
+        // Intensifier noise (strawberry 2026-09-09: "up the intensity of the film grain on both nightvisions").
+        // Both roughly doubled, and the civilian tube stays the grainier of the two -- that gap is the whole
+        // characterisation of it as the cheaper unit, so raising them to the same number would flatten the pair
+        // into one effect with two colours.
+        public const float GrainMilitary = 0.11f;   // was 0.05
+        public const float GrainCivilian = 0.19f;   // was 0.09
+
         ColorRect _rect; ShaderMaterial _mat;
 
         public override void _Ready()
@@ -36,7 +59,7 @@ namespace UnturnedGodot
             {
                 _mat.SetShaderParameter("gain", military ? 2.6f : 1.9f);
                 _mat.SetShaderParameter("tint", military ? new Color(0.22f, 1.0f, 0.32f) : new Color(0.88f, 0.90f, 0.88f));
-                _mat.SetShaderParameter("grain", military ? 0.05f : 0.09f);
+                _mat.SetShaderParameter("grain", military ? GrainMilitary : GrainCivilian);
                 _mat.SetShaderParameter("vignette", military ? 0.35f : 0.45f);
                 _mat.SetShaderParameter("hot", military ? 0.6f : 0.4f);
             }

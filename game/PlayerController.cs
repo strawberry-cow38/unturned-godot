@@ -8491,6 +8491,14 @@ namespace UnturnedGodot
                 else _viewmodel.ClearDrivingWheel();
                 _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug && !TankOpticsActive);   // no arms over a periscope or a gunsight   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
+                // ALT-LOOK: the gun belongs to the BODY, not the eyes (strawberry 2026-09-09: "do not have the
+                // viewmodel follow the camera when alt-looking in 1st person"). The intent was always that it
+                // "stays put" -- but the arms render in their own viewport whose camera never moves, so a head
+                // turn left the gun welded to the SCREEN, which is the exact opposite of staying put in the
+                // world. Handing the head-look angles to that viewport's camera swings the arms out of frame as
+                // you look away, and _fpLookYaw/_Pitch already ease back to zero on release, so the gun eases
+                // back with them for free.
+                _viewmodel.AltLookDeg = _fp ? new Vector2(_fpLookPitch, _fpLookYaw) : Vector2.Zero;
             }
             if (_body == null) return;
             _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
@@ -9492,7 +9500,11 @@ namespace UnturnedGodot
                 forward = (Keybinds.Pressed(GameAction.MoveForward) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveBack) ? 1f : 0f);
                 strafe  = (Keybinds.Pressed(GameAction.MoveRight) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveLeft) ? 1f : 0f);
             }
-            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance, forward);
+            // SPRINT NEEDS FORWARD (strawberry 2026-09-09: "prevent sprinting backwards and sideways"). Gated at
+            // the call rather than where sprintNow is read, because the axes are only known here -- and on the
+            // FORWARD axis alone, so W+D still sprints: a diagonal is a run, and only pure strafe or reverse is
+            // the thing being stopped.
+            StepStanceOnce(xNow, zNow, sprintNow && forward > 0f, cHeld ? EPlayerStance.CROUCH : ScriptedStance, forward);
             if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
