@@ -2125,6 +2125,19 @@ namespace UnturnedGodot
         // WHERE the held item lives in the grid. Recorded so the held reference can be re-bound after an owner
         // echo -- see RebindHeldRefs, which is the fix for the held item going dangling. -1 page = not from the
         // grid (a world pickup held before it lands, fists, a tool).
+        /// <summary>Where the held gun sits in the bag, which is how the server addresses it. Also flushes the
+        /// pending gun state first: the unload is validated against the server's copy of gunAmmo, so sending it
+        /// while a shot is still un-flushed would have the server refuse a perfectly legitimate unload.</summary>
+        bool HeldGunAddress(out byte page, out byte x, out byte y)
+        {
+            page = 0; x = 0; y = 0;
+            if (_heldItem == null || _heldPage < 0 || Gun == null) return false;
+            SaveGunState();
+            FlushGunState();
+            page = (byte)_heldPage; x = _heldX; y = _heldY;
+            return true;
+        }
+
         int _heldPage = -1; byte _heldX, _heldY;
         public void NoteHeldFrom(int page, byte x, byte y)
         {
@@ -4415,6 +4428,7 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
         public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
         public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
+        public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
@@ -5186,25 +5200,14 @@ namespace UnturnedGodot
         bool ReturnShellsToBag(SDG.Unturned.ItemAsset a, int n)
         {
             if (a == null || n <= 0 || Inventory == null) return false;
-            if (!(InventoryIsServerOwned && NetReloadSwap != null))
-            {
-                Inventory.tryAddItem(new Item((ushort)a.id, (byte)n));
-                return true;
-            }
-            int cap = System.Math.Max(1, a.stackSize);
-            for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
-            {
-                var pg = Inventory.items[b];
-                for (byte i = 0; i < pg.getItemCount(); i++)
-                {
-                    var jar = pg.getItem(i);
-                    if (jar?.item == null || jar.item.id != a.id) continue;
-                    if (jar.item.amount + n > cap) continue;                     // would overflow the stack clamp
-                    NetReloadSwap(b, jar.x, jar.y, (ushort)a.id, (byte)(jar.item.amount + n));
-                    return true;
-                }
-            }
-            return false;
+            if (!InventoryIsServerOwned) { Inventory.tryAddItem(new Item((ushort)a.id, (byte)n)); return true; }
+            if (NetGunUnload == null) return false;
+            // Addressed by the GUN, so the server can check its own gunAmmo before paying out. The first attempt
+            // folded the rounds into an existing stack through the reload intent, which worked but could only
+            // unload when you already had ammo -- and rested on a count the server had no way to verify.
+            if (!HeldGunAddress(out byte gp, out byte gx, out byte gy)) return false;
+            NetGunUnload(gp, gx, gy, (ushort)a.id, (byte)System.Math.Min(n, 255));
+            return true;
         }
 
         int ConsumeShells(int want)   // remove up to `want` matching shells from inventory stacks; returns how many were actually taken

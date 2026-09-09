@@ -634,6 +634,7 @@ namespace SDG.Unturned
                     if (a == null) continue;
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
+                    a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
                     a.slot = SlotTypeExtension.Parse(d.GetString("Slot"));   // Primary/Secondary from the gun's own .dat
                     if (!UnturnedGodot.Viewmodel.IsKnownGun(name)) noVisual.Add(name);   // this file lives in SDG.Unturned
                 }

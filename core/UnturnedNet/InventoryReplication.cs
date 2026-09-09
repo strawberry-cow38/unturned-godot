@@ -201,6 +201,25 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Unload loose rounds from the gun at (Page,X,Y) into the bag -- see
+    /// ReplicationIds.CommandGunUnload. Unlike ReloadSwapCommand's SpentAmount, Count is CHECKED: the server
+    /// holds this gun's ammo (v16) and refuses a claim larger than what it is holding.</summary>
+    public struct GunUnloadCommand
+    {
+        public byte Page, X, Y;      // where the gun is
+        public ushort RoundId;       // the loose round coming out
+        public byte Count;           // how many
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(RoundId); w.WriteUInt8(Count); }
+        public static bool TryRead(NetPakReader r, out GunUnloadCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
+                || !r.ReadUInt16(out ushort rid) || !r.ReadUInt8(out byte n)) return false;
+            cmd = new GunUnloadCommand { Page = p, X = x, Y = y, RoundId = rid, Count = n };
+            return true;
+        }
+    }
+
     /// <summary>The client-owned gun state for the item at (Page,X,Y) -- see ReplicationIds.CommandGunState
     /// for why the server needs telling at all. Id is carried so a command that arrives after the player has
     /// moved something else into that cell lands on nothing rather than stamping a rifle's magazine onto a can

@@ -152,6 +152,18 @@ namespace UnturnedGodot.Net
         /// player if any step is dropped. Grabbing one item is one atomic thing and should cost one message.</summary>
         public const byte CommandTakeFromStorage = 45;   // v34 (see the doc above; the old one-liner here described CommandCraftCancel and was left behind by a copy-paste)
 
+        /// <summary>v39: take loose rounds OUT of a gun and into the bag. The give-back half of a shell reload
+        /// had no wire at all, so it was a local tryAddItem the next owner echo wiped -- "when unloading, i never
+        /// recieve rounds back". It cannot ride CommandReloadSwap, whose whole shape is "spend the item at this
+        /// address": an unload spends nothing, and letting that command give back with nothing spent would make it
+        /// a free-ammo generator bounded only by its clamp.
+        ///
+        /// This one is VERIFIABLE, which is why it earns its own id. The server has tracked Item.gunAmmo since
+        /// v16 (CommandGunState), so it can check the gun at (Page,X,Y) really holds the rounds being claimed,
+        /// decrement them, and only then pay them out -- rather than taking the client's word as SpentAmount
+        /// does.</summary>
+        public const byte CommandGunUnload = 48;
+
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
 

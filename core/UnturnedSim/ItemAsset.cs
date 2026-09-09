@@ -36,6 +36,10 @@ namespace SDG.Unturned
         // and "the client says 4000" has to be answerable without a gun simulation. 0 = not a gun, or a gun whose
         // .dat did not parse.
         public int gunAmmoMax;
+        // ...and its Caliber, for the same reason and by the same route. A server validating an unload has to
+        // answer "is this round the sort this gun fires", and the only caliber it could otherwise reach lives on
+        // MAGAZINE assets (magCaliber). 0 = not a gun, or a .dat that did not parse.
+        public int gunCaliber;
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;

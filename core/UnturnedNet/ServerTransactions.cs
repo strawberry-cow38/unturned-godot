@@ -395,6 +395,10 @@ namespace UnturnedGodot.Net
                 OnReloadSwap,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
+            commands.Register<GunUnloadCommand>(ReplicationIds.CommandGunUnload, GunUnloadCommand.TryRead,
+                OnGunUnload,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
             commands.Register<WearClothingCommand>(ReplicationIds.CommandWearClothing, WearClothingCommand.TryRead,
                 OnWearClothing,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
@@ -1055,6 +1059,37 @@ namespace UnturnedGodot.Net
                     if (amt > 0) inv.tryAddItem(new Item(cmd.SpentId, amt, 100));
                 }
             }
+            Diag.ReloadsApplied++;
+        }
+
+        /// <summary>UNLOAD, server side: loose rounds out of a gun and into the bag.
+        ///
+        /// The one handler here that does NOT have to take the client's word for the count. The server has held
+        /// Item.gunAmmo since v16, so it checks the gun is really carrying what is claimed, takes it off the gun
+        /// FIRST, and only then pays out -- an over-claim is refused outright rather than clamped, because
+        /// clamping a number the server can actually verify is just a slower way of trusting it.
+        ///
+        /// The round must also match the gun's caliber, or "unload" becomes "convert my ammo into anything".</summary>
+        void OnGunUnload(ushort sender, GunUnloadCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv?.items[cmd.Page];
+            byte index = page?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var gun = jar?.item != null ? Assets.find(jar.item.id) : null;
+            if (gun?.gunName == null || cmd.Count == 0) { Diag.ReloadsRejected++; return; }
+
+            var round = Assets.find(cmd.RoundId);
+            // Loose ammo of THIS gun's caliber, and nothing else.
+            // gunCaliber, not magCaliber: magCaliber is a MAGAZINE's field and reads 0 on a gun, so comparing the
+            // two would have refused every honest unload while looking like a real check.
+            if (round == null || !round.isAmmo || gun.gunCaliber <= 0 || round.magCaliber != gun.gunCaliber) { Diag.ReloadsRejected++; return; }
+            if (jar.item.gunAmmo < cmd.Count) { Diag.ReloadsRejected++; return; }   // it cannot give up what it is not holding
+
+            jar.item.gunAmmo -= cmd.Count;
+            // tryAddItem raises the page's own state-updated event, which is what drives the owner echo -- the
+            // gunAmmo write above is a field poke that raises nothing on its own, so it rides that.
+            inv.tryAddItem(new Item(cmd.RoundId, cmd.Count, 100));
             Diag.ReloadsApplied++;
         }
 

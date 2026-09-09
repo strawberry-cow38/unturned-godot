@@ -225,6 +225,7 @@ namespace UnturnedGodot
                     (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
                     it.gunTacticalId, it.gunAttachSeeded);
                 Player.NetReloadSwap = (page, x, y, sid, samt) => Client.SendReloadSwap(page, x, y, sid, samt);
+Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, rid, n);
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
                 Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
                 Player.NetCraft = index => Client.SendCraft(index);

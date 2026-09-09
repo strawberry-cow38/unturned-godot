@@ -1128,6 +1128,9 @@ namespace UnturnedGodot.Net
         public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, byte spentAmount)
             => SendCommand(ReplicationIds.CommandReloadSwap, new ReloadSwapCommand { Page = page, X = x, Y = y, SpentId = spentId, SpentAmount = spentAmount }.Write);
 
+        public bool SendGunUnload(byte page, byte x, byte y, ushort roundId, byte count)
+            => SendCommand(ReplicationIds.CommandGunUnload, new GunUnloadCommand { Page = page, X = x, Y = y, RoundId = roundId, Count = count }.Write);
+
         public bool SendWearClothing(byte page, byte x, byte y, byte slot)
             => SendCommand(ReplicationIds.CommandWearClothing, new WearClothingCommand { Page = page, X = x, Y = y, Slot = slot }.Write);
 
