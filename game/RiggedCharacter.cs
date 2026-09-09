@@ -216,6 +216,7 @@ namespace UnturnedGodot
             // is not being drawn, so it just goes away.
             if (_faceQuad != null && GodotObject.IsInstanceValid(_faceQuad)) _faceQuad.Visible = !_fpTrim;
             PushPitch();   // entering/leaving 1P changes whether the look pitch reaches the spine at all
+            ApplyArmTrim();
         }
 
         int[] _armRootBones;                        // the two shoulders -> re-aimed forward after the torso restore so the barrel doesn't tilt down with the pitched stance spine (master: crouch pointed 45deg down, prone into the ground)
@@ -477,6 +478,7 @@ namespace UnturnedGodot
                     }
                 }
                 ApplyAimAdditive();
+                ApplyArmTrim();   // after the clips, which write bone scale of their own
             }
         }
 
@@ -626,6 +628,30 @@ namespace UnturnedGodot
         /// person -- that is how someone else reads where you are looking -- and wrong in first person, where the
         /// camera IS the head: your legs do not swing when you glance at them. Zeroed at the one place every
         /// caller goes through, so no call site has to remember.</summary>
+        /// <summary>Hide the BODY's arms in first person (strawberry 2026-09-09: "hide the 'legs' arms for now"),
+        /// because the viewmodel is already drawing a pair and you would otherwise have four.
+        ///
+        /// The shoulders are the top of each arm chain, so collapsing those two bones takes the whole arm with
+        /// them. Measured before committing to it: 90 vertices are weighted PURELY to arm bones and vanish
+        /// cleanly, 24 straddle the shoulder seam and stretch. That 24 is the known cost of this being a stopgap
+        /// -- the seam sits under the armpit, behind the camera in first person, and the real answer is one rig
+        /// instead of two.
+        ///
+        /// Re-applied after the pose advance because the clips write bone scale; also applied on toggle, since a
+        /// body with nothing playing never reaches the advance at all.</summary>
+        void ApplyArmTrim()
+        {
+            if (Skeleton == null) return;
+            if (!_fpTrim && !_armTrimApplied) return;   // do not stomp an animated scale for a value that is One
+            if (_trimShoulders == null)
+                _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
+            var sc = _fpTrim ? Vector3.Zero : Vector3.One;
+            foreach (int b in _trimShoulders) if (b >= 0) Skeleton.SetBonePoseScale(b, sc);
+            _armTrimApplied = _fpTrim;
+        }
+        int[] _trimShoulders;
+        bool _armTrimApplied;
+
         void PushPitch()
         {
             if (_leanMod != null) _leanMod.PitchDeg = _fpTrim ? 0f : _pitchDeg;

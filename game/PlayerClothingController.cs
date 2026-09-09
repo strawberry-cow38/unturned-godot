@@ -17,6 +17,27 @@ namespace UnturnedGodot
     public class PlayerClothingController
     {
         readonly RiggedCharacter _body;   // the live 3P body (albedoTexPath==null -> the clothes-shader path P3a/P3b drive)
+
+        /// <summary>The VIEWMODEL's arms (strawberry 2026-09-09: "clothe our viewmodel arms"). A second rig
+        /// entirely, built later than this controller and replaced when the held item changes -- so it is a
+        /// settable property that RE-APPLIES on assignment rather than a constructor argument, or the arms come
+        /// back bare every time the viewmodel rebuilds them.
+        ///
+        /// Only shirt and pants: the gear meshes are bone-attached to the 3P body and a hat has nothing to do
+        /// with a pair of forearms.</summary>
+        public RiggedCharacter Arms
+        {
+            get => _arms;
+            set
+            {
+                if (ReferenceEquals(_arms, value)) return;
+                _arms = value;
+                if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
+                    GD.Print($"[clothes] viewmodel arms {(value == null ? "detached" : "attached")} -> shirt/pants re-applied to both rigs");
+                ApplyShirt(); ApplyPants();
+            }
+        }
+        RiggedCharacter _arms;
         readonly PlayerInventory _inv;    // the worn-slot STATE + armor aggregation (owned elsewhere; we only read/set slots)
 
         public PlayerClothingController(RiggedCharacter body, PlayerInventory inv)
@@ -102,17 +123,19 @@ namespace UnturnedGodot
         void ApplyShirt()
         {
             var it = _inv.wornShirt;
-            if (it == null) { _body?.ClearShirt(); return; }
+            if (it == null) { _body?.ClearShirt(); _arms?.ClearShirt(); return; }
             var t = ClothingContent.LoadTextures(it.id);
             _body?.SetShirt(t.Albedo, t.Emission, t.Metallic);
+            _arms?.SetShirt(t.Albedo, t.Emission, t.Metallic);
         }
 
         void ApplyPants()
         {
             var it = _inv.wornPants;
-            if (it == null) { _body?.ClearPants(); return; }
+            if (it == null) { _body?.ClearPants(); _arms?.ClearPants(); return; }
             var t = ClothingContent.LoadTextures(it.id);
             _body?.SetPants(t.Albedo, t.Emission, t.Metallic);
+            _arms?.SetPants(t.Albedo, t.Emission, t.Metallic);
         }
 
         void ApplyHat()      => ApplyGear(_inv.wornHat, EItemType.HAT);

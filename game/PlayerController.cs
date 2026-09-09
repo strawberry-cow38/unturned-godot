@@ -8571,6 +8571,9 @@ namespace UnturnedGodot
             // it exactly the way looking down finds your legs.
             _body.Visible = !_dead;   // dead -> the corpse ragdoll handles the body
             _body.FirstPersonTrim = _fp;
+            // The arms rig is rebuilt whenever the held item changes, so this is pushed every frame rather than
+            // once at construction; the setter early-outs on the same reference and re-paints on a new one.
+            if (_clothing != null && _viewmodel != null) _clothing.Arms = _viewmodel.ArmsRig;
             // SEATED in first person the body still gets posed + animated: the 1P vehicle camera sits on ITS eyes
             // (strawberry 2026-09-03: "if it was exactly where the model's eyes would be, and the pm invisible,
             // would be perfect"), so the skull bone has to be where the seated clip puts it.

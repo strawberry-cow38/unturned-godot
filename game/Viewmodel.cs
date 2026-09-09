@@ -24,6 +24,10 @@ namespace UnturnedGodot
         public Godot.Environment WorldEnv;
         Camera3D _cam;
         RiggedCharacter _arms;
+        /// <summary>The arms rig, so the clothing controller can paint them. They are a SEPARATE
+        /// RiggedCharacter from the 3P body, which is why they were the one part of you not wearing your own
+        /// shirt -- invisible while the body was hidden, obvious the moment first person could see both.</summary>
+        public RiggedCharacter ArmsRig => _arms;
         string _meleeCap;   // Cap(melee content name), e.g. "Blowtorch"/"Sledgehammer" -> per-melee clip labels (Blowtorch_Start_Swing, Sledgehammer_Weak, ...); null for guns/consumables
         Node3D _gun;
         CanvasLayer _layer;
