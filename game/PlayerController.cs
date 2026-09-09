@@ -260,6 +260,12 @@ namespace UnturnedGodot
 
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;
+        // Plane chase cam height, as a fraction of the chase distance plus a slice of the airframe's size. Was
+        // 0.34 + 0.05*size = 25.1 degrees above the aircraft even in level flight; strawberry called the result
+        // "top down", so it comes down to 17.5. The pitch-following in PositionVehicleCam is the bigger half of
+        // that fix -- this is the resting angle it holds.
+        const float PlaneCamUp = 0.22f, PlaneCamUpSize = 0.04f;
+        const float PlaneCamPoleStart = 0.94f;    // |forward . worldUp| past which the roll-free up eases to the airframe's
         float _driveCamZoom = 1f;                 // 3rd-person chase distance multiplier on the auto-zoom; scroll wheel steps it (strawberry 2026-09-03 "reel in the 3p vehicle camera, control it on scroll wheel")
         const float DriveCamZoomMin = 0.35f, DriveCamZoomMax = 1.8f, DriveCamZoomStep = 0.88f;
         float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
@@ -9458,15 +9464,47 @@ namespace UnturnedGodot
                 float dist = (_driving.IsPlane ? Mathf.Clamp(size * 0.62f, 6.5f, 20f) : Mathf.Clamp(size * 0.95f, 5.5f, 34f)) * _driveCamZoom;   // reeled in a touch + scroll zoom (strawberry 2026-09-03)   // planes: the long fuselage+wingspan inflate the AABB diagonal (~14.7 jet -> 16m) -> pull the chase cam IN (master 2026-08-18: jet 3p was way too far); helis unchanged (tinyclaw)
                 if (_driving.IsPlane)
                 {
-                    // WORLD-STABLE chase for the PLANE (level horizon). The airframe-locked cam below swung the
-                    // whole view around during rolls/loops -> master 2026-08-18 "the 3p camera keeps getting messed up".
-                    var pf = -vt.Basis.Z; pf.Y = 0f; pf = pf.LengthSquared() > 0.001f ? pf.Normalized() : Vector3.Forward;   // flattened heading
-                    var plook = new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * pf;   // ALT free-look: orbit the chase point around the plane
-                    float pp = Mathf.DegToRad(_flyLookPitch);
-                    var ptarget = vt.Origin + Vector3.Up * 0.4f;
-                    var peye = vt.Origin - plook * (dist * 0.9f * Mathf.Cos(pp)) + Vector3.Up * (dist * 0.34f + size * 0.05f + dist * 0.9f * Mathf.Sin(pp));
+                    // PLANE: follow the aircraft's PITCH and YAW, but not its ROLL (strawberry 2026-09-09: "fix
+                    // 3rd person in a jet to not be top down").
+                    //
+                    // This is the third go at this camera, so the constraint from the second one matters. It was
+                    // airframe-LOCKED, and rolling the whole view through a barrel roll got "the 3p camera keeps
+                    // getting messed up" (2026-08-18); the answer then was to flatten the heading (pf.Y = 0) and
+                    // hang the camera off WORLD up. That fixed the roll and created this: the camera's height is
+                    // world-vertical and its "behind" ignores pitch entirely, so the angle you view the aircraft
+                    // from is 25 degrees PLUS however far its nose is down. Measured on the jet (size 16, dist
+                    // 9.92), the angle above the airframe's own axis:
+                    //     dive     0     10    20    30    45    60 deg
+                    //     before  25.1  35.1  45.1  55.1  70.1  85.1
+                    // At 60 degrees nose-down you are looking 85 degrees down onto the wing. That is the top-down.
+                    //
+                    // So: keep the roll fix, drop the pitch flattening. The chase axis is the TRUE flight axis, and
+                    // "up" is world up with the along-axis component removed -- roll-free by construction, so the
+                    // horizon still does not spin, while the camera stays behind the tail at a constant 17.5
+                    // degrees whatever the aircraft is doing.
+                    Vector3 pf = -vt.Basis.Z;
+                    pf = pf.LengthSquared() > 1e-6f ? pf.Normalized() : Vector3.Forward;
+                    Vector3 apUp = vt.Basis.Y.Normalized();
+                    Vector3 pup = Vector3.Up - pf * pf.Dot(Vector3.Up);
+                    pup = pup.LengthSquared() > 1e-6f ? pup.Normalized() : apUp;
+                    // Straight up or straight down, "world up minus the axis" vanishes and a level horizon is not
+                    // defined anyway -- blend to the airframe's own up over the last few degrees so it eases
+                    // instead of snapping at the pole.
+                    float vert = Mathf.Abs(pf.Dot(Vector3.Up));
+                    if (vert > PlaneCamPoleStart)
+                    {
+                        var blended = pup.Lerp(apUp, Mathf.InverseLerp(PlaneCamPoleStart, 0.999f, vert));
+                        if (blended.LengthSquared() > 1e-6f) pup = blended.Normalized();
+                    }
+                    // Built by hand rather than LookingAt: Godot's forward is -Z, so the basis' Z column is the
+                    // BACKWARD axis, which is exactly what the camera offset wants and is easy to get wrong.
+                    Vector3 zAxis = -pf, xAxis = pup.Cross(zAxis).Normalized();
+                    Basis pb = new Basis(xAxis, zAxis.Cross(xAxis), zAxis);
+                    Basis plook = pb * new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_flyLookPitch));   // ALT free-look, now in the aircraft's own frame
+                    var ptarget = vt.Origin + pup * 0.4f;
+                    var peye = vt.Origin + plook.Z * (dist * 0.9f) + plook.Y * (dist * PlaneCamUp + size * PlaneCamUpSize);
                     peye = CamCollide(ptarget, peye);
-                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(ptarget, Vector3.Up);
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(ptarget, pup);
                 }
                 else
                 {
