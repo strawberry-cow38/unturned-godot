@@ -596,10 +596,44 @@ def check_exhaust(wagon):
           f'tip flush at {rear:.6f}; outlet/emitter {tuple(round(c,4) for c in tip)}; clear path')
 
 
+def body_surface_z(mesh, x, y, front):
+    """Z where a ray down Z at (x,y) meets the body -- nearest face if `front`, else furthest. Vertex
+    proximity will not do: these bodies are low-poly and there is rarely a vertex near a lamp centre."""
+    V, hits = mesh['vertices'], []
+    for f in mesh['faces']:
+        a, b, c = (V[int(i.split('/')[0])-1] for i in f)
+        den = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1])
+        if abs(den) < 1e-12:
+            continue
+        u = ((b[1]-c[1])*(x-c[0]) + (c[0]-b[0])*(y-c[1])) / den
+        v = ((c[1]-a[1])*(x-c[0]) + (a[0]-c[0])*(y-c[1])) / den
+        if u < -1e-9 or v < -1e-9 or 1-u-v < -1e-9:
+            continue
+        hits.append(u*a[2] + v*b[2] + (1-u-v)*c[2])
+    assert hits, ('no body surface behind the lamp', x, y)
+    return min(hits) if front else max(hits)
+
+
 def check_donor_parts(wagon, sedan):
-    for lamp,field,delta in (('headlights','SpotPos',.150),('taillights','TailPos',.012)):
+    # THE OFFSET IS DERIVED, SO ASSERT THE PROPERTY IT SERVES, NOT THE NUMBER. The lenses are the sedan's
+    # meshes moved in Z until they stand as far PROUD of this body as they do of the sedan's -- which is
+    # what strawberry was reading as "thickness". Pinning .150/.012 here would re-pin the bug: those were
+    # the offsets that left the headlights 0.019 proud against the sedan's 0.064 and the taillights 0.120
+    # against 0.029, and they would have to be edited by hand every time the fascia or tailgate moves.
+    for lamp,field,front in (('headlights','SpotPos',True),('taillights','TailPos',False)):
         source = obj(CONTENT/f'sedan_{lamp}.txt')
         part = obj(CONTENT/f'wagon_{lamp}.txt')
+        delta = part['lo'][2]-source['lo'][2]
+        assert abs((part['hi'][2]-source['hi'][2]) - delta) < 1e-6, 'lamp scaled, not translated'
+        xs=[abs(v[0]) for v in source['vertices']]; ys=[v[1] for v in source['vertices']]
+        cx,cy=(min(xs)+max(xs))/2,(min(ys)+max(ys))/2
+        def proud(body, lens):
+            surf = body_surface_z(body, cx, cy, front)
+            return (surf-lens['lo'][2]) if front else (lens['hi'][2]-surf)
+        want = proud(obj(CONTENT/'sedan_body.txt'), source)
+        got  = proud(obj(CONTENT/'wagon_body.txt'), part)
+        assert abs(got-want) < 1e-4, (f'{lamp} stand-off does not match the sedan', got, want)
+        print(f'PASS {lamp}: {got:.4f} m proud, matching the sedan; Z {delta:+.6f} derived not pinned')
         assert len(part['faces']) == len(source['faces']) == 20
         # Check every corner and UV, not merely the same bounding box.
         for sf,pf in zip(source['faces'],part['faces']):

@@ -3168,8 +3168,11 @@ namespace UnturnedGodot
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             // Fuel follows the class too: cars run 45-50 kL, the off-road block 60-95. 70 kL matches the van.
             Fuel = 70_000f, Health = 600f, Rarity = EItemRarity.COMMON, Name = "SUV", Horn = "carhorn_02.ogg",
-            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.819f), new Vector3(0.765f, 0.708f, -2.819f) }, OmniPos = new Vector3(0f, 0.841f, -2.795f),
-            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.853f), new Vector3(0.979f, 0.688f, 2.853f) },   // Sedan emitters follow lens translations: front +0.150 m, rear +0.012 m in Z
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.863985f), new Vector3(0.765f, 0.708f, -2.863985f) }, OmniPos = new Vector3(0f, 0.841f, -2.839985f),
+            // Emitters follow the lenses, and the lenses are now placed to match the SEDAN'S PROTRUSION rather
+            // than a remembered offset: front +0.105015 m, rear -0.079167 m in Z (was +0.150 / +0.012, which left
+            // the headlights 0.019 proud against the sedan's 0.064, and the taillights 0.120 against 0.029).
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.761833f), new Vector3(0.979f, 0.688f, 2.761833f) },
             ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.8269f),   // outlet centre of the SEDAN duct lifted out of sedan_body.txt, its tip flush with this car's rearmost point like the sedan's is with its own
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.211f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
             Wheels = new (float, float, float, bool)[]

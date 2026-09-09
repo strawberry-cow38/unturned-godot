@@ -186,6 +186,27 @@ def build_exhaust():
     return tip
 
 
+def body_surface_z(mesh, x, y, front):
+    """Z of the body surface a ray down Z hits at (x,y) -- the nearest face if `front`, else the furthest.
+
+    Vertex proximity will not do: these bodies are low-poly and there is usually no vertex anywhere near a
+    lamp centre, only a face spanning past it."""
+    V, hits = mesh['vertices'], []
+    for f in mesh['faces']:
+        a, b, c = (V[int(i.split('/')[0])-1] for i in f)
+        den = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1])
+        if abs(den) < 1e-12:
+            continue
+        u = ((b[1]-c[1])*(x-c[0]) + (c[0]-b[0])*(y-c[1])) / den
+        v = ((c[1]-a[1])*(x-c[0]) + (a[0]-c[0])*(y-c[1])) / den
+        w = 1 - u - v
+        if u < -1e-9 or v < -1e-9 or w < -1e-9:
+            continue
+        hits.append(u*a[2] + v*b[2] + w*c[2])
+    assert hits, ('no body surface behind the lamp', x, y)
+    return min(hits) if front else max(hits)
+
+
 def outward_quad(mesh, points, direction, uv=None):
     n = cross(sub(points[1], points[0]), sub(points[2], points[0]))
     if sum(a*b for a,b in zip(n,direction)) < 0:
@@ -413,10 +434,32 @@ def build():
         outward_quad(mesh,points,direction)
         mesh.write('wagon_glass_'+label+'.txt')
 
-    # Original wagon lamp translations, with every sedan corner retained.
-    for lamp,delta in [('headlights',.150),('taillights',.012)]:
-        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p: (0,0,delta))
-        print(f'Sedan {lamp} Z delta: {delta:+.6f}')
+    # MATCH THE SEDAN'S PROTRUSION, not a remembered Z offset (strawberry 2026-09-09: "reduce the
+    # thickness of tail lights to match sedan. and thicken headlights? to match sedan on the suv").
+    #
+    # The lenses ARE the sedan's meshes, identical to the micrometre -- what he was reading as thickness
+    # is how far they stand PROUD of the bodywork behind them, and this car's nose and tailgate are not
+    # where the sedan's are. Raycast down Z through each lens centre, on the sedan and on this body:
+    #     headlights  sedan 0.0641 proud   suv 0.0191   (sunk almost flush)
+    #     taillights  sedan 0.0288 proud   suv 0.1200   (stood off four times too far)
+    # So the offsets are DERIVED here rather than carried as .150/.012 constants: whatever the fascia or
+    # the tailgate does next, the lamps keep the sedan's stand-off instead of quietly drifting again.
+    for lamp, front in (('headlights', True), ('taillights', False)):
+        src = obj(CONTENT/f'sedan_{lamp}.txt')
+        sedan_body = obj(CONTENT/'sedan_body.txt')
+        xs = [abs(v[0]) for v in src['vertices']]; ys = [v[1] for v in src['vertices']]
+        x, y = (min(xs)+max(xs))/2, (min(ys)+max(ys))/2
+        lo_z, hi_z = min(v[2] for v in src['vertices']), max(v[2] for v in src['vertices'])
+        want = (body_surface_z(sedan_body, x, y, front) - lo_z) if front else \
+               (hi_z - body_surface_z(sedan_body, x, y, front))
+        here = body_surface_z(obj(CONTENT/'wagon_body.txt'), x, y, front)
+        delta = (here - want - lo_z) if front else (here + want - hi_z)
+        translate_asset(f'sedan_{lamp}.txt', f'wagon_{lamp}.txt', lambda p, d=delta: (0, 0, d))
+        got = obj(CONTENT/f'wagon_{lamp}.txt')
+        gz = min(v[2] for v in got['vertices']) if front else max(v[2] for v in got['vertices'])
+        actual = (here - gz) if front else (gz - here)
+        assert abs(actual - want) < 1e-6, (lamp, actual, want)
+        print(f'Sedan {lamp}: Z {delta:+.6f} -> {actual:.4f} m proud, matching the sedan\'s {want:.4f}')
     translate_asset('sedan_steer.txt', 'wagon_steer.txt', lambda p: (0,0,.205))
     seats = obj(CONTENT/'sedan_seats.txt')
     assert all(len({seats['vertices'][int(c.split('/')[0])-1][2] < 0 for c in f}) == 1
