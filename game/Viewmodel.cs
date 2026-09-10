@@ -228,13 +228,36 @@ namespace UnturnedGodot
             if (!Godot.FileAccess.FileExists(tsv)) return 0;
             using var f = Godot.FileAccess.Open(tsv, Godot.FileAccess.ModeFlags.Read);
             if (f == null) return 0;
-            int built = 0;
+            // ⚠ Model_n ARE LODs, Bone_n ARE THE MODEL. An equipable's LODGroup picks ONE Model_n by distance --
+            // canned_beans ships Model_0..Model_3 -- and the Bone_n are the pieces the Use clip animates. Drawing
+            // every part meant drawing the whole LOD chain on top of itself: for bag_chips, Model_1 (24 verts) is
+            // simply the low-detail copy of Bone_0 (88), so the bag was rendered twice, one of them coarse and
+            // neither of them going away. Same trap as the trees (bake LOD0 only) and the tank (Model_0/_1 =
+            // LOD0/LOD1, render ONE), which I had written down and still walked into.
+            //
+            // So: if this item has Bone_n, THEY are the model and every Model_n is skipped. An item with no Bone_n
+            // is static, and takes its lowest-numbered Model_n -- lowest, not Model_0, because bag_chips proves
+            // Model_0 is not always present.
+            var rows = new System.Collections.Generic.List<string[]>();
             while (!f.EofReached())
             {
-                string line = f.GetLine();
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var col = line.Split('\t');
-                if (col.Length < 5) continue;
+                string ln = f.GetLine();
+                if (string.IsNullOrWhiteSpace(ln)) continue;
+                var cc = ln.Split('\t');
+                if (cc.Length >= 5) rows.Add(cc);
+            }
+            bool hasBones = rows.Exists(r => r[0].StartsWith("Bone_"));
+            string keepModel = null;
+            if (!hasBones)
+            {
+                int best = int.MaxValue;
+                foreach (var r in rows)
+                    if (r[0].StartsWith("Model_") && int.TryParse(r[0][6..], out int idx) && idx < best) { best = idx; keepModel = r[0]; }
+            }
+            int built = 0;
+            foreach (var col in rows)
+            {
+                if (col[0].StartsWith("Model_") && col[0] != keepModel) continue;   // an LOD copy of something already drawn
                 var mesh = ContentProvider.ParseObj($"res://content/{col[1]}");
                 if (mesh == null) continue;
                 var pv = col[2].Split(' '); var qv = col[3].Split(' '); var sv = col[4].Split(' ');
