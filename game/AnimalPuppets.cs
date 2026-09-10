@@ -50,6 +50,8 @@ namespace UnturnedGodot
                     var kind = AnimalCatalog.Get(e.Species);
                     var rig = RiggedCharacter.Build($"res://content/{kind.Rig}_rig.json", Colors.White, false, $"res://content/objects/{kind.Tex}", null);
                     if (rig == null) continue;
+                    // Replicas receive the agent's travel yaw, so apply the same local -X correction as SP.
+                    rig.RotationDegrees = new Vector3(0f, AnimalAgent.RigYawFix, 0f);
                     var holder = new Node3D();
                     AddChild(holder);
                     holder.AddChild(rig);
