@@ -29,9 +29,11 @@ namespace UnturnedGodot
                 ushort pid = ce.OwnerPlayerId;
                 bool changed = false;
 
+                SDG.Unturned.PlayerInventory heldFrom = null;
                 if (_server.Inventories.TryGet(pid, out var inv))
                 {
                     var pi = inv.Inventory;
+                    heldFrom = pi;
                     changed |= SetU(ref ce.WornShirt, Id(pi.wornShirt));
                     changed |= SetU(ref ce.WornPants, Id(pi.wornPants));
                     changed |= SetU(ref ce.WornHat, Id(pi.wornHat));
@@ -44,6 +46,14 @@ namespace UnturnedGodot
                 {
                     changed |= SetB(ref ce.Stance, (byte)mi.Stance);
                     changed |= SetU(ref ce.HeldId, mi.HeldItemId);   // v22: what the player is holding -> other clients' puppets draw the gun/melee
+                    // ...and what is bolted to it. Derived SERVER-SIDE from the server's own copy of the player's
+                    // inventory rather than asking the client to report three more ids on every input packet: the
+                    // attachment state already lives here, and an equipped weapon is in a holster page by
+                    // construction (EquipToHandSlot moves it into one), so the id identifies it there.
+                    var heldGun = FindEquipped(heldFrom, mi.HeldItemId);
+                    changed |= SetU(ref ce.HeldSight, AttId(heldGun, "Sight"));
+                    changed |= SetU(ref ce.HeldMagazine, AttId(heldGun, "Magazine"));
+                    changed |= SetU(ref ce.HeldBarrel, AttId(heldGun, "Barrel"));
                 }
 
                 if (changed) _server.CombatState.MarkDirty(ce, tick);
@@ -51,6 +61,28 @@ namespace UnturnedGodot
         }
 
         static ushort Id(Item it) => it?.id ?? (ushort)0;
+
+        /// <summary>The equipped weapon, found in the holster pages by the id the client reports holding. Null when
+        /// it is not in one (nothing equipped, or something held straight out of the bag) -- the puppet then shows
+        /// the gun's factory fittings, which is what it did before this existed.</summary>
+        static Item FindEquipped(PlayerInventory pi, ushort heldId)
+        {
+            if (pi == null || heldId == 0) return null;
+            for (byte pg = 0; pg < PlayerInventory.SLOTS; pg++)
+            {
+                var page = pi.items[pg];
+                if (page == null) continue;
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var it = page.getItem(i)?.item;
+                    if (it != null && it.id == heldId) return it;
+                }
+            }
+            return null;
+        }
+
+        static ushort AttId(Item gun, string slot)
+            => gun == null ? (ushort)0 : (ushort)AttachmentFit.InstalledId(gun, slot);
         static bool SetU(ref ushort field, ushort val) { if (field == val) return false; field = val; return true; }
         static bool SetB(ref byte field, byte val) { if (field == val) return false; field = val; return true; }
     }

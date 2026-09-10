@@ -469,6 +469,10 @@ namespace UnturnedGodot.Net
             // the 25 Hz transform. Server publishes them from each player's server-side worn inventory (PlayerAppearanceNetSync).
             public ushort WornHat, WornGlasses, WornMask, WornShirt, WornVest, WornBackpack, WornPants;
             public ushort HeldId;   // equipped item id (0 = nothing / fists)
+            // What is BOLTED to the held gun (strawberry 2026-09-10: "fix for mp"). The Item itself never crosses
+            // the wire -- only its id does -- so a puppet had no way to know the gun had a scope on it and every
+            // other player appeared to be carrying a factory weapon. Three ids, the same three the mount renders.
+            public ushort HeldSight, HeldMagazine, HeldBarrel;
             public byte Stance;     // EPlayerStance (stand/crouch/prone/...)
             public long LastChangedTick;
 
@@ -583,6 +587,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, e.WornHat); h = NetHash.MixUInt32(h, e.WornGlasses); h = NetHash.MixUInt32(h, e.WornMask);
                 h = NetHash.MixUInt32(h, e.WornShirt); h = NetHash.MixUInt32(h, e.WornVest); h = NetHash.MixUInt32(h, e.WornBackpack); h = NetHash.MixUInt32(h, e.WornPants);
                 h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance);
+                h = NetHash.MixUInt32(h, e.HeldSight); h = NetHash.MixUInt32(h, e.HeldMagazine); h = NetHash.MixUInt32(h, e.HeldBarrel);
             }
             return h;
         }
@@ -597,6 +602,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16(e.WornHat); w.WriteUInt16(e.WornGlasses); w.WriteUInt16(e.WornMask);
             w.WriteUInt16(e.WornShirt); w.WriteUInt16(e.WornVest); w.WriteUInt16(e.WornBackpack); w.WriteUInt16(e.WornPants);
             w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance);
+            w.WriteUInt16(e.HeldSight); w.WriteUInt16(e.HeldMagazine); w.WriteUInt16(e.HeldBarrel);
         }
 
         static bool ReadEntity(NetPakReader r, out CombatEntity e)
@@ -610,9 +616,11 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort wHat) || !r.ReadUInt16(out ushort wGlasses) || !r.ReadUInt16(out ushort wMask)) return false;
             if (!r.ReadUInt16(out ushort wShirt) || !r.ReadUInt16(out ushort wVest) || !r.ReadUInt16(out ushort wBackpack) || !r.ReadUInt16(out ushort wPants)) return false;
             if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance)) return false;
+            if (!r.ReadUInt16(out ushort aSight) || !r.ReadUInt16(out ushort aMag) || !r.ReadUInt16(out ushort aBarrel)) return false;
             e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths,
                 WornHat = wHat, WornGlasses = wGlasses, WornMask = wMask, WornShirt = wShirt, WornVest = wVest,
-                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance };
+                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance,
+                HeldSight = aSight, HeldMagazine = aMag, HeldBarrel = aBarrel };
             return true;
         }
 

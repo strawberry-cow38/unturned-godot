@@ -309,7 +309,7 @@ namespace UnturnedGodot
         {
             ApplyWorn(av.Inv, ce);
             av.Clothing.Refresh();
-            ApplyHeld(av, ce.HeldId);
+            ApplyHeld(av, ce.HeldId, ce.HeldSight, ce.HeldMagazine, ce.HeldBarrel);
         }
 
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
@@ -322,7 +322,7 @@ namespace UnturnedGodot
             float len = av.Body.PlayMeleeSwing(av.MeleeName ?? "fists", strong);
             if (len > 0f) av.SwingLeft = len;
         }
-        static void ApplyHeld(Av av, ushort heldId)
+        static void ApplyHeld(Av av, ushort heldId, ushort sightId = 0, ushort magId = 0, ushort barrelId = 0)
         {
             var a = heldId != 0 ? SDG.Unturned.Assets.find(heldId) : null;
             string gun = a?.gunName, melee = a?.meleeName;
@@ -337,6 +337,8 @@ namespace UnturnedGodot
                 string equip = av.Body.ClipLength(cap + "_Equip") > 0f ? cap + "_Equip" : "Gun_Equip";
                 if (!av.Body.GunLayerOn) av.Body.EnableGunLayer(aim); else av.Body.RebakeAim(aim);
                 av.Body.SnapGunOverlay(equip);   // straight to the ready hold (the pull-out already happened on their screen)
+                // ...wearing what they actually have bolted on. Same mount the local body and the paperdoll use.
+                AttachmentFit.MountOn(av.Body, gun, sightId, magId, barrelId);
             }
             else
             {
@@ -365,6 +367,7 @@ namespace UnturnedGodot
             void M(ushort v) { h = (h ^ v) * 1099511628211UL; }
             M(ce.WornShirt); M(ce.WornPants); M(ce.WornHat); M(ce.WornVest);
             M(ce.WornMask); M(ce.WornGlasses); M(ce.WornBackpack); M(ce.HeldId);   // v22: a weapon swap re-dresses the hand
+            M(ce.HeldSight); M(ce.HeldMagazine); M(ce.HeldBarrel);   // fitting a scope re-dresses it too, and does not change HeldId
             return h;
         }
     }

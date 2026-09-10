@@ -8914,19 +8914,10 @@ namespace UnturnedGodot
         public void MountAttachmentsOn(RiggedCharacter body)
         {
             if (body == null || !IsInstanceValid(body) || string.IsNullOrEmpty(_gunName)) return;
-            body.ClearGunAttachments();   // idempotent: callable on a gun that is already wearing a previous set
-            var gv = Viewmodel.VisualForTest(_gunName);
-            int sid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0;
-            string sightTxt = sid > 0 ? AttachmentFit.MeshFor((ushort)sid) : gv.Sight;
-            if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Mesh sm)
-                body.MountGunAttachment("Sight", sm, gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f), gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f));
-            int mid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0;
-            string magTxt = mid > 0 ? AttachmentFit.MeshFor((ushort)mid) : gv.Mag;
-            if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Mesh mm)
-                body.MountGunAttachment("Magazine", mm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
-            int bid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0;   // barrel only when one's fitted (guns ship bare)
-            if (bid > 0 && AttachmentFit.MeshFor((ushort)bid) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Mesh bm)
-                body.MountGunAttachment("Barrel", bm, new Vector3(0f, 0.7307f, -0.0818f), new Color(0.05f, 0.05f, 0.055f));
+            AttachmentFit.MountOn(body, _gunName,
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0,
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0,
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0);
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---

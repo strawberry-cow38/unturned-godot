@@ -191,6 +191,33 @@ namespace UnturnedGodot
         /// Fits() because fitting is a rules question and having a model is an asset question -- an attachment with
         /// no mesh still attaches and still applies its stats, it just renders nothing, and conflating the two would
         /// hide every un-ripped attachment from a menu that is supposed to show what you own.</summary>
+        /// <summary>Hang a gun's sight / magazine / barrel on a rig, from ids rather than from an Item.
+        ///
+        /// ⚠ ONE implementation for all four viewers: the live 3P body, the inventory paperdoll, and other players'
+        /// puppets. The first two read the ids off the held Item; a puppet cannot -- the item never crosses the
+        /// wire, only its id does -- so the ids are the parameter and the mounting is shared. A second copy for
+        /// remote players would have drifted from this one the first time a hook position moved, and the symptom
+        /// would be "other people's scopes sit slightly wrong", which nobody reports precisely.
+        ///
+        /// Hook positions and colours are the ones the viewmodel attach loop uses. Falls back to the gun's factory
+        /// iron sight and default magazine when nothing is fitted; a barrel only appears when one actually is,
+        /// because guns ship bare.</summary>
+        public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId)
+        {
+            if (body == null || string.IsNullOrEmpty(gunName)) return;
+            body.ClearGunAttachments();
+            var gv = Viewmodel.VisualForTest(gunName);
+            string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
+            if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
+                body.MountGunAttachment("Sight", sm, gv.SightPos != Godot.Vector3.Zero ? gv.SightPos : new Godot.Vector3(0f, 0.1312f, -0.118f),
+                                        gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f));
+            string magTxt = magId > 0 ? MeshFor((ushort)magId) : gv.Mag;
+            if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
+                body.MountGunAttachment("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f));
+            if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
+                body.MountGunAttachment("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f));
+        }
+
         public static string MeshFor(ushort id)
         {
             if (Meshes.TryGetValue(id, out var m)) return m;
