@@ -70,7 +70,10 @@ void fragment() {
         const int HDRGAP = 86;       // grid sits 70px below its own header
         const int PAGEADV = 96;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
         const int GRIDPAD = 30;      // SleekItems.SizeOffset_Y = rows*50 + 30
-        const int BOXX = 580;        // box start = MARGIN + CHARW + 8 (follows the tighter char panel; was 700)
+        // DERIVED, not typed. Its own comment already said "MARGIN + CHARW + 8" -- but as a literal it did not
+        // follow CHARW, so widening the character panel drove it straight through the Hands column. Caught in the
+        // render, not by reading. The relationship is unchanged; only the drift is gone.
+        const int BOXX = MARGIN + CHARW + 8;
         const int BOXINSET = 590;    // BOXX + 10 -> 10px right margin (was 710)
         const int SPLITMIN = 1350;   // isSplitClothingArea kicks in at this screen width
         const int PAD = 12;
@@ -80,7 +83,11 @@ void fragment() {
         // NOT a centred blob.
         const int NAVH = 60;         // top navbar strip (source backdropBox starts at Y=60, below the nav)
         const int MARGIN = 12;       // screen-edge margin
-        const int CHARW = 560;       // character panel width -- sized to hug the SHRUNK paperdoll (master 2026-08-26: "shrink the stuff around to fit the new scale"; was 680).
+        // 560 -> 616 (strawberry 2026-09-10: "make the viewport wider"). ⚠ This is the one thing that had to
+        // move with it: the paperdoll viewport already ran 8..556 inside a 560 panel, so there were four spare
+        // pixels and a viewport cannot be wider than the panel holding it. Everything else in here is derived from
+        // CHARW, so the panel and its contents keep their existing relationships.
+        const int CHARW = 616;       // character panel width -- sized to hug the SHRUNK paperdoll (master 2026-08-26: "shrink the stuff around to fit the new scale"; was 680).
         const int GUTTER = 20;       // gap between the character panel and the storage box
         const int PDTOP = 88;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
@@ -91,7 +98,7 @@ void fragment() {
         // fixed WORLD height (frameH) whatever resolution it renders at, so enlarging the panel alone re-renders
         // the identical framing on more pixels and a tall hat stays just as cropped. The view grows below, in
         // PD_FRAME_H; these two only decide how much screen it lands on.
-        const int PDWIDEN = 28;      // extra render+display width over PDW: "slightly wider" (kept inside CHARW)
+        const int PDWIDEN = 28;      // extra render+display width over PDW (kept inside CHARW: 8 + PDW + this <= CHARW)
         const float PD_ASPECT = 0.585f;  // paperdoll viewport w/h -- wide enough his arm span clears the frame (measured off the widened render)
         // How much WORLD the camera frames vertically, as a multiple of the body's own AABB height. 1.36 fitted the
         // body and nothing above it, so anything worn on the head left the frame. 1.62 buys ~26 cm of headroom on a
@@ -2000,7 +2007,11 @@ void fragment() {
             float cy = ab.Position.Y + ab.Size.Y * 0.5f;          // vertical centre of the body
             float frameH = ab.Size.Y * PD_FRAME_H;                // the WORLD height the camera fits -- this is the view size, and the only thing that decides whether a hat is cropped
             float dist = frameH * 0.5f / Mathf.Tan(Mathf.DegToRad(_pdCam.Fov * 0.5f));
-            float aimY = cy - 0.15f;
+            // WHERE HE SITS IN THE FRAME (strawberry 2026-09-10: "move him down in the viewport"). The camera
+            // aims at the frame's CENTRE, so aiming BELOW the body's centre pushes the body UP the frame -- which
+            // is what -0.15 was doing, and why the purple shot had 33 px over his head against 80 under his feet.
+            // Aiming slightly ABOVE it drops him, and puts the spare room where a hat needs it.
+            float aimY = cy + 0.05f;
             _pdCam.Position = new Vector3(0f, aimY, dist);
             _pdCam.LookAt(new Vector3(0f, aimY, 0f), Vector3.Up);
             _pdFramed = true;
