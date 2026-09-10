@@ -53,6 +53,9 @@ namespace UnturnedGodot.Net
         // destructible props (rubble): the alive-bitmap + the server-only health/respawn authority
         public readonly DestructibleReplication Destructibles = new DestructibleReplication();
         public readonly ServerDestructibles DestructibleHost;
+        // forageable resources (berry bushes, mushrooms): reward/reach/regrow authority beside the resource
+        // alive-bitmap, exactly as DestructibleHost sits beside the destructible one
+        public readonly ServerForage ForageHost;
         // SP/MP unify: doors + beds. The authoritative state itself -- changes go out as reliable events
         // (they happen rarely and on demand, so there is nothing worth streaming at 25 Hz), and the
         // InteractableState block below carries the same state to whoever joined after the change.
@@ -130,6 +133,8 @@ namespace UnturnedGodot.Net
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals, Interactables);
+            ForageHost = new ServerForage(Resources);
+            Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
             Transactions.Crafting_ = CraftQueue;
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot
@@ -1181,6 +1186,11 @@ namespace UnturnedGodot.Net
 
         public bool SendHarvestCrop(uint netId)
             => SendCommand(ReplicationIds.CommandHarvestCrop, new HarvestCropCommand { NetId = netId }.Write);
+
+        /// <summary>Pick the berry bush / mushroom at this resource INDEX (v40). Addressed by the load-order
+        /// index rather than a NetId because a resource is authored map data -- there is no entity to mint.</summary>
+        public bool SendForageResource(int index)
+            => SendCommand(ReplicationIds.CommandForageResource, new ForageResourceCommand { Index = (ushort)index }.Write);
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 

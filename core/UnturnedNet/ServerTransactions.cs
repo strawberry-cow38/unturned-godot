@@ -157,6 +157,9 @@ namespace UnturnedGodot.Net
         /// need, on a constructor that already takes twelve things.</summary>
         public ServerCooking Cooking;
 
+        /// <summary>Forageable resources (berry bushes, mushrooms). Settable for the same reason Cooking is.</summary>
+        public ServerForage Forage;
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
@@ -469,6 +472,15 @@ namespace UnturnedGodot.Net
                                             && _crops.Schema.TryGet(cmd.SeedId, out _)
                                             && SenderInventory(sender)?.getItemCount(cmd.SeedId) > 0);
 
+                // FORAGE (retail ResourceManager.ReceiveForageRequest). Validated exactly as that does, in the
+                // same order and against the same 400 sq.m: a real index, one registered forageable, still
+                // standing, and within reach of the asker. All four live in ServerForage.CanForage so the
+                // gate a test can call and the gate the wire runs are the same code.
+                commands.Register<ForageResourceCommand>(ReplicationIds.CommandForageResource, ForageResourceCommand.TryRead,
+                    OnForageResource,
+                    validate: (sender, cmd) => Forage != null
+                                            && TryGetSenderPos(sender, out var pos)
+                                            && Forage.CanForage(cmd.Index, pos));
                 commands.Register<HarvestCropCommand>(ReplicationIds.CommandHarvestCrop, HarvestCropCommand.TryRead,
                     OnHarvestCrop,
                     validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -1375,6 +1387,49 @@ namespace UnturnedGodot.Net
                     SpawnWorldItem(new Item(def.YieldItemId), at + new Vector3(0.25f, 0f, 0f), Vector3.zero);
             }
             AwardXp(sender, HarvestRewardExperience);   // source: harvest awards Harvest_Reward_Experience
+        }
+
+        /// <summary>Pick a berry bush or a mushroom. The whole transaction is server-side: the client named
+        /// an index and nothing else, and every other fact -- what it gives, whether it is even forageable,
+        /// whether it is still standing, whether the asker is near it -- is read here.
+        ///
+        /// Retail (ReceiveForageRequest) does `askDamage(1)` on a Health-1 resource, which is its way of
+        /// saying "one interaction takes it"; the port has no health pool for resources, so taking it IS the
+        /// damage. The reward goes straight into the BAG (retail forceAddItem(auto:true)) rather than onto
+        /// the ground like a crop's yield -- you are picking a berry, not felling something that scatters --
+        /// and only overflows to the ground when there is no room for it.
+        ///
+        /// The AGRICULTURE second-yield roll is the same one OnHarvestCrop makes, from the same skill, rolled
+        /// on the server for the same reason: a client that rolls its own mastery always wins it.</summary>
+        void OnForageResource(ushort sender, ForageResourceCommand cmd)
+        {
+            if (Forage == null) return;
+            if (!TryGetSenderPos(sender, out var pos)) return;
+            ushort reward = Forage.Take(cmd.Index, pos, _tick());
+            if (reward == 0) return;                       // refused: not forageable, already picked, or out of reach
+            if (!SetResourceAlive(cmd.Index, false)) return;   // one writer owns the alive bit + its broadcast
+
+            // A FULL BAG STILL TAKES THE PLANT, and what will not fit is left lying at the plant. Retail's
+            // forceAddItem drops the overflow the same way, and the alternative is worse: refusing after the
+            // alive bit has flipped needs that flip undone, and refusing before it hands a player with one
+            // free slot a way to probe the reach check for free.
+            var inv = SenderInventory(sender);
+            var at = Forage.Position(cmd.Index) + new Vector3(0f, 0.3f, 0f);
+            GiveOrDrop(inv, reward, at);
+
+            // The AGRICULTURE second-yield roll, same skill and same server-side roll as OnHarvestCrop.
+            float mastery = _skills.TryGet(sender, out var se)
+                ? se.Skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE).Mastery : 0f;
+            if (mastery > 0f && Rand() < mastery) GiveOrDrop(inv, reward, at + new Vector3(0.25f, 0f, 0f));
+
+            AwardXp(sender, ServerForage.RewardExperience);   // source: Forage_Reward_Experience, default 1
+        }
+
+        /// <summary>One picked item into the bag, or onto the ground at `at` when there is no room for it.</summary>
+        void GiveOrDrop(PlayerInventory inv, ushort itemId, Vector3 at)
+        {
+            if (inv != null && inv.tryAddItem(new Item(itemId))) return;
+            SpawnWorldItem(new Item(itemId), at, Vector3.zero);
         }
 
         /// <summary>Server-side crop removal + its broadcast fact. Idempotent -- false if already gone.</summary>

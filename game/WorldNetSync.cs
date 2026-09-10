@@ -209,9 +209,22 @@ namespace UnturnedGodot
             if (field != null)
             {
                 _server.Resources.ServerInit(field.InstanceCount, server.Session.CurrentTick);
+                // FORAGE METADATA, seeded from the same field the bitmap was sized from. Every index starts
+                // NOT forageable and only the built ForagePlant bodies register one, so a resource the server
+                // was told nothing about -- a tree, an ore node, a plain Bush_0 -- can never be picked.
+                // Reset is retail's 1000 s at the 50 Hz server tick, the same conversion Rubble_Reset uses.
+                _server.ForageHost.ServerInit(field.InstanceCount);
+                foreach (var p in field.ForagePlants)
+                    _server.ForageHost.SetMeta(p.Index, p.Reward, ToNet(p.WorldPos),
+                                               (long)System.Math.Round(ResourceField.ForageResetSeconds * 50f));
                 _appliedVersion = _server.Resources.Version;
             }
         }
+
+        /// <summary>Godot world position -> the engine-free vector core validates reach against. Same values,
+        /// different struct: core cannot see Godot, which is the whole reason ServerForage holds its own copy
+        /// of where each plant is rather than asking the scene.</summary>
+        static UnityEngine.Vector3 ToNet(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
         /// <summary>Fell (false) / respawn (true) one resource: authoritative flip + event + world mirror.</summary>
         public bool SetAlive(int index, bool alive)
@@ -221,8 +234,15 @@ namespace UnturnedGodot
             return true;
         }
 
+        readonly System.Collections.Generic.List<int> _regrown = new();
+
         public void Tick()
         {
+            // REGROW. A picked bush comes back on retail's 1000 s Reset, and it comes back through SetAlive
+            // -- the same authoritative flip + broadcast a pick goes through -- so the alive bit has exactly
+            // one writer and a client that missed the harvest event still agrees about what is standing.
+            if (_server.ForageHost.CollectRegrown(_server.Session.CurrentTick, _regrown) > 0)
+                foreach (int i in _regrown) SetAlive(i, true);
             // keep the field mirrored even when bits flip behind our back (console/test hooks)
             if (_field == null || _server.Resources.Version == _appliedVersion) return;
             _appliedVersion = _server.Resources.Version;

@@ -163,6 +163,11 @@ namespace UnturnedGodot.Net
         /// decrement them, and only then pay them out -- rather than taking the client's word as SpentAmount
         /// does.</summary>
         public const byte CommandGunUnload = 48;
+        /// <summary>v40: pick a berry bush or a mushroom (retail ResourceManager.ReceiveForageRequest).
+        /// Its own intent rather than a reuse of anything: a forage is addressed by RESOURCE INDEX, gives
+        /// an item the server chooses, and kills a world resource -- no existing command means any of
+        /// those. The client asserts only WHICH plant.</summary>
+        public const byte CommandForageResource = 49;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.

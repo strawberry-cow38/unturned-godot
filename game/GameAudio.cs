@@ -227,9 +227,14 @@ namespace UnturnedGodot
         /// 21's), and `metal_2_metal.wav` the Metal one every ore and clay node shares (effect 52). Both prefixes
         /// name the retail effect they were ripped from, which is what makes them addressable at all.
         ///
-        /// Bushes and mushrooms resolve to effect 43 (`Foliage`) and the two Christmas resources to a `Reset`
-        /// chime, but nothing in the port destroys any of those yet -- they are scenery with no harvest body. Left
-        /// deliberately unwired rather than given a clip no caller can reach.</summary>
+        /// Bushes and mushrooms take effect 43's `Foliage` rustle, which got its caller the day forageable
+        /// bushes did. ⚠ `foliage_0_foliage.wav` was MISLABELLED until then: 175584 bytes against effect
+        /// Foliage_0's actual 120416-byte clip, and that prefab has exactly one AudioSource, so it was not a
+        /// second source -- it was the wrong file under the right name. Replaced with the real one.
+        ///
+        /// Bush_0 and Bush_1 return null on purpose and are not an oversight: those two have no Explosion
+        /// field at all in retail and no Forage key either, so they are scenery that neither breaks nor picks.
+        /// The two Christmas resources resolve to a `Reset` chime that nothing destroys yet.</summary>
         public static AudioStream ResourceBreak(string resourceName)
         {
             string n = resourceName ?? "";
@@ -237,6 +242,8 @@ namespace UnturnedGodot
                 return Pick("explosions", "birch_0");   // the shared Timber clip
             if (n.StartsWith("Metal") || n.StartsWith("Clay"))
                 return Pick("explosions", "metal_2");   // the shared Metal clip
+            if (n.StartsWith("Bush") || n.StartsWith("Mushroom"))
+                return Pick("explosions", "foliage_0"); // effect 43, shared by every forageable bush and mushroom
             return null;
         }
 

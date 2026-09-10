@@ -306,6 +306,11 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 //     hidden SuppressLocalVisual SP drop + locally-awarded-then-overwritten XP. The loopback's
                 //     CropNetSync stamps NetId onto the host's real CropManager nodes so the scan finds them.
                 Player.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
+                // FORAGE (v40): berry bushes + mushrooms. Unlike the crop harvest above there is no direct SP
+                // path this supersedes -- forage never existed locally, and it is server-only by design
+                // (master 2026-09-10 "make sure the harvest path goes through the server"), so this is the
+                // only route from pressing F on a bush to actually getting a berry.
+                Player.NetForageResource = index => Client.SendForageResource(index);
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and
