@@ -1,0 +1,943 @@
+{
+  "9110": {
+    "name": "Tank",
+    "palette": [
+      [
+        87,
+        104,
+        118
+      ],
+      [
+        99,
+        119,
+        135
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9110_body.txt",
+      "vertices": 156,
+      "triangles": 256,
+      "min": [
+        -0.5,
+        0,
+        -0.456739
+      ],
+      "max": [
+        0.5,
+        1.4,
+        0.456739
+      ],
+      "groups": {
+        "bands": 132,
+        "hose_fitting": 72,
+        "lid": 20,
+        "socket_back": 8,
+        "vessel": 24
+      }
+    },
+    "lod1": {
+      "file": "9110_body_lod1.txt",
+      "vertices": 48,
+      "triangles": 80,
+      "min": [
+        -0.5,
+        0,
+        -0.395548
+      ],
+      "max": [
+        0.5,
+        1.4,
+        0.395548
+      ],
+      "groups": {
+        "hose_fitting": 40,
+        "lid": 20,
+        "vessel": 20
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.456739
+    ],
+    "boundsSize": [
+      1.0,
+      1.4,
+      0.913478
+    ],
+    "offset": 0.7,
+    "radius": 0.456739
+  },
+  "9111": {
+    "name": "Water source",
+    "palette": [
+      [
+        87,
+        119,
+        90
+      ],
+      [
+        99,
+        135,
+        102
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9111_body.txt",
+      "vertices": 144,
+      "triangles": 260,
+      "min": [
+        -0.456739,
+        0,
+        -0.456739
+      ],
+      "max": [
+        0.456739,
+        1.4,
+        0.55
+      ],
+      "groups": {
+        "bands": 132,
+        "hose_fitting": 36,
+        "outlet_neck": 20,
+        "shoulder": 44,
+        "socket_back": 4,
+        "vessel": 24
+      }
+    },
+    "lod1": {
+      "file": "9111_body_lod1.txt",
+      "vertices": 42,
+      "triangles": 80,
+      "min": [
+        -0.456739,
+        0,
+        -0.395548
+      ],
+      "max": [
+        0.456739,
+        1.4,
+        0.55
+      ],
+      "groups": {
+        "hose_fitting": 20,
+        "outlet_neck": 20,
+        "shoulder": 20,
+        "vessel": 20
+      }
+    },
+    "boundsMin": [
+      -0.456739,
+      0,
+      -0.456739
+    ],
+    "boundsSize": [
+      0.913478,
+      1.4,
+      1.006739
+    ],
+    "offset": 0.7,
+    "radius": 0.456739
+  },
+  "9114": {
+    "name": "Pump",
+    "palette": [
+      [
+        213,
+        167,
+        44
+      ],
+      [
+        99,
+        119,
+        135
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": [
+      0,
+      1.25,
+      0
+    ],
+    "mesh": {
+      "file": "9114_preview.txt",
+      "vertices": 130,
+      "triangles": 220,
+      "min": [
+        -0.5,
+        0,
+        -0.42
+      ],
+      "max": [
+        0.5,
+        1.466506,
+        0.42
+      ],
+      "groups": {
+        "hose_fitting": 72,
+        "motor": 20,
+        "motor_end": 20,
+        "motor_mount": 12,
+        "pedestal": 12,
+        "power_terminal": 12,
+        "pump_chamber": 28,
+        "rear_terminals": 12,
+        "skids": 24,
+        "socket_back": 8
+      }
+    },
+    "lod1": {
+      "file": "9114_preview_lod1.txt",
+      "vertices": 96,
+      "triangles": 152,
+      "min": [
+        -0.5,
+        0,
+        -0.42
+      ],
+      "max": [
+        0.5,
+        1.466506,
+        0.42
+      ],
+      "groups": {
+        "hose_fitting": 40,
+        "motor": 20,
+        "motor_mount": 12,
+        "pedestal": 12,
+        "power_terminal": 12,
+        "pump_chamber": 20,
+        "rear_terminals": 12,
+        "skids": 24
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.42
+    ],
+    "boundsSize": [
+      1.0,
+      1.476506,
+      0.84
+    ],
+    "offset": 0.738253,
+    "radius": 0.42
+  },
+  "9115": {
+    "name": "Valve",
+    "palette": [
+      [
+        99,
+        135,
+        102
+      ],
+      [
+        162,
+        32,
+        32
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": [
+      0,
+      1.4,
+      0
+    ],
+    "mesh": {
+      "file": "9115_preview.txt",
+      "vertices": 176,
+      "triangles": 300,
+      "min": [
+        -0.5,
+        0,
+        -0.3
+      ],
+      "max": [
+        0.5,
+        1.45,
+        0.3
+      ],
+      "groups": {
+        "base": 12,
+        "bonnet": 20,
+        "handle": 96,
+        "handle_spoke": 12,
+        "hose_fitting": 72,
+        "pedestal": 12,
+        "socket_back": 8,
+        "stem": 12,
+        "trigger_housing": 24,
+        "trigger_support": 12,
+        "valve_pipe": 20
+      }
+    },
+    "lod1": {
+      "file": "9115_preview_lod1.txt",
+      "vertices": 108,
+      "triangles": 172,
+      "min": [
+        -0.5,
+        0,
+        -0.259808
+      ],
+      "max": [
+        0.5,
+        1.45,
+        0.259808
+      ],
+      "groups": {
+        "base": 12,
+        "bonnet": 20,
+        "handle": 20,
+        "hose_fitting": 40,
+        "pedestal": 12,
+        "stem": 12,
+        "trigger_housing": 24,
+        "trigger_support": 12,
+        "valve_pipe": 20
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.3
+    ],
+    "boundsSize": [
+      1.0,
+      1.45,
+      0.6
+    ],
+    "offset": 0.725,
+    "radius": 0.3
+  },
+  "9116": {
+    "name": "Refinery",
+    "palette": [
+      [
+        112,
+        68,
+        68
+      ],
+      [
+        131,
+        87,
+        87
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9116_body.txt",
+      "vertices": 136,
+      "triangles": 232,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        1.75,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "cross_pipe": 20,
+        "heater": 12,
+        "hose_fitting": 72,
+        "retort": 44,
+        "retort_band": 44,
+        "socket_back": 8,
+        "stack": 20
+      }
+    },
+    "lod1": {
+      "file": "9116_body_lod1.txt",
+      "vertices": 76,
+      "triangles": 124,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        1.75,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "cross_pipe": 20,
+        "heater": 12,
+        "hose_fitting": 40,
+        "retort": 20,
+        "stack": 20
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.45
+    ],
+    "boundsSize": [
+      1.0,
+      1.75,
+      0.9
+    ],
+    "offset": 0.875,
+    "radius": 0.45
+  },
+  "9117": {
+    "name": "Sluice",
+    "palette": [
+      [
+        112,
+        68,
+        68
+      ],
+      [
+        131,
+        87,
+        87
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9117_body.txt",
+      "vertices": 120,
+      "triangles": 188,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        0.84116,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "hose_fitting": 72,
+        "riffles": 36,
+        "socket_back": 8,
+        "trestle": 24,
+        "trough_floor": 12,
+        "trough_wall": 24
+      }
+    },
+    "lod1": {
+      "file": "9117_body_lod1.txt",
+      "vertices": 72,
+      "triangles": 112,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        0.84116,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "hose_fitting": 40,
+        "trestle": 24,
+        "trough_floor": 12,
+        "trough_wall": 24
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.45
+    ],
+    "boundsSize": [
+      1.0,
+      0.84116,
+      0.9
+    ],
+    "offset": 0.42058,
+    "radius": 0.37942
+  },
+  "9121": {
+    "name": "Purifier",
+    "palette": [
+      [
+        219,
+        219,
+        219
+      ],
+      [
+        99,
+        119,
+        135
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9121_body.txt",
+      "vertices": 156,
+      "triangles": 268,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        1.33847,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "control_cabinet": 12,
+        "cross_pipe": 20,
+        "filter": 88,
+        "filter_clamp": 56,
+        "hose_fitting": 72,
+        "socket_back": 8
+      }
+    },
+    "lod1": {
+      "file": "9121_body_lod1.txt",
+      "vertices": 88,
+      "triangles": 148,
+      "min": [
+        -0.5,
+        0,
+        -0.45
+      ],
+      "max": [
+        0.5,
+        1.33847,
+        0.45
+      ],
+      "groups": {
+        "base": 12,
+        "control_cabinet": 12,
+        "cross_pipe": 20,
+        "filter": 64,
+        "hose_fitting": 40
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.45
+    ],
+    "boundsSize": [
+      1.0,
+      1.33847,
+      0.9
+    ],
+    "offset": 0.669235,
+    "radius": 0.45
+  },
+  "9112": {
+    "name": "Splitter",
+    "palette": [
+      [
+        87,
+        104,
+        118
+      ],
+      [
+        99,
+        119,
+        135
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9112_body.txt",
+      "vertices": 136,
+      "triangles": 224,
+      "min": [
+        -0.5,
+        0,
+        -0.45206
+      ],
+      "max": [
+        0.5,
+        0.75249,
+        0.45206
+      ],
+      "groups": {
+        "base": 12,
+        "branch": 60,
+        "hose_fitting": 108,
+        "manifold": 20,
+        "socket_back": 12,
+        "support": 12
+      }
+    },
+    "lod1": {
+      "file": "9112_body_lod1.txt",
+      "vertices": 100,
+      "triangles": 164,
+      "min": [
+        -0.5,
+        0,
+        -0.45206
+      ],
+      "max": [
+        0.5,
+        0.75249,
+        0.45206
+      ],
+      "groups": {
+        "base": 12,
+        "branch": 60,
+        "hose_fitting": 60,
+        "manifold": 20,
+        "support": 12
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.45206
+    ],
+    "boundsSize": [
+      1.0,
+      0.75249,
+      0.90412
+    ],
+    "offset": 0.376245,
+    "radius": 0.33508499999999997
+  },
+  "9113": {
+    "name": "Combiner",
+    "palette": [
+      [
+        87,
+        119,
+        90
+      ],
+      [
+        99,
+        135,
+        102
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9113_body.txt",
+      "vertices": 136,
+      "triangles": 224,
+      "min": [
+        -0.5,
+        0,
+        -0.45206
+      ],
+      "max": [
+        0.5,
+        0.75249,
+        0.45206
+      ],
+      "groups": {
+        "base": 12,
+        "branch": 60,
+        "hose_fitting": 108,
+        "manifold": 20,
+        "socket_back": 12,
+        "support": 12
+      }
+    },
+    "lod1": {
+      "file": "9113_body_lod1.txt",
+      "vertices": 100,
+      "triangles": 164,
+      "min": [
+        -0.5,
+        0,
+        -0.45206
+      ],
+      "max": [
+        0.5,
+        0.75249,
+        0.45206
+      ],
+      "groups": {
+        "base": 12,
+        "branch": 60,
+        "hose_fitting": 60,
+        "manifold": 20,
+        "support": 12
+      }
+    },
+    "boundsMin": [
+      -0.5,
+      0,
+      -0.45206
+    ],
+    "boundsSize": [
+      1.0,
+      0.75249,
+      0.90412
+    ],
+    "offset": 0.376245,
+    "radius": 0.33508499999999997
+  },
+  "9119": {
+    "name": "Inlet",
+    "palette": [
+      [
+        87,
+        119,
+        90
+      ],
+      [
+        99,
+        135,
+        102
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9119_body.txt",
+      "vertices": 142,
+      "triangles": 232,
+      "min": [
+        -0.27058,
+        0,
+        -0.27058
+      ],
+      "max": [
+        0.27058,
+        0.83206,
+        0.55
+      ],
+      "groups": {
+        "hose_fitting": 36,
+        "outlet_neck": 20,
+        "riser": 20,
+        "socket_back": 4,
+        "strainer_base": 28,
+        "strainer_ribs": 96,
+        "strainer_top": 28
+      }
+    },
+    "lod1": {
+      "file": "9119_body_lod1.txt",
+      "vertices": 58,
+      "triangles": 120,
+      "min": [
+        -0.25,
+        0,
+        -0.216506
+      ],
+      "max": [
+        0.25,
+        0.83206,
+        0.55
+      ],
+      "groups": {
+        "hose_fitting": 20,
+        "outlet_neck": 20,
+        "riser": 20,
+        "strainer": 20,
+        "strainer_base": 20,
+        "strainer_top": 20
+      }
+    },
+    "boundsMin": [
+      -0.27058,
+      0,
+      -0.27058
+    ],
+    "boundsSize": [
+      0.54116,
+      0.83206,
+      0.82058
+    ],
+    "offset": 0.41603,
+    "radius": 0.27058
+  },
+  "9120": {
+    "name": "Drain",
+    "palette": [
+      [
+        112,
+        68,
+        68
+      ],
+      [
+        131,
+        87,
+        87
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "mesh": {
+      "file": "9120_body.txt",
+      "vertices": 110,
+      "triangles": 192,
+      "min": [
+        -0.456739,
+        0,
+        -0.456739
+      ],
+      "max": [
+        0.456739,
+        0.83206,
+        0.55
+      ],
+      "groups": {
+        "bowl_bottom": 28,
+        "drain_bowl": 48,
+        "grate": 36,
+        "hose_fitting": 36,
+        "outlet_neck": 20,
+        "riser": 20,
+        "socket_back": 4
+      }
+    },
+    "lod1": {
+      "file": "9120_body_lod1.txt",
+      "vertices": 64,
+      "triangles": 116,
+      "min": [
+        -0.456739,
+        0,
+        -0.395548
+      ],
+      "max": [
+        0.456739,
+        0.83206,
+        0.55
+      ],
+      "groups": {
+        "bowl_bottom": 20,
+        "drain_bowl": 36,
+        "hose_fitting": 20,
+        "outlet_neck": 20,
+        "riser": 20
+      }
+    },
+    "boundsMin": [
+      -0.456739,
+      0,
+      -0.456739
+    ],
+    "boundsSize": [
+      0.913478,
+      0.83206,
+      1.006739
+    ],
+    "offset": 0.41603,
+    "radius": 0.37487000000000004
+  }
+}

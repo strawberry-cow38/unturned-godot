@@ -57,6 +57,11 @@ SCENES = {
     # generator rig would hand back a confident, wrong picture -- the failure mode this whole
     # tool exists to stop. A scene is here only when it renders the thing it is named after.
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
+    "fluid":    (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "gallery"}, False, 180, "11 placed fluid devices at LOD0 + retail barrel/generator/propane references"),
+    "fluiddevice": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110")}, False, 120, "one placed fluid device, LOD0 (DEVICE=9110..9121)"),
+    "fluidlod": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"), "UG_FLUIDLOD1": "1"}, False, 120, "one fluid device beyond its real LOD split, orthographic close view"),
+    "fluidclosed": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "9115", "UG_FLUIDCLOSED": "1"}, False, 120, "placed valve closed: turned handle and red palette cell"),
+    "fluidflow": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "flow"}, False, 180, "source -> powered pump -> valve -> uphill tank, real generator and hoses"),
     "vehicle":  (["--vehicle={TMP}"], {"UG_QUICK": "1", "UG_VSIDE": "2"}, False, 180, "jeep beauty shot"),
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),

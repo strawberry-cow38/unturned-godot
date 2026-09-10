@@ -350,15 +350,16 @@ namespace UnturnedGodot
         };
 
         // --- FLUID devices (strawberry 2026-07-22): placeable items that spawn FluidContainers, not power Deployables
-        //     (Fluid marker set). The ghost is a gray box of Size; the real fluid mesh + HosePorts build on spawn. ---
+        //     (Fluid marker set). Authored Y-up meshes and measured bounds are shared with the ghost. ---
         static DeployableDef MakeFluid(ushort id, string name, FluidRole role, System.Action<DeployableDef> tweak = null)
         {
             var d = new DeployableDef
             {
-                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement", Fluid = role,
+                Id = id, Name = name, Model = $"fluid/{id}", Upright = true, PlaceSound = "metalplacement", Fluid = role,
                 Size = new Vector3(1f, 1.4f, 1f), Offset = 0.7f, Radius = 0.5f, Range = 4.5f, Health = 200f, Fuel = 0f,
             };
             tweak?.Invoke(d);
+            FluidArt.Configure(d);   // bounds include fittings and the pump's 0.01 m vibration travel
             return d;
         }
         public static readonly DeployableDef FluidTank    = MakeFluid(9110, "Fluid Tank",    FluidRole.Storage);   // empty; adopts what's piped in
@@ -702,12 +703,14 @@ namespace UnturnedGodot
         // like the vehicles/barn). Shared by the ghost, the held viewmodel, and the placed object.
         public Mesh LoadMesh()
         {
+            if (FluidArt.HasArt(this)) return FluidArt.Preview(this);
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             return ObjMesh.Load(dir + Model + ".obj");
         }
 
         public StandardMaterial3D MakeMaterial()
         {
+            if (FluidArt.HasArt(this)) return FluidArt.Material(this);
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             if (ProcBox) { mat.AlbedoColor = new Color(0.42f, 0.43f, 0.45f); mat.Metallic = 0.15f; mat.Roughness = 0.7f; return mat; }   // plain gray junction box
             string tp = ProjectSettings.GlobalizePath($"res://content/objects/{Model}_tex.png");

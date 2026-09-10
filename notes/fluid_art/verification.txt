@@ -1,0 +1,259 @@
+Fluid art verification
+Base: 827516d6599d0fb698cc36186528935c590b0b0e
+Worktree: /home/ec2-user/ug-fluidio-wt
+
+FINAL BUILD
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SDG.NetTransport -> /home/ec2-user/ug-fluidio-wt/core/SDG.NetTransport/bin/Debug/net8.0/SDG.NetTransport.dll
+  SDG.Compat -> /home/ec2-user/ug-fluidio-wt/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.dll
+  BugReportCore -> /home/ec2-user/ug-fluidio-wt/core/BugReportCore/bin/Debug/net8.0/BugReportCore.dll
+  SDG.NetPak -> /home/ec2-user/ug-fluidio-wt/core/SDG.NetPak/bin/Debug/net8.0/SDG.NetPak.dll
+  UnturnedDat -> /home/ec2-user/ug-fluidio-wt/core/UnturnedDat/bin/Debug/net8.0/UnturnedDat.dll
+  UnturnedSim -> /home/ec2-user/ug-fluidio-wt/core/UnturnedSim/bin/Debug/net8.0/UnturnedSim.dll
+  UnturnedNet -> /home/ec2-user/ug-fluidio-wt/core/UnturnedNet/bin/Debug/net8.0/UnturnedNet.dll
+  UnturnedGodot -> /home/ec2-user/ug-fluidio-wt/game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:06.52
+
+FULL COMPILE NOTE: 22 existing-code warnings on recompilation; 0 errors.
+
+STRICT MESH VALIDATOR
+PASS 9110_body.txt: 156 v, 256 tris; AABB [-0.5, 0.0, -0.456739] -> [0.5, 1.4, 0.456739]
+PASS 9110_body_lod1.txt: 48 v, 80 tris; AABB [-0.5, 0.0, -0.395548] -> [0.5, 1.4, 0.395548]
+PASS 9111_body.txt: 144 v, 260 tris; AABB [-0.456739, 0.0, -0.456739] -> [0.456739, 1.4, 0.55]
+PASS 9111_body_lod1.txt: 42 v, 80 tris; AABB [-0.456739, 0.0, -0.395548] -> [0.456739, 1.4, 0.55]
+PASS 9114_body.txt: 112 v, 180 tris; AABB [-0.5, 0.0, -0.42] -> [0.5, 1.33847, 0.42]
+PASS 9114_part.txt: 18 v, 40 tris; AABB [-0.25, -0.216506, -0.25] -> [0.25, 0.216506, 0.25]
+PASS 9114_preview.txt: 130 v, 220 tris; AABB [-0.5, 0.0, -0.42] -> [0.5, 1.466506, 0.42]
+PASS 9114_body_lod1.txt: 84 v, 132 tris; AABB [-0.5, 0.0, -0.42] -> [0.5, 1.33847, 0.42]
+PASS 9114_part_lod1.txt: 12 v, 20 tris; AABB [-0.25, -0.216506, -0.25] -> [0.25, 0.216506, 0.25]
+PASS 9114_preview_lod1.txt: 96 v, 152 tris; AABB [-0.5, 0.0, -0.42] -> [0.5, 1.466506, 0.42]
+PASS 9115_body.txt: 120 v, 192 tris; AABB [-0.5, 0.0, -0.25] -> [0.5, 1.37942, 0.25]
+PASS 9115_part.txt: 56 v, 108 tris; AABB [-0.3, -0.05, -0.3] -> [0.3, 0.05, 0.3]
+PASS 9115_preview.txt: 176 v, 300 tris; AABB [-0.5, 0.0, -0.3] -> [0.5, 1.45, 0.3]
+PASS 9115_body_lod1.txt: 96 v, 152 tris; AABB [-0.5, 0.0, -0.25] -> [0.5, 1.37942, 0.25]
+PASS 9115_part_lod1.txt: 12 v, 20 tris; AABB [-0.3, -0.05, -0.259808] -> [0.3, 0.05, 0.259808]
+PASS 9115_preview_lod1.txt: 108 v, 172 tris; AABB [-0.5, 0.0, -0.259808] -> [0.5, 1.45, 0.259808]
+PASS 9116_body.txt: 136 v, 232 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 1.75, 0.45]
+PASS 9116_body_lod1.txt: 76 v, 124 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 1.75, 0.45]
+PASS 9117_body.txt: 120 v, 188 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 0.84116, 0.45]
+PASS 9117_body_lod1.txt: 72 v, 112 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 0.84116, 0.45]
+PASS 9121_body.txt: 156 v, 268 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 1.33847, 0.45]
+PASS 9121_body_lod1.txt: 88 v, 148 tris; AABB [-0.5, 0.0, -0.45] -> [0.5, 1.33847, 0.45]
+PASS 9112_body.txt: 136 v, 224 tris; AABB [-0.5, 0.0, -0.45206] -> [0.5, 0.75249, 0.45206]
+PASS 9112_body_lod1.txt: 100 v, 164 tris; AABB [-0.5, 0.0, -0.45206] -> [0.5, 0.75249, 0.45206]
+PASS 9113_body.txt: 136 v, 224 tris; AABB [-0.5, 0.0, -0.45206] -> [0.5, 0.75249, 0.45206]
+PASS 9113_body_lod1.txt: 100 v, 164 tris; AABB [-0.5, 0.0, -0.45206] -> [0.5, 0.75249, 0.45206]
+PASS 9119_body.txt: 142 v, 232 tris; AABB [-0.27058, 0.0, -0.27058] -> [0.27058, 0.83206, 0.55]
+PASS 9119_body_lod1.txt: 58 v, 120 tris; AABB [-0.25, 0.0, -0.216506] -> [0.25, 0.83206, 0.55]
+PASS 9120_body.txt: 110 v, 192 tris; AABB [-0.456739, 0.0, -0.456739] -> [0.456739, 0.83206, 0.55]
+PASS 9120_body_lod1.txt: 64 v, 116 tris; AABB [-0.456739, 0.0, -0.395548] -> [0.456739, 0.83206, 0.55]
+PASS: 30 meshes / 4872 triangles, all 21 unchanged hose anchors have modelled mouths
+
+FLUID SUITE
+== L1: in-engine tests (headless godot, one boot) ==
+[TEST] fluid.art_placements_and_flow              | PASS | 1.39s (147 checks)
+[TEST] fluid.container_drink_modes                | PASS | 0.54s (16 checks)
+[TEST] fluid.fill_command                         | PASS | 0.21s (23 checks)
+[TEST] fluid.idle_posttick_group                  | PASS | 0.01s (9 checks)
+[TEST] fluid.sink_prop_identity                   | PASS | 0.00s (5 checks)
+[TEST] fluid.sink_spout_anchor                    | PASS | 0.05s (16 checks)
+[TEST] fluid.sink_water_input                     | PASS | 0.76s (13 checks)
+[TEST] fluid.water_mains_gate                     | PASS | 0.42s (5 checks)
+[TEST] fluid.water_mains_shape                    | PASS | 0.03s (13 checks)
+[TEST] fluid.well_source                          | PASS | 0.04s (15 checks)
+[SUITE] L1 in-engine | PASS | 10 passed
+[SUMMARY] TOTAL: 10 passed, 0 failed | ok | trx: .verify/fluid-final
+
+ART TEST AFTER GEOMETRY REFINEMENT
+== L1: in-engine tests (headless godot, one boot) ==
+[TEST] fluid.art_placements_and_flow              | PASS | 1.51s (147 checks)
+[SUITE] L1 in-engine | PASS | 1 passed
+[SUMMARY] TOTAL: 1 passed, 0 failed | ok | trx: .verify/fluid-art-final
+
+
+FINAL CAPTURES (all inspected)
+9110.png 900x900 sha256=6e84a5e9ec0baadb789ade69207ecaa658241159f3b801b992204af5fd1e5cbf
+[fluidart] placed 9110: 2 hose ports, mesh=(-0.5, 0, -0.456739), (1, 1.4, 0.913478)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9110.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9111.png 900x900 sha256=7b9b0544a062640f4d2f1e2ffb1b01c96822cba7fc1963447e833a6a48c84d56
+[fluidart] placed 9111: 1 hose ports, mesh=(-0.456739, 0, -0.456739), (0.913478, 1.4, 1.006739)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9111.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9114.png 900x900 sha256=1c14fb6226a754cbf23a384f74930d9789559634778051039ea7875c716f8e80
+[fluidart] placed 9114: 2 hose ports, mesh=(-0.5, 0, -0.42), (1, 1.33847, 0.84)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9114.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9115.png 900x900 sha256=ededf520da16697e6b73a0dd3193d8d6210da56268d027d88013ed040d315ad8
+[fluidart] placed 9115: 2 hose ports, mesh=(-0.5, 0, -0.25), (1, 1.37942, 0.5)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9115.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9116.png 900x900 sha256=db1526dd41678995b2d270974d09d373f39911afeb12ac215a4ca595d2a4cf95
+[fluidart] placed 9116: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 1.75, 0.9)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9116.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9117.png 900x900 sha256=53462028a5372f0e15dd337d8d7942f84002742922f0a76b24cab058250ab696
+[fluidart] placed 9117: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 0.84116, 0.9)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9117.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9121.png 900x900 sha256=42e6ad5659159e967c77d6afcee14ffb0b21c4bb22763a34186d221928e3d8b1
+[fluidart] placed 9121: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 1.33847, 0.9)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9121.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9112.png 900x900 sha256=b6ec010a84bc09a4a2582f906bb8c7731c9776cedca7387f83a16c8825fa3cd7
+[fluidart] placed 9112: 3 hose ports, mesh=(-0.5, 0, -0.45206), (1, 0.75249, 0.90412)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9112.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9113.png 900x900 sha256=f2a630369d2897ef4ce9c2a109f87a9cad4d57fcf900b76926c3097e73595a43
+[fluidart] placed 9113: 3 hose ports, mesh=(-0.5, 0, -0.45206), (1, 0.75249, 0.90412)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9113.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9119.png 900x900 sha256=d8ecd2b7790c4e1f420565fdfe40ea43652e6a7769c5abd2bbdec3d7262216c6
+[fluidart] placed 9119: 1 hose ports, mesh=(-0.27058, 0, -0.27058), (0.54116, 0.83206, 0.82058)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9119.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9120.png 900x900 sha256=66f978f06e52c8b7d9308c59a8b0535849426fc4b4aa055955f954765b970f18
+[fluidart] placed 9120: 1 hose ports, mesh=(-0.456739, 0, -0.456739), (0.913478, 0.83206, 1.006739)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9120.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+gallery.png 1600x1000 sha256=80b58ed3dc9d2213335f6fa0cd18f1b424b8adab1d505cfe041069cc9b8dc24d
+[fluidart] gallery: 11 placed devices, 4 retail references; LOD0 forced for comparison
+[SHOT] still waiting after 15s -- settle frame budget (frame=3)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-gallery.png (1600x1000)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+valve-closed.png 900x900 sha256=7ae8123164547f8c734edc4881073372fcce2cc57e91842bb6ddc93afa7b6af6
+[fluidart] placed 9115: 2 hose ports, mesh=(-0.5, 0, -0.25), (1, 1.37942, 0.5)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-valve-closed.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+tank-lod1.png 900x900 sha256=d335187ea3f02da036dc8a64523d9c82f3b4f136ffffd94045b3bde4208d89d5
+[fluidart] placed 9110: 2 hose ports, mesh=(-0.5, 0, -0.456739), (1, 1.4, 0.913478)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-tank-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+pump-lod1.png 900x900 sha256=56b04fd63ce6e8427698f9815d70cfb9c24fff033dd372121e7775ea6f4eed36
+[fluidart] placed 9114: 2 hose ports, mesh=(-0.5, 0, -0.42), (1, 1.33847, 0.84)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-pump-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+flow.png 1280x800 sha256=4d1d0c47441291c36d46d13270f32407a5856df72cfeaad82a9d2b0db5d1eaf9
+[fluidart] flow: power=True, drive=True, received=1250, drum=(0.009977427, 1.2595209, 0.007720116)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-flow.png (1280x800)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9111-lod1.png 900x900 sha256=5c38fc67e6d64f333c7d27f1c59cc87a7ef9695a0a10934c5da58cdb236570bb
+[fluidart] placed 9111: 1 hose ports, mesh=(-0.456739, 0, -0.456739), (0.913478, 1.4, 1.006739)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9111-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9115-lod1.png 900x900 sha256=250be6e856421c4e697aa2f2eb290b9d6334d627c12171d48b30cb23ab83660e
+[fluidart] placed 9115: 2 hose ports, mesh=(-0.5, 0, -0.25), (1, 1.37942, 0.5)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9115-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9116-lod1.png 900x900 sha256=6a30b76af6726606655d59ec98923af45dfbaa345ca4a580384c4733aa7c2603
+[fluidart] placed 9116: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 1.75, 0.9)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9116-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9117-lod1.png 900x900 sha256=c3c2eb759f3c860482b1d7cefb110489cb3250aeeecf071bcbca61a90faa6d21
+[fluidart] placed 9117: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 0.84116, 0.9)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9117-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9121-lod1.png 900x900 sha256=7dc3e8fc7ce971113755b805d01c63a29c2fead646322087c2c29cc938a75d77
+[fluidart] placed 9121: 2 hose ports, mesh=(-0.5, 0, -0.45), (1, 1.33847, 0.9)
+ERROR: Condition "p_image.is_null() || p_image->is_empty()" is true.
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9121-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9112-lod1.png 900x900 sha256=2309dbfc384e99ed6356f9e554e3ff7c1974a8cd162c3762689e2c42c9c23b40
+[fluidart] placed 9112: 3 hose ports, mesh=(-0.5, 0, -0.45206), (1, 0.75249, 0.90412)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9112-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9113-lod1.png 900x900 sha256=f02426aeeeb1c460b10dd3c6abb71d0801f635aae6bca82b1eff12d62aa8a53f
+[fluidart] placed 9113: 3 hose ports, mesh=(-0.5, 0, -0.45206), (1, 0.75249, 0.90412)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9113-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9119-lod1.png 900x900 sha256=72a1ce32fc228da43f7e5632e001b145949fb3feff56141375e7d8027fed3387
+[fluidart] placed 9119: 1 hose ports, mesh=(-0.27058, 0, -0.27058), (0.54116, 0.83206, 0.82058)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9119-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+9120-lod1.png 900x900 sha256=4eccdeadf50bf1e20b4244202e3fc31842789b67d5fa8ce5197a6d579eb1109c
+[fluidart] placed 9120: 1 hose ports, mesh=(-0.456739, 0, -0.456739), (0.913478, 0.83206, 1.006739)
+[SHOT] saved /home/ec2-user/ug-fluidio-wt/.shots/fluid-9120-lod1.png (900x900)
+ERROR: This function (finalize) can only be called from the render thread.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+
+FINAL ASSET HASHES
+77c401059bae84d10cb0de9274e08542416aad8d2d82e494d5d033a36cf5f971  game/content/fluid/9110_body.txt
+51b9fee54740b97f3bd12c3f3d4df5ced806d3a3c2181fc26429285353824b7a  game/content/fluid/9110_body_lod1.txt
+5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b  game/content/fluid/9110_palette.png
+19bb6af1f268b9c2d2304d9d806a8dfce913a94af1a476a668e97892d3285622  game/content/fluid/9111_body.txt
+071dd43c83167e7c7716f45f7bdd659f32b273f7f9efc994de695a2f51738df0  game/content/fluid/9111_body_lod1.txt
+dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523  game/content/fluid/9111_palette.png
+f4103e5f59f5e9457600ff1506164a0afa146d98aac14f2a69824555860b6f8d  game/content/fluid/9112_body.txt
+0d484f8ce320d98123d63d3073a1f6fd1c45b73e0e7c8c0dab539ac8b9c00be1  game/content/fluid/9112_body_lod1.txt
+5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b  game/content/fluid/9112_palette.png
+a40337fe8f5c1fcd48f6482a876a2b298673fd3756869c56e0aabaf63b398520  game/content/fluid/9113_body.txt
+0f5cb21271dbae0d8fccde524e480eb2225cead3a46ec03b1c81cf3b50a53a5d  game/content/fluid/9113_body_lod1.txt
+dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523  game/content/fluid/9113_palette.png
+dbf6cb0f591c584df9d4fce418d26b58713863589da0a9d9892112d1c010042c  game/content/fluid/9114_body.txt
+55be88446c1ed84fc5436950f6c4117ac17cf2ff67eafcef83f47ac699d93764  game/content/fluid/9114_body_lod1.txt
+02d490552489693d8febf31a8972dc50d39e1c0dac9496fd86a6b9409d1382af  game/content/fluid/9114_palette.png
+2e88bcaf34151943a9c011e27af7500fa558cc1b55a8a6876a2ab7c1fcaea366  game/content/fluid/9114_part.txt
+2289cec5f87e89c65397a2c832a17564db84ac4226d63d4743829833c789c7a8  game/content/fluid/9114_part_lod1.txt
+f9340746ddb4bd77a9626d8703b12263d2956d07120a92b4df4b135c52bb71c2  game/content/fluid/9114_preview.txt
+fe3f5387d9f683cc85e01e1ddcc4c8ece67bd2ab806848300ba79453f9581538  game/content/fluid/9114_preview_lod1.txt
+40142148dd3d0d10951f4c5adb5f5b61ae44ef6418bd9a0359fa5e96833a5b60  game/content/fluid/9115_body.txt
+7f2d27313cbd4a17135db172b36785de9ab9bd5df04a4a52096c35eddcc44e2d  game/content/fluid/9115_body_lod1.txt
+1e574a7436d4f76f529ea4f02e1cf46a5b659316ca0af00c27b352c565b4db38  game/content/fluid/9115_palette.png
+89cb16c71ecd6c6a99b9300cfb9d1ae072dfa802d9093b1d6a9d031966c3a3b4  game/content/fluid/9115_part.txt
+4a444c18eb5d2f1d9bc7cfc06d0481c33f001cf1a7cbf6b0cba07e0fd324db01  game/content/fluid/9115_part_lod1.txt
+21f4a21b24a5f9302c98caccd44199c146211dc4219d2792db746a4488d9ef2d  game/content/fluid/9115_preview.txt
+895338796969cc548de0c616e2257a38c2b6300769c2b33e77bdfc7888731863  game/content/fluid/9115_preview_lod1.txt
+ba1b2734d68032beb41bddbe0c1e337a68e44717a8a92fe25b77e099e0a984f7  game/content/fluid/9116_body.txt
+bb3674e8c84975847c5f4a1f7ed1036c9deac95631dee59e1ef2eac11e825c39  game/content/fluid/9116_body_lod1.txt
+1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e  game/content/fluid/9116_palette.png
+f02ee47c0c26c7b8099ceb4f6e38e38b274a7d386157f61f90863247fd0834d5  game/content/fluid/9117_body.txt
+82ec647f87daeac55441e70ce35890ceccc5a929cfabf3b6edede6ddfb727a40  game/content/fluid/9117_body_lod1.txt
+1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e  game/content/fluid/9117_palette.png
+b1d2808386ad8ecb1fd8f2c92190f7a141b26b7011738f8a946927b64719eab6  game/content/fluid/9119_body.txt
+74bbfa309f92058f73938a0f2c01e48be837ea5c30e7996034c8d05c3a3a4dc1  game/content/fluid/9119_body_lod1.txt
+dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523  game/content/fluid/9119_palette.png
+31319a4ec7c35818f3b3c27a675214431ac7bd0fc6282c9af43d23b3a3936666  game/content/fluid/9120_body.txt
+5360ac5000cd98683e43da7270800322984534031be4f5afbf1a4757e4109b64  game/content/fluid/9120_body_lod1.txt
+1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e  game/content/fluid/9120_palette.png
+01c6461722c988f428038ddb4288fdb090796f72b318b55302e0ceea8c46ef14  game/content/fluid/9121_body.txt
+986084828c55c0a165b65c3d369c2827dd6e4c3f0b5ab28d12ca8b1100275ee2  game/content/fluid/9121_body_lod1.txt
+227a687ae0c336e267fd7aff3a03572a52a1611b05d96dea83ecbdb8b160eb82  game/content/fluid/9121_palette.png
+04e712b6b90f01878c45418794fd346084a2262c1790b609b5a70d5255426940  game/content/fluid/catalog.json
+
+IN-ENGINE CLEANUP DIAGNOSTICS (not test failures)
+.verify/fluid-final/l1.log
+WARNING: The separate rendering thread feature is experimental. Feel free to try it since it will eventually become a stable feature.
+ERROR: 11 RID allocations of type 'P11GodotBody3D' were leaked at exit.
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+.verify/fluid-art-final/l1.log
+WARNING: The separate rendering thread feature is experimental. Feel free to try it since it will eventually become a stable feature.
