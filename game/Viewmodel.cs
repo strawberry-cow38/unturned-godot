@@ -503,20 +503,20 @@ namespace UnturnedGodot
             AddChild(_vp);
 
             _cam = new Camera3D { KeepAspect = Camera3D.KeepAspectEnum.Width, Fov = OversizeFov(SourceFov), Current = true };
-            // HARNESS FRAMING. The arms live in THIS viewport with THIS camera, so the scene camera cannot frame
-            // them and moving the arms only slides them around a view that is still pressed against them -- which
-            // is why every eat render was a face-full of knuckles and could not answer "does the bag open UP".
-            // UG_VMCAM="x,y,z[,fov]" moves the camera instead of the subject, which is the handle that was missing.
+            // HARNESS FRAMING, and ⚠ ONLY THE FOV IS USEFUL HERE. The arms are a CHILD OF THIS CAMERA -- the node
+            // path proves it: .../@SubViewport@8/@Camera3D@9/@Node3D@16/Skeleton3D/... -- so moving the camera moves
+            // the arms with it and changes nothing, which is exactly why my UG_VMCAM render came back identical to
+            // the one before it. The subject cannot be framed by moving a camera it is parented to.
+            // So position is applied to the ARMS (UG_VMTUNE, which is relative to this camera and does work), and
+            // this knob keeps only the part that is independent of the parenting: the field of view.
             if (System.Environment.GetEnvironmentVariable("UG_VMCAM") is string _vc)
             {
                 var a = _vc.Trim('\'', '"').Split(',');
                 float PC(int i) => a.Length > i && float.TryParse(a[i].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : 0f;
-                if (a.Length >= 3)
+                if (a.Length >= 1 && PC(0) > 1f)
                 {
-                    _cam.Position = new Vector3(PC(0), PC(1), PC(2));
-                    if (a.Length >= 4 && PC(3) > 1f) _cam.Fov = PC(3);
-                    _cam.LookAt(Vector3.Zero, Vector3.Up);   // aim back at the hands wherever it is put
-                    GD.Print($"[vm] harness cam at {_cam.Position} fov {_cam.Fov:0.#}");
+                    _cam.Fov = PC(0);
+                    GD.Print($"[vm] harness fov {_cam.Fov:0.#} (position ignored on purpose: the arms are this camera's child)");
                 }
             }   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
             _vp.AddChild(_cam);
