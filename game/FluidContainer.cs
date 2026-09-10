@@ -60,11 +60,15 @@ namespace UnturnedGodot
         internal float DebugPumpAngle => _pumpAngle;
         MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump shaft coupling: spins while DRIVING (powered + fluid flowing), and spins down when it stops
         internal const float PumpSpinRate = 9.0f;      // rad/s at full drive -- fast enough to read, slow enough not to strobe at 30 Hz
-        internal const float ValveTravel = Mathf.Pi * 5f;   // 2.5 turns from open to shut, like a real gate valve
+        // A HALF TURN, not 2.5. strawberry: "change the valve's valve to be a half-turn close instead
+        // of a fricken 20 turn lol." I read his earlier "slow down the valve animation by a lot" as
+        // asking for MORE WINDING when it was asking for slower winding, and wound up with a wheel that
+        // spun like a ship's helm.
+        internal const float ValveTravel = Mathf.Pi;
         // Winding a gate valve is SLOW -- it is a hand crank on a threaded stem, not a light switch.
         // 1.1 s still read as a flick (strawberry 2026-09-10: "slow down the valve animation by a lot").
         // The flow gate is instant either way; this is only how long the wheel takes to catch up.
-        internal const float ValveSeconds = 4.5f;
+        internal const float ValveSeconds = 1.5f;   // deliberate, but a half turn over 4.5 s reads as stuck
 
         // True when the device is actively working and should animate (a powered pump with fluid moving through it).
         // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.

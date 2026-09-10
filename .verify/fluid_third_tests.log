@@ -1,0 +1,14 @@
+== L1: in-engine tests (headless godot, one boot) ==
+[TEST] fluid.art_placements_and_flow              | PASS | 4.28s (210 checks)
+[TEST] fluid.container_drink_modes                | PASS | 0.92s (16 checks)
+[TEST] fluid.fill_command                         | PASS | 0.21s (23 checks)
+[TEST] fluid.idle_posttick_group                  | PASS | 0.02s (9 checks)
+[TEST] fluid.place_consumes_over_the_wire         | PASS | 3.67s (14 checks)
+[TEST] fluid.sink_prop_identity                   | PASS | 0.00s (5 checks)
+[TEST] fluid.sink_spout_anchor                    | PASS | 0.01s (16 checks)
+[TEST] fluid.sink_water_input                     | PASS | 0.76s (13 checks)
+[TEST] fluid.water_mains_gate                     | PASS | 0.42s (5 checks)
+[TEST] fluid.water_mains_shape                    | PASS | 0.05s (13 checks)
+[TEST] fluid.well_source                          | PASS | 0.03s (15 checks)
+[SUITE] L1 in-engine | PASS | 11 passed
+[SUMMARY] TOTAL: 11 passed, 0 failed | ok | trx: .testresults

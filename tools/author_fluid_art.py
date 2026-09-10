@@ -418,7 +418,11 @@ def valve(low):
     for sign in [-1,1]: seated_port(m,(sign*.5,PORTY,0),'x',sign,.17,6 if low else 8,low=low)
     for x in [-.32,.32]:
         m.box((x-BORE,1.2-BAND/2,-BORE),(x+BORE,1.2+BAND/2,BORE),2,'trigger_housing')
-    m.box((-.32,1.2-BAND-STEM,-STEM/2),(.32,1.2-BAND,STEM/2),3,'trigger_support')
+    # The support has to MEET the housings, on both axes. It topped out at 1.10 while they start at
+    # 1.15, leaving a 5 cm hole under each one, and it ran to +-.32 -- their CENTRES -- so they also
+    # overhung it at both ends. strawberry spotted it from underneath: "theres also a gap where the
+    # power open/close inputs are". Overlap up into them and past them, rather than butting flush.
+    m.box((-.32-BORE,1.2-BAND-STEM,-STEM/2),(.32+BORE,1.16,STEM/2),3,'trigger_support')
     # THE HANDWHEEL. Colour 1 is the palette's red texel, in both states.
     wheel=Mesh()
     if low:

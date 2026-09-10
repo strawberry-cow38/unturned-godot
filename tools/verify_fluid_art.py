@@ -123,6 +123,13 @@ def main():
                     assert any(inside(p,v,comp) for comp in backing),(id,suffix,port,'floating collar',p)
                 if not suffix:checked+=1
     assert catalog['9121']['portY']==catalog['9121']['boundsSize'][1]/2, 'purifier IO off midpoint'
+    # Closed solids must still leave the intended empty spaces: annular end caps
+    # previously passed closure checks while sealing the middle of a wheel.
+    for suffix in ['', '_lod1']:
+        v,_,ts=load(DIR/f'9111_body{suffix}.txt'); solids=components(v,ts)
+        for y in [.20,1.29,1.32,1.50,1.58]:
+            assert not any(inside((0,y,0),v,comp) for comp in solids),(
+                suffix,y,'rain catcher drum or central drain sealed by a cap')
 
     # Match the reference's component colour assignment through the actual V flip,
     # not just the list of RGBs in the PNG (which would miss swapped shell/bands).

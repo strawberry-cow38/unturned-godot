@@ -447,3 +447,57 @@ What I could not verify:
 - Godot logs a render-thread `finalize` error on shutdown after saving captures. The PNGs are decoded
   and checked for fresh output, framing and transparency, but that shutdown error was not diagnosed.
 - The non-fluid test suite was not run.
+
+
+## Third art pass — 2026-09-10
+
+The tank and valve were treated as signed-off artifacts. Before changing the source, I split the old
+shared `barrel(source, low)` into independent `tank(low)` and `rain_catcher(low)` builders, regenerated,
+and checked all sixteen frozen asset hashes. The tank and valve alone retain the legacy
+`seated_port()` builder. `Mesh.face()` and the clockwise-front convention are unchanged.
+
+### Changes and measurements
+
+| Change | Measurement and resulting geometry |
+|---|---|
+| Plain hex bushings | The six-sided collar radius remains **0.152490 m**, the LOD0 spout radius remains **0.1282815 m** (`0.088470 × 1.45`), and the exposed collar/spout lengths remain **0.06 / 0.12 m**. LOD1 retains its existing six-sided simplification. There are **no boss groups on any unfrozen device**. The hex itself continues back into the wall, with a six-vertex ring retained at the published anchor. The inlet and drain already used plain sockets and needed no geometry changes. |
+| Curved-wall contact | Seating uses the hex radius, circular sag, polygon sag, and **25 mm** penetration; flat walls use **30 mm**. Refinery discharge hex backs are at X=**0.690445 / 0.656890 m** at LOD0/1; the firebox inlet starts at X=**−0.870000 m**. Purifier backs are at \|X\|=**0.608520 / 0.592321 m**. Sluice backs are at \|X\|=**0.830000 m**. These are continuous hexagons, with no intermediate transition shape. |
+| Purifier IO | Its body spans **Y=0…1.95 m**. `catalog.json` now publishes **portY=0.975 m**, up **0.375 m** from 0.60. The generator reads that catalog height and places both sockets from it; the game and verifier read the same value. Comparing every `portX`, `portY` and `branchZ` against the pre-pass catalog finds **only this one height change**. Tank/source retain 0.45 m; other devices retain 0.60 m. |
+| Splitter / combiner | The solid collector plate is gone. A **0.1282815 m radius** pipe forms the header and **0.18 m centreline-radius** end elbows; the middle connection is a through tee. Two narrow feet and **70 mm diameter** legs support it. Each run extends **25 mm past its anchor**, into a plain hex union. The **1:3 / 3:1** topology and branch Z=**[−0.32, 0, +0.32] m** remain unchanged. The combiner is a rotation of the same pipework. |
+| Rain catcher drum | Independent green drum with **0.500 m outer / 0.456 m inner radii**, an internal floor at **Y=0.090 m**, and an open mouth. Its three hoops are closed annuli emitted with `caps=False`. The body's inner lip ends at **Y=1.300 m**, **21.8 mm below** the top hoop, eliminating coplanar rim faces found in the first render. The outlet retains **(0, 0.45, 0.55)**; its plain hex seats **105 / 140 mm** back into the LOD0/1 shell. |
+| Rain catcher tarp / arms | Cloth spans **1.90 × 1.90 m**, with corners at **Y=2.38 m**, edge midpoints at **2.16 m**, and the centre drain at **1.58 m**: **0.80 m of real vertical dip**, plus **0.22 m edge sag**. LOD0 has another folded ring near 1.90–1.96 m; LOD1 retains the full dip. The cloth has **12 mm thickness** and an open centre. A hollow drain neck has **60 / 42 mm outer / inner radii**, extending from **Y=1.40 to 1.60 m**. Four **41.16 mm diameter** metal rods rise from **(±0.34, 1.265, ±0.34)** to **(±0.95, 2.385, ±0.95)**. |
+| Centrifugal pump casing / routing | Entirely new direct-drive set. The casing's scroll grows from **0.21 to 0.36 m radius** over one turn, with **24 / 12 angular steps** and **0.29 m axial thickness** (X=−0.65…−0.36). Suction enters its X axis at **Y=0.60, Z=0**. Discharge leaves the fat upper end toward **+Z**, then sweeps around the motor to finish along **+X at (0.78, 0.60, 0)**, inside the unchanged **(0.80, 0.60, 0)** collar. The discharge run radius is **0.088470 m**; successive bend radii are **0.18, 0.16, 0.16, 0.10 m**. Its return is beyond the motor end, rather than passing through the motor or volute. |
+| Pump drive / support | Bearing housing radius **0.105 m**, shaft radius **0.043 m**, motor radius **0.240 m**, all on the same **Y=0.60, Z=0** axis. The moving coupling is centred at **(−0.005, 0.60, 0)**, with the existing **−90° Z** part rotation and local-Y animation. The stationary slotted half-round guard has **0.16 / 0.18 m inner / outer radii** and an open underside. The motor, bearing pedestal and volute sit on one baseplate. The electrical cabinet has a **50 mm diameter post from the baseplate** at Z=−0.25; the electrical anchor backing and all electrical anchors remain in place. |
+
+| Changed device | LOD0 / LOD1 triangles, before → after | Final placed envelope (X × Y × Z), metres |
+|---|---|---|
+| 9111 Water source | 276 / 72 → **700 / 440** | **1.936734 × 2.397558 × 1.936734** |
+| 9112 Splitter | 380 / 284 → **568 / 328** | **1.36 × 0.752490 × 0.904120** |
+| 9113 Combiner | 380 / 284 → **568 / 328** | **1.36 × 0.752490 × 0.904120** |
+| 9114 Pump, assembled | 736 / 348 → **1540 / 740** | **1.96 × 1.38 × 0.97** |
+| 9116 Refinery | 572 / 284 → **460 / 220** | **2.56 × 3.64 × 1.40** |
+| 9117 Sluice | 296 / 200 → **256 / 160** | **2.20 × 1.05 × 1.00** |
+| 9121 Purifier | 440 / 240 → **360 / 176** | **2.06 × 1.95 × 1.04** |
+
+The changed devices' dropped meshes and bounds were regenerated from their complete assemblies,
+using the existing portable-item size rule. Palettes are unchanged. The icon tool now explicitly
+preserves 9110 and 9115 and can render a selected set of other IDs.
+
+### Frozen-device proof
+
+`notes/FLUIDIO_FROZEN_ASSETS.json` records SHA-256 values taken **before this pass** for all **16**
+frozen files: ten fluid mesh/palette files, four item mesh/palette files, and two inventory icons.
+It also records both complete catalog and item-manifest entries, including anchors and part pivots.
+`verify_fluid_art.py` now checks these values on every run. The frozen assets matched both immediately
+after the builder split and after the geometry changes.
+
+Both the requested command and the wildcard form that actually selects all matching files are empty:
+
+```bash
+git diff --stat -- game/content/fluid/9110_ game/content/fluid/9115_
+git diff --stat -- 'game/content/fluid/9110_*' 'game/content/fluid/9115_*'
+```
+
+The item meshes, palettes and icons for 9110/9115 also have an empty diff. Their full catalog and
+item-manifest records are equal to the records in the starting commit. No file under the live server
+checkout was used or changed; this work remains on `astra-fluidio`, with no push.
