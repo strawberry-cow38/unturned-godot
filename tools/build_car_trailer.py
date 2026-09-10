@@ -26,6 +26,39 @@ class Model(Mesh):
             n=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
             if sum(n[i]*(a[i]-c[i]) for i in range(3))<0: ps=list(reversed(ps))
             self.polygon(ps,color)
+    def strip(self,name,outer,inner,ylo,yhi,color=0):
+        """A closed solid whose PLAN is a bent strip: `outer` and `inner` are matching (x,z) polylines.
+
+        A bent strip is not convex, and prism()'s cap is a triangle fan from one vertex, which only
+        works on a convex ring. Splitting it into two convex prisms instead makes them share a face,
+        and save() welds that into an edge carrying four triangles -- which the verifier correctly
+        calls non-manifold.
+
+        So it is built as a chain of CELLS with the seams between them left unemitted. Each cell winds
+        its own faces against ITS OWN centroid, not the strip's: a bent strip's overall centroid sits
+        in the empty air inside the bend, so "away from the centre" is the wrong test there and gives
+        two faces the same winding round a shared edge. Same 12 bad edges either way, different cause.
+        """
+        self.component(name)
+        n=len(outer)
+        def P(pt,yy): return (pt[0],yy,pt[1])
+        for k in range(n-1):
+            o0,o1,i0,i1=outer[k],outer[k+1],inner[k],inner[k+1]
+            corners=[P(o0,ylo),P(o1,ylo),P(i1,ylo),P(i0,ylo),P(o0,yhi),P(o1,yhi),P(i1,yhi),P(i0,yhi)]
+            c=tuple(sum(q[i] for q in corners)/8 for i in range(3))
+            faces=[[P(o0,ylo),P(o1,ylo),P(i1,ylo),P(i0,ylo)],      # floor
+                   [P(o0,yhi),P(o1,yhi),P(i1,yhi),P(i0,yhi)],      # ceiling
+                   [P(o0,ylo),P(o1,ylo),P(o1,yhi),P(o0,yhi)],      # outer wall
+                   [P(i0,ylo),P(i1,ylo),P(i1,yhi),P(i0,yhi)]]      # inner wall
+            if k==0:    faces.append([P(o0,ylo),P(i0,ylo),P(i0,yhi),P(o0,yhi)])
+            if k==n-2:  faces.append([P(o1,ylo),P(i1,ylo),P(i1,yhi),P(o1,yhi)])
+            for ps in faces:
+                a,b,e=ps[:3]; u=[b[i]-a[i] for i in range(3)];v=[e[i]-a[i] for i in range(3)]
+                nrm=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+                mid=tuple(sum(q[i] for q in ps)/len(ps) for i in range(3))
+                if sum(nrm[i]*(mid[i]-c[i]) for i in range(3))<0: ps=list(reversed(ps))
+                self.polygon(ps,color)
+
     def box(self,name,lo,hi,color=0):
         self.component(name)
         self.prism([(lo[0],lo[1],lo[2]),(hi[0],lo[1],lo[2]),(hi[0],lo[1],hi[2]),(lo[0],lo[1],hi[2])],
@@ -125,7 +158,16 @@ def generate(cls='small', specs=None, rear=None):
     d=design(specs,rear,cls); key=d['key']
     t=d['t'];w=d['deck_w']/2;f=d['front'];b=d['back'];y=d['deck_y'];r=d['radius'];ky=d['king'][1];kz=d['king'][2];az=d['axle_z'];cy=d['wheel_center_y'];wt=d['wall_t'];wh=d['wall_h']
     m=Model()
-    drawbars=[((sign*t,ky,kz+4*t),(sign*(w-2*t),y-wt/2,f+d['deck_l']/4)) for sign in (-1,1)]
+    def body_half(z):
+        """The body's outer half-width at a given Z. Constant on a straight-sided class; on a tapered
+        one it follows the nose in, which is what the drawbar has to land on."""
+        if not d['nose_w'] or z >= f+d['nose_run']: return w
+        return d['nose_w']+(z-f)/d['nose_run']*(w-d['nose_w'])
+    # THE DRAWBAR LANDS ON THE BODY, wherever the body is. It used to splay to a fixed w-2t, which is
+    # outside a tapered nose: at the attach point the animal trailer is 1.220 half-wide against that
+    # 1.450, so both beams stood 230 mm proud of the panel they were supposed to be bolted to.
+    bar_z=f+d['deck_l']/4
+    drawbars=[((sign*t,ky,kz+4*t),(sign*(body_half(bar_z)-2*t),y-wt/2,bar_z)) for sign in (-1,1)]
     # ONE SLAB, NOT PLANKS. The reference is the truck's own bed (strawberry: "too much detail. look
     # at the truck bed etc"), and that floor is TWO triangles -- a single 1.616 m2 quad at Y=0.125, no
     # board lines anywhere. Modelling nine separate boards with gaps cost 72 tris to say something the
@@ -137,7 +179,17 @@ def generate(cls='small', specs=None, rear=None):
     # Y .125 over structure down to -.125, exactly .250).
     # The deck is INSET half a section inside the walls rather than flush with them: sharing the outer
     # plane put two coplanar faces on |X| = w with an overlapping Y band, which z-fights.
-    m.box('deck',(-w+wt/2,y-wt,f+wt/2),(w-wt/2,y,b-wt/2),2)
+    nose_w=d['nose_w']; run=d['nose_run']
+    def plan(half,nose,z0,z1):
+        """Body outline seen from above: a rectangle, or a hexagon tapering to `nose` at the front.
+        Convex either way, which prism()'s fan triangulation requires."""
+        if not nose: return [(-half,z0),(half,z0),(half,z1),(-half,z1)]
+        return [(-half,z1),(half,z1),(half,z0+run),(nose,z0),(-nose,z0),(-half,z0+run)]
+    def slab(name,half,nose,z0,z1,ylo,yhi,colour):
+        pts=plan(half,nose,z0,z1)
+        m.component(name)
+        m.prism([(px,ylo,pz) for px,pz in pts],[(px,yhi,pz) for px,pz in pts],colour)
+    slab('deck',w-wt/2,(nose_w-wt/2) if nose_w else None,f+wt/2,b-wt/2,y-wt,y,2)
     for sign,(a,bb) in zip((-1,1),drawbars):
         m.beam('drawbar_'+str(sign),a,bb,2*t,2*t,0)
     # NO AXLE BAR (strawberry: "its the axle. remove the axle"). With the wheels flush against the
@@ -151,16 +203,31 @@ def generate(cls='small', specs=None, rear=None):
     # sub-centimetre trim at a scale nothing else in the fleet models.
     for sign in [-1,1]:
         xo=sign*w; xi=sign*(w-wt)
-        m.box('side_'+str(sign),(min(xo,xi),y-wt,f),(max(xo,xi),y+wh,b),1)
+        # A tapered side is a strip that bends, and a bent strip is NOT convex in plan -- prism()'s fan
+        # triangulation needs convex rings. So it is two pieces: the straight run, and a convex quad
+        # for the nose. Same reason the deck and roof stay single hexagons: those ARE convex.
+        if nose_w:
+            m.strip('side_'+str(sign),
+                    [(sign*w,b),(sign*w,f+run),(sign*nose_w,f)],
+                    [(sign*(w-wt),b),(sign*(w-wt),f+run),(sign*(nose_w-wt),f)],
+                    y-wt,y+wh,1)
+        else:
+            m.box('side_'+str(sign),(min(xo,xi),y-wt,f),(max(xo,xi),y+wh,b),1)
     # The GATES own the ends now: their outer faces are f and b, so nothing stands proud of them. The
     # deck used to overhang the tailgate by wt/4, which is the lip that read as a mis-modelled edge.
     # They still tuck into the sideboards (x +/- wt/2 past the inner face) -- butting flush puts the
     # gate's outer face exactly on the side's inner face with matching corners, and
     # save(weld_positions=True) merges those into an edge carrying four faces.
-    for label,z in [('headboard',f),('tailgate',b-wt)]:
-        m.box(label,(-w+wt/2,y-wt,z),(w-wt/2,y+wh,z+wt),1)
+    head_half=(nose_w-wt/2) if nose_w else (w-wt/2)
+    m.box('headboard',(-head_half,y-wt,f),(head_half,y+wh,f+wt),1)
+    m.box('tailgate',(-w+wt/2,y-wt,b-wt),(w-wt/2,y+wh,b),1)
     # NO WHEEL ARCHES (strawberry: "remove the wheel arches"). The widened track in design() keeps
     # the tyres outboard of the wider box with the same construction-module clearance.
+    # A ROOF makes it a horsebox rather than a very tall open trailer. One slab of the same wall
+    # section as everything else, overlapping the walls it sits on (never butting flush -- coincident
+    # corners get welded and the shared edge then carries four faces).
+    if d['roof_top'] is not None:
+        slab('roof',w,nose_w,f,b,y+wh-wt/2,y+wh+wt/2,1)
     m.box('coupler',(-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t),0)
     # Gone with the rest of the trim: mudflaps, the coupler's latch and handle, the stand's foot pad
     # and the amber reflectors. Every one was a box under ~8 cm; nothing else in the fleet models at
@@ -169,7 +236,10 @@ def generate(cls='small', specs=None, rear=None):
     stand_z=(kz+f)/2; stand_x=3*t
     m.box('landing_stand',(stand_x-t,d['ground'],stand_z-t/2),(stand_x+t,ky-t,stand_z+t/2),0)
     m.save(key+'_body.txt')
-    tail_pos=sedan_lamps(b,y+wh/2,w,d['lamp_inset'],key+'_taillights.txt')   # b is the tailgate's outer face, so 'proud of the tailgate' is literal
+    # Lamps sit at the same absolute height on every class -- half the TRUCK BED's wall height above
+    # the floor. Centring them on this class's own wall put the horsebox's lamps at 1.07, up by its
+    # roofline, because its walls are twice as tall.
+    tail_pos=sedan_lamps(b,d['lamp_y'],w,d['lamp_inset'],key+'_taillights.txt')
     im=Image.new('RGBA',(4,2));im.putdata(COLORS);im.save(CONTENT/'car_trailer_palette.png')
     for name in (TOW_CARS if cls=='dinky' else []):   # hitches live on the CARS; emit them once
         h=Model(); rr=rear[name];hy=rr['y'];hz=rr['rear']+d['hitch_projection']
@@ -180,8 +250,11 @@ def generate(cls='small', specs=None, rear=None):
     # Explicit primitive colliders keep the open load space open (no enclosing hull).
     boxes=[]
     def box(lo,hi):boxes.append((tuple(hi[i]-lo[i] for i in range(3)),tuple((hi[i]+lo[i])/2 for i in range(3))))
-    box((-w,y,f),(-w+wt,y+wh,b));box((w-wt,y,f),(w,y+wh,b))                 # sideboards, truck-bed section
-    box((-w+wt,y,f),(w-wt,y+wh,f+wt));box((-w+wt,y,b-wt),(w-wt,y+wh,b))     # headboard and tailgate
+    for sg in (-1,1):
+        xs=sorted((sg*w,sg*(nose_w-wt if nose_w else w-wt)))
+        box((xs[0],y,f),(xs[1],y+wh,b))                                     # sideboard AABB, tapered or not
+    box((-(head_half-wt/2),y,f),(head_half-wt/2,y+wh,f+wt));box((-w+wt,y,b-wt),(w-wt,y+wh,b))  # headboard, tailgate
+    if d['roof_top'] is not None: box((-w,y+wh-wt/2,f),(w,y+wh+wt/2,b))   # roof AABB; solid too
     box((-2*t,ky-t,kz-2*t),(2*t,ky+t,kz+4*t))
     # Oriented drawbar collider boxes follow the two diagonal beams exactly in plan.
     hulls=[]

@@ -547,3 +547,89 @@ real meshes, with two mutations — walk this class's axles forward, and move th
 The second is the one that matters: it fails if the two ever stop tracking each other.
 
 **225 named checks, 918 mutations.**
+
+## Ninth pass: a horsebox on the large's chassis
+
+strawberry: *"then make a horsebox trailer based off the large one"*.
+
+Same deck (6.013 x 3.100), same track, same tandem, same rear-axle setback — it inherits the
+large's whole class entry. What makes it a horsebox is that it is **enclosed**: the sideboards run up to
+a roof instead of stopping at the truck bed's 1.000.
+
+**The roof height is a fleet measurement, not a number I picked.** The fleet's enclosed bodies sit in
+two tiers — van and truck top out at 2.125, ambulance and Ural at **2.375**. A horsebox takes the taller
+one, because the thing it carries has to stand up in it. `roof_ref='ambulance'` in the class table, so
+the roof is that body's measured top and moving the ambulance moves the horsebox with it. Walls run
+2.148 from the floor to the roof's underside, against 1.000 on the open classes.
+
+Two details worth recording. The roof **straddles** the wall tops by half a section each way rather than
+sitting on them — coincident corners get welded into a four-face edge, the same trap the deck and the
+gates each hit. And the tail lamps are pinned to half the **truck bed's** wall height above the floor
+rather than to this class's own: centring them on a 2.148 wall put the horsebox's lamps up by its
+roofline.
+
+The verifier gained an enclosed mode rather than exemptions. Wall THICKNESS is still the truck bed's in
+every class; HEIGHT is only the truck's for the open ones, and for an enclosed class the binding
+relationship is that the wall ends exactly at the roof's mid-height. Two mutations needed swapping for
+it: raising the truck bed's wall is not a mutation for a class whose height comes from the ambulance,
+and a band check ("wall top anywhere inside the roof") was loose enough that a 100 mm wall move stayed
+inside it. The audit caught both surviving.
+
+**282 named checks, 1149 mutations**, over five classes.
+
+## Tenth pass: the rake reverted, taller, and a tapered sibling
+
+strawberry: *"revert to the previous version, make it taller, then dupe another one and have the front
+slope inwards on both sides at the front end like an animal trailer/horsebox"*.
+
+The raked-nose commit is reverted — `horsebox_trailer` is the plain enclosed box again. **Taller:**
+`roof_ref` moves from the ambulance to the **bus**, the tallest enclosed body in the fleet, so the roof
+tops out at **2.775** against 2.375 and the walls run 2.548.
+
+**`animal_trailer` is the dupe**, identical in every dimension, with the front tapering in PLAN — the
+sides converge toward the nose — where the reverted version leaned back in elevation.
+
+Both taper numbers are measured, and they come from different places for a reason. **Every** road body
+in the fleet narrows to the same **41.5%** of its half-width at its front face — van, bus, truck, Ural,
+firetruck, sedan and Golf all agree — so that fraction is a fleet constant, not one donor's quirk. What
+the donor supplies is how far back the taper runs: the ambulance is the only body whose nose is a real
+taper (2.104 m) rather than a 67 mm corner chamfer, and **39.3%** of its own length is what scales.
+Nose half-width **0.643** from 1.550, over a **2.363** run.
+
+**A bent strip is not a prism.** A tapered sideboard is a strip that changes direction, which is
+non-convex in plan, and `prism()`'s cap is a triangle fan from one vertex. Splitting it into two convex
+prisms makes them share a face, which `save()` welds into an edge carrying four triangles. It is built
+as a chain of cells with the seams unemitted, and each cell winds against **its own** centroid: a bent
+strip's overall centroid sits in the empty air inside the bend, so "away from the centre" is the wrong
+test there and produced the same 12 bad edges by a different route.
+
+Three checks had to stop using bounding boxes, all for the same reason. Sideboard **thickness** is
+measured at the tailgate end, because a tapered side's AABB spans from its outer face at the rear to
+its inner face at the nose and reports the whole taper as thickness. The **gates** span the sideboards'
+inner faces *at their own end*, not the sides' global bounds. And the taper itself gets a check that
+reads the outer face at two Z planes, with a `square the nose off` mutation — because, exactly as with
+the rake, `group_bounds()` on a tapered wall returns the rectangle it would return untapered, and every
+other check in the file passes the flat version unchanged.
+
+**340 named checks, 1382 mutations**, over six classes.
+
+### Correction within the tenth pass: the drawbar was hanging outside the nose
+
+strawberry: *"adjust the hitch arm front stuff to fit the new shape of the horse trailer"*.
+
+The drawbar beams splayed to a fixed `w - 2t` = **1.450**, which is a point on the sideboard of a
+straight-sided trailer and thin air on a tapered one. At the attach Z the animal trailer is **1.220**
+half-wide, so both beams stood **230 mm proud** of the panel they are supposed to be bolted to. They
+now land on `body_half(z) - 2t` — the body's actual outer width wherever the beam reaches it.
+
+**All 340 checks were green while that was true.** The collider checks verify each beam against its own
+collider, and the body checks verify the body; nothing looked at the two together. That gap now has a
+check of its own — the beam's outermost vertex against the sideboard's outer face at the beam's own Z,
+bounded from both sides so stopping short fails as loudly as poking out.
+
+It needed one fix on the way: reading the wall's outer face by snapping to the nearest vertex plane is
+fine on a straight wall and wrong on a tapered one, which only has vertices at its corners. A beam
+landing mid-taper snapped to whichever end was nearer and was reported 380 mm adrift of a body it was
+touching. It interpolates along the outline now.
+
+**346 named checks, 1394 mutations.**

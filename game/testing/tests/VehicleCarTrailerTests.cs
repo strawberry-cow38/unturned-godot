@@ -29,7 +29,7 @@ namespace UnturnedGodot.Testing
                 Vehicle.BuildByName("car_trailer").SpecKey == "dinky_trailer");
             // The three sizes occupy TypeIds 33/34/35 IN ORDER. SpecNames indices are replicated, so
             // an insert or a reorder silently rebuilds other people's vehicles as something else.
-            var order = new[] { "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer" };
+            var order = new[] { "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer", "horsebox_trailer", "animal_trailer" };
             T.Check("the trailers are appended after the SUV TypeId, in size order",
                 order.Select((n, i) => System.Array.IndexOf(Vehicle.SpecNames, n)
                                        == System.Array.IndexOf(Vehicle.SpecNames, "wagon") + 1 + i).All(ok => ok)
@@ -51,9 +51,22 @@ namespace UnturnedGodot.Testing
             // Off the BUILT bodies, not off the specs: the mesh is what a player sees, and it is the
             // thing that would silently stay the old size if the generator had not been re-run.
             Aabb Box(string k) { var v = Vehicle.BuildByName(k); return v.GetNode<MeshInstance3D>("Body").Mesh.GetAabb(); }
-            var boxes = order.Select(Box).ToArray();
-            T.Check("each size is longer and wider than the one below it",
-                boxes.Zip(boxes.Skip(1), (a, b) => b.Size.Z > a.Size.Z && b.Size.X > a.Size.X).All(ok => ok));
+            // The horsebox is the large's chassis with a roof on it, so it breaks the size ladder --
+            // same deck, taller box. Ordering applies to the four open sizes; the horsebox is checked
+            // against the large it is based on instead.
+            var open = order.Take(4).Select(Box).ToArray();
+            T.Check("each open size is longer and wider than the one below it",
+                open.Zip(open.Skip(1), (a, b) => b.Size.Z > a.Size.Z && b.Size.X > a.Size.X).All(ok => ok));
+            Aabb bl = Box("large_trailer"), bh = Box("horsebox_trailer"), ba = Box("animal_trailer");
+            T.Check("horsebox is the large's deck, enclosed and taller",
+                Mathf.Abs(bh.Size.Z - bl.Size.Z) < 0.001f && Mathf.Abs(bh.Size.X - bl.Size.X) < 0.001f
+                && bh.Size.Y > bl.Size.Y + 1f);
+            // The animal trailer shares the horsebox's envelope exactly -- same deck, same roof. What
+            // differs is INSIDE the bounding box, so an AABB comparison cannot tell them apart and
+            // must not be asked to: the taper is checked on the mesh by verify_car_trailer.py.
+            T.Check("animal trailer shares the horsebox envelope",
+                Mathf.Abs(ba.Size.Z - bh.Size.Z) < 0.001f && Mathf.Abs(ba.Size.X - bh.Size.X) < 0.001f
+                && Mathf.Abs(ba.Size.Y - bh.Size.Y) < 0.001f);
             // The two WIDE classes carry their wheels UNDER the deck, so their floors have to clear the
             // tyre. A box that merely got wider without rising would put the wheel through its own
             // floor -- which is the whole cost of removing the width limit, and worth a tripwire.
