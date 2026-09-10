@@ -219,7 +219,12 @@ namespace UnturnedGodot
         /// the two rips can coexist while the 170 are converted.</summary>
         static int AttachHeldParts(Node3D att, string meshName, StandardMaterial3D mat)
         {
-            string tsv = $"res://content/{meshName}_parts.tsv";
+            // ⚠ ConsumableMesh carries its EXTENSION ("bag_chips.txt") -- EquipHeldConsumable sets it that way and
+            // ParseObj wants it. Building the sidecar name off it verbatim asked for "bag_chips.txt_parts.tsv",
+            // which never exists, so this returned 0 and fell back to the old single mesh WITHOUT A WORD. That is
+            // why the parts appeared to do nothing in game while everything built green.
+            string stem = meshName.EndsWith(".txt") ? meshName[..^4] : meshName;
+            string tsv = $"res://content/{stem}_parts.tsv";
             if (!Godot.FileAccess.FileExists(tsv)) return 0;
             using var f = Godot.FileAccess.Open(tsv, Godot.FileAccess.ModeFlags.Read);
             if (f == null) return 0;

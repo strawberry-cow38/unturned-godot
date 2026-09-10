@@ -1716,7 +1716,7 @@ namespace UnturnedGodot
                 : isFuel
                 ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
                 : isConsumable   // ⚠ BEFORE isMelee: a consumable ships <name>.txt too, so isMelee would swallow every food
-                ? new Viewmodel { ConsumableMesh = gunName, ConsumableAlbedo = $"{gunName}_albedo.png",
+                ? new Viewmodel { ConsumableMesh = $"{gunName}.txt", ConsumableAlbedo = $"{gunName}_albedo.png",   // .txt, EXACTLY as EquipHeldConsumable builds it -- a harness that passes a different shape can pass while the game fails
                                   ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip }   // food/drink/med: its OWN CE_n/CU_n, and (since b5d2b4f3) its equipable's real parts
                 : isMelee
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
