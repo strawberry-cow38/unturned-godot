@@ -214,7 +214,16 @@ def build():
             (hx-d['head_length']*.70, poll-d['head_height']*.55),
             (hx+d['head_length']*.18, poll),
             (-L*.27, H-depth*.22)]
-    prism('neck', neck, lambda x, y: d['head_width']+(x-hx)/(-L*.27-hx)*(W*.75-d['head_width']), 'Skull')
+    # CLAMPED at head_width. The sweep tapers the neck from the shoulder forward, and past hx it kept
+    # right on tapering -- 0.126 m at the head end against the head's 0.29 -- so a wide head met a narrow
+    # neck and you saw the step, however deeply the two interpenetrated. Seating it fixed the gap and not
+    # the SILHOUETTE (strawberry: "it still looks like a separate component"). Holding the forward half
+    # at head width makes the neck run into the head as one mass.
+    # ...at .92 of head width, NOT flush at 1.0. Flush makes the neck's side faces coplanar with the
+    # head's, which fails the buried-root rule for a real reason -- coplanar faces z-fight. .92 leaves
+    # ~6 mm of clearance a side on a 290 mm head: invisible, and the cap stays strictly inside.
+    prism('neck', neck, lambda x, y: max(d['head_width']*.92,
+                                         d['head_width']+(x-hx)/(-L*.27-hx)*(W*.75-d['head_width'])), 'Skull')
     for i in range(*parts['neck']):
         if any(np.allclose(rig['positions'][i][:2], a, atol=1e-7) for a in (neck[0], neck[4])):
             rig['skin_index'][i] = [slots['Spine'], slots['Skull']]
@@ -232,7 +241,11 @@ def build():
              (center[0]+delta[0],center[1]+delta[1],0),
              (center[0],center[1],-d['eye'])]
     # profile is counterclockwise; edge 1 is the sloping forehead.
-    prism('head', head, d['head_width'], 'Skull', 1,
+    # BASE COLOUR 0 -- the body/neck brown, not palette 1. The head was drawn entirely in the warm
+    # muzzle texel, which is most of why it read as a bolted-on part regardless of geometry
+    # (strawberry: "unify the head-body color"). Palette 1 now covers only edges 2 and 3, the muzzle
+    # front and the lower jaw, which is the marking a bay horse actually has.
+    prism('head', head, d['head_width'], 'Skull', 0, edge_colors={2: 1, 3: 1},
           inlays={**eyes, 1: dict(inset=blaze, inset_color=3)})
     # Thin mane follows the rear crest; it is a solid prism, not a billboard.
     # The mane straddles the neck crest, and it must sit DEEP enough to stay buried when the head turns:
