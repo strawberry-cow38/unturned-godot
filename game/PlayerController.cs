@@ -523,6 +523,7 @@ namespace UnturnedGodot
         ElevatorButton _focusElevButton;   // the elevator floor-BUTTON being LOOKED AT -> F calls the car to that floor
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldPaintItem; // a vehicle spraypaint in hand -> LMB the car you are aimed at to respray it
+        SDG.Unturned.Item _heldCarjackItem;  // the Carjack (277) in hand -> LMB an EMPTY car to launch + spin it back onto its wheels
         SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
         // Fishing (UseableFisher port): a rod in hand -> hold LMB to charge the cast gauge, release to fling the
         // bobber into water, a fish bites, press LMB in the window to land it. _fishing owns the state/timing sim.
@@ -2147,7 +2148,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable/optic/throwable (not a layer). The ClearHeldOptic() used to sit INSIDE this comment, so it never ran: binoculars -> a melee left _heldOptic set, and LMB cycled a dead zoom instead of swinging (the same paste lost it in EquipHeldGun).
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable/optic/throwable (not a layer). The ClearHeldOptic() used to sit INSIDE this comment, so it never ran: binoculars -> a melee left _heldOptic set, and LMB cycled a dead zoom instead of swinging (the same paste lost it in EquipHeldGun).
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -2256,7 +2257,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f; _heldSlotPage = -1; _heldPage = -1;   // holding nothing -> no grid address to rebind to
@@ -2323,6 +2324,7 @@ namespace UnturnedGodot
             var tool = ToolDef.ById(asset.id);
             if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
             if (VehiclePaints.Is(asset.id)) { EquipHeldSpraypaint(asset, backing); return true; }   // a vehicle spraypaint -> hold it, LMB the car you are aimed at
+            if (asset.id == CarjackItemId) { EquipHeldCarjack(asset, backing); return true; }   // the carjack -> hold it, LMB an empty car to flip it
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
             if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }
             if (asset.type == EItemType.OPTIC) { EquipHeldOptic(asset, backing); return true; }   // binoculars -> raised at once, LMB cycles the zoom   // a fishing rod -> hold it, LMB casts (UseableFisher)
@@ -2338,7 +2340,7 @@ namespace UnturnedGodot
         {
             SaveGunState(); ClearDeployable();
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
-            _heldFluidItem = null; _heldFuelItem = null; _heldPaintItem = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldFluidItem = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldPaintItem = backing;
@@ -2349,7 +2351,47 @@ namespace UnturnedGodot
             Log.Print($"[paint] holding {asset.itemName} -- aim at a vehicle and LMB to respray it");
         }
 
-        void ClearHeldSpraypaint() => _heldPaintItem = null;
+        void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; }
+
+        /// <summary>Retail item 277. Held like the spraypaint and the gas can -- no carry model in the rip, so
+        /// the hands are empty and the mechanic is the point.</summary>
+        public const ushort CarjackItemId = 277;
+
+        public void EquipHeldCarjack(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldFluidItem = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; ClearHeldOptic(); ClearHeldThrowable();
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldCarjackItem = backing;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            Log.Print($"[carjack] holding {asset.itemName} -- LMB an EMPTY vehicle to jack it");
+        }
+
+        /// <summary>LMB with the carjack on an empty vehicle: launch and spin it (source UseableCarjack ->
+        /// VehicleManager.carjackVehicle). The jack is NOT consumed -- it is a tool, and retail keeps it.
+        ///
+        /// ⚠ SP ONLY for now, and flagged rather than silently local: on a server the vehicle is the server's
+        /// and this impulse would be overwritten by the next authoritative transform. It needs a command like
+        /// the respray got, which belongs in one batched wire wave with the tire work rather than its own
+        /// bump -- the plan's never-bump-per-gap rule.</summary>
+        void TryCarjack()
+        {
+            if (_heldCarjackItem == null) return;
+            if (!IsInstanceValid(_focusVehicle)) { Log.Print("[carjack] aim at a vehicle"); return; }
+            bool flight = false;   // source: the FLIGHT skill boost quadruples the lift. No boost system here yet.
+            if (!_focusVehicle.Carjack(flight))
+            {
+                Log.Print(_focusVehicle.IsWreck ? "[carjack] that is a wreck" : "[carjack] somebody is in it");
+                return;
+            }
+            GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), _focusVehicle.GlobalPosition, -3f, 6f, 40f);
+            Log.Print($"[carjack] jacked {_focusVehicle.DisplayName}");
+        }
 
         /// <summary>LMB with a spraypaint, aimed at a vehicle: respray it and spend the can.
         ///
@@ -2417,7 +2459,7 @@ namespace UnturnedGodot
         public void EquipHeldFisher(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();   // ClearDeployable tears down any prior rod/line before we set up the new one
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFisherItem = backing;
@@ -2474,7 +2516,7 @@ namespace UnturnedGodot
         public void EquipHeldOptic(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable(); ClearFisher(); ClearHeldOptic(); ClearHeldThrowable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldOptic = asset; _heldOpticItem = backing; _opticZoomIdx = 0; _opticLensesDone = false; _opticBaseFov = _cam?.Fov ?? 75f;
@@ -2559,7 +2601,7 @@ namespace UnturnedGodot
             if (HoldingThrowable && _heldThrowable.id == asset.id && _viewmodel != null && IsInstanceValid(_viewmodel))
             { _heldThrowableItem = backing; return; }
             ClearDeployable(); ClearFisher(); ClearHeldOptic(); ClearHeldThrowable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldThrowable = asset; _heldThrowableItem = backing;
@@ -2911,7 +2953,7 @@ namespace UnturnedGodot
         public void EquipHeldFluidContainer(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFluidItem = backing;
@@ -3171,7 +3213,7 @@ namespace UnturnedGodot
                 Consume(_heldConsumable, eatenQuality, eaten?.cooked ?? 0, (ECookStyle)(eaten?.cookStyle ?? 0));   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 Log.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; ClearHeldOptic(); ClearHeldThrowable();   // one use per item: this one leaves the hand + is deleted (master). THIRD site where ClearHeldOptic() was swallowed by this trailing // comment (cow tools spotted this one); harmless in practice because you cannot be holding an optic while eating, but a call that only LOOKS present is exactly what made the gun and melee sites wrong. A sweep of game/ + core/ for the same shape found no others.
+                _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; ClearHeldOptic(); ClearHeldThrowable();   // one use per item: this one leaves the hand + is deleted (master). THIRD site where ClearHeldOptic() was swallowed by this trailing // comment (cow tools spotted this one); harmless in practice because you cannot be holding an optic while eating, but a call that only LOOKS present is exactly what made the gun and melee sites wrong. A sweep of game/ + core/ for the same shape found no others.
                 int left;
                 if (NetConsume != null)
                 {
@@ -3237,7 +3279,7 @@ namespace UnturnedGodot
             SaveGunState();
             ClearFisher();   // this equip path sets _deployable directly (doesn't go through ClearDeployable) -> reel in the rod here
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -3268,7 +3310,7 @@ namespace UnturnedGodot
             SaveGunState();
             bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : HoldingWireTool;
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
@@ -6406,7 +6448,7 @@ namespace UnturnedGodot
             // you rather than deleting them (strawberry: "irons are their own item and can be installed across
             // weapons"). Only fills an UNSET slot, so it never overwrites what the player fitted.
             if (backingItem != null) AttachmentFit.SeedDefaults(backingItem, SDG.Unturned.Assets.find(backingItem.id)?.itemName);
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // equipping a gun REPLACES the held consumable/melee/deployable/optic/throwable (not a layer) -- master. ClearHeldOptic() was inside this comment and never ran: binoculars -> a rifle left _heldOptic set, and LMB cycled the dead zoom instead of FIRING.
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable(); ClearHeldOptic(); ClearHeldThrowable();   // equipping a gun REPLACES the held consumable/melee/deployable/optic/throwable (not a layer) -- master. ClearHeldOptic() was inside this comment and never ran: binoculars -> a rifle left _heldOptic set, and LMB cycled the dead zoom instead of FIRING.
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };
             AddChild(_viewmodel);
@@ -6765,6 +6807,7 @@ namespace UnturnedGodot
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldPaintItem != null) TrySprayVehicle();     // holding a spraypaint: LMB resprays the vehicle you're aimed at
+                else if (_heldCarjackItem != null) TryCarjack();        // holding the carjack: LMB launches the empty car you're aimed at
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
                 else if (HoldingFisher) FisherPrimary();                // holding a rod: LMB press starts the cast gauge / lands the fish on the bite (UseableFisher.startPrimary)
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)

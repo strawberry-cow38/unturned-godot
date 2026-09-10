@@ -944,6 +944,42 @@ namespace UnturnedGodot
         Material _paintMat; Color _paint = Colors.White;
         public Color PaintColor => _paint;
 
+        // ---- CARJACK (source UseableCarjack + VehicleManager.carjackVehicle) --------------------------------
+        /// <summary>Retail's jack launches an EMPTY vehicle and spins it, which is how you get a car back onto
+        /// its wheels (and how you put one on a roof). Source vectors, exactly:
+        ///   force  = (Random(-32,32), Random(480,544) * (FLIGHT boost ? 4 : 1), Random(-32,32))
+        ///   torque = (Random(-64,64), Random(-64,64), Random(-64,64))
+        /// applied with Rigidbody.AddForce/AddTorque -- DEFAULT ForceMode.Force, so one physics step's worth.
+        ///
+        /// THE CONVERSION IS DERIVED, NOT GUESSED. Retail gives every vehicle rigidbody mass 2.0 (see
+        /// GlobalMass), so its actual velocity change is force/2 * 0.02 = force * 0.01 -- about 5 m/s upward,
+        /// which is the launch you see in game. The port runs REAL kerb masses (900 default, 1700 for a
+        /// sedan), so reproducing that same 5 m/s needs an impulse of force * 0.01 * ourMass. Take retail's
+        /// number as an impulse directly and a 1700 kg car would twitch 0.3 m/s and the feature would read as
+        /// broken.
+        ///
+        /// ⚠ The SPIN is the same conversion against a different quantity: retail's inertia tensor is not
+        /// ours (mass 2.0 on a car-sized box), so the torque is scaled by mass alone and the resulting
+        /// tumble is in the right spirit rather than frame-accurate.</summary>
+        public const float CarjackRetailMass = 2f;      // source Rigidbody.mass for every vehicle
+        public const float CarjackStepSeconds = 0.02f;  // Unity's fixed step -- AddForce is one step of it
+
+        public bool Carjack(bool flightBoost, System.Random rng = null)
+        {
+            if (IsWreck) return false;
+            if (OccupiedSeats.Count > 0) return false;   // source: !vehicle.isEmpty -> refused. You cannot jack an occupied car.
+            rng ??= new System.Random();
+            float R(float a, float b) => a + (float)rng.NextDouble() * (b - a);
+
+            var force = new Vector3(R(-32f, 32f), R(480f, 544f) * (flightBoost ? 4f : 1f), R(-32f, 32f));
+            var torque = new Vector3(R(-64f, 64f), R(-64f, 64f), R(-64f, 64f));
+            float k = CarjackStepSeconds / CarjackRetailMass * Mass;   // retail's dv, re-expressed as OUR impulse
+
+            ApplyCentralImpulse(force * k);   // Vehicle IS a VehicleBody3D, which is a RigidBody3D
+            ApplyTorqueImpulse(torque * k);
+            return true;
+        }
+
         /// <summary>Respray it. Retail's spraypaint sets the vehicle's paint colour, which the shader reads as
         /// `paint_color` over the body palette -- so only the texels the artist marked paintable change, and
         /// the livery, glass and trim stay exactly as they were.</summary>
