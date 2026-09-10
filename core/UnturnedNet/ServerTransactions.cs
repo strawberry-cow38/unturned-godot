@@ -517,10 +517,26 @@ namespace UnturnedGodot.Net
         void OnPlaceDeployable(ushort sender, PlaceDeployableCommand cmd)
         {
             var inv = SenderInventory(sender);
+            // READ THE CONDITION BEFORE SPENDING IT. The jar is about to be decremented or removed, and its
+            // quality/fuelLevel are what a picked-up device carried here -- so they have to come off it first.
+            // This is only possible because the command now names the jar: with an id search there was no
+            // "the one you are holding" to read.
+            float? placeHealth = null, placeFuel = null;
+            if (cmd.Page < PlayerInventory.PAGES && inv != null)
+            {
+                var srcPage = inv.items[cmd.Page];
+                byte si = srcPage?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+                var srcJar = si == byte.MaxValue ? null : srcPage.getItem(si);
+                if (srcJar?.item != null && srcJar.item.id == cmd.DefId && _deployables.Schema.TryGet(cmd.DefId, out var sdef))
+                {
+                    if (sdef.Health > 0f) placeHealth = sdef.Health * srcJar.item.quality / 100f;
+                    if (srcJar.item.fuelLevel >= 0f) placeFuel = srcJar.item.fuelLevel;
+                }
+            }
             // Spend the jar the client named. It carries the address as of v-this-commit; page 255 (or an address
             // that no longer holds the id) falls back to the old id search.
             if (!SpendAt(inv, cmd.Page, cmd.X, cmd.Y, cmd.DefId, sender)) SpendAnyOf(inv, cmd.DefId, sender);
-            var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick());
+            var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick(), placeHealth, placeFuel);
             if (e == null) return;
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
             // what the client stamps onto the materialized crate and what its F-open addresses. So the whole
