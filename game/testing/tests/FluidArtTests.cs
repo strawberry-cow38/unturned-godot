@@ -172,8 +172,10 @@ namespace UnturnedGodot.Testing
                     var handle=c.GetNode<MeshInstance3D>("ValveHandle");
                     c.ToggleValve();c.HubTick(.1);
                     T.Check("valve handle moves through an intermediate angle",c.DebugValveAngle>0 && c.DebugValveAngle<FluidContainer.ValveTravel);
-                    // wind it the rest of the way: a real gate valve is ~2.5 turns and takes ~1.1 s,
-                    // where the old quarter turn was done in 0.2 s. Flow stops on the toggle either way.
+                    // Wind it the rest of the way. ValveTicks is DERIVED from FluidContainer.ValveSeconds rather
+                    // than a count sized for whatever the animation took the day this was written, so the half-turn
+                    // change (5*Pi -> Pi over 1.5 s, strawberry 2026-09-10) needed nothing here. Flow stops on the
+                    // toggle either way -- the wind is cosmetic, the block is not.
                     for(int i=0;i<ValveTicks;i++)c.HubTick(.1);float before=outputs[0].Tank.Amount;
                     for(int i=0;i<10;i++)FluidNet.Tick(Tree,.1f);
                     T.Check("closed valve stops real flow and winds fully shut",Mathf.Abs(outputs[0].Tank.Amount-before)<.001f && Mathf.Abs(c.DebugValveAngle-FluidContainer.ValveTravel)<.001f);
