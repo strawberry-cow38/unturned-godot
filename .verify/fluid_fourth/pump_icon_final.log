@@ -1,0 +1,3 @@
+  WARNING Godot pid 1694340 has run 10739m at 101% cpu and is competing for cores with this render.
+          If it is a leftover it is safe to kill; CHECK FIRST -- this box is shared, and a long test run looks the same from here.
+  OK      fluidicon: /home/ec2-user/ug-fluidio-wt/game/content/items/icons/9114.png  (256x256, 32kb, 17s)

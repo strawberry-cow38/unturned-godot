@@ -193,91 +193,110 @@
       ]
     ],
     "part": [
-      -0.005,
-      0.6,
-      0
+      -0.38,
+      0.92,
+      -0.66
     ],
     "partRot": [
+      90,
       0,
-      0,
-      -90
+      0
     ],
     "portX": 0.8,
     "portY": 0.6,
     "mesh": {
       "file": "9114_preview.txt",
-      "vertices": 852,
-      "triangles": 1540,
+      "vertices": 940,
+      "triangles": 1660,
       "min": [
         -0.98,
         0,
-        -0.41
+        -1.27
       ],
       "max": [
         0.98,
-        1.37,
-        0.56
+        1.38,
+        0.403464
       ],
       "groups": {
+        "axial_suction": 236,
         "bearing_foot": 12,
         "bearing_housing": 28,
         "bedplate": 12,
         "coupling": 28,
-        "coupling_guard": 260,
+        "coupling_guard": 80,
         "coupling_key": 12,
         "cover_bolt": 120,
         "drive_shaft": 20,
+        "electrical_panel": 12,
         "hose_fitting": 112,
         "motor": 28,
         "motor_fan_cover": 28,
         "motor_feet": 24,
         "motor_fin": 160,
-        "power_gland": 12,
-        "rear_terminals": 12,
+        "panel_contact_off": 20,
+        "panel_contact_on": 20,
+        "panel_contact_power": 20,
+        "panel_face": 12,
+        "panel_off_mark": 64,
+        "panel_on_mark": 12,
+        "panel_power_mark": 60,
+        "panel_screw": 80,
+        "panel_socket_off": 12,
+        "panel_socket_on": 12,
+        "panel_socket_power": 12,
+        "panel_stand": 24,
         "skids": 24,
         "spiral_volute": 50,
         "suction_cover": 28,
-        "tangential_discharge": 476,
-        "terminal_box": 12,
-        "terminal_stand": 20,
+        "tangential_discharge": 236,
         "volute_face": 50,
         "volute_pedestal": 12
       }
     },
     "lod1": {
       "file": "9114_preview_lod1.txt",
-      "vertices": 424,
-      "triangles": 740,
+      "vertices": 524,
+      "triangles": 900,
       "min": [
         -0.98,
         0,
-        -0.41
+        -1.27
       ],
       "max": [
         0.98,
-        1.37,
-        0.56
+        1.38,
+        0.403464
       ],
       "groups": {
+        "axial_suction": 104,
         "bearing_foot": 12,
         "bearing_housing": 20,
         "bedplate": 12,
         "coupling": 20,
-        "coupling_guard": 140,
+        "coupling_guard": 80,
         "coupling_key": 12,
         "drive_shaft": 20,
+        "electrical_panel": 12,
         "hose_fitting": 64,
         "motor": 20,
         "motor_fan_cover": 20,
         "motor_feet": 24,
-        "power_gland": 12,
-        "rear_terminals": 12,
+        "panel_contact_off": 20,
+        "panel_contact_on": 20,
+        "panel_contact_power": 20,
+        "panel_face": 12,
+        "panel_off_mark": 64,
+        "panel_on_mark": 12,
+        "panel_power_mark": 60,
+        "panel_socket_off": 12,
+        "panel_socket_on": 12,
+        "panel_socket_power": 12,
+        "panel_stand": 24,
         "skids": 24,
         "spiral_volute": 26,
         "suction_cover": 20,
-        "tangential_discharge": 212,
-        "terminal_box": 12,
-        "terminal_stand": 20,
+        "tangential_discharge": 104,
         "volute_face": 26,
         "volute_pedestal": 12
       }
@@ -285,15 +304,15 @@
     "boundsMin": [
       -0.98,
       0,
-      -0.41
+      -1.27
     ],
     "boundsSize": [
       1.96,
-      1.38,
-      0.97
+      1.39,
+      1.673464
     ],
-    "offset": 0.69,
-    "radius": 0.485
+    "offset": 0.695,
+    "radius": 0.5
   },
   "9115": {
     "name": "Valve",
@@ -333,8 +352,8 @@
     "portY": 0.6,
     "mesh": {
       "file": "9115_preview.txt",
-      "vertices": 344,
-      "triangles": 600,
+      "vertices": 480,
+      "triangles": 832,
       "min": [
         -0.68,
         0,
@@ -348,16 +367,25 @@
       "groups": {
         "base": 12,
         "bonnet": 28,
+        "electrical_panel": 12,
         "flange": 56,
         "handle_hub": 28,
         "handle_rim": 96,
         "handle_spoke": 60,
         "hose_fitting": 88,
+        "panel_blank_power": 12,
+        "panel_contact_off": 20,
+        "panel_contact_on": 20,
+        "panel_face": 12,
+        "panel_mount": 12,
+        "panel_off_mark": 64,
+        "panel_on_mark": 12,
+        "panel_screw": 80,
+        "panel_socket_off": 12,
+        "panel_socket_on": 12,
         "pedestal": 12,
         "seated_boss": 104,
         "stem": 12,
-        "trigger_housing": 24,
-        "trigger_support": 12,
         "valve_body": 28,
         "valve_pipe": 20,
         "yoke": 20
@@ -365,8 +393,8 @@
     },
     "lod1": {
       "file": "9115_preview_lod1.txt",
-      "vertices": 204,
-      "triangles": 340,
+      "vertices": 292,
+      "triangles": 492,
       "min": [
         -0.68,
         0,
@@ -380,14 +408,22 @@
       "groups": {
         "base": 12,
         "bonnet": 20,
+        "electrical_panel": 12,
         "flange": 40,
         "handle": 20,
         "hose_fitting": 40,
+        "panel_blank_power": 12,
+        "panel_contact_off": 20,
+        "panel_contact_on": 20,
+        "panel_face": 12,
+        "panel_mount": 12,
+        "panel_off_mark": 64,
+        "panel_on_mark": 12,
+        "panel_socket_off": 12,
+        "panel_socket_on": 12,
         "pedestal": 12,
         "seated_boss": 88,
         "stem": 12,
-        "trigger_housing": 24,
-        "trigger_support": 12,
         "valve_body": 20,
         "valve_pipe": 20,
         "yoke": 20
@@ -618,8 +654,8 @@
     "portY": 0.975,
     "mesh": {
       "file": "9121_body.txt",
-      "vertices": 204,
-      "triangles": 360,
+      "vertices": 332,
+      "triangles": 568,
       "min": [
         -1.03,
         0,
@@ -634,16 +670,23 @@
         "base": 12,
         "cabinet_hood": 12,
         "control_cabinet": 12,
+        "electrical_panel": 12,
         "filter": 88,
         "filter_clamp": 112,
         "hose_fitting": 112,
-        "power_gland": 12
+        "panel_blank_off": 12,
+        "panel_blank_on": 12,
+        "panel_contact_power": 20,
+        "panel_face": 12,
+        "panel_power_mark": 60,
+        "panel_screw": 80,
+        "panel_socket_power": 12
       }
     },
     "lod1": {
       "file": "9121_body_lod1.txt",
-      "vertices": 104,
-      "triangles": 176,
+      "vertices": 184,
+      "triangles": 304,
       "min": [
         -1.03,
         0,
@@ -658,9 +701,15 @@
         "base": 12,
         "cabinet_hood": 12,
         "control_cabinet": 12,
+        "electrical_panel": 12,
         "filter": 64,
         "hose_fitting": 64,
-        "power_gland": 12
+        "panel_blank_off": 12,
+        "panel_blank_on": 12,
+        "panel_contact_power": 20,
+        "panel_face": 12,
+        "panel_power_mark": 60,
+        "panel_socket_power": 12
       }
     },
     "boundsMin": [
