@@ -184,3 +184,83 @@ Byte comparisons against `git show 91874f30:<path>` are identical for all three 
 SECOND_PASS_RESULTS_PENDING
 
 **Not verified:** continuous-time closure between the sampled instants, every possible view of every clip, a complete self-intersection analysis of every deformed triangle, continuous world animation, slopes, death/ragdoll, or a live remote multiplayer session. The audit proves closure and attachment at its sampled poses; it does not certify subjective anatomy. The fixed deer bones still impose simple leg swings and stretched triangles near the anchored roots. The neck remains visibly faceted, and overlapping solids retain some intersection/shading seams. These limitations are not being called a smooth articulated horse. No live-server checkout was read or written, and nothing was pushed.
+
+---
+
+# Passes 2 and 3 — holes, seating, and why the model still read as parts
+
+Astra did pass 2's geometry and hit its usage limit before committing or writing this up; passes 2 and 3
+were verified and finished by tinyclaw. Commits `6bf28507`, `ea069f86`, `697eccc8`.
+
+## The instrument was wrong before the model was
+
+`verify_horse_rig.py` printed `topology PASS` on the model strawberry called holed. Its "topology" was
+index bounds, `faces % 3`, skin/bone bounds, unit normals, non-degenerate triangles and winding — **no
+closure test at all**. An open solid, a leg hovering under the barrel and a face left out of a fan all
+passed every assertion in the file.
+
+`tools/audit_animal_geometry.py` replaced it, modelled on the fluid set's per-solid audit: split into
+connected components, require each closed **on its own** (these are deliberately overlapping solids, so
+watertight-as-one-surface would flag every correct joint), plus posed seams and attachment overlap.
+
+**Run against deer, pig and cow first.** They came back 0 findings, which is what licensed believing the
+horse's 25 — an audit that flags the house standard is broken, not insightful.
+
+## What it found, and the number that had been there all along
+
+Pass 2's 25 findings are in `HORSE_AUDIT_BEFORE.json`. The mane had **no volume overlap with the neck in
+all seven clips** — floating — and `Left_Front -> body` showed an exposed attachment root under `Run`.
+
+Then strawberry, on the 0-findings result: *"the head isnt attached properly, big gaps."*
+
+The audit was already computing penetration depth per joint per pose and testing it only against `== 0`:
+
+| joint | depth |
+|---|---|
+| `head -> neck` | **0.00062 m** — 0.6 mm, on a 0.64 m head |
+| `tail -> body` | 0.00004 m |
+| `mane -> neck` | 0.00004 m mid-`Glance` |
+| `Left_Front -> body` | 0.08180 m |
+| `neck -> body` | 0.13155 m |
+
+Two orders of magnitude below every joint anyone was happy with, and passing, because it was not
+literally zero. The rule is now a flat 1 mm — **after** a proportional version was written and thrown
+away for firing on `neck -> body` at 24 mm during `Eat`, which is a neck legitimately bending.
+
+## Two rounds fixing what was measured instead of what was visible
+
+Seating the head, tail and mane closed the gaps and strawberry's next message was *"unify the head-body
+color. and actually ATTACH the head. it still looks like a separate component."* Both causes were
+outside anything the audit measures:
+
+- **Colour.** `prism('head', ..., 1)` drew the entire head in palette texel 1, the warm muzzle brown,
+  against texel 0 for body and neck. Texel 1 now covers only the muzzle front and lower jaw.
+- **Silhouette.** The neck's linear width sweep did not stop at the head junction and reached 0.126 m
+  against the head's 0.29 — a wide head on a narrow neck. Now clamped at `.92 * head_width`; not flush,
+  because flush makes the side faces coplanar and coplanar faces z-fight (the buried-root rule caught
+  that attempt in all eight poses).
+
+The audit answers *is this connected*. It says nothing about *does this read as one animal*, and two
+rounds were spent learning that on this model.
+
+## Teeth
+
+The first replacement rule — a buried-cap test for `neck -> head` — reported **0 findings on the broken
+geometry**. It proved nothing and was nearly shipped. The rule that replaced it goes **307 findings on
+the pre-fix model → 0 on this one**, naming all four joints.
+
+## State
+
+336 vertices / 188 triangles: triangles exactly at the fleet maximum, vertices 7 over it and inside the
+360 the verifier asserts. `deer_rig.json`, `pig_rig.json`, `cow_rig.json` and the fleet textures are
+byte-identical across all three commits.
+
+**Not verified:** live PEI streaming, slope behaviour, ragdoll.
+
+No L1 suite has been run against any of these three commits. `--all` ran 18:52–19:51 against the tree as
+it stood at `91874f30`, and its result carries a caveat I introduced: **astra was writing into the same
+worktree while it ran**, rebuilding the assembly at 19:09 mid-L1. The L1 host loads its assembly once at
+start, so its nine failures should be sound — and five have since been independently confirmed as real
+bugs with fixes — but the L2 visual stage started afterwards and ran against the newer build. Treat the
+ten visual failures as unattributed until re-run on a quiet tree. Running a sweep and an agent in one
+worktree is exactly what `dont_edit_under_a_running_sweep` says not to do.
