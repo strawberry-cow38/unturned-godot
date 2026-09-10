@@ -732,7 +732,12 @@ namespace UnturnedGodot
         // from three humps to two, so it is two taps in under half a second rather than three over one.
         const float SettleTime = 0.40f, SettleDeg = 3.5f;
         const float SettleTaps = 2f;         // half-cycles of |sin| across the settle = how many times it bumps
-        const double DebrisLife = 11.0;      // the fall got a second and a half longer, so this follows it: 9.0 was
+        // ⚠ NOT a const: tree.harvest shortens it. The rewards moved onto this timer on 2026-09-09 ("leave their
+        // wood where they landed" -- they have to wait for the tree to LAND, or they scatter from the stump along
+        // a fall direction nothing has chosen yet), and the test has asserted an immediate drop ever since. Making
+        // it settable lets the test drive the REAL timer quickly rather than assert past it: a seam that dropped
+        // the rewards directly would pass with this wiring removed entirely.
+        internal static double DebrisLife = 11.0;   // the fall got a second and a half longer, so this follows it: 9.0 was
                                             // set to leave ~3.8 s of the tree lying there after a 4.2 s fall, and
                                             // keeping that dwell is the point, not keeping the number
         bool _settling;
