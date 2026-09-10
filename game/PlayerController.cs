@@ -794,7 +794,12 @@ namespace UnturnedGodot
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
             }
-            if (hitFluid != _focusFluid) _focusFluid = hitFluid;   // no outline shader on fluid bodies -> just track it for hold-F pickup
+            if (hitFluid != _focusFluid)
+            {   // no outline shader on fluid bodies -- but the device's own billboard is look-gated off this
+                if (_focusFluid != null && IsInstanceValid(_focusFluid)) _focusFluid.SetLookFocused(false);
+                _focusFluid = hitFluid;
+                _focusFluid?.SetLookFocused(true);
+            }
             if (hitDoor != _focusDoor)
             {
                 if (IsInstanceValid(_focusDoor)) _focusDoor.SetLookFocused(false);
@@ -3045,6 +3050,19 @@ namespace UnturnedGodot
 
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
+
+        // TEST SEAMS for placement. The harness has no camera and no ground to aim at, so DebugArmPlace
+        // freezes the target the way a click does; DebugDeployTick then runs the REAL TickDeploy
+        // completion -- the same branch the game takes, including the item spend. Driving a copy of that
+        // block would test the copy. (strawberry 2026-09-10: fluid devices "arent consumed on place")
+        public void DebugArmPlace(Vector3 point, float yaw = 0f)
+        { _placePoint = point; _placeYaw = yaw; _placeNormal = Vector3.Up; _placeTimer = 0.001f; }
+        public void DebugDeployTick(float dt) => TickDeploy(dt);
+        public DeployableDef DebugHeldDeployable => _deployable;
+        public bool DebugPlacerActive => _placer != null;
+        public bool DebugNetPlaceWired => NetPlaceDeployable != null;
+        public float DebugPlaceTimer => _placeTimer;
+        public SDG.Unturned.Item DebugDeployBacking => _deployItem;
         // test seam: drive a held fluid-container sip from a headless test (no look-ray / focus needed)
         public void DebugDrinkContainer() => TryDrinkContainer();
 

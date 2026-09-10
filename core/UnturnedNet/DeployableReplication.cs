@@ -56,6 +56,19 @@ namespace UnturnedGodot.Net
         /// both ends agree from the content hash and nothing new rides the wire. A placed one registers with
         /// ServerCooking under the same NetId its crate uses.</summary>
         public byte CookerKind = 255;
+        /// <summary>A device the server VALIDATES and SPENDS for but never spawns a replica of -- fluid
+        /// devices and placeable doors, which are still materialized client-locally because each needs its
+        /// own materializer and that is being done one class at a time.
+        ///
+        /// They used to be left OUT of the schema entirely to get the same effect, and that was the bug:
+        /// the schema is not just the spawn table, it is the server's whole def table, so an absent id also
+        /// fails CanPlace -- which is the PlaceDeployable command's validator. The command was rejected
+        /// before OnPlaceDeployable could run, so the item was never spent, while the client had already
+        /// skipped its own local spend on the assumption the server would do it. Result: free deployables.
+        /// (strawberry 2026-09-10: "the fluid io deployables arent consumed on place.")
+        ///
+        /// Def-table only, never on the wire, like FixtureKind.</summary>
+        public bool LocalOnly;
     }
 
     /// <summary>Instance-scoped def registry (no static state -- test isolation for free).</summary>
@@ -421,6 +434,7 @@ namespace UnturnedGodot.Net
         public DeployableEntity ServerPlace(NetId id, ushort defId, ushort owner, Vector3 pos, float yawDegrees, long tick)
         {
             if (!Schema.TryGet(defId, out var def)) return null;
+            if (def.LocalOnly) return null;   // validated and spent, but the client materializes it itself
             var e = new DeployableEntity
             {
                 NetIdValue = id.Value,

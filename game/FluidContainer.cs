@@ -37,6 +37,18 @@ namespace UnturnedGodot
         public Vector3 PortLocalPos = new Vector3(0f, 0.7f, 0.55f);   // where a single-port tank's cube sits (front face); placement sets it per-face
         public float LastFlow;             // debug / fill-bar readout
         InfoBillboard _info;
+        // LOOK-GATED BILLBOARD (strawberry 2026-09-10: "make the billboards for all fluid io deployables
+        // only show when looking at them."). A fluid farm is a dozen devices in a small space, and every
+        // one of them was holding a name plate and a fill bar up permanently -- from any distance, through
+        // walls, all at once. PlayerController already resolves which device the look-ray is on for hold-F
+        // pickup; this rides the same signal rather than adding a second notion of "focused".
+        bool _lookFocused;
+        public void SetLookFocused(bool on)
+        {
+            if (_lookFocused == on) return;
+            _lookFocused = on;
+            if (_info != null) _info.Visible = on;
+        }
         StandardMaterial3D _valveHandleMat;   // ONLY the legacy primitive handle recolours; the authored wheel is red in both states
         MeshInstance3D _valveHandle;         // authored wheel and its lower LOD rotate together
         // THE ANGLE IS OURS, NOT THE NODE'S. Reading it back off Rotation.Y cannot work here: Godot
@@ -49,6 +61,10 @@ namespace UnturnedGodot
         MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump belt pulley: spins while DRIVING (powered + fluid flowing), and spins down when it stops
         internal const float PumpSpinRate = 9.0f;      // rad/s at full drive -- fast enough to read, slow enough not to strobe at 30 Hz
         internal const float ValveTravel = Mathf.Pi * 5f;   // 2.5 turns from open to shut, like a real gate valve
+        // Winding a gate valve is SLOW -- it is a hand crank on a threaded stem, not a light switch.
+        // 1.1 s still read as a flick (strawberry 2026-09-10: "slow down the valve animation by a lot").
+        // The flow gate is instant either way; this is only how long the wheel takes to catch up.
+        internal const float ValveSeconds = 4.5f;
 
         // True when the device is actively working and should animate (a powered pump with fluid moving through it).
         // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.
@@ -228,6 +244,7 @@ namespace UnturnedGodot
                     _info = new InfoBillboard { TopLevel = true };
                     AddChild(_info);
                     _info.SetActive(true);
+                    _info.Visible = _lookFocused;
                 }
                 return;
             }
@@ -257,6 +274,7 @@ namespace UnturnedGodot
                     _info = new InfoBillboard { TopLevel = true };
                     AddChild(_info);
                     _info.SetActive(true);
+                    _info.Visible = _lookFocused;
                 }
                 return;
             }
@@ -344,7 +362,7 @@ namespace UnturnedGodot
             // the colour no longer changes. ~2.5 turns over ~1.1 s, following manual and remote alike.
             if (_valveHandle != null)
             {
-                float next = Mathf.MoveToward(_valveAngle, Blocked ? ValveTravel : 0f, (float)delta * ValveTravel / 1.1f);
+                float next = Mathf.MoveToward(_valveAngle, Blocked ? ValveTravel : 0f, (float)delta * ValveTravel / ValveSeconds);
                 if (!Mathf.IsEqualApprox(next, _valveAngle))
                 {
                     _valveAngle = next;
@@ -369,7 +387,7 @@ namespace UnturnedGodot
                 }
                 else if (_pumpDrum.Position != _pumpDrumBase) _pumpDrum.Position = _pumpDrumBase;
             }
-            if (_info == null) return;
+            if (_info == null || !_lookFocused) return;   // hidden -> nothing to place or relabel
             _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar/status above the device (TopLevel node)
             if (Tank == null)   // a machine (pump/purifier/valve/refinery/sluice): show its name + at-a-glance status, no fill bar
             {

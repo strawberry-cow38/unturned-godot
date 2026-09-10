@@ -10,7 +10,11 @@ namespace UnturnedGodot.Testing
     public sealed class FluidArtTests : GameTest
     {
         public override string Name => "fluid.art_placements_and_flow";
-        public override double TimeoutSimSeconds => 30;
+        public override double TimeoutSimSeconds => 40;
+        // Wind the wheel all the way, DERIVED from the animation's own duration rather than a fixed count.
+        // It was 15 ticks when the travel was 1.1 s, and slowing the valve to 4.5 s (strawberry: "slow down
+        // the valve animation by a lot") silently left the test asserting a half-turned wheel.
+        static int ValveTicks => (int)(FluidContainer.ValveSeconds / .1f) + 4;
 
         // WHERE the ports are is now the art catalog's business: the four machines strawberry enlarged
         // carry their hose anchors further out, because their fittings deliberately did NOT grow with
@@ -131,7 +135,7 @@ namespace UnturnedGodot.Testing
                     T.Check("valve handle moves through an intermediate angle",c.DebugValveAngle>0 && c.DebugValveAngle<FluidContainer.ValveTravel);
                     // wind it the rest of the way: a real gate valve is ~2.5 turns and takes ~1.1 s,
                     // where the old quarter turn was done in 0.2 s. Flow stops on the toggle either way.
-                    for(int i=0;i<15;i++)c.HubTick(.1);float before=outputs[0].Tank.Amount;
+                    for(int i=0;i<ValveTicks;i++)c.HubTick(.1);float before=outputs[0].Tank.Amount;
                     for(int i=0;i<10;i++)FluidNet.Tick(Tree,.1f);
                     T.Check("closed valve stops real flow and winds fully shut",Mathf.Abs(outputs[0].Tank.Amount-before)<.001f && Mathf.Abs(c.DebugValveAngle-FluidContainer.ValveTravel)<.001f);
                     // RED IN BOTH STATES (strawberry: "change the valve handle to be red"). The wheel
@@ -141,10 +145,10 @@ namespace UnturnedGodot.Testing
                     powerSource=Deployable.Spawn(stage,DeployableDef.Generator,new Vector3(-3,0,-4),0);
                     var control=new Wire {Source=powerSource.Ports.Find(p=>p.Kind==DeployableDef.PortKind.Output),Consumer=((IPowerDevice)c).PowerPorts[0]};
                     stage.AddChild(control);control.AddToGroup("wires");powerSource.TogglePower();PowerNet.Recompute(Tree);
-                    c.HubTick(.03);for(int i=0;i<15;i++)c.HubTick(.1); // trigger state is applied after the base animation tick
+                    c.HubTick(.03);for(int i=0;i<ValveTicks;i++)c.HubTick(.1); // trigger state is applied after the base animation tick
                     for(int i=0;i<10;i++)FluidNet.Tick(Tree,.1f);
                     T.Check("wired OPEN trigger reopens, turns and resumes flow",outputs[0].Tank.Amount>before && Mathf.Abs(c.DebugValveAngle)<.001f && ((StandardMaterial3D)handle.MaterialOverride).Uv1Offset.X==0);
-                    control.Consumer=((IPowerDevice)c).PowerPorts[1];PowerNet.Recompute(Tree);c.HubTick(.03);for(int i=0;i<15;i++)c.HubTick(.1);
+                    control.Consumer=((IPowerDevice)c).PowerPorts[1];PowerNet.Recompute(Tree);c.HubTick(.03);for(int i=0;i<ValveTicks;i++)c.HubTick(.1);
                     T.Check("wired CLOSE trigger closes and turns the handle",c.Blocked && Mathf.Abs(c.DebugValveAngle-FluidContainer.ValveTravel)<.001f);
                 }
                 stage.QueueFree();yield return Ticks(2);
