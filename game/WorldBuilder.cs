@@ -1446,7 +1446,14 @@ namespace UnturnedGodot
                         // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
                         long _b0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
-                        body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
+                        // WHAT IT IS MADE OF, off the retail physic material on its own collider. The line
+                        // this replaces was `fmesh != null ? Wood : Concrete` -- "trees have foliage so they
+                        // are wood, everything else is concrete" -- against a world where 506 of the 1028
+                        // props that name a material are METAL. A chain-link fence rang like pavement.
+                        // The ternary survives as the fallback because it is right for exactly the props the
+                        // table has no row for: the resources, which live in a different bundle.
+                        body.SetMeta(PlayerController.SurfMeta,
+                                     (int)(PropSurfaces.For(name) ?? (fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete)));
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
                         // this meta, and reads the ladder's facing off the BODY's basis (retail keys off the
                         // collider's transform the same way). 76 of these are already placed across the map.

@@ -49,6 +49,7 @@ namespace UnturnedGodot
             Viewmodel.ClearCaches();
             GlassPane.ClearCaches();
             GlassShards.ClearCaches();
+            PropSurfaces.Clear();          // the retail physic-material table is per-MAP content, so a map change re-reads it
             RainSystem3D.ResetGlobals();   // rain_wetness/rain_intensity are process-wide + outlive the scene -> zero them so the next scene/menu isn't stuck wet (tinyclaw)
             Log.Print("[caches] cleared all static resource caches (editor/map transition)");
         }

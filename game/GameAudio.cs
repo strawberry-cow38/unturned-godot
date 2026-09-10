@@ -320,12 +320,14 @@ namespace UnturnedGodot
         });
 
         // ---- PHYSICS IMPACTS (content/audio/impacts, 19 clips, also referenced nowhere) -------------------------
-        // ⚠ THE STATIC/DYNAMIC SPLIT IS MY READING, NOT A CONFIRMED RETAIL RULE. The clips are <material>_static and
-        // <material>_dynamic; retail's own trigger for them is the one audio path I could not pin down in the SDK
-        // (its footstep, land, bullet and melee keys are all named outright in PhysicMaterialCustomData callers,
-        // and these are not among them). Read as "what was struck": a dropped tin landing on a road hits a STATIC
-        // world surface. If that turns out to be backwards it is one switch, and it is flagged rather than
-        // presented as ported.
+        // ✅ THE STATIC/DYNAMIC SPLIT IS CONFIRMED RETAIL (2026-09-10), and the guess it replaces was right.
+        // It was flagged here as "my reading, not a confirmed rule" because no PhysicMaterialCustomData caller
+        // names a static/dynamic key. The answer was never in the callers: `Concrete_Static` and
+        // `Concrete_Dynamic` are two SEPARATE PHYSIC MATERIALS -- the bundle carries 21 of them, Concrete /
+        // Metal / Wood / Gravel / Foliage / Tile / Cloth each in a _Static and a _Dynamic flavour -- and
+        // GetAudioDef is keyed by the material NAME, so the suffix picks the clip without any caller ever
+        // spelling it. Static is world geometry, dynamic is a thing that moves, which is exactly "what was
+        // struck". Found while extracting per-prop surfaces (tools/extract_prop_surfaces.py).
         public static AudioStream Impact(PlayerController.Surf s) => Pick("impacts", (s switch
         {
             PlayerController.Surf.Metal => "metal",
