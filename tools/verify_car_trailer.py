@@ -14,7 +14,7 @@ import re
 import subprocess
 from PIL import Image
 from measure_vehicles import ROOT, CONTENT, obj, uncomment, braced, split_top, vector, number, vectors
-from measure_car_trailer import measurements, TOW_CARS, CLASSES
+from measure_car_trailer import measurements, TOW_CARS, CLASSES, RIDE_TARGET, DECK_ABOVE_AXLE, ANCHOR_SLOPE
 from verify_wagon import validate, f32
 
 VEH = ROOT/'game/Vehicle.cs'
@@ -257,8 +257,13 @@ def expected(cls='dinky'):
     W=track if C['wide'] else track-tw-2*t
     track=W+tw
     draw=g['mesh']['size'][0]/2+radius
+    # SETTLED ride height. rr['golf']['ground'] is the FULL-EXTENSION datum -- a height nothing rests
+    # at -- so it is now only what the wheel anchor is measured from. The leg foot goes where the
+    # trailer ACTUALLY sits, or it stilts the nose up (see design() in measure_car_trailer.py).
+    _dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])
+    _drop=(RIDE_TARGET-DECK_ABOVE_AXLE[cls])/ANCHOR_SLOPE
     return s,rr,dict(r=radius,t=t,L=L,W=W,draw=draw,king=(0,rr['golf']['y'],-L/2-draw),
-                    ground=rr['golf']['ground'],wy=rr['golf']['ground']+radius+.25,tw=tw,
+                    ground=(_dy-wall_t)-RIDE_TARGET,wy=rr['golf']['ground']+radius+.25-_drop,tw=tw,
                     az=_axle_centre(g,wall_t,radius,t,cls),
                     # deck sits so the wheel rest centre is the fleet's .2734 above the body's underside
                     dy=wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1]),
@@ -389,18 +394,36 @@ def cases(cls='dinky'):
                 else 'sideboard top is not the truck bed wall height')
         require(close(wall_thickness('side_1'),d['wall_t']),'sideboard is not the truck bed wall thickness')
         require(close(hi[0],W/2))
-    def ride():
-        """Off the MESH and the SPEC, not off expected()'s own arithmetic -- the first version of this
-        compared two numbers I had derived, so no file mutation could fail it and the audit caught it
-        surviving. Fleet constant: golf, sedan, hatchback, jeep, truck and van all rest their wheel
-        centre .2734 above the body's lowest point. The trailer's sat at .0000, wheel centre exactly
-        level with the deck underside, which is what made it read as a box on stilts."""
-        anchor=float(re.search(r'\(-?[\d.]+f, ([-\d.]+)f,',fields(KEY)['Wheels']).group(1))
-        require(close(anchor-.25-group_bounds('deck')[0][1], d['ride']),
-                f'wheel rest {anchor-.25:.4f} sits {anchor-.25-group_bounds("deck")[0][1]:.4f} above the deck underside, fleet is {d["ride"]:.4f}')
-    add('wheels ride the fleet relationship: rest centre .2734 above the body underside',ride,
-        (BODY,move_group('deck',(0,.3,0)),'lift the body off its wheels'),
-        fieldmut('Wheels','new (float, float, float, bool)[] { (-1.300000f, 0.900000f, 0.313712f, false), (1.300000f, 0.900000f, 0.313712f, false) }'))
+    def parks_level():
+        """THE TRAILER MUST PARK LEVEL AT THE FLEET'S RIDE HEIGHT, and that replaces the old claim,
+        which was the fleet's BODY-SPACE relationship (wheel rest centre .2734 above the underside).
+        Matching that relationship is exactly what broke it: a 300 kg hull squats ~.19 further than a
+        1500 kg one, so the body sank past where the leg was cut for, the leg became a stilt, and all
+        six parked NOSE-UP 2-4 deg with the dinky's tail 4 cm off the ground and its deck at .124
+        where the road cars sit at .289. (strawberry 2026-09-10: "move all wheels on trailers down to
+        match the ride height of other vehicles.")
+
+        What is checked HERE is the leg: its foot must sit RIDE_TARGET below the deck underside, or a
+        parked trailer cannot be level whatever the wheels do. That reads the SPEC's landing gear
+        against the MESH's deck, so lengthening the leg and moving the deck each fail it.
+
+        THE WHEEL ANCHOR IS NOT CHECKABLE HERE and pretending otherwise would be a restatement of the
+        formula that produced it -- the squat is a physics property, not a number any of these files
+        can derive. It is established in-engine instead (--vehicle --gun=<name>, UG_RESTCHECK, flat
+        plane, frame 200), and these are the readings after the fix:
+            dinky  pitch -0.52 deg  deck front .2938   small  -0.44  .2953
+            medium -0.30            .2919              large  -0.29  .2924
+            horsebox -0.28          .2923              animal -0.28  .2923
+        against a .289 target and road cars measured at .264-.297. Before: +2.0..+4.1 deg, .23-.25."""
+        f=fields(KEY)
+        foot=vector(f['LandingGearCenter'])[1]-vector(f['LandingGearSize'])[1]/2
+        drop=group_bounds('deck')[0][1]-foot
+        require(close(drop, RIDE_TARGET),
+                f'leg foot sits {drop:.4f} below the deck underside, the fleet ride height is {RIDE_TARGET:.4f}')
+    add('parks level: the landing leg reaches the ride height the wheels settle at',parks_level,
+        (BODY,move_group('deck',(0,.3,0)),'lift the body off its leg'),
+        fieldmut('LandingGearSize','new Vector3(0.200000f, 0.700000f, 0.200000f)'),
+        fieldmut('LandingGearCenter','new Vector3(0.150000f, -0.420000f, -2.499091f)'))
     add('sideboard section = the truck bed wall, measured',sideboard,
         (BODY,move_group('side_1',(0,.1,0)),'raise sideboard'),(BODY,move_group('side_1',(.1,0,0)),'thin sideboard'))
     def donor_wall():

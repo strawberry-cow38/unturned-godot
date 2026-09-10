@@ -86,6 +86,17 @@ def truck_bed():
 #   the sideboard. The big ones do NOT (strawberry: "wider! ignore the limit on width") -- their box is
 #   set directly and the wheels end up UNDER it, which is the only arrangement that removes the limit
 #   rather than restating it. That forces the deck up over the tyre; see `deck_y` below.
+# MEASURED IN-ENGINE, not chosen. See the note in design() -- the old model authored to the suspension
+# at full extension, which nothing rests at.
+RIDE_TARGET = .289          # road-car median settled deck clearance: sedan .2807 jeep .2864 hatchback
+                            # .2644 van .2940 offroader .2924 truck .2969 (golf .1529 is a 400 kg cart
+                            # and sinks for the same reason the trailers did -- excluded, not averaged)
+DECK_ABOVE_AXLE = {         # settled deck height over the axle per class, measured BEFORE this fix
+    'dinky': .1238, 'small': .1258, 'medium': .1315,
+    'large': .1461, 'horsebox': .1464, 'animal': .1464,
+}
+ANCHOR_SLOPE = .891         # measured: dropping the dinky's anchor .136 raised its settled body .121
+
 CLASSES = {
     'dinky':  dict(length=.60, width_steps=0, axles=1, wide=False, display='Dinky Trailer'),
     'small':  dict(length=.75, width_steps=1, axles=1, wide=False, display='Small Trailer'),
@@ -171,9 +182,18 @@ def design(specs, rear, cls='small'):
     draw = car_width/2+radius
     king = (0.,rear['golf']['y'],front-draw)
     hitch_projection = 3*t   # was radius/3, which would now drag all eight cars' tow balls back 50 mm
-    ground = rear['golf']['ground']
-    wheel_y = ground+radius+.25
-    wheel_center_y = wheel_y-.25        # the RESTING centre: the tyre touches `ground` here
+    # SETTLED, NOT FULLY EXTENDED -- and the difference is the whole bug. rear['golf']['ground'] is
+    # anchorY - radius - restLength, i.e. where the ground sits with the suspension at FULL EXTENSION,
+    # which is a position no vehicle is ever in. Measured in-engine (--vehicle --gun=<name> with
+    # UG_RESTCHECK, flat plane, frame 200): a 300 kg trailer settles ~.19 BELOW it, so the body sank
+    # onto its own landing leg and every one of the six parked NOSE-UP 2-4 degrees with the tail 4 cm
+    # off the ground -- and the deck sat .124 above ground where the road cars sit at .289.
+    # Both numbers below are measurements. (strawberry 2026-09-10: "move all wheels on trailers down
+    # to match the ride height of other vehicles.")
+    ground_ext = rear['golf']['ground']   # the full-extension datum wheel_y is still measured from
+    drop = (RIDE_TARGET-DECK_ABOVE_AXLE[cls])/ANCHOR_SLOPE
+    wheel_y = ground_ext+radius+.25-drop
+    wheel_center_y = wheel_y-.25
     axle_z = deck_l/10  # 60% of deck length from its front; COM at Z=0 is ahead of axle
     # TANDEM SPACING is derived, not chosen: two tyres of radius r on one side must not intersect in
     # Z, so their centres are at least 2r apart; plus t of clearance. Single-axle classes ignore it.
@@ -196,6 +216,9 @@ def design(specs, rear, cls='small'):
     # have to keep meeting the ground.
     ride = (golf['Wheels'][0][1]-.25) - obj(CONTENT/golf['fields']['Body'].strip('"'))['lo'][1]
     deck_y = wall_t-ride
+    # The LANDING LEG reaches the ground the trailer actually rests at, so a parked trailer sits LEVEL
+    # on wheels + leg instead of being stilted nose-up by a leg cut for a height it never reaches.
+    ground = (deck_y-wall_t)-RIDE_TARGET
     if roof_top is not None:
         wall_h = roof_top-wall_t-deck_y     # walls run from the floor to the roof's underside
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
