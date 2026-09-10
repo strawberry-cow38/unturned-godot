@@ -1948,7 +1948,7 @@ void fragment() {
                 // render without widening this would have thrown the extra view straight away. 8 + 548 = 556 still
                 // fits inside CHARW (560).
                 Position = new Vector2(8, PDTOP), Size = new Vector2(PDW + PDWIDEN, PDH),
-                Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
+                Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop,   // no TooltipText: the hover hint is gone (strawberry 2026-09-10)
             };
             _pdHit = vpc;   // this rect IS the equip drop target (PointToClothSlot) AND the click-spin hit-rect (OverPaperdoll in _Input)
             box.AddChild(vpc);
