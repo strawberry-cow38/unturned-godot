@@ -13,12 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sheet-only', action='store_true', help='tile the existing rendered icons')
+    parser.add_argument('--devices', default='9111,9112,9113,9114,9116,9117,9118,9119,9120,9121',
+                        help='comma-separated IDs to render; signed-off 9110/9115 are always preserved')
     args = parser.parse_args()
+    devices={int(x) for x in args.devices.split(',')}
+    if devices & {9110,9115}: parser.error('9110 and 9115 icons are frozen')
     sheet = Image.new('RGB', (4*280, 3*292), (68, 73, 77))
     draw = ImageDraw.Draw(sheet)
     for i, item in enumerate(range(9110, 9122)):
         path = ROOT/f'game/content/items/icons/{item}.png'
-        if not args.sheet_only:
+        if not args.sheet_only and item in devices:
             subprocess.run([sys.executable, str(ROOT/'tools/shot.py'), 'fluidicon', '-o', str(path)],
                            env=dict(os.environ, DEVICE=str(item)), check=True)
         icon = Image.open(path).convert('RGBA')

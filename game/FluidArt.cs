@@ -33,8 +33,8 @@ namespace UnturnedGodot
 
         /// <summary>Where this device presents its hoses. The four machines strawberry enlarged carry
         /// their anchors further out (their fittings did NOT grow with them, so a spigot left at the old
-        /// +-0.5 would sit buried inside the new hull); everything else still answers 0.5. Y is one
-        /// height for every device, so a hose between any two of them runs level.</summary>
+        /// +-0.5 would sit buried inside the new hull); everything else still answers 0.5. The catalog
+        /// publishes each height: barrels at .45, most machines at .60, purifier at its midpoint.</summary>
         public static Vector3 Port(DeployableDef def, float x, float y, float z)
         {
             if (!HasArt(def) || !Catalog.Value.TryGetValue(def.Id, out var spec)) return new Vector3(x, y, z);
@@ -123,7 +123,7 @@ namespace UnturnedGodot
             var part = AddLevels(owner, def.Id, "part",
                 def.Fluid == FluidRole.Pump ? "PumpDrum" : "ValveHandle", material, distance);
             part.Position = Vec(spec.Part);
-            // The pump's pulley is authored lying flat and is stood upright onto the motor shaft here,
+            // The pump's coupling is authored lying flat and is stood upright onto the motor shaft here,
             // so both moving parts spin about their OWN local Y and the animation is one code path.
             if (spec.PartRot != null) part.RotationDegrees = Vec(spec.PartRot);
             return part;

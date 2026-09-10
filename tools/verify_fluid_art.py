@@ -7,6 +7,7 @@ anything the permissive runtime could silently truncate or render incompletely.
 from pathlib import Path
 import json
 import math
+import hashlib
 from PIL import Image
 from measure_fluid_art import parse, sub, dot, cross, length, rings
 from audit_fluid_geometry import audit, load, components
@@ -31,6 +32,13 @@ def inside(point, vertices, comp):
     return len(hits)%2==1
 
 def main():
+    # The third-pass sign-off includes item art and metadata, not only body OBJs.
+    frozen=json.loads((ROOT/'notes/FLUIDIO_FROZEN_ASSETS.json').read_text())
+    for name,digest in frozen['files'].items():
+        assert hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest,(name,'frozen asset changed')
+    for key,path in [('catalog',DIR/'catalog.json'),('items',ROOT/'game/content/items/items_manifest.json')]:
+        data=json.loads(path.read_text())
+        for id,spec in frozen[key].items(): assert data[id]==spec,(id,key,'frozen metadata changed')
     claimed=json.loads(MANIFEST.read_text())
     assert {p.name for p in DIR.glob('*.txt')}=={s['file'] for s in claimed}
     total=0
@@ -66,6 +74,13 @@ def main():
         lo=[min(x[i] for x in v) for i in range(3)];hi=[max(x[i] for x in v) for i in range(3)]
         assert max(abs(x-y) for x,y in zip(lo+hi,spec['min']+spec['max']))<1e-6,(p,lo,hi)
         assert {r['n'] for r in rings(v,fs)} <= {6,8,12},p
+        # Opposing stored normals alone cannot detect an inside-out new solid:
+        # both its faces and normals would be reversed. Clockwise-front volume
+        # must be positive AFTER negating the usual right-hand signed volume.
+        verts,_,triangles=load(p)
+        for comp in components(verts,triangles):
+            volume=-sum(dot(verts[t[0][0]],cross(verts[t[1][0]],verts[t[2][0]])) for t,_ in comp)/6
+            assert volume>1e-10,(p,{g for _,g in comp},'inward solid')
         total+=len(fs)
         print(f"PASS {p.name}: {len(v)} v, {len(fs)} tris; AABB {lo} -> {hi}")
     # THE FITTING MUST BE WHERE THE PORT IS. The four machines strawberry enlarged moved their hose
@@ -85,20 +100,29 @@ def main():
         for suffix in ['', '_lod1']:
             v,_,ts=load(DIR/f'{id}_body{suffix}.txt')
             backing=components(v,[(t,g) for t,g in ts if g!='hose_fitting'])
+            fittings=components(v,[(t,g) for t,g in ts if g=='hose_fitting'])
+            if id not in [9110,9115]:
+                assert not any('boss' in g for _,g in ts),(id,suffix,'complex bushing returned')
             for port in ports:
                 axis=2 if id in [9111,9119,9120] else 0
                 ring=[q for q in v if abs(q[axis]-port[axis])<1e-6 and abs(length(sub(q,port))-.15249)<2e-6]
                 assert len(ring)==6,(id,suffix,port,len(ring),'no spigot collar at the port anchor')
-                # A collar is not a connection if the pipe stops short of it. Sample its centre and
-                # six bore points 12 mm INSIDE the collar, requiring a non-fitting solid behind them.
+                # A seated hex extends behind its published anchor. Check 12 mm
+                # into its ACTUAL back face, retaining the separate anchor-ring
+                # assertion above. Requiring backing at the exposed anchor plane
+                # would force the rejected intermediate boss back into the art.
                 axes=[k for k in range(3) if k!=axis]; sign=1 if port[axis]>0 else -1
+                fitting=next(comp for comp in fittings
+                             if all(any(v[k]==q for t,_ in comp for k,_ in t) for q in ring))
+                back=min(sign*v[k][axis] for t,_ in fitting for k,_ in t)
                 for i in range(7):
-                    p=list(port); p[axis]+=.012*sign
+                    p=list(port); p[axis]=(back+.012)*sign
                     if i:
                         p[axes[0]]+=.07*math.cos(math.tau*(i-1)/6)
                         p[axes[1]]+=.07*math.sin(math.tau*(i-1)/6)
                     assert any(inside(p,v,comp) for comp in backing),(id,suffix,port,'floating collar',p)
                 if not suffix:checked+=1
+    assert catalog['9121']['portY']==catalog['9121']['boundsSize'][1]/2, 'purifier IO off midpoint'
 
     # Match the reference's component colour assignment through the actual V flip,
     # not just the list of RGBs in the PNG (which would miss swapped shell/bands).
@@ -132,6 +156,7 @@ def main():
         assert icon.mode=='RGBA' and icon.size==(256,256),(id,'icon convention')
         alpha=icon.getchannel('A'); bbox=alpha.getbbox()
         assert alpha.getextrema()==(0,255) and bbox and min(bbox)>0 and max(bbox)<256,(id,'icon transparency/framing')
-    print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} connected hose anchors at both LODs; 12 item meshes and icons')
+    print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} connected hose anchors at both LODs; '
+          '12 item meshes and icons; 16 frozen asset hashes and catalog/item records unchanged')
 
 if __name__=='__main__':main()

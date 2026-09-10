@@ -58,7 +58,7 @@ namespace UnturnedGodot
         float _valveAngle, _pumpAngle; Basis _partRest = Basis.Identity; bool _partRestSet;
         internal float DebugValveAngle => _valveAngle;      // the tests assert on the real angle, not a wrapped euler
         internal float DebugPumpAngle => _pumpAngle;
-        MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump belt pulley: spins while DRIVING (powered + fluid flowing), and spins down when it stops
+        MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump shaft coupling: spins while DRIVING (powered + fluid flowing), and spins down when it stops
         internal const float PumpSpinRate = 9.0f;      // rad/s at full drive -- fast enough to read, slow enough not to strobe at 30 Hz
         internal const float ValveTravel = Mathf.Pi * 5f;   // 2.5 turns from open to shut, like a real gate valve
         // Winding a gate valve is SLOW -- it is a hand crank on a threaded stem, not a light switch.
@@ -348,7 +348,7 @@ namespace UnturnedGodot
                 _ => $"Fluid {Role}",
             };
 
-        // The part's authored resting orientation (the pump's pulley is stood upright onto the motor
+        // The part's authored resting orientation (the pump's coupling is stood upright onto the motor
         // shaft), captured once so a spin composes onto it instead of overwriting it.
         Basis PartRest(MeshInstance3D part)
         {
@@ -370,9 +370,9 @@ namespace UnturnedGodot
                     _valveHandle.Transform = new Transform3D(PartRest(_valveHandle) * new Basis(Vector3.Up, _valveAngle), _valveHandle.Position);
                 }
             }
-            // A powered pump with fluid moving through it SPINS ITS BELT PULLEY (strawberry: "the pump
-            // should have some part of it that spins, but making sense"). The pulley sits on the motor
-            // shaft under the belt guard, so what turns is the thing actually driving the volute --
+            // A powered pump with fluid moving through it SPINS ITS SHAFT COUPLING (strawberry: "the pump
+            // should have some part of it that spins, but making sense"). The coupling sits on the motor
+            // shaft under the slotted guard, so what turns is the thing actually driving the volute --
             // where the old animation jittered the whole motor drum on the spot, which no pump does.
             // It SPINS DOWN rather than stopping dead, because a loaded rotor has inertia.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))

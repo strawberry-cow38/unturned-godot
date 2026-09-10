@@ -1,0 +1,253 @@
+{
+  "files": {
+    "game/content/fluid/9110_body.txt": "3a7ddedc7c45b858d943ae19224e972ddc997764fc16d93d97875bd21c6bda78",
+    "game/content/fluid/9110_body_lod1.txt": "8fd44528319aada9cd0648a04f941c2ecf28fddba8a460e521b1b6bec0048c96",
+    "game/content/fluid/9110_palette.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/fluid/9115_body.txt": "2ad9ba634b0937763e0f192e0ff509363e7c7cb1c143246946c50fa8f46c5639",
+    "game/content/fluid/9115_body_lod1.txt": "308b0a127a3482b05d44fc12c04224d5a21e623891f9168eed479779bcf7cf16",
+    "game/content/fluid/9115_palette.png": "1e574a7436d4f76f529ea4f02e1cf46a5b659316ca0af00c27b352c565b4db38",
+    "game/content/fluid/9115_part.txt": "88fb9c18d7ef61defc2c8f7d67f3de8da3cf2739b5be236b27f781be09e3b95b",
+    "game/content/fluid/9115_part_lod1.txt": "5d3a0cdf27927d9c8cc11a25c5faa6e8090432b4fb7cf5da7ffcea42ade5b28a",
+    "game/content/fluid/9115_preview.txt": "d5b0dafc5afbe61232d9238feb8dffc0c3988635a3a79f78c673891dcd62b971",
+    "game/content/fluid/9115_preview_lod1.txt": "6c6bb8d9d7d4d17f3de6a836559091b4a54964e18db6e85f6627cef5e0760bcf",
+    "game/content/items/9110.obj": "9abb5821e537635f20c39eafc85f4dba8462862b0da6aec26cd25d9d35121618",
+    "game/content/items/9110.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9115.obj": "85470c934638d8b7f590454f78b3a4670b06110c51f4e8199bbe9dc6bda27e25",
+    "game/content/items/9115.png": "1e574a7436d4f76f529ea4f02e1cf46a5b659316ca0af00c27b352c565b4db38",
+    "game/content/items/icons/9110.png": "637a546cab606786c0f00519790f1058429ab1a4ef6a684559080885d1051a70",
+    "game/content/items/icons/9115.png": "7e548b63c655a7fdfabbe1bb083dd86b5573e76f3d4fd0fe102817888f263634"
+  },
+  "catalog": {
+    "9110": {
+      "name": "Tank",
+      "palette": [
+        [
+          87,
+          104,
+          118
+        ],
+        [
+          99,
+          119,
+          135
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.45,
+      "mesh": {
+        "file": "9110_body.txt",
+        "vertices": 204,
+        "triangles": 376,
+        "min": [
+          -0.68,
+          0.0,
+          -0.543261
+        ],
+        "max": [
+          0.68,
+          1.3218,
+          0.543261
+        ],
+        "groups": {
+          "bands": 132,
+          "hose_fitting": 88,
+          "seated_boss": 112,
+          "vessel": 44
+        }
+      },
+      "lod1": {
+        "file": "9110_body_lod1.txt",
+        "vertices": 72,
+        "triangles": 124,
+        "min": [
+          -0.68,
+          0,
+          -0.470478
+        ],
+        "max": [
+          0.68,
+          1.3218,
+          0.470478
+        ],
+        "groups": {
+          "hose_fitting": 40,
+          "seated_boss": 64,
+          "vessel": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0.0,
+        -0.543261
+      ],
+      "boundsSize": [
+        1.36,
+        1.3218,
+        1.086522
+      ],
+      "offset": 0.6609,
+      "radius": 0.5
+    },
+    "9115": {
+      "name": "Valve",
+      "palette": [
+        [
+          99,
+          135,
+          102
+        ],
+        [
+          162,
+          32,
+          32
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": [
+        0,
+        1.44,
+        0
+      ],
+      "partRot": [
+        0,
+        0,
+        0
+      ],
+      "portX": 0.5,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9115_preview.txt",
+        "vertices": 344,
+        "triangles": 600,
+        "min": [
+          -0.68,
+          0,
+          -0.3
+        ],
+        "max": [
+          0.68,
+          1.49,
+          0.3
+        ],
+        "groups": {
+          "base": 12,
+          "bonnet": 28,
+          "flange": 56,
+          "handle_hub": 28,
+          "handle_rim": 96,
+          "handle_spoke": 60,
+          "hose_fitting": 88,
+          "pedestal": 12,
+          "seated_boss": 104,
+          "stem": 12,
+          "trigger_housing": 24,
+          "trigger_support": 12,
+          "valve_body": 28,
+          "valve_pipe": 20,
+          "yoke": 20
+        }
+      },
+      "lod1": {
+        "file": "9115_preview_lod1.txt",
+        "vertices": 204,
+        "triangles": 340,
+        "min": [
+          -0.68,
+          0,
+          -0.3
+        ],
+        "max": [
+          0.68,
+          1.48,
+          0.3
+        ],
+        "groups": {
+          "base": 12,
+          "bonnet": 20,
+          "flange": 40,
+          "handle": 20,
+          "hose_fitting": 40,
+          "pedestal": 12,
+          "seated_boss": 88,
+          "stem": 12,
+          "trigger_housing": 24,
+          "trigger_support": 12,
+          "valve_body": 20,
+          "valve_pipe": 20,
+          "yoke": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0,
+        -0.3
+      ],
+      "boundsSize": [
+        1.36,
+        1.49,
+        0.6
+      ],
+      "offset": 0.745,
+      "radius": 0.3
+    }
+  },
+  "items": {
+    "9110": {
+      "name": "Fluid Tank",
+      "type": "Generic",
+      "obj": "9110.obj",
+      "tex": "9110.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.6609,
+        0.54326
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9115": {
+      "name": "Fluid Valve",
+      "type": "Generic",
+      "obj": "9115.obj",
+      "tex": "9115.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.745,
+        0.3
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    }
+  }
+}
