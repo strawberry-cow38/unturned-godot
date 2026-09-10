@@ -212,6 +212,26 @@ namespace UnturnedGodot
         public static AudioStream MagRound(int magCapacity) =>
             Pick("foley", magCapacity <= 15 ? "gun_pistol_load_bullet" : "gun_semi_auto_rifle_load_bullet");
 
+        /// <summary>The crash of a felled tree, by SPECIES.
+        ///
+        /// ⚠ The folder is called "explosions" and almost none of it is explosions -- our rip flattened retail's
+        /// per-object DESTRUCTION audio into it, named <object>_<variant>_<material>: birch_0_timber, maple_4_wood,
+        /// glass_weak_glass, phone_0_phone, board_0_television. 60 prefixes, of which exactly one (bomb_fire) was
+        /// ever played. That is why felling a tree was silent.
+        ///
+        /// Matched on species and NOT on the variant index: our trees are Birch_0/Birch_1 while the clips are
+        /// birch_0/2/3/4, so the numbers do not line up and pretending they do would pick by coincidence. The
+        /// species is the axis that means something; the index is a variant, and Bank's prefix glob picks across
+        /// them. A bush falls back to foliage rather than to a tree -- it is not one.</summary>
+        public static AudioStream TreeFall(string treeName)
+        {
+            string sp = (treeName ?? "").ToLowerInvariant();
+            int u = sp.IndexOf('_'); if (u > 0) sp = sp.Substring(0, u);
+            return (sp.Length > 0 ? Pick("explosions", sp) : null)
+                ?? Pick("explosions", "foliage")
+                ?? Pick("explosions", "birch");
+        }
+
         /// <summary>A keyring, for locking and unlocking a door you own.</summary>
         public static AudioStream Keys() => Pick("foley", "foley_keys_belt_metal_jingle");
 

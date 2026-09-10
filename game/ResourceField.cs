@@ -823,6 +823,13 @@ namespace UnturnedGodot
                     // IT HITS. Kick the trunk's own flex here, off the speed it actually arrived at, so a big
                     // trunk landing fast rings harder than a sapling tipping over.
                     _trunkVel = Vector3.Up * (TrunkKick * Mathf.Tau * TrunkFreq * Mathf.Min(1f, _toppleVel / 1.094f));
+                    // ...AND IT MAKES A NOISE. Felling was completely silent -- ResourceField had no audio at all --
+                    // while the ripped per-species destruction clips sat unplayed in content/audio/explosions.
+                    // Scaled off the speed it arrived at, like the trunk kick on the line above and for the same
+                    // reason, and carried a long way: a tree coming down is the loudest thing in a quiet forest.
+                    GameAudio.PlayAt(this, GameAudio.TreeFall(TreeName), GlobalTransform.Origin,
+                                     Mathf.Lerp(-6f, 4f, Mathf.Min(1f, _toppleVel / 1.094f)), 8f, 90f,
+                                     (float)GD.RandRange(0.94, 1.06));
                     _toppling = false; _settling = true; _settleT = 0f;
                 }
             }
