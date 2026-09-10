@@ -45,8 +45,12 @@ namespace UnturnedGodot.Testing
 
             // clips -> hook side, which decides which hand the whole assembly hangs off
             var hook = new Dictionary<string, string>();
+            var useClip = new Dictionary<string, string>();
             foreach (var c in Rows("res://content/consumable_anims.tsv"))
+            {
                 if (c.Length >= 5) hook[c[0].Trim()] = c[4].Trim();
+                if (c.Length >= 3) useClip[c[0].Trim()] = c[2].Trim();
+            }
             int lefties = 0;
             foreach (var kv in hook) if (kv.Value == "Left") lefties++;
             // The bug was hanging every consumable off Right_Hook. If this ever reads 0 the hook column has been
@@ -55,7 +59,7 @@ namespace UnturnedGodot.Testing
             T.Check("bag_chips specifically is a left-hook item",
                 hook.TryGetValue("bag_chips", out var bch) && bch == "Left");
 
-            int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0, missingTex = 0;
+            int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0, missingTex = 0, unresolvedNames = 0;
             string firstMissing = null, firstBadParent = null, firstNoDraw = null, firstMissingTex = null;
             int multiTexItems = 0, noRip = 0;
             string firstNoRip = null;
@@ -100,19 +104,59 @@ namespace UnturnedGodot.Testing
                 if (drawn == 0) { noDraw++; firstNoDraw ??= kv.Key; }
                 if (texNames.Count > 1) multiTexItems++;
 
-                // ⭐ THE ONE THAT MATTERS. Every name the clips drive must exist as a node. This is the assertion
-                // that fails on "AnimationMixer: couldn't resolve track", and it fails HERE instead of in a warning
-                // stream during play.
-                foreach (var p in kv.Value)
-                {
-                    string nm = p.Trim();
-                    if (nm.Length > 0 && !seen.Contains(nm)) { missingParts++; firstMissing ??= $"{kv.Key}/{nm}"; }
-                }
+                // ⚠ A CLIP MAY NAME A PART THIS ITEM DOES NOT HAVE, and that is retail's doing, not ours. This
+                // asserted that every driven name resolves, on the reasoning that a clip archetype IS one equipable
+                // prefab shape. It is not: 14 clips are shared, and sharers carry different SUBSETS. CU_30 drives a
+                // Model_1 that none of its 20 sandwiches has, and canned_pasta lacks the Stat_Tracker canned_beans
+                // has on the same clip. 23 such names across 75 items, all of them dead tracks that resolve to
+                // nothing and do nothing.
+                //
+                // What IS invariant is that an item resolves SOME of its parts. Zero is the disaster this file was
+                // written for -- a whole item inert because the names or the paths moved -- and it is what the old
+                // assertion would have caught while also failing on 23 harmless ones forever.
+                int hit = 0;
+                foreach (var p in kv.Value) { string nm = p.Trim(); if (nm.Length > 0 && seen.Contains(nm)) hit++; }
+                if (hit == 0) { missingParts++; firstMissing ??= $"{kv.Key} resolves NONE of its {kv.Value.Length} animated names"; }
+                else unresolvedNames += kv.Value.Length - hit;
             }
 
             T.Check($"cross-checked a real number of items ({checkedItems})", checkedItems > 50);
             T.Check($"every item whose clips drive parts actually has a rip ({noRip} un-ripped{(firstNoRip != null ? ", first " + firstNoRip : "")})", noRip == 0);
-            T.Check($"every animated part name exists as a node ({missingParts} missing{(firstMissing != null ? ", first " + firstMissing : "")})", missingParts == 0);
+            T.Check($"every item resolves at least one of its animated parts ({missingParts} inert{(firstMissing != null ? ", first " + firstMissing : "")})", missingParts == 0);
+            GD.Print($"[hierarchy] {unresolvedNames} driven names have no node on their item -- shared-archetype leftovers, see the note above");
+
+            // ⭐ THE PROPERTY THE PATH SCHEME ACTUALLY RESTS ON. Track names are item-RELATIVE paths
+            // ("Item_Root/Bone_5/Bone_6") so that ONE shared Animation resource serves every item using that clip.
+            // That is only valid while sharers agree about where a shared part SITS. They may own different
+            // subsets -- proven above -- but the moment two of them disagree about a part's PARENT, the shared
+            // resource is addressing the wrong node for one of them, silently, and only for the nested parts.
+            // Verified rather than assumed: this is the assumption the whole design was justified on.
+            var parentOf = new Dictionary<string, Dictionary<string, string>>();
+            foreach (var kv in animParts)
+            {
+                var rows = Godot.FileAccess.FileExists($"res://content/{kv.Key}_parts.tsv") ? Rows($"res://content/{kv.Key}_parts.tsv") : null;
+                if (rows == null) continue;
+                var d = new Dictionary<string, string>();
+                foreach (var r in rows) if (r.Length >= 6) d[r[0]] = r[5];
+                parentOf[kv.Key] = d;
+            }
+            int parentConflicts = 0; string firstConflict = null;
+            var byClip = new Dictionary<string, List<string>>();
+            foreach (var kv in useClip)
+                if (parentOf.ContainsKey(kv.Key)) { if (!byClip.TryGetValue(kv.Value, out var l)) byClip[kv.Value] = l = new List<string>(); l.Add(kv.Key); }
+            foreach (var grp in byClip)
+            {
+                var seenParent = new Dictionary<string, (string item, string par)>();
+                foreach (var it in grp.Value)
+                    foreach (var np in parentOf[it])
+                    {
+                        if (seenParent.TryGetValue(np.Key, out var was) && was.par != np.Value)
+                        { parentConflicts++; firstConflict ??= $"{grp.Key}: {np.Key} is under {was.par} in {was.item} but {np.Value} in {it}"; }
+                        else seenParent[np.Key] = (it, np.Value);
+                    }
+            }
+            T.Check($"sharers of a clip never disagree about a part's parent ({parentConflicts} conflicts{(firstConflict != null ? ", first " + firstConflict : "")})", parentConflicts == 0);
+            T.Check($"...and clips really are shared, so that check is not vacuous ({byClip.Count} clips over {parentOf.Count} items)", byClip.Count < parentOf.Count);
             T.Check($"every part's parent is emitted before it, one root each ({badParent} bad{(firstBadParent != null ? ", first " + firstBadParent : "")})", badParent == 0);
             T.Check($"no item builds with nothing visible ({noDraw} blank{(firstNoDraw != null ? ", first " + firstNoDraw : "")})", noDraw == 0);
             // CONTROL. Without this the draw flag could be all-1s -- every mesh drawn, LOD copies stacked on the
