@@ -9858,13 +9858,18 @@ namespace UnturnedGodot
     {
         public Viewmodel VM;
         public float Period = 3f;
-        float _t;
+        // Start nearly due, so the FIRST use begins about a second in. Waiting a full period before the first one
+        // means a render has to be Period + clip long just to reach the thing it is meant to show.
+        float _t = 1e9f;
+        bool _first = true;
         public override void _Process(double delta)
         {
             if (VM == null) return;
+            if (_first && _t > 1e8f) _t = Period - 1f;   // first use at ~1 s, not at Period
             _t += (float)delta;
             if (_t < Period) return;
             _t = 0f;
+            if (_first) { _first = false; }
             VM.PlayConsumeUse();
         }
     }
