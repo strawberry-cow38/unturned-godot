@@ -938,6 +938,26 @@ namespace UnturnedGodot
         float _burnTime = -1f;   // seconds since the wreck caught fire (master lifecycle): <40 full, 40-60 dying down, 60 out+light killed, 360 despawn
         CpuParticles3D[] _wheelDust;   // per-WHEEL dust from the ground contact point (src Wheel.cs TireMotionEffectInstance is per-wheel); tinted by the Surf under each wheel
         PlayerController.Surf[] _wheelSurf; float _dustCheckT, _dustLogT;   // cached ground material per wheel (raycast, throttled); _dustLogT throttles UG_DUSTDEBUG
+        // THE PAINTWORK, kept rather than discarded after Build. The body material is ONE Material instance
+        // shared by every painted mesh the model builders were handed, so holding it here means a respray is
+        // a single parameter write and every panel changes together -- no rebuild, no mesh walk.
+        Material _paintMat; Color _paint = Colors.White;
+        public Color PaintColor => _paint;
+
+        /// <summary>Respray it. Retail's spraypaint sets the vehicle's paint colour, which the shader reads as
+        /// `paint_color` over the body palette -- so only the texels the artist marked paintable change, and
+        /// the livery, glass and trim stay exactly as they were.</summary>
+        public void SetPaint(Color c)
+        {
+            _paint = c;
+            if (_paintMat is ShaderMaterial sm)
+            {
+                var lin = c.SrgbToLinear();   // same conversion PaintMat does: ALBEDO is linear, the hex is sRGB
+                sm.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
+            }
+            else if (_paintMat is StandardMaterial3D std) std.AlbedoColor = c;   // the no-palette fallback body
+        }
+
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         // FOOT BRAKE. 1.5, not the 6 that shipped, because 6 stands the car on its nose. strawberry, after
@@ -4856,6 +4876,12 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            // ⚠ A RESPRAY DOES NOT REACH THIS PUPPET. VehiclePuppet is a separate class with no paint state,
+            // and the colour is not on the wire -- the entity carries no paint field, so a remote client
+            // rebuilds it from SpawnPaint(variant) and keeps showing the SPAWN colour however many times the
+            // owner sprays it. Flagged rather than papered over with fields nothing writes: making it
+            // replicate means a paint colour on the vehicle entity and a command to ask for one, which is a
+            // wire bump and its own change.
             // SPLIT THE LENSES OUT, exactly as Build() does. The puppet used to load the body WHOLE, so its
             // headlights and taillights were baked into the paintwork and could never emit -- which is why a
             // remote car drove around dark no matter what its driver did. Same zones, same X-mirror, so the
@@ -6601,6 +6627,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            v._paintMat = bodyMat; v._paint = paint;   // kept so a spraypaint can change it later
             ArrayMesh bodyMesh = null, doorMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
             // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
             (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
