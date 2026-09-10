@@ -53,7 +53,15 @@ namespace UnturnedGodot.Net
         {
             public uint NetIdValue { get; internal set; }
             public byte TypeId { get; internal set; }        // index into the game's vehicle spec table (Vehicle.SpecNames order)
-            public byte Variant { get; internal set; }       // spawn paint variant -- paint derives deterministically (Vehicle.SpawnPaint)
+            public byte Variant { get; internal set; }       // spawn paint variant -- the paint a car SPAWNS in derives deterministically from it (Vehicle.SpawnPaint)
+            /// <summary>A RESPRAY, as 0xRRGGBB, or null for "never sprayed -- derive from Variant".
+            ///
+            /// Variant alone cannot carry this: it selects from the spec's own default list or seeds the
+            /// random-hue roll, and a spraypaint colour is an arbitrary 24-bit value off the CAN. Nullable
+            /// rather than 0-means-unpainted because #000000 is a legal paint even though no retail can is
+            /// quite it (Midnight Black is #0a0a0a) -- a sentinel that a future can could collide with is a
+            /// bug waiting for a content update.</summary>
+            public uint? PaintRgb { get; internal set; }
             public ushort DriverPlayerId { get; internal set; }   // seat 0. 0 = empty.
             /// <summary>Seats 1..N, index-aligned with the game layer's Vehicle.SeatLocals minus the driver.
             /// Null or empty = a vehicle nobody is riding as a passenger. Seat 0 stays DriverPlayerId rather
@@ -259,6 +267,16 @@ namespace UnturnedGodot.Net
             e.LastChangedTick = tick;
         }
 
+        /// <summary>Respray it (0xRRGGBB), or clear back to its spawn colour with null. Server-only: the
+        /// colour comes off the CAN the server just spent, so a client that could assert it could paint
+        /// without owning a spraypaint.</summary>
+        public void ServerSetPaint(NetId id, uint? rgb, long tick)
+        {
+            if (!_vehicles.TryGet(id, out var e) || e.PaintRgb == rgb) return;
+            e.PaintRgb = rgb;
+            e.LastChangedTick = tick;
+        }
+
         /// <summary>Put a player in a seat, or clear it with 0. Seat 0 is the driver and routes to
         /// DriverPlayerId so every existing reader keeps working; 1..N grow the Passengers array on demand.</summary>
         public void ServerSetSeat(NetId id, int seat, ushort playerId, long tick)
@@ -449,6 +467,9 @@ namespace UnturnedGodot.Net
                 // (stored by ServerPublishTow) is byte-identical to the client's wire-read value.
                 h = NetHash.MixUInt32(h, e.TowedNetId);
                 h = NetHash.MixFloat(h, e.TowRestLen);
+                // v41 respray: mixed as 0 when unpainted, which is NOT the same as a painted #000000 -- the
+                // extra 1 distinguishes them so an unpainted car and a black one cannot hash alike.
+                h = NetHash.MixUInt32(h, e.PaintRgb.HasValue ? e.PaintRgb.Value | 0x1000000u : 0u);
             }
             return h;
         }
@@ -483,6 +504,15 @@ namespace UnturnedGodot.Net
             byte pc = (byte)(e.Passengers?.Length ?? 0);
             w.WriteUInt8(pc);
             for (int i = 0; i < pc; i++) w.WriteUInt16(e.Passengers[i]);
+            // v41 respray, appended last and GATED BY A BIT: a car nobody has sprayed costs one bit rather
+            // than three bytes, and the overwhelming majority never get sprayed.
+            bool painted = e.PaintRgb.HasValue;
+            w.WriteBit(painted);
+            if (painted)
+            {
+                uint rgb = e.PaintRgb.Value;
+                w.WriteUInt8((byte)(rgb >> 16)); w.WriteUInt8((byte)(rgb >> 8)); w.WriteUInt8((byte)rgb);
+            }
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -509,13 +539,22 @@ namespace UnturnedGodot.Net
             if (pc > MaxSeats) return false;                                                           // bounds BEFORE the allocation
             ushort[] pax = pc == 0 ? System.Array.Empty<ushort>() : new ushort[pc];
             for (int i = 0; i < pc; i++) { if (!r.ReadUInt16(out ushort occ)) return false; pax[i] = occ; }
+            if (!r.ReadBit(out bool painted)) return false;                                            // v41 respray gate
+            uint? paint = null;
+            if (painted)
+            {
+                if (!r.ReadUInt8(out byte pr)) return false;
+                if (!r.ReadUInt8(out byte pg)) return false;
+                if (!r.ReadUInt8(out byte pb)) return false;
+                paint = ((uint)pr << 16) | ((uint)pg << 8) | pb;
+            }
             e = new VehicleEntity
             {
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
                 Fuel = fuel, Health = health, Battery = battery, Flags = flags,
-                TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax,
+                TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax, PaintRgb = paint,
             };
             return true;
         }
@@ -963,8 +1002,32 @@ namespace UnturnedGodot.Net
             _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
         }
 
+        /// <summary>(sender, spraypaint item id) -> the colour it was, having SPENT it; null if the sender
+        /// does not own that can or it is not a spraypaint. Set by the host to ServerTransactions.SpendPaintCan
+        /// -- ServerVehicles has the vehicles and the reach, and that has the bag and the content table, and
+        /// neither should grow a copy of the other's half.</summary>
+        public Func<ushort, ushort, uint?> TrySpendPaint;
+
+        /// <summary>How close you must be to respray a car. Generous like the forage reach and for the same
+        /// reason: the server is refusing a forged NetId, not re-deciding what the client may aim at.</summary>
+        public const float PaintReach = 8f;
+
         public void Register(CommandRegistry commands)
         {
+            // RESPRAY. The client names the CAR and the CAN and nothing else: the colour, whether that can is
+            // really in the bag, and whether the asker is stood next to the car are all answered here.
+            commands.Register<PaintVehicleCommand>(ReplicationIds.CommandPaintVehicle, PaintVehicleCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (TrySpendPaint == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.NetId), out var e) || e.Exploded) return;
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    uint? rgb = TrySpendPaint(sender, cmd.ItemId);   // spends it -- so this must come AFTER every other check
+                    if (rgb == null) return;
+                    _vehicles.ServerSetPaint(new NetId(cmd.NetId), rgb, _tick());
+                });
+
             commands.Register<EnterVehicleCommand>(ReplicationIds.CommandEnterVehicle, EnterVehicleCommand.TryRead,
                 (sender, cmd) => ServerEnter(sender, cmd.NetId, cmd.Seat),
                 validate: (sender, cmd) => CanEnter(sender, cmd.NetId));

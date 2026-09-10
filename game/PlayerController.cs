@@ -2361,9 +2361,25 @@ namespace UnturnedGodot
             if (_heldPaintItem == null) return;
             var col = VehiclePaints.For(_heldPaintItem.id);
             if (col == null) return;
+            // MP (v41): ASK, and ask FIRST. A remote client has no real Vehicle at all -- what it is looking
+            // at is a VehiclePuppet -- so the replicated case is tested before the local one rather than as a
+            // fallback from it. The server owns whether the can is in the bag, spends it, and publishes the
+            // colour on the vehicle ENTITY, so every client (including one that joins later) sees the sprayed
+            // car instead of its spawn colour.
+            //
+            // No optimistic local repaint: a car that changes colour and then changes back when the server
+            // refuses is worse than one that changes a beat late, and the owner echo would take the can back
+            // regardless. Nothing about a respray needs smoothing over.
+            if (NetPaintVehicle != null && NearestPuppet() is VehiclePuppet vp && vp.NetId != 0)
+            {
+                NetPaintVehicle(vp.NetId, _heldPaintItem.id);
+                Log.Print($"[paint] asked the server to respray #{vp.NetId}");
+                ClearHeldSpraypaint();   // the server spends it; the owner echo empties the cell
+                return;
+            }
+
             if (!IsInstanceValid(_focusVehicle)) { Log.Print("[paint] aim at a vehicle"); return; }
             if (_focusVehicle.IsWreck) { Log.Print("[paint] that one is a burnt-out wreck"); return; }
-
             _focusVehicle.SetPaint(col.Value);
             GameAudio.Play2D(this, GameAudio.Clip("misc", "vehicle_spraypaint"), -4f);
             Log.Print($"[paint] resprayed {_focusVehicle.DisplayName} {VehiclePaints.NameOf(_heldPaintItem.id)}");
@@ -4682,6 +4698,7 @@ namespace UnturnedGodot
         public System.Action<uint> NetSitSeat;                       // seat NetId (0 = stand) -> Client.SendSitSeat
         public System.Action<uint> NetToggleObjectDoor;              // prop-door assembly NetId -> Client.SendToggleObjectDoor
         public System.Action<int> NetForageResource;                 // resource INDEX -> Client.SendForageResource (v40)
+        public System.Action<uint, ushort> NetPaintVehicle;           // (vehicle NetId, spraypaint item id) -> Client.SendPaintVehicle (v41)
 
         VehiclePuppet NearestPuppet()
         {

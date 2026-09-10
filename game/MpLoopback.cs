@@ -81,6 +81,14 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            // v41: the spraypaint table is CONTENT, so the game layer hands it down -- core cannot read
+            // content/vehicle_paints.tsv, and a server that does not know what a can is must not paint.
+            Server.Transactions.PaintColorFor = id =>
+            {
+                if (VehiclePaints.For(id) is not Color c) return null;
+                return ((uint)(c.R8) << 16) | ((uint)(c.G8) << 8) | (uint)c.B8;
+            };
+
 
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
@@ -311,6 +319,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // (master 2026-09-10 "make sure the harvest path goes through the server"), so this is the
                 // only route from pressing F on a bush to actually getting a berry.
                 Player.NetForageResource = index => Client.SendForageResource(index);
+                Player.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41 respray
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and

@@ -608,6 +608,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetPlantCrop = (seedId, pos) => Client.SendPlantCrop(seedId, ToU(pos));
             shell.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
             shell.NetForageResource = index => Client.SendForageResource(index);   // v40: pick a berry bush / mushroom
+            shell.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41: respray a vehicle
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);

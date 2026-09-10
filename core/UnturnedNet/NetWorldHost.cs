@@ -184,6 +184,9 @@ namespace UnturnedGodot.Net
             Inventories.CrateOpenChanged = (netId, open) => Containers.ServerSetDoorsOpen(netId, open, Session.CurrentTick);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
+            // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
+            // the content table. One hook rather than each growing a copy of the other's half.
+            VehicleHost.TrySpendPaint = (sender, itemId) => Transactions.SpendPaintCan(sender, itemId);
             VehicleHost.Register(Commands);
             // mp-clientauth-foot (v9): the owner's on-foot transform stream -- envelope-validated, then
             // adopted through ServerDrive (the entity goes ExternallyDriven; ServerStep never integrates
@@ -1191,6 +1194,11 @@ namespace UnturnedGodot.Net
         /// index rather than a NetId because a resource is authored map data -- there is no entity to mint.</summary>
         public bool SendForageResource(int index)
             => SendCommand(ReplicationIds.CommandForageResource, new ForageResourceCommand { Index = (ushort)index }.Write);
+
+        /// <summary>Respray the vehicle at this NetId with the spraypaint `itemId` (v41). The colour is not
+        /// sent: the server reads it off the can it spends.</summary>
+        public bool SendPaintVehicle(uint netId, ushort itemId)
+            => SendCommand(ReplicationIds.CommandPaintVehicle, new PaintVehicleCommand { NetId = netId, ItemId = itemId }.Write);
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 

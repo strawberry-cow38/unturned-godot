@@ -4876,12 +4876,7 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            // ⚠ A RESPRAY DOES NOT REACH THIS PUPPET. VehiclePuppet is a separate class with no paint state,
-            // and the colour is not on the wire -- the entity carries no paint field, so a remote client
-            // rebuilds it from SpawnPaint(variant) and keeps showing the SPAWN colour however many times the
-            // owner sprays it. Flagged rather than papered over with fields nothing writes: making it
-            // replicate means a paint colour on the vehicle entity and a command to ask for one, which is a
-            // wire bump and its own change.
+            p.SetPaintMaterial(bodyMat);   // v41: so a replicated respray can repaint this puppet
             // SPLIT THE LENSES OUT, exactly as Build() does. The puppet used to load the body WHOLE, so its
             // headlights and taillights were baked into the paintwork and could never emit -- which is why a
             // remote car drove around dark no matter what its driver did. Same zones, same X-mirror, so the

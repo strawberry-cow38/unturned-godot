@@ -160,6 +160,27 @@ namespace UnturnedGodot.Net
         /// <summary>Forageable resources (berry bushes, mushrooms). Settable for the same reason Cooking is.</summary>
         public ServerForage Forage;
 
+        /// <summary>A spraypaint item id -> its colour as 0xRRGGBB, or null if that id is not a spraypaint.
+        /// Set by the game layer (VehiclePaints), because the table is content and core cannot read content.
+        /// Null here means no spraypaint resolves, which is the right failure: a server that does not know
+        /// what a can is must not paint anything.</summary>
+        public System.Func<ushort, uint?> PaintColorFor;
+
+        /// <summary>Spend one spraypaint out of the sender's bag and report the colour it was. Null if the id
+        /// is not a spraypaint or the sender does not actually have one -- the ownership check is the whole
+        /// point, since the client names the can and a client that could name one it does not own could
+        /// repaint the map for free.</summary>
+        public uint? SpendPaintCan(ushort sender, ushort itemId)
+        {
+            if (PaintColorFor == null) return null;
+            uint? rgb = PaintColorFor(itemId);
+            if (rgb == null) return null;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(itemId) <= 0) return null;
+            SpendAnyOf(inv, itemId, sender);
+            return rgb;
+        }
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
