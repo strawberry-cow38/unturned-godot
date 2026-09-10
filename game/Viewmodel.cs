@@ -254,6 +254,16 @@ namespace UnturnedGodot
                 if (partMats.TryGetValue(texFile, out var have)) return have;
                 string gp = ProjectSettings.GlobalizePath($"res://content/{texFile}");
                 var img = System.IO.File.Exists(gp) ? ContentProvider.LoadImage(gp) : null;
+                // ⚠ SOME FILLINGS ARE ALPHA-CUT CARDS (strawberry 2026-09-10: "the chips are missing their shape").
+                // bag_chips' Bone_3/Bone_4 are flat quads -- 8 and 24 verts -- and their 32x32 texture is 85%
+                // TRANSPARENT: the chip silhouette is cut out of the card, exactly like a foliage billboard. Drawn
+                // opaque you get the card instead of the chip, which is a rectangle where a crisp should be.
+                //
+                // Detected per texture rather than assumed, because it is NOT a property of "fillings": granola's
+                // filling texture is a 2x2 fully-opaque swatch, and forcing scissor on that would cost a
+                // depth-prepass branch for nothing. Scissor rather than blend -- these are solid-edged cutouts that
+                // must sort and depth-write normally, the same call the Yukon ice made.
+                var alpha = img?.DetectAlpha() ?? Image.AlphaMode.None;
                 // TextureFilter.Nearest for the same reason the gun body needs it: a runtime-loaded ImageTexture has
                 // no mipmaps, and the default linear-mipmap filter samples black once it minifies.
                 var made = img == null ? mat : new StandardMaterial3D
@@ -262,7 +272,10 @@ namespace UnturnedGodot
                     Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
                     TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
                     AlbedoTexture = ImageTexture.CreateFromImage(img),
+                    Transparency = alpha != Image.AlphaMode.None ? BaseMaterial3D.TransparencyEnum.AlphaScissor : BaseMaterial3D.TransparencyEnum.Disabled,
+                    AlphaScissorThreshold = 0.5f,
                 };
+                if (alpha != Image.AlphaMode.None) GD.Print($"[heldparts] {texFile} is an alpha cutout -> scissor");
                 partMats[texFile] = made;
                 return made;
             }
