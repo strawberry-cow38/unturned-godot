@@ -449,7 +449,7 @@ What I could not verify:
 - The non-fluid test suite was not run.
 
 
-## Third art pass — 2026-09-10
+## Third art pass — 2026-09-10 (implementation saved; final sign-off blocked)
 
 The tank and valve were treated as signed-off artifacts. Before changing the source, I split the old
 shared `barrel(source, low)` into independent `tank(low)` and `rain_catcher(low)` builders, regenerated,
@@ -485,19 +485,97 @@ preserves 9110 and 9115 and can render a selected set of other IDs.
 
 ### Frozen-device proof
 
+**Concurrent-edit exception, pending resolution:** the proof below holds for the art implementation
+commit `8a72188d` (originally `9afc58a0`, then reapplied by another process). A separate process then
+committed `66807341`, changing five 9115 mesh/item files and its animation. The frozen verifier
+correctly rejects that later valve. I have not changed the baseline hashes to conceal this conflict;
+the user has been asked whether to retain the originally signed-off valve or the later edit.
+
 `notes/FLUIDIO_FROZEN_ASSETS.json` records SHA-256 values taken **before this pass** for all **16**
 frozen files: ten fluid mesh/palette files, four item mesh/palette files, and two inventory icons.
 It also records both complete catalog and item-manifest entries, including anchors and part pivots.
 `verify_fluid_art.py` now checks these values on every run. The frozen assets matched both immediately
 after the builder split and after the geometry changes.
 
-Both the requested command and the wildcard form that actually selects all matching files are empty:
+For this pass’s implementation, both the requested command and the wildcard form that actually
+selects all matching files were empty. Comparing `2204128d..8a72188d` for these paths is also empty:
 
 ```bash
 git diff --stat -- game/content/fluid/9110_ game/content/fluid/9115_
 git diff --stat -- 'game/content/fluid/9110_*' 'game/content/fluid/9115_*'
 ```
 
-The item meshes, palettes and icons for 9110/9115 also have an empty diff. Their full catalog and
-item-manifest records are equal to the records in the starting commit. No file under the live server
+In that implementation, the item meshes, palettes and icons for 9110/9115 also have an empty diff.
+Their full catalog and item-manifest records equal the records in the starting commit. No file under the live server
 checkout was used or changed; this work remains on `astra-fluidio`, with no push.
+
+
+### What the angles showed
+
+I opened the completed six-angle sheets for **9110, 9111, 9112, 9113, 9114, 9116, 9117, 9119 and
+9120**, including their **145° / −22° underside views**. I also opened the separately changed valve’s
+six-angle capture to identify its version, then preserved the original signed-off valve sheet in the
+pass artifacts. The purifier’s initial 35° view was inspected, but its final full sheet was not
+completed before the concurrent changes made the capture inconsistent.
+
+- The catcher’s oblique view initially showed speckled, overlapping rim faces. Lowering the body lip
+  by **21.8 mm** removed them in the subsequent capture. Side and low views show the four rods meeting
+  the rim and tarp corners, a clear open mouth, the drain ending above that mouth, and the actual
+  **0.80 m tarp dip**. The underside shows the drum’s closed bottom and the tarp’s lower surface.
+- Manifold front/side views show three distinct branch mouths with unchanged spacing. Oblique and
+  underside views show pipe bends with air between the runs, connected unions, and both support legs
+  entering the header. The combiner preserves the mirrored 3:1 arrangement.
+- The pump’s rear and underside views show the bearing, rotating coupling inside the slotted guard,
+  and motor arranged along one shaft. Its discharge returns around the motor end without skewering
+  the casing or motor. The electrical cabinet’s post visibly reaches the baseplate. The planned
+  additional axial suction view was not reached before the shared pump was replaced by another edit.
+- Refinery and sluice side/underside views show the plain hex runs seated into their walls and headers.
+  The refinery still has separate inlet and discharge fittings. The purifier’s initial oblique capture
+  shows both sockets between its two clamp bands, at the measured machine midpoint.
+- The unchanged inlet and drain retain their swept endpoints and connected collars; the low views
+  expose the cage caps, grate support, and closed bowl underside. No geometry changes were needed.
+
+### Verification completed before the concurrent edits
+
+- `python3 tools/author_fluid_art.py`: generated all meshes/items; a repeat produced **68 byte-identical
+  generated files**, including catalog, item manifest and mesh bounds.
+- `python3 tools/audit_fluid_geometry.py`: **30 meshes, 12,464 triangles, 0 with findings**.
+- `python3 tools/verify_fluid_art.py`: **23 connected hose anchors at both LODs**, all mesh/palette/item
+  checks passed, and **all 16 original frozen asset hashes plus both catalog/manifest records matched**.
+  The verifier additionally requires positive outward volume for each clockwise-front solid and
+  samples the catcher’s drum, mouth and central drain to catch accidental sealing at either LOD.
+- `dotnet build game/UnturnedGodot.csproj`: passed. Full compiles emitted **22 existing warnings,
+  0 errors**; the initial incremental build had 0 warnings.
+- `./test.sh --l1 --only 'fluid.*'`: **11 passed, 0 failed** before the external schema revert,
+  including **210 checks** in `fluid.art_placements_and_flow`. This covered placement, all manifold
+  branches, item loading/drops, and the pump coupling’s powered motion/coasting. Test runs were serial.
+
+### Current checkout blockers and unfinished validation
+
+This is **not a final sign-off of the shared checkout**. Another process first stashed the work,
+rewrote the branch to insert `ac8dbfc1`, reapplied the art commit as `8a72188d`, then committed the
+valve edit `66807341`. It subsequently began further uncommitted changes to the pump, purifier,
+valve and their electrical panels/anchors. I stopped my capture supervisor so it could not present
+images of multiple changing implementations as one verified pass. The unrelated edits were not
+reverted or staged by this pass.
+
+- The original frozen verifier now **fails at `9115_body.txt`**, as intended. At the first conflicting
+  valve commit, the changed files were its body and preview at both LODs, plus `items/9115.obj`.
+  Later panel edits also change its metadata. The original SHA-256 ledger remains intact; I did not
+  change expected hashes to conceal the conflict. Resolving which version is authoritative requires
+  the user’s answer to the pending clarification.
+- The latest build still passes with **22 warnings / 0 errors**, and the latest fluid run passes
+  **10/10**, not the requested 11/11: the separate schema revert removed
+  **`fluid.place_consumes_over_the_wire`**. The earlier 11/11 result cannot certify that later state.
+  Restoring the intentionally reverted schema behavior is outside this art pass.
+- The full contact-sheet command completed ten devices before being stopped during the purifier.
+  **The final purifier sheet, supplementary suction/drain views, LOD1 visual captures, and new inventory
+  icons were not completed.** Existing icons remain; dropped meshes were generated. Those remaining
+  renders must use one settled version of the shared assets/code before they can be reviewed.
+- No hardware GPU, animation video, multiplayer/full-island play session, inventory-grid screenshot,
+  manual pickup session, or non-fluid test suite. Captures use software Vulkan under xvfb. Geometry
+  cost was not benchmarked; the authored set increased from **9,208 to 12,464 triangles**.
+
+Only this pass’s source/art implementation and completed review artifacts were committed on
+`astra-fluidio`. I did not push or access the live-server checkout. Final verification remains blocked
+by the concurrent requirement changes above, rather than being reported as complete.
