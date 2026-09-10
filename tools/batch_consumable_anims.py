@@ -35,6 +35,15 @@ def convert(cl):
         bn = str(cur.path).split("/")[-1]
         keys = [[float(kf.time), x, y, -z] for kf in keyframes(cur) for (x, y, z, _w) in [xyzw(kf.value)]]
         if keys: tracks.setdefault(bn, {})["pos"] = keys
+    # ⚠ SCALE CURVES, which this tool never read (strawberry 2026-09-10: "the animation is playing but its still
+    # wrong"). Retail hides a sub-piece by parking it at ~0.001 rest scale and SCALES IT UP in the Use clip when it
+    # should appear -- the handful of chips, the bag flaps. Dropping these curves left those parts 1000x too small
+    # and permanently invisible, so the clip played with half its content missing and nothing looked broken.
+    # Scale needs no axis fix: the X/Z negation is a frame change, and per-axis magnitudes do not flip under one.
+    for cur in (getattr(cl, "m_ScaleCurves", None) or []):
+        bn = str(cur.path).split("/")[-1]
+        keys = [[float(kf.time), x, y, z] for kf in keyframes(cur) for (x, y, z, _w) in [xyzw(kf.value)]]
+        if keys: tracks.setdefault(bn, {})["scale"] = keys
     sk = tracks.get("Skeleton")
     if sk and sk.get("rot"):
         K = qinv(sk["rot"][0][1:5])
