@@ -38,6 +38,7 @@ namespace UnturnedGodot
         public float LastFlow;             // debug / fill-bar readout
         InfoBillboard _info;
         StandardMaterial3D _valveHandleMat;   // valve: the handle wheel material (green open / red closed)
+        MeshInstance3D _valveHandle;         // authored wheel and its lower LOD rotate together
         MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase;   // pump motor drum: vibrates when the pump is DRIVING (powered + fluid flowing)
 
         // True when the device is actively working and should animate (a powered pump with fluid moving through it).
@@ -202,6 +203,25 @@ namespace UnturnedGodot
 
         protected virtual void BuildVisuals()
         {
+            if (FluidArt.HasArt(Def))
+            {
+                var part = FluidArt.BuildPlaced(this);
+                if (Role == FluidRole.Pump) { _pumpDrum = part; _pumpDrumBase = part.Position; }
+                if (Role == FluidRole.Valve)
+                {
+                    _valveHandle = part;
+                    _valveHandleMat = (StandardMaterial3D)part.MaterialOverride;
+                    part.Rotation = new Vector3(0, Blocked ? Mathf.Pi / 2f : 0, 0);
+                    RefreshValveVisual();
+                }
+                if (DisplayServer.GetName() != "headless" && (!IsFitting || StatusLine().text != null))
+                {
+                    _info = new InfoBillboard { TopLevel = true };
+                    AddChild(_info);
+                    _info.SetActive(true);
+                }
+                return;
+            }
             if (IsFitting)   // a small metal box, no fill bar (no tank)
             {
                 var fcol = Role switch { FluidRole.Splitter => new Color(0.56f, 0.60f, 0.68f), FluidRole.Combiner => new Color(0.62f, 0.56f, 0.66f), FluidRole.Transformer => new Color(0.60f, 0.42f, 0.28f), FluidRole.Valve => new Color(0.48f, 0.52f, 0.58f), _ => new Color(0.30f, 0.42f, 0.62f) };   // pump = electric blue / transformer = copper / valve = steel
@@ -270,6 +290,11 @@ namespace UnturnedGodot
         }
         protected void RefreshValveVisual()
         {
+            if (_valveHandle != null)
+            {
+                _valveHandleMat.Uv1Offset = new Vector3(Blocked ? 0.5f : 0f, 0, 0);
+                return;
+            }
             if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
         }
 
@@ -298,6 +323,12 @@ namespace UnturnedGodot
 
         public virtual void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
+            if (_valveHandle != null)
+            {
+                float angle = Mathf.MoveToward(_valveHandle.Rotation.Y, Blocked ? Mathf.Pi / 2f : 0f,
+                    (float)delta * Mathf.Pi * 2.5f);   // quarter turn in 0.2 s; follows both manual and remote state
+                _valveHandle.Rotation = new Vector3(0, angle, 0);
+            }
             // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
             // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))

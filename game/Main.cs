@@ -404,7 +404,7 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (fluidTest) { RunFluidTest(); return; }   // F2: spawn source->hose->storage, tick the fluid net, log the fill, quit
+            if (fluidTest) { _shotPath = shot; RunFluidTest(); return; }   // fluid test or tools/shot.py authored-art scene
 
             if (doorTest)   // openable prop door MVP: Fridge_0 a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open (so I can shot open vs closed)
             {
@@ -5921,6 +5921,8 @@ namespace UnturnedGodot
         // harness can capture the bars filling (F3 visual verify); else the fast headless log-check (go easy).
         void RunFluidTest()
         {
+            string artScene = System.Environment.GetEnvironmentVariable("UG_FLUIDART");
+            if (!string.IsNullOrEmpty(artScene)) { BuildFluidArtScene(artScene); return; }
             if (System.Environment.GetEnvironmentVariable("UG_HOSETOOL") == "1") { RunHoseToolTest(); return; }
             var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
             var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
