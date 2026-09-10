@@ -8829,8 +8829,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (!CanTow || CoupledTrailer != null) return;   // coupled -> CoupleTo owns the exception+ghost; leave it
             Vehicle near = null; float best = ApproachReach * ApproachReach;
             var fw = FifthWheelWorld;
+            // NEAREST, and it has to actually be nearest. This used to `break` on the first trailer in group order
+            // within range and never write `best` back, so the range gate was the only thing the distance did any
+            // work for -- with ONE trailer in the world that is the same answer, and it was the same answer for as
+            // long as there was only the semi trailer. Six car trailers spawned to look at them is the case it was
+            // always wrong for: the ghost latched onto whichever sorted first, so the one you were actually backing
+            // under stayed SOLID, your bumper hit its drawbar and shoved it away, and it read as unhitchable.
+            // (strawberry 2026-09-10: "the trailers are IMPOSSIBLE to tow.")
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null && fw.DistanceSquaredTo(v.KingpinWorld) < best) { near = v; break; }
+                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null)
+                {
+                    float d = fw.DistanceSquaredTo(v.KingpinWorld);
+                    if (d < best) { best = d; near = v; }
+                }
             if (near == _approachGhost) return;
             if (_approachGhost != null && IsInstanceValid(_approachGhost) && _approachGhost.CoupledCab != this)
             { RemoveCollisionExceptionWith(_approachGhost); _approachGhost.SetTowGhost(false); }   // left the one we were lining up under

@@ -76,7 +76,7 @@ namespace UnturnedGodot
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am; bool _vmSightSet;   // --attach : hold the T attachment menu open for the render; UG_SIGHT=<mesh.txt> mounts a specific sight/scope for a demo
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _chain, _hitch, _backunder, _pivots; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--chain] [--hitch] [--backunder] [--pivots]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _chain, _hitch, _backunder, _pivots, _hitchSweep; Vehicle _buTrailer; string _hsName; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--chain] [--hitch] [--backunder] [--pivots]
         bool _lampFxDone;   // UG_LAMPBREAK/UG_LAMPS apply once per run
         bool _planeTest;   // UG_PLANETEST (with --boattest --gun=otter): scripted fixed-wing flight (throttle/pitch/roll injected) to verify the flight model in a render
         int _heliPhase, _heliPhaseTick;   // UG_HELITEST maneuver sequence: 0 climb, 1 cruise, 2 turn, 3 slide, 4 recover
@@ -211,6 +211,7 @@ namespace UnturnedGodot
                 else if (arg == "--chain") _chain = true;         // a 2nd car beside _veh -> blow _veh -> chain reaction (source vehicle-explosion damage)
                 else if (arg == "--hitch") _hitch = true;         // with --gun=semi: back a trailer under the cab + couple it (verify the fifth-wheel hitch + articulation)
                 else if (arg == "--backunder") { _backunder = true; _hitch = false; }   // with --gun=semi: spawn a PARKED trailer behind + reverse the cab UNDER it, couple on proximity (verify the drive-under + phase-through)
+                else if (arg == "--hitchsweep") { _hitchSweep = true; _hitch = false; }   // cab backed under UG_TRAILER: sweep every place the player could stand + look, and report whether the on-foot hitch is reachable AT ALL
                 else if (arg == "--pivots") { _pivots = true; _hitch = false; }   // with --gun=semi: show cab + trailer SEPARATE with a labeled arrow at each coupling pivot (fifth wheel / kingpin)
                 else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
@@ -2119,6 +2120,65 @@ namespace UnturnedGodot
         static readonly bool _aiAtEnd = System.Environment.GetEnvironmentVariable("UG_AIEND") == "1";
         SceneTreeTimer _aiQuitTimer;   // strong ref: see UG_AIQUIT above
 
+        // WHAT THE PLAYER CAN ACTUALLY REACH. --backunder proves the physics couples; it says nothing about
+        // whether a person on foot can ever GET the hitch prompt, because it drives the cab by script and calls
+        // CoupleTo directly. TryToggleHitch needs BOTH gates at once: the look-focus must be the TRAILER, and you
+        // must stand within HitchReach of the KINGPIN -- which on a car trailer is a point 1.9 m out in front of
+        // the nose, with the cab's back end parked on top of it. So sweep every spot in range against every aim
+        // at the trailer's own look hulls and count how many actually work.
+        void RunHitchSweep()
+        {
+            var tr = _buTrailer; var cab = _veh;
+            var kp = tr.KingpinWorld;
+            const float HitchReach = 3.5f, LookReach = 2.6f, EyeY = 1.6f, CapsuleY = 0.9f;
+            var aims = new System.Collections.Generic.List<Vector3>();
+            foreach (var (xf, size) in tr.LookHullBoxes())
+            {
+                aims.Add(xf.Origin);
+                for (int c = 0; c < 8; c++)
+                    aims.Add(xf * new Vector3(((c & 1) == 0 ? -1 : 1) * size.X * 0.5f,
+                                              ((c & 2) == 0 ? -1 : 1) * size.Y * 0.5f,
+                                              ((c & 4) == 0 ? -1 : 1) * size.Z * 0.5f));
+            }
+            int inReach = 0, sawTrailer = 0, okTotal = 0, cabStole = 0;
+            float bestDist = 999f; Vector3 bestPos = Vector3.Zero;
+            for (float px = -4f; px <= 4.001f; px += 0.25f)
+                for (float pz = -4f; pz <= 4.001f; pz += 0.25f)
+                {
+                    var foot = new Vector3(kp.X + px, 0f, kp.Z + pz);
+                    float dk = (foot + Vector3.Up * CapsuleY).DistanceTo(kp);
+                    if (dk > HitchReach) continue;
+                    inReach++;
+                    var eye = foot + Vector3.Up * EyeY;
+                    bool anyTrailer = false, anyOk = false;
+                    foreach (var a in aims)
+                    {
+                        var d = a - eye;
+                        if (d.LengthSquared() < 1e-6f) continue;
+                        var dir = d.Normalized();
+                        var to = eye + dir * LookReach;
+                        if (!tr.LookRayHitsHull(eye, to)) continue;
+                        anyTrailer = true;
+                        if (!cab.LookRayHitsHull(eye, to) || FirstHit(tr, eye, dir) <= FirstHit(cab, eye, dir)) { anyOk = true; break; }
+                    }
+                    if (anyTrailer) sawTrailer++;
+                    if (anyOk) { okTotal++; if (dk < bestDist) { bestDist = dk; bestPos = foot; } }
+                    else if (anyTrailer) cabStole++;
+                }
+            GD.Print($"[hitchsweep] {_hsName}: kingpin {tr.KingpinLocal.Z:F2} local | spots within HitchReach({HitchReach}m) = {inReach} | look-ray reaches the trailer from {sawTrailer} | HITCH AVAILABLE from {okTotal} | cab stole focus at {cabStole}");
+            if (okTotal > 0) GD.Print($"[hitchsweep] {_hsName}: closest working spot is {bestDist:F2} m from the kingpin at {bestPos}");
+            else GD.Print($"[hitchsweep] {_hsName}: NO stand+aim pair works -- the on-foot hitch is UNREACHABLE");
+            GetTree().Quit();
+        }
+
+        // first-hit distance along dir, by bisecting the segment LookRayHitsHull accepts (it returns bool only)
+        float FirstHit(Vehicle v, Vector3 from, Vector3 dir)
+        {
+            float lo = 0f, hi = 2.6f;
+            for (int i = 0; i < 12; i++) { float m = (lo + hi) * 0.5f; if (v.LookRayHitsHull(from, from + dir * m)) hi = m; else lo = m; }
+            return hi;
+        }
+
         void BuildVehicleTest(string type)
         {
             var env = new Godot.Environment
@@ -2179,10 +2239,30 @@ namespace UnturnedGodot
             }
             if (_backunder && _veh.CanTow)   // --backunder: park a trailer ~4m behind the cab's rear, then the cab reverses UNDER it (see the vehTest loop) + couples on proximity
             {
-                _buTrailer = Vehicle.BuildByName("trailer");
+                // DECOYS: park other trailers nearby, the way looking at all six of them does. UpdateTrailerApproach
+                // takes the FIRST trailer in group order within ApproachReach, not the nearest, so a decoy that
+                // sorts earlier steals the ghost and the one you are actually backing under stays SOLID.
+                int nDecoy = int.TryParse(System.Environment.GetEnvironmentVariable("UG_DECOYS"), out var dn) ? dn : 0;
+                for (int di = 0; di < nDecoy; di++)
+                {
+                    var dv = Vehicle.BuildByName("dinky_trailer");
+                    AddChild(dv);
+                    dv.Position = new Vector3(-4.5f - di * 3f, 1.2f, _veh.Position.Z + 6f);   // off to the side, within ApproachReach of the reversing cab
+                }
+                var buName = System.Environment.GetEnvironmentVariable("UG_TRAILER");   // --backunder against ANY trailer, not just the semi. The car trailers are a different shape of problem (kingpin 1.9m ahead of the nose, car-sized cab) and the harness could not reach them at all.
+                _buTrailer = Vehicle.BuildByName(string.IsNullOrEmpty(buName) ? "trailer" : buName);
+                GD.Print($"[backunder] trailer={buName ?? "trailer"} kingpin={_buTrailer.KingpinLocal} hitMeshTris={_buTrailer.DebugHitMeshTris} solidBit={_buTrailer.DebugSolidBit} layer={_buTrailer.CollisionLayer} mask={_buTrailer.CollisionMask}");
                 AddChild(_buTrailer);
                 // face the same way as the cab; drop it OFF-CENTER (X+0.8) ~4m behind so the cab reverses to close the gap AND the magnetize has to pull the kingpin sideways onto the fifth wheel (tests the centre-pull)
                 _buTrailer.Position = new Vector3(0.8f, 1.2f, _veh.Position.Z + _veh.FifthWheelLocal.Z - _buTrailer.KingpinLocal.Z + 4.0f);
+            }
+            if (_hitchSweep && _veh.CanTow)
+            {
+                var hsName = System.Environment.GetEnvironmentVariable("UG_TRAILER") ?? "dinky_trailer";
+                _buTrailer = Vehicle.BuildByName(hsName);
+                AddChild(_buTrailer);
+                _buTrailer.Position = (_veh.Position + _veh.FifthWheelLocal) - _buTrailer.KingpinLocal;   // backed under: kingpin ON the fifth wheel, the best case the player can ever be in
+                _hsName = hsName;
             }
             if (_pivots && _veh.CanTow)   // --pivots: cab + trailer SEPARATE, a labeled arrow pinned to each coupling point
             {
@@ -9165,11 +9245,14 @@ namespace UnturnedGodot
                 else if (_vehTest && _veh != null)
                 {
                     // settle, then auto-drive a course for the video: straight -> right curve -> left curve
-                    if (_backunder)   // reverse straight back UNDER the parked trailer, couple in reach, then PULL FORWARD to prove the rig drives
+                    if (_hitchSweep) { if (_frame == 60) RunHitchSweep(); }
+                    else if (_backunder)   // reverse straight back UNDER the parked trailer, couple in reach, then PULL FORWARD to prove the rig drives
                     {
                         if (_veh.CoupledTrailer == null)
                         {
                             _veh.Drive(-0.55f, 0f, false);
+                            if (_buTrailer != null && _frame % 40 == 0)
+                                GD.Print($"[backunder] f{_frame} gap={_veh.FifthWheelWorld.DistanceTo(_buTrailer.KingpinWorld):F3} targetGhosted={(_buTrailer.CollisionLayer & 64u) != 0u} targetZ={_buTrailer.GlobalPosition.Z:F2} targetX={_buTrailer.GlobalPosition.X:F2}");
                             if (_buTrailer != null && _veh.CoupleTo(_buTrailer)) { _buCoupledFrame = _frame; GD.Print($"[backunder] coupled OK at frame {_frame}"); }
                         }
                         else _veh.Drive(_frame > _buCoupledFrame + 50 ? 1f : 0f, _frame > _buCoupledFrame + 160 ? 0.4f : 0f, false);   // hitched -> HOLD ~50 frames (see if the magnetize centered the off-center trailer at rest) then drive forward
