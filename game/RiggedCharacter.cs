@@ -877,6 +877,20 @@ namespace UnturnedGodot
             return (Pick(cap + "_Equip", "Melee_Equip"), Pick(cap + "_Weak", "Melee_Weak"), Pick(cap + "_Strong", "Melee_Strong"));
         }
         /// <summary>Ready-to-swing hold for a drawn melee weapon: the upper-body layer parked on the end of its Equip clip.</summary>
+        /// <summary>Hold a GUN in the 3P ready pose -- the end of its equip, not a replay of drawing it. Mirrors
+        /// ShowMeleeHold on purpose: the live body and the inventory paperdoll are both RiggedCharacters holding
+        /// the same weapon, and two callers each assembling "Capitalised_Equip" by hand is how they drift apart.
+        /// Falls back to the generic Gun_Equip for a weapon with no clips of its own.</summary>
+        public void ShowGunHold(string gunName)
+        {
+            if (string.IsNullOrEmpty(gunName)) return;
+            string cap = char.ToUpper(gunName[0]) + gunName[1..];
+            string equip = ClipLength(cap + "_Equip") > 0f ? cap + "_Equip" : "Gun_Equip";
+            if (ClipLength(equip) <= 0f) return;
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");   // additive aim bake is inert at AimBlend 0; the LAYER is what we want
+            SnapGunOverlay(equip);
+        }
+
         public void ShowMeleeHold(string meleeName)
         {
             var (equip, _, _) = MeleeClipsFor(meleeName);

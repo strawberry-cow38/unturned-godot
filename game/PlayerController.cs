@@ -2926,6 +2926,15 @@ namespace UnturnedGodot
         // A gun is genuinely OUT only when one is loaded AND nothing else is in hand. A melee/held item is mutually
         // exclusive with the gun, so it fully disarms: no firing, no ammo HUD, no reload/firemode logic (master).
         public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null && _deployable == null;
+
+        /// <summary>What is in your hands, for anything that wants to DRAW it rather than fire it -- the inventory
+        /// paperdoll, which is a second 3P body and should hold what the first one holds. Names only: the caller
+        /// feeds them to the same RiggedCharacter.AttachGun/AttachMelee the live body uses, so the two cannot
+        /// disagree about which mesh a name maps to.</summary>
+        public string HeldGunNameForDisplay => HasGunOut ? _gunName : null;
+        public bool HeldGunLeftHook => Gun?.LeftHook ?? false;
+        public string HeldMeleeNameForDisplay =>
+            (!HasGunOut && _melee != null && !string.IsNullOrEmpty(_heldMeleeName) && _heldMeleeName != "fists") ? _heldMeleeName : null;
         // Scope (PiP): the ScopeOverlay reads these each frame -- the look camera's ADS blend and the per-gun
         // magnification (>1 only for the augewehr for now; scoped view only renders while a scope gun is aimed).
         public float CurrentAimAlpha => _viewmodel?.AimAlpha ?? 0f;
@@ -8613,6 +8622,16 @@ namespace UnturnedGodot
                 }
                 else _viewmodel.ClearDrivingWheel();
                 _viewmodel.SetShown(((_fp && _driving == null && _riding == null && !_dead && !OpticRaised) || drivingArms) && !HideViewmodelDebug && !TankOpticsActive);   // no arms over a periscope or a gunsight   // FP gun arms on foot, driving arms at the wheel; binoculars at the eyes = retail overlay, no arms
+                // A MENU DROPS THE SIGHTS (strawberry 2026-09-10: "im able to hold rmb to ads, open my inventory, and
+                // ill stay ads'd even if i close my inv"). ADS is driven purely by the RMB input EVENT, so opening a
+                // UI swallows the release and the aim latches on -- it never gets the event that would clear it.
+                // Held-FIRE already had this covered by UiInputBlocked; the sights did not.
+                //
+                // Forced off every frame the menu is up rather than once on open: an open menu is a state, not an
+                // edge, and a "clear it on open" hook only fixes the paths that remember to call it. And it does not
+                // resume on close by design -- SetAiming only moves on an input event, so you have to press RMB
+                // again, which is what "inventory open should drop all that stuff" asks for.
+                if (UiInputBlocked) _viewmodel.SetAiming(false);
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
                 // ALT-LOOK: the gun belongs to the BODY, not the eyes (strawberry 2026-09-09: "do not have the
                 // viewmodel follow the camera when alt-looking in 1st person"). The intent was always that it

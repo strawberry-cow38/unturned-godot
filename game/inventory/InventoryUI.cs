@@ -445,6 +445,7 @@ void fragment() {
             if (_open) MatchPaperdollLight();   // only while the bag is up: the doll is not rendered otherwise
             if (!_open) return;
             LayoutDash();   // keep the panels sized/placed to the screen as the viewport settles
+            SyncPaperdollHands();   // ...holding whatever you are actually holding, in the 3P pose for it
             _pdBody?.Tick(delta);   // advance the paperdoll's idle so it breathes instead of a frozen T-pose
             FramePaperdoll();       // one-time: aim + distance the camera at the rig's real bounds (needs it in-tree)
             // LIVE update (master): if the inventory changed in the background (e.g. a consume finishing while the bag's
@@ -2254,6 +2255,35 @@ void fragment() {
                 if (_pdStage != null) { _pdStage.Position = new Vector2(pdX, pdY); _pdStage.Size = new Vector2(pdW, pdH); }
                 if (_pdHit != null)   { _pdHit.Position   = new Vector2(pdX, pdY); _pdHit.Size   = new Vector2(pdW, pdH); }
                 if (_pdVp != null)    _pdVp.Size = new Vector2I(Mathf.RoundToInt(pdW), Mathf.RoundToInt(pdH));
+            }
+        }
+
+        // WHAT YOU ARE HOLDING, ON THE PAPERDOLL (strawberry 2026-09-10: "have the paperdoll show whats in your
+        // hands with the proper 3p animations").
+        //
+        // The paperdoll IS a RiggedCharacter -- the same class as the live 3P body -- so this is the live body's
+        // own AttachGun/AttachMelee/ShowMeleeHold/gun-layer path pointed at the preview rig, not a second way of
+        // drawing a weapon. The names come off the player rather than being re-derived here, so the two bodies
+        // cannot disagree about which mesh a held item maps to.
+        //
+        // Change-gated on the name, like UpdateBodyGun: attaching rebuilds a BoneAttachment3D and reloads a mesh,
+        // which is not something to do every frame at 60 fps behind an open menu.
+        string _pdGunName, _pdMeleeName;
+        void SyncPaperdollHands()
+        {
+            if (_pdBody == null || Player == null) return;
+            string gun = Player.HeldGunNameForDisplay, melee = Player.HeldMeleeNameForDisplay;
+            if (gun != _pdGunName)
+            {
+                if (gun == null) { _pdBody.DetachGun(); if (melee == null) _pdBody.DisableGunLayer(); }
+                else { _pdBody.AttachGun(gun, Player.HeldGunLeftHook); _pdBody.ShowGunHold(gun); }
+                _pdGunName = gun;
+            }
+            if (melee != _pdMeleeName)
+            {
+                if (melee == null) { _pdBody.DetachMelee(); if (gun == null) _pdBody.DisableGunLayer(); }
+                else { _pdBody.AttachMelee(melee); _pdBody.ShowMeleeHold(melee); }
+                _pdMeleeName = melee;
             }
         }
 
