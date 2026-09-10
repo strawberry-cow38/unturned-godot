@@ -253,7 +253,11 @@ namespace UnturnedGodot
                 if (string.IsNullOrEmpty(texFile) || texFile == "-") return mat;
                 if (partMats.TryGetValue(texFile, out var have)) return have;
                 string gp = ProjectSettings.GlobalizePath($"res://content/{texFile}");
+                // IsEmpty as well as null: Image.LoadFromFile hands back an EMPTY image for a truncated or
+                // unreadable png rather than null, and CreateFromImage on that is a RenderingServer error plus a
+                // null texture -- the same shape as the guard Terrain.UpdateSplat already carries.
                 var img = System.IO.File.Exists(gp) ? ContentProvider.LoadImage(gp) : null;
+                if (img != null && img.IsEmpty()) { GD.PushWarning($"[heldparts] {texFile} loaded empty"); img = null; }
                 // ⚠ SOME FILLINGS ARE ALPHA-CUT CARDS (strawberry 2026-09-10: "the chips are missing their shape").
                 // bag_chips' Bone_3/Bone_4 are flat quads -- 8 and 24 verts -- and their 32x32 texture is 85%
                 // TRANSPARENT: the chip silhouette is cut out of the card, exactly like a foliage billboard. Drawn
