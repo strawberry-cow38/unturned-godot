@@ -1,0 +1,9 @@
+  WARNING Godot pid 1694340 has run 10733m at 101% cpu and is competing for cores with this render.
+          If it is a leftover it is safe to kill; CHECK FIRST -- this box is shared, and a long test run looks the same from here.
+  OK      fluidlod: /home/ec2-user/ug-fluidio-wt/.verify/fluid_fourth/9114_lod1.png  (900x900, 163kb, 16s)
+  WARNING Godot pid 1694340 has run 10733m at 101% cpu and is competing for cores with this render.
+          If it is a leftover it is safe to kill; CHECK FIRST -- this box is shared, and a long test run looks the same from here.
+  OK      fluidlod: /home/ec2-user/ug-fluidio-wt/.verify/fluid_fourth/9115_lod1.png  (900x900, 133kb, 15s)
+  WARNING Godot pid 1694340 has run 10733m at 101% cpu and is competing for cores with this render.
+          If it is a leftover it is safe to kill; CHECK FIRST -- this box is shared, and a long test run looks the same from here.
+  OK      fluidlod: /home/ec2-user/ug-fluidio-wt/.verify/fluid_fourth/9121_lod1.png  (900x900, 116kb, 15s)

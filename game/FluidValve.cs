@@ -19,8 +19,8 @@ namespace UnturnedGodot
         {
             // green OPEN trigger (left) + red CLOSE trigger (right), on top by the handle wheel. 0-watt sense inputs (a
             // >=1w signal flips the valve, drawing nothing) -- the exact mirror of the generator's TurnOn/TurnOff ports.
-            _onTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOn, Pos = new Vector3(-0.32f, 1.2f, 0f), Watts = 0f }, "Fluid Valve");
-            _offTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOff, Pos = new Vector3(0.32f, 1.2f, 0f), Watts = 0f }, "Fluid Valve");
+            _onTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOn, Pos = FluidElectricalPanel.Anchor(9115, DeployableDef.SwitchRole.TurnOn), Watts = 0f }, "Fluid Valve");
+            _offTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOff, Pos = FluidElectricalPanel.Anchor(9115, DeployableDef.SwitchRole.TurnOff), Watts = 0f }, "Fluid Valve");
             _powerPorts.Add(_onTrigger); _powerPorts.Add(_offTrigger);
             AddChild(_onTrigger); AddChild(_offTrigger);
             AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice) for the trigger ports

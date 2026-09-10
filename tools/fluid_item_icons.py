@@ -13,11 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sheet-only', action='store_true', help='tile the existing rendered icons')
-    parser.add_argument('--devices', default='9111,9112,9113,9114,9116,9117,9118,9119,9120,9121',
-                        help='comma-separated IDs to render; signed-off 9110/9115 are always preserved')
+    parser.add_argument('--devices', default='9111,9112,9113,9114,9115,9116,9117,9118,9119,9120,9121',
+                        help='comma-separated IDs to render; signed-off 9110 is always preserved')
     args = parser.parse_args()
     devices={int(x) for x in args.devices.split(',')}
-    if devices & {9110,9115}: parser.error('9110 and 9115 icons are frozen')
+    if 9110 in devices: parser.error('9110 icon is frozen')
     sheet = Image.new('RGB', (4*280, 3*292), (68, 73, 77))
     draw = ImageDraw.Draw(sheet)
     for i, item in enumerate(range(9110, 9122)):

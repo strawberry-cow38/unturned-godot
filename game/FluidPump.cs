@@ -41,11 +41,11 @@ namespace UnturnedGodot
         {
             // the power CONSUMER side: one input cube drawing PumpWatts on the power net's "deployables" group. A wire
             // tool run from a generator to this cube powers the pump exactly as a gas pump / spotlight is powered.
-            _powerInput = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = new Vector3(0f, 1.25f, 0.42f), Watts = PumpWatts }, "Fluid Pump");
+            _powerInput = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = FluidElectricalPanel.Anchor(9114), Watts = PumpWatts }, "Fluid Pump");
             // + electrical remote control (strawberry): a green OPEN/enable trigger + a red CLOSE/disable trigger, 0-watt
             // sense inputs (a >=1w signal flips _remoteOn, drawing nothing) -- the mirror of the generator's remote start/stop.
-            _onTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOn, Pos = new Vector3(-0.32f, 1.25f, -0.42f), Watts = 0f }, "Fluid Pump");
-            _offTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOff, Pos = new Vector3(0.32f, 1.25f, -0.42f), Watts = 0f }, "Fluid Pump");
+            _onTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOn, Pos = FluidElectricalPanel.Anchor(9114, DeployableDef.SwitchRole.TurnOn), Watts = 0f }, "Fluid Pump");
+            _offTrigger = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Role = DeployableDef.SwitchRole.TurnOff, Pos = FluidElectricalPanel.Anchor(9114, DeployableDef.SwitchRole.TurnOff), Watts = 0f }, "Fluid Pump");
             _powerPorts.Add(_powerInput); _powerPorts.Add(_onTrigger); _powerPorts.Add(_offTrigger);
             AddChild(_powerInput); AddChild(_onTrigger); AddChild(_offTrigger);
             AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice)

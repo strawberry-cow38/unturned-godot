@@ -11,6 +11,7 @@ import hashlib
 from PIL import Image
 from measure_fluid_art import parse, sub, dot, cross, length, rings
 from audit_fluid_geometry import audit, load, components
+from author_fluid_art import panel_origin, PANEL_ANCHORS
 
 ROOT=Path(__file__).resolve().parents[1]
 DIR=ROOT/'game/content/fluid'
@@ -32,13 +33,17 @@ def inside(point, vertices, comp):
     return len(hits)%2==1
 
 def main():
-    # The third-pass sign-off includes item art and metadata, not only body OBJs.
+    # Fourth pass explicitly reopens 9115 for the shared panel. Preserve the old
+    # sign-off ledger verbatim, but enforce only the still-frozen 9110 records.
     frozen=json.loads((ROOT/'notes/FLUIDIO_FROZEN_ASSETS.json').read_text())
+    frozen_count=0
     for name,digest in frozen['files'].items():
+        if not Path(name).name.startswith('9110'): continue
         assert hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest,(name,'frozen asset changed')
+        frozen_count+=1
     for key,path in [('catalog',DIR/'catalog.json'),('items',ROOT/'game/content/items/items_manifest.json')]:
         data=json.loads(path.read_text())
-        for id,spec in frozen[key].items(): assert data[id]==spec,(id,key,'frozen metadata changed')
+        assert data['9110']==frozen[key]['9110'],('9110',key,'frozen metadata changed')
     claimed=json.loads(MANIFEST.read_text())
     assert {p.name for p in DIR.glob('*.txt')}=={s['file'] for s in claimed}
     total=0
@@ -123,6 +128,43 @@ def main():
                     assert any(inside(p,v,comp) for comp in backing),(id,suffix,port,'floating collar',p)
                 if not suffix:checked+=1
     assert catalog['9121']['portY']==catalog['9121']['boundsSize'][1]/2, 'purifier IO off midpoint'
+    # A uniform panel has identical enclosure/face geometry after translation.
+    # Every real input must meet its socket and remain exposed on the +Z face.
+    panel_signatures={}
+    for id,slots in [(9114,['on','power','off']),(9115,['on','off']),(9121,['power'])]:
+        origin=panel_origin(id)
+        for suffix in ['', '_lod1']:
+            v,_,ts=load(DIR/f'{id}_body{suffix}.txt')
+            panel=[(t,g) for t,g in ts if g in ['electrical_panel','panel_face']]
+            signature=sorted((g,tuple(tuple(round(v[k][i]-origin[i],6) for i in range(3)) for k,_ in t)) for t,g in panel)
+            if suffix not in panel_signatures: panel_signatures[suffix]=signature
+            assert signature==panel_signatures[suffix],(id,suffix,'nonuniform electrical panel')
+            solids=components(v,ts)
+            for slot in slots:
+                x={'on':-PANEL_ANCHORS['TriggerX'],'power':0,'off':PANEL_ANCHORS['TriggerX']}[slot]
+                socket=components(v,[(t,g) for t,g in ts if g=='panel_socket_'+slot])
+                back=(x,origin[1],origin[2]-.05)
+                assert any(inside(back,v,c) for c in socket),(id,suffix,slot,'electrical anchor has no socket backing')
+                assert not any(inside((x,origin[1],origin[2]+.03),v,c) for c in solids),(id,suffix,slot,'electrical anchor buried')
+    # The level discharge cannot return over the motor. The two pipe centres
+    # meet the unchanged anchors; the separate local-Y rotor sits on the Z shaft.
+    assert catalog['9114']['partRot']==[90,0,0]
+    pivot=catalog['9114']['part']
+    for suffix in ['', '_lod1']:
+        v,_,ts=load(DIR/f'9114_body{suffix}.txt')
+        def group_vertices(group): return [v[k] for t,g in ts if g==group for k,_ in t]
+        discharge=group_vertices('tangential_discharge')
+        motor=group_vertices('motor')
+        assert all(abs(p[1]-.60)<=.088471 for p in discharge),(suffix,'discharge climbs above hose height')
+        assert min(p[2] for p in discharge)>max(p[2] for p in motor)+.3,(suffix,'discharge crosses motor')
+        # Include the key's .124535 m swept radius and the existing 4 mm
+        # animation vibration. Guard geometry beside the rotor needs clearance.
+        guard=group_vertices('coupling_guard')
+        assert all(math.hypot(p[0]-pivot[0],p[1]-pivot[1])>.135
+                   for p in guard if pivot[2]-.10<p[2]<pivot[2]+.10),(suffix,'guard intrudes into rotating coupling')
+        for group in ['motor','bearing_housing','drive_shaft','suction_cover']:
+            points=group_vertices(group)
+            assert all(abs((min(p[i] for p in points)+max(p[i] for p in points))/2-pivot[i])<1e-6 for i in [0,1]),(suffix,group,'off shaft axis')
     # Closed solids must still leave the intended empty spaces: annular end caps
     # previously passed closure checks while sealing the middle of a wheel.
     for suffix in ['', '_lod1']:
@@ -164,6 +206,7 @@ def main():
         alpha=icon.getchannel('A'); bbox=alpha.getbbox()
         assert alpha.getextrema()==(0,255) and bbox and min(bbox)>0 and max(bbox)<256,(id,'icon transparency/framing')
     print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} connected hose anchors at both LODs; '
-          '12 item meshes and icons; 16 frozen asset hashes and catalog/item records unchanged')
+          f'12 item meshes and icons; {frozen_count} frozen tank asset hashes and catalog/item records unchanged; '
+          '3 uniform panels, exposed electrical anchors and coaxial pump drive at both LODs')
 
 if __name__=='__main__':main()

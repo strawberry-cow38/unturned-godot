@@ -28,7 +28,7 @@ namespace UnturnedGodot
         {
             // the power CONSUMER side: one input cube drawing PurifierWatts on the power net's "deployables" group -- wire a
             // generator to it exactly as you'd power a pump / gas pump / spotlight.
-            _powerInput = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = new Vector3(0f, 1.25f, 0.42f), Watts = PurifierWatts }, "Fluid Purifier");
+            _powerInput = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = FluidElectricalPanel.Anchor(9121), Watts = PurifierWatts }, "Fluid Purifier");
             _powerPorts.Add(_powerInput);
             AddChild(_powerInput);
             AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice)

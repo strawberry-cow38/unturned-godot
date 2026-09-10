@@ -135,7 +135,19 @@ namespace UnturnedGodot.Testing
                 T.Check($"{id}: placed device actually moves/consumes fluid on every connected branch",received);
                 if (id==9117)T.Check("sluice output still dirty",outputs.TrueForAll(t=>t.Tank.Quality==WaterQuality.Dirty));
                 if (id==9121)T.Check("purifier output still clean",outputs.TrueForAll(t=>t.Tank.Quality==WaterQuality.Clean));
-                if (c is IPowerDevice power)T.Check($"{id}: electrical ports still attached",power.PowerPorts.Count>0 && System.Linq.Enumerable.All(power.PowerPorts,p=>p.GetParent()==c));
+                if (c is IPowerDevice power)
+                {
+                    T.Check($"{id}: electrical ports still attached",power.PowerPorts.Count>0 && System.Linq.Enumerable.All(power.PowerPorts,p=>p.GetParent()==c));
+                    foreach (var p in power.PowerPorts)
+                    {
+                        var ray=PhysicsRayQueryParameters3D.Create(c.ToGlobal(p.Position+Vector3.Back*.3f),
+                            c.ToGlobal(p.Position-Vector3.Back*.02f),ConnectionPort.PortLayer);
+                        var hit=c.GetWorld3D().DirectSpaceState.IntersectRay(ray);
+                        T.Check($"{id}: {p.Role} is wireable from the shared panel face",
+                            p.Position.IsEqualApprox(FluidElectricalPanel.Anchor(id,p.Role)) &&
+                            hit.Count>0 && hit["collider"].AsGodotObject()==p);
+                    }
+                }
                 if (c is FluidPump pump)
                 {
                     var drum=pump.GetNode<MeshInstance3D>("PumpDrum");
@@ -144,6 +156,8 @@ namespace UnturnedGodot.Testing
                     for(int i=0;i<6;i++)pump.HubTick(.03);
                     float a1=pump.DebugPumpAngle;
                     T.Check("driven coupling turns about its own axis",a1-a0>.01f && !drum.Basis.IsEqualApprox(b0));
+                    T.Check("coupling local Y stays aligned with the visible Z shaft while spinning",
+                        drum.Basis.Y.IsEqualApprox(Vector3.Back) && b0.Y.IsEqualApprox(drum.Basis.Y));
                     T.Check("LOD1 coupling follows the same transform",drum.GetNode<MeshInstance3D>("Lod1").GlobalTransform.IsEqualApprox(drum.GlobalTransform));
                     powerSource.TogglePower();PowerNet.Recompute(Tree);
                     // a loaded rotor has inertia: it must COAST rather than stop dead on the same tick

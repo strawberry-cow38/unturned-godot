@@ -8,6 +8,7 @@ that a retail prop contains this machine. Run measure_fluid_art.py first.
 from pathlib import Path
 import math
 import json
+import re
 from PIL import Image
 from measure_fluid_art import parse, sub, cross, unit
 
@@ -48,6 +49,13 @@ BLUE=(87,104,118); BLUE_LIGHT=(99,119,135)
 GREEN=(87,119,90); GREEN_LIGHT=(99,135,102)
 RED=(162,32,32); RUST=(112,68,68); RUST_LIGHT=(131,87,87)
 YELLOW=(213,167,44); WHITE=(219,219,219)
+# C# owns the electrical anchors; do not maintain a second coordinate table here.
+PANEL_ANCHORS={name:float(value) for name,value in re.findall(
+    r'public const float (\w+) = ([\d.]+)f;', (ROOT/'game/FluidElectricalPanel.cs').read_text())}
+
+def panel_origin(id):
+    kind='Valve' if id==9115 else 'Powered'
+    return (0,PANEL_ANCHORS[kind+'Y'],PANEL_ANCHORS[kind+'Z'])
 
 class Mesh:
     def __init__(self): self.v=[]; self.faces=[]; self.groups=[]
@@ -311,88 +319,122 @@ def rain_catcher(low):
             rod(m,(x*.34,1.265,z*.34),(x*.95,2.385,z*.95))
     return m
 
+def electrical_panel(m,id,low):
+    """Same 880 x 260 x 140 mm enclosure, face and ON / power / OFF row everywhere.
+
+    Each active wire cube is 130 mm wide (ConnectionPort.CubeSize): its rear
+    25 mm intersects a socket, with the remaining 105 mm exposed for wiring.
+    Devices without a given input get a flat blank in that slot, never fake IO.
+    Only the mounting bracket belongs to the individual device.
+    """
+    panel=Mesh()
+    panel.box((-.44,-.13,-.18),(.44,.13,-.04),2,'electrical_panel')
+    panel.box((-.425,-.115,-.05),(.425,.115,-.035),3,'panel_face')
+    for slot,x in [('on',-PANEL_ANCHORS['TriggerX']),('power',0),('off',PANEL_ANCHORS['TriggerX'])]:
+        active=id==9114 or (id==9115 and slot!='power') or (id==9121 and slot=='power')
+        panel.box((x-.085,-.085,-.06),(x+.085,.085,-.025 if active else -.03),2,
+                  'panel_socket_'+slot if active else 'panel_blank_'+slot)
+        if active:
+            # Socket liners and permanent I / lightning / O marks stay legible
+            # with the wire-tool overlay hidden. All use the shared metal texel.
+            cylinder(panel,.046,-.045,-.022,6,3,'z',(x,0,0),'panel_contact_'+slot)
+            if slot=='on': panel.box((x-.009,-.063,-.028),(x+.009,-.034,-.020),3,'panel_on_mark')
+            elif slot=='off':
+                ring=Mesh()
+                ring.lathe([(-.029,.013),(-.029,.023),(-.020,.023),(-.020,.013),(-.029,.013)],
+                           8,3,'panel_off_mark',axis='z',center=(x,-.052,0),caps=False)
+                panel.add(ring)
+            else:
+                for a,b in [((x+.015,-.030,-.020),(x-.007,-.050,-.020)),
+                            ((x-.007,-.050,-.020),(x+.008,-.050,-.020)),
+                            ((x+.008,-.050,-.020),(x-.015,-.072,-.020))]:
+                    rod(panel,a,b,.004,3,'panel_power_mark')
+    if not low:
+        for x in [-.405,.405]:
+            for y in [-.095,.095]:
+                cylinder(panel,.012,-.045,-.026,6,2,'z',(x,y,0),'panel_screw')
+    m.add(panel,offset=panel_origin(id))
+
+
 def pump(low):
-    """Direct-drive centrifugal set: axial suction, spiral scroll, tangential discharge."""
+    """End suction centrifugal set: front axial eye, motor behind, low side discharge.
+
+    The shaft runs along Z, leaving the +X hose side clear. A two-bend suction
+    riser meets the eye on-axis; the scroll's bottom tangent feeds a level S-jog
+    to the outlet. Neither pipe crosses the motor or the visible coupling.
+    """
     m=Mesh(); px=PORTX[9114]; n=6 if low else 8; steps=3 if low else 6
-    for z in [-.34,.46]: m.box((-.73,0,z-.07),(.84,.12,z+.07),2,'skids')
-    m.box((-.72,.12,-.40),(.84,.22,.56),2,'bedplate')
-    m.box((-.63,.21,-.15),(-.36,.43,.15),1,'volute_pedestal')
-    # Spiral grows 0.21 -> 0.36 m over a turn, ending at the TOP with a +Z tangent.
-    # Extrude the asymmetric footprint along X. The slightly off-centre fan point
-    # triangulates the radial cutwater edge too (an on-axis fan would degenerate).
+    cx=-.38; cy=.92
+    for x in [-.61,.65]: m.box((x-.07,0,-1.27),(x+.07,.12,.34),2,'skids')
+    m.box((-.73,.12,-1.27),(.84,.22,.34),2,'bedplate')
+    m.box((-.58,.21,-.43),(-.18,.68,-.20),1,'volute_pedestal')
+    # Bottom cutwater: radius .19 -> .32 m, zero radial slope at each end so
+    # the final tangent is exactly +X at Y=.60, the unchanged hose height.
     count=12 if low else 24
-    outline=[(PORTY+(.21+.15*i/count)*math.cos(math.tau*i/count),
-              (.21+.15*i/count)*math.sin(math.tau*i/count)) for i in range(count+1)]
-    rings=[[(x,y,z) for y,z in outline] for x in [-.36,-.65]]
+    outline=[]
+    for i in range(count+1):
+        t=i/count; r=.19+.13*t*t*(3-2*t)
+        outline.append((cx+r*math.sin(math.tau*t),cy-r*math.cos(math.tau*t)))
+    rings=[[(x,y,z) for x,y in outline] for z in [-.18,-.44]]
     m.loft(rings,1,'spiral_volute',caps=False)
     for j,ring in enumerate(rings):
         order=ring if j==0 else ring[::-1]
-        centre=(ring[0][0],PORTY,-.025)
+        centre=(cx-.025,cy,ring[0][2])
         for a,b in zip(order,order[1:]+order[:1]): m.face([centre,a,b],1,'volute_face')
-    cylinder(m,.19,-.674,-.63,n,3,'x',(0,PORTY,0),'suction_cover')
+    cylinder(m,.19,-.20,-.154,n,3,'z',(cx,cy,0),'suction_cover')
     if not low:
         for i in range(6):
             a=math.tau*(i+.5)/6
-            cylinder(m,.021,-.688,-.662,6,2,'x',(0,PORTY+.169*math.cos(a),.169*math.sin(a)),'cover_bolt')
-    # The hex is sunk straight into the axial cover. No transition boss.
-    m.socket((-px,PORTY,0),'x',-1,low,seat=.18)
-    cylinder(m,.105,-.40,-.13,n,3,'x',(0,PORTY,0),'bearing_housing')
-    m.box((-.30,.21,-.09),(-.17,.57,.09),3,'bearing_foot')
-    cylinder(m,.043,-.17,.14,6,3,'x',(0,PORTY,0),'drive_shaft')
-    cylinder(m,.24,.10,.51,n,0,'x',(0,PORTY,0),'motor')
-    cylinder(m,.25,.46,.55,n,2,'x',(0,PORTY,0),'motor_fan_cover')
-    for x in [.16,.44]: m.box((x-.045,.21,-.19),(x+.045,.44,.19),2,'motor_feet')
+            cylinder(m,.021,-.169,-.142,6,2,'z',(cx+.169*math.cos(a),cy+.169*math.sin(a),0),'cover_bolt')
+    # Two tangent quarter bends: +X -> +Y -> -Z into the axial eye. The
+    # .18 + .14 m lift is fixed by .92 shaft height minus .60 hose height.
+    sections=[((-.825,PORTY,0),(1,0,0)),((-.56,PORTY,0),(1,0,0))]
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((-.56+.18*math.sin(a),.78-.18*math.cos(a),0),(math.cos(a),math.sin(a),0)))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((cx,.78+.14*math.sin(a),-.14+.14*math.cos(a)),(0,math.cos(a),-math.sin(a))))
+    sections.append(((cx,cy,-.22),(0,0,-1)))
+    pipe(m,sections,BORE,n,1,'axial_suction',normal=(0,0,1))
+    m.socket((-px,PORTY,0),'x',-1,low,seat=.03)
+    # A horizontal run off the BOTTOM tangent of the volute. Two 155 mm
+    # bends shift Z by .31 m onto the anchor plane, all at Y=.60.
+    sections=[((cx-.04,PORTY,-.31),(1,0,0)),((.30,PORTY,-.31),(1,0,0))]
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.30+.155*math.sin(a),PORTY,-.155-.155*math.cos(a)),(math.cos(a),0,math.sin(a))))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.61-.155*math.cos(a),PORTY,-.155+.155*math.sin(a)),(math.sin(a),0,math.cos(a))))
+    sections.append(((.825,PORTY,0),(1,0,0)))
+    pipe(m,sections,BORE,n,1,'tangential_discharge')
+    m.socket((px,PORTY,0),'x',1,low,seat=.03)
+    # Behind the casing: bearing, exposed coupling, motor, fan. One shaft axis.
+    cylinder(m,.105,-.565,-.42,n,3,'z',(cx,cy,0),'bearing_housing')
+    m.box((cx-.09,.21,-.55),(cx+.09,.87,-.46),3,'bearing_foot')
+    cylinder(m,.043,-.81,-.53,6,3,'z',(cx,cy,0),'drive_shaft')
+    cylinder(m,.24,-1.18,-.76,n,0,'z',(cx,cy,0),'motor')
+    cylinder(m,.25,-1.23,-1.14,n,2,'z',(cx,cy,0),'motor_fan_cover')
+    for z in [-1.11,-.83]: m.box((cx-.19,.21,z-.045),(cx+.19,.76,z+.045),2,'motor_feet')
     if not low:
         for i in range(8):
             a=math.tau*(i+.5)/8
-            rod(m,(.14,PORTY+.236*math.cos(a),.236*math.sin(a)),
-                  (.47,PORTY+.236*math.cos(a),.236*math.sin(a)),.015,0,'motor_fin')
-    # A stationary slotted half-round coupling guard, open below the shaft.
-    # Each strip is a closed rectangular section, so no annular profile is capped.
-    def guard_strip(a,b,x0,x1):
-        sections=[]
-        for i in range(steps+1):
-            t=a+(b-a)*i/steps
-            sections.append([(x0,PORTY+.16*math.cos(t),.16*math.sin(t)),
-                             (x1,PORTY+.16*math.cos(t),.16*math.sin(t)),
-                             (x1,PORTY+.18*math.cos(t),.18*math.sin(t)),
-                             (x0,PORTY+.18*math.cos(t),.18*math.sin(t))])
-        # Section order faces out of the new curved strip (ring tangent is +angle).
-        m.loft([ring[::-1] for ring in sections],0,'coupling_guard')
-    for x in [-.125,.072]: guard_strip(-math.pi/2,math.pi/2,x,x+.028)
-    for a in [-1.05,0,1.05]: guard_strip(a-.13,a+.13,-.13,.105)
-    # Tangential +Z outlet at the fat end of the scroll, then elbows around the
-    # motor. Final elbow turns onto +X at (.78,.60,0), inside the published collar.
-    sections=[((-.50,.96,-.06),(0,0,1)),((-.50,.96,.24),(0,0,1))]
-    for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((-.32-.18*math.cos(a),.96,.24+.18*math.sin(a)),(math.sin(a),0,math.cos(a))))
-    sections.append(((.52,.96,.42),(1,0,0)))
-    for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((.52+.16*math.sin(a),.80+.16*math.cos(a),.42),(math.cos(a),-math.sin(a),0)))
-    sections.append(((.68,.76,.42),(0,-1,0)))
-    for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((.68,.76-.16*math.sin(a),.26+.16*math.cos(a)),(0,-math.cos(a),-math.sin(a))))
-    sections.append(((.68,PORTY,.10),(0,0,-1)))
-    for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((.78-.10*math.cos(a),PORTY,.10-.10*math.sin(a)),(math.sin(a),0,-math.cos(a))))
-    sections.append(((.825,PORTY,0),(1,0,0)))
-    pipe(m,sections,BORE,n,1,'tangential_discharge',normal=(1,0,0))
-    m.socket((px,PORTY,0),'x',1,low,seat=.03)
-    # The fixed electrical anchors remain at their previous height, on a supported
-    # terminal cabinet above the motor, clear of the discharge behind it.
-    rod(m,(0,.20,-.25),(0,1.24,-.25),.025,3,'terminal_stand')
-    m.box((-.18,1.14,-.17),(.18,1.37,.17),2,'terminal_box')
-    m.box((-.10,1.15,.10),(.10,1.34,.385),2,'power_gland')
-    m.box((-.30,1.28-BORE,-.40),(.30,1.28+BORE,-.14),2,'rear_terminals')
-    # Reuse the existing local-Y spin / -90 Z placement for a real shaft coupling.
+            rod(m,(cx+.236*math.cos(a),cy+.236*math.sin(a),-1.15),
+                  (cx+.236*math.cos(a),cy+.236*math.sin(a),-.79),.015,0,'motor_fin')
+    # Two small guard rails leave the keyed rotating coupling visible from
+    # either side. Turn inward only AFTER the rotor's front end at Z=-.57;
+    # a diagonal rail to the bearing cut through the keyed rotor's swept volume.
+    for sign in [-1,1]:
+        rod(m,(cx+sign*.16,.86,-.80),(cx+sign*.16,.86,-.53),.018,2,'coupling_guard')
+        rod(m,(cx+sign*.16,.86,-.545),(cx+sign*.07,.86,-.50),.018,2,'coupling_guard')
+    for x in [-.32,.32]:
+        m.box((x-.025,.21,.26),(x+.025,1.18,.31),3,'panel_stand')
+    electrical_panel(m,9114,low)
     coupling=Mesh()
-    cylinder(coupling,.112,-.09,.09,6 if low else 8,3,group='coupling')
+    cylinder(coupling,.112,-.09,.09,n,3,group='coupling')
     coupling.box((-.025,-.078,.095),(.025,.078,.122),2,'coupling_key')
-    return m,coupling,(-.005,PORTY,0)
+    return m,coupling,(cx,cy,-.66)
 
 def valve(low):
     """A gate valve: flanged body, bonnet, rising stem, and a RED handwheel on top.
@@ -416,13 +458,10 @@ def valve(low):
     cylinder(m,.075,PORTY+.30,1.30,6,3,group='yoke')
     m.box((-STEM/2,1.30,-STEM/2),(STEM/2,1.44,STEM/2),3,'stem')
     for sign in [-1,1]: seated_port(m,(sign*.5,PORTY,0),'x',sign,.17,6 if low else 8,low=low)
-    for x in [-.32,.32]:
-        m.box((x-BORE,1.2-BAND/2,-BORE),(x+BORE,1.2+BAND/2,BORE),2,'trigger_housing')
-    # The support has to MEET the housings, on both axes. It topped out at 1.10 while they start at
-    # 1.15, leaving a 5 cm hole under each one, and it ran to +-.32 -- their CENTRES -- so they also
-    # overhung it at both ends. strawberry spotted it from underneath: "theres also a gap where the
-    # power open/close inputs are". Overlap up into them and past them, rather than butting flush.
-    m.box((-.32-BORE,1.2-BAND-STEM,-STEM/2),(.32+BORE,1.16,STEM/2),3,'trigger_support')
+    # Rear saddle joins the common panel to the existing yoke; wire anchors
+    # remain at (+-.32, 1.20, 0), below the handwheel's swept volume.
+    m.box((-.12,1.10,-.16),(.12,1.26,.025),3,'panel_mount')
+    electrical_panel(m,9115,low)
     # THE HANDWHEEL. Colour 1 is the palette's red texel, in both states.
     wheel=Mesh()
     if low:
@@ -487,7 +526,7 @@ def transformer(id,low,port_y):
                     cylinder(m,.28+LIP,h,h+BAND,n,1,center=(x,0,0),group='filter_clamp')
         m.box((-.20,BAND,-.30),(.20,1.36,.30),2,'control_cabinet')
         m.box((-.24,1.36,-.34),(.24,1.50,.34),3,'cabinet_hood')
-        m.box((-.10,1.13,.28),(.10,1.37,.39),3,'power_gland')
+        electrical_panel(m,9121,low)
     # ONE STUB PER PORT, off the body wall. A single pipe across the whole width ran straight THROUGH
     # the refinery's vessel and out the far side, which read as a skewer rather than plumbing.
     for sign in [-1,1]:
@@ -576,7 +615,7 @@ def assembled(body,part,offset,id):
     if part:
         # Match catalog partRot, including the pump's axial coupling in ghosts and dropped art.
         m.add(part,transform=lambda p:tuple(a+b for a,b in zip(
-            (p[1],-p[0],p[2]) if id==9114 else p,offset)))
+            (p[0],-p[2],p[1]) if id==9114 else p,offset)))
     return m
 
 def write_item(id,name,mesh,palette,manifest):
@@ -624,8 +663,8 @@ def main():
                 pr=preview.write(OUT/f'{id}_preview{suffix}.txt');files.append(pr)
                 if not low:
                     entry['part']=list(offset)
-                    # the coupling's local Y axis is stood onto the pump's X shaft here
-                    entry['partRot']=[0,0,-90] if id==9114 else [0,0,0]
+                    # the coupling's local Y axis is stood onto the pump's Z shaft here
+                    entry['partRot']=[90,0,0] if id==9114 else [0,0,0]
             else: pr=body
             if not low: write_item(id,'Fluid '+name,assembled(m,part,offset,id),palette,items)
             entry['lod1' if low else 'mesh']=pr

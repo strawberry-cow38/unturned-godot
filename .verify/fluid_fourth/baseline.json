@@ -1,0 +1,111 @@
+{
+  "head": "66807341b0f4b006e16e955d6854d6fe25f6c91c",
+  "files": {
+    "game/content/fluid/9110_body.txt": "3a7ddedc7c45b858d943ae19224e972ddc997764fc16d93d97875bd21c6bda78",
+    "game/content/fluid/9110_body_lod1.txt": "8fd44528319aada9cd0648a04f941c2ecf28fddba8a460e521b1b6bec0048c96",
+    "game/content/fluid/9110_palette.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9110.obj": "9abb5821e537635f20c39eafc85f4dba8462862b0da6aec26cd25d9d35121618",
+    "game/content/items/9110.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/icons/9110.png": "637a546cab606786c0f00519790f1058429ab1a4ef6a684559080885d1051a70"
+  },
+  "catalog": {
+    "name": "Tank",
+    "palette": [
+      [
+        87,
+        104,
+        118
+      ],
+      [
+        99,
+        119,
+        135
+      ],
+      [
+        59,
+        59,
+        59
+      ],
+      [
+        138,
+        138,
+        138
+      ]
+    ],
+    "part": null,
+    "partRot": null,
+    "portX": 0.5,
+    "portY": 0.45,
+    "mesh": {
+      "file": "9110_body.txt",
+      "vertices": 204,
+      "triangles": 376,
+      "min": [
+        -0.68,
+        0.0,
+        -0.543261
+      ],
+      "max": [
+        0.68,
+        1.3218,
+        0.543261
+      ],
+      "groups": {
+        "bands": 132,
+        "hose_fitting": 88,
+        "seated_boss": 112,
+        "vessel": 44
+      }
+    },
+    "lod1": {
+      "file": "9110_body_lod1.txt",
+      "vertices": 72,
+      "triangles": 124,
+      "min": [
+        -0.68,
+        0,
+        -0.470478
+      ],
+      "max": [
+        0.68,
+        1.3218,
+        0.470478
+      ],
+      "groups": {
+        "hose_fitting": 40,
+        "seated_boss": 64,
+        "vessel": 20
+      }
+    },
+    "boundsMin": [
+      -0.68,
+      0.0,
+      -0.543261
+    ],
+    "boundsSize": [
+      1.36,
+      1.3218,
+      1.086522
+    ],
+    "offset": 0.6609,
+    "radius": 0.5
+  },
+  "item": {
+    "name": "Fluid Tank",
+    "type": "Generic",
+    "obj": "9110.obj",
+    "tex": "9110.png",
+    "color": null,
+    "box": [
+      0.68,
+      0.6609,
+      0.54326
+    ],
+    "center": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "parts": 1
+  }
+}

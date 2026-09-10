@@ -449,7 +449,7 @@ What I could not verify:
 - The non-fluid test suite was not run.
 
 
-## Third art pass — 2026-09-10
+## Third art pass — 2026-09-10 (implementation saved; final sign-off blocked)
 
 The tank and valve were treated as signed-off artifacts. Before changing the source, I split the old
 shared `barrel(source, low)` into independent `tank(low)` and `rain_catcher(low)` builders, regenerated,
@@ -485,19 +485,243 @@ preserves 9110 and 9115 and can render a selected set of other IDs.
 
 ### Frozen-device proof
 
+**Concurrent-edit exception, pending resolution:** the proof below holds for the art implementation
+commit `8a72188d` (originally `9afc58a0`, then reapplied by another process). A separate process then
+committed `66807341`, changing five 9115 mesh/item files and its animation. The frozen verifier
+correctly rejects that later valve. I have not changed the baseline hashes to conceal this conflict;
+the user has been asked whether to retain the originally signed-off valve or the later edit.
+
 `notes/FLUIDIO_FROZEN_ASSETS.json` records SHA-256 values taken **before this pass** for all **16**
 frozen files: ten fluid mesh/palette files, four item mesh/palette files, and two inventory icons.
 It also records both complete catalog and item-manifest entries, including anchors and part pivots.
 `verify_fluid_art.py` now checks these values on every run. The frozen assets matched both immediately
 after the builder split and after the geometry changes.
 
-Both the requested command and the wildcard form that actually selects all matching files are empty:
+For this pass’s implementation, both the requested command and the wildcard form that actually
+selects all matching files were empty. Comparing `2204128d..8a72188d` for these paths is also empty:
 
 ```bash
 git diff --stat -- game/content/fluid/9110_ game/content/fluid/9115_
 git diff --stat -- 'game/content/fluid/9110_*' 'game/content/fluid/9115_*'
 ```
 
-The item meshes, palettes and icons for 9110/9115 also have an empty diff. Their full catalog and
-item-manifest records are equal to the records in the starting commit. No file under the live server
+In that implementation, the item meshes, palettes and icons for 9110/9115 also have an empty diff.
+Their full catalog and item-manifest records equal the records in the starting commit. No file under the live server
 checkout was used or changed; this work remains on `astra-fluidio`, with no push.
+
+
+### What the angles showed
+
+I opened the completed six-angle sheets for **9110, 9111, 9112, 9113, 9114, 9116, 9117, 9119 and
+9120**, including their **145° / −22° underside views**. I also opened the separately changed valve’s
+six-angle capture to identify its version, then preserved the original signed-off valve sheet in the
+pass artifacts. The purifier’s initial 35° view was inspected, but its final full sheet was not
+completed before the concurrent changes made the capture inconsistent.
+
+- The catcher’s oblique view initially showed speckled, overlapping rim faces. Lowering the body lip
+  by **21.8 mm** removed them in the subsequent capture. Side and low views show the four rods meeting
+  the rim and tarp corners, a clear open mouth, the drain ending above that mouth, and the actual
+  **0.80 m tarp dip**. The underside shows the drum’s closed bottom and the tarp’s lower surface.
+- Manifold front/side views show three distinct branch mouths with unchanged spacing. Oblique and
+  underside views show pipe bends with air between the runs, connected unions, and both support legs
+  entering the header. The combiner preserves the mirrored 3:1 arrangement.
+- The pump’s rear and underside views show the bearing, rotating coupling inside the slotted guard,
+  and motor arranged along one shaft. Its discharge returns around the motor end without skewering
+  the casing or motor. The electrical cabinet’s post visibly reaches the baseplate. The planned
+  additional axial suction view was not reached before the shared pump was replaced by another edit.
+- Refinery and sluice side/underside views show the plain hex runs seated into their walls and headers.
+  The refinery still has separate inlet and discharge fittings. The purifier’s initial oblique capture
+  shows both sockets between its two clamp bands, at the measured machine midpoint.
+- The unchanged inlet and drain retain their swept endpoints and connected collars; the low views
+  expose the cage caps, grate support, and closed bowl underside. No geometry changes were needed.
+
+### Verification completed before the concurrent edits
+
+- `python3 tools/author_fluid_art.py`: generated all meshes/items; a repeat produced **68 byte-identical
+  generated files**, including catalog, item manifest and mesh bounds.
+- `python3 tools/audit_fluid_geometry.py`: **30 meshes, 12,464 triangles, 0 with findings**.
+- `python3 tools/verify_fluid_art.py`: **23 connected hose anchors at both LODs**, all mesh/palette/item
+  checks passed, and **all 16 original frozen asset hashes plus both catalog/manifest records matched**.
+  The verifier additionally requires positive outward volume for each clockwise-front solid and
+  samples the catcher’s drum, mouth and central drain to catch accidental sealing at either LOD.
+- `dotnet build game/UnturnedGodot.csproj`: passed. Full compiles emitted **22 existing warnings,
+  0 errors**; the initial incremental build had 0 warnings.
+- `./test.sh --l1 --only 'fluid.*'`: **11 passed, 0 failed** before the external schema revert,
+  including **210 checks** in `fluid.art_placements_and_flow`. This covered placement, all manifold
+  branches, item loading/drops, and the pump coupling’s powered motion/coasting. Test runs were serial.
+
+### Current checkout blockers and unfinished validation
+
+This is **not a final sign-off of the shared checkout**. Another process first stashed the work,
+rewrote the branch to insert `ac8dbfc1`, reapplied the art commit as `8a72188d`, then committed the
+valve edit `66807341`. It subsequently began further uncommitted changes to the pump, purifier,
+valve and their electrical panels/anchors. I stopped my capture supervisor so it could not present
+images of multiple changing implementations as one verified pass. The unrelated edits were not
+reverted or staged by this pass.
+
+- The original frozen verifier now **fails at `9115_body.txt`**, as intended. At the first conflicting
+  valve commit, the changed files were its body and preview at both LODs, plus `items/9115.obj`.
+  Later panel edits also change its metadata. The original SHA-256 ledger remains intact; I did not
+  change expected hashes to conceal the conflict. Resolving which version is authoritative requires
+  the user’s answer to the pending clarification.
+- The latest build still passes with **22 warnings / 0 errors**, and the latest fluid run passes
+  **10/10**, not the requested 11/11: the separate schema revert removed
+  **`fluid.place_consumes_over_the_wire`**. The earlier 11/11 result cannot certify that later state.
+  Restoring the intentionally reverted schema behavior is outside this art pass.
+- The full contact-sheet command completed ten devices before being stopped during the purifier.
+  **The final purifier sheet, supplementary suction/drain views, LOD1 visual captures, and new inventory
+  icons were not completed.** Existing icons remain; dropped meshes were generated. Those remaining
+  renders must use one settled version of the shared assets/code before they can be reviewed.
+- No hardware GPU, animation video, multiplayer/full-island play session, inventory-grid screenshot,
+  manual pickup session, or non-fluid test suite. Captures use software Vulkan under xvfb. Geometry
+  cost was not benchmarked; the authored set increased from **9,208 to 12,464 triangles**.
+
+Only this pass’s source/art implementation and completed review artifacts were committed on
+`astra-fluidio`. I did not push or access the live-server checkout. Final verification remains blocked
+by the concurrent requirement changes above, rather than being reported as complete.
+
+
+## Fourth art pass — 2026-09-10
+
+The pump now has a rear motor driving a front centrifugal casing through an exposed shaft coupling,
+and a level discharge beside the casing. Pump, purifier and valve call the same
+`electrical_panel(m, id, low)` builder. This request explicitly reopens the valve for that panel;
+**only 9110 remains frozen**. This supersedes the preceding pass's unresolved valve-freeze note.
+The existing valve wheel and half-turn animation were retained, including both local wheel meshes.
+
+### Changes traced to measurements
+
+| Change | Measured constraint and final geometry |
+|---|---|
+| Pump flow and drive orientation | Hose anchors remain **(−0.80, 0.60, 0)** and **(+0.80, 0.60, 0)**. The motor, bearing, shaft, suction cover and moving coupling now share **X=−0.38, Y=0.92**, along **Z**. Putting the motor behind the casing leaves the right hose side free. The motor occupies **Z=−1.18…−0.76**, radius **0.24 m**; its fan cover ends at **−1.23 m**, 40 mm inside the baseplate's rear edge. The bearing, casing pedestal and motor feet all overlap the common plate at **Y=0.21…0.22 m**. |
+| Axial suction | A **0.088470 m radius** pipe runs from the unchanged left hex, bends **+X → +Y → −Z**, and ends at **(−0.38, 0.92, −0.22)** inside the axial cover. The **0.18 / 0.14 m** bend radii add up to the **0.32 m** rise from the hose to the shaft. Its centreline is **0.847655 m** long. Both straight/bend joins are tangent; it does not route around the motor. |
+| Tangential discharge | The scroll grows **0.19 → 0.32 m** over a turn, with **24 / 12** angular segments and **0.26 m** axial thickness. Smooth radial growth has zero radial derivative at the bottom cutwater, so the outlet tangent is **+X**, at **Y=0.92−0.32=0.60 m**. Two **0.155 m** horizontal bends shift the pipe from **Z=−0.31** to the hose plane **Z=0**. Centreline length falls **2.327478 → 1.421947 m (−38.9%)**. The entire pipe stays within **Y=0.511530…0.688470 m**, instead of climbing to the old 0.96 m centreline. Its nearest Z extent is **0.361530 m** clear of the motor. |
+| Visible animated coupling | The local coupling meshes are **byte-identical** to the starting commit. `catalog.json` now places the part at **[−0.38, 0.92, −0.66]**, with **partRot=[90, 0, 0]**. Local Y therefore lies on the Z shaft. The keyed coupling remains a separate runtime node, with its LOD1 child sharing the transform. Two small guard rails leave the coupling visible and meet the motor and bearing. Preview and dropped-item assembly use the same rotation. Numeric animation checks confirm local Y stays on the shaft while the rotor spins and coasts. |
+| Plain hex connections | Pump collars retain **0.152490 m** hex radius, **0.06 m** collar length and **0.12 m** exposed spout length. The pipe runs penetrate **25 mm** beyond their anchor planes and the hexes seat **30 mm** back. No new transition boss was introduced. Every device's `portX`, `portY` and `branchZ` metadata is unchanged, including purifier hose height **0.975 m**. |
+| One electrical panel | Every device uses the same **0.880 × 0.260 × 0.140 m** dark enclosure, metal face, mounting screws and three positions: **ON at X=−0.32**, **power at X=0**, **OFF at X=+0.32 m**. These dimensions and relative placements are identical at each LOD. Active sockets have permanent I / lightning / O marks; unused positions are flat blanks. The pump uses all three, purifier only the centre, valve only the outer pair. No additional electrical behavior or fake connection ports were added. |
+| Panel/anchor contact | `ConnectionPort.CubeSize` is **0.13 m**. The face sits **40 mm behind the anchor**, leaving **25 mm** of the cube intersecting the enclosure and **105 mm** exposed. Pump/purifier panel origins remain **(0, 1.25, 0.42)**; the valve origin is **(0, 1.20, 0)**. Two posts seat the pump panel into the base, the purifier panel overlaps its existing cabinet, and the valve's rear saddle overlaps the existing yoke. The verifier compares enclosure/face triangles after translation and checks backing and exposed space at every active electrical anchor at both LODs. |
+
+**The only moved anchors are the pump's two trigger inputs:**
+**(±0.32, 1.25, −0.42) → (±0.32, 1.25, +0.42)**, a **+0.84 m Z** shift.
+Previously they were on the opposite face from power-in; those three points cannot occupy one compact
+front-facing panel without bringing the triggers forward. Power-in on pump and purifier, and both
+valve trigger positions, retain their exact previous coordinates. `game/FluidElectricalPanel.cs`
+owns the shared anchor constants and role offsets. Each C# device calls its `Anchor` method; the
+Python builder reads those same C# constants rather than maintaining another position table.
+Wire port ordering, roles, wattage and network behavior are unchanged.
+
+| Changed assembly | LOD0 / LOD1 triangles, before → after | Placed collision envelope X × Y × Z, metres |
+|---|---|---|
+| 9114 Pump | 1540 / 740 → **1660 / 900** | **1.960000 × 1.390000 × 1.673464** |
+| 9115 Valve | 600 / 340 → **832 / 492** | **1.360000 × 1.490000 × 0.600000** |
+| 9121 Purifier | 360 / 176 → **568 / 304** | **2.060000 × 1.950000 × 1.040000** |
+
+The three changed dropped meshes and their bounds were regenerated from the complete assemblies;
+their three inventory icons were rendered again. Palettes are unchanged. The archived
+`FLUIDIO_FROZEN_ASSETS.json` was not rewritten: verification now enforces its six tank hashes and
+complete tank catalog/item records, retaining the old valve records as historical evidence.
+`Mesh.face`, clockwise-front emission, explicit normals and palette V convention are unchanged.
+No annular profile was capped to fill its centre.
+
+The final mechanical clearance review caught guard rails converging toward the bearing while still
+beside the rotor. The keyed coupling sweeps **0.124535 m radius**, plus the existing **4 mm** vertical
+animation vibration. The revised rails stay at **X=shaft X ±0.16, Y=0.86**, with **18 mm** tube radius,
+beside the rotor; their inward returns start at **Z=−0.545**, past the rotor's **−0.570 m** front end.
+The verifier now requires the guard vertices alongside the rotor to stay outside a **0.135 m** radius.
+The pump was regenerated, checked and rerendered after this correction.
+
+### What the changed-device angles showed
+
+- **Pump:** the 35° and 90° views expose the motor → keyed coupling → bearing → casing relationship.
+  The 90° view shows the suction elbow meeting the front eye on-axis, and the level discharge clear
+  of the drive. Front/low views show the shorter pipework meeting both hex anchors; rear and underside
+  views show attached feet, panel posts and a closed base. The panel overlaps part of the casing in
+  the straight-on projection, but the shaft and coupling are exposed in the oblique/side views.
+- **Valve:** front/35° views show the same enclosure and left/right inputs beneath the red wheel.
+  The existing yoke stands in front of the unused centre position. Side, rear and underside views show
+  the panel attached to its saddle, without the old gap below separate trigger housings. The LOD0
+  handwheel still has its open rim and visible spokes.
+- **Purifier:** front/35° views show the same panel across the cabinet, with one centre power socket
+  and two blanks. The side view shows the face standing forward of the columns; rear/underside views
+  show the cabinet and filter supports remaining closed and attached. Both hose fittings stay at the
+  measured half-height.
+- Supplementary **35° LOD1 captures of all three changed devices** were opened as well. The panel
+  proportions and exposed anchors remain consistent; pump elbows and coupling remain distinct.
+  The valve keeps its pre-existing solid hexagonal LOD1 wheel simplification.
+
+The other eight final six-angle sheets were also opened: the signed-off blue tank shows its closed
+ends and protruding fittings; the rain catcher shows an open drum and draining tarp; splitter and
+combiner show connected three-branch headers and attached stands; refinery and sluice show seated
+side fittings and closed bases; inlet and drain show connected elbows and closed undersides. No
+geometry was changed on those eight devices in this pass.
+
+### Frozen 9110 proof
+
+The baseline was captured before edits at **66807341b0f4b006e16e955d6854d6fe25f6c91c**.
+`.verify/fluid_fourth/baseline.json` and `frozen_proof.json` record all six tank asset hashes.
+All six match, and both full catalog/item records are unchanged. In particular:
+
+| File | SHA-256, unchanged |
+|---|---|
+| `game/content/fluid/9110_body.txt` | `3a7ddedc7c45b858d943ae19224e972ddc997764fc16d93d97875bd21c6bda78` |
+| `game/content/fluid/9110_body_lod1.txt` | `8fd44528319aada9cd0648a04f941c2ecf28fddba8a460e521b1b6bec0048c96` |
+| `game/content/fluid/9110_palette.png` | `5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b` |
+
+Both commands below produced **no output**; the wildcard also selects every matching file rather
+than relying on the literal prefix pathspec. The same comparison against the baseline commit is empty.
+
+```bash
+git diff --stat -- game/content/fluid/9110_
+git diff --stat -- 'game/content/fluid/9110_*'
+```
+
+### Verification and limits
+
+- `python3 tools/author_fluid_art.py`: completed on the final geometry. Only pump, valve and purifier
+  geometry/catalog records differ from the starting art; other hose metadata and all palettes match.
+- `python3 tools/audit_fluid_geometry.py`: **30 meshes, 14,128 triangles, 0 with findings**.
+- `python3 tools/verify_fluid_art.py`: passed triangle-only ParseObj semantics, explicit clockwise-front
+  normals, V-flipped palette sampling, finite bounds, positive closed-solid volume, **23 connected
+  hose anchors at both LODs**, all 12 item meshes/icon formats, **six frozen tank hashes**, matching
+  tank records, uniform panels, exposed electrical anchors, coaxial pump parts and guard clearance.
+- `dotnet build game/UnturnedGodot.csproj`: **22 existing warnings, 0 errors**. The final test runner's
+  build also passed with the same warning count.
+- `./test.sh --l1 --only 'fluid.*'`: **10 passed, 0 failed**, including **217 checks** in
+  `fluid.art_placements_and_flow`. Added checks raycast every electrical input from the common front
+  face and verify that the rotating coupling's local Y remains aligned with the Z shaft. Existing
+  tests cover actual generator power, fluid flow, valve trigger operation, placement, dropped items,
+  both LOD transforms and spin-down. Runs were serial, using the runner's lock.
+- The three changed icons were rendered and inspected together in `notes/fluid_art/item_icons.png`.
+  The pump icon and LOD1 capture were refreshed after the guard clearance correction. Delivery hashes
+  in `.verify/fluid_fourth/delivered_hashes.json` verify that authored files stayed stable during the
+  final render review. Logs and supplementary LOD1 views are in `.verify/fluid_fourth/`.
+- `python3 tools/fluid_contact_sheet.py` produced **11 fresh six-view sheets**, and the final pump
+  rerun with `FLUID_DEVICES=9114` replaced its six views after the guard correction. **All 11 final
+  sheets / 66 final frames were opened and inspected**, including underneath each base. Every sheet
+  decodes at **2700 × 450**. Both render runs logged every expected completed sheet, but their hosting
+  shell results were **143**, not a clean zero exit. This is an output-complete render review, not a
+  claim that those two shell invocations exited successfully.
+
+What this pass did **not** verify:
+
+- A clean exit of the contact-sheet hosting shell, or the cause of its reported **143** status after
+  producing the complete outputs. The final Godot capture also logs a render-thread `finalize` error
+  and leaked-object warning during shutdown. These existing shutdown diagnostics were not fixed;
+  fresh frame creation, decoding and the actual images were checked independently.
+- No hardware GPU, night/underwater scene or full-island/manual play session. These captures use
+  software Vulkan under xvfb. The non-fluid suite was not run, and geometry cost was not benchmarked:
+  the 30 delivered device meshes total **14,128**, up from **12,464 triangles**.
+- No animation video or real-time visual motion review. Numeric tests cover rotation, local-axis
+  alignment, coasting and valve response; the rendered angles are still frames. LOD1 visual coverage
+  is one 35° view of each changed device, rather than six views of every LOD1 model.
+- No multiplayer/saved-world migration test for pre-existing wires on the two relocated pump
+  triggers. Port indices and roles are preserved, but saved/custom wire polylines were not exercised.
+- No inventory-grid screenshot or manual pickup session. Only the pump/valve/purifier icons were
+  refreshed here. Some unchanged-device icons, notably the rain catcher and splitter/combiner,
+  still depict earlier-pass art; the twelve-icon format checks do not establish silhouette accuracy
+  for those older images.
+
+The previous process completed report-only commit `04bb7efe` while this pass was working. Its report
+and review artifacts were preserved. Pre-existing build-output changes and unrelated verification
+files were not included in this pass's commit. All work used the `astra-fluidio` worktree; no push or
+source edits in `/home/ec2-user/projects/unturned-godot` were performed.
