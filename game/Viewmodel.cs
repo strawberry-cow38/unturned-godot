@@ -213,6 +213,41 @@ namespace UnturnedGodot
         public bool EmptyHands;   // holding-something-with-no-arm-model (e.g. a deployable) -> arms in a static rest hold, no weapon mesh
         public bool Fists;        // UNARMED combat state -> bare arms in the melee ready hold + weak/strong punch swings, no mesh (src: empty hands = hardcoded fists)
         public string ConsumableMesh, ConsumableAlbedo;   // set (instead of GunName) to HOLD a consumable (food/drink/medical): mesh + albedo, Equip hold + Use eat/drink anim, no gun FX
+        /// <summary>Build a consumable's real held model: every Model_n / Bone_n from its equipable.prefab, as its
+        /// own node under the hand attachment, named so the Use clip's tracks land on it. Returns how many parts
+        /// were built -- 0 means this item has not been re-ripped yet and the caller keeps the old single mesh, so
+        /// the two rips can coexist while the 170 are converted.</summary>
+        static int AttachHeldParts(Node3D att, string meshName, StandardMaterial3D mat)
+        {
+            string tsv = $"res://content/{meshName}_parts.tsv";
+            if (!Godot.FileAccess.FileExists(tsv)) return 0;
+            using var f = Godot.FileAccess.Open(tsv, Godot.FileAccess.ModeFlags.Read);
+            if (f == null) return 0;
+            int built = 0;
+            while (!f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var col = line.Split('\t');
+                if (col.Length < 5) continue;
+                var mesh = ContentProvider.ParseObj($"res://content/{col[1]}");
+                if (mesh == null) continue;
+                var pv = col[2].Split(' '); var qv = col[3].Split(' '); var sv = col[4].Split(' ');
+                float P(string[] a, int i) => a.Length > i && float.TryParse(a[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
+                var basis = new Basis(new Quaternion(P(qv, 0), P(qv, 1), P(qv, 2), qv.Length > 3 ? P(qv, 3) : 1f).Normalized())
+                            .Scaled(new Vector3(sv.Length > 0 ? P(sv, 0) : 1f, sv.Length > 1 ? P(sv, 1) : 1f, sv.Length > 2 ? P(sv, 2) : 1f));
+                att.AddChild(new MeshInstance3D
+                {
+                    Name = col[0],   // EXACTLY the clip's track name -- Model_0 / Bone_3 / ...
+                    Mesh = mesh,
+                    MaterialOverride = mat,
+                    Transform = new Transform3D(basis, new Vector3(P(pv, 0), P(pv, 1), P(pv, 2))),
+                });
+                built++;
+            }
+            return built;
+        }
+
         public string ConsumableEquipClip, ConsumableUseClip;   // this item's OWN archetype clips (CE_n/CU_n from consumable_anims), e.g. drink vs eat vs syringe; empty -> generic fallback
         public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         public string DeployableMesh, DeployableAlbedo;   // set (instead of GunName) to HOLD a deployable (generator/spotlight): item.prefab carry mesh + palette, Deploy_Equip hold + Deploy_Use place anim, no gun FX
@@ -602,6 +637,13 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    // THE HELD MODEL IS NOT ONE PIECE. Retail's equipable.prefab carries Model_0..n plus Bone_0..n,
+                    // each its own mesh, and the item's Use clip animates them -- that is how a chip bag opens and
+                    // how a canned meal's spoon moves. `mi` above is the old single-mesh rip of the WORLD model; if
+                    // this item has the real parts ripped, they replace it wholesale rather than sitting on top of
+                    // it, and they are named exactly as the clip's tracks address them (see
+                    // RiggedCharacter.HeldPartPath, which binds "Bone_0" to a node instead of a nonexistent bone).
+                    if (ConsumableMesh != null && AttachHeldParts(att, ConsumableMesh, mat) > 0) mi.Visible = false;
                     BuildSksAction(mi, mat);
                     // glowing sight dots: each peeled marker surface rendered emissive in its OWN source colour (ace red,
                     // avenger/desert_falcon green, cobra white). Children of the body so they ride its transform. Energy is

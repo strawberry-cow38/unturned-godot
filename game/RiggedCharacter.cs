@@ -1455,6 +1455,11 @@ namespace UnturnedGodot
             return root;
         }
 
+        /// <summary>Where a consumable's own parts hang: under the hand attachment the held mesh already uses, so
+        /// they inherit the hand and the clip only has to supply their local motion.</summary>
+        internal const string HeldPartPath = "Skeleton3D/GunAttach/";
+        internal static bool IsHeldPartTrack(string n) => n.StartsWith("Bone_") || n.StartsWith("Model_");
+
         static Animation BuildAnim(ClipData c)
         {
             var a = new Animation { Length = (float)Math.Max(c.length, 1.0 / 30.0) };
@@ -1462,7 +1467,16 @@ namespace UnturnedGodot
             if (c.tracks == null) return a;
             foreach (var kv in c.tracks)
             {
-                string path = "Skeleton3D:" + kv.Key;
+                // ⚠ NOT EVERY TRACK IS A BONE. A consumable's Use clip animates the arm skeleton AND the parts of
+                // the thing in your hand -- retail's equipable.prefab carries Model_0..n plus Bone_0..n, each its
+                // own mesh, and the clip opens a chip bag or lifts a spoon by moving those. They are GameObjects,
+                // not skeleton bones, so binding them as "Skeleton3D:Bone_0" resolved to nothing and the track was
+                // dropped in silence -- which is why every food item played the same static hold while a 7.5 s
+                // animation ran (strawberry: "the chip bag should open and we should take handfuls of chips").
+                //
+                // Retail's own naming is the discriminator: Model_n / Bone_n are item parts, everything else is a
+                // bone. rig.json's 17 bones use none of those prefixes, so this cannot collide.
+                string path = IsHeldPartTrack(kv.Key) ? HeldPartPath + kv.Key : "Skeleton3D:" + kv.Key;
                 var tr = kv.Value;
                 if (tr.rot != null && tr.rot.Length > 0)
                 {
