@@ -31,6 +31,18 @@ SRC = "\n".join(src)
 quoted   = set(re.findall(r'"([A-Za-z0-9_./-]{2,})"', SRC))
 prefixes = set(re.findall(r'(?:Bank|Pick)\(\s*"[a-z]+"\s*,\s*"([A-Za-z0-9_]+)"', SRC)) | quoted
 
+# ...AND the names that are BUILT rather than written. `Clip("items", $"throwables_{stem}_use")` puts no
+# literal "throwables_smoke_red_use" anywhere, so a scan for quoted strings calls 24 wired clips dead --
+# which it did, immediately after they were wired. Take the literal FRAGMENTS out of each interpolated
+# string and treat one as a prefix: "throwables_" reaches every throwable clip. Path-ish and very short
+# fragments are dropped, or "res://content/audio/" would mark the entire tree reachable.
+interp_frags = set()
+for lit in re.findall(r'\$"((?:[^"\\]|\\.)*)"', SRC):
+    for frag in re.split(r"\{[^}]*\}", lit):
+        frag = frag.strip()
+        if len(frag) >= 5 and "/" not in frag and ":" not in frag:
+            interp_frags.add(frag)
+
 # ...AND the clip names that live in DATA rather than in code. Half of what a source-only pass calls dead is
 # wired through a table: consumable_sounds.tsv names a use clip per item id, effects/rubble_snd.json names one
 # per effect id, and the prop-door catalog names a clip stem. A tool that cannot read those reports phantom
@@ -59,6 +71,8 @@ def reachable(rel):
     stem = os.path.splitext(os.path.basename(rel))[0]
     if rel in SRC or stem in quoted or os.path.basename(rel) in SRC: return "named"
     if stem in data_words or os.path.basename(rel) in data_words: return "data"
+    for f in interp_frags:
+        if stem.startswith(f): return "built"
     parts = stem.split("_")
     for i in range(len(parts), 0, -1):
         if "_".join(parts[:i]) in prefixes: return "prefix"

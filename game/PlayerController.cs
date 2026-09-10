@@ -2794,13 +2794,14 @@ namespace UnturnedGodot
                 if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
                 if (!_focusGasPump.IsPowered) { Log.Print("[fuel] that pump has no power"); return; }
                 float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
-                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); Log.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
+                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GameAudio.Play2D(this, GameAudio.FuelPour(_heldFuelItem.id), -5f); Log.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)   // siphon fuel out of a car
             {
                 float pulled = Mathf.Min(space, _focusVehicle.Fuel);
                 if (pulled <= 0.01f) { Log.Print("[fuel] that vehicle is empty"); return; }
                 _focusVehicle.Fuel -= pulled; _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh();
+                GameAudio.Play2D(this, GameAudio.FuelPour(_heldFuelItem.id), -5f);   // same clip either direction: it is the CAN that makes the noise
                 Log.Print($"[fuel] siphoned {FluidDef.Litres(pulled)} from {_focusVehicle.DisplayName} -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}");
             }
         }
@@ -2823,6 +2824,7 @@ namespace UnturnedGodot
                 if (space <= 0.01f) { Log.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusDeployable.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
+                GameAudio.Play2D(this, GameAudio.FuelPour(_heldFuelItem.id), -5f);   // the can glugging, per container
                 PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
                 Log.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusDeployable.Def?.Name} {FluidDef.Litres(_focusDeployable.Fuel)}/{FluidDef.Litres(_focusDeployable.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
@@ -2832,6 +2834,7 @@ namespace UnturnedGodot
                 if (space <= 0.01f) { Log.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusVehicle.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
+                GameAudio.Play2D(this, GameAudio.FuelPour(_heldFuelItem.id), -5f);
                 Log.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusVehicle.DisplayName} {FluidDef.Litres(_focusVehicle.Fuel)}/{FluidDef.Litres(_focusVehicle.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
         }

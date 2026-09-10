@@ -306,6 +306,19 @@ namespace UnturnedGodot
         /// file is named for the grenade because that is the bundle it lives in, not because it is frag-only.</summary>
         public static AudioStream ThrowableBounce() => Clip("items", "throwables_grenade_bounce_use");
 
+        /// <summary>Fuel moving between a can and a tank -- pouring in, siphoning out, filling at a pump.
+        /// Retail ships one clip per CONTAINER (UseableFuel's own bundle), and the port has all five of the
+        /// items they belong to, so this is a straight id map rather than a family guess:
+        /// 28 Portable Gas Can, 1440 Industrial Gas Can, 1114/1115/1116 the Maple/Birch/Pine Jerrycans.</summary>
+        public static AudioStream FuelPour(ushort itemId) => Clip("items", itemId switch
+        {
+            1440 => "fuels_gas_large_use",
+            1114 => "fuels_jerrycan_maple_use",
+            1115 => "fuels_jerrycan_birch_use",
+            1116 => "fuels_jerrycan_pine_use",
+            _ => "fuels_gas_use",          // 28, and any fuel container a later rip adds
+        });
+
         // ---- PHYSICS IMPACTS (content/audio/impacts, 19 clips, also referenced nowhere) -------------------------
         // ⚠ THE STATIC/DYNAMIC SPLIT IS MY READING, NOT A CONFIRMED RETAIL RULE. The clips are <material>_static and
         // <material>_dynamic; retail's own trigger for them is the one audio path I could not pin down in the SDK
