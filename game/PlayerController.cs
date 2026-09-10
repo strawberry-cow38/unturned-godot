@@ -3827,12 +3827,11 @@ namespace UnturnedGodot
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
-            // ...and it ACTUALLY breaks the legs now. This line has logged "legs broken" since it was written
-            // and never set the flag, so Broken had no source anywhere -- PlayerVitalsReplication says as much
-            // in its own comment ("server has no source yet -> false"). Jump was already gated on it and the
-            // splint/medkit cure was already wired (ItemAsset.useHealBroken), so the whole feature was one
-            // assignment short of existing.
-            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); Broken = true; TakeDamage(dmg); }
+            // NO `Broken = true` here. The line above already set it, gated on the worn clothing's
+            // Prevents_Falling_Broken_Bones -- I added an unconditional one on 81b8f808 believing Broken had no
+            // source at all, which silently voided that clothing feature for one commit. The claim came from a
+            // grep whose output I had truncated with `head`; the assignment was on the line above the one I read.
+            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, broken={Broken}"); TakeDamage(dmg); }
         }
 
         float _grenadeCd;
