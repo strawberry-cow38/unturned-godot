@@ -1,0 +1,174 @@
+diff --git a/game/FluidContainer.cs b/game/FluidContainer.cs
+index d1056f77..e9c753dd 100644
+--- a/game/FluidContainer.cs
++++ b/game/FluidContainer.cs
+@@ -60,15 +60,11 @@ namespace UnturnedGodot
+         internal float DebugPumpAngle => _pumpAngle;
+         MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump shaft coupling: spins while DRIVING (powered + fluid flowing), and spins down when it stops
+         internal const float PumpSpinRate = 9.0f;      // rad/s at full drive -- fast enough to read, slow enough not to strobe at 30 Hz
+-        // A HALF TURN, not 2.5. strawberry: "change the valve's valve to be a half-turn close instead
+-        // of a fricken 20 turn lol." I read his earlier "slow down the valve animation by a lot" as
+-        // asking for MORE WINDING when it was asking for slower winding, and wound up with a wheel that
+-        // spun like a ship's helm.
+-        internal const float ValveTravel = Mathf.Pi;
++        internal const float ValveTravel = Mathf.Pi * 5f;   // 2.5 turns from open to shut, like a real gate valve
+         // Winding a gate valve is SLOW -- it is a hand crank on a threaded stem, not a light switch.
+         // 1.1 s still read as a flick (strawberry 2026-09-10: "slow down the valve animation by a lot").
+         // The flow gate is instant either way; this is only how long the wheel takes to catch up.
+-        internal const float ValveSeconds = 1.5f;   // deliberate, but a half turn over 4.5 s reads as stuck
++        internal const float ValveSeconds = 4.5f;
+ 
+         // True when the device is actively working and should animate (a powered pump with fluid moving through it).
+         // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.
+diff --git a/game/content/fluid/9115_body.txt b/game/content/fluid/9115_body.txt
+index 6df9037d..955bad1a 100644
+--- a/game/content/fluid/9115_body.txt
++++ b/game/content/fluid/9115_body.txt
+@@ -232,14 +232,14 @@ v 0.408470 1.150000 0.088470
+ v 0.408470 1.150000 -0.088470
+ v 0.408470 1.250000 -0.088470
+ v 0.408470 1.250000 0.088470
+-v -0.408470 1.058840 -0.020580
+-v -0.408470 1.058840 0.020580
+-v -0.408470 1.160000 0.020580
+-v -0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 0.020580
+-v 0.408470 1.058840 -0.020580
+-v 0.408470 1.160000 -0.020580
+-v 0.408470 1.160000 0.020580
++v -0.320000 1.058840 -0.020580
++v -0.320000 1.058840 0.020580
++v -0.320000 1.100000 0.020580
++v -0.320000 1.100000 -0.020580
++v 0.320000 1.058840 0.020580
++v 0.320000 1.058840 -0.020580
++v 0.320000 1.100000 -0.020580
++v 0.320000 1.100000 0.020580
+ vt 0.25 0.75
+ vt 0.75 0.75
+ vt 0.25 0.25
+diff --git a/game/content/fluid/9115_body_lod1.txt b/game/content/fluid/9115_body_lod1.txt
+index 0a010762..7e71aabf 100644
+--- a/game/content/fluid/9115_body_lod1.txt
++++ b/game/content/fluid/9115_body_lod1.txt
+@@ -184,14 +184,14 @@ v 0.408470 1.150000 0.088470
+ v 0.408470 1.150000 -0.088470
+ v 0.408470 1.250000 -0.088470
+ v 0.408470 1.250000 0.088470
+-v -0.408470 1.058840 -0.020580
+-v -0.408470 1.058840 0.020580
+-v -0.408470 1.160000 0.020580
+-v -0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 0.020580
+-v 0.408470 1.058840 -0.020580
+-v 0.408470 1.160000 -0.020580
+-v 0.408470 1.160000 0.020580
++v -0.320000 1.058840 -0.020580
++v -0.320000 1.058840 0.020580
++v -0.320000 1.100000 0.020580
++v -0.320000 1.100000 -0.020580
++v 0.320000 1.058840 0.020580
++v 0.320000 1.058840 -0.020580
++v 0.320000 1.100000 -0.020580
++v 0.320000 1.100000 0.020580
+ vt 0.25 0.75
+ vt 0.75 0.75
+ vt 0.25 0.25
+diff --git a/game/content/fluid/9115_preview.txt b/game/content/fluid/9115_preview.txt
+index 9a5d793d..0e023c82 100644
+--- a/game/content/fluid/9115_preview.txt
++++ b/game/content/fluid/9115_preview.txt
+@@ -232,14 +232,14 @@ v 0.408470 1.150000 -0.088470
+ v 0.408470 1.250000 -0.088470
+ v 0.408470 1.150000 0.088470
+ v 0.408470 1.250000 0.088470
+-v -0.408470 1.058840 0.020580
+-v -0.408470 1.160000 0.020580
+-v -0.408470 1.058840 -0.020580
+-v -0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 -0.020580
+-v 0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 0.020580
+-v 0.408470 1.160000 0.020580
++v -0.320000 1.058840 0.020580
++v -0.320000 1.100000 0.020580
++v -0.320000 1.058840 -0.020580
++v -0.320000 1.100000 -0.020580
++v 0.320000 1.058840 -0.020580
++v 0.320000 1.100000 -0.020580
++v 0.320000 1.058840 0.020580
++v 0.320000 1.100000 0.020580
+ v 0.260000 1.395000 0.000000
+ v 0.225167 1.395000 0.130000
+ v 0.175000 1.395000 0.000000
+diff --git a/game/content/fluid/9115_preview_lod1.txt b/game/content/fluid/9115_preview_lod1.txt
+index 73a5e3a5..f2291b58 100644
+--- a/game/content/fluid/9115_preview_lod1.txt
++++ b/game/content/fluid/9115_preview_lod1.txt
+@@ -184,14 +184,14 @@ v 0.408470 1.150000 -0.088470
+ v 0.408470 1.250000 -0.088470
+ v 0.408470 1.150000 0.088470
+ v 0.408470 1.250000 0.088470
+-v -0.408470 1.058840 0.020580
+-v -0.408470 1.160000 0.020580
+-v -0.408470 1.058840 -0.020580
+-v -0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 -0.020580
+-v 0.408470 1.160000 -0.020580
+-v 0.408470 1.058840 0.020580
+-v 0.408470 1.160000 0.020580
++v -0.320000 1.058840 0.020580
++v -0.320000 1.100000 0.020580
++v -0.320000 1.058840 -0.020580
++v -0.320000 1.100000 -0.020580
++v 0.320000 1.058840 -0.020580
++v 0.320000 1.100000 -0.020580
++v 0.320000 1.058840 0.020580
++v 0.320000 1.100000 0.020580
+ v 0.260000 1.480000 0.000000
+ v 0.130000 1.480000 0.225167
+ v 0.260000 1.400000 0.000000
+diff --git a/game/content/items/9115.obj b/game/content/items/9115.obj
+index b9c672b2..fe407ae9 100644
+--- a/game/content/items/9115.obj
++++ b/game/content/items/9115.obj
+@@ -232,14 +232,14 @@ v 0.204235 0.252500 -0.044235
+ v 0.204235 0.202500 0.044235
+ v 0.204235 0.202500 -0.044235
+ v 0.204235 0.252500 0.044235
+-v -0.204235 0.207500 0.010290
+-v -0.204235 0.156920 -0.010290
+-v -0.204235 0.156920 0.010290
+-v -0.204235 0.207500 -0.010290
+-v 0.204235 0.207500 -0.010290
+-v 0.204235 0.156920 0.010290
+-v 0.204235 0.156920 -0.010290
+-v 0.204235 0.207500 0.010290
++v -0.160000 0.177500 0.010290
++v -0.160000 0.156920 -0.010290
++v -0.160000 0.156920 0.010290
++v -0.160000 0.177500 -0.010290
++v 0.160000 0.177500 -0.010290
++v 0.160000 0.156920 0.010290
++v 0.160000 0.156920 -0.010290
++v 0.160000 0.177500 0.010290
+ v 0.112584 0.325000 0.065000
+ v 0.087500 0.325000 0.000000
+ v 0.130000 0.325000 0.000000
+diff --git a/tools/author_fluid_art.py b/tools/author_fluid_art.py
+index 62a167e5..523b8429 100755
+--- a/tools/author_fluid_art.py
++++ b/tools/author_fluid_art.py
+@@ -418,11 +418,7 @@ def valve(low):
+     for sign in [-1,1]: seated_port(m,(sign*.5,PORTY,0),'x',sign,.17,6 if low else 8,low=low)
+     for x in [-.32,.32]:
+         m.box((x-BORE,1.2-BAND/2,-BORE),(x+BORE,1.2+BAND/2,BORE),2,'trigger_housing')
+-    # The support has to MEET the housings, on both axes. It topped out at 1.10 while they start at
+-    # 1.15, leaving a 5 cm hole under each one, and it ran to +-.32 -- their CENTRES -- so they also
+-    # overhung it at both ends. strawberry spotted it from underneath: "theres also a gap where the
+-    # power open/close inputs are". Overlap up into them and past them, rather than butting flush.
+-    m.box((-.32-BORE,1.2-BAND-STEM,-STEM/2),(.32+BORE,1.16,STEM/2),3,'trigger_support')
++    m.box((-.32,1.2-BAND-STEM,-STEM/2),(.32,1.2-BAND,STEM/2),3,'trigger_support')
+     # THE HANDWHEEL. Colour 1 is the palette's red texel, in both states.
+     wheel=Mesh()
+     if low:

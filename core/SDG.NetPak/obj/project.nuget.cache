@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "XXyCx34L1Y8=",
+  "dgSpecHash": "C3RvORQajXg=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-hotfix/core/SDG.NetPak/SDG.NetPak.csproj",
+  "projectFilePath": "/home/ec2-user/ug-fluidio-wt/core/SDG.NetPak/SDG.NetPak.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }
