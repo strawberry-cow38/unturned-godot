@@ -217,7 +217,7 @@ namespace UnturnedGodot
         /// own node under the hand attachment, named so the Use clip's tracks land on it. Returns how many parts
         /// were built -- 0 means this item has not been re-ripped yet and the caller keeps the old single mesh, so
         /// the two rips can coexist while the 170 are converted.</summary>
-        static int AttachHeldParts(Node3D att, string meshName, StandardMaterial3D mat)
+        static int AttachHeldParts(Node3D partRoot, string meshName, StandardMaterial3D mat)
         {
             // ⚠ ConsumableMesh carries its EXTENSION ("bag_chips.txt") -- EquipHeldConsumable sets it that way and
             // ParseObj wants it. Building the sidecar name off it verbatim asked for "bag_chips.txt_parts.tsv",
@@ -264,7 +264,7 @@ namespace UnturnedGodot
                 float P(string[] a, int i) => a.Length > i && float.TryParse(a[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
                 var basis = new Basis(new Quaternion(P(qv, 0), P(qv, 1), P(qv, 2), qv.Length > 3 ? P(qv, 3) : 1f).Normalized())
                             .Scaled(new Vector3(sv.Length > 0 ? P(sv, 0) : 1f, sv.Length > 1 ? P(sv, 1) : 1f, sv.Length > 2 ? P(sv, 2) : 1f));
-                att.AddChild(new MeshInstance3D
+                partRoot.AddChild(new MeshInstance3D
                 {
                     Name = col[0],   // EXACTLY the clip's track name -- Model_0 / Bone_3 / ...
                     Mesh = mesh,
@@ -276,7 +276,7 @@ namespace UnturnedGodot
             // DIAGNOSTIC, and the reason this exists: the parts render but do not move, which means the clip's
             // Bone_n tracks are not reaching these nodes. Print the path they ACTUALLY live at, so it can be
             // compared against RiggedCharacter.HeldPartPath instead of assumed equal to it.
-            if (built > 0) GD.Print($"[heldparts] {stem}: built {built} under {att.GetPath()} (clip tracks expect '{RiggedCharacter.HeldPartPath}<name>')");
+            if (built > 0) GD.Print($"[heldparts] {stem}: built {built} under {partRoot.GetPath()} (clip tracks expect '{RiggedCharacter.HeldPartPath}<name>')");
             return built;
         }
 
@@ -691,7 +691,9 @@ namespace UnturnedGodot
                     // this item has the real parts ripped, they replace it wholesale rather than sitting on top of
                     // it, and they are named exactly as the clip's tracks address them (see
                     // RiggedCharacter.HeldPartPath, which binds "Bone_0" to a node instead of a nonexistent bone).
-                    if (ConsumableMesh != null && AttachHeldParts(att, ConsumableMesh, mat) > 0)
+                    // Parts go on the SKELETON, not on `att`: the clip positions them absolutely, so a parent that
+                    // moves (the hand) gets applied twice. See RiggedCharacter.HeldPartPath.
+                    if (ConsumableMesh != null && AttachHeldParts(skel, ConsumableMesh, mat) > 0)
                     {
                         mi.Visible = false;
                         _arms?.RefreshAnimCaches();   // the clips were bound before these nodes existed; re-resolve or they stay inert

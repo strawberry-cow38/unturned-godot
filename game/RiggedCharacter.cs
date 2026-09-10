@@ -1457,7 +1457,15 @@ namespace UnturnedGodot
 
         /// <summary>Where a consumable's own parts hang: under the hand attachment the held mesh already uses, so
         /// they inherit the hand and the clip only has to supply their local motion.</summary>
-        internal const string HeldPartPath = "Skeleton3D/GunAttach/";
+        /// <summary>⚠ The parts hang off the SKELETON, not off the hand attachment (strawberry 2026-09-10: "i think
+        /// its cuz ur anchoring the chips to the right hand. when the right hand grabs chips from the bag").
+        ///
+        /// Each Bone_n track carries 228 keys of position and rotation -- the clip places these pieces outright, so
+        /// they need a STATIC parent. Parenting them to GunAttach, which rides Right_Hook, applied the hand's motion
+        /// AND the clip's on top of each other. Everything then followed the right hand, including the bag the right
+        /// hand is supposed to be reaching INTO, so the whole thing swung as one lump instead of a hand taking
+        /// chips out of a bag held in the other one.</summary>
+        internal const string HeldPartPath = "Skeleton3D/";
         /// <summary>Re-resolve every animation track against the CURRENT scene tree. An AnimationMixer caches
         /// track path -> node once, and the held item's parts are added AFTER the rig and its clips are built --
         /// so the Bone_n tracks resolved to nothing, cached that, and never looked again. The parts rendered,
