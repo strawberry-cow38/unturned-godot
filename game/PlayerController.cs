@@ -3224,7 +3224,7 @@ namespace UnturnedGodot
                                 // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
-                                NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -3256,7 +3256,7 @@ namespace UnturnedGodot
                                 // then ServerPlace no-ops the fluid id (filtered from the schema) so NO phantom replica spawns.
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
-                                NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -4505,7 +4505,30 @@ namespace UnturnedGodot
         /// <summary>v31: the server's craft queue landed -- hand it to the menu to display. The menu owns the
         /// distinction between its own queue and a mirrored one; this is only the route.</summary>
         public void NoteServerCraftQueue((ushort bp, float left, float of)[] jobs) => _craftMenu?.AdoptServerQueue(jobs);
-        public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
+        public System.Action<ushort, Vector3, float, byte, byte, byte> NetPlaceDeployable;   // (defId,pos,yaw,page,x,y) -> Client.SendPlaceDeployable; the address names WHICH jar to spend (255 = unaddressed)
+
+        /// <summary>Where the held deployable's backing item actually sits right now, for the server to spend.
+        ///
+        /// Found by REFERENCE, not by id: a same-id twin elsewhere in the bag is a different object, and spending
+        /// the wrong one is half the bug this exists to fix. Looked up at PLACE time rather than remembered at
+        /// equip time, because the player can rearrange the bag in between. Walks every page including STORAGE --
+        /// a deployable held out of an open crate lives on page 7, which is precisely what removeItemAmount could
+        /// never see. Page 255 = "not in any page", and the server falls back to its old id search.</summary>
+        (byte page, byte x, byte y) HeldDeployableAddress()
+        {
+            if (_deployItem == null || Inventory == null) return (255, 0, 0);
+            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.PAGES; pg++)
+            {
+                var page = Inventory.items[pg];
+                if (page == null) continue;
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    if (jar != null && ReferenceEquals(jar.item, _deployItem)) return (pg, jar.x, jar.y);
+                }
+            }
+            return (255, 0, 0);
+        }
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
         public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)
         public System.Action<uint> NetExtractFuel;                   // A2: pumpNetId -> Client.SendExtractFuel (server drains the shared station tank into the held can; owner echo re-adopts the fuller can)
@@ -4720,7 +4743,7 @@ namespace UnturnedGodot
         public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg)
         {
             if (NetPlaceDeployable == null) return false;
-            NetPlaceDeployable(defId, pos, yawDeg);
+            NetPlaceDeployable(defId, pos, yawDeg, 255, 0, 0);   // debug/console seam: no jar to name -> id fallback
             return true;
         }
 

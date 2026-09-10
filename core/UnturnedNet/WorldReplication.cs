@@ -135,15 +135,28 @@ namespace UnturnedGodot.Net
     {
         public ushort SeedId;
         public Vector3 Pos;
+        // ⚠ WHICH JAR, not just which id. OnPlantCrop spends with removeItemAmount(SeedId, 1), which walks
+        // pages 0..OWNPAGES and takes the FIRST match -- so it could spend a same-id twin instead of the one you
+        // are holding, and it cannot see page 7 at all, which is why a deployable held out of an open crate was
+        // never spent. The handler could not do better: this command never told it where.
+        //
+        // Page 255 = UNADDRESSED, and the handler falls back to the old id search. That is not a hedge -- the
+        // console's `plant` command has no jar to name, so the fallback is the correct answer for it.
+        public byte Page, X, Y;
 
-        public void Write(NetPakWriter w) { w.WriteUInt16(SeedId); NetWire.WritePos(w, Pos); }
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt16(SeedId); NetWire.WritePos(w, Pos);
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+        }
 
         public static bool TryRead(NetPakReader r, out PlantCropCommand cmd)
         {
             cmd = default;
             if (!r.ReadUInt16(out ushort seedId)) return false;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
-            cmd = new PlantCropCommand { SeedId = seedId, Pos = pos };
+            if (!r.ReadUInt8(out byte pg) || !r.ReadUInt8(out byte px) || !r.ReadUInt8(out byte py)) return false;
+            cmd = new PlantCropCommand { SeedId = seedId, Pos = pos, Page = pg, X = px, Y = py };
             return true;
         }
     }

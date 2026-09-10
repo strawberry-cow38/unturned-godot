@@ -88,8 +88,20 @@ namespace UnturnedGodot.Net
         public ushort DefId;
         public Vector3 Pos;
         public float YawDegrees;
+        // ⚠ WHICH JAR, not just which id. OnPlaceDeployable spent with removeItemAmount(DefId, 1), which walks
+        // pages 0..OWNPAGES and takes the FIRST match -- so it could spend a same-id twin instead of the one you
+        // are holding, and it cannot see page 7 at all, which is why a deployable held out of an open crate was
+        // never spent. The handler could not do better: this command never told it where.
+        //
+        // Page 255 = UNADDRESSED, and the handler falls back to the old id search. That is not a hedge -- the
+        // console's `plant` command has no jar to name, so the fallback is the correct answer for it.
+        public byte Page, X, Y;
 
-        public void Write(NetPakWriter w) { w.WriteUInt16(DefId); NetWire.WritePos(w, Pos); w.WriteDegrees(YawDegrees, NetQuantization.YawBits); }
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt16(DefId); NetWire.WritePos(w, Pos); w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+        }
 
         public static bool TryRead(NetPakReader r, out PlaceDeployableCommand cmd)
         {
@@ -97,7 +109,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort defId)) return false;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
-            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw };
+            if (!r.ReadUInt8(out byte pg) || !r.ReadUInt8(out byte px) || !r.ReadUInt8(out byte py)) return false;
+            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw, Page = pg, X = px, Y = py };
             return true;
         }
     }

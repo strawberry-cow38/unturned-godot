@@ -1043,8 +1043,8 @@ namespace UnturnedGodot.Net
         public bool SendUpgradeSkill(byte speciality, byte index)
             => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
 
-        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees)
-            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees }.Write);
+        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0)
+            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y }.Write);
 
         public bool SendSalvageDeployable(uint netId)
             => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);
@@ -1176,8 +1176,8 @@ namespace UnturnedGodot.Net
 
         // ---- Phase 8 crop commands (§3.7): both transactional, ReliableOrdered ----
 
-        public bool SendPlantCrop(ushort seedId, Vector3 pos)
-            => SendCommand(ReplicationIds.CommandPlantCrop, new PlantCropCommand { SeedId = seedId, Pos = pos }.Write);
+        public bool SendPlantCrop(ushort seedId, Vector3 pos, byte page = 255, byte x = 0, byte y = 0)
+            => SendCommand(ReplicationIds.CommandPlantCrop, new PlantCropCommand { SeedId = seedId, Pos = pos, Page = page, X = x, Y = y }.Write);
 
         public bool SendHarvestCrop(uint netId)
             => SendCommand(ReplicationIds.CommandHarvestCrop, new HarvestCropCommand { NetId = netId }.Write);

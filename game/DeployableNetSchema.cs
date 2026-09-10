@@ -29,15 +29,7 @@ namespace UnturnedGodot
                 // server def table: an absent id ALSO fails CanPlace, which is this command's validator, so
                 // the place was rejected before OnPlaceDeployable could spend the item. The client had
                 // already skipped its own local spend expecting the server to do it, so they were free.
-                // TEMPORARILY REVERTED 2026-09-10. Registering these with LocalOnly is what let the
-                // server VALIDATE and SPEND a fluid/door place (see 01587da4) -- but strawberry hit
-                // "all inventory items are fake and disappear when updating the inventory" on the build
-                // carrying it, and a broken inventory for every item in the game is far worse than
-                // deployables being free. Exclusion restored while I find what registering them
-                // disturbs. The LocalOnly flag stays: it is the right shape for the real fix, and
-                // nothing reads it while nothing is registered.
-                if (def.Fluid != null || def.DoorProp != null) continue;
-                bool localOnly = false;
+                bool localOnly = def.Fluid != null || def.DoorProp != null;
                                                     // server-replicated deployables. Keeping them out of the schema makes the server's
                                                     // ServerPlace no-op a fluid id (no phantom replica) while OnPlaceDeployable still
                                                     // SPENDS the item -> the fluid place routes its spend server-side without a spawn.

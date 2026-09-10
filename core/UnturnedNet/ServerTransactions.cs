@@ -480,10 +480,46 @@ namespace UnturnedGodot.Net
 
         // ---- cross-system handlers ----
 
+        /// <summary>Spend ONE of `id` at the address the client named, and DIRTY the entry. Mirrors OnConsume,
+        /// which had both halves of this right already.
+        ///
+        /// ⚠ THE DIRTY CALL IS NOT OPTIONAL. removeItemAmount's decrement is a bare `jar.item.amount -= take`,
+        /// which raises no grid event -- only the branch where it hits zero calls removeItem, which does. So
+        /// placing off a STACK mutated the server and never echoed: the client kept drawing a count the server no
+        /// longer had, every later move addressed a jar the server disagreed about, and the bag read as full of
+        /// fake items (strawberry 2026-09-10: "any item i moved in my bag went fake ... i couldnt remove items
+        /// from my 1/2 slots"). Placing the LAST one was always fine, which is why it survived two repros.
+        ///
+        /// Returns false when the address does not hold that id -- a stale or hostile address spends nothing
+        /// rather than something else.</summary>
+        bool SpendAt(PlayerInventory inv, byte page, byte x, byte y, ushort id, ushort sender)
+        {
+            if (inv == null || page >= PlayerInventory.PAGES) return false;
+            var pg = inv.items[page];
+            byte idx = pg?.getIndex(x, y) ?? byte.MaxValue;
+            var jar = idx == byte.MaxValue ? null : pg.getItem(idx);
+            if (jar?.item == null || jar.item.id != id) return false;
+            if (jar.item.amount > 1) { jar.item.amount--; _inventories.ServerMarkDirty(sender); }
+            else pg.removeItem(idx);   // removeItem raises onStateUpdated, which dirties the entry itself
+            return true;
+        }
+
+        /// <summary>The pre-address fallback: spend the first jar anywhere in pages 0..OWNPAGES with this id.
+        /// Kept for commands that genuinely have no jar to name (the console's plant), and for an address that
+        /// has gone stale. Dirties afterwards, which the bare decrement inside removeItemAmount never did.</summary>
+        void SpendAnyOf(PlayerInventory inv, ushort id, ushort sender)
+        {
+            if (inv == null) return;
+            inv.removeItemAmount(id, 1);
+            _inventories.ServerMarkDirty(sender);
+        }
+
         void OnPlaceDeployable(ushort sender, PlaceDeployableCommand cmd)
         {
             var inv = SenderInventory(sender);
-            inv.removeItemAmount(cmd.DefId, 1);   // the deployable item is spent (SP: planting consumes it)
+            // Spend the jar the client named. It carries the address as of v-this-commit; page 255 (or an address
+            // that no longer holds the id) falls back to the old id search.
+            if (!SpendAt(inv, cmd.Page, cmd.X, cmd.Y, cmd.DefId, sender)) SpendAnyOf(inv, cmd.DefId, sender);
             var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick());
             if (e == null) return;
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
@@ -1269,7 +1305,8 @@ namespace UnturnedGodot.Net
 
         void OnPlantCrop(ushort sender, PlantCropCommand cmd)
         {
-            SenderInventory(sender).removeItemAmount(cmd.SeedId, 1);   // the seed is spent (SP: planting consumes it)
+            var inv = SenderInventory(sender);
+            if (!SpendAt(inv, cmd.Page, cmd.X, cmd.Y, cmd.SeedId, sender)) SpendAnyOf(inv, cmd.SeedId, sender);   // the seed is spent
             PlantCrop(cmd.SeedId, cmd.Pos, grown: false);
         }
 
