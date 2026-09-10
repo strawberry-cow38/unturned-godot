@@ -57,15 +57,19 @@ namespace UnturnedGodot.Testing
 
             int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0, missingTex = 0;
             string firstMissing = null, firstBadParent = null, firstNoDraw = null, firstMissingTex = null;
-            int multiTexItems = 0;
+            int multiTexItems = 0, noRip = 0;
+            string firstNoRip = null;
             var allTex = new HashSet<string>();
 
             foreach (var kv in animParts)
             {
+                // ⚠ A MISSING RIP IS THE FAILURE, NOT A REASON TO SKIP. This used to `continue` past an item with
+                // no _parts.tsv, which is precisely the item that would fall back to the one-piece world model
+                // while its clip drove tracks at nodes that do not exist -- the bug this whole test exists for,
+                // stepped over in silence. If the clips say an item has parts, it must have been ripped.
                 string tsv = $"res://content/{kv.Key}_parts.tsv";
-                if (!Godot.FileAccess.FileExists(tsv)) continue;
-                var rows = Rows(tsv);
-                if (rows.Count == 0) continue;
+                var rows = Godot.FileAccess.FileExists(tsv) ? Rows(tsv) : new List<string[]>();
+                if (rows.Count == 0) { noRip++; firstNoRip ??= kv.Key; continue; }
                 checkedItems++;
 
                 var seen = new HashSet<string>();
@@ -107,6 +111,7 @@ namespace UnturnedGodot.Testing
             }
 
             T.Check($"cross-checked a real number of items ({checkedItems})", checkedItems > 50);
+            T.Check($"every item whose clips drive parts actually has a rip ({noRip} un-ripped{(firstNoRip != null ? ", first " + firstNoRip : "")})", noRip == 0);
             T.Check($"every animated part name exists as a node ({missingParts} missing{(firstMissing != null ? ", first " + firstMissing : "")})", missingParts == 0);
             T.Check($"every part's parent is emitted before it, one root each ({badParent} bad{(firstBadParent != null ? ", first " + firstBadParent : "")})", badParent == 0);
             T.Check($"no item builds with nothing visible ({noDraw} blank{(firstNoDraw != null ? ", first " + firstNoDraw : "")})", noDraw == 0);
