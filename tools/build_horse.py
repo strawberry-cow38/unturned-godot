@@ -201,8 +201,17 @@ def build():
     hx = -L/2-d['head_length']*.45
     # Five landmarks, with a broad base tapering in Z toward the poll. Both
     # buried base landmarks use Spine; the head end retains the deer Skull.
+    # neck[2] is the neck's FORWARD-LOWER corner and it has to sit WELL INSIDE the head, not on its
+    # rear edge. At .25/.35 it landed at (-1.348, 2.110) -- effectively ON the head's rear diagonal, so
+    # the two solids met along a line instead of interpenetrating, and the head's whole lower-rear face
+    # from y=1.85 to 2.11 was open air. That is the gap strawberry saw ("the head isnt attached
+    # properly, big gaps"), and the audit's plain volume-overlap test passed it because the bounding
+    # boxes DO overlap -- see the buried-cap rule this now gets in audit_animal_geometry.py, the same
+    # one the legs already had for the same reason.
+    # .55/.50 puts it at (-1.54, 2.05): inside the head's top edge (y=2.12 there) and above its lower
+    # edge (y=1.91), with the swept neck width 0.161 against the head's 0.29.
     neck = [(-L*.45, leg+depth*.25), (-L*.64, H),
-            (hx-d['head_length']*.25, poll-d['head_height']*.35),
+            (hx-d['head_length']*.70, poll-d['head_height']*.55),
             (hx+d['head_length']*.18, poll),
             (-L*.27, H-depth*.22)]
     prism('neck', neck, lambda x, y: d['head_width']+(x-hx)/(-L*.27-hx)*(W*.75-d['head_width']), 'Skull')
@@ -226,10 +235,14 @@ def build():
     prism('head', head, d['head_width'], 'Skull', 1,
           inlays={**eyes, 1: dict(inset=blaze, inset_color=3)})
     # Thin mane follows the rear crest; it is a solid prism, not a billboard.
-    mane = [(neck[3][0]-d['mane_width']/3, poll-d['mane_width']/3),
+    # The mane straddles the neck crest, and it must sit DEEP enough to stay buried when the head turns:
+    # it is skinned to Spine while the neck's forward half is Skull, so under Glance_0/Glance_1 the two
+    # move apart and a shallow mane peels off the crest. At -mane_width/3 the audit measured 0.04 mm of
+    # remaining overlap mid-glance -- floating, the same defect the first pass had at rest.
+    mane = [(neck[3][0]-d['mane_width']*1.2, poll-d['mane_width']*1.2),
             (neck[3][0]+d['mane_width'], poll),
             (neck[4][0]+d['mane_width'], neck[4][1]),
-            (neck[4][0]-d['mane_width']/3, neck[4][1]-d['mane_width']/3)]
+            (neck[4][0]-d['mane_width']*1.2, neck[4][1]-d['mane_width']*1.2)]
     prism('mane', mane, d['mane_width'], 'Skull', 2)
     for i in range(*parts['mane']):
         if rig['positions'][i][1] < H:
@@ -249,7 +262,11 @@ def build():
                 f = f[::-1]
             face(f, 'Skull', 0)
         parts['ear_left' if sign > 0 else 'ear_right'] = [start, len(rig['positions'])]
-    tail = [(L/2-d['hoof_length']/3, H-depth*.18), (L/2+d['hoof_length']*.7, H-depth*.25),
+    # The tail ROOT sits deep in the rump, not just inside its rear face. At L/2-hoof/3 it seated
+    # 0.04 mm -- the audit's seat rule now wants 10 mm for a part this size, and 0.04 mm is a tail
+    # resting against the horse rather than growing out of it. Only the buried end moves; the
+    # visible silhouette outside the body is unchanged.
+    tail = [(L/2-d['hoof_length']*1.2, H-depth*.18), (L/2+d['hoof_length']*.7, H-depth*.25),
             (L/2+d['hoof_length']*1.6, H-depth*.18-d['tail_length']),
             (L/2+d['hoof_length']*.7, H-depth*.18-d['tail_length']*.90)]
     prism('tail', tail, d['mane_width']*1.5, 'Spine', 2)

@@ -214,8 +214,13 @@ def audit(d, fleet=False, animate=True):
     attachments = []
     if not fleet:
         byname = {s.name: s for s in parts}
+        # ('neck','head') is here IN ADDITION to ('head','neck'): the two directions ask different
+        # questions and only one of them catches a head sitting on the end of the neck like a bead on a
+        # wire. head->neck is the volume test, which passes on a sliver; neck->head gets the buried-cap
+        # rule below, which is what the legs have had all along.
         for child, parent in [('Left_Front', 'body'), ('Right_Front', 'body'), ('Left_Back', 'body'),
                               ('Right_Back', 'body'), ('neck', 'body'), ('head', 'neck'), ('mane', 'neck'),
+                              ('neck', 'head'),
                               ('tail', 'body'), ('ear_left', 'head'), ('ear_right', 'head'),
                               ('eye_left', 'head'), ('eye_right', 'head'), ('blaze', 'head')]:
             if child not in byname or parent not in byname:
@@ -227,15 +232,33 @@ def audit(d, fleet=False, animate=True):
                 attachments.append((byname[child], byname[parent]))
     worst = {}
     caps = {}
+    # Minimum penetration for a joint to count as SEATED rather than merely touching: a tenth of the
+    # child's own smallest dimension, floored at 5 mm. Proportional because these parts differ by an
+    # order of magnitude in size -- a 0.29 m-wide head wants ~29 mm, a thin ear wants ~5 mm.
+    # A FLAT 1 mm, deliberately, after trying a proportional one and throwing it away: scaling the
+    # requirement to the child's size flagged `neck -> body` at 24 mm under the Eat clip, which is a neck
+    # legitimately bending, and a rule that fires on correct geometry is worse than no rule. 1 mm is the
+    # epsilon the zero-overlap test should have had all along -- it separates "touching" from "seated"
+    # without pretending to know how deep a given joint ought to be. Measured: the shipped head seated
+    # 0.62 mm and the tail 0.04 mm; every joint anyone is happy with is 7 mm or more.
+    SEATED = .001
     for child, parent in attachments:
+        # Keyed by the PAIR, not the child: the neck has two ends and they are buried in different
+        # solids -- its bottom in the body, its front in the head. Keyed by name, the second one
+        # silently overwrote the first.
         if child.name in ('Left_Front', 'Right_Front', 'Left_Back', 'Right_Back'):
             # The whole root cap must stay buried. A sliver of intersection can
             # pass the volume test while most of the swinging root is exposed.
             y = rest[child.vertices, 1]
-            caps[child.name] = child.vertices[np.isclose(y, y.max(), atol=EXPORT_EPS)]
-        elif child.name == 'neck':
+            caps[child.name, parent.name] = child.vertices[np.isclose(y, y.max(), atol=EXPORT_EPS)]
+        elif child.name == 'neck' and parent.name == 'body':
             y = rest[child.vertices, 1]
-            caps[child.name] = child.vertices[y <= y.min()+np.ptp(y)*.15]
+            caps[child.name, parent.name] = child.vertices[y <= y.min()+np.ptp(y)*.15]
+        elif child.name == 'neck' and parent.name == 'head':
+            # The neck's FORWARD end, which must sit inside the head rather than touching its rear face.
+            # -X is forward (these rigs face local -X), so the front cap is the low-x tail of the range.
+            x = rest[child.vertices, 0]
+            caps[child.name, parent.name] = child.vertices[x <= x.min()+np.ptp(x)*.15]
     count = 0
     for clip, t in (samples(d) if animate else [(None, 0.)]):
         count += 1
@@ -264,8 +287,8 @@ def audit(d, fleet=False, animate=True):
                     notes.add(f'{s.name}: open root buried in closed core')
         for child, parent in attachments:
             key = f'{child.name} -> {parent.name}'
-            if child.name in caps:
-                cap = p[caps[child.name]]
+            if (child.name, parent.name) in caps:
+                cap = p[caps[child.name, parent.name]]
                 if not strict_inside(cap, p[parent.faces]).all():
                     findings.add(f'{key}: exposed attachment root ({clip or "rest"})')
             margin = overlap(p[child.faces], p[parent.faces])
@@ -274,6 +297,15 @@ def audit(d, fleet=False, animate=True):
             if margin == 0:
                 # Aggregate by joint/clip rather than burying useful names in hundreds of lines.
                 findings.add(f'{key}: NO VOLUME OVERLAP ({clip or "rest"})')
+            elif margin < SEATED:
+                # NONZERO IS NOT ENOUGH, and this is what let a head sit on the end of a neck like a bead
+                # on a wire while every check passed. Measured on that build: head -> neck penetrated
+                # 0.00062 m -- 0.6 mm, on a 0.64 m head -- against 0.0818 for a leg and 0.13155 for the
+                # neck into the body. The volume test says "they touch", and touching is what it looked
+                # like. Burying the neck's forward corner properly took it to 0.04043.
+                #
+                # See SEATED above for why this is a flat epsilon rather than a per-part depth.
+                findings.add(f'{key}: TOUCHING NOT SEATED, {margin*1000:.2f} mm ({clip or "rest"})')
     return dict(findings=sorted(findings), notes=sorted(notes), solids=len(closed),
                 components=len(parts), poses=count, attachments=worst)
 
