@@ -212,6 +212,9 @@ namespace UnturnedGodot
         public static AudioStream MagRound(int magCapacity) =>
             Pick("foley", magCapacity <= 15 ? "gun_pistol_load_bullet" : "gun_semi_auto_rifle_load_bullet");
 
+        /// <summary>A keyring, for locking and unlocking a door you own.</summary>
+        public static AudioStream Keys() => Pick("foley", "foley_keys_belt_metal_jingle");
+
         /// <summary>Kit moving on the body while you walk. Retail scales this by what is actually worn, so the bank
         /// steps with the count of carried gear rather than playing one rattle for a vest and a rucksack alike.</summary>
         public static AudioStream GearMovement(int wornPieces) => wornPieces >= 4
@@ -219,6 +222,23 @@ namespace UnturnedGodot
             : wornPieces >= 2
             ? Pick("foley", "foley_soldier_gear_equipment_rattle_movement_light")
             : Pick("foley", "foley_cloth_light_fast_movement");
+
+        // ---- PHYSICS IMPACTS (content/audio/impacts, 19 clips, also referenced nowhere) -------------------------
+        // ⚠ THE STATIC/DYNAMIC SPLIT IS MY READING, NOT A CONFIRMED RETAIL RULE. The clips are <material>_static and
+        // <material>_dynamic; retail's own trigger for them is the one audio path I could not pin down in the SDK
+        // (its footstep, land, bullet and melee keys are all named outright in PhysicMaterialCustomData callers,
+        // and these are not among them). Read as "what was struck": a dropped tin landing on a road hits a STATIC
+        // world surface. If that turns out to be backwards it is one switch, and it is flagged rather than
+        // presented as ported.
+        public static AudioStream Impact(PlayerController.Surf s) => Pick("impacts", (s switch
+        {
+            PlayerController.Surf.Metal => "metal",
+            PlayerController.Surf.Wood => "wood",
+            PlayerController.Surf.Water => "water",
+            PlayerController.Surf.Grass => "foliage",
+            PlayerController.Surf.Dirt or PlayerController.Surf.Sand => "gravel",
+            _ => "concrete",
+        }) + "_static");
 
         public static string BulletSurface(PlayerController.Surf s) => s switch
         {

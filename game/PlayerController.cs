@@ -1804,10 +1804,19 @@ namespace UnturnedGodot
         {
             if (d == null || !IsInstanceValid(d)) return false;
             // Replicated door: the server owns the bolt, and the DoorState echo paints the result.
-            if (d.NetId != 0 && NetSetDoorLocked != null) { NetSetDoorLocked(d.NetId, locked); return true; }
+            // Keys, on both paths that actually turn a bolt -- you handled the keyring either way, and the
+            // replicated branch is you doing it while the server confirms. NOT on the refusal below: hearing your
+            // keys on someone else's door tells you the wrong thing about what just happened.
+            if (d.NetId != 0 && NetSetDoorLocked != null)
+            {
+                NetSetDoorLocked(d.NetId, locked);
+                GameAudio.PlayAt(this, GameAudio.Keys(), GlobalPosition, -7f, 3f, 12f, _rng.RandfRange(0.96f, 1.04f));
+                return true;
+            }
             if (d.TrySetLocked(PlayerId, locked))
             {
                 FluidPickupHudSet(locked ? "locked" : "unlocked");
+                GameAudio.PlayAt(this, GameAudio.Keys(), GlobalPosition, -7f, 3f, 12f, _rng.RandfRange(0.96f, 1.04f));
                 return true;
             }
             FluidPickupHudSet("not your door");   // only the owner holds the key
