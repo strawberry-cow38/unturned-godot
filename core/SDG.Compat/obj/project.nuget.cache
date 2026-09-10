@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "Dl3Mxkb5cPA=",
+  "dgSpecHash": "CO/Bx7W4XSk=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-fluidio-wt/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/ug-hotfix/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }
