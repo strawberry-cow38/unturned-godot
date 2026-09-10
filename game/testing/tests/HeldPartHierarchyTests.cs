@@ -58,6 +58,7 @@ namespace UnturnedGodot.Testing
             int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0, missingTex = 0;
             string firstMissing = null, firstBadParent = null, firstNoDraw = null, firstMissingTex = null;
             int multiTexItems = 0;
+            var allTex = new HashSet<string>();
 
             foreach (var kv in animParts)
             {
@@ -85,7 +86,7 @@ namespace UnturnedGodot.Testing
                         // chips shipped, before the ripper knew a part could carry its own material.
                         if (r[7] != "-" && !Godot.FileAccess.FileExists($"res://content/{r[7]}"))
                         { missingTex++; firstMissingTex ??= $"{kv.Key}/{r[0]} -> {r[7]}"; }
-                        if (r[7] != "-") texNames.Add(r[7]);
+                        if (r[7] != "-") { texNames.Add(r[7]); allTex.Add(r[7]); }
                     }
                     else if (r[1] != "-") undrawnMeshed++;
                 }
@@ -113,6 +114,17 @@ namespace UnturnedGodot.Testing
             // parts they duplicate -- and the "nothing blank" check above would still pass happily.
             T.Check($"...and the draw flag actually excludes something ({undrawnMeshed} meshed parts held back as LODs)", undrawnMeshed > 0);
             T.Check($"every texture a drawn part names was actually ripped ({missingTex} missing{(firstMissingTex != null ? ", first " + firstMissingTex : "")})", missingTex == 0);
+            // ⭐ THE ALPHA CHANNEL SURVIVED THE RIP. bag_chips' crisps are flat quads whose 32x32 texture is 85%
+            // transparent -- the silhouette is CUT OUT of the card. A ripper that dropped alpha (an RGB convert, a
+            // re-encode) would leave the pixels looking right in every screenshot and render each crisp as an
+            // opaque rectangle: "the chips are missing their shape". Nothing else here would notice.
+            int cutouts = 0;
+            foreach (var t in allTex)
+            {
+                var im = Image.LoadFromFile($"res://content/{t}");
+                if (im != null && im.DetectAlpha() != Image.AlphaMode.None) cutouts++;
+            }
+            T.Check($"the alpha cutouts survived the rip ({cutouts} of {allTex.Count} part textures have alpha)", cutouts > 0);
             // CONTROL for the one above: if the ripper regressed to one-texture-per-item, the check would pass by
             // having nothing to get wrong. bag_chips' crisps and canned_beans' beans carry their own material.
             T.Check($"...and parts really do carry their own materials ({multiTexItems} items use more than one texture)", multiTexItems > 0);
