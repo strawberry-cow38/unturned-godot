@@ -1458,6 +1458,16 @@ namespace UnturnedGodot
         /// <summary>Where a consumable's own parts hang: under the hand attachment the held mesh already uses, so
         /// they inherit the hand and the clip only has to supply their local motion.</summary>
         internal const string HeldPartPath = "Skeleton3D/GunAttach/";
+        /// <summary>Re-resolve every animation track against the CURRENT scene tree. An AnimationMixer caches
+        /// track path -> node once, and the held item's parts are added AFTER the rig and its clips are built --
+        /// so the Bone_n tracks resolved to nothing, cached that, and never looked again. The parts rendered,
+        /// sat exactly where the hand put them, and did not move: "the chip bag is glued to the right hand".</summary>
+        public void RefreshAnimCaches()
+        {
+            _ap?.ClearCaches();
+            _gunAp?.ClearCaches();
+        }
+
         internal static bool IsHeldPartTrack(string n) => n.StartsWith("Bone_") || n.StartsWith("Model_");
 
         static Animation BuildAnim(ClipData c)

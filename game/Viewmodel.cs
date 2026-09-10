@@ -273,6 +273,10 @@ namespace UnturnedGodot
                 });
                 built++;
             }
+            // DIAGNOSTIC, and the reason this exists: the parts render but do not move, which means the clip's
+            // Bone_n tracks are not reaching these nodes. Print the path they ACTUALLY live at, so it can be
+            // compared against RiggedCharacter.HeldPartPath instead of assumed equal to it.
+            if (built > 0) GD.Print($"[heldparts] {stem}: built {built} under {att.GetPath()} (clip tracks expect '{RiggedCharacter.HeldPartPath}<name>')");
             return built;
         }
 
@@ -671,7 +675,11 @@ namespace UnturnedGodot
                     // this item has the real parts ripped, they replace it wholesale rather than sitting on top of
                     // it, and they are named exactly as the clip's tracks address them (see
                     // RiggedCharacter.HeldPartPath, which binds "Bone_0" to a node instead of a nonexistent bone).
-                    if (ConsumableMesh != null && AttachHeldParts(att, ConsumableMesh, mat) > 0) mi.Visible = false;
+                    if (ConsumableMesh != null && AttachHeldParts(att, ConsumableMesh, mat) > 0)
+                    {
+                        mi.Visible = false;
+                        _arms?.RefreshAnimCaches();   // the clips were bound before these nodes existed; re-resolve or they stay inert
+                    }
                     BuildSksAction(mi, mat);
                     // glowing sight dots: each peeled marker surface rendered emissive in its OWN source colour (ace red,
                     // avenger/desert_falcon green, cobra white). Children of the body so they ride its transform. Energy is
