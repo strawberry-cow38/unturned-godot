@@ -1,0 +1,42 @@
+{
+  "/tmp/pump5.png": {
+    "size": [
+      900,
+      900
+    ],
+    "sha256": "1a232a53f5ce44b2b487aece91538e91983608c021f719f5511b9677c5760212",
+    "opened_and_inspected": true
+  },
+  "/home/ec2-user/ug-fluidio-wt/notes/fluid_art/9114.png": {
+    "size": [
+      900,
+      900
+    ],
+    "sha256": "1a232a53f5ce44b2b487aece91538e91983608c021f719f5511b9677c5760212",
+    "opened_and_inspected": true
+  },
+  "/home/ec2-user/ug-fluidio-wt/notes/fluid_angles/9114_angles.png": {
+    "size": [
+      2700,
+      450
+    ],
+    "sha256": "178660df869ab7132dae869a46d3e501da3c7247a040569b7a36d249e17c6d9a",
+    "opened_and_inspected": true
+  },
+  "/home/ec2-user/ug-fluidio-wt/.verify/fluid_fifth/pump_lod1.png": {
+    "size": [
+      900,
+      900
+    ],
+    "sha256": "585e0e65665bb256b74a0c3c29d24048ec197b227d52715078344075e9e45cb0",
+    "opened_and_inspected": true
+  },
+  "/home/ec2-user/ug-fluidio-wt/game/content/items/icons/9114.png": {
+    "size": [
+      256,
+      256
+    ],
+    "sha256": "48a5c0fbe66b7b8a000beb9e636d0e678a7504efe0776ceeafc5d4b969616bfd",
+    "opened_and_inspected": true
+  }
+}

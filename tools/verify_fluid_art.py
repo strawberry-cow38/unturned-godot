@@ -141,7 +141,7 @@ def main():
             assert signature==panel_signatures[suffix],(id,suffix,'nonuniform electrical panel')
             solids=components(v,ts)
             for slot in slots:
-                x={'on':-PANEL_ANCHORS['TriggerX'],'power':0,'off':PANEL_ANCHORS['TriggerX']}[slot]
+                x=origin[0]+{'on':-PANEL_ANCHORS['TriggerX'],'power':0,'off':PANEL_ANCHORS['TriggerX']}[slot]
                 socket=components(v,[(t,g) for t,g in ts if g=='panel_socket_'+slot])
                 back=(x,origin[1],origin[2]-.05)
                 assert any(inside(back,v,c) for c in socket),(id,suffix,slot,'electrical anchor has no socket backing')
@@ -155,6 +155,17 @@ def main():
         def group_vertices(group): return [v[k] for t,g in ts if g==group for k,_ in t]
         discharge=group_vertices('tangential_discharge')
         motor=group_vertices('motor')
+        # A flat underside extends along the entire shaft, rather than resting
+        # on one polygon corner or a tilted end. The shared enclosure must seat
+        # in the motor crown at both LODs, not merely appear nearby in projection.
+        bottom_y=min(p[1] for p in motor)
+        bottom=[p for p in motor if abs(p[1]-bottom_y)<2e-6]
+        assert len({p[0] for p in bottom})==2 and len({p[2] for p in bottom})==2,(suffix,'motor has no level bottom face')
+        enclosure=group_vertices('electrical_panel')
+        contact=tuple((max(min(p[i] for p in motor),min(p[i] for p in enclosure))+
+                       min(max(p[i] for p in motor),max(p[i] for p in enclosure)))/2 for i in range(3))
+        for group in ['motor','electrical_panel']:
+            assert any(inside(contact,v,c) for c in components(v,[(t,g) for t,g in ts if g==group])),(suffix,'panel detached from motor')
         assert all(abs(p[1]-.60)<=.088471 for p in discharge),(suffix,'discharge climbs above hose height')
         assert min(p[2] for p in discharge)>max(p[2] for p in motor)+.3,(suffix,'discharge crosses motor')
         # Include the key's .124535 m swept radius and the existing 4 mm

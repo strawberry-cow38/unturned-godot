@@ -1,0 +1,50 @@
+{
+  "unchanged_hashes": {
+    "game/content/fluid/9110_body.txt": "3a7ddedc7c45b858d943ae19224e972ddc997764fc16d93d97875bd21c6bda78",
+    "game/content/fluid/9110_body_lod1.txt": "8fd44528319aada9cd0648a04f941c2ecf28fddba8a460e521b1b6bec0048c96",
+    "game/content/fluid/9110_palette.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9110.obj": "9abb5821e537635f20c39eafc85f4dba8462862b0da6aec26cd25d9d35121618",
+    "game/content/items/9110.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/icons/9110.png": "637a546cab606786c0f00519790f1058429ab1a4ef6a684559080885d1051a70",
+    "game/content/fluid/9114_part.txt": "198a324dc5b10f9687ae07c4076e7edb560d1a62222f79f98c013a24d7af8fb1",
+    "game/content/fluid/9114_part_lod1.txt": "a8e53fa3659a47346640b26e4d775d257a23b13ddc72b8105982555ddcb41139"
+  },
+  "hose_metadata": "unchanged for every device",
+  "pipe_lengths_m": {
+    "before": {
+      "lod0": {
+        "axial_suction": 0.8462205781249978,
+        "tangential_discharge": 1.4205574350585914
+      },
+      "lod1": {
+        "axial_suction": 0.8419325665968397,
+        "tangential_discharge": 1.4164034238906886
+      }
+    },
+    "after": {
+      "lod0": {
+        "axial_suction": 0.6362205781249982,
+        "tangential_discharge": 1.3980778895394481
+      },
+      "lod1": {
+        "axial_suction": 0.6319325665968399,
+        "tangential_discharge": 1.3969304423925224
+      }
+    }
+  },
+  "baseplate": {
+    "before": [
+      1.57,
+      1.61
+    ],
+    "after": [
+      0.95,
+      1.28
+    ],
+    "area_reduction": 0.5189302527989873
+  },
+  "baseline_commit": "9bdd4bce4afcc8137e61516f44811a98de86a01e",
+  "catalog_and_items_changed_ids": [
+    "9114"
+  ]
+}
