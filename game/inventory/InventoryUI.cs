@@ -372,7 +372,24 @@ void fragment() {
         public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_root != null) _root.Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); _swoop?.In(); }
         // _open goes false NOW -- input routing must stop the moment you press the key -- but the pixels stay up
         // for the length of the swoop, and the swoop hides them when it lands.
-        public void Close() { _open = false; _pdDragging = false; _pendingSlotEquip = -1; if (_swoop == null || !_swoop.Out()) { Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; } }
+        /// <summary>⚠ Closing the dashboard ALWAYS closes an open container with it (strawberry 2026-09-10:
+        /// "container uis closed via this route should trigger a door close too").
+        ///
+        /// Every equip/hold action in here -- EquipSelected, HoldSelected, PlaceSelected, the optic, the rod, the
+        /// fuel can -- ends by calling Close() directly, while only PlayerController's Escape/Tab/F paths paired it
+        /// with CloseCrate(). So equipping something out of a crate left the crate "open": its door stood swinging
+        /// wide, and on a non-replicated container the edited STORAGE page was never written back.
+        ///
+        /// CloseCrate is idempotent (it clears _openCrate/_openCrateNetId and no-ops on a second call), so the
+        /// existing paths that already call it before Close() are unaffected. It is also correct for a REPLICATED
+        /// container, where the local door is deliberately not ours to swing: there it sends NetCloseStorage and
+        /// the server shuts the door once nobody is left inside.</summary>
+        public void Close()
+        {
+            if (Player != null && IsInstanceValid(Player)) Player.CloseCrate();
+            _open = false; _pdDragging = false; _pendingSlotEquip = -1;
+            if (_swoop == null || !_swoop.Out()) { Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }
+        }
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
@@ -747,8 +764,16 @@ void fragment() {
             // WEAPON onto the PAPERDOLL (master 2026-09-04): it goes into ITS OWN hand slot -- primary-able -> PRIMARY, else
             // SECONDARY (an "any" item takes the empty hand first). Whatever was in that slot goes back to the grid, and
             // if nothing has room for it, onto the ground. The dragged weapon always wins the slot.
-            bool ownPageToDoll = !fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE;
-            if (ownPageToDoll && WeaponSlotFor(_dragJar) is byte wslot)
+            // STORAGE is allowed as a source (strawberry 2026-09-10: "allow dragging equipables from storage
+            // containers straight onto the paper doll/primary/secondary slots for equipping"). EquipToHandSlot is a
+            // page-to-page move, so the weapon leaves the crate and lands in your slot in one gesture, and the MP
+            // path is the same request it already was. AREA is still excluded: that is ground loot, and equipping
+            // off the floor was not what was asked for.
+            //
+            // Clothing needed no change -- the cloth-slot branch above calls WearFromGrid, which never cared which
+            // page the garment came from, so dragging a hat out of a crate onto the head slot already worked.
+            bool toDoll = !fromCloth && OverPaperdoll(global) && sp >= PlayerInventory.SLOTS && sp != PlayerInventory.AREA;
+            if (toDoll && WeaponSlotFor(_dragJar) is byte wslot)
             {
                 EquipToHandSlot(sp, sx, sy, wslot);
                 CloseSelection(); Refresh();
@@ -758,7 +783,10 @@ void fragment() {
             // "dragging ANYTHING you can hold onto the paperdoll should equip it, too"): the exact chain the item
             // menu's one hand button runs (Hold a consumable / bottle / gas can, Equip a deployable / tool / rod /
             // anything else with a hand action), seeded off the dragged cell like the Debug* seams do.
-            if (ownPageToDoll && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
+            // ...but only from your OWN pages. Putting a crate's bandage straight into your hands would leave the
+            // item sitting in the crate while your hands claimed it -- taking it first is a separate gesture, and
+            // "equipables ... onto the primary/secondary slots" is the slot case above, not this one.
+            if (toDoll && sp != PlayerInventory.STORAGE && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
             {
                 _selPage = sp; _selX = sx; _selY = sy;
                 HandActionSelected(handAsset);
@@ -1447,6 +1475,37 @@ void fragment() {
             return WornFor(slotType) != null;
         }
 
+        /// <summary>The same REAL gesture aimed at the PAPERDOLL: set the drag up off (page,x,y) exactly as
+        /// StartDrag's grid branch does, then call the actual Drop() at the paperdoll's screen centre. Returns the
+        /// hand slot the item ended up in, or -1.
+        ///
+        /// This exists rather than a call to EquipToHandSlot because the thing that was broken was never the equip
+        /// -- it was the GATE in front of it, which refused a drag whose source page was the open container. A
+        /// harness that calls the equip directly cannot see a source-page gate at all; it would have passed every
+        /// day this feature did not exist.</summary>
+        public int DebugDropGestureOnPaperdoll(byte page, byte x, byte y, out bool layoutValid)
+        {
+            layoutValid = false;
+            if (Inv == null || page >= Inv.items.Length) return -1;
+            var pg = Inv.items[page]; byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return -1;
+            layoutValid = _pdHit != null && _pdHit.Size.X > 1f && _pdHit.Size.Y > 1f;
+            if (!layoutValid) return -1;
+            var jar = pg.getItem(idx);
+            ushort want = jar.item.id;
+            _dragFromCloth = false; _dragJar = jar;
+            _dragPage = page; _dragX0 = jar.x; _dragY0 = jar.y; _dragRot = jar.rot;
+            _grab = Vector2.Zero; _dragging = true;
+            Drop(_pdHit.GlobalPosition + _pdHit.Size * 0.5f);
+            Refresh();
+            for (byte sl = 0; sl < PlayerInventory.SLOTS; sl++)
+            {
+                var sp2 = Inv.items[sl];
+                if (sp2.getItemCount() > 0 && sp2.getItem(0)?.item?.id == want) return sl;
+            }
+            return -1;
+        }
+
         // --- selection panel (openSelection): the item's big tile + name/info + Equip/Drop actions ---
         void OpenSelection(byte page, byte x, byte y)
         {
@@ -1561,7 +1620,10 @@ void fragment() {
             }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
             { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
-            if (asset.IsFluidContainer && jar.item != null)   // a fluid container: toggle autodrink (default on -> passive 50 mL sips of safe liquid)
+            // OWN pages only: a bottle in the open crate or on the ground is not yours to sip from, so it does not
+            // get the toggle either. Hiding the button and skipping the scan are BOTH needed -- the flag rides on the
+            // item and travels with it, so one already set before the bottle went into a crate would keep working.
+            if (asset.IsFluidContainer && jar.item != null && _selPage < PlayerInventory.OWNPAGES)   // a fluid container: toggle autodrink (default on -> passive 50 mL sips of safe liquid)
             { AddActionButton(panel, jar.item.autoDrink ? "Autodrink: ON" : "Autodrink: OFF", new Vector2(228, by), ToggleAutoDrinkSelected); by += 44; }
             if (Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0)   // #7: a crate is open -> Store/Take quick-move (source onClickedStore; reuses QuickAction's crate<->pages logic)
             {

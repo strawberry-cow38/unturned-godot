@@ -20,7 +20,12 @@ namespace UnturnedGodot
         public static Item ActiveAutoDrink(SDG.Unturned.PlayerInventory inv)
         {
             if (inv == null) return null;
-            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.PAGES; pg++)
+            // ⚠ OWNPAGES, not PAGES (strawberry 2026-09-10: "prevent items in containers being eligable for
+            // autodrink. only things in your inventory can have autodrink"). PAGES walks past the player's own
+            // pages into STORAGE (7) and AREA (8) -- the open crate's grid and the Nearby ground scan -- so
+            // standing over a crate of water, or merely near a dropped bottle, silently sipped from it. You were
+            // drinking out of a box on the floor.
+            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.OWNPAGES; pg++)
             {
                 var page = inv.items[pg];
                 for (byte i = 0; i < page.getItemCount(); i++)

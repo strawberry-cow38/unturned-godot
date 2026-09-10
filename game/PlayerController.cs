@@ -3941,8 +3941,10 @@ namespace UnturnedGodot
             return true;
         }
 
-        // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
-        void CloseCrate()
+        /// <summary>Save the open crate's contents back and clear the STORAGE view. Called whenever the dashboard
+        /// closes -- including from InventoryUI.Close(), so an equip action that leaves the inventory shuts the
+        /// container's door behind it. Idempotent: a second call finds nothing open and returns.</summary>
+        public void CloseCrate()
         {
             _openDoorShelf?.SetDoorsOpen(false); _openDoorShelf = null;   // swing a doored container's leaf shut on close -- at the top so it covers BOTH the SP copy-back and the MP _openCrateNetId early-return below
             if (NetCloseStorage != null && _openCrateNetId != 0)
