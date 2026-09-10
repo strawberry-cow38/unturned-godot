@@ -755,7 +755,12 @@ void fragment() {
             // piece off the paperdoll -> sendSwap<Slot>(255,255,255) -> the garment forceAddItem's back to the inventory).
             if (fromCloth)
             {
-                TakeOff(fromType);
+                // ...to the cell you released on, when that is a real one. The garment used to go to the top of
+                // the bag regardless of where you dropped it, which reads as the drag having been ignored.
+                // PointToCell on the item's TOP-LEFT (not the cursor) so a multi-cell coat lands where it is drawn.
+                byte dp = 255, dx = 0, dy = 0;
+                if (PointToCell(topLeft, out byte cp, out byte cx, out byte cy, out _, out _)) { dp = cp; dx = cx; dy = cy; }
+                TakeOff(fromType, dp, dx, dy);
                 CloseSelection();
                 Refresh();
                 return;
@@ -1341,6 +1346,21 @@ void fragment() {
         void UnwearVisual(EItemType t) { if (Clothing != null) Clothing.Unwear(t); else Player?.UnwearClothing(t); }
 
         // return a garment to the inventory grid (source: forceAddItem) -> auto-place in the first page with room, else drop it in the world
+        /// <summary>Place `it` exactly at a named cell if it is free and the item fits. False when unaddressed
+        /// (255) or taken, and the caller falls back to ReturnToGrid -- so a stale target is never worse than the
+        /// old behaviour, it just is not honoured.</summary>
+        bool TryPlaceGarment(byte page, byte x, byte y, Item it)
+        {
+            if (it == null || Inv == null || page >= PlayerInventory.PAGES) return false;
+            var pg = Inv.items[page];
+            if (pg == null || pg.width == 0 || pg.height == 0) return false;
+            var a = it.GetAsset();
+            byte sx = a?.size_x ?? 1, sy = a?.size_y ?? 1;
+            if (!pg.checkSpaceEmpty(x, y, sx, sy, 0)) return false;
+            pg.addItem(x, y, 0, it);
+            return true;
+        }
+
         void ReturnToGrid(Item it)
         {
             if (it == null || Inv == null) return;
@@ -1381,7 +1401,13 @@ void fragment() {
 
         // UNEQUIP clothing slot `slotType` -> clear its state+visual and drop the garment back into the grid. Mirrors
         // ReceiveSwap<Slot>Request(255,255,255): wear nothing; the old garment forceAddItem's to the inventory. Returns true if it removed something.
-        public bool TakeOff(EItemType slotType)
+        public bool TakeOff(EItemType slotType) => TakeOff(slotType, 255, 0, 0);
+
+        /// <summary>Unequip, landing the garment at (destPage,destX,destY) when one is named -- the cell you
+        /// actually dragged it to (strawberry 2026-09-10: "it should go into the slot i dragged it to, not just
+        /// the top of my entire inventory"). 255 = no target: the item menu's Unequip and every non-drag caller,
+        /// which keep the find-anywhere behaviour because they have no cell to mean.</summary>
+        public bool TakeOff(EItemType slotType, byte destPage, byte destX, byte destY)
         {
             var old = WornFor(slotType);
             if (old == null) return false;
@@ -1389,7 +1415,7 @@ void fragment() {
             // DISCARDED every jar in it (Items.loadSize drops what no longer fits) until the echo restored them.
             if (Player != null && Player.InventoryIsServerOwned && Player.NetUnwearClothing != null)
             {
-                Player.NetUnwearClothing((byte)slotType);
+                Player.NetUnwearClothing((byte)slotType, destPage, destX, destY);
                 return true;
             }
             // Everything INSIDE the garment first (master 2026-09-03): pull the page's items out, then unwear (the page
@@ -1402,7 +1428,8 @@ void fragment() {
                 for (int i = pg.getItemCount() - 1; i >= 0; i--) { var j = pg.getItem((byte)i); if (j?.item != null) spill.Add(j.item); pg.removeItem((byte)i); }
             }
             UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
-            ReturnToGrid(old);        // the garment itself: a free slot, else the ground
+            // the garment itself: the cell it was dropped on if that is free, else a free slot, else the ground
+            if (!TryPlaceGarment(destPage, destX, destY, old)) ReturnToGrid(old);
             foreach (var it in spill) ReturnToGrid(it);   // ReturnToGrid = tryAddItem across the pages, else DropWorldItem
             return true;
         }

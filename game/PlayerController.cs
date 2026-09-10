@@ -4499,7 +4499,7 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
-        public System.Action<byte> NetUnwearClothing;                     // (EItemType slot) -> Client.SendUnwearClothing
+        public System.Action<byte, byte, byte, byte> NetUnwearClothing;   // (slot, page, x, y) -> Client.SendUnwearClothing; page 255 = "anywhere", the pre-drag behaviour
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
         public System.Action<byte> NetCraftCancel;                   // queue SLOT (server order, oldest first) -> Client.SendCraftCancel
         /// <summary>v31: the server's craft queue landed -- hand it to the menu to display. The menu owns the

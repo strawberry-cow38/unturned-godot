@@ -340,12 +340,19 @@ namespace UnturnedGodot.Net
     public struct UnwearClothingCommand
     {
         public byte Slot;
-        public void Write(NetPakWriter w) => w.WriteUInt8(Slot);
+        // WHERE THE GARMENT LANDS (strawberry 2026-09-10: "if i drag a clothing item off, it should go into the
+        // slot i dragged it to, not just the top of my entire inventory"). The command said only WHICH slot to
+        // empty, so the server rehomed with tryAddItem -- first free space from the top -- and the cell you
+        // actually dropped on was never sent. Page 255 = unaddressed (the hotkey/menu unequip, which genuinely
+        // has no target) and keeps the old find-anywhere behaviour.
+        public byte Page, X, Y;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Slot); w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); }
         public static bool TryRead(NetPakReader r, out UnwearClothingCommand cmd)
         {
             cmd = default;
             if (!r.ReadUInt8(out byte s)) return false;
-            cmd = new UnwearClothingCommand { Slot = s };
+            if (!r.ReadUInt8(out byte pg) || !r.ReadUInt8(out byte px) || !r.ReadUInt8(out byte py)) return false;
+            cmd = new UnwearClothingCommand { Slot = s, Page = pg, X = px, Y = py };
             return true;
         }
     }

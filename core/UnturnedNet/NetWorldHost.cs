@@ -1134,8 +1134,8 @@ namespace UnturnedGodot.Net
         public bool SendWearClothing(byte page, byte x, byte y, byte slot)
             => SendCommand(ReplicationIds.CommandWearClothing, new WearClothingCommand { Page = page, X = x, Y = y, Slot = slot }.Write);
 
-        public bool SendUnwearClothing(byte slot)
-            => SendCommand(ReplicationIds.CommandUnwearClothing, new UnwearClothingCommand { Slot = slot }.Write);
+        public bool SendUnwearClothing(byte slot, byte page = 255, byte x = 0, byte y = 0)
+            => SendCommand(ReplicationIds.CommandUnwearClothing, new UnwearClothingCommand { Slot = slot, Page = page, X = x, Y = y }.Write);
 
         public bool SendOpenStorage(uint netId)
             => SendCommand(ReplicationIds.CommandOpenStorage, new OpenStorageCommand { NetId = netId }.Write);

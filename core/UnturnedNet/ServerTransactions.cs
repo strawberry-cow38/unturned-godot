@@ -1163,6 +1163,21 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>UNWEAR, server side: worn slot -> grid.</summary>
+        /// <summary>Put `it` exactly where the client asked, if that cell is free and it fits. False for an
+        /// unaddressed request (page 255) or a spot that is taken -- the caller then falls back to its usual
+        /// search, so a stale address costs the player nothing worse than the old behaviour.</summary>
+        static bool TryPlaceAt(PlayerInventory inv, byte page, byte x, byte y, Item it)
+        {
+            if (inv == null || it == null || page >= PlayerInventory.PAGES) return false;
+            var pg = inv.items[page];
+            if (pg == null || pg.width == 0 || pg.height == 0) return false;
+            var a = it.GetAsset();
+            byte sx = a?.size_x ?? 1, sy = a?.size_y ?? 1;
+            if (!pg.checkSpaceEmpty(x, y, sx, sy, 0)) return false;
+            pg.addItem(x, y, 0, it);
+            return true;
+        }
+
         void OnUnwearClothing(ushort sender, UnwearClothingCommand cmd)
         {
             var inv = SenderInventory(sender);
@@ -1199,7 +1214,10 @@ namespace UnturnedGodot.Net
             }
 
             Wear(inv, want, null);
-            if (!inv.tryAddItem(old))
+            // The cell the player dropped it on, if they named one and it is free; else the old find-anywhere.
+            // Checked AFTER the wear is cleared, because the garment's own page has just gone 0x0 and a shirt
+            // dropped onto its own vacated space is a legal target.
+            if (!TryPlaceAt(inv, cmd.Page, cmd.X, cmd.Y, old) && !inv.tryAddItem(old))
             {
                 // No room for the garment: put it back ON, and put its contents back IN. Restoring the garment
                 // alone is what turned a rejected request into permanent item loss.

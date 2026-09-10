@@ -227,7 +227,7 @@ namespace UnturnedGodot
                 Player.NetReloadSwap = (page, x, y, sid, samt) => Client.SendReloadSwap(page, x, y, sid, samt);
 Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, rid, n);
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
-                Player.NetUnwearClothing = slot => Client.SendUnwearClothing(slot);
+                Player.NetUnwearClothing = (slot, pg, px, py) => Client.SendUnwearClothing(slot, pg, px, py);
                 Player.NetCraft = index => Client.SendCraft(index);
                 Player.NetCraftCancel = slot => Client.SendCraftCancel(slot);
                 Player.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
