@@ -3308,6 +3308,8 @@ namespace UnturnedGodot
             bool active = !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured && !(_invUI?.IsOpen ?? false);
             _placer.SetGhostVisible(active);
             if (active) _placer.Aim(_cam);
+            // Cleared whenever the ghost is not up, so a reason cannot outlive the thing it was about.
+            HUD.PlacementHint(active && !_placer.Valid ? _placer.Reason : null);
         }
         public static bool DebugCanLoadWav(string stem) => LoadWavOneShot($"res://content/sounds/{stem}.wav") != null;   // test: the exported WAV parses as 16-bit PCM
         public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items

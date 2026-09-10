@@ -58,7 +58,10 @@ namespace UnturnedGodot
         /// <summary>Status billboard: says WHY it is dead, rather than reading as a broken fixture. The whole point of
         /// the machine-status line is that a dead device explains itself.</summary>
         public override (string text, Color color) StatusLine()
-            => FluidNet.GlobalWater ? ("MAINS", new Color(0.45f, 0.85f, 1f))
-                                    : ("NO WATER", new Color(1f, 0.55f, 0.2f));
+            // Sentence case and the SHARED status colours, like every other fluid device. This shouted in caps
+            // with two hand-mixed Colors, so a hydrant's "no water" looked like a different class of problem from a
+            // pump's "no power" when it is the same one: the thing is there, it just has nothing to give you.
+            => FluidNet.GlobalWater ? ("Mains", StatusGo)
+                                    : ("No water", StatusWarn);
     }
 }

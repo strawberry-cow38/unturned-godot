@@ -33,6 +33,11 @@ namespace UnturnedGodot
         public DeployableDef Def { get; private set; }
         public BarricadeMount Mount = BarricadeMount.Wall;   // the mount family (from the barricade's build type); Wall = the new capability
         public bool Valid { get; private set; }
+        /// <summary>WHY the ghost is red, or null when it is not (strawberry 2026-09-10: polish the deployable
+        /// UX). There are five distinct ways a placement fails and the player was shown one undifferentiated red
+        /// ghost for all of them -- so "why can't I put it here" had no answer, and the fix was to wave the
+        /// cursor about until it turned blue. Kept short enough to read at a glance under the crosshair.</summary>
+        public string Reason { get; private set; }
         public Vector3 Point { get; private set; }              // surface contact (raycast hit position)
         public Vector3 Normal { get; private set; } = Vector3.Up;  // the hit surface normal
         public float Yaw { get; private set; }                 // the final yaw fed to StandBasis (player aim for Floor; wall-facing for Wall)
@@ -151,7 +156,7 @@ namespace UnturnedGodot
             var hit = space.IntersectRay(rq);
             if (hit.Count == 0)                           // aiming at nothing within range -> invalid
             {
-                Valid = false; Normal = Vector3.Up; Point = from + dir * Def.Range; Yaw = aimYaw; Apply(); return false;
+                Valid = false; Reason = "Too far away"; Normal = Vector3.Up; Point = from + dir * Def.Range; Yaw = aimYaw; Apply(); return false;
             }
             Vector3 hp = (Vector3)hit["position"], n = ((Vector3)hit["normal"]).Normalized();
             var collider = hit["collider"].As<Node>();
@@ -167,15 +172,30 @@ namespace UnturnedGodot
             // build on at all" and "does the structure under it agree" -- and both must hold.
             bool attach = DefaultAttachable(collider) && (CanAttach == null || CanAttach(hp, n, collider));
             Valid = surf && clear && attach;
+            // Most specific first: an obstructed spot on a legal surface should say "not enough room", not repeat
+            // the surface rule that is actually satisfied.
+            Reason = surf ? (clear ? (attach ? null : "Can't build on that") : "Not enough room") : SurfaceReason(Mount);
             // submersible device (fluid inlet) parity: valid only on submerged seabed within its water-depth band
             if (Valid && Def.WaterDepthMin >= 0f)
             {
                 float depth = DeployableDef.SeaLevel - hp.Y;
                 Valid = depth >= Def.WaterDepthMin && depth <= Def.WaterDepthMax;
+                if (!Valid) Reason = depth < Def.WaterDepthMin ? "Needs deeper water" : "Water too deep";
             }
+            if (Valid) Reason = null;
             Apply();
             return Valid;
         }
+
+        /// <summary>The surface rule for this mount family, phrased as what to DO rather than what is wrong --
+        /// "needs flat ground" tells you where to look, "invalid surface" does not.</summary>
+        static string SurfaceReason(BarricadeMount m) => m switch
+        {
+            BarricadeMount.Wall => "Needs a wall",
+            BarricadeMount.Window => "Needs a window opening",
+            BarricadeMount.Sticky => "Needs a surface",
+            _ => "Needs flat ground",
+        };
 
         // The ghost/placed transform for the current mount. Window = stood-up + faced like a Wall mount, but scaled to
         // fit the opening and seated at the opening centre + face standoff (Point), not a raycast hit + MountOrigin lift.
@@ -240,7 +260,7 @@ namespace UnturnedGodot
 
             if (SnappedWall == null && SnappedMarker == null)   // not on a window -> invalid; park the ghost out along the ray
             {
-                Valid = false; Normal = Vector3.Up; _windowScale = Vector3.One;
+                Valid = false; Reason = "Needs a window opening"; Normal = Vector3.Up; _windowScale = Vector3.One;
                 Point = from + dir * Def.Range; Yaw = 0f; Apply(); return false;
             }
             SnappedFace = (from - bC).Dot(bN) >= 0f ? 1 : -1;              // the face the camera is on
@@ -249,6 +269,7 @@ namespace UnturnedGodot
             Point = bC + Normal * (bHT + Def.Size.Y * 0.5f + 0.005f);      // seat the panel flat ON the aimed face (half-wall + half-panel + hair)
             _windowScale = new Vector3(bHW * 2f / Def.Size.X, 1f, bHH * 2f / Def.Size.Z);   // fit the flat frame (X=width, Z=height) to the opening
             Valid = !SlotTaken();                                         // one barricade per face
+            Reason = Valid ? null : "That opening is taken";
             Apply();
             return Valid;
         }

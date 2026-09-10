@@ -82,6 +82,19 @@ namespace UnturnedGodot
             Current._alert.Text = text;
             Current._alertLeft = seconds;
         }
+        Label _placeHint;   // why a deployable ghost is red, under the crosshair while placing
+
+        /// <summary>Say why the placement ghost is red, or pass null/"" to clear it. Separate from Alert because
+        /// this updates every frame while you sweep the cursor -- a transient toast re-triggered 60 times a second
+        /// is a flicker, not a message -- and because it is advice, not an error: it sits under the crosshair
+        /// where you are already looking, in warning amber rather than error red.</summary>
+        public static void PlacementHint(string text)
+        {
+            if (Current == null || !GodotObject.IsInstanceValid(Current) || Current._placeHint == null) return;
+            Current._placeHint.Text = text ?? "";
+            Current._placeHint.Visible = !string.IsNullOrEmpty(text);
+        }
+
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
         HurtDirectionIndicator _hurtIndicator;
         public HurtDirectionIndicator HurtIndicator => _hurtIndicator;
@@ -246,6 +259,18 @@ namespace UnturnedGodot
             _alert.MouseFilter = Control.MouseFilterEnum.Ignore;
             _alert.Modulate = new Color(1f, 1f, 1f, 0f);
             root.AddChild(_alert);
+
+            // The placement hint: just BELOW the crosshair, where the alert is above it, so the two never collide
+            // and neither covers the aim point itself.
+            _placeHint = new Label { Text = "", Visible = false, HorizontalAlignment = HorizontalAlignment.Center };
+            _placeHint.AddThemeFontSizeOverride("font_size", 22);
+            _placeHint.AddThemeColorOverride("font_color", new Color(0.98f, 0.72f, 0.28f));   // warning amber: advice, not an error
+            _placeHint.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _placeHint.AddThemeConstantOverride("outline_size", 6);
+            _placeHint.AnchorLeft = 0f; _placeHint.AnchorRight = 1f; _placeHint.AnchorTop = 0.5f; _placeHint.AnchorBottom = 0.5f;
+            _placeHint.OffsetTop = 46f; _placeHint.OffsetBottom = 78f;
+            _placeHint.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_placeHint);
 
             // Centre-screen crosshair for THIRD person (master). Sits dead-centre with a small gap so it frames the aim
             // point without covering it; the 3P camera toes in on the converged aim, so screen-centre is where the shot

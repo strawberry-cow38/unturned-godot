@@ -97,9 +97,13 @@ namespace UnturnedGodot
         protected static readonly Color StatusOff = new Color(0.95f, 0.35f, 0.35f);
         public virtual (string text, Color color) StatusLine() => Role switch
         {
-            FluidRole.Valve => Blocked ? ("closed", StatusOff) : ("open", StatusGo),
+            // ⚠ SENTENCE CASE, and that is the whole rule: the device NAME sits directly above this in Title Case,
+            // and the three status producers had three different answers -- these were lowercase, the pump's were
+            // lowercase, and the fire hydrant SHOUTED "MAINS" / "NO WATER". Nothing re-cases them on the way to the
+            // billboard (InfoBillboard.SetPrompt assigns the string verbatim), so that was what the player saw.
+            FluidRole.Valve => Blocked ? ("Closed", StatusOff) : ("Open", StatusGo),
             // a plain transformer (refinery/sluice) runs whenever its input flows (1-tick-latched TransformActive)
-            FluidRole.Transformer => TransformActive ? ("running", StatusGo) : ("idle", StatusIdle),
+            FluidRole.Transformer => TransformActive ? ("Running", StatusGo) : ("Idle", StatusIdle),
             _ => (null, default),   // splitter/combiner: passive relay, no status
         };
 
@@ -362,9 +366,10 @@ namespace UnturnedGodot
 
         public virtual void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
-            // A gate valve is wound shut over SEVERAL turns, not a quarter turn -- that is what the
-            // wheel is geared for and it is what makes the open/closed state readable at a glance now
-            // the colour no longer changes. ~2.5 turns over ~1.1 s, following manual and remote alike.
+            // A gate valve winds shut over a HALF turn (strawberry 2026-09-10: "change the valve's valve to be a
+            // half-turn close instead of a fricken 20 turn lol"), following manual and remote alike. ValveTravel is
+            // Pi over ValveSeconds; this comment said "~2.5 turns over ~1.1 s" for a while after the constants had
+            // already changed, which is worse than no comment.
             if (_valveHandle != null)
             {
                 float next = Mathf.MoveToward(_valveAngle, Blocked ? ValveTravel : 0f, (float)delta * ValveTravel / ValveSeconds);

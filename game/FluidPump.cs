@@ -72,11 +72,11 @@ namespace UnturnedGodot
         // off (remote-disabled) → no power (wire it) → idle (line has no supply/sink) → pumping.
         public override (string text, Color color) StatusLine()
         {
-            if (!_remoteOn) return ("off", StatusOff);   // an electrical TurnOff trigger disabled it
+            if (!_remoteOn) return ("Off", StatusOff);   // an electrical TurnOff trigger disabled it
             bool wired = DebugForcePower || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered);
-            if (!wired) return ("no power", StatusWarn);   // needs a wire from a generator
-            if (!_hasWork) return ("idle — no supply", StatusIdle);   // powered but the line has no source to draw / nowhere to push
-            return ("pumping", StatusGo);
+            if (!wired) return ("No power", StatusWarn);   // needs a wire from a generator
+            if (!_hasWork) return ("Idle — no supply", StatusIdle);   // powered but the line has no source to draw / nowhere to push
+            return ("Pumping", StatusGo);
         }
 
         // picked up -> also free any wire plugged into the input or a trigger cube (the base frees its hoses), then re-solve
