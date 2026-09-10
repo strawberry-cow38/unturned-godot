@@ -1,0 +1,61 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SDG.Compat -> /home/ec2-user/ug-fluidio-wt/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.dll
+  BugReportCore -> /home/ec2-user/ug-fluidio-wt/core/BugReportCore/bin/Debug/net8.0/BugReportCore.dll
+  SDG.NetTransport -> /home/ec2-user/ug-fluidio-wt/core/SDG.NetTransport/bin/Debug/net8.0/SDG.NetTransport.dll
+  SDG.NetPak -> /home/ec2-user/ug-fluidio-wt/core/SDG.NetPak/bin/Debug/net8.0/SDG.NetPak.dll
+  UnturnedDat -> /home/ec2-user/ug-fluidio-wt/core/UnturnedDat/bin/Debug/net8.0/UnturnedDat.dll
+  UnturnedSim -> /home/ec2-user/ug-fluidio-wt/core/UnturnedSim/bin/Debug/net8.0/UnturnedSim.dll
+  UnturnedNet -> /home/ec2-user/ug-fluidio-wt/core/UnturnedNet/bin/Debug/net8.0/UnturnedNet.dll
+/home/ec2-user/ug-fluidio-wt/game/PropSeat.cs(81,21): warning CS0108: 'PropSeat.Free' hides inherited member 'GodotObject.Free()'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/EditorObjects.cs(128,21): warning CS0108: 'EditorObjects.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/EditorRoads.cs(60,21): warning CS0108: 'EditorRoads.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/RiggedCharacter.cs(489,34): warning CS0672: Member 'RiggedCharacter.TorsoPoseModifier._ProcessModification()' overrides obsolete member 'SkeletonModifier3D._ProcessModification()'. Add the Obsolete attribute to 'RiggedCharacter.TorsoPoseModifier._ProcessModification()'. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/TVDevice.cs(372,36): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/TVDevice.cs(752,17): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/RiggedCharacter.cs(833,13): warning CS0618: 'Skeleton3D.PhysicalBonesStartSimulation(Array<StringName>)' is obsolete: 'This method is deprecated.' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/ProcIsland.cs(581,25): warning CS0219: The variable 'Unit' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(133,280): warning CS0219: The variable 'navShot' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(135,18): warning CS0219: The variable 'zperf' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(136,18): warning CS0219: The variable 'zbody' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(3848,18): warning CS8321: The local function 'Eval' is declared but never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/ProcIslandTests.cs(643,21): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/LitApplianceTests.cs(76,50): warning CS0472: The result of the expression is always 'true' since a value of type 'bool' is never equal to 'null' of type 'bool?' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/LitApplianceTests.cs(77,52): warning CS0472: The result of the expression is always 'true' since a value of type 'bool' is never equal to 'null' of type 'bool?' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/.godot/mono/temp/obj/Debug/Godot.SourceGenerators/Godot.SourceGenerators.ScriptMethodsGenerator/UnturnedGodot.RiggedCharacter.TorsoPoseModifier_ScriptMethods.generated.cs(38,13): warning CS0618: 'SkeletonModifier3D._ProcessModification()' is obsolete: 'Use 'Godot.SkeletonModifier3D._ProcessModificationWithDelta(double)' instead.' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2197,40): warning CS0649: Field 'Vehicle.Spec.TailHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2196,39): warning CS0649: Field 'Vehicle.Spec.TailRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2040,30): warning CS0649: Field 'Vehicle.Spec.Buoys' is never assigned to, and will always have its default value null [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2196,26): warning CS0649: Field 'Vehicle.Spec.MainRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2197,28): warning CS0649: Field 'Vehicle.Spec.MainHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2086,48): warning CS0649: Field 'Vehicle.Spec.HullDecompose' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+  UnturnedGodot -> /home/ec2-user/ug-fluidio-wt/game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll
+
+Build succeeded.
+
+/home/ec2-user/ug-fluidio-wt/game/PropSeat.cs(81,21): warning CS0108: 'PropSeat.Free' hides inherited member 'GodotObject.Free()'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/EditorObjects.cs(128,21): warning CS0108: 'EditorObjects.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/EditorRoads.cs(60,21): warning CS0108: 'EditorRoads.SetVisible(bool)' hides inherited member 'Node3D.SetVisible(bool)'. Use the new keyword if hiding was intended. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/RiggedCharacter.cs(489,34): warning CS0672: Member 'RiggedCharacter.TorsoPoseModifier._ProcessModification()' overrides obsolete member 'SkeletonModifier3D._ProcessModification()'. Add the Obsolete attribute to 'RiggedCharacter.TorsoPoseModifier._ProcessModification()'. [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/TVDevice.cs(372,36): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/TVDevice.cs(752,17): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/RiggedCharacter.cs(833,13): warning CS0618: 'Skeleton3D.PhysicalBonesStartSimulation(Array<StringName>)' is obsolete: 'This method is deprecated.' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/ProcIsland.cs(581,25): warning CS0219: The variable 'Unit' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(133,280): warning CS0219: The variable 'navShot' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(135,18): warning CS0219: The variable 'zperf' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(136,18): warning CS0219: The variable 'zbody' is assigned but its value is never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Main.cs(3848,18): warning CS8321: The local function 'Eval' is declared but never used [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/ProcIslandTests.cs(643,21): warning CS0162: Unreachable code detected [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/LitApplianceTests.cs(76,50): warning CS0472: The result of the expression is always 'true' since a value of type 'bool' is never equal to 'null' of type 'bool?' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/testing/tests/LitApplianceTests.cs(77,52): warning CS0472: The result of the expression is always 'true' since a value of type 'bool' is never equal to 'null' of type 'bool?' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/.godot/mono/temp/obj/Debug/Godot.SourceGenerators/Godot.SourceGenerators.ScriptMethodsGenerator/UnturnedGodot.RiggedCharacter.TorsoPoseModifier_ScriptMethods.generated.cs(38,13): warning CS0618: 'SkeletonModifier3D._ProcessModification()' is obsolete: 'Use 'Godot.SkeletonModifier3D._ProcessModificationWithDelta(double)' instead.' [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2197,40): warning CS0649: Field 'Vehicle.Spec.TailHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2196,39): warning CS0649: Field 'Vehicle.Spec.TailRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2040,30): warning CS0649: Field 'Vehicle.Spec.Buoys' is never assigned to, and will always have its default value null [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2196,26): warning CS0649: Field 'Vehicle.Spec.MainRotorHp' is never assigned to, and will always have its default value 0 [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2197,28): warning CS0649: Field 'Vehicle.Spec.MainHubBox' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+/home/ec2-user/ug-fluidio-wt/game/Vehicle.cs(2086,48): warning CS0649: Field 'Vehicle.Spec.HullDecompose' is never assigned to, and will always have its default value [/home/ec2-user/ug-fluidio-wt/game/UnturnedGodot.csproj]
+    22 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:46.35

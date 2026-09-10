@@ -110,7 +110,7 @@ class Mesh:
         if caps:
             self.face(rings[0],colour,group)
             self.face(rings[-1][::-1],colour if end_colour is None else end_colour,group)
-    def socket(self, anchor, axis, sign=1, low=False):
+    def socket(self, anchor, axis, sign=1, low=False, seat=0):
         """A hose connection that STICKS OUT of the body, and is a closed solid.
 
         It used to be a mouth RECESSED into the shell at the port anchor. Two things were wrong with
@@ -126,10 +126,14 @@ class Mesh:
         tmp=Mesh()
         n=6
         spout=BORE*1.45
+        # Optional buried continuation is the SAME hex, with no round/lofted boss.
+        # Keep a ring at zero for the published anchor, and preserve the exact frozen
+        # emitter when seat=0 (tank, valve and hose tool use that path).
+        back=[(-seat,HEX)] if seat else []
         if low:
-            tmp.lathe([(0,HEX),(COLLAR+SPOUT,HEX)],n,3,'hose_fitting',caps=True,end_colour=2)
+            tmp.lathe(back+[(0,HEX),(COLLAR+SPOUT,HEX)],n,3,'hose_fitting',caps=True,end_colour=2)
         else:
-            tmp.lathe([(0,HEX),(COLLAR,HEX),(COLLAR,spout),(COLLAR+SPOUT,spout)],
+            tmp.lathe(back+[(0,HEX),(COLLAR,HEX),(COLLAR,spout),(COLLAR+SPOUT,spout)],
                       n,3,'hose_fitting',caps=True,end_colour=2)
         def tr(p):
             x,y,z=p
@@ -209,8 +213,38 @@ class Mesh:
 def cylinder(m,r,a,b,n=6,c=3,axis='y',center=(0,0,0),group='pipe'):
     m.lathe([(a,r),(b,r)],n,c,group,axis=axis,center=center)
 
+def pipe(m, sections, radius=BORE*1.45, n=8, colour=3, group='pipe', normal=(0,1,0)):
+    """Closed pipe sweep. Sections are (centre, tangent); transport the ring frame.
+
+    Every bend is sampled on a circular centreline with tangent straight runs.
+    Clockwise-front emission remains entirely in Mesh.face, as for the frozen art.
+    """
+    rings=[]; u=normal
+    for p,t in sections:
+        t=unit(t); along=sum(a*b for a,b in zip(u,t))
+        u=unit(tuple(a-along*b for a,b in zip(u,t)))
+        v=cross(u,t)
+        rings.append([tuple(p[k]+radius*(u[k]*math.cos(a)+v[k]*math.sin(a)) for k in range(3))
+                      for a in [math.tau*i/n for i in range(n)]])
+    m.loft(rings,colour,group)
+
+def rod(m,a,b,r=STEM/2,colour=3,group='support_rod'):
+    t=unit(sub(b,a)); normal=(0,1,0) if abs(t[1])<.95 else (1,0,0)
+    pipe(m,[(a,t),(b,t)],r,6,colour,group,normal)
+
+def hex_wall_port(m,anchor,sign,wall,body_radius=None,low=False):
+    """Seat the hex itself into the wall, retaining the published anchor and bore.
+
+    Round bodies need circular + polygon sag, as measured in the second pass;
+    the radius used for that calculation is now HEX, not an oversized boss.
+    """
+    n=6 if low else 8
+    depth=.03 if body_radius is None else (body_radius-math.sqrt(body_radius**2-HEX**2)
+                                         +body_radius*(1-math.cos(math.pi/n))+.025)
+    m.socket(anchor,'x',sign,low,seat=sign*anchor[0]-wall+depth)
+
 def seated_port(m,anchor,axis,sign,wall,n,body_radius=None,low=False):
-    """A broad seat embedded beyond the curved body's sag, tapering to the hex run.
+    """FROZEN legacy seats: called only by the signed-off tank and valve.
 
     wall is positive distance from the origin along sign*axis. The extra 25 mm
     seat depth includes polygon sag, so even LOD1 seats penetrate over their full
@@ -235,70 +269,130 @@ def seated_port(m,anchor,axis,sign,wall,n,body_radius=None,low=False):
     m.loft(rings,3,'seated_boss')
     m.socket(anchor,axis,sign,low)
 
-def barrel(source,low):
-    """Barrel_0's own profile, not an approximation of it: .5 shell, .543261 bands, ends straddled."""
+def tank(low):
+    """FROZEN 9110 builder. Do not share vessel construction with the rain catcher."""
     m=Mesh(); n=6 if low else 12
     if low:
         cylinder(m,BARREL_BAND_R,0,BARREL_TOP,n,1,group='vessel')
     else:
-        # CLOSED shell (caps=True). The old one was an open tube relying on the bands to hide its
-        # ends, which left it counted as a hole and showed through wherever a band did not cover.
         m.lathe([(BARREL_SHELL[0],BARREL_R),(BARREL_SHELL[1],BARREL_R)],12,1,'vessel',caps=True)
         for a,b in BARREL_BANDS:
             m.lathe([(a,BARREL_BAND_R),(b,BARREL_BAND_R)],12,0,'bands',caps=True)
-    if source:
-        seated_port(m,(0,BARREL_PORTY,.55),'z',1,.5,n,.5,low)
-    else:
-        for sign in [-1,1]: seated_port(m,(sign*.5,BARREL_PORTY,0),'x',sign,.5,n,.5,low)
+    for sign in [-1,1]: seated_port(m,(sign*.5,BARREL_PORTY,0),'x',sign,.5,n,.5,low)
+    return m
+
+def rain_catcher(low):
+    """Open green drum with four metal arms and a folded, draining tarp."""
+    m=Mesh(); n=6 if low else 12
+    # First cap is UNDER the drum; last cap is its internal floor. There is no lid.
+    # The inner wall returns from the lip to the floor in the same closed solid.
+    # Body lip sits 21.8 mm below the upper hoop; overlapping top faces at the same
+    # height made the rim visibly speckle in the first oblique capture.
+    m.lathe([(.04604,.5),(1.276,.5),(1.30,.52),(1.30,.456),(.09,.456)],
+            n,1,'vessel',caps=True)
+    for a,b in BARREL_BANDS:
+        # Annular bands, with their cross-section closed and NO disc caps.
+        m.lathe([(a,.484),(a,BARREL_BAND_R),(b,BARREL_BAND_R),(b,.484),(a,.484)],
+                n,0,'bands',caps=False)
+    m.socket((0,BARREL_PORTY,.55),'z',low=low,seat=.14 if low else .105)
+    # Alternate edge midpoints and corners around a square. Corners hang from rods;
+    # edge midpoints droop 220 mm, then the cloth falls to a 1.58 m central drain.
+    outer=[(.95,2.16,0),(.95,2.38,.95),(0,2.16,.95),(-.95,2.38,.95),
+           (-.95,2.16,0),(-.95,2.38,-.95),(0,2.16,-.95),(.95,2.38,-.95)]
+    middle=[(x*.49,1.90+(.06 if i%2 else 0),z*.49) for i,(x,y,z) in enumerate(outer)]
+    drain=[(.06*math.cos(math.tau*i/8),1.58,.06*math.sin(math.tau*i/8)) for i in range(8)]
+    top=[outer,drain] if low else [outer,middle,drain]
+    underside=[[(x,y-.012,z) for x,y,z in ring] for ring in top[::-1]]
+    m.loft(top+underside+[outer],0,'sagging_tarp',caps=False)
+    m.lathe([(1.40,.06),(1.60,.06),(1.60,.042),(1.40,.042),(1.40,.06)],
+            8,3,'tarp_drain',caps=False)
+    for x in [-1,1]:
+        for z in [-1,1]:
+            rod(m,(x*.34,1.265,z*.34),(x*.95,2.385,z*.95))
     return m
 
 def pump(low):
-    """A skid-mounted centrifugal set: volute on the hose line, motor above, belt between them.
-
-    strawberry: "the pump should have some part of it that spins, but making sense." What spins is the
-    PULLEY on the motor shaft, and it is connected by a belt to a sheave on the volute shaft, so it is
-    visibly driving the casing the fluid crosses. The first attempt made the motor and the volute the
-    same size and the same yellow, which read as two drums rather than a machine, and left the moved
-    hose anchors floating unattached -- both fixed here."""
-    m=Mesh(); px=PORTX[9114]; n=6 if low else 8
-    for z in [-.46,.46]: m.box((-.66,0,z-.09),(.66,.13,z+.09),2,'skids')
-    m.box((-.56,.13,-.38),(.56,.26,.38),2,'bedplate')
-    # VOLUTE -- the casing the fluid actually crosses, on the hose axis, plus its suction/discharge.
-    m.box((-.24,.26,-.24),(.24,PORTY-.24,.24),2,'volute_pedestal')
-    cylinder(m,.30,-.20,.20,n,1,'x',(0,PORTY,0),'volute')
-    cylinder(m,.34,-.06,.06,n,3,'x',(0,PORTY,0),'volute_band')
-    # MOTOR -- smaller than the volute and the only yellow thing here, so the two read apart.
-    m.box((-.30,.26,-.26),(.30,.84,.26),2,'motor_stool')
-    cylinder(m,.24,-.40,.40,n,0,'x',(0,1.10,0),'motor')
+    """Direct-drive centrifugal set: axial suction, spiral scroll, tangential discharge."""
+    m=Mesh(); px=PORTX[9114]; n=6 if low else 8; steps=3 if low else 6
+    for z in [-.34,.46]: m.box((-.73,0,z-.07),(.84,.12,z+.07),2,'skids')
+    m.box((-.72,.12,-.40),(.84,.22,.56),2,'bedplate')
+    m.box((-.63,.21,-.15),(-.36,.43,.15),1,'volute_pedestal')
+    # Spiral grows 0.21 -> 0.36 m over a turn, ending at the TOP with a +Z tangent.
+    # Extrude the asymmetric footprint along X. The slightly off-centre fan point
+    # triangulates the radial cutwater edge too (an on-axis fan would degenerate).
+    count=12 if low else 24
+    outline=[(PORTY+(.21+.15*i/count)*math.cos(math.tau*i/count),
+              (.21+.15*i/count)*math.sin(math.tau*i/count)) for i in range(count+1)]
+    rings=[[(x,y,z) for y,z in outline] for x in [-.36,-.65]]
+    m.loft(rings,1,'spiral_volute',caps=False)
+    for j,ring in enumerate(rings):
+        order=ring if j==0 else ring[::-1]
+        centre=(ring[0][0],PORTY,-.025)
+        for a,b in zip(order,order[1:]+order[:1]): m.face([centre,a,b],1,'volute_face')
+    cylinder(m,.19,-.674,-.63,n,3,'x',(0,PORTY,0),'suction_cover')
     if not low:
-        for x in [-.26,.26]: cylinder(m,.265,x-.04,x+.04,n,3,'x',(0,1.10,0),'motor_band')
-    m.box((-.18,1.28,-.13),(.18,1.40,.13),2,'terminal_box')
-    # The live power cube is at (0,1.25,.42), with its inner face at Z=.355.
-    # Carry it back into the motor/terminal box instead of leaving it suspended.
+        for i in range(6):
+            a=math.tau*(i+.5)/6
+            cylinder(m,.021,-.688,-.662,6,2,'x',(0,PORTY+.169*math.cos(a),.169*math.sin(a)),'cover_bolt')
+    # The hex is sunk straight into the axial cover. No transition boss.
+    m.socket((-px,PORTY,0),'x',-1,low,seat=.18)
+    cylinder(m,.105,-.40,-.13,n,3,'x',(0,PORTY,0),'bearing_housing')
+    m.box((-.30,.21,-.09),(-.17,.57,.09),3,'bearing_foot')
+    cylinder(m,.043,-.17,.14,6,3,'x',(0,PORTY,0),'drive_shaft')
+    cylinder(m,.24,.10,.51,n,0,'x',(0,PORTY,0),'motor')
+    cylinder(m,.25,.46,.55,n,2,'x',(0,PORTY,0),'motor_fan_cover')
+    for x in [.16,.44]: m.box((x-.045,.21,-.19),(x+.045,.44,.19),2,'motor_feet')
+    if not low:
+        for i in range(8):
+            a=math.tau*(i+.5)/8
+            rod(m,(.14,PORTY+.236*math.cos(a),.236*math.sin(a)),
+                  (.47,PORTY+.236*math.cos(a),.236*math.sin(a)),.015,0,'motor_fin')
+    # A stationary slotted half-round coupling guard, open below the shaft.
+    # Each strip is a closed rectangular section, so no annular profile is capped.
+    def guard_strip(a,b,x0,x1):
+        sections=[]
+        for i in range(steps+1):
+            t=a+(b-a)*i/steps
+            sections.append([(x0,PORTY+.16*math.cos(t),.16*math.sin(t)),
+                             (x1,PORTY+.16*math.cos(t),.16*math.sin(t)),
+                             (x1,PORTY+.18*math.cos(t),.18*math.sin(t)),
+                             (x0,PORTY+.18*math.cos(t),.18*math.sin(t))])
+        # Section order faces out of the new curved strip (ring tangent is +angle).
+        m.loft([ring[::-1] for ring in sections],0,'coupling_guard')
+    for x in [-.125,.072]: guard_strip(-math.pi/2,math.pi/2,x,x+.028)
+    for a in [-1.05,0,1.05]: guard_strip(a-.13,a+.13,-.13,.105)
+    # Tangential +Z outlet at the fat end of the scroll, then elbows around the
+    # motor. Final elbow turns onto +X at (.78,.60,0), inside the published collar.
+    sections=[((-.50,.96,-.06),(0,0,1)),((-.50,.96,.24),(0,0,1))]
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((-.32-.18*math.cos(a),.96,.24+.18*math.sin(a)),(math.sin(a),0,math.cos(a))))
+    sections.append(((.52,.96,.42),(1,0,0)))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.52+.16*math.sin(a),.80+.16*math.cos(a),.42),(math.cos(a),-math.sin(a),0)))
+    sections.append(((.68,.76,.42),(0,-1,0)))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.68,.76-.16*math.sin(a),.26+.16*math.cos(a)),(0,-math.cos(a),-math.sin(a))))
+    sections.append(((.68,PORTY,.10),(0,0,-1)))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.78-.10*math.cos(a),PORTY,.10-.10*math.sin(a)),(math.sin(a),0,-math.cos(a))))
+    sections.append(((.825,PORTY,0),(1,0,0)))
+    pipe(m,sections,BORE,n,1,'tangential_discharge',normal=(1,0,0))
+    m.socket((px,PORTY,0),'x',1,low,seat=.03)
+    # The fixed electrical anchors remain at their previous height, on a supported
+    # terminal cabinet above the motor, clear of the discharge behind it.
+    rod(m,(0,.20,-.25),(0,1.24,-.25),.025,3,'terminal_stand')
+    m.box((-.18,1.14,-.17),(.18,1.37,.17),2,'terminal_box')
     m.box((-.10,1.15,.10),(.10,1.34,.385),2,'power_gland')
-    m.box((-.30,1.28-BORE,-.40),(.30,1.28+BORE,-.28),2,'rear_terminals')
-    # BELT: a sheave on the volute shaft and two straps up to the pulley, so the pulley drives something.
-    cylinder(m,.15,.42,.52,6,2,'x',(0,PORTY,0),'sheave')
-    for sign in [-1,1]:
-        strap=Mesh()
-        strap.box((.44,PORTY-.02,-.028),(.50,1.12,.028),2,'belt')
-        # The .15-radius hex lower sheave reaches only Z=.129904; the old
-        # straight straps started at |Z|=.172 and missed it by 42 mm.
-        # Taper the run between that sheave and the .26-radius upper pulley.
-        m.add(strap,transform=lambda p:(p[0],p[1],p[2]+sign*(.14+.105*(p[1]-PORTY)/.5)))
-    for sign in [-1,1]: seated_port(m,(sign*px,PORTY,0),'x',sign,.20,n,low=low)
-    # THE TURNING PART: authored Y-UP like the valve handwheel and stood upright by the catalog's part
-    # rotation, so both moving parts spin about their own local Y and there is one animation path.
-    pulley=Mesh()
-    if low:
-        cylinder(pulley,.24,-.05,.05,6,3,group='pulley')
-    else:
-        pulley.lathe([(-.06,.20),(-.06,.26),(-.025,.26),(-.025,.225),(.025,.225),(.025,.26),
-                      (.06,.26),(.06,.20)],12,3,'pulley_rim',caps=True)
-        cylinder(pulley,.085,-.045,.045,8,0,group='pulley_hub')
-        for i in range(4):
-            pulley.box_oriented((.07,-.022,-.022),(.215,.022,.022),math.tau*i/4,0,'pulley_spoke')
-    return m,pulley,(.47,1.10,0)
+    m.box((-.30,1.28-BORE,-.40),(.30,1.28+BORE,-.14),2,'rear_terminals')
+    # Reuse the existing local-Y spin / -90 Z placement for a real shaft coupling.
+    coupling=Mesh()
+    cylinder(coupling,.112,-.09,.09,6 if low else 8,3,group='coupling')
+    coupling.box((-.025,-.078,.095),(.025,.078,.122),2,'coupling_key')
+    return m,coupling,(-.005,PORTY,0)
 
 def valve(low):
     """A gate valve: flanged body, bonnet, rising stem, and a RED handwheel on top.
@@ -324,7 +418,11 @@ def valve(low):
     for sign in [-1,1]: seated_port(m,(sign*.5,PORTY,0),'x',sign,.17,6 if low else 8,low=low)
     for x in [-.32,.32]:
         m.box((x-BORE,1.2-BAND/2,-BORE),(x+BORE,1.2+BAND/2,BORE),2,'trigger_housing')
-    m.box((-.32,1.2-BAND-STEM,-STEM/2),(.32,1.2-BAND,STEM/2),3,'trigger_support')
+    # The support has to MEET the housings, on both axes. It topped out at 1.10 while they start at
+    # 1.15, leaving a 5 cm hole under each one, and it ran to +-.32 -- their CENTRES -- so they also
+    # overhung it at both ends. strawberry spotted it from underneath: "theres also a gap where the
+    # power open/close inputs are". Overlap up into them and past them, rather than butting flush.
+    m.box((-.32-BORE,1.2-BAND-STEM,-STEM/2),(.32+BORE,1.16,STEM/2),3,'trigger_support')
     # THE HANDWHEEL. Colour 1 is the palette's red texel, in both states.
     wheel=Mesh()
     if low:
@@ -341,7 +439,7 @@ def valve(low):
             wheel.box_oriented((.06,-.024,-.024),(.245,.024,.024),math.tau*i/5,1,'handle_spoke')
     return m,wheel,(0,1.44,0)
 
-def transformer(id,low):
+def transformer(id,low,port_y):
     """Refinery, sluice and purifier -- the three strawberry asked to enlarge, ~1.8x the old envelope.
 
     "the purifier, refinery, pump and sluice should be much bigger (keeping the Io pipes the same
@@ -393,39 +491,39 @@ def transformer(id,low):
     # ONE STUB PER PORT, off the body wall. A single pipe across the whole width ran straight THROUGH
     # the refinery's vessel and out the far side, which read as a skewer rather than plumbing.
     for sign in [-1,1]:
-        anchor=(sign*px,PORTY,0)
+        anchor=(sign*px,port_y,0)
         if id==9116:
             # Left inlet on the firebox, right discharge on the retort. No cross-vessel skewer.
-            seated_port(m,anchor,'x',sign,.78 if sign>0 else .90,12,
-                        .58 if sign>0 else None,low)
-        elif id==9121: seated_port(m,anchor,'x',sign,.70,n,.28,low)
-        else: seated_port(m,anchor,'x',sign,.86,6,low=low)
+            hex_wall_port(m,anchor,sign,.78 if sign>0 else .90,.58 if sign>0 else None,low)
+        elif id==9121: hex_wall_port(m,anchor,sign,.70,.28,low)
+        else: hex_wall_port(m,anchor,sign,.86,low=low)
     return m
 
 def manifold(combine,low):
-    m=Mesh();m.box((-.45,0,-.51),(.45,BAND,.51),2,'base')
-    m.box((-.06,.08,-.35),(.13,.49,.35),3,'support')
-    # A tapered collector: narrow single-side throat, broad flat three-side face.
-    # Extrusion closes the bottom as well as the top. Branches enter a flat face
-    # on the collector and overlap their socket, all with matching hex profiles.
-    outline=[(-.28,-.12),(.10,-.44),(.22,-.44),(.22,.44),(.10,.44),(-.28,.12)]
-    bottom=[(x,.46,z) for x,z in outline]; top=[(x,.74,z) for x,z in outline]
-    m.face(bottom,0,'collector'); m.face(top[::-1],0,'collector')
-    for i in range(len(outline)):
-        j=(i+1)%len(outline)
-        m.face([bottom[i],top[i],top[j],bottom[j]],0,'collector')
+    """Three branches on a tubular header with two return elbows, mirrored for 3:1."""
+    m=Mesh(); n=6 if low else 8; steps=3 if low else 6
+    # Two narrow feet and legs leave air under and between the actual pipework.
+    for z in [-.24,.24]:
+        m.box((-.24,0,z-.07),(.29,.08,z+.07),2,'feet')
+        rod(m,(.03,.06,z),(.03,.52,z),.035,3,'pipe_stand')
+    # The header is a Z pipe, turning into +X at each end. Middle branch is a tee.
+    sections=[((.525,PORTY,-.32),(-1,0,0)),((.21,PORTY,-.32),(-1,0,0))]
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.21-.18*math.sin(a),PORTY,-.14-.18*math.cos(a)),(-math.cos(a),0,math.sin(a))))
+    sections.append(((.03,PORTY,.14),(0,0,1)))
+    for i in range(1,steps+1):
+        a=math.pi/2*i/steps
+        sections.append(((.21-.18*math.cos(a),PORTY,.14+.18*math.sin(a)),(math.sin(a),0,math.cos(a))))
+    sections.append(((.525,PORTY,.32),(1,0,0)))
+    pipe(m,sections,BORE*1.45,n,0,'header_elbows')
+    cylinder(m,BORE*1.45,-.525,.525,n,0,'x',(0,PORTY,0),'through_tee')
     for x,z in [(-.5,0)]+[(.5,z) for z in FAN_Z]:
         sign=1 if x>0 else -1
-        # Six-sided face glands fit the .32 m pitch, leaving .056 m between collars.
-        wall=.22 if sign>0 else .28
-        a,b=sorted([sign*(wall-.035),x+sign*.025])
-        cylinder(m,BORE*1.45,a,b,6,3,'x',(0,PORTY,z),'branch')
-        a,b=sorted([sign*(wall-.02),sign*(wall+.05)])
-        cylinder(m,HEX,a,b,6,3,'x',(0,PORTY,z),'branch_gland')
-        m.socket((x,PORTY,z),'x',sign,low)
+        # Plain hex unions; all runs penetrate 25 mm beyond the anchor plane.
+        m.socket((x,PORTY,z),'x',sign,low,seat=.035)
     if not combine:return m
     mirrored=Mesh()
-    # A half-turn preserves winding and turns 1:3 into 3:1 (the branch row is symmetric).
     mirrored.add(m,transform=lambda p:(-p[0],p[1],-p[2]))
     return mirrored
 
@@ -476,7 +574,7 @@ def hose_tool():
 def assembled(body,part,offset,id):
     m=Mesh(); m.add(body)
     if part:
-        # Match catalog partRot, including the pump's upright pulley in ghosts and dropped art.
+        # Match catalog partRot, including the pump's axial coupling in ghosts and dropped art.
         m.add(part,transform=lambda p:tuple(a+b for a,b in zip(
             (p[1],-p[0],p[2]) if id==9114 else p,offset)))
     return m
@@ -497,6 +595,7 @@ def write_item(id,name,mesh,palette,manifest):
 def main():
     OUT.mkdir(exist_ok=True)
     catalog={}; files=[]
+    published=json.loads((OUT/'catalog.json').read_text())
     item_path=ROOT/'game/content/items/items_manifest.json'
     items=json.loads(item_path.read_text())
     for id,name in [(9110,'Tank'),(9111,'Water source'),(9114,'Pump'),(9115,'Valve'),(9116,'Refinery'),(9117,'Sluice'),(9121,'Purifier'),(9112,'Splitter'),(9113,'Combiner'),(9119,'Inlet'),(9120,'Drain')]:
@@ -507,14 +606,15 @@ def main():
                  [WHITE,BLUE_LIGHT,DARK,METAL] if id==9121 else [RUST,RUST_LIGHT,DARK,METAL])
         im=Image.new('RGB',(2,2));im.putdata(palette);im.save(OUT/f'{id}_palette.png')
         entry=dict(name=name,palette=palette,part=None,partRot=None,portX=PORTX.get(id,.5),
-                   portY=BARREL_PORTY if id in (9110,9111) else PORTY)
+                   portY=published[str(id)]['portY'])
         if id in [9112,9113]: entry['branchZ']=FAN_Z
         for low in [False,True]:
             part=None; offset=None; suffix='_lod1' if low else ''
-            if id in [9110,9111]:m=barrel(id==9111,low)
+            if id==9110:m=tank(low)
+            elif id==9111:m=rain_catcher(low)
             elif id==9114:m,part,offset=pump(low)
             elif id==9115:m,part,offset=valve(low)
-            elif id in [9116,9117,9121]:m=transformer(id,low)
+            elif id in [9116,9117,9121]:m=transformer(id,low,entry['portY'])
             elif id in [9112,9113]:m=manifold(id==9113,low)
             else:m=endpoint(id==9120,low)
             body=m.write(OUT/f'{id}_body{suffix}.txt');files.append(body)
@@ -524,7 +624,7 @@ def main():
                 pr=preview.write(OUT/f'{id}_preview{suffix}.txt');files.append(pr)
                 if not low:
                     entry['part']=list(offset)
-                    # the pump's pulley is authored flat and stood upright onto the motor shaft here
+                    # the coupling's local Y axis is stood onto the pump's X shaft here
                     entry['partRot']=[0,0,-90] if id==9114 else [0,0,0]
             else: pr=body
             if not low: write_item(id,'Fluid '+name,assembled(m,part,offset,id),palette,items)

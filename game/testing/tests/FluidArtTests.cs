@@ -143,15 +143,15 @@ namespace UnturnedGodot.Testing
                     float a0=pump.DebugPumpAngle;var b0=drum.Basis;
                     for(int i=0;i<6;i++)pump.HubTick(.03);
                     float a1=pump.DebugPumpAngle;
-                    T.Check("driven pulley turns about its own axis",a1-a0>.01f && !drum.Basis.IsEqualApprox(b0));
-                    T.Check("lower pulley follows the same transform",drum.GetNode<MeshInstance3D>("Lod1").GlobalTransform.IsEqualApprox(drum.GlobalTransform));
+                    T.Check("driven coupling turns about its own axis",a1-a0>.01f && !drum.Basis.IsEqualApprox(b0));
+                    T.Check("LOD1 coupling follows the same transform",drum.GetNode<MeshInstance3D>("Lod1").GlobalTransform.IsEqualApprox(drum.GlobalTransform));
                     powerSource.TogglePower();PowerNet.Recompute(Tree);
                     // a loaded rotor has inertia: it must COAST rather than stop dead on the same tick
                     pump.HubTick(.03);
-                    T.Check("unpowered pulley coasts, not an instant stop",pump.DebugPumpAngle>a1);
+                    T.Check("unpowered coupling coasts, not an instant stop",pump.DebugPumpAngle>a1);
                     for(int i=0;i<40;i++)pump.HubTick(.03);
                     float a3=pump.DebugPumpAngle;pump.HubTick(.03);
-                    T.Check("pulley comes to rest once spun down",Mathf.IsEqualApprox(a3,pump.DebugPumpAngle));
+                    T.Check("coupling comes to rest once spun down",Mathf.IsEqualApprox(a3,pump.DebugPumpAngle));
                 }
                 if (id==9115)
                 {

@@ -42,210 +42,237 @@
   },
   {
     "file": "9111_body.txt",
-    "vertices": 150,
-    "triangles": 276,
+    "vertices": 362,
+    "triangles": 700,
     "min": [
-      -0.543261,
+      -0.968367,
       0.0,
-      -0.543261
+      -0.968367
     ],
     "max": [
-      0.543261,
-      1.3218,
-      0.73
+      0.968367,
+      2.397558,
+      0.968367
     ],
     "groups": {
-      "bands": 132,
-      "hose_fitting": 44,
-      "seated_boss": 56,
-      "vessel": 44
+      "bands": 288,
+      "hose_fitting": 56,
+      "sagging_tarp": 96,
+      "support_rod": 80,
+      "tarp_drain": 64,
+      "vessel": 116
     }
   },
   {
     "file": "9111_body_lod1.txt",
-    "vertices": 42,
-    "triangles": 72,
+    "vertices": 232,
+    "triangles": 440,
     "min": [
-      -0.543261,
-      0,
-      -0.470478
+      -0.968367,
+      0.0,
+      -0.968367
     ],
     "max": [
-      0.543261,
-      1.3218,
-      0.73
+      0.968367,
+      2.397558,
+      0.968367
     ],
     "groups": {
-      "hose_fitting": 20,
-      "seated_boss": 32,
-      "vessel": 20
+      "bands": 144,
+      "hose_fitting": 32,
+      "sagging_tarp": 64,
+      "support_rod": 80,
+      "tarp_drain": 64,
+      "vessel": 56
     }
   },
   {
     "file": "9114_body.txt",
-    "vertices": 276,
-    "triangles": 472,
+    "vertices": 828,
+    "triangles": 1500,
     "min": [
       -0.98,
       0,
-      -0.55
+      -0.41
     ],
     "max": [
       0.98,
-      1.4,
-      0.55
+      1.37,
+      0.56
     ],
     "groups": {
+      "bearing_foot": 12,
+      "bearing_housing": 28,
       "bedplate": 12,
-      "belt": 24,
-      "hose_fitting": 88,
+      "coupling_guard": 260,
+      "cover_bolt": 120,
+      "drive_shaft": 20,
+      "hose_fitting": 112,
       "motor": 28,
-      "motor_band": 56,
-      "motor_stool": 12,
+      "motor_fan_cover": 28,
+      "motor_feet": 24,
+      "motor_fin": 160,
       "power_gland": 12,
       "rear_terminals": 12,
-      "seated_boss": 104,
-      "sheave": 20,
       "skids": 24,
+      "spiral_volute": 50,
+      "suction_cover": 28,
+      "tangential_discharge": 476,
       "terminal_box": 12,
-      "volute": 28,
-      "volute_band": 28,
+      "terminal_stand": 20,
+      "volute_face": 50,
       "volute_pedestal": 12
     }
   },
   {
     "file": "9114_part.txt",
-    "vertices": 144,
-    "triangles": 264,
+    "vertices": 24,
+    "triangles": 40,
     "min": [
-      -0.26,
-      -0.06,
-      -0.26
+      -0.112,
+      -0.09,
+      -0.112
     ],
     "max": [
-      0.26,
-      0.06,
-      0.26
+      0.112,
+      0.09,
+      0.122
     ],
     "groups": {
-      "pulley_hub": 28,
-      "pulley_rim": 188,
-      "pulley_spoke": 48
+      "coupling": 28,
+      "coupling_key": 12
     }
   },
   {
     "file": "9114_preview.txt",
-    "vertices": 420,
-    "triangles": 736,
+    "vertices": 852,
+    "triangles": 1540,
     "min": [
       -0.98,
       0,
-      -0.55
+      -0.41
     ],
     "max": [
       0.98,
-      1.4,
-      0.55
+      1.37,
+      0.56
     ],
     "groups": {
+      "bearing_foot": 12,
+      "bearing_housing": 28,
       "bedplate": 12,
-      "belt": 24,
-      "hose_fitting": 88,
+      "coupling": 28,
+      "coupling_guard": 260,
+      "coupling_key": 12,
+      "cover_bolt": 120,
+      "drive_shaft": 20,
+      "hose_fitting": 112,
       "motor": 28,
-      "motor_band": 56,
-      "motor_stool": 12,
+      "motor_fan_cover": 28,
+      "motor_feet": 24,
+      "motor_fin": 160,
       "power_gland": 12,
-      "pulley_hub": 28,
-      "pulley_rim": 188,
-      "pulley_spoke": 48,
       "rear_terminals": 12,
-      "seated_boss": 104,
-      "sheave": 20,
       "skids": 24,
+      "spiral_volute": 50,
+      "suction_cover": 28,
+      "tangential_discharge": 476,
       "terminal_box": 12,
-      "volute": 28,
-      "volute_band": 28,
+      "terminal_stand": 20,
+      "volute_face": 50,
       "volute_pedestal": 12
     }
   },
   {
     "file": "9114_body_lod1.txt",
-    "vertices": 200,
-    "triangles": 328,
+    "vertices": 404,
+    "triangles": 708,
     "min": [
       -0.98,
       0,
-      -0.55
+      -0.41
     ],
     "max": [
       0.98,
-      1.4,
-      0.55
+      1.37,
+      0.56
     ],
     "groups": {
+      "bearing_foot": 12,
+      "bearing_housing": 20,
       "bedplate": 12,
-      "belt": 24,
-      "hose_fitting": 40,
+      "coupling_guard": 140,
+      "drive_shaft": 20,
+      "hose_fitting": 64,
       "motor": 20,
-      "motor_stool": 12,
+      "motor_fan_cover": 20,
+      "motor_feet": 24,
       "power_gland": 12,
       "rear_terminals": 12,
-      "seated_boss": 88,
-      "sheave": 20,
       "skids": 24,
+      "spiral_volute": 26,
+      "suction_cover": 20,
+      "tangential_discharge": 212,
       "terminal_box": 12,
-      "volute": 20,
-      "volute_band": 20,
+      "terminal_stand": 20,
+      "volute_face": 26,
       "volute_pedestal": 12
     }
   },
   {
     "file": "9114_part_lod1.txt",
-    "vertices": 12,
-    "triangles": 20,
+    "vertices": 20,
+    "triangles": 32,
     "min": [
-      -0.24,
-      -0.05,
-      -0.207846
+      -0.112,
+      -0.09,
+      -0.096995
     ],
     "max": [
-      0.24,
-      0.05,
-      0.207846
+      0.112,
+      0.09,
+      0.122
     ],
     "groups": {
-      "pulley": 20
+      "coupling": 20,
+      "coupling_key": 12
     }
   },
   {
     "file": "9114_preview_lod1.txt",
-    "vertices": 212,
-    "triangles": 348,
+    "vertices": 424,
+    "triangles": 740,
     "min": [
       -0.98,
       0,
-      -0.55
+      -0.41
     ],
     "max": [
       0.98,
-      1.4,
-      0.55
+      1.37,
+      0.56
     ],
     "groups": {
+      "bearing_foot": 12,
+      "bearing_housing": 20,
       "bedplate": 12,
-      "belt": 24,
-      "hose_fitting": 40,
+      "coupling": 20,
+      "coupling_guard": 140,
+      "coupling_key": 12,
+      "drive_shaft": 20,
+      "hose_fitting": 64,
       "motor": 20,
-      "motor_stool": 12,
+      "motor_fan_cover": 20,
+      "motor_feet": 24,
       "power_gland": 12,
-      "pulley": 20,
       "rear_terminals": 12,
-      "seated_boss": 88,
-      "sheave": 20,
       "skids": 24,
+      "spiral_volute": 26,
+      "suction_cover": 20,
+      "tangential_discharge": 212,
       "terminal_box": 12,
-      "volute": 20,
-      "volute_band": 20,
+      "terminal_stand": 20,
+      "volute_face": 26,
       "volute_pedestal": 12
     }
   },
@@ -409,8 +436,8 @@
   },
   {
     "file": "9116_body.txt",
-    "vertices": 314,
-    "triangles": 572,
+    "vertices": 254,
+    "triangles": 460,
     "min": [
       -1.28,
       0,
@@ -426,18 +453,17 @@
       "firebox": 12,
       "firebox_door": 12,
       "firebox_hood": 12,
-      "hose_fitting": 88,
+      "hose_fitting": 112,
       "retort": 68,
       "retort_band": 132,
       "retort_cap": 44,
-      "seated_boss": 136,
       "stack": 56
     }
   },
   {
     "file": "9116_body_lod1.txt",
-    "vertices": 164,
-    "triangles": 284,
+    "vertices": 128,
+    "triangles": 220,
     "min": [
       -1.28,
       0,
@@ -453,17 +479,16 @@
       "firebox": 12,
       "firebox_door": 12,
       "firebox_hood": 12,
-      "hose_fitting": 40,
+      "hose_fitting": 64,
       "retort": 32,
       "retort_cap": 20,
-      "seated_boss": 88,
       "stack": 56
     }
   },
   {
     "file": "9117_body.txt",
-    "vertices": 180,
-    "triangles": 296,
+    "vertices": 156,
+    "triangles": 256,
     "min": [
       -1.1,
       0,
@@ -476,11 +501,10 @@
     ],
     "groups": {
       "base": 12,
-      "hose_fitting": 88,
+      "hose_fitting": 112,
       "inlet_header": 12,
       "outlet_header": 12,
       "riffles": 48,
-      "seated_boss": 64,
       "trestle": 24,
       "trough_floor": 12,
       "trough_wall": 24
@@ -488,8 +512,8 @@
   },
   {
     "file": "9117_body_lod1.txt",
-    "vertices": 124,
-    "triangles": 200,
+    "vertices": 100,
+    "triangles": 160,
     "min": [
       -1.1,
       0,
@@ -502,10 +526,9 @@
     ],
     "groups": {
       "base": 12,
-      "hose_fitting": 40,
+      "hose_fitting": 64,
       "inlet_header": 12,
       "outlet_header": 12,
-      "seated_boss": 64,
       "trestle": 24,
       "trough_floor": 12,
       "trough_wall": 24
@@ -513,8 +536,8 @@
   },
   {
     "file": "9121_body.txt",
-    "vertices": 248,
-    "triangles": 440,
+    "vertices": 204,
+    "triangles": 360,
     "min": [
       -1.03,
       0,
@@ -531,15 +554,14 @@
       "control_cabinet": 12,
       "filter": 88,
       "filter_clamp": 112,
-      "hose_fitting": 88,
-      "power_gland": 12,
-      "seated_boss": 104
+      "hose_fitting": 112,
+      "power_gland": 12
     }
   },
   {
     "file": "9121_body_lod1.txt",
-    "vertices": 140,
-    "triangles": 240,
+    "vertices": 104,
+    "triangles": 176,
     "min": [
       -1.03,
       0,
@@ -555,101 +577,96 @@
       "cabinet_hood": 12,
       "control_cabinet": 12,
       "filter": 64,
-      "hose_fitting": 40,
-      "power_gland": 12,
-      "seated_boss": 88
+      "hose_fitting": 64,
+      "power_gland": 12
     }
   },
   {
     "file": "9112_body.txt",
-    "vertices": 220,
-    "triangles": 380,
+    "vertices": 304,
+    "triangles": 568,
     "min": [
       -0.68,
       0,
-      -0.51
+      -0.45206
     ],
     "max": [
       0.68,
       0.75249,
-      0.51
+      0.45206
     ],
     "groups": {
-      "base": 12,
-      "branch": 80,
-      "branch_gland": 80,
-      "collector": 20,
-      "hose_fitting": 176,
-      "support": 12
+      "feet": 24,
+      "header_elbows": 252,
+      "hose_fitting": 224,
+      "pipe_stand": 40,
+      "through_tee": 28
     }
   },
   {
     "file": "9112_body_lod1.txt",
-    "vertices": 172,
-    "triangles": 284,
+    "vertices": 184,
+    "triangles": 328,
     "min": [
       -0.68,
       0,
-      -0.51
+      -0.45206
     ],
     "max": [
       0.68,
       0.75249,
-      0.51
+      0.45206
     ],
     "groups": {
-      "base": 12,
-      "branch": 80,
-      "branch_gland": 80,
-      "collector": 20,
-      "hose_fitting": 80,
-      "support": 12
+      "feet": 24,
+      "header_elbows": 116,
+      "hose_fitting": 128,
+      "pipe_stand": 40,
+      "through_tee": 20
     }
   },
   {
     "file": "9113_body.txt",
-    "vertices": 220,
-    "triangles": 380,
+    "vertices": 304,
+    "triangles": 568,
     "min": [
       -0.68,
       0,
-      -0.51
+      -0.45206
     ],
     "max": [
       0.68,
       0.75249,
-      0.51
+      0.45206
     ],
     "groups": {
-      "base": 12,
-      "branch": 80,
-      "branch_gland": 80,
-      "collector": 20,
-      "hose_fitting": 176,
-      "support": 12
+      "feet": 24,
+      "header_elbows": 252,
+      "hose_fitting": 224,
+      "pipe_stand": 40,
+      "through_tee": 28
     }
   },
   {
     "file": "9113_body_lod1.txt",
-    "vertices": 172,
-    "triangles": 284,
+    "vertices": 184,
+    "triangles": 328,
     "min": [
       -0.68,
       0,
-      -0.51
+      -0.45206
     ],
     "max": [
       0.68,
       0.75249,
-      0.51
+      0.45206
     ],
     "groups": {
-      "base": 12,
-      "branch": 80,
-      "branch_gland": 80,
-      "collector": 20,
-      "hose_fitting": 80,
-      "support": 12
+      "feet": 24,
+      "header_elbows": 116,
+      "hose_fitting": 128,
+      "pipe_stand": 40,
+      "through_tee": 20
     }
   },
   {
