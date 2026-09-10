@@ -61,6 +61,8 @@ SCENES = {
     "fluiddevice": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"),
                      "UG_FLUIDANGLE": os.environ.get("ANGLE", "35"), "UG_FLUIDELEV": os.environ.get("ELEV", "28")},
                     False, 120, "one placed fluid device, LOD0 (DEVICE=9110..9121, ANGLE=deg, ELEV=deg)"),
+    "fluidicon": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"), "UG_FLUIDICON": "1"},
+                  False, 120, "transparent 256x256 inventory render of one fluid item, including Hose Tool (DEVICE=9110..9121)"),
     "fluidlod": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"), "UG_FLUIDLOD1": "1"}, False, 120, "one fluid device beyond its real LOD split, orthographic close view"),
     "fluidclosed": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "9115", "UG_FLUIDCLOSED": "1"}, False, 120, "placed valve closed: turned handle and red palette cell"),
     "fluidflow": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "flow"}, False, 180, "source -> powered pump -> valve -> uphill tank, real generator and hoses"),
@@ -196,7 +198,12 @@ def check(path):
 def take(scene, out, verbose, realtime=False):
     args, scene_env, needs_map, budget, _ = SCENES[scene]
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    if scene == "fluidicon" and os.path.exists(out):
+        os.unlink(out)   # require a fresh render, even if a previous icon already exists
     tmp = os.path.dirname(out)
+    if scene == "fluidicon":
+        tmp = os.path.join(OUT_DIR, "fluidicon")
+        os.makedirs(tmp, exist_ok=True)
     if needs_map and not os.path.isdir(UNTURNED):
         print(f"  FAILED  {scene}: needs the retail map data, but UG_UNTURNED_DIR "
               f"({UNTURNED}) is not a directory.", file=sys.stderr)
@@ -259,6 +266,21 @@ def take(scene, out, verbose, realtime=False):
         return 1
 
     from PIL import Image
+    if scene == "fluidicon":
+        im = Image.open(cap).convert("RGBA")
+        alpha = im.getchannel("A")
+        bbox = alpha.getbbox()
+        if not bbox or alpha.getextrema()[0] != 0:
+            print("  FAILED  fluidicon: render has no transparent background", file=sys.stderr)
+            return 1
+        if bbox[0] == 0 or bbox[1] == 0 or bbox[2] == im.width or bbox[3] == im.height:
+            print("  FAILED  fluidicon: model touches capture edge", file=sys.stderr)
+            return 1
+        im = im.crop(bbox)
+        im.thumbnail((254,254), Image.Resampling.LANCZOS)
+        icon = Image.new("RGBA", (256,256))
+        icon.paste(im, ((256-im.width)//2, (256-im.height)//2))
+        icon.save(cap)
     w, h = Image.open(cap).size
     print(f"  OK      {scene}: {cap}  ({w}x{h}, {os.path.getsize(cap)//1024}kb, {dt:.0f}s)")
     if verbose:

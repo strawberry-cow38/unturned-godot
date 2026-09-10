@@ -10,10 +10,12 @@ namespace UnturnedGodot
         // real item-placement factory, with retail props on the same lit ground.
         void BuildFluidArtScene(string mode)
         {
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDICON") == "1")
+            { BuildFluidIconScene(ushort.Parse(mode)); return; }
             GetWindow().Mode = Window.ModeEnum.Windowed;
             GetWindow().Size = mode == "gallery" ? new Vector2I(1600,1000)
                 : mode == "flow" ? new Vector2I(1280,800) : new Vector2I(900,900);
-            AddChild(new MeshInstance3D
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDUNDERSIDE") != "1") AddChild(new MeshInstance3D
             {
                 Mesh = new PlaneMesh { Size = new Vector2(40, 40) },
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(.32f, .36f, .30f), Roughness = 1f },
@@ -38,7 +40,7 @@ namespace UnturnedGodot
                 // gallery. The live plumbing scene retains the real status bars.
                 if (mode != "flow")
                     foreach (var child in c.GetChildren()) if (child is InfoBillboard info) info.SetActive(false);
-                if (mode == "gallery")
+                if (mode != "flow" && System.Environment.GetEnvironmentVariable("UG_FLUIDLOD1") != "1")
                     foreach (var child in c.GetChildren())
                         if (child is MeshInstance3D mi)
                         {
@@ -131,6 +133,38 @@ namespace UnturnedGodot
                 Label(c.Def.Name + (low ? " — LOD1" : "") + $"  {Mathf.RoundToInt(Mathf.RadToDeg(az))}°",new Vector3(0,-.15f,.55f));
                 GD.Print($"[fluidart] placed {id}: {c.PortNodes.Count} hose ports, mesh={c.GetNode<MeshInstance3D>("FluidBody").Mesh.GetAabb()}");
             }
+        }
+
+        // Render the actual manifest model through the dropped-item loader. shot.py trims only
+        // transparent pixels and downsamples this render to the inventory's 256 px convention.
+        void BuildFluidIconScene(ushort id)
+        {
+            GetWindow().Mode = Window.ModeEnum.Windowed;
+            GetWindow().Size = new Vector2I(512,512);
+            GetViewport().TransparentBg = true;
+            var visual = WorldItem.BuildReplicaVisual(id, Colors.White);
+            if (visual.Mesh is not ArrayMesh) throw new InvalidOperationException($"No authored item mesh for {id}");
+            // WorldItem defaults to two-sided retail materials. Back culling here also makes the
+            // rendered icons a check of our own clockwise-front meshes.
+            var material = (StandardMaterial3D)visual.MaterialOverride.Duplicate();
+            material.CullMode = BaseMaterial3D.CullModeEnum.Back;
+            visual.MaterialOverride = material;
+            AddChild(visual);
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55,-40,0) });
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0,0,0,0),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = .65f,
+                TonemapMode = Godot.Environment.ToneMapper.Linear,
+            }});
+            var bounds = visual.Mesh.GetAabb();
+            var cam = new Camera3D { Current = true, Projection = Camera3D.ProjectionType.Orthogonal,
+                Size = bounds.Size.Length()*1.15f };
+            AddChild(cam);
+            cam.Position = bounds.GetCenter()+new Vector3(3,2.4f,4).Normalized()*4;
+            cam.LookAt(bounds.GetCenter());
+            GD.Print($"[fluidart] icon {id}: manifest model {bounds}, transparent render");
         }
     }
 }

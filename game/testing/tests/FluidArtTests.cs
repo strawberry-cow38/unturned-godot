@@ -24,14 +24,39 @@ namespace UnturnedGodot.Testing
         static Vector3[] Anchors(DeployableDef def) => def.Id switch
         {
             9111 or 9119 or 9120 => new[] {FluidArt.Port(def,0,.7f,.55f)},
-            9112 => new[] {FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,.5f,.6f,-.32f),FluidArt.Port(def,.5f,.6f,.32f)},
-            9113 => new[] {FluidArt.Port(def,-.5f,.6f,-.32f),FluidArt.Port(def,-.5f,.6f,.32f),FluidArt.Port(def,.5f,.6f,0)},
+            9112 => new[] {FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,.5f,.6f,-.32f),FluidArt.Port(def,.5f,.6f,0),FluidArt.Port(def,.5f,.6f,.32f)},
+            9113 => new[] {FluidArt.Port(def,-.5f,.6f,-.32f),FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,-.5f,.6f,.32f),FluidArt.Port(def,.5f,.6f,0)},
             9110 => new[] {FluidArt.Port(def,-.5f,.7f,0),FluidArt.Port(def,.5f,.7f,0)},
             _ => new[] {FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,.5f,.6f,0)},
         };
 
         public override IEnumerable<Step> Run()
         {
+            ItemCatalog.RegisterAll();
+            var drops = new Node3D(); World.AddChild(drops);
+            var floorBody = new StaticBody3D { Position = new Vector3(0,-.1f,14) };
+            floorBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(20,.2f,4) } });
+            drops.AddChild(floorBody);
+            var dropped = new List<WorldItem>();
+            for (ushort id=9110;id<=9121;id++)
+            {
+                var icon = InventoryUI.IconFor(id);
+                T.Check($"{id}: inventory loads the rendered icon",icon?.GetWidth()==256 && icon.GetHeight()==256);
+                var visual = WorldItem.BuildReplicaVisual(id,Colors.White);
+                T.Check($"{id}: dropped and replica paths load an OBJ, not fallback",visual.Mesh is ArrayMesh);
+                var size = visual.Mesh.GetAabb().Size;
+                T.Check($"{id}: dropped model is within the measured portable-item envelope",size[(int)size.MaxAxisIndex()]<=.87221f);
+                visual.Free();
+                var item = WorldItem.Spawn(drops,new Item(id),new Vector3(-8+(id-9110)*1.4f,1.5f,14));
+                dropped.Add(item);
+                foreach (var node in item.GetChildren())
+                    if (node is CollisionShape3D col && col.Shape is BoxShape3D box)
+                        T.Check($"{id}: drop collider matches reduced mesh plus standard pickup margin",box.Size.IsEqualApprox(size*1.15f));
+            }
+            yield return Ticks(120);
+            foreach (var item in dropped)
+                T.Check($"{item.Item.id}: physical drop lands on the floor",item.GlobalPosition.Y>0 && item.GlobalPosition.Y<.9f);
+            drops.QueueFree(); yield return Ticks(2);
             foreach (ushort id in new ushort[] {9110,9111,9114,9115,9116,9117,9121,9112,9113,9119,9120})
             {
                 var stage=new Node3D();World.AddChild(stage);
@@ -64,7 +89,7 @@ namespace UnturnedGodot.Testing
                 T.Check($"{id}: both runtime meshes loaded and LOD split has no gap",body.Mesh is ArrayMesh && lod.Mesh is ArrayMesh && body.VisibilityRangeEnd>0 && Mathf.Abs(body.VisibilityRangeEnd-lod.VisibilityRangeBegin)<.00001f);
                 yield return Ticks(2); // let physical HosePort bodies register with the space
                 var anchors=Anchors(c.Def);
-                T.Check($"{id}: port count retained",c.PortNodes.Count==anchors.Length);
+                T.Check($"{id}: port count matches authored topology",c.PortNodes.Count==anchors.Length);
                 for (int i=0;i<anchors.Length;i++)
                 {
                     var p=c.PortNodes[i];var outward=new Vector3(p.Position.X,0,p.Position.Z).Normalized();
