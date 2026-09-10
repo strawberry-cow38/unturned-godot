@@ -1916,6 +1916,15 @@ namespace UnturnedGodot
             if (_veh == null) { Log.Err($"[glassshot] no vehicle '{type}'"); GetTree().Quit(1); return; }
             AddChild(_veh);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the floor so the suspension settles, as --vehicle does
+            // UG_PAINT=<spraypaint item id>: RESPRAY it before the photo, through the same Vehicle.SetPaint a
+            // player's can calls. Deliberately the respray path and not a spawn-colour override -- a shot of
+            // SpawnPaint would prove the shader works, which was never in doubt; this proves the CAN does.
+            if (ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_PAINT"), out ushort paintId)
+                && VehiclePaints.For(paintId) is Color pc)
+            {
+                _veh.SetPaint(pc);
+                Log.Print($"[glassshot] resprayed {VehiclePaints.NameOf(paintId)} (#{pc.ToHtml(false)})");
+            }
 
             // Bright flat body so the glass is the only thing that isn't magenta (master: "color the body a
             // bright color too to help you diff"). Applied to every mesh EXCEPT the glass panes, which the
