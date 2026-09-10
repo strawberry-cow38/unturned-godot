@@ -134,7 +134,30 @@ namespace UnturnedGodot
         // A resource is forageable iff its retail .dat carries the bare key `Forage` (ResourceAsset.cs:334),
         // and every one that does shares the same shape: Health 1 (one interaction takes it), a SINGLE
         // Reward_ID rather than a Reward_Min..Max roll, Reset 1000, Forage_Reward_Experience 1. Read off
-        // Bundles/Trees/<Name>/<Name>.dat on the box -- the ids are retail item ids, not ours to choose.
+        // Bundles/Trees/<Name>/<Name>.dat on the box.
+        //
+        // ⚠ `Reward_ID` IS A SPAWN TABLE, NOT AN ITEM ID. First cut of this table used the raw Reward_ID and
+        // those ids are cosmetics in the ITEM space -- picking an amber bush handed you a BattlEye Halo, and
+        // a mushroom a Cowboy Top. Retail resolves it through
+        // `SpawnTableTool.ResolveLegacyId(rewardID, EAssetType.ITEM, ...)`: find the SPAWN asset with that
+        // legacy id, roll it, resolve the entry as an item. Every forage table happens to hold exactly ONE
+        // entry at weight 100 (Bundles/Spawns/<Name>/Asset.dat), so the roll is deterministic and the
+        // resolved ITEM id is baked here rather than shipping a spawn-table roller for ten single-entry
+        // tables. If a table ever gains a second entry this becomes a real roll and belongs server-side.
+        //
+        //   resource            Reward_ID (spawn)  ->  item
+        //   Bush_Amber          963                    270  Raw Jazzberries      <- see below
+        //   ⚠ the bush COLOUR does not name its berry: Bush_Amber gives Jazzberries while Raw Ameberries
+        //     (115) come off Bush_MAUVE. That is what the tables say; do not "fix" it to match the names.
+        //   Bush_Indigo         964                    271  Raw Rainberries
+        //   Bush_Jade           965                    272  Raw Viriberries
+        //   Bush_Mauve          966                    115  Raw Ameberries
+        //   Bush_Russet         967                    273  Raw Gloomberries
+        //   Bush_Teal           968                    274  Raw Mayberries
+        //   Bush_Vermillion     969                    275  Raw Crimberries
+        //   Bush_Hanu           903                    571  Raw Hanuberries
+        //   Mushroom_Brown_0    901                    1932 Brown Cap Mushroom
+        //   Mushroom_Red_0      902                    1934 Red Spotted Mushroom
         //
         // Bush_0 and Bush_1 are deliberately absent: the two plain green bushes have no Forage key, no
         // Reward_ID and no Explosion at all, so in retail they are scenery you cannot pick. Leaving them out
@@ -150,9 +173,9 @@ namespace UnturnedGodot
             if (n.EndsWith("_Snow")) n = n.Substring(0, n.Length - 5);
             return n switch
             {
-                "Bush_Amber" => 963, "Bush_Indigo" => 964, "Bush_Jade" => 965, "Bush_Mauve" => 966,
-                "Bush_Russet" => 967, "Bush_Teal" => 968, "Bush_Vermillion" => 969, "Bush_Hanu" => 903,
-                "Mushroom_Brown_0" => 901, "Mushroom_Red_0" => 902,
+                "Bush_Amber" => 270, "Bush_Indigo" => 271, "Bush_Jade" => 272, "Bush_Mauve" => 115,
+                "Bush_Russet" => 273, "Bush_Teal" => 274, "Bush_Vermillion" => 275, "Bush_Hanu" => 571,
+                "Mushroom_Brown_0" => 1932, "Mushroom_Red_0" => 1934,
                 _ => (ushort)0,
             };
         }

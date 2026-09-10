@@ -24,16 +24,30 @@ namespace UnturnedGodot.Testing
             yield return Ticks(1);
 
             // ---- THE RETAIL TABLE. Reward_ID off each resource's own .dat.
+            // ⚠ These are the items the reward SPAWN TABLE resolves to, not the Reward_ID in the resource
+            // .dat. The first cut of this used the raw Reward_ID and handed out cosmetics -- 963 is a
+            // BattlEye Halo in the item space, 901 a Cowboy Top -- because retail runs it through
+            // SpawnTableTool.ResolveLegacyId(id, EAssetType.ITEM). Each of the ten tables holds exactly one
+            // entry at weight 100, so the resolution is deterministic and checkable.
             var want = new (string Name, ushort Reward)[]
             {
-                ("Bush_Amber", 963), ("Bush_Indigo", 964), ("Bush_Jade", 965), ("Bush_Mauve", 966),
-                ("Bush_Russet", 967), ("Bush_Teal", 968), ("Bush_Vermillion", 969), ("Bush_Hanu", 903),
-                ("Mushroom_Brown_0", 901), ("Mushroom_Red_0", 902),
+                ("Bush_Amber", 270), ("Bush_Indigo", 271), ("Bush_Jade", 272), ("Bush_Mauve", 115),
+                ("Bush_Russet", 273), ("Bush_Teal", 274), ("Bush_Vermillion", 275), ("Bush_Hanu", 571),
+                ("Mushroom_Brown_0", 1932), ("Mushroom_Red_0", 1934),
             };
             foreach (var (n, r) in want)
                 T.Check($"{n} gives retail item {r} (got {ResourceField.ForageReward(n)})", ResourceField.ForageReward(n) == r);
             T.Check("Yukon's snowy variants share their green twin's reward",
-                    ResourceField.ForageReward("Bush_Amber_Snow") == 963 && ResourceField.ForageReward("Bush_Hanu_Snow") == 903);
+                    ResourceField.ForageReward("Bush_Amber_Snow") == 270 && ResourceField.ForageReward("Bush_Hanu_Snow") == 571);
+
+            // ---- AND NOT A COSMETIC. The Reward_ID values themselves are real items in the ITEM id space --
+            // a BattlEye Halo, a Cowboy Top, a Militia Jacket -- so handing one out looks like a working
+            // feature right up until you open the bag. Each is rejected by name.
+            foreach (var (n, bad) in new (string, ushort)[]
+                     { ("Bush_Amber", 963), ("Bush_Indigo", 964), ("Bush_Jade", 965), ("Bush_Mauve", 966),
+                       ("Bush_Russet", 967), ("Bush_Teal", 968), ("Bush_Vermillion", 969), ("Bush_Hanu", 903),
+                       ("Mushroom_Brown_0", 901), ("Mushroom_Red_0", 902) })
+                T.Check($"{n} does not hand out the raw Reward_ID ({bad}, a cosmetic)", ResourceField.ForageReward(n) != bad);
 
             // ---- WHAT IS NOT FORAGEABLE. Bush_0/Bush_1 carry no Forage key, no Reward_ID and no Explosion in
             // retail: they are scenery. Trees and ore nodes have their own harvest paths and must not answer
@@ -45,7 +59,7 @@ namespace UnturnedGodot.Testing
             // ---- A PLANT IS NOT A WALL. Its body sits on its own look-ray bit, never the world layer: a bush
             // you cannot walk through would change how the whole map moves, and one that stops bullets would
             // turn undergrowth into cover.
-            var plant = new ForagePlant { Field = null, Index = 12, ResourceName = "Bush_Amber", Reward = 963,
+            var plant = new ForagePlant { Field = null, Index = 12, ResourceName = "Bush_Amber", Reward = 270,
                                           WorldPos = Vector3.Zero, CollisionLayer = ForagePlant.HitLayer };
             World.AddChild(plant);
             yield return Ticks(1);
@@ -64,13 +78,13 @@ namespace UnturnedGodot.Testing
 
             int sent = -1, calls = 0;
             p.NetForageResource = i => { sent = i; calls++; };
-            int bagBefore = p.Inventory.getItemCount(963);
+            int bagBefore = p.Inventory.getItemCount(270);
             T.Check("with a server attached, the request is made", p.RequestForage(plant));
             T.Check($"...carrying the plant's INDEX (sent {sent}, expected 12)", sent == 12);
             T.Check("...exactly once", calls == 1);
             // THE POINT OF THE WHOLE TEST: the client asked and got nothing. Everything below is what a local
             // grant would have changed, and each would be reverted by the next authoritative echo.
-            T.Check("the client granted itself NO item", p.Inventory.getItemCount(963) == bagBefore);
+            T.Check("the client granted itself NO item", p.Inventory.getItemCount(270) == bagBefore);
             T.Check("...and did not hide the plant either -- the harvested event does that",
                     plant.Alive);
 
