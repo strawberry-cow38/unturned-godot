@@ -1658,6 +1658,28 @@ namespace UnturnedGodot
 
         // --vm=DIR : render the first-person viewmodel through its own camera (the demo uses a separate cam,
         // so the viewmodel never shows there). Floor + backdrop wall + FP camera + Viewmodel; kick at f20.
+        string _cEquipClip = "", _cUseClip = "";
+        float _cUseLen;
+        /// <summary>Is this --vm= name a consumable, and if so what are its own clips? Read from the shipped
+        /// consumable_anims.tsv rather than a list in the harness, so the harness cannot disagree with the game
+        /// about which clip an item eats with.</summary>
+        bool ResolveConsumable(string name)
+        {
+            using var f = Godot.FileAccess.Open("res://content/consumable_anims.tsv", Godot.FileAccess.ModeFlags.Read);
+            if (f == null) return false;
+            while (!f.EofReached())
+            {
+                var c = f.GetLine().Split('\t');
+                if (c.Length >= 3 && c[0].Trim() == name)
+                {
+                    _cEquipClip = c[1].Trim(); _cUseClip = c[2].Trim();
+                    _cUseLen = c.Length > 3 && float.TryParse(c[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var l) ? l : 2f;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         void BuildViewmodelTest(string gunName)
         {
             var env = new Godot.Environment
@@ -1681,6 +1703,7 @@ namespace UnturnedGodot
             // melee weapons ship <name>.txt (root-mesh rip) with no <name>_gun.txt -> show them via the melee viewmodel path
             bool isMelee = System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{gunName}.txt")) && !System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{gunName}_gun.txt"));
             bool isFists = gunName == "fists" || gunName == "unarmed";
+            bool isConsumable = ResolveConsumable(gunName);   // food/drink/med, resolved from the shipped clip table
             bool isDeploy = gunName == "generator" || gunName == "spot" || gunName == "spotlight";
             bool isWire = gunName == "wire";
             bool isFuel = gunName == "gascan";   // gas can: held in-hand via the DeployableMesh+NaturalHold path -- must beat isMelee (gascan.txt exists)
@@ -1692,11 +1715,20 @@ namespace UnturnedGodot
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel
                 ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
+                : isConsumable   // ⚠ BEFORE isMelee: a consumable ships <name>.txt too, so isMelee would swallow every food
+                ? new Viewmodel { ConsumableMesh = gunName, ConsumableAlbedo = $"{gunName}_albedo.png",
+                                  ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip }   // food/drink/med: its OWN CE_n/CU_n, and (since b5d2b4f3) its equipable's real parts
                 : isMelee
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
-            _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel;
+            _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel || isConsumable;
+            // EATING IS A THING THE HARNESS CAN SHOW NOW (strawberry 2026-09-10: "its YOUR demo harness. if theres
+            // something it cant do, write it"). I had reported the consumable part rip as unverifiable because
+            // nothing could put food in a hand -- which is a gap in my own tool, not a reason. A driver replays the
+            // item's Use clip on a loop so a movie catches the whole thing: a chip bag has 7.5 s of animation and
+            // the interesting half is a bag opening, not the pose it starts in.
+            if (isConsumable) AddChild(new ConsumeUseDriver { VM = _vm, Period = Mathf.Max(1.5f, _cUseLen + 0.6f) });
             if (isMelee) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
             if (isDeploy) AddChild(new DeployUseDriver { VM = _vm });   // periodic place motion so the --vm render shows the Deploy_Use anim
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
@@ -9819,6 +9851,24 @@ namespace UnturnedGodot
 
     // Drives the melee self-test: after a few settle frames, swings every physics tick (the cooldown gates it to
     // ~0.45 s). Quits when the zombie dies (Kills > 0) or after a timeout, so the run self-terminates for log-check.
+    /// <summary>--vm=&lt;food&gt;: replay the item's Use clip on a loop so a movie catches the WHOLE animation.
+    /// A chip bag runs 7.5 s and the part worth seeing is it OPENING, not the pose it starts in -- a still of the
+    /// ready hold is exactly the evidence that proved nothing when I first tried to check this with --invequip.</summary>
+    public partial class ConsumeUseDriver : Node3D
+    {
+        public Viewmodel VM;
+        public float Period = 3f;
+        float _t;
+        public override void _Process(double delta)
+        {
+            if (VM == null) return;
+            _t += (float)delta;
+            if (_t < Period) return;
+            _t = 0f;
+            VM.PlayConsumeUse();
+        }
+    }
+
     public partial class MeleeSwingDriver : Node3D
     {
         public Viewmodel VM;
