@@ -42,9 +42,11 @@ def pptr(v):
     return by_id.get(v.get("m_PathID")) if isinstance(v, dict) else None
 
 def yaw180(q):
-    """Rotate a Unity quaternion by 180 degrees about Y -- the rotation that IS the X/Z negation."""
+    """Map a Unity local rotation into the X/Z-negated Godot frame: conjugation R_g = N R_u N, which is just
+    the rotation AXIS taking the same negation a position does. Multiplying by the turn once instead leaves a
+    spurious half-turn on every part -- identity came out as (0,1,0,0) -- and mirrors them."""
     qx, qy, qz, qw = q.get("x", 0.0), q.get("y", 0.0), q.get("z", 0.0), q.get("w", 1.0)
-    return (qz, qw, -qx, -qy)
+    return (-qx, qy, -qz, qw)
 
 def convert_mesh(mesh_obj, label):
     txt = mesh_obj.read().export()
