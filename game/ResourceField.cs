@@ -212,7 +212,7 @@ namespace UnturnedGodot
                         var t = xf[k];
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
-                        var body = new OreRock { Field = this, Index = baseIdx + k, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        var body = new OreRock { Field = this, Index = baseIdx + k, NodeName = name, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);   // pickaxe/bullet hits read as metal
                         body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2.6f * sr, 2.4f * sh, 2.6f * sr) }, Position = new Vector3(0f, 1.1f * sh, 0f) });
                         AddChild(body);
@@ -824,10 +824,10 @@ namespace UnturnedGodot
                     // trunk landing fast rings harder than a sapling tipping over.
                     _trunkVel = Vector3.Up * (TrunkKick * Mathf.Tau * TrunkFreq * Mathf.Min(1f, _toppleVel / 1.094f));
                     // ...AND IT MAKES A NOISE. Felling was completely silent -- ResourceField had no audio at all --
-                    // while the ripped per-species destruction clips sat unplayed in content/audio/explosions.
-                    // Scaled off the speed it arrived at, like the trunk kick on the line above and for the same
-                    // reason, and carried a long way: a tree coming down is the loudest thing in a quiet forest.
-                    GameAudio.PlayAt(this, GameAudio.TreeFall(TreeName), GlobalTransform.Origin,
+                    // while the retail destruction clips sat unplayed in content/audio/explosions. Scaled off the
+                    // speed it arrived at, like the trunk kick on the line above and for the same reason, and
+                    // carried a long way: a tree coming down is the loudest thing in a quiet forest.
+                    GameAudio.PlayAt(this, GameAudio.ResourceBreak(TreeName), GlobalTransform.Origin,
                                      Mathf.Lerp(-6f, 4f, Mathf.Min(1f, _toppleVel / 1.094f)), 8f, 90f,
                                      (float)GD.RandRange(0.94, 1.06));
                     _toppling = false; _settling = true; _settleT = 0f;
@@ -1065,6 +1065,7 @@ namespace UnturnedGodot
     {
         public ResourceField Field;
         public int Index;
+        public string NodeName;             // the resource it was built from -- picks the break sound, as TreeName does
         public float Health = 500f;         // ~5 pickaxe hits at Resource_Damage 100 (tunable -- no retail Metal .dat on hand)
         public float Reset = 600f;          // respawn seconds
         public int RewardMin = 2, RewardMax = 4;
@@ -1081,6 +1082,11 @@ namespace UnturnedGodot
             Health -= amount;
             if (Health > 0f) return;
             Mined = true;
+            // Depleting a node was as silent as felling used to be. Retail fires the resource's own Explosion
+            // effect here -- for every Metal and Clay node that is the one Metal clip. Quieter and shorter-ranged
+            // than a tree: it is the same event happening to a much smaller thing.
+            GameAudio.PlayAt(this, GameAudio.ResourceBreak(NodeName), GlobalTransform.Origin, -3f, 5f, 45f,
+                             (float)GD.RandRange(0.94, 1.06));
             Field?.SetAlive(Index, false);   // zero-scale the rock out of its MultiMesh + drop the collider to layer 0
             DropScrap();
             GetTree().CreateTimer(Reset).Timeout += Regrow;

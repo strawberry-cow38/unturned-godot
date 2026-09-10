@@ -212,24 +212,32 @@ namespace UnturnedGodot
         public static AudioStream MagRound(int magCapacity) =>
             Pick("foley", magCapacity <= 15 ? "gun_pistol_load_bullet" : "gun_semi_auto_rifle_load_bullet");
 
-        /// <summary>The crash of a felled tree, by SPECIES.
+        /// <summary>What a harvestable RESOURCE makes when it comes down -- a felled tree, a depleted ore node.
         ///
-        /// ⚠ The folder is called "explosions" and almost none of it is explosions -- our rip flattened retail's
-        /// per-object DESTRUCTION audio into it, named <object>_<variant>_<material>: birch_0_timber, maple_4_wood,
-        /// glass_weak_glass, phone_0_phone, board_0_television. 60 prefixes, of which exactly one (bomb_fire) was
-        /// ever played. That is why felling a tree was silent.
+        /// Retail reads this off the resource itself: `ResourceAsset.explosion` (ResourceAsset.cs:308) resolves via
+        /// FindExplosionEffectAsset (:117) to an EffectAsset, and that prefab's single AudioSource carries the clip.
+        /// Swept across all 69 retail resources with tools/extract_resource_sfx.py: they name 28 distinct effects,
+        /// and 23 of those carry the BYTE-IDENTICAL `Timber` clip. Every birch, maple, pine and dead tree in the
+        /// game falls with one sound.
         ///
-        /// Matched on species and NOT on the variant index: our trees are Birch_0/Birch_1 while the clips are
-        /// birch_0/2/3/4, so the numbers do not line up and pretending they do would pick by coincidence. The
-        /// species is the axis that means something; the index is a variant, and Bank's prefix glob picks across
-        /// them. A bush falls back to foliage rather than to a tree -- it is not one.</summary>
-        public static AudioStream TreeFall(string treeName)
+        /// So there is no per-species tree crash to match, and the species matching that used to be here was worse
+        /// than a coincidence: `birch_2_wood`/`maple_4_wood`/`pine_2_wood` are OBJECT rubble effects that all carry
+        /// the generic Wood crate-break, so a falling maple or pine played a smashing crate 100% of the time and a
+        /// birch did three times in four. `birch_0_timber.wav` is the real Timber clip (byte-identical to effect
+        /// 21's), and `metal_2_metal.wav` the Metal one every ore and clay node shares (effect 52). Both prefixes
+        /// name the retail effect they were ripped from, which is what makes them addressable at all.
+        ///
+        /// Bushes and mushrooms resolve to effect 43 (`Foliage`) and the two Christmas resources to a `Reset`
+        /// chime, but nothing in the port destroys any of those yet -- they are scenery with no harvest body. Left
+        /// deliberately unwired rather than given a clip no caller can reach.</summary>
+        public static AudioStream ResourceBreak(string resourceName)
         {
-            string sp = (treeName ?? "").ToLowerInvariant();
-            int u = sp.IndexOf('_'); if (u > 0) sp = sp.Substring(0, u);
-            return (sp.Length > 0 ? Pick("explosions", sp) : null)
-                ?? Pick("explosions", "foliage")
-                ?? Pick("explosions", "birch");
+            string n = resourceName ?? "";
+            if (n.StartsWith("Birch") || n.StartsWith("Maple") || n.StartsWith("Pine") || n.StartsWith("Dead"))
+                return Pick("explosions", "birch_0");   // the shared Timber clip
+            if (n.StartsWith("Metal") || n.StartsWith("Clay"))
+                return Pick("explosions", "metal_2");   // the shared Metal clip
+            return null;
         }
 
         /// <summary>A keyring, for locking and unlocking a door you own.</summary>
