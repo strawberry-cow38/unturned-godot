@@ -87,6 +87,7 @@ namespace UnturnedGodot
         public WaterQuality FluidQuality = WaterQuality.Clean;   // water this source spawns with (natural = tainted; a filled reservoir = tainted; bottled = clean)
         public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
         public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
+        public bool FluidPumpsCrude;                 // a POWERED SOURCE that lifts crude oil out of the ground (the pump jack) -> FluidDeploy spawns a PumpJack; dead without power
         public float WaterDepthMin = -1f, WaterDepthMax = -1f;   // placement must be SUBMERGED in this water-depth band (-1 = no water requirement)
         public static float SeaLevel => Terrain.SeaLevelY;   // per-map water plane world-Y (Terrain reads each map's Lighting.dat seaLevel x 256; = Deployable.WindSeaLevel)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
@@ -370,6 +371,11 @@ namespace UnturnedGodot
         public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
         public static readonly DeployableDef Refinery      = MakeFluid(9116, "Fluid Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
         public static readonly DeployableDef Sluice        = MakeFluid(9117, "Fluid Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidDirties = true; });   // runs water through -> DIRTY-flagged water (not its own type anymore)
+        /// <summary>The retail Pump Jack item id (1219, type Oil_Pump). Named rather than spelled twice: the
+        /// power port's panel anchor is keyed by it, and an id that appears in two places drifts.</summary>
+        public const ushort PumpJackId = 1219;
+        public static readonly DeployableDef PumpJack      = MakeFluid(PumpJackId, "Pump Jack", FluidRole.Source, d => { d.FluidType = FluidType.Oil; d.FluidCapacity = PumpJackCapacity; d.FluidPumpsCrude = true; d.Health = 600f; });   // POWER in -> crude oil out; produces and supplies nothing unpowered
+        public const float PumpJackCapacity = 20000f;   // wellhead buffer (20 L) -- mirrors PumpJack.WellheadCapacityMl
         public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
         // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
