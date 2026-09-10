@@ -2331,6 +2331,7 @@ void fragment() {
         // Change-gated on the name, like UpdateBodyGun: attaching rebuilds a BoneAttachment3D and reloads a mesh,
         // which is not something to do every frame at 60 fps behind an open menu.
         string _pdGunName, _pdMeleeName;
+        int _pdAttachSig;
         void SyncPaperdollHands()
         {
             if (_pdBody == null || Player == null) return;
@@ -2338,8 +2339,25 @@ void fragment() {
             if (gun != _pdGunName)
             {
                 if (gun == null) { _pdBody.DetachGun(); if (melee == null) _pdBody.DisableGunLayer(); }
-                else { _pdBody.AttachGun(gun, Player.HeldGunLeftHook); _pdBody.ShowGunHold(gun); }
+                else
+                {
+                    _pdBody.AttachGun(gun, Player.HeldGunLeftHook);
+                    _pdBody.ShowGunHold(gun);
+                    // ...wearing whatever is actually bolted to it. The doll showed a bare factory weapon while the
+                    // 3P body beside it wore the drum mag and the scope, which reads as the doll being wrong rather
+                    // than incomplete. Same call the live body makes, off the same held item.
+                    Player.MountAttachmentsOn(_pdBody);
+                }
                 _pdGunName = gun;
+                _pdAttachSig = Player.HeldAttachmentSignature;
+            }
+            else if (gun != null && Player.HeldAttachmentSignature != _pdAttachSig)
+            {
+                // ⚠ THE NAME IS NOT ENOUGH. Fitting a scope or swapping to a drum mag does not change the gun's
+                // name, so the change-gate above never fired and the doll kept whatever it was built with -- which
+                // is the exact moment you are looking at it, since you fit attachments FROM this menu.
+                Player.MountAttachmentsOn(_pdBody);
+                _pdAttachSig = Player.HeldAttachmentSignature;
             }
             if (melee != _pdMeleeName)
             {

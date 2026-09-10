@@ -454,6 +454,17 @@ namespace UnturnedGodot
 
         // Mount an attachment mesh (sight/scope/magazine/barrel) as a child of the 3P gun mesh at its gun-local hook.
         // Rides the gun's Z=90 roll like the body + muzzle marker. Called by the fire wiring right after AttachGun.
+        /// <summary>Drop every mounted attachment, leaving the bare gun. Lets a re-mount be idempotent: fitting a
+        /// scope does not change the gun's NAME, so nothing re-runs AttachGun (which is what used to clear these),
+        /// and mounting again over the top would leave the old sight inside the new one.</summary>
+        public void ClearGunAttachments()
+        {
+            var gm = HeldGunMesh;
+            if (gm == null) return;
+            foreach (var ch in gm.GetChildren())
+                if (ch is Node n && n.Name.ToString().StartsWith("A_")) n.QueueFree();
+        }
+
         public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color)
         {
             var gm = HeldGunMesh;

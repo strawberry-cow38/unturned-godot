@@ -2953,6 +2953,22 @@ namespace UnturnedGodot
         /// feeds them to the same RiggedCharacter.AttachGun/AttachMelee the live body uses, so the two cannot
         /// disagree about which mesh a name maps to.</summary>
         public string HeldGunNameForDisplay => HasGunOut ? _gunName : null;
+
+        /// <summary>What is bolted to the held gun right now, as one comparable value. Exactly the three slots
+        /// MountAttachmentsOn renders, so a viewer that re-mounts when this changes can never be showing a set the
+        /// player is not wearing -- and adding a fourth rendered slot without adding it here would be caught by
+        /// the doll visibly failing to update, rather than silently.</summary>
+        public int HeldAttachmentSignature
+        {
+            get
+            {
+                if (_heldItem == null) return 0;
+                int h = 17;
+                foreach (var slot in new[] { "Sight", "Magazine", "Barrel" })
+                    h = h * 31 + AttachmentFit.InstalledId(_heldItem, slot);
+                return h;
+            }
+        }
         public bool HeldGunLeftHook => Gun?.LeftHook ?? false;
         public string HeldMeleeNameForDisplay =>
             (!HasGunOut && _melee != null && !string.IsNullOrEmpty(_heldMeleeName) && _heldMeleeName != "fists") ? _heldMeleeName : null;
@@ -8885,20 +8901,32 @@ namespace UnturnedGodot
         // 3P attachments: mount the gun's installed sight/scope + magazine + barrel onto the 3P gun mesh, mirroring the
         // viewmodel attach loop (same meshes / hook positions / materials). Installed ids come off the held Item via
         // AttachmentFit; falls back to the gun's factory iron sight + default magazine when nothing's fitted.
-        void MountBody3PAttachments()
+        void MountBody3PAttachments() => MountAttachmentsOn(_body);
+
+        /// <summary>Mount the held gun's installed sight / magazine / barrel onto ANY rig wearing that gun
+        /// (strawberry 2026-09-10: "make magazines and other attachments show on weapons on the 3p playermodel
+        /// and the paperdoll in the inv").
+        ///
+        /// The live 3P body and the inventory paperdoll are showing the SAME weapon off the SAME held item, so
+        /// they have to read the same installed ids -- a second copy of this in the UI would drift the moment one
+        /// of the two hook positions or fallbacks changed, which is how the paperdoll ended up bare in the first
+        /// place. One implementation, pointed at whichever rig is asking.</summary>
+        public void MountAttachmentsOn(RiggedCharacter body)
         {
+            if (body == null || !IsInstanceValid(body) || string.IsNullOrEmpty(_gunName)) return;
+            body.ClearGunAttachments();   // idempotent: callable on a gun that is already wearing a previous set
             var gv = Viewmodel.VisualForTest(_gunName);
             int sid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0;
             string sightTxt = sid > 0 ? AttachmentFit.MeshFor((ushort)sid) : gv.Sight;
             if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Mesh sm)
-                _body.MountGunAttachment("Sight", sm, gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f), gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f));
+                body.MountGunAttachment("Sight", sm, gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f), gv.SightColor.A > 0f ? gv.SightColor : new Color(0.3f, 0.3f, 0.3f));
             int mid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0;
             string magTxt = mid > 0 ? AttachmentFit.MeshFor((ushort)mid) : gv.Mag;
             if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Mesh mm)
-                _body.MountGunAttachment("Magazine", mm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
+                body.MountGunAttachment("Magazine", mm, new Vector3(0f, 0.0166f, 0.0238f), new Color(0.07f, 0.07f, 0.08f));
             int bid = _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0;   // barrel only when one's fitted (guns ship bare)
             if (bid > 0 && AttachmentFit.MeshFor((ushort)bid) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Mesh bm)
-                _body.MountGunAttachment("Barrel", bm, new Vector3(0f, 0.7307f, -0.0818f), new Color(0.05f, 0.05f, 0.055f));
+                body.MountGunAttachment("Barrel", bm, new Vector3(0f, 0.7307f, -0.0818f), new Color(0.05f, 0.05f, 0.055f));
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---
