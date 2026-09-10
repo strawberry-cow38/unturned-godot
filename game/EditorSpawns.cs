@@ -106,7 +106,7 @@ namespace UnturnedGodot
         void LoadAnimalSpawns()   // Fauna.dat points (River, source LevelAnimals): skip tables, u16 pointCount, per point u8 type + Vector3 (no angle)
         {
             string fpath = _mapRoot + "/Spawns/Fauna.dat";
-            if (!System.IO.File.Exists(fpath)) { GD.Print("[editor-spawns] no Fauna.dat"); return; }
+            if (!System.IO.File.Exists(fpath)) { Log.Print("[editor-spawns] no Fauna.dat"); return; }
             var fd = System.IO.File.ReadAllBytes(fpath); int fp = 0;
             byte U8() => fd[fp++];
             ushort U16() { var v = System.BitConverter.ToUInt16(fd, fp); fp += 2; return v; }
@@ -122,7 +122,7 @@ namespace UnturnedGodot
                 float pz = System.BitConverter.ToSingle(fd, fp); fp += 4;
                 _spawns.Add(new Spawn { Pos = new Vector3(px, py, -pz), Type = type });   // authored Y, port negate-Z
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} animal spawns");
+            Log.Print($"[editor-spawns] loaded {_spawns.Count} animal spawns");
         }
 
         void LoadItemTables()   // Spawns/Items.dat table colours (source LevelItems tables)
@@ -149,7 +149,7 @@ namespace UnturnedGodot
         void LoadRegionSpawns(string file)   // Jars.dat / Animals.dat: byte ver, 64x64 regions each [u16 count, count x (u8 type + Vector3)]
         {
             string path = _mapRoot + "/Spawns/" + file;
-            if (!System.IO.File.Exists(path)) { GD.Print($"[editor-spawns] no {file}"); return; }
+            if (!System.IO.File.Exists(path)) { Log.Print($"[editor-spawns] no {file}"); return; }
             var b = System.IO.File.ReadAllBytes(path); int o = 0;
             byte version = b[o++];
             if (version == 0) return;
@@ -165,7 +165,7 @@ namespace UnturnedGodot
                     _spawns.Add(new Spawn { Pos = new Vector3(px, py, -pz), Type = type });   // authored Y, port negate-Z
                 }
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns");
+            Log.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns");
         }
 
         void LoadTranslator(string sp)
@@ -177,13 +177,13 @@ namespace UnturnedGodot
                 if (float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z) && float.TryParse(p[3], out var yaw))
                     _spawns.Add(new Spawn { Pos = new Vector3(x, y, z), Yaw = yaw, IsAlt = p[4] == "1", Type = p.Length > 5 && int.TryParse(p[5], out var t) ? t : 0 });
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns (editor translator)");
+            Log.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns (editor translator)");
         }
 
         void LoadPlayerSpawns()   // Spawns/Players.dat: u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3
         {
             string ppath = _mapRoot + "/Spawns/Players.dat";
-            if (!System.IO.File.Exists(ppath)) { GD.Print("[editor-spawns] no Players.dat"); return; }
+            if (!System.IO.File.Exists(ppath)) { Log.Print("[editor-spawns] no Players.dat"); return; }
             var pd = System.IO.File.ReadAllBytes(ppath); int p = 0;
             byte ver = pd[p++], count = pd[p++];
             for (int i = 0; i < count; i++)
@@ -195,13 +195,13 @@ namespace UnturnedGodot
                 bool isAlt = ver > 3 && pd[p++] != 0;
                 _spawns.Add(new Spawn { Pos = new Vector3(x, y, -z), Yaw = -ang, IsAlt = isAlt });   // port negate-Z + negate yaw
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} player spawns ({PlayerCount} regular)");
+            Log.Print($"[editor-spawns] loaded {_spawns.Count} player spawns ({PlayerCount} regular)");
         }
 
         void LoadVehicleSpawns()   // Spawns/Vehicles.dat: header (tables) then u16 pointCount, per point u8 type + Vector3(skip y) + u8 angle*2
         {
             string vpath = _mapRoot + "/Spawns/Vehicles.dat";
-            if (!System.IO.File.Exists(vpath)) { GD.Print("[editor-spawns] no Vehicles.dat"); return; }
+            if (!System.IO.File.Exists(vpath)) { Log.Print("[editor-spawns] no Vehicles.dat"); return; }
             var vd = System.IO.File.ReadAllBytes(vpath); int vp = 0;
             byte U8() => vd[vp++];
             ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
@@ -220,7 +220,7 @@ namespace UnturnedGodot
                 float gz = -pz;
                 _spawns.Add(new Spawn { Pos = new Vector3(px, RaycastDown(px, gz), gz), Yaw = -ang + 180f, Type = type });   // vehicle facing (master: +180 vs the player -ang convention)
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} vehicle spawns");
+            Log.Print($"[editor-spawns] loaded {_spawns.Count} vehicle spawns");
         }
 
         float RaycastDown(float x, float z)   // vehicle .dat skips point.y; sample the terrain height here
@@ -237,7 +237,7 @@ namespace UnturnedGodot
             using var w = new System.IO.StreamWriter(sp, false);
             foreach (var s in _spawns)
                 w.WriteLine($"{s.Pos.X:0.###} {s.Pos.Y:0.###} {s.Pos.Z:0.###} {s.Yaw:0.###} {(s.IsAlt ? 1 : 0)} {s.Type}");
-            GD.Print($"[editor-spawns] saved {_spawns.Count} {_category} spawns -> {sp}");
+            Log.Print($"[editor-spawns] saved {_spawns.Count} {_category} spawns -> {sp}");
             return _spawns.Count;
         }
 
@@ -408,7 +408,7 @@ namespace UnturnedGodot
             ShapeAddCursor();
             UpdateAddCursorColor();
             CategoryChanged?.Invoke();
-            GD.Print($"[editor-spawns] category -> {_category} ({_spawns.Count})");
+            Log.Print($"[editor-spawns] category -> {_category} ({_spawns.Count})");
         }
 
         // --- panel (EditorSpawnsPanel) API ---
@@ -432,7 +432,7 @@ namespace UnturnedGodot
             _spawns.Add(s);
             if (IsPointCloud) RebuildMarkers();   // point-cloud MultiMesh rebuild
             else { var m = MakeMarker(pt, yaw, MarkerColor(s)); AddChild(m); _markers.Add(m); Positions.Add(pt); }
-            GD.Print($"[editor-spawns] added {_category} spawn ({_spawns.Count} total)");
+            Log.Print($"[editor-spawns] added {_category} spawn ({_spawns.Count} total)");
         }
 
         public List<Spawn> RemoveNear(Vector3 pt)   // source LevelXxx.removeSpawn(point, radius); returns the removed (for undo)
@@ -440,7 +440,7 @@ namespace UnturnedGodot
             var removed = new List<Spawn>();
             for (int i = _spawns.Count - 1; i >= 0; i--)
                 if (_spawns[i].Pos.DistanceTo(pt) <= _radius) { removed.Add(_spawns[i]); _spawns.RemoveAt(i); }
-            if (removed.Count > 0) { RebuildMarkers(); GD.Print($"[editor-spawns] removed {removed.Count} ({_spawns.Count} left)"); }
+            if (removed.Count > 0) { RebuildMarkers(); Log.Print($"[editor-spawns] removed {removed.Count} ({_spawns.Count} left)"); }
             return removed;
         }
 

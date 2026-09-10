@@ -302,7 +302,7 @@ namespace SDG.Unturned
                 string clean = UnityRichText.Replace(a.description, string.Empty);
                 if (clean != a.description) { a.description = clean; n++; }
             }
-            if (n > 0) Godot.GD.Print($"[item-text] stripped Unity rich-text markup from {n} description(s)");
+            if (n > 0) UnturnedGodot.Log.Print($"[item-text] stripped Unity rich-text markup from {n} description(s)");
         }
 
         /// <summary>
@@ -346,8 +346,8 @@ namespace SDG.Unturned
                 if (string.IsNullOrEmpty(mag.magRound)) mag.magRound = g.CaliberName;
                 filled++;
             }
-            Godot.GD.Print($"[items] derived magazine data for {filled} magazines from their guns");
-            Godot.GD.Print($"[items] named the real cartridge in {calibered} gun descriptions");
+            UnturnedGodot.Log.Print($"[items] derived magazine data for {filled} magazines from their guns");
+            UnturnedGodot.Log.Print($"[items] named the real cartridge in {calibered} gun descriptions");
         }
 
         /// <summary>Put the gun's REAL cartridge in its description (strawberry 2026-09-04: "make guns say their
@@ -519,7 +519,7 @@ namespace SDG.Unturned
                     wired++;
                 }
             }
-            GD.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept)");
+            UnturnedGodot.Log.Print($"[items] magazines.tsv: {wired} magazines + {shells} shells wired (hand-wired rows kept)");
         }
 
         static void WireConsumableStats()
@@ -548,7 +548,7 @@ namespace SDG.Unturned
                 }
                 n++;
             }
-            GD.Print($"[items] wired consumable effects for {n} food/water/medical items");
+            UnturnedGodot.Log.Print($"[items] wired consumable effects for {n} food/water/medical items");
         }
 
         // Load the additive clothing-armor table (content/clothing_armor.tsv: id  Armor  Armor_Explosion  Falling_Damage_Multiplier)
@@ -576,7 +576,7 @@ namespace SDG.Unturned
                 if (byte.TryParse(c[3], out var w) && byte.TryParse(c[4], out var h)) { a.width = w; a.height = h; if (w > 0 && h > 0) storage++; }
                 n++;
             }
-            GD.Print($"[items] wired clothing dims for {n} garments ({storage} with a storage grid)");
+            UnturnedGodot.Log.Print($"[items] wired clothing dims for {n} garments ({storage} with a storage grid)");
         }
 
         static void WireClothingArmor()
@@ -601,7 +601,7 @@ namespace SDG.Unturned
                 if (c.Length > 4) a.preventsFallingBoneBreak = c[4].Trim() == "1";
                 n++;
             }
-            GD.Print($"[items] wired clothing armor for {n} items (fall + explosion whole-body multipliers)");
+            UnturnedGodot.Log.Print($"[items] wired clothing armor for {n} items (fall + explosion whole-body multipliers)");
         }
 
         // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so
@@ -640,7 +640,7 @@ namespace SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
-            GD.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
+            UnturnedGodot.Log.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
             // Named loudly rather than left to be discovered in play: these equip to a REFUSAL (see
             // PlayerController.EquipHeldGun), which is the honest outcome but still a missing row someone must add.
             if (noVisual.Count > 0)
@@ -669,14 +669,14 @@ namespace SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
-            GD.Print($"[items] wired {n} extracted melee weapons for in-game equip");
+            UnturnedGodot.Log.Print($"[items] wired {n} extracted melee weapons for in-game equip");
         }
 
         // bulk-load the pre-extracted retail catalog: one tab-separated line per item -- id,name,Type,Rarity,Size_X,Size_Y,Description
         static void LoadCatalogFile()
         {
             const string path = "res://content/items_catalog.tsv";
-            if (!Godot.FileAccess.FileExists(path)) { GD.PrintErr("[items] catalog file missing: " + path + " (loot shows table fallbacks only)"); return; }
+            if (!Godot.FileAccess.FileExists(path)) { UnturnedGodot.Log.Err("[items] catalog file missing: " + path + " (loot shows table fallbacks only)"); return; }
             using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
             int n = 0;
             while (f != null && !f.EofReached())
@@ -694,7 +694,7 @@ namespace SDG.Unturned
                 });
                 n++;
             }
-            GD.Print($"[items] loaded {n} item assets from {path}");
+            UnturnedGodot.Log.Print($"[items] loaded {n} item assets from {path}");
         }
 
         static byte ParseByte(string s) => byte.TryParse(s, out var v) && v >= 1 ? v : (byte)1;

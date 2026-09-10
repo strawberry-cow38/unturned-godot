@@ -91,7 +91,7 @@ namespace UnturnedGodot
                 // SAY SO. A silent `continue` here spawns a door with a working hinge, a working collider and
                 // no visible leaf -- which reads in game as "the door is invisible", not as "the mesh is
                 // missing", and sends you looking at the wrong system.
-                if (leaf == null) { GD.PrintErr($"[door] {def.DoorProp}: leaf mesh '{e.MeshFile}' failed to load"); continue; }
+                if (leaf == null) { Log.Err($"[door] {def.DoorProp}: leaf mesh '{e.MeshFile}' failed to load"); continue; }
 
                 // Fit to the hole. Width is authored X and height is authored Z (these rips stand up via 270),
                 // so a hole of w x h wants scale (w/sizeX, 1, h/sizeZ) IN THE FLAT FRAME -- the same frame the
@@ -190,7 +190,7 @@ namespace UnturnedGodot
             // clipping through each other.
             if (hinges.Count > 1)
             {
-                GD.PrintErr($"[door] {prop}: {hinges.Count} hinges but one mesh -- the panel split is not implemented, skipping");
+                Log.Err($"[door] {prop}: {hinges.Count} hinges but one mesh -- the panel split is not implemented, skipping");
                 return null;
             }
 

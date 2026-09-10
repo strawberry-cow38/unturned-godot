@@ -128,7 +128,7 @@ namespace UnturnedGodot
             if (DisplayServer.GetName() != "headless")
             {
                 DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
-                GD.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
+                Log.Print($"[display] vsync -> {DisplayServer.WindowGetVsyncMode()}");
             }
             string glassShot = null, catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, tanktest = null, proptest = null, magnettest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null, slingtest = null, trainshow = null, traintrack = null, ammoRadial = null, animaltest = null, treetest = null, profileShot = null;
             bool bakeHulls = false;   // --bakehulls: build every vehicle spec once so the convex-hull bakes get written (user://vehicle_hulls -> commit into content/vehicle_hulls)
@@ -604,10 +604,10 @@ namespace UnturnedGodot
                 {
                     if (n == "jet") continue;   // alias of fighterjet
                     try { var bv = Vehicle.BuildByName(n); if (bv != null) { AddChild(bv); bv.Position = new Vector3(0f, 200f, 0f); } }
-                    catch (System.Exception e) { GD.PrintErr($"[bakehulls] {n}: {e.Message}"); }
+                    catch (System.Exception e) { Log.Err($"[bakehulls] {n}: {e.Message}"); }
                 }
                 _bakeHullsFrames = 0;   // _Process counts a few frames (VHACD runs in _Ready on entry) then quits
-                GD.Print($"[bakehulls] built {Vehicle.SpecNames.Length - 1} specs; waiting for _Ready bakes");
+                Log.Print($"[bakehulls] built {Vehicle.SpecNames.Length - 1} specs; waiting for _Ready bakes");
                 return;
             }
             if (puppetAnim) { GetWindow().Size = new Vector2I(720, 960); BuildPuppetAnim(); if (shot != null) { _shotPath = shot; _shotRequested = shot; } return; }   // --shot=P arms a still too (UG_SHOTTIME picks the moment; no --shot -> movie as before)   // idle->walk->run movie (no _shotPath -> --write-movie captures the whole run)
@@ -944,7 +944,7 @@ namespace UnturnedGodot
             var dict = new DatParser().Parse("Health 55\nName Test_Item");
             var v = new UnityEngine.Vector3(1f, 2f, 3f);
             Godot.Vector3 gv = v.ToGodot();
-            GD.Print($"[UnturnedGodot] core live in Godot {Engine.GetVersionInfo()["string"]}: " +
+            Log.Print($"[UnturnedGodot] core live in Godot {Engine.GetVersionInfo()["string"]}: " +
                      $"NetPak 0x{got:X}==0xABC:{got == 0xABCu} | Dat keys={dict.Count} hasHealth={dict.ContainsKey("Health")} | " +
                      $"adapter {v}->{gv}");
 
@@ -953,7 +953,7 @@ namespace UnturnedGodot
             AddChild(content);
             content.LoadManifest();
             var mesh = content.LoadMesh(GateGuid);
-            if (mesh == null) GD.PrintErr($"[GATE] FAILED: could not resolve GUID {GateGuid}");
+            if (mesh == null) Log.Err($"[GATE] FAILED: could not resolve GUID {GateGuid}");
             else
             {
                 AddChild(new MeshInstance3D { Mesh = mesh });
@@ -961,7 +961,7 @@ namespace UnturnedGodot
                 var arrays = mesh.SurfaceGetArrays(0);
                 int vcount = arrays.Count > 0 && arrays[(int)Mesh.ArrayType.Vertex].VariantType != Variant.Type.Nil
                     ? ((Vector3[])arrays[(int)Mesh.ArrayType.Vertex]).Length : 0;
-                GD.Print($"[GATE] PASS: ContentProvider({content.Count} guid) -> mesh by GUID {GateGuid[..8]}.. " +
+                Log.Print($"[GATE] PASS: ContentProvider({content.Count} guid) -> mesh by GUID {GateGuid[..8]}.. " +
                          $"instantiated. verts={vcount} aabb.size=({aabb.Size.X:F3},{aabb.Size.Y:F3},{aabb.Size.Z:F3})");
             }
 
@@ -981,7 +981,7 @@ namespace UnturnedGodot
                     var vv = (Vector3[])m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
                     if (vv is { Length: > 0 }) { ok++; tv += vv.Length; tt += vv.Length / 3; }
                 }
-                GD.Print($"[CATALOG] manifest={cat.Count} GUIDs; sampled {tried} -> {ok} loaded OK, {tv} verts / {tt} tris.");
+                Log.Print($"[CATALOG] manifest={cat.Count} GUIDs; sampled {tried} -> {ok} loaded OK, {tv} verts / {tt} tris.");
             }
 
             GetTree().Quit();
@@ -1023,24 +1023,24 @@ namespace UnturnedGodot
             // be placed wrong. UG_RIGHEAD turns it on rather than changing what every existing --rig run renders.
             var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null,
                 System.Environment.GetEnvironmentVariable("UG_RIGHEAD") == "1" ? RiggedCharacter.FacePath(PlayerProfile.Face) : null);
-            if (rc == null) { GD.PrintErr("[rig] build failed"); GetTree().Quit(); return; }
+            if (rc == null) { Log.Err("[rig] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
             if (!string.IsNullOrEmpty(gun)) rc.AttachGun(gun);   // 3P gun mesh on the hand (the clip poses the arms)
-            GD.Print($"[rig] clips: {string.Join(",", rc.ClipNames)}  playing '{anim}'");
+            Log.Print($"[rig] clips: {string.Join(",", rc.ClipNames)}  playing '{anim}'");
             // UG_LEAN=<deg>: hold the 3P spine at a lean so the tilt is renderable. The rig's bone axes are not
             // Unity's, so which axis rolls the torso sideways is a thing to LOOK at rather than port on faith.
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LEAN"), out var _lean))
-            { rc.LeanDeg = _lean; GD.Print($"[rig] lean {_lean:0.#} deg"); }
+            { rc.LeanDeg = _lean; Log.Print($"[rig] lean {_lean:0.#} deg"); }
             // UG_PITCH=<deg>, + looking up. Same reason as UG_LEAN: "looking up tilts the torso back" is a claim about
             // the picture, and a single frame can settle it -- unlike the lean's SIGN, which needed the camera.
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_PITCH"), out var _pit))
-            { rc.PitchDeg = _pit; GD.Print($"[rig] pitch {_pit:0.#} deg"); }
+            { rc.PitchDeg = _pit; Log.Print($"[rig] pitch {_pit:0.#} deg"); }
             // UG_YAW=<deg>: turn the character on the spot. The harness camera looks at the rig nearly head-on, which
             // is the WORST angle for judging a pitch -- a rotation in the sagittal plane is edge-on from there and
             // reads as ambiguous head-wobble. Yaw 90 puts that plane across the screen, where a tilt is just a tilt.
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_YAW"), out var _yaw))
-            { rc.RotationDegrees = new Vector3(0f, _yaw, 0f); GD.Print($"[rig] yaw {_yaw:0.#} deg"); }
+            { rc.RotationDegrees = new Vector3(0f, _yaw, 0f); Log.Print($"[rig] yaw {_yaw:0.#} deg"); }
             if (System.Environment.GetEnvironmentVariable("UG_GUNLAYER") == "1" && !string.IsNullOrEmpty(gun))
             {
                 // 3P GUN LAYER test: legs walk (Move_Walk) while the arms hold/aim/reload the gun via the overlay.
@@ -1090,7 +1090,7 @@ namespace UnturnedGodot
                 // except that guessing at a subject's position is how you photograph the wrong thing.
                 var fq = _rc?.FaceQuadForTest;
                 Vector3 head = fq != null && GodotObject.IsInstanceValid(fq) ? fq.GlobalPosition : new Vector3(0f, 1.75f, -0.21f);
-                GD.Print($"[righead] face quad at {head} (local z should be about -0.212 off the body centreline)");
+                Log.Print($"[righead] face quad at {head} (local z should be about -0.212 off the body centreline)");
                 cam.Fov = 26f;
                 cam.LookAtFromPosition(head + new Vector3(-1.25f, 0.18f, -1.65f), head, Vector3.Up);
             }
@@ -1124,7 +1124,7 @@ namespace UnturnedGodot
                 _     => ("deer", "Animal_Deer_tex.png", 0.70f),
             };
             var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
-            if (rc == null) { GD.PrintErr("[animaltest] rig build failed"); GetTree().Quit(); return; }
+            if (rc == null) { Log.Err("[animaltest] rig build failed"); GetTree().Quit(); return; }
             var holder = new Node3D();   // identity: holder -Z is world -Z = the travel direction AnimalAgent's LookAt produces
             AddChild(holder);
             float holderY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALFOOT"), out var _hf) ? _hf : def.foot;   // UG_ANIMALFOOT=0 -> rig origin ON the ground, so the render shows the feet's TRUE local offset
@@ -1133,14 +1133,14 @@ namespace UnturnedGodot
             float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALYAW"), out var y) ? y : 0f;
             rc.RotationDegrees = new Vector3(0f, yaw, 0f);
             rc.Play("Idle");
-            GD.Print($"[animaltest] {def.rig}: holder faces -Z (travel), rig yaw {yaw:0}. clips: {string.Join(",", rc.ClipNames)}");
+            Log.Print($"[animaltest] {def.rig}: holder faces -Z (travel), rig yaw {yaw:0}. clips: {string.Join(",", rc.ClipNames)}");
             // FEET measurement: lowest world-Y of any rig mesh box vs the Y=0 ground. holder is at foot, so >0 = floats.
             float _minY = 1e9f;
             var _st = new System.Collections.Generic.Stack<Node>(); _st.Push(rc);
             while (_st.Count > 0) { var _n = _st.Pop(); foreach (var _c in _n.GetChildren()) _st.Push(_c);
                 if (_n is VisualInstance3D _vi) { var _bb = _vi.GetAabb(); var _gt = _vi.GlobalTransform;
                     for (int _i = 0; _i < 8; _i++) { var _cor = _bb.Position + _bb.Size * new Vector3(_i & 1, (_i >> 1) & 1, (_i >> 2) & 1); _minY = Mathf.Min(_minY, (_gt * _cor).Y); } } }
-            GD.Print($"[animalfeet] {def.rig}: feet world Y={_minY:0.000} (float above Y=0; foot={def.foot}) -> ground it with foot={(def.foot - _minY):0.000}");
+            Log.Print($"[animalfeet] {def.rig}: feet world Y={_minY:0.000} (float above Y=0; foot={def.foot}) -> ground it with foot={(def.foot - _minY):0.000}");
 
             var arrow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.12f, 1.4f) } };   // points -Z = travel
             arrow.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.2f, 0.2f) };
@@ -1180,8 +1180,8 @@ namespace UnturnedGodot
             if (_bootCmdElapsed < at) return;
             _bootCmdRun = true;
             var console = FindDevConsole(this);
-            if (console == null) { GD.PrintErr("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
-            GD.Print($"[BOOTCMD] {cmd}");
+            if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
+            Log.Print($"[BOOTCMD] {cmd}");
             console.DebugRun(cmd);
         }
 
@@ -1224,7 +1224,7 @@ namespace UnturnedGodot
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(5f, 0.25f, 4f) },
                     Position = new Vector3(-4.6f, fy + 0.125f + landdy, 4.4f),   // surface at fy+0.25 = the car's MEASURED interior floor, so the car stops flush with each landing
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(shade, shade, shade + 0.03f), Roughness = 1f } });
-                if (System.Environment.GetEnvironmentVariable("UG_ELEVMESHCOL") == "1") GD.Print($"[landing] floor {f}: landing top world Y = {fy + 0.125f + landdy + 0.125f:0.000}");   // diag alongside the mesh-floor raycast
+                if (System.Environment.GetEnvironmentVariable("UG_ELEVMESHCOL") == "1") Log.Print($"[landing] floor {f}: landing top world Y = {fy + 0.125f + landdy + 0.125f:0.000}");   // diag alongside the mesh-floor raycast
                 // EXTERNAL call button at this landing: summon the car to THIS floor (master: "external call buttons
                 // too"). Same ElevatorButton -> GoToFloor(f); WORLD-parented so it stays at the floor, doesn't ride.
                 var ecol = f == 0 ? new Color(0.35f, 0.85f, 0.45f) : f == ev.Floors.Length - 1 ? new Color(0.92f, 0.34f, 0.32f) : new Color(0.95f, 0.85f, 0.35f);
@@ -1251,7 +1251,7 @@ namespace UnturnedGodot
             cam.LookAt(new Vector3(0.5f, 4.2f, 0f), Vector3.Up);   // from the -X/door side: sees into the car (rider + button panel) across the floors
             var _ec = System.Environment.GetEnvironmentVariable("UG_ELEVCAM");   // diag: "ex,ey,ez,tx,ty,tz"
             if (!string.IsNullOrEmpty(_ec)) { var a = _ec.Split(','); cam.Position = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); cam.LookAt(new Vector3(float.Parse(a[3]), float.Parse(a[4]), float.Parse(a[5])), Vector3.Up); }
-            GD.Print("[elevatortest] Elevator + floor-button panel; UG_ELEVFLOORS=1 steps every floor. Set UG_SHOTTIME/--write-movie to capture.");
+            Log.Print("[elevatortest] Elevator + floor-button panel; UG_ELEVFLOORS=1 steps every floor. Set UG_SHOTTIME/--write-movie to capture.");
         }
 
         // --raintest: a showcase scene for the rain visuals -- overcast ground + hard-surface boxes + the RainOverlay.
@@ -1296,7 +1296,7 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
-            GD.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
+            Log.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
 
         // --rainmattest: positional rain-on-material audio proof. A pine (visual + a TreeTrunk collider on the world
@@ -1339,7 +1339,7 @@ namespace UnturnedGodot
             // positional read is AUDIBLE, not just asserted.
             var tw = CreateTween();
             tw.TweenProperty(cam, "position", new Vector3(-4f, 2.4f, 2.5f), 5.0);   // end WELL under the canopy so the rain hole reads
-            GD.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
+            Log.Print("[rainmattest] pine at (-4,0,0), cam walks 22m -> 4m over 5s, heavy rain -> foliage fades in");
         }
 
         // --windowbarrtest: window-barricade visual proof. A drawn wall with one window opening + a WindowBarricade
@@ -1388,7 +1388,7 @@ namespace UnturnedGodot
                     wall.Openings.Add(new UnturnedSim.WallOpening(0.7f, ov, ow, oh));
                     AddChild(wall);
                     var d = def;
-                    Callable.From(() => { var b = Barricade.PlaceInWindow(wall, 0, 1, d); GD.Print($"[windowbarrtest] {d.Name} on {ow}x{oh} window -> {b?.GlobalPosition}"); }).CallDeferred();
+                    Callable.From(() => { var b = Barricade.PlaceInWindow(wall, 0, 1, d); Log.Print($"[windowbarrtest] {d.Name} on {ow}x{oh} window -> {b?.GlobalPosition}"); }).CallDeferred();
                 }
                 var camz = new Camera3D { Current = true, Fov = 60f };
                 AddChild(camz);
@@ -1449,7 +1449,7 @@ namespace UnturnedGodot
                 var d = def; var l = label;
                 Callable.From(() => {   // after the wall's _Ready (transform + Rebuild + "walls" group)
                     var b = Barricade.PlaceInWindow(wall, 0, 1, d);    // +Z (outside/camera) face
-                    GD.Print($"[windowbarrtest] {l}: HP={d.Health} at {b?.GlobalPosition}");
+                    Log.Print($"[windowbarrtest] {l}: HP={d.Health} at {b?.GlobalPosition}");
                 }).CallDeferred();
             }
 
@@ -1490,7 +1490,7 @@ namespace UnturnedGodot
             var trunk = new TreeTrunk { Field = null, Index = 11, LogItem = log, Health = 10f, RewardMin = 6, RewardMax = 8, TreeName = name, ResDir = dir, TreeXf = new Transform3D(Basis.Identity, new Vector3(8f, -sink, 0f)) };
             AddChild(trunk); trunk.Position = new Vector3(8f, -sink, 0f);
             trunk.Chop(999f, new Vector3(8f, 1f, 0f), new Vector3(0.6f, 0f, -0.8f).Normalized());   // fell it -> stump stays + debris topples back-right (keeps the near logs visible) + logs drop
-            GD.Print($"[treetest] {name}: left standing, right felled -> stump + debris + logs (log item {log})");
+            Log.Print($"[treetest] {name}: left standing, right felled -> stump + debris + logs (log item {log})");
 
             var cam = new Camera3D { Fov = 36f, Far = 800f };
             AddChild(cam);
@@ -1585,7 +1585,7 @@ namespace UnturnedGodot
 
             // player skin tint + the Skull face-quad decal (kept exactly as-is) -> the clothes-shader body path (albedoTexPath null)
             var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
-            if (rc == null) { GD.PrintErr("[clothtest] build failed"); GetTree().Quit(); return; }
+            if (rc == null) { Log.Err("[clothtest] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
 
@@ -1593,7 +1593,7 @@ namespace UnturnedGodot
             var pants = ClothingContent.LoadTextures(pantsId);
             rc.SetShirt(shirt.Albedo, shirt.Emission, shirt.Metallic);
             rc.SetPants(pants.Albedo, pants.Emission, pants.Metallic);
-            GD.Print($"[clothtest] shirt {shirtId} albedo={(shirt.Albedo != null)} emis={(shirt.Emission != null)} metal={(shirt.Metallic != null)} | pants {pantsId} albedo={(pants.Albedo != null)} emis={(pants.Emission != null)} metal={(pants.Metallic != null)}");
+            Log.Print($"[clothtest] shirt {shirtId} albedo={(shirt.Albedo != null)} emis={(shirt.Emission != null)} metal={(shirt.Metallic != null)} | pants {pantsId} albedo={(pants.Albedo != null)} emis={(pants.Emission != null)} metal={(pants.Metallic != null)}");
             rc.Play("Idle_Stand");
 
             var cam = new Camera3D { Fov = 42f };
@@ -1632,7 +1632,7 @@ namespace UnturnedGodot
             AddChild(ground);
 
             var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));   // UG_FACE picks the face
-            if (rc == null) { GD.PrintErr("[wearcloth] build failed"); GetTree().Quit(); return; }
+            if (rc == null) { Log.Err("[wearcloth] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
 
@@ -1648,7 +1648,7 @@ namespace UnturnedGodot
             clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_VEST", 10)));   // Police Vest (vest)    -> Spine-bone mesh
             if (WearId("UG_WEAR_MASK", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_MASK", 0)));
             if (WearId("UG_WEAR_GLASSES", 0) > 0) clothing.Wear(new SDG.Unturned.Item((ushort)WearId("UG_WEAR_GLASSES", 0)));
-            GD.Print($"[wearcloth] worn: shirt={inv.wornShirt?.id} pants={inv.wornPants?.id} hat={inv.wornHat?.id} vest={inv.wornVest?.id} | fall x{inv.FallingDamageMultiplier:0.###} explo x{inv.ExplosionArmor:0.###}");
+            Log.Print($"[wearcloth] worn: shirt={inv.wornShirt?.id} pants={inv.wornPants?.id} hat={inv.wornHat?.id} vest={inv.wornVest?.id} | fall x{inv.FallingDamageMultiplier:0.###} explo x{inv.ExplosionArmor:0.###}");
             rc.Play("Idle_Stand");
 
             var cam = new Camera3D { Fov = 42f };
@@ -1743,7 +1743,7 @@ namespace UnturnedGodot
                 var a = _vt.Trim('\'', '"').Split(',');
                 float PF(string v) => float.TryParse(v.Trim().Trim('\'', '"'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : 0f;
                 Viewmodel.TuneOffset = new Vector3(PF(a[0]), PF(a[1]), PF(a[2]));
-                GD.Print($"[vm] tune offset {Viewmodel.TuneOffset} from raw '{_vt}' parts={string.Join('|', a)}");
+                Log.Print($"[vm] tune offset {Viewmodel.TuneOffset} from raw '{_vt}' parts={string.Join('|', a)}");
             }
             // ⚠ NOT for a consumable. isMelee is still TRUE for one -- it is computed from "<name>.txt exists",
             // and every food ships that -- so reordering the viewmodel branch was not enough: the swing driver kept
@@ -1913,7 +1913,7 @@ namespace UnturnedGodot
             { var e = System.Environment.GetEnvironmentVariable("UG_GLASSEYE");    if (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ee)) _glassEye = ee; }
 
             _veh = Vehicle.BuildByName(type, 0);
-            if (_veh == null) { GD.PrintErr($"[glassshot] no vehicle '{type}'"); GetTree().Quit(1); return; }
+            if (_veh == null) { Log.Err($"[glassshot] no vehicle '{type}'"); GetTree().Quit(1); return; }
             AddChild(_veh);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the floor so the suspension settles, as --vehicle does
 
@@ -1943,7 +1943,7 @@ namespace UnturnedGodot
             Paint(_veh);
             if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
                 foreach (var mi in _bodyMeshes)
-                { var a = mi.GetAabb(); GD.Print($"[mesh] {mi.Name,-26} size=({a.Size.X,7:0.00},{a.Size.Y,6:0.00},{a.Size.Z,7:0.00}) pos=({mi.Position.X,6:0.00},{mi.Position.Y,6:0.00},{mi.Position.Z,6:0.00})"); }
+                { var a = mi.GetAabb(); Log.Print($"[mesh] {mi.Name,-26} size=({a.Size.X,7:0.00},{a.Size.Y,6:0.00},{a.Size.Z,7:0.00}) pos=({mi.Position.X,6:0.00},{mi.Position.Y,6:0.00},{mi.Position.Z,6:0.00})"); }
             if (keepPaint) _glassPanes.Clear();   // leave the real tinted glass alone too
             // Colour the panes MYSELF rather than leaning on UG_GLASSDEBUG: its palette starts at
             // (1,0.2,1), the same magenta as the body above, so every vehicle's windscreen was
@@ -1954,7 +1954,7 @@ namespace UnturnedGodot
                     AlbedoColor = PaneColors[i % PaneColors.Length],
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            GD.Print($"[glassshot] '{type}': {painted} body meshes painted, {panes} glass panes left alone, {GlassShotYaws.Length} yaws at eye {_glassEye:0.00} m, radius {_glassRadius:0.0} m");
+            Log.Print($"[glassshot] '{type}': {painted} body meshes painted, {panes} glass panes left alone, {GlassShotYaws.Length} yaws at eye {_glassEye:0.00} m, radius {_glassRadius:0.0} m");
             // Per-pane numbers next to the pictures: a pane that is the wrong SIZE or in the wrong PLACE is
             // easier to see in metres than in pixels, and the debug colour tells me which pane I am looking at.
             foreach (var mi in _glassPanes)
@@ -1965,7 +1965,7 @@ namespace UnturnedGodot
                 // thinnest axis = the pane's normal; its extent is the pane's thickness
                 float t = Mathf.Min(sz.X, Mathf.Min(sz.Y, sz.Z));
                 string axis = t == sz.X ? "X" : (t == sz.Y ? "Y" : "Z");
-                GD.Print($"[pane] {type,-10} {mi.Name,-18} {col}  c=({c.X,6:0.00},{c.Y,6:0.00},{c.Z,7:0.00})  size=({sz.X,5:0.00},{sz.Y,5:0.00},{sz.Z,5:0.00})  thin={axis} {t:0.0000}m");
+                Log.Print($"[pane] {type,-10} {mi.Name,-18} {col}  c=({c.X,6:0.00},{c.Y,6:0.00},{c.Z,7:0.00})  size=({sz.X,5:0.00},{sz.Y,5:0.00},{sz.Z,5:0.00})  thin={axis} {t:0.0000}m");
             }
 
             _orbitCentre = VehicleCentre();
@@ -2034,7 +2034,7 @@ namespace UnturnedGodot
                 var aabb = new Aabb(); bool first = true;
                 void Grow(Node n) { if (n is MeshInstance3D mi && mi.Mesh != null) { var a = mi.GlobalTransform * mi.GetAabb(); if (first) { aabb = a; first = false; } else aabb = aabb.Merge(a); } foreach (var c in n.GetChildren()) Grow(c); }
                 if (_veh != null) Grow(_veh);
-                GD.Print($"[glassdiag] yaw {i}: cam {_glassCam.GlobalPosition} fwd {-_glassCam.GlobalTransform.Basis.Z} | veh {(_veh == null ? "NULL" : _veh.GlobalPosition.ToString())} visible {(_veh?.Visible)} meshAabb {(first ? "NONE" : aabb.ToString())}");
+                Log.Print($"[glassdiag] yaw {i}: cam {_glassCam.GlobalPosition} fwd {-_glassCam.GlobalTransform.Basis.Z} | veh {(_veh == null ? "NULL" : _veh.GlobalPosition.ToString())} visible {(_veh?.Visible)} meshAabb {(first ? "NONE" : aabb.ToString())}");
             }
         }
 
@@ -2045,9 +2045,9 @@ namespace UnturnedGodot
         {
             var _n = System.Environment.GetEnvironmentVariable("UG_AIDRIVE");
             if (string.IsNullOrEmpty(_n) || !int.TryParse(_n, out int want) || want <= 0) return;
-            if (GetTree().GetFirstNodeInGroup("roadfield") is not RoadField rf) { GD.PrintErr("[aidrive] no road field in the tree"); return; }
+            if (GetTree().GetFirstNodeInGroup("roadfield") is not RoadField rf) { Log.Err("[aidrive] no road field in the tree"); return; }
             var lanes = rf.LanePaths;
-            if (lanes.Count == 0) { GD.PrintErr("[aidrive] road field has no lane paths"); return; }
+            if (lanes.Count == 0) { Log.Err("[aidrive] road field has no lane paths"); return; }
             var rng = new RandomNumberGenerator(); rng.Randomize();
             // WHICH VEHICLES. Master 2026-09-08: "allow any vehicle to be an ai driver on ur roads" -> "any ROAD
             // vehicle*". The pool is derived from the specs (Vehicle.IsRoadVehicle drops boats, aircraft and the
@@ -2062,12 +2062,12 @@ namespace UnturnedGodot
                 {
                     var k = t.Trim().Trim('\'', '"').ToLowerInvariant();   // shells love to hand quotes through in the value
                     if (k.Length > 0 && Vehicle.IsRoadVehicle(k)) picked.Add(k);
-                    else if (k.Length > 0) GD.PrintErr($"[aidrive] '{k}' is not a road vehicle -- ignored");
+                    else if (k.Length > 0) Log.Err($"[aidrive] '{k}' is not a road vehicle -- ignored");
                 }
                 if (picked.Count > 0) pool = picked.ToArray();
             }
-            if (pool.Length == 0) { GD.PrintErr("[aidrive] no road vehicles in the pool"); return; }
-            VehicleAiDriver.Log($"[aidrive] pool: {string.Join(", ", pool)}");
+            if (pool.Length == 0) { Log.Err("[aidrive] no road vehicles in the pool"); return; }
+            VehicleAiDriver.DriverLog($"[aidrive] pool: {string.Join(", ", pool)}");
             // SPAWN THEM WHERE THE CAMERA IS. PEI's lane network is 70 paths spread over the whole island, so
             // picking uniformly at random put every AI car kilometres from the only viewpoint that exists -- a
             // render of the feature with none of it in frame. Reuse UG_SPAWNAT (the eye's own position) and keep
@@ -2087,7 +2087,7 @@ namespace UnturnedGodot
                     foreach (var pt in l.Points)
                         if (new Vector2(pt.X - near.X, pt.Z - near.Z).LengthSquared() < radius * radius) { close.Add(l); break; }
                 if (close.Count > 0) lanes = close;
-                VehicleAiDriver.Log($"[aidrive] {close.Count} of {rf.LanePaths.Count} lane paths within {radius:0} m of ({near.X:0},{near.Z:0})");
+                VehicleAiDriver.DriverLog($"[aidrive] {close.Count} of {rf.LanePaths.Count} lane paths within {radius:0} m of ({near.X:0},{near.Z:0})");
             }
             // UG_LANELINK=1: for every lane, how far away is the nearest point of ANOTHER road heading roughly the
             // same way? That is exactly the test HandleEnd runs to decide "continuation or dead end", and printing it
@@ -2113,7 +2113,7 @@ namespace UnturnedGodot
                     }
                     float len = 0f;
                     for (int i = 0; i < l.Points.Length - 1; i++) len += l.Points[i].DistanceTo(l.Points[i + 1]);
-                    VehicleAiDriver.Log($"[lanelink] road {l.Road} lane {l.Lane} {(l.Forward ? "fwd" : "rev")} len {len:0} m -> nearest other road {br} at {bd:0.0} m dot {bdot:0.00}");
+                    VehicleAiDriver.DriverLog($"[lanelink] road {l.Road} lane {l.Lane} {(l.Forward ? "fwd" : "rev")} len {len:0} m -> nearest other road {br} at {bd:0.0} m dot {bdot:0.00}");
                 }
             int made = 0;
             var placed = new System.Collections.Generic.List<Vector3>();
@@ -2160,7 +2160,7 @@ namespace UnturnedGodot
                     if (laneLen < circle * 12f) continue;
                 }
                 var car = Vehicle.BuildByName(type, rng.RandiRange(0, 3));
-                if (car == null) { GD.PrintErr($"[aidrive] {type} failed to build"); return; }
+                if (car == null) { Log.Err($"[aidrive] {type} failed to build"); return; }
                 AddChild(car);
                 car.GlobalPosition = p0 + Vector3.Up * 1.2f;
                 Vector3 fwd = (p1 - p0).Normalized();
@@ -2169,12 +2169,12 @@ namespace UnturnedGodot
                 // start it -- and Vehicle.Drive zeroes the throttle outright while the engine is off, so an AI that
                 // never does this pushes the pedal all day and the car does not move a millimetre. (Battery and
                 // engine health are full on build, so the start always catches; it still cranks for ~1.2 s first.)
-                if (!car.TryStartEngine()) GD.PrintErr($"[aidrive] {type} {made} would not start");
+                if (!car.TryStartEngine()) Log.Err($"[aidrive] {type} {made} would not start");
                 var ai = new VehicleAiDriver { Car = car, Roads = rf, Name = $"ai{made}", StartPath = lane, StartIndex = i };
                 car.AddChild(ai);
                 _aiDrivers.Add(ai);
                 placed.Add(p0);
-                VehicleAiDriver.Log($"[aidrive] ai{made} {type} wb {car.WheelbaseM:0.00} hw {car.HalfWidthM:0.00} hull {car.HullSize.X:0.0}x{car.HullSize.Y:0.0}x{car.HullSize.Z:0.0} vmax {car.SpeedMaxForward:0.0} lock {car.SteerMaxDegrees:0} circle {2f * car.WheelbaseM / Mathf.Max(0.05f, Mathf.Tan(Mathf.DegToRad(car.SteerMaxDegrees))):0.0}m{(car.Tracked ? " TRACKED" : "")} at ({p0.X:0.0},{p0.Y:0.0},{p0.Z:0.0}) road {lane.Road} lane {lane.Lane} {(lane.Forward ? "fwd" : "rev")} pt {i}/{lane.Points.Length}");
+                VehicleAiDriver.DriverLog($"[aidrive] ai{made} {type} wb {car.WheelbaseM:0.00} hw {car.HalfWidthM:0.00} hull {car.HullSize.X:0.0}x{car.HullSize.Y:0.0}x{car.HullSize.Z:0.0} vmax {car.SpeedMaxForward:0.0} lock {car.SteerMaxDegrees:0} circle {2f * car.WheelbaseM / Mathf.Max(0.05f, Mathf.Tan(Mathf.DegToRad(car.SteerMaxDegrees))):0.0}m{(car.Tracked ? " TRACKED" : "")} at ({p0.X:0.0},{p0.Y:0.0},{p0.Z:0.0}) road {lane.Road} lane {lane.Lane} {(lane.Forward ? "fwd" : "rev")} pt {i}/{lane.Points.Length}");
                 made++;
             }
             // UG_AICHASE=1: ride behind the first car. The whole point of this feature is how the car BEHAVES over
@@ -2185,10 +2185,10 @@ namespace UnturnedGodot
             {
                 var chase = new Camera3D { Position = new Vector3(0f, 3.4f, 9.0f), RotationDegrees = new Vector3(-11f, 0f, 0f), Current = true, Far = 2000f };
                 _aiDrivers[0].Car.AddChild(chase);
-                GD.Print("[aidrive] chase camera on ai0");
+                Log.Print("[aidrive] chase camera on ai0");
             }
-            GD.Print($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths");
-            VehicleAiDriver.Log($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths (atEnd={_aiAtEnd})");
+            Log.Print($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths");
+            VehicleAiDriver.DriverLog($"[aidrive] {made} AI vehicles on {lanes.Count} lane paths (atEnd={_aiAtEnd})");
             // UG_AIQUIT=<sec>: quit after that many seconds of DRIVING, counted from here rather than from launch.
             // --quit-after counts engine iterations, and headless burns thousands of those while the world is still
             // streaming in -- a telemetry run kept exiting before a single car existed. This clock starts when the
@@ -2201,7 +2201,7 @@ namespace UnturnedGodot
                 // of driving and was still going at 113 s with a 269 MB movie file behind it. Same trap as the
                 // elevator's door timer.
                 _aiQuitTimer = GetTree().CreateTimer(secs, false, true);
-                _aiQuitTimer.Timeout += () => { GD.Print($"[aidrive] {secs:0}s of driving done"); VehicleAiDriver.Log($"[aidrive] {secs:0}s of driving done"); GetTree().Quit(); };
+                _aiQuitTimer.Timeout += () => { Log.Print($"[aidrive] {secs:0}s of driving done"); VehicleAiDriver.DriverLog($"[aidrive] {secs:0}s of driving done"); GetTree().Quit(); };
             }
         }
         readonly System.Collections.Generic.List<VehicleAiDriver> _aiDrivers = new();
@@ -2253,9 +2253,9 @@ namespace UnturnedGodot
                     if (anyOk) { okTotal++; if (dk < bestDist) { bestDist = dk; bestPos = foot; } }
                     else if (anyTrailer) cabStole++;
                 }
-            GD.Print($"[hitchsweep] {_hsName}: kingpin {tr.KingpinLocal.Z:F2} local | spots within HitchReach({HitchReach}m) = {inReach} | look-ray reaches the trailer from {sawTrailer} | HITCH AVAILABLE from {okTotal} | cab stole focus at {cabStole}");
-            if (okTotal > 0) GD.Print($"[hitchsweep] {_hsName}: closest working spot is {bestDist:F2} m from the kingpin at {bestPos}");
-            else GD.Print($"[hitchsweep] {_hsName}: NO stand+aim pair works -- the on-foot hitch is UNREACHABLE");
+            Log.Print($"[hitchsweep] {_hsName}: kingpin {tr.KingpinLocal.Z:F2} local | spots within HitchReach({HitchReach}m) = {inReach} | look-ray reaches the trailer from {sawTrailer} | HITCH AVAILABLE from {okTotal} | cab stole focus at {cabStole}");
+            if (okTotal > 0) Log.Print($"[hitchsweep] {_hsName}: closest working spot is {bestDist:F2} m from the kingpin at {bestPos}");
+            else Log.Print($"[hitchsweep] {_hsName}: NO stand+aim pair works -- the on-foot hitch is UNREACHABLE");
             GetTree().Quit();
         }
 
@@ -2323,7 +2323,7 @@ namespace UnturnedGodot
                 var trailer = Vehicle.BuildByName("trailer");
                 AddChild(trailer);
                 trailer.Position = (_veh.Position + _veh.FifthWheelLocal) - trailer.KingpinLocal;   // line the kingpin up under the fifth-wheel plate
-                GD.Print(_veh.CoupleTo(trailer) ? "[hitch] coupled OK" : "[hitch] couple FAILED (out of reach)");
+                Log.Print(_veh.CoupleTo(trailer) ? "[hitch] coupled OK" : "[hitch] couple FAILED (out of reach)");
             }
             if (_backunder && _veh.CanTow)   // --backunder: park a trailer ~4m behind the cab's rear, then the cab reverses UNDER it (see the vehTest loop) + couples on proximity
             {
@@ -2339,7 +2339,7 @@ namespace UnturnedGodot
                 }
                 var buName = System.Environment.GetEnvironmentVariable("UG_TRAILER");   // --backunder against ANY trailer, not just the semi. The car trailers are a different shape of problem (kingpin 1.9m ahead of the nose, car-sized cab) and the harness could not reach them at all.
                 _buTrailer = Vehicle.BuildByName(string.IsNullOrEmpty(buName) ? "trailer" : buName);
-                GD.Print($"[backunder] trailer={buName ?? "trailer"} kingpin={_buTrailer.KingpinLocal} hitMeshTris={_buTrailer.DebugHitMeshTris} solidBit={_buTrailer.DebugSolidBit} layer={_buTrailer.CollisionLayer} mask={_buTrailer.CollisionMask}");
+                Log.Print($"[backunder] trailer={buName ?? "trailer"} kingpin={_buTrailer.KingpinLocal} hitMeshTris={_buTrailer.DebugHitMeshTris} solidBit={_buTrailer.DebugSolidBit} layer={_buTrailer.CollisionLayer} mask={_buTrailer.CollisionMask}");
                 AddChild(_buTrailer);
                 // face the same way as the cab; drop it OFF-CENTER (X+0.8) ~4m behind so the cab reverses to close the gap AND the magnetize has to pull the kingpin sideways onto the fifth wheel (tests the centre-pull)
                 _buTrailer.Position = new Vector3(0.8f, 1.2f, _veh.Position.Z + _veh.FifthWheelLocal.Z - _buTrailer.KingpinLocal.Z + 4.0f);
@@ -2411,7 +2411,7 @@ namespace UnturnedGodot
                     var parts = camEnv.Split(',');
                     if (parts.Length == 3 && float.TryParse(parts[0], out var cx) && float.TryParse(parts[1], out var cy) && float.TryParse(parts[2], out var cz))
                         _heliCamLocal = new Vector3(cx, cy, cz);
-                    else GD.PrintErr($"[helicam] could not parse UG_HELICAM='{camEnv}' -- want x,y,z; using the chase cam");
+                    else Log.Err($"[helicam] could not parse UG_HELICAM='{camEnv}' -- want x,y,z; using the chase cam");
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_HELIPILOT") == "1")
                 {
@@ -2618,7 +2618,7 @@ namespace UnturnedGodot
                     {
                         var g = cp.FindGuidByName(name.Trim());
                         if (g != null) guids.Add(g);
-                        else GD.Print($"[SHOT] pick not found: {name}");
+                        else Log.Print($"[SHOT] pick not found: {name}");
                     }
                 else
                     foreach (var g in cp.TexturedGuids) { guids.Add(g); if (guids.Count >= 10) break; }
@@ -2657,7 +2657,7 @@ namespace UnturnedGodot
                 cam.Position = new Vector3(0f, 1.7f, width * 0.55f + 1.0f);
                 cam.LookAt(new Vector3(0f, 1.0f, -0.3f), Vector3.Up);
 
-                GD.Print($"[SHOT] showcase: {n} props ({textured} textured){(picks != null ? " [picked]" : "")}");
+                Log.Print($"[SHOT] showcase: {n} props ({textured} textured){(picks != null ? " [picked]" : "")}");
             }
         }
 
@@ -2723,7 +2723,7 @@ namespace UnturnedGodot
             var ammoRadial = new AmmoRadial();   // R-hold -> shotgun ammo-type picker (buckshot / slug)
             AddChild(ammoRadial);
             player.AmmoRadial = ammoRadial;
-            GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
+            Log.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
         }
 
         // --firetest [--supp]: a reusable firing-mechanics harness -- the player fires downrange (UG_HITWALL / UG_HITGLASS
@@ -2775,7 +2775,7 @@ namespace UnturnedGodot
                 AddChild(wall);
                 wall.GlobalPosition = new Vector3(0, 2.5f, 18f);
                 wall.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
-                GD.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
+                Log.Print("[FIRETEST] UG_HITWALL: concrete wall at +Z 18 m (player fires into it)");
             }
 
             // UG_HITGLASS: a full window-sized DESTRUCTIBLE glass pane 6 m downrange -> the player shoots it + it shatters
@@ -2799,13 +2799,13 @@ namespace UnturnedGodot
                                    System.Globalization.CultureInfo.InvariantCulture, out float hpv) && hpv > 0f)
                     ghp = hpv;
                 var pane = GlassPane.Build(new Vector2(1.2f, 1.5f), hp: ghp);
-                pane.OnShattered += () => GD.Print($"[FIRETEST] glass SHATTERED at frame {_ftFrame} (capture wants ~195)");
+                pane.OnShattered += () => Log.Print($"[FIRETEST] glass SHATTERED at frame {_ftFrame} (capture wants ~195)");
                 AddChild(pane);
                 pane.GlobalPosition = new Vector3(0f, 1.5f, 6f);
-                GD.Print($"[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m, hp {ghp:0.#} (player shatters it)");
+                Log.Print($"[FIRETEST] UG_HITGLASS: destructible glass pane at +Z 6 m, hp {ghp:0.#} (player shatters it)");
             }
             env.TonemapMode = Godot.Environment.ToneMapper.Aces;   // match the game's ACES so this harness validates the scope PiP color/tonemap (was default Linear)
-            GD.Print($"[FIRETEST] suppressed={suppressed} -- firing downrange (viewmodel / tracer / ADS / impact rig)");
+            Log.Print($"[FIRETEST] suppressed={suppressed} -- firing downrange (viewmodel / tracer / ADS / impact rig)");
         }
 
         // --craftmenu: open the NEWER CraftingMenu (the browsable recipe index wired to the player as _craftMenu / Y)
@@ -2845,7 +2845,7 @@ namespace UnturnedGodot
             AddChild(menu);
             menu.Open();
             if (System.Environment.GetEnvironmentVariable("UG_CRAFTQUEUE") == "1") menu.DebugQueueCraftable(3, 3);   // populate the queue for the shot
-            GD.Print("[CRAFTMENU] opened the newer CraftingMenu over a stocked inventory");
+            Log.Print("[CRAFTMENU] opened the newer CraftingMenu over a stocked inventory");
         }
 
         // --stationtest: place all 9 crafting-station deployables in a row on a lit ground -> verify the ripped models.
@@ -2866,7 +2866,7 @@ namespace UnturnedGodot
             var cam = new Camera3D { Fov = 46f, Far = 400f };
             AddChild(cam);
             cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
-            GD.Print("[stationtest] 9 crafting stations placed");
+            Log.Print("[stationtest] 9 crafting stations placed");
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
@@ -2877,23 +2877,23 @@ namespace UnturnedGodot
         void BuildZombieTierTest()
         {
             var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: false);
-            if (terr == null) { GD.Print("[zombietier] no PEI terrain -- need the retail install"); GetTree().Quit(); return; }
+            if (terr == null) { Log.Print("[zombietier] no PEI terrain -- need the retail install"); GetTree().Quit(); return; }
             AddChild(terr);
             var zf = new ZombieChunkField { Terr = terr };
             AddChild(zf);
             zf.LoadFromPei(MapDir("PEI"));
 
             var town = zf.DensestChunkCenter();
-            GD.Print($"[zombietier] densest town chunk @ ({town.X:0},{town.Z:0}); sweeping an anchor out of it:");
+            Log.Print($"[zombietier] densest town chunk @ ({town.X:0},{town.Z:0}); sweeping an anchor out of it:");
             foreach (float off in new float[] { 0f, 60f, 120f, 200f, 300f, 500f })
             {
                 zf.DebugAnchor = town + new Vector3(off, 0f, 0f);
                 zf.ForceReclassify();
                 int sim = zf.TierZombies[3] + zf.TierZombies[2];   // HOT + WARM = the simulated ones the budget caps
-                GD.Print($"[zombietier] +{off,4:0}m | chunks HOT {zf.TierChunks[3]} WARM {zf.TierChunks[2]} COLD {zf.TierChunks[1]} FROZEN {zf.TierChunks[0]}"
+                Log.Print($"[zombietier] +{off,4:0}m | chunks HOT {zf.TierChunks[3]} WARM {zf.TierChunks[2]} COLD {zf.TierChunks[1]} FROZEN {zf.TierChunks[0]}"
                        + $" | zombies HOT {zf.TierZombies[3]} WARM {zf.TierZombies[2]} COLD {zf.TierZombies[1]} (sim={sim}/{ZombieChunkField.Budget}) FROZEN-potential {zf.TierZombies[0]}");
             }
-            GD.Print("[zombietier] done -- tiers should shed HOT->WARM->COLD->FROZEN as the anchor leaves, and sim never exceeds the budget.");
+            Log.Print("[zombietier] done -- tiers should shed HOT->WARM->COLD->FROZEN as the anchor leaves, and sim never exceeds the budget.");
             GetTree().Quit();
         }
 
@@ -2939,7 +2939,7 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 4000f };
             AddChild(cam); cam.Position = new Vector3(0f, 175f, 0.01f); cam.LookAt(Vector3.Zero, Vector3.Forward);
             _zflowMode = true;
-            GD.Print("[zflow] wall scene: anchor +45x, 40 zombies -45x, 60m wall at x=0 -> they must round the ends.");
+            Log.Print("[zflow] wall scene: anchor +45x, 40 zombies -45x, 60m wall at x=0 -> they must round the ends.");
         }
 
         void UpdateZflowDots()
@@ -2977,9 +2977,9 @@ namespace UnturnedGodot
             var behind = f.Sample(new Vector3(-10f, 0f, 0f));      // OPEN cell directly behind the wall centre -> must point to an END (strong |Z|)
             var mid = f.Sample(new Vector3(-25f, 0f, 0f));         // further back, still behind centre -> still angled to an end
             var end = f.Sample(new Vector3(-10f, 0f, 33f));        // OPEN cell past the north end -> curls east (+X) around it
-            GD.Print($"[zflow] after {_zflowT:0}s: EAST(past wall) {east} / at-wall {atwall} / WEST {west} | x min {minx:0} avg {(n>0?sumx/n:0):0} max {maxx:0}");
-            GD.Print($"[zflow] field: {f.BlockedCells}/{f.CellCount} cells blocked; cost behind-centre(-10,0)={f.CostAt(new Vector3(-10,0,0))} vs at-end(-10,33)={f.CostAt(new Vector3(-10,0,33))}  [behind should cost MORE if routing around]");
-            GD.Print($"[zflow] field dir behind-centre (-10,0)= ({behind.X:0.00},{behind.Y:0.00})  further (-25,0)= ({mid.X:0.00},{mid.Y:0.00})  past-end (-10,33)= ({end.X:0.00},{end.Y:0.00})   [strong Y behind-centre => routing toward an end, NOT straight through]");
+            Log.Print($"[zflow] after {_zflowT:0}s: EAST(past wall) {east} / at-wall {atwall} / WEST {west} | x min {minx:0} avg {(n>0?sumx/n:0):0} max {maxx:0}");
+            Log.Print($"[zflow] field: {f.BlockedCells}/{f.CellCount} cells blocked; cost behind-centre(-10,0)={f.CostAt(new Vector3(-10,0,0))} vs at-end(-10,33)={f.CostAt(new Vector3(-10,0,33))}  [behind should cost MORE if routing around]");
+            Log.Print($"[zflow] field dir behind-centre (-10,0)= ({behind.X:0.00},{behind.Y:0.00})  further (-25,0)= ({mid.X:0.00},{mid.Y:0.00})  past-end (-10,33)= ({end.X:0.00},{end.Y:0.00})   [strong Y behind-centre => routing toward an end, NOT straight through]");
             _zflowMode = false;
             GetTree().Quit();
         }
@@ -3016,7 +3016,7 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 2000f };
             AddChild(cam); cam.Position = new Vector3(6f, 6f, 16f); cam.LookAt(new Vector3(0f, 1f, -14f), Vector3.Up);
             _zhMode = true;
-            GD.Print("[zhunt] 24 zombies ~24m from the anchor -> HOT bodies shamble in.");
+            Log.Print("[zhunt] 24 zombies ~24m from the anchor -> HOT bodies shamble in.");
         }
 
         void ZhuntReport()
@@ -3027,7 +3027,7 @@ namespace UnturnedGodot
                 if (z.Body != null && GodotObject.IsInstanceValid(z.Body)) hot++;
                 sum += Mathf.Sqrt(z.Pos.X * z.Pos.X + z.Pos.Z * z.Pos.Z); n++;
             }
-            GD.Print($"[zhunt] after {_zhT:0}s: {hot} HOT bodies of {n} zombies; avg dist to anchor {(n > 0 ? sum / n : 0):0.0}m (started ~24m -> CLOSES as they shamble in)");
+            Log.Print($"[zhunt] after {_zhT:0}s: {hot} HOT bodies of {n} zombies; avg dist to anchor {(n > 0 ? sum / n : 0):0.0}m (started ~24m -> CLOSES as they shamble in)");
             _zhMode = false;
             GetTree().Quit();
         }
@@ -3060,16 +3060,16 @@ namespace UnturnedGodot
             zf.DebugSeed(new Vector3(0f, 0f, 7f), 3, spread: 1f);   // a tight column dead ahead in the fire line
             _zkf = zf; _zkPlayer = player;
             _zkMode = true;
-            GD.Print("[zkill] player vs 6 zombies 10m downrange, auto-firing...");
+            Log.Print("[zkill] player vs 6 zombies 10m downrange, auto-firing...");
         }
 
         void ZkillReport()
         {
             int alive = 0; float minHp = 999f; ZombieBody sample = null;
             foreach (var z in _zkf.DebugZombies()) if (z.Body != null && GodotObject.IsInstanceValid(z.Body)) { if (!z.Body.Dead) { alive++; sample ??= z.Body; } minHp = Mathf.Min(minHp, z.Body.Health); }
-            GD.Print($"[zkill] after {_zkT:0}s: gun fired (Ammo {_zkPlayer.Ammo}); a bullet CONNECTED -> lowest zombie HP {minHp:0} (< 100 = the ZombieBody hit-wiring works); player Kills={_zkPlayer.Kills}");
+            Log.Print($"[zkill] after {_zkT:0}s: gun fired (Ammo {_zkPlayer.Ammo}); a bullet CONNECTED -> lowest zombie HP {minHp:0} (< 100 = the ZombieBody hit-wiring works); player Kills={_zkPlayer.Kills}");
             // The death path (Die -> ragdoll -> despawn) shares the same Damage entry the bullets already proved. Trigger it lethally to confirm it fires.
-            if (sample != null) { bool wasDead = sample.Dead; sample.Damage(999f, _zkPlayer.GlobalPosition); GD.Print($"[zkill] lethal test: 999 dmg -> zombie Dead {wasDead}->{sample.Dead} (true = Die() ran: ragdoll + leaves the group + despawns)"); }
+            if (sample != null) { bool wasDead = sample.Dead; sample.Damage(999f, _zkPlayer.GlobalPosition); Log.Print($"[zkill] lethal test: 999 dmg -> zombie Dead {wasDead}->{sample.Dead} (true = Die() ran: ragdoll + leaves the group + despawns)"); }
             _zkMode = false;
             GetTree().Quit();
         }
@@ -3109,14 +3109,14 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 58f, Far = 2000f };
             AddChild(cam); cam.Position = new Vector3(34f, 20f, -35f); cam.LookAt(new Vector3(0f, 1f, -52f), Vector3.Up);
             _zsMode = true;
-            GD.Print("[zsound] player at origin (out of sight); 10 zombies at -35 -> silent hold; gunshot at -72 @ 3s -> lure to the NOISE.");
+            Log.Print("[zsound] player at origin (out of sight); 10 zombies at -35 -> silent hold; gunshot at -72 @ 3s -> lure to the NOISE.");
         }
 
         void ZsoundReport()
         {
             float toSound = 0f, toPlayer = 0f; int n = 0;
             foreach (var z in _zsf.DebugZombies()) { toSound += z.Pos.DistanceTo(_zsSound); toPlayer += Mathf.Sqrt(z.Pos.X * z.Pos.X + z.Pos.Z * z.Pos.Z); n++; }
-            GD.Print($"[zsound] after {_zsT:0}s: avg dist to GUNSHOT {(n > 0 ? toSound / n : 0):0}m (started ~37 -> SHRINKS = lured by the noise); avg dist to PLAYER {(n > 0 ? toPlayer / n : 0):0}m (started ~35 -> GROWS = they chased the sound, NOT the player)");
+            Log.Print($"[zsound] after {_zsT:0}s: avg dist to GUNSHOT {(n > 0 ? toSound / n : 0):0}m (started ~37 -> SHRINKS = lured by the noise); avg dist to PLAYER {(n > 0 ? toPlayer / n : 0):0}m (started ~35 -> GROWS = they chased the sound, NOT the player)");
             _zsMode = false;
             GetTree().Quit();
         }
@@ -3147,7 +3147,7 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 46f, Far = 500f };
             AddChild(cam); cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up);   // wide SIDE view: zombie travels +X (screen-right) across frame; a planted foot should hold its WORLD spot, not skate back
             _zfMode = true;
-            GD.Print("[zface] one zombie, DesiredVel = world +X (toward RED). top-down: RED=+X(right) BLUE=+Z(down). arms should point at RED if facing is correct.");
+            Log.Print("[zface] one zombie, DesiredVel = world +X (toward RED). top-down: RED=+X(right) BLUE=+Z(down). arms should point at RED if facing is correct.");
         }
 
         // --zpath: PATHFINDING-AROUND-OBSTACLES demo (master: "show how they path around objects"). A horde spawns BEHIND a
@@ -3165,9 +3165,9 @@ namespace UnturnedGodot
                 total++;
                 float dT = new Vector2(z.Pos.X - _zpTarget.X, z.Pos.Z - _zpTarget.Z).Length();
                 bool wall = Mathf.Abs(z.Pos.X) < 4f;
-                if (dT > 4f) { far++; if (wall) atWall++; GD.Print($"[zpath] STUCK at ({z.Pos.X:0.0},{z.Pos.Z:0.0}) dT {dT:0.0}m  {(wall ? "<-AT WALL (genuine)" : "(en route near target)")}"); }
+                if (dT > 4f) { far++; if (wall) atWall++; Log.Print($"[zpath] STUCK at ({z.Pos.X:0.0},{z.Pos.Z:0.0}) dT {dT:0.0}m  {(wall ? "<-AT WALL (genuine)" : "(en route near target)")}"); }
             }
-            GD.Print($"[zpath] after 25s: {atWall}/{total} genuinely stuck AT WALL; {far - atWall} more en route near the target");
+            Log.Print($"[zpath] after 25s: {atWall}/{total} genuinely stuck AT WALL; {far - atWall} more en route near the target");
         }
         void BuildZombiePath()
         {
@@ -3205,7 +3205,7 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 2000f };
             AddChild(cam); cam.Position = new Vector3(0f, 40f, 0.01f); cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN (-Z up, +X right) -> the fork around the wall reads cleanly
             _zpMode = true;
-            GD.Print("[zpath] 18 zombies vs a 16m wall between them and the target (green). Noise at the target floods the flow field -> they FORK around both ends.");
+            Log.Print("[zpath] 18 zombies vs a 16m wall between them and the target (green). Noise at the target floods the flow field -> they FORK around both ends.");
         }
 
         void BuildTerrainTest()
@@ -3222,14 +3222,14 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
             var _terr = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false);   // --map= aware (defaults to PEI); any modern-Landscape map renders here
-            if (_terr == null) { GD.PrintErr($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
+            if (_terr == null) { Log.Err($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
             AddChild(_terr);
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
             cam.Position = new Vector3(0f, 5200f, 1f);
             cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
-            GD.Print($"[TERRAIN] loaded {System.IO.Path.GetFileName(_mapRoot)} (merged, seamless)");
+            Log.Print($"[TERRAIN] loaded {System.IO.Path.GetFileName(_mapRoot)} (merged, seamless)");
         }
 
         // --proptest=NAME diagnostic: one prop at identity with RGB axis refs (X=red +right, Y=green +up, Z=blue +back)
@@ -3299,7 +3299,7 @@ namespace UnturnedGodot
             AddChild(cinst);
             // Report RELATIVE to the airframe, not to the world -- UG_SLING_FLY moves the aircraft too, so a
             // load measured against a deck that slid out from under it stays articulate and answers the wrong question.
-            if (touch) GD.Print($"[SLING] base Y {baseY:0.00}, top {baseY + cH:0.00} vs underside {underY:0.00} -> {(baseY + cH > underY ? $"CLIPS by {baseY + cH - underY:0.00} m" : "clear")}; sits {deckY - baseY:0.00} m below the deck; ground clearance {baseY:0.00} m");
+            if (touch) Log.Print($"[SLING] base Y {baseY:0.00}, top {baseY + cH:0.00} vs underside {underY:0.00} -> {(baseY + cH > underY ? $"CLIPS by {baseY + cH - underY:0.00} m" : "clear")}; sits {deckY - baseY:0.00} m below the deck; ground clearance {baseY:0.00} m");
 
             // UG_SLING_TOUCH=1: raise the aircraft until the container's TOP meets its underside -- strawberry's
             // "lower the container so its top touches the bottom of the tail", done the way round that keeps the
@@ -3318,7 +3318,7 @@ namespace UnturnedGodot
             heli.FreezeMode = RigidBody3D.FreezeModeEnum.Static; heli.Freeze = true;
             heli.GravityScale = 0f; heli.LinearVelocity = Vector3.Zero; heli.AngularVelocity = Vector3.Zero;
             heli.ProcessMode = Node.ProcessModeEnum.Disabled;
-            if (touch) GD.Print($"[SLING] raised {lift:0.00} m so the container's top meets the underside -> legs {(-LegBottom) + lift:0.00} m tall (were {-LegBottom:0.00})");
+            if (touch) Log.Print($"[SLING] raised {lift:0.00} m so the container's top meets the underside -> legs {(-LegBottom) + lift:0.00} m tall (were {-LegBottom:0.00})");
 
             // GROUND TRUTH, read back off the scene rather than off my own intent. Every number above is a
             // prediction; these two are what actually gathered in the world. A placement that validates against
@@ -3340,9 +3340,9 @@ namespace UnturnedGodot
             }
             var cA = cinst.GlobalTransform * cmesh.GetAabb();
             var hA = WorldAabb(heli);
-            GD.Print($"[SLING/REAL] container Y {cA.Position.Y:0.00}..{cA.End.Y:0.00}  Z {cA.Position.Z:0.00}..{cA.End.Z:0.00}  X {cA.Position.X:0.00}..{cA.End.X:0.00}");
-            GD.Print($"[SLING/REAL] heli      Y {hA.Position.Y:0.00}..{hA.End.Y:0.00}  Z {hA.Position.Z:0.00}..{hA.End.Z:0.00}  (origin Y {heli.GlobalPosition.Y:0.00})");
-            GD.Print($"[SLING/REAL] container base is {hA.Position.Y - cA.Position.Y:0.00} m below the lowest point of the aircraft (its gear)");
+            Log.Print($"[SLING/REAL] container Y {cA.Position.Y:0.00}..{cA.End.Y:0.00}  Z {cA.Position.Z:0.00}..{cA.End.Z:0.00}  X {cA.Position.X:0.00}..{cA.End.X:0.00}");
+            Log.Print($"[SLING/REAL] heli      Y {hA.Position.Y:0.00}..{hA.End.Y:0.00}  Z {hA.Position.Z:0.00}..{hA.End.Z:0.00}  (origin Y {heli.GlobalPosition.Y:0.00})");
+            Log.Print($"[SLING/REAL] container base is {hA.Position.Y - cA.Position.Y:0.00} m below the lowest point of the aircraft (its gear)");
             // RE-DERIVE the belly from real vertices instead of trusting the number typed at the top. Scan every
             // heli vertex that lies over the container footprint, drop anything at/below the gear plane, and take
             // the lowest survivor -- that IS the surface the load would hit.
@@ -3379,7 +3379,7 @@ namespace UnturnedGodot
                         var a = vi.GlobalTransform * vi.GetAabb();
                         extra = $"  Y {a.Position.Y:0.00}..{a.End.Y:0.00}  vis={vi.Visible}";
                     }
-                    GD.Print($"[SLING/NODE] {ind}{k.Name} <{k.GetType().Name}>{extra}");
+                    Log.Print($"[SLING/NODE] {ind}{k.Name} <{k.GetType().Name}>{extra}");
                     foreach (var c in k.GetChildren()) List(c, ind + "  ");
                 }
                 List(heli, "");
@@ -3390,15 +3390,15 @@ namespace UnturnedGodot
                 {
                     var when = t;
                     GetTree().CreateTimer(when).Timeout += () =>
-                        GD.Print($"[SLING/LATE {when:0.0}s] heli origin Y {heli.GlobalPosition.Y:0.00} (built at {heliOriginY:0.00}), frozen={heli.Freeze}; container base Y {cinst.GlobalPosition.Y:0.00}");
+                        Log.Print($"[SLING/LATE {when:0.0}s] heli origin Y {heli.GlobalPosition.Y:0.00} (built at {heliOriginY:0.00}), frozen={heli.Freeze}; container base Y {cinst.GlobalPosition.Y:0.00}");
                 }
-                GD.Print($"[SLING/REAL] belly over the footprint: world Y {lo:0.00} (local {lo - heli.GlobalPosition.Y:0.00}) on \"{who}\"; harness assumed world {underY:0.00}");
-                GD.Print($"[SLING/REAL] container top {cA.End.Y:0.00} -> {(cA.End.Y > lo ? $"CLIPS by {cA.End.Y - lo:0.00} m" : $"clear by {lo - cA.End.Y:0.00} m")}");
+                Log.Print($"[SLING/REAL] belly over the footprint: world Y {lo:0.00} (local {lo - heli.GlobalPosition.Y:0.00}) on \"{who}\"; harness assumed world {underY:0.00}");
+                Log.Print($"[SLING/REAL] container top {cA.End.Y:0.00} -> {(cA.End.Y > lo ? $"CLIPS by {cA.End.Y - lo:0.00} m" : $"clear by {lo - cA.End.Y:0.00} m")}");
             }
 
             float overhang = (centreZ + cL * 0.5f) - LegZTo;
-            GD.Print($"[SLING] container W {cW:0.00} H {cH:0.00} L {cL:0.00}; front face Z {frontZ:0.00} (cockpit rear {CockpitRearZ:0.00} + {gap:0.00} gap), rear face Z {centreZ + cL * 0.5f:0.00}");
-            GD.Print($"[SLING] legs span Z {LegZFrom:0.00}..{LegZTo:0.00} -> container overhangs the gear by {overhang:0.00} m aft");
+            Log.Print($"[SLING] container W {cW:0.00} H {cH:0.00} L {cL:0.00}; front face Z {frontZ:0.00} (cockpit rear {CockpitRearZ:0.00} + {gap:0.00} gap), rear face Z {centreZ + cL * 0.5f:0.00}");
+            Log.Print($"[SLING] legs span Z {LegZFrom:0.00}..{LegZTo:0.00} -> container overhangs the gear by {overhang:0.00} m aft");
 
             // UG_SLING_LEGS=1: draw what the gear WOULD have to become to carry it -- extended aft to the
             // container's rear face. Ghosted rather than modelled, since this is a question, not a change.
@@ -3412,7 +3412,7 @@ namespace UnturnedGodot
                     foreach (float lz in new[] { LegZFrom + 0.8f, newTo - 0.8f })   // the taller struts up to the hull
                         AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.34f, -LegBottom + lift, 0.34f) }, MaterialOverride = gm, Position = new Vector3(sx, (-LegBottom + lift) * 0.5f, lz) });
                 }
-                GD.Print($"[SLING] ghost gear: {len:0.00} m long (was {LegZTo - LegZFrom:0.00}), {-LegBottom + lift:0.00} m tall (was {-LegBottom:0.00})");
+                Log.Print($"[SLING] ghost gear: {len:0.00} m long (was {LegZTo - LegZFrom:0.00}), {-LegBottom + lift:0.00} m tall (was {-LegBottom:0.00})");
             }
 
             // DATUM: a thin translucent slab at the gear plane. The question is "how much sits below the aircraft",
@@ -3482,20 +3482,20 @@ namespace UnturnedGodot
                     // falling coil, say) and a PASS would look identical to a real one.
                     if (System.Environment.GetEnvironmentVariable("UG_MAG_NOENERGISE") != "1") Heli.ToggleSlingMagnet();
                     Phase = 1;
-                    GD.Print($"[MAGNET] energised at t={T:0.00}; deployed={Heli.SlingDeployed}");
+                    Log.Print($"[MAGNET] energised at t={T:0.00}; deployed={Heli.SlingDeployed}");
                 }
                 else if (Phase == 1 && T > 3.4f)   // give it time to bite, then hoist
                 {
                     Phase = 2;
-                    GD.Print($"[MAGNET] grab: held={(mag?.Held != null ? mag.Held.Name.ToString() : "NOTHING")}; loadY0={LoadY0:0.00}");
+                    Log.Print($"[MAGNET] grab: held={(mag?.Held != null ? mag.Held.Name.ToString() : "NOTHING")}; loadY0={LoadY0:0.00}");
                 }
                 else if (Phase == 2 && T > 2.7f) { HoldY += 2.2f * (float)delta; }   // hoist the whole stand
                 if (Phase == 2 && T > 5.0f && !Reported)
                 {
                     Reported = true;
                     float lifted = (mag?.Held != null && !float.IsNaN(LoadY0)) ? mag.Held.GlobalPosition.Y - LoadY0 : float.NaN;
-                    GD.Print($"[MAGNET] t={T:0.00} heli {HoldY:0.00}; magnet Y {(mag != null ? mag.GlobalPosition.Y : float.NaN):0.00}; held={(mag?.Held != null ? "YES" : "no")}; load RAISED {lifted:0.00} m");
-                    GD.Print($"[MAGNET] VERDICT: {((mag?.Held != null && lifted > 0.5f) ? "LIFTS" : "DOES NOT LIFT")}");
+                    Log.Print($"[MAGNET] t={T:0.00} heli {HoldY:0.00}; magnet Y {(mag != null ? mag.GlobalPosition.Y : float.NaN):0.00}; held={(mag?.Held != null ? "YES" : "no")}; load RAISED {lifted:0.00} m");
+                    Log.Print($"[MAGNET] VERDICT: {((mag?.Held != null && lifted > 0.5f) ? "LIFTS" : "DOES NOT LIFT")}");
                 }
             }
         }
@@ -3541,7 +3541,7 @@ namespace UnturnedGodot
             {
                 belly = bm.Position;
                 var ab = bm.Mesh.GetAabb();
-                GD.Print($"[BELLYSHOT] {name}: beacon at {belly} size {ab.Size} (X/Z square = a flush panel, thick Y = a lump)");
+                Log.Print($"[BELLYSHOT] {name}: beacon at {belly} size {ab.Size} (X/Z square = a flush panel, thick Y = a lump)");
                 // Force it ON: the flasher is driven by rotor rpm and this rig has no running rotor, so an
                 // unlit beacon here would be the harness, not the fitting -- exactly the reading I would
                 // otherwise have to guess at.
@@ -3553,7 +3553,7 @@ namespace UnturnedGodot
                     mat.AlbedoColor = new Color(1f, 0.35f, 0.35f);
                 }
             }
-            else GD.Print($"[BELLYSHOT] {name}: NO BeaconBelly node -- nothing to look at");
+            else Log.Print($"[BELLYSHOT] {name}: NO BeaconBelly node -- nothing to look at");
 
             // UG_TURRET_AIM="yaw,pitch" swings the mount before the shot, so "the barrel disappears" can be
             // looked at rather than reasoned about -- a chin turret at full depression is exactly the case where
@@ -3566,11 +3566,11 @@ namespace UnturnedGodot
                 {
                     v.AimTurret(v.Turrets[0].Seat, float.Parse(tp[0]), float.Parse(tp[1]));
                     var mz = v.TurretMuzzle(v.Turrets[0].Seat);
-                    GD.Print($"[BELLYSHOT] turret aimed ({tp[0]},{tp[1]}) muzzle {mz} barrel {v.TurretBarrelDir(v.Turrets[0].Seat)}");
+                    Log.Print($"[BELLYSHOT] turret aimed ({tp[0]},{tp[1]}) muzzle {mz} barrel {v.TurretBarrelDir(v.Turrets[0].Seat)}");
                     if (v.FindChild($"TurretPitch{v.Turrets[0].Seat}", true, false) is Node3D pn)
                         foreach (var ch in pn.GetChildren())
                             if (ch is MeshInstance3D pm)
-                                GD.Print($"[BELLYSHOT] pitch mesh '{pm.Name}' visible={pm.Visible} aabb {pm.Mesh?.GetAabb().Size} globalY {pm.GlobalPosition.Y:0.00}");
+                                Log.Print($"[BELLYSHOT] pitch mesh '{pm.Name}' visible={pm.Visible} aabb {pm.Mesh?.GetAabb().Size} globalY {pm.GlobalPosition.Y:0.00}");
                 }
             }
 
@@ -3579,14 +3579,14 @@ namespace UnturnedGodot
             foreach (var ch in v.GetChildren())
             {
                 if (ch is TargetDummy td)
-                    GD.Print($"[BELLYSHOT] crew '{td.Name}' local {td.Position} world {td.GlobalPosition} down={td.Down} hp={td.MaxHealth:0}");
+                    Log.Print($"[BELLYSHOT] crew '{td.Name}' local {td.Position} world {td.GlobalPosition} down={td.Down} hp={td.MaxHealth:0}");
                 if (ch is Node3D n3 && n3.Name.ToString().StartsWith("TurretYaw"))
                 {
-                    GD.Print($"[BELLYSHOT] mount '{n3.Name}' local {n3.Position}");
+                    Log.Print($"[BELLYSHOT] mount '{n3.Name}' local {n3.Position}");
                     foreach (var g2 in n3.GetChildren())
                         if (g2 is Node3D pn2 && pn2.Name.ToString().StartsWith("TurretPitch"))
                             foreach (var m2 in pn2.GetChildren())
-                                GD.Print($"[BELLYSHOT]   gun child '{m2.GetType().Name}:{m2.Name}' mesh={(m2 is MeshInstance3D mi2 ? (mi2.Mesh == null ? "NULL" : mi2.Mesh.GetAabb().Size.ToString()) : "-")}");
+                                Log.Print($"[BELLYSHOT]   gun child '{m2.GetType().Name}:{m2.Name}' mesh={(m2 is MeshInstance3D mi2 ? (mi2.Mesh == null ? "NULL" : mi2.Mesh.GetAabb().Size.ToString()) : "-")}");
                 }
             }
 
@@ -3639,7 +3639,7 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), EmissionEnabled = true, Emission = new Color(1f, 0.1f, 0.1f), EmissionEnergyMultiplier = 0.8f },
                 Position = hub,
             });
-            GD.Print($"[TAILSHOT] {name}: hub {hub} (red pip)");
+            Log.Print($"[TAILSHOT] {name}: hub {hub} (red pip)");
             // Report what the belly beacon actually IS. "It exists and flashes" is what the parts suite checks;
             // whether it is the same FITTING as the nav lights is a different claim and needs the mesh type.
             if (v.FindChild("BeaconBelly", false, false) is MeshInstance3D bm)
@@ -3655,7 +3655,7 @@ namespace UnturnedGodot
                     foreach (var lv in arr[(int)Mesh.ArrayType.Vertex].AsVector3Array())
                         if (lv.X < -0.02f) nx++; else if (lv.X > 0.02f) px++;
                 }
-                GD.Print($"[BEACON] {name}: {bm.Mesh.GetType().Name} size {ab.Size} centre {ab.GetCenter()} verts -X{nx}/+X{px} sameAsNav={sameModel}");
+                Log.Print($"[BEACON] {name}: {bm.Mesh.GetType().Name} size {ab.Size} centre {ab.GetCenter()} verts -X{nx}/+X{px} sameAsNav={sameModel}");
             }
             var cam = new Camera3D { Current = true, Fov = 40f, Far = 400f };
             AddChild(cam);
@@ -3675,7 +3675,7 @@ namespace UnturnedGodot
         void BuildTailCheck()
         {
             string[] fleet = { "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird" };
-            GD.Print("[TAIL] airframe      specX  side   reach-X  reach+X   verts     nearest  verdict");
+            Log.Print("[TAIL] airframe      specX  side   reach-X  reach+X   verts     nearest  verdict");
             foreach (var name in fleet)
             {
                 var v = Vehicle.BuildByName(name);
@@ -3715,7 +3715,7 @@ namespace UnturnedGodot
                                : meshSide == "none" || meshSide == "sym" ? "no protruding post -- faired or centred"
                                : meshSide == specSide ? "ok"
                                : $"MISMATCH: hub is {specSide} but the post is {meshSide}";
-                GD.Print($"[TAIL] {name,-12} {hub.X,6:0.00}  {meshSide,-5} -X{negX,6:0.00} +X{posX,6:0.00}  n{negN,3}/{posN,-3} near{nearest,5:0.00}  {verdict}");
+                Log.Print($"[TAIL] {name,-12} {hub.X,6:0.00}  {meshSide,-5} -X{negX,6:0.00} +X{posX,6:0.00}  n{negN,3}/{posN,-3} near{nearest,5:0.00}  {verdict}");
                 v.QueueFree();
             }
             GetTree().Quit();
@@ -3769,9 +3769,9 @@ namespace UnturnedGodot
                 Scan(heli);
                 var top = new System.Collections.Generic.List<string>();
                 foreach (var kv in bins) if (kv.Value >= 4) top.Add($"Z{kv.Key / 2f:0.0}x{kv.Value}");
-                GD.Print($"[GEAR] visible gear geometry Z {lo:0.00}..{hi:0.00}; clusters: {string.Join(" ", top)}");
+                Log.Print($"[GEAR] visible gear geometry Z {lo:0.00}..{hi:0.00}; clusters: {string.Join(" ", top)}");
             }
-            GD.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
+            Log.Print($"[MAGNET/SPEC] slingHook={heli.DebugSlingHook} cableLen={heli.DebugSlingLen:0.00} forceAnchor={heli.DebugSlingAnchorLocal} drawAnchor={heli.DebugSlingVisualAnchorLocal}");
 
             // UG_MAG_CONTAINER=1: use the real MagnetableContainer instead of the stand-in box, which exercises the
             // FIXED attach point (all three axes) rather than the generic seat-the-AABB path.
@@ -3799,7 +3799,7 @@ namespace UnturnedGodot
                     cam2.LookAt(new Vector3(0f, 5.5f, 1.0f), Vector3.Up);
                     g2.Cam = cam2;   // track only when the aircraft is the subject
                 }
-                GD.Print($"[MAGNET] using a real MagnetableContainer ({MagnetableContainer.ContainerMass:0} kg)");
+                Log.Print($"[MAGNET] using a real MagnetableContainer ({MagnetableContainer.ContainerMass:0} kg)");
                 return;
             }
 
@@ -3834,7 +3834,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var mesh = ObjMesh.Load(dir + name + ".obj");
-            if (mesh == null) { GD.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
+            if (mesh == null) { Log.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
@@ -3846,7 +3846,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && name == "Well_0")
             {
                 var ws = WellShaft.Make(propMi, WellShaft.WallColor(mat.AlbedoTexture));
-                GD.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
+                Log.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
             }
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
             {
@@ -3856,11 +3856,11 @@ namespace UnturnedGodot
                 // was wrong (a hidden overlay uncovered the prop's own green trace), and it is not visible from any
                 // amount of staring at the lit one.
                 if (System.Environment.GetEnvironmentVariable("UG_MONITOR_OFF") == "1") hm.Toggle();
-                GD.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive} lit={hm.DebugLit})");
+                Log.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive} lit={hm.DebugLit})");
             }
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
-            GD.Print($"[PROPTEST] {name} aabb pos={aabb.Position} size={aabb.Size}");
+            Log.Print($"[PROPTEST] {name} aabb pos={aabb.Position} size={aabb.Size}");
             // UG_NOAXES=1: the axis bars meet AT the origin, so anything small sitting there (a base plate,
             // a pivot stub) is hidden behind the gizmo -- which is exactly the question when a prop looks
             // like it is missing its bottom. Turn them off to see what is really at 0,0,0.
@@ -3893,7 +3893,7 @@ namespace UnturnedGodot
                 }
             }
             if (System.Environment.GetEnvironmentVariable("UG_PROPSPIN") == "1") { _orbitCam = cam; _orbitCenter = propMi.Transform.Basis * c; _orbitR = r * 1.7f; }   // 360 turntable movie
-            GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+            Log.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
 
         // --trainshow : assemble train_cargo_0 from its extracted pieces (loco + 8 bogies + 3 cars +
@@ -4017,7 +4017,7 @@ namespace UnturnedGodot
             {
                 string nm = form + "_" + wood;
                 var m = ObjMesh.Load(odir + nm + ".obj");
-                if (m == null) { GD.Print($"[DOORS] {nm}.obj MISSING"); return; }
+                if (m == null) { Log.Print($"[DOORS] {nm}.obj MISSING"); return; }
                 var lb = m.GetAabb();
                 // The Gate is a GARAGE DOOR (master): wide + tilts UP (ripped anim axis = X-tilt). Its handle rips at the
                 // TOP but a garage door's handle belongs at the BOTTOM (front/back, master), so flip it 180 deg in-plane
@@ -4036,7 +4036,7 @@ namespace UnturnedGodot
                     mx = new Vector3(Mathf.Max(mx.X, wc.X), Mathf.Max(mx.Y, wc.Y), Mathf.Max(mx.Z, wc.Z));
                 }
                 Vector3 c = (mn + mx) * 0.5f;
-                GD.Print($"[DOORS] {nm} stood-up size={mx - mn} (w={mx.X - mn.X:0.00} h={mx.Y - mn.Y:0.00} d={mx.Z - mn.Z:0.00})");
+                Log.Print($"[DOORS] {nm} stood-up size={mx - mn} (w={mx.X - mn.X:0.00} h={mx.Y - mn.Y:0.00} d={mx.Z - mn.Z:0.00})");
                 var placement = new Transform3D(su, new Vector3(pos.X - c.X, -mn.Y, pos.Z - c.Z));
                 var world = placement;
                 if (openFrac > 0f && anims.TryGetValue(form, out var hs) && hs.Count == 1)   // single-hinge -> swing the whole mesh about its hinge; Doubledoor (2 hinges) needs a panel split, stays shut here
@@ -4101,7 +4101,7 @@ namespace UnturnedGodot
             {
                 if (wd.DoorProp != name) continue;
                 var placed = DoorDeploy.SpawnFor(wd, this, Vector3.Zero, 0f);
-                if (placed == null) { GD.Print($"[DOORTEST] {name}: DoorDeploy refused it (no hinge row / no mesh)"); GetTree().Quit(1); return; }
+                if (placed == null) { Log.Print($"[DOORTEST] {name}: DoorDeploy refused it (no hinge row / no mesh)"); GetTree().Quit(1); return; }
                 if (System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1")
                     foreach (var c in placed.GetChildren()) if (c is ObjectDoor od) od.SetInitialState(true);
                 var wcam = new Camera3D { Current = true, Fov = 55f };
@@ -4127,14 +4127,14 @@ namespace UnturnedGodot
                 var gnd = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(14f, 14f) } };
                 gnd.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.30f) };
                 AddChild(gnd);
-                GD.Print($"[DOORTEST] wooden door {name} placed via DoorDeploy");
+                Log.Print($"[DOORTEST] wooden door {name} placed via DoorDeploy");
                 return;
             }
 
             var bodyMesh = ObjMesh.Load(dir + name + ".obj");
-            if (bodyMesh == null) { GD.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
+            if (bodyMesh == null) { Log.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
             var doorCatalog = WorldBuilder.LoadDoorCatalog(dir);
-            if (!doorCatalog.TryGetValue(name, out var doorLeaves) || doorLeaves.Count == 0) { GD.Print($"[DOORTEST] no doors.txt entries for {name} -- run tools/extract_doors.py {name}"); GetTree().Quit(1); return; }
+            if (!doorCatalog.TryGetValue(name, out var doorLeaves) || doorLeaves.Count == 0) { Log.Print($"[DOORTEST] no doors.txt entries for {name} -- run tools/extract_doors.py {name}"); GetTree().Quit(1); return; }
 
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
@@ -4165,7 +4165,7 @@ namespace UnturnedGodot
             foreach (var doorCfg in doorLeaves)
             {
                 var doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile);
-                if (doorMesh == null) { GD.Print($"[DOORTEST] no door mesh {doorCfg.MeshFile}"); continue; }
+                if (doorMesh == null) { Log.Print($"[DOORTEST] no door mesh {doorCfg.MeshFile}"); continue; }
                 bool startOpen = (!doorAnim && doorOpenEnv != null) ? (doorOpenEnv == "1") : doorCfg.DefaultOpen;
                 string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
                 var openCurve = WorldBuilder.LoadDoorCurve(dir, curveBase, "open");
@@ -4174,9 +4174,9 @@ namespace UnturnedGodot
                 if (spawnedDoors.Count == 0) { repDuration = doorCfg.DurationSec; repStartOpen = startOpen; }
                 spawnedDoors.Add(door);
                 pivotSum += doorCfg.Pivot;
-                GD.Print($"[DOORTEST] {name} leaf mesh={doorCfg.MeshFile} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing} sound={doorCfg.Sound} hasAudio={door.DebugHasAudio}");
+                Log.Print($"[DOORTEST] {name} leaf mesh={doorCfg.MeshFile} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing} sound={doorCfg.Sound} hasAudio={door.DebugHasAudio}");
             }
-            if (spawnedDoors.Count == 0) { GD.Print($"[DOORTEST] no door leaves could be spawned for {name}"); GetTree().Quit(1); return; }
+            if (spawnedDoors.Count == 0) { Log.Print($"[DOORTEST] no door leaves could be spawned for {name}"); GetTree().Quit(1); return; }
             if (spawnedDoors.Count > 1)
                 foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
 
@@ -4200,7 +4200,7 @@ namespace UnturnedGodot
                 _doorAnim = true;
                 string awayWord = repStartOpen ? "CLOSE" : "OPEN";
                 string backWord = repStartOpen ? "OPEN" : "CLOSE";
-                GD.Print($"[DOORANIM] default={(repStartOpen ? "OPEN" : "CLOSED")}; timeline (s): hold default 0.000-{_doorAnimToggle1At:0.000}, {awayWord} toggle @{_doorAnimToggle1At:0.000}, settles ~{_doorAnimToggle1At + repDuration:0.000}, holds to {_doorAnimToggle2At:0.000}, {backWord} toggle @{_doorAnimToggle2At:0.000}, settles ~{_doorAnimToggle2At + repDuration:0.000}, quits @{_doorAnimDoneAt:0.000}");
+                Log.Print($"[DOORANIM] default={(repStartOpen ? "OPEN" : "CLOSED")}; timeline (s): hold default 0.000-{_doorAnimToggle1At:0.000}, {awayWord} toggle @{_doorAnimToggle1At:0.000}, settles ~{_doorAnimToggle1At + repDuration:0.000}, holds to {_doorAnimToggle2At:0.000}, {backWord} toggle @{_doorAnimToggle2At:0.000}, settles ~{_doorAnimToggle2At + repDuration:0.000}, quits @{_doorAnimDoneAt:0.000}");
             }
 
             // Camera: a few metres out along the direction the door(s) actually face, computed from the real
@@ -4237,7 +4237,7 @@ namespace UnturnedGodot
             }
             else cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
             cam.LookAt(lookAt, Vector3.Up);
-            GD.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
+            Log.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
         }
 
         // --containertest[=NAME]: spawn the doored prop (Fridge_0/Wardrobe_0/Counter_0..) as a REAL StoreShelf
@@ -4258,7 +4258,7 @@ namespace UnturnedGodot
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var bodyMesh = ObjMesh.Load(dir + name + ".obj");
-            if (bodyMesh == null) { GD.Print($"[CONTAINERTEST] no body mesh {name}"); GetTree().Quit(1); return; }
+            if (bodyMesh == null) { Log.Print($"[CONTAINERTEST] no body mesh {name}"); GetTree().Quit(1); return; }
 
             // The REAL container node: serverOwned=true skips the loot roll (no LootTables dependency for a pure
             // door render), showItems=false = a solid F-open prop. Exercises StoreShelf.BuildVisual's actual
@@ -4277,7 +4277,7 @@ namespace UnturnedGodot
                 for (double t = 0; t < settle - 1e-9; t += 1.0 / 60.0) shelf.TickDoorsForTest(1.0 / 60.0);
                 shelf.FreezeDoorsForTest();   // ...and HOLD it there, or the engine finishes the swing before the shot
             }
-            GD.Print($"[CONTAINERTEST] {name} hasDoors={shelf.HasDoors} open={open} settledSwing={shelf.DebugDoorSwing():0.00}");
+            Log.Print($"[CONTAINERTEST] {name} hasDoors={shelf.HasDoors} open={open} settledSwing={shelf.DebugDoorSwing():0.00}");
             if (System.Environment.GetEnvironmentVariable("UG_CONTAINER_FOCUS") == "1") shelf.SetShelfFocused(true);   // debug: force the whole-prop focus so a --shot shows the container's outline meshes present -- body (_shelfGlow) + each swinging door leaf (_leafOutline)
 
             // Camera from the door side, in StoreShelf's _upright frame (shelf spawned at yaw=0/pos=0 -> its
@@ -4323,7 +4323,7 @@ namespace UnturnedGodot
             }
             else cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
             cam.LookAt(lookAt, Vector3.Up);
-            GD.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
+            Log.Print($"[CONTAINERTEST] bodyAabb={bodyAabb} r={r:0.00} lookAt={lookAt} cam={cam.Position}");
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
@@ -4335,7 +4335,7 @@ namespace UnturnedGodot
         {
             string mp = ProjectSettings.GlobalizePath("res://content/pei_map.png");
             var img = System.IO.File.Exists(mp) ? ContentProvider.LoadImage(mp) : null;
-            if (img == null) { GD.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
+            if (img == null) { Log.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
             if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
             int W = img.GetWidth(), H = img.GetHeight();
             const float LevelSize = 1920f;
@@ -4348,7 +4348,7 @@ namespace UnturnedGodot
                     img.SetPixel(px, py, img.GetPixel(px, py).Lerp(WindHeat(w), 0.5f));
                 }
             img.SavePng("res://windmap.png");
-            GD.Print("[windmap] saved windmap.png");
+            Log.Print("[windmap] saved windmap.png");
             GetTree().Quit(0);
         }
 
@@ -4430,7 +4430,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(1f, 4.2f, 15f);   // closer: at 26 m the effects were small in frame and read worse than they are
             cam.LookAt(new Vector3(-4f, 2.2f, -5f), Vector3.Up);
-            GD.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
+            Log.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
         }
 
         // --impacttest : fire ONE reimplemented ImpactFx per surface across a grey wall (concrete / metal / wood / dirt
@@ -4543,9 +4543,9 @@ namespace UnturnedGodot
                     w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(-3.0f, 1.4f, 0.6f), cons.GlobalPosition }, valid: true);
                     gen.TogglePower();
                     PowerNet.Recompute(GetTree());
-                    GD.Print($"[CAGETEST] gen.IsPowered={gen.IsPowered} consumer.recv={cons.Live:0}w powered={cons.Powered}");
+                    Log.Print($"[CAGETEST] gen.IsPowered={gen.IsPowered} consumer.recv={cons.Live:0}w powered={cons.Powered}");
                 }
-                else GD.Print($"[CAGETEST] MISSING PORTS gen={gen.Ports.Count} cage={wallA?.Ports.Count}");
+                else Log.Print($"[CAGETEST] MISSING PORTS gen={gen.Ports.Count} cage={wallA?.Ports.Count}");
             }
 
             var cam = new Camera3D { Current = true, Fov = 56f, Far = 10000f };
@@ -4606,7 +4606,7 @@ namespace UnturnedGodot
             dot.SetAnchorsPreset(Control.LayoutPreset.Center);
             dot.Position = new Vector2(-3f, -3f);
             layer.AddChild(dot);
-            GD.Print("[barricadeplay] HOLD RMB to fly/look (WASD move, scroll=speed). LMB=place. [1-3]=def, Tab=mount family, R=rotate 90.");
+            Log.Print("[barricadeplay] HOLD RMB to fly/look (WASD move, scroll=speed). LMB=place. [1-3]=def, Tab=mount family, R=rotate 90.");
         }
 
         void BuildDeployTest()
@@ -4685,11 +4685,11 @@ namespace UnturnedGodot
                     _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
                     if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                     PowerNet.Recompute(GetTree());
-                    GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w draw={outp.Draw:0}w load={placedGen.LoadFraction:0.00}");
+                    Log.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w draw={outp.Draw:0}w load={placedGen.LoadFraction:0.00}");
                     if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1")   // destroy the spotlight -> its wire + port cubes must vanish (strawberry)
                     {
                         placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
-                        GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
+                        Log.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
                     }
                 }
                 if (!spotNight)   // the night shot is about the BEAM: a glowing red ghost parked in front of the
@@ -4730,9 +4730,9 @@ namespace UnturnedGodot
                     w2.SetPoints(new System.Collections.Generic.List<Vector3> { deskThru.GlobalPosition, new Vector3(0.3f, 0.2f, 0.3f), floorIn.GlobalPosition }, valid: true);
                     lampGen.TogglePower();
                     PowerNet.Recompute(GetTree());
-                    GD.Print($"[LAMPTEST] gen={lampGen.IsPowered} desk.recv={deskIn.Live:0}w powered={deskIn.Powered} thru={deskThru.Live:0}w floor.recv={floorIn.Live:0}w powered={floorIn.Powered}");
+                    Log.Print($"[LAMPTEST] gen={lampGen.IsPowered} desk.recv={deskIn.Live:0}w powered={deskIn.Powered} thru={deskThru.Live:0}w floor.recv={floorIn.Live:0}w powered={floorIn.Powered}");
                 }
-                else GD.Print($"[LAMPTEST] MISSING PORTS gen={lampGen.Ports.Count} desk={desk.Ports.Count} floor={floorLamp.Ports.Count}");
+                else Log.Print($"[LAMPTEST] MISSING PORTS gen={lampGen.Ports.Count} desk={desk.Ports.Count} floor={floorLamp.Ports.Count}");
                 // ORIENTATION PROBE, and it runs HEADLESS on purpose: master reports hand-placed standing lamps
                 // upside down, the arithmetic says otherwise, and a render cannot settle it while their game owns the
                 // GPU. The mesh's WORLD aabb is the ground truth -- if the shade is not above the base, the stand-up
@@ -4741,11 +4741,11 @@ namespace UnturnedGodot
                 {
                     MeshInstance3D mi = null;
                     foreach (var ch in dep.GetChildren()) if (ch is MeshInstance3D m && m.Mesh != null) { mi = m; break; }
-                    if (mi == null) { GD.Print($"[LAMPROT] {nm}: no mesh"); continue; }
+                    if (mi == null) { Log.Print($"[LAMPROT] {nm}: no mesh"); continue; }
                     var xf = mi.GlobalTransform; var ab = mi.Mesh.GetAabb();
                     float lo = float.MaxValue, hi = float.MinValue;
                     for (int i = 0; i < 8; i++) { float y = (xf * ab.GetEndpoint(i)).Y; lo = Mathf.Min(lo, y); hi = Mathf.Max(hi, y); }
-                    GD.Print($"[LAMPROT] {nm} StandRotX={DeployableDef.StandRotX} meshEuler={dep.Def.MeshEuler} worldY=[{lo:0.000},{hi:0.000}] basisY={xf.Basis.Y} {(hi > lo && lo > -0.2f ? "UPRIGHT" : "SUSPECT")}");
+                    Log.Print($"[LAMPROT] {nm} StandRotX={DeployableDef.StandRotX} meshEuler={dep.Def.MeshEuler} worldY=[{lo:0.000},{hi:0.000}] basisY={xf.Basis.Y} {(hi > lo && lo > -0.2f ? "UPRIGHT" : "SUSPECT")}");
                 }
                 // ...and the GHOST, through the REAL placer master uses -- not the harness Ghost() helper. The ghost is
                 // the MeshInstance itself, so it is the half that can lose the model fixup while the placed body keeps it.
@@ -4758,7 +4758,7 @@ namespace UnturnedGodot
                     var gxf = gm.GlobalTransform; var gab = gm.Mesh.GetAabb();
                     float glo = float.MaxValue, ghi = float.MinValue;
                     for (int i = 0; i < 8; i++) { float y = (gxf * gab.GetEndpoint(i)).Y; glo = Mathf.Min(glo, y); ghi = Mathf.Max(ghi, y); }
-                    GD.Print($"[LAMPROT] GHOST standing worldY=[{glo:0.000},{ghi:0.000}] {(ghi > 1.5f && glo > -0.2f ? "UPRIGHT" : "UPSIDE DOWN")}");
+                    Log.Print($"[LAMPROT] GHOST standing worldY=[{glo:0.000},{ghi:0.000}] {(ghi > 1.5f && glo > -0.2f ? "UPRIGHT" : "UPSIDE DOWN")}");
                     break;
                 }
                 look = new Vector3(0.2f, 1.0f, 0f);
@@ -4801,7 +4801,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1")
             {
                 var batMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Battery_0.obj"));
-                if (batMesh != null) { var bb = batMesh.GetAabb(); GD.Print($"[BATTERY] mesh AABB size={bb.Size} center={bb.GetCenter()}"); }
+                if (batMesh != null) { var bb = batMesh.GetAabb(); Log.Print($"[BATTERY] mesh AABB size={bb.Size} center={bb.GetCenter()}"); }
                 var bat = Deployable.Spawn(this, DeployableDef.Battery, Vector3.Zero, 0f);
                 if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")
                     foreach (var pt in bat.Ports) pt.SetArrowState(true, true);   // arrows only for port-debug; default = clean product shot
@@ -4819,7 +4819,7 @@ namespace UnturnedGodot
                 {
                     Deployable.Spawn(this, def, new Vector3(tx, 0f, 0f), 0f);
                     var m = ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{def.Model}.obj"));
-                    if (m != null) { var bb = m.GetAabb(); GD.Print($"[TRAPS] {def.Name} ({def.Model}) AABB size={bb.Size} center={bb.GetCenter()}"); }
+                    if (m != null) { var bb = m.GetAabb(); Log.Print($"[TRAPS] {def.Name} ({def.Model}) AABB size={bb.Size} center={bb.GetCenter()}"); }
                     tx += 1.3f;
                 }
                 look = new Vector3(0f, 0.05f, 0f);
@@ -4858,9 +4858,9 @@ namespace UnturnedGodot
                 void Prop(string nm, Vector3 pos)
                 {
                     var m = ObjMesh.Load(odir + nm + ".obj");
-                    if (m == null) { GD.Print($"[WATERTANK] {nm}.obj MISSING"); return; }
+                    if (m == null) { Log.Print($"[WATERTANK] {nm}.obj MISSING"); return; }
                     var bb = m.GetAabb();
-                    GD.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
+                    Log.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
                     var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                     string tp = odir + nm + "_tex.png";
                     if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
@@ -5000,7 +5000,7 @@ namespace UnturnedGodot
             // several angles (a break that hides from the front shows from the side). Applied last, over whatever
             // per-mode framing ran above. UG_CAMPITCH raises/lowers the eye by the same orbit for a higher/lower view.
             ApplyCamOrbit(cam, look);
-            GD.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
+            Log.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
         }
 
         // Orbit a camera around its look target so one scene can be captured from several angles.
@@ -5062,7 +5062,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(0f, 0.85f, 2.0f);
             cam.LookAt(new Vector3(0f, 0.2f, 0f), Vector3.Up);
-            GD.Print($"[CROPTEST] {name}: young(Foliage_0) left, grown(Foliage_1) right");
+            Log.Print($"[CROPTEST] {name}: young(Foliage_0) left, grown(Foliage_1) right");
         }
 
         // ---- MAP BAKE --------------------------------------------------------------------------------------
@@ -5155,8 +5155,8 @@ namespace UnturnedGodot
                 _bakeMapVp.AddChild(_bakeMapCam);
                 _bakeMapSize = size; _bakeMapY = y;
                 AimBakePass();
-                GD.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared, {lodHidden} far-LOD instances hidden, {seas} water surface(s) flattened");
-                GD.Print($"[bakemap] overview + {MapUI.BakedChunks}x{MapUI.BakedChunks} chunks at {_bakeMapRes} px = {MapUI.BakedChunks * _bakeMapRes} px of detail across the island");
+                Log.Print($"[bakemap] {_bakeMapRes}x{_bakeMapRes} ortho, {size:0} m level from y={y:0}, {cleared} visibility ranges cleared, {lodHidden} far-LOD instances hidden, {seas} water surface(s) flattened");
+                Log.Print($"[bakemap] overview + {MapUI.BakedChunks}x{MapUI.BakedChunks} chunks at {_bakeMapRes} px = {MapUI.BakedChunks * _bakeMapRes} px of detail across the island");
                 return;
             }
 
@@ -5166,16 +5166,16 @@ namespace UnturnedGodot
             if (++_bakeMapFrames < (_bakeMapPass == 0 ? 12 : 5)) return;
 
             var img = _bakeMapVp.GetTexture()?.GetImage();
-            if (img == null) { GD.PrintErr("[bakemap] the viewport produced no image"); _bakeMapDone = true; GetTree().Quit(); return; }
+            if (img == null) { Log.Err("[bakemap] the viewport produced no image"); _bakeMapDone = true; GetTree().Quit(); return; }
             string outPath = ProjectSettings.GlobalizePath("res://content/" + BakePassName(_bakeMapPass));
             // Tiles go out as JPEG (see MapUI.BakedChunkName for why, and for the edge test that picked 0.90);
             // the overview stays lossless.
             var err = outPath.EndsWith(".jpg") ? img.SaveJpg(outPath, 0.90f) : img.SavePng(outPath);
-            if (err != Error.Ok) GD.PrintErr($"[bakemap] SavePng failed: {err}");
-            else GD.Print($"[bakemap] wrote {System.IO.Path.GetFileName(outPath)} ({img.GetWidth()}x{img.GetHeight()})");
+            if (err != Error.Ok) Log.Err($"[bakemap] SavePng failed: {err}");
+            else Log.Print($"[bakemap] wrote {System.IO.Path.GetFileName(outPath)} ({img.GetWidth()}x{img.GetHeight()})");
 
             _bakeMapPass++;
-            if (_bakeMapPass > MapUI.BakedChunks * MapUI.BakedChunks) { _bakeMapDone = true; GD.Print("[bakemap] done"); GetTree().Quit(); return; }
+            if (_bakeMapPass > MapUI.BakedChunks * MapUI.BakedChunks) { _bakeMapDone = true; Log.Print("[bakemap] done"); GetTree().Quit(); return; }
             _bakeMapFrames = 0;
             AimBakePass();
         }
@@ -5277,7 +5277,7 @@ namespace UnturnedGodot
             var ui = new SkillsUI { SkillsSource = skills };
             AddChild(ui);
             ui.Open();
-            GD.Print("[skillsui] opened skills menu with a sample PlayerSkills");
+            Log.Print("[skillsui] opened skills menu with a sample PlayerSkills");
         }
 
         bool _menuXpDone;
@@ -5311,7 +5311,7 @@ namespace UnturnedGodot
                 int set = 0;
                 foreach (var (name, lv) in demo)
                     if (loop.Server.Skills.ServerSetSkillLevel(pid, name, lv, tick, out _, out _)) set++;
-                GD.Print($"[menuxp] server-granted {xp} XP (total {total}) + {set}/{demo.Length} skill levels");
+                Log.Print($"[menuxp] server-granted {xp} XP (total {total}) + {set}/{demo.Length} skill levels");
             }
             else
             {
@@ -5320,7 +5320,7 @@ namespace UnturnedGodot
                 sk.AwardExperience(xp);
                 foreach (var (name, lv) in demo)
                     if (sk.TryFind(name, out var one, out _)) one.level = (byte)System.Math.Min(lv, one.max);
-                GD.Print($"[menuxp] locally granted {xp} XP + {demo.Length} skill levels (no server)");
+                Log.Print($"[menuxp] locally granted {xp} XP + {demo.Length} skill levels (no server)");
             }
             _menuXpDone = true;
         }
@@ -5380,7 +5380,7 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 1.5f, w * 0.85f + 1.2f);
             cam.LookAt(new Vector3(0f, 0.15f, 0f), Vector3.Up);
             CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space outline overlay (so UG_FOCUS previews it)
-            GD.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
+            Log.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
         }
 
         // --profileshot=OUT: two rigged bodies wearing real Nameplates -- one with a VALID 128x128 picture that
@@ -5407,18 +5407,18 @@ namespace UnturnedGodot
             byte[] good = MakeDemoAvatarPng();
             ulong hash = SDG.Unturned.ProfileRules.AvatarHash(good);
             bool accepted = repl.ClientAcceptAvatar(hash, good);   // the REAL acceptance path: header re-check + hash recompute
-            GD.Print($"[PROFILESHOT] avatar accepted by the client path: {accepted} ({good.Length} bytes)");
+            Log.Print($"[PROFILESHOT] avatar accepted by the client path: {accepted} ({good.Length} bytes)");
 
             void Place(float x, string name, byte[] png)
             {
                 var body = UnturnedGodot.RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
-                if (body == null) { GD.Print("[PROFILESHOT] rig.json failed to load"); return; }
+                if (body == null) { Log.Print("[PROFILESHOT] rig.json failed to load"); return; }
                 body.PlayLoop("Idle");
                 body.Position = new Vector3(x, 0f, 0f);
                 AddChild(body);
                 var plate = UnturnedGodot.Nameplate.Attach(body);
                 plate?.Set(name, png);
-                GD.Print($"[PROFILESHOT] '{name}' plate: text='{plate?.DebugText}' missingTexture={plate?.DebugShowingMissingTexture}");
+                Log.Print($"[PROFILESHOT] '{name}' plate: text='{plate?.DebugText}' missingTexture={plate?.DebugShowingMissingTexture}");
             }
 
             // Far enough apart that the two plates cannot overlap -- a screenshot where the names run into
@@ -5478,7 +5478,7 @@ namespace UnturnedGodot
                 };
                 mags.Sort((a, b) => b.rounds.CompareTo(a.rounds));   // fuller mags higher, matching gameplay (master)
                 radial.OpenMags(mags, true, true, "HP");   // chamber type "HP" -> proves the chamber tracks independently of the seated mags (master)
-                GD.Print($"[AMMORADIAL] mag demo: {mags.Count} mags + remove + rack");
+                Log.Print($"[AMMORADIAL] mag demo: {mags.Count} mags + remove + rack");
                 return;
             }
             var choices = new System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)>();
@@ -5489,7 +5489,7 @@ namespace UnturnedGodot
             if (slug != null) choices.Add((slug, 6, true));   // slug shown as the currently-selected type
             if (bean != null) choices.Add((bean, 4, false));
             radial.OpenWith(choices, true);   // demo: show the unload segment too
-            GD.Print($"[AMMORADIAL] demo: {choices.Count} choices (buck={buck?.itemName}, slug={slug?.itemName})");
+            Log.Print($"[AMMORADIAL] demo: {choices.Count} choices (buck={buck?.itemName}, slug={slug?.itemName})");
         }
 
         // --animrig=NAME: build a rigged animal from content/NAME_rig.json at its REST pose (no clips) + RGB axes + auto-framed
@@ -5506,7 +5506,7 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
             var rc = RiggedCharacter.Build($"res://content/{name}_rig.json", new Color(0.52f, 0.36f, 0.22f), false, null, null);
-            if (rc == null) { GD.PrintErr($"[ANIMRIG] FAILED to build {name}"); GetTree().Quit(); return; }
+            if (rc == null) { Log.Err($"[ANIMRIG] FAILED to build {name}"); GetTree().Quit(); return; }
             AddChild(rc);
             { var clip = System.Environment.GetEnvironmentVariable("UG_CLIP"); if (!string.IsNullOrEmpty(clip)) rc.Play(clip); }   // UG_CLIP=Run/Walk/Idle to preview a clip (else rest pose)
             var aabb = rc.Body != null ? rc.Body.GetAabb() : new Aabb(Vector3.Zero, Vector3.One);
@@ -5521,7 +5521,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = c + new Vector3(r * 1.2f, r * 0.8f, r * 1.2f);
             cam.LookAt(c, Vector3.Up);
-            GD.Print($"[ANIMRIG] {name} body aabb size={aabb.Size} center={c} bones={rc.Skeleton?.GetBoneCount()}");
+            Log.Print($"[ANIMRIG] {name} body aabb size={aabb.Size} center={c} bones={rc.Skeleton?.GetBoneCount()}");
         }
 
         // --puppetanim: prove the RemotePlayers locomotion drive animates. A player rig.json body driven idle->walk->run
@@ -5539,7 +5539,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.3f });
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(30f, 30f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.22f, 0.26f) } });   // ground
             _paRig = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
-            if (_paRig == null) { GD.PrintErr("[puppetanim] rig build failed"); GetTree().Quit(1); return; }
+            if (_paRig == null) { Log.Err("[puppetanim] rig build failed"); GetTree().Quit(1); return; }
             AddChild(_paRig);
             _paRig.PlayLoop("Idle_Stand");
             if (System.Environment.GetEnvironmentVariable("UG_PAGUN") == "1")
@@ -5622,7 +5622,7 @@ namespace UnturnedGodot
             float look = _paStance == 3 ? 0.32f : (_paStance == 2 ? 0.68f : 0.98f);   // lower target for crouch/prone
             cam.LookAt(new Vector3(0f, look, 0f), Vector3.Up);
             _paActive = true;
-            GD.Print("[puppetanim] driving idle->walk->run via SetLocomotion+Tick");
+            Log.Print("[puppetanim] driving idle->walk->run via SetLocomotion+Tick");
         }
 
         // --rottest=NAME: place one prop under a candidate placement-rotation convention (UG_ROTCONV 0-3) with a chosen
@@ -5639,7 +5639,7 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var mesh = ObjMesh.Load(dir + name + ".obj");
-            if (mesh == null) { GD.PrintErr($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
+            if (mesh == null) { Log.Err($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
@@ -5677,7 +5677,7 @@ namespace UnturnedGodot
                 }
                 var ccam = new Camera3D { Current = true, Fov = 60f, Far = 10000f };
                 AddChild(ccam); ccam.Position = new Vector3(4.5f, 2.5f, 8f); ccam.LookAt(new Vector3(4.5f, 0f, 0f), Vector3.Up);
-                GD.Print($"[CLOCKROW] conv={conv} (leftmost=c0 correct, next 3 = rolled)");
+                Log.Print($"[CLOCKROW] conv={conv} (leftmost=c0 correct, next 3 = rolled)");
                 return;
             }
             var rot = ConvBasis(ex, ey, ez);
@@ -5691,7 +5691,7 @@ namespace UnturnedGodot
             var taabb = xf * mesh.GetAabb(); var c = taabb.GetCenter(); float r = Mathf.Max(taabb.Size.X, Mathf.Max(taabb.Size.Y, taabb.Size.Z)); if (r < 0.01f) r = 5f;
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
             AddChild(cam); cam.Position = c + new Vector3(r * 1.1f, r * 0.6f, r * 1.1f); cam.LookAt(c, Vector3.Up);
-            GD.Print($"[ROTTEST] {name} conv={conv} euler=({ex},{ey},{ez}) tAABB={taabb.Size} center={c}");
+            Log.Print($"[ROTTEST] {name} conv={conv} euler=({ex},{ey},{ez}) tAABB={taabb.Size} center={c}");
         }
 
         // active holiday (src HolidayUtil schedule + -Holiday override -> UG_HOLIDAY). Gates the ~285 in-season
@@ -5735,10 +5735,10 @@ namespace UnturnedGodot
                 {
                     var cyl = cs.Shape as CylinderShape3D;
                     string what = r.Count > 0 ? ((Node)r["collider"].As<Node>()).Name : "MISS";
-                    GD.Print($"[treecheck#{tested}] bodyPos={body.GlobalPosition} centre={c} r={cyl?.Radius:0.00} h={cyl?.Height:0.00} enabled={!cs.Disabled} ray->{what}");
+                    Log.Print($"[treecheck#{tested}] bodyPos={body.GlobalPosition} centre={c} r={cyl?.Radius:0.00} h={cyl?.Height:0.00} enabled={!cs.Disabled} ray->{what}");
                 }
             }
-            GD.Print($"[treecheck] {hit}/{tested} tree trunks solid -> collision {(tested > 0 && hit >= tested - 2 ? "WORKS" : "PARTIAL/BROKEN")}");
+            Log.Print($"[treecheck] {hit}/{tested} tree trunks solid -> collision {(tested > 0 && hit >= tested - 2 ? "WORKS" : "PARTIAL/BROKEN")}");
         }
 
         // The real-world assembly now lives in WorldBuilder.BuildFullWorld (MP_PLAN §4 Phase 3: one world
@@ -5786,8 +5786,8 @@ namespace UnturnedGodot
                 };
                 // (UG_MENUXP is applied from _Process -- see MenuXpTick; the listen-server has no skills
                 //  entry for this player yet at this point, so an award here returns a total of 0.)
-                if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); GD.Print($"[menuopen] {t.Value}"); }
-                else GD.PrintErr($"[menuopen] unknown tab '{menuTab}'");
+                if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); Log.Print($"[menuopen] {t.Value}"); }
+                else Log.Err($"[menuopen] unknown tab '{menuTab}'");
             }
             if (_peiPlayable)
             {
@@ -5851,7 +5851,7 @@ namespace UnturnedGodot
                     RotationDegrees = new Vector3(-90f, 0f, 0f),   // straight down; world +X = screen right, world +Z = screen DOWN
                 };
                 AddChild(mcam);
-                GD.Print($"[mapshot] ortho top-down centre=({mcx},{mcz}) halfExtent={half}m size={half * 2f}m");
+                Log.Print($"[mapshot] ortho top-down centre=({mcx},{mcz}) halfExtent={half}m size={half * 2f}m");
             }
             if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); if (!_loopbackConsuming) SpawnMapContainers(res); }   // stock the map with loot containers (A1: the StorageReplicaView materializes them under a consuming loopback) + grid-power boxes + gas pumps
         }
@@ -5871,7 +5871,7 @@ namespace UnturnedGodot
                 else
                     StoreShelf.Spawn(this, c.pos, c.mesh, c.table, c.yaw, c.display, c.label, rot: res.ContainerRots[_ci]);
             }
-            GD.Print($"[containers] spawned {res.Containers.Count} map containers post-build (asset DB ready)");
+            Log.Print($"[containers] spawned {res.Containers.Count} map containers post-build (asset DB ready)");
         }
 
         // Spawn the loot crates the editor saved for PEI (editor_PEI_crates.txt), each rolling its PEI item table (LootCrate).
@@ -5889,7 +5889,7 @@ namespace UnturnedGodot
                 LootCrate.Spawn(this, new Vector3(px, py, -pz), tbl);
                 n++;
             }
-            if (n > 0) GD.Print($"[loot-crate] spawned {n} editor loot crates in SP");
+            if (n > 0) Log.Print($"[loot-crate] spawned {n} editor loot crates in SP");
         }
 
         // Spawn the store shelves the editor saved for PEI (editor_PEI_shelves.txt), each rolling its PEI table + showing
@@ -5909,7 +5909,7 @@ namespace UnturnedGodot
                 StoreShelf.SpawnDouble(this, new Vector3(px, py, -pz), "Shelf_1", tbl, tbl, yaw);   // gondola: both aisles stocked
                 n++;
             }
-            if (n > 0) GD.Print($"[store-shelf] spawned {n} editor store shelves in SP");
+            if (n > 0) Log.Print($"[store-shelf] spawned {n} editor store shelves in SP");
         }
 
         // Spawn the grid-power boxes the editor saved for PEI (editor_PEI_gridpower.txt): the Circuit_0 mesh + a
@@ -5946,7 +5946,7 @@ namespace UnturnedGodot
                 }
                 n++;
             }
-            if (n > 0) GD.Print($"[grid-power] spawned {n} editor grid boxes in SP");
+            if (n > 0) Log.Print($"[grid-power] spawned {n} editor grid boxes in SP");
         }
 
         // Spawn the gas pumps the editor saved for PEI (editor_PEI_gaspump.txt): the Gas_Pump_0 mesh + a GasPump fuel
@@ -5982,7 +5982,7 @@ namespace UnturnedGodot
                 }
                 n++;
             }
-            if (n > 0) GD.Print($"[gas-pump] spawned {n} editor gas pumps in SP");
+            if (n > 0) Log.Print($"[gas-pump] spawned {n} editor gas pumps in SP");
         }
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from
@@ -6072,7 +6072,7 @@ namespace UnturnedGodot
             // map the editor built -- one world-building path, not two that can disagree.
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
-            GD.Print(genSeed.HasValue
+            Log.Print(genSeed.HasValue
                 ? $"[editor] custom map '{mapName}' (GENERATED island, seed {genSeed.Value}) up"
                 : $"[editor] custom map '{mapName}' (flat 3x3 base) up");
         }
@@ -6118,7 +6118,7 @@ namespace UnturnedGodot
                 AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
                 AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
                 AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
-                GD.Print("[fluidtest] refine render scene up — oil source -> refinery -> gas tank");
+                Log.Print("[fluidtest] refine render scene up — oil source -> refinery -> gas tank");
                 return;
             }
 
@@ -6146,7 +6146,7 @@ namespace UnturnedGodot
                 AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
                 AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
                 AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
-                GD.Print("[fluidtest] pump render scene up — low source -> powered pump -> HIGH tank (uphill)");
+                Log.Print("[fluidtest] pump render scene up — low source -> powered pump -> HIGH tank (uphill)");
                 return;
             }
 
@@ -6171,7 +6171,7 @@ namespace UnturnedGodot
                 AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
                 AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
                 AddChild(new Camera3D { Position = new Vector3(0f, 4f, 11f), RotationDegrees = new Vector3(-18f, 0f, 0f), Current = true });
-                GD.Print("[fluidtest] split render scene up — source -> splitter -> two storages");
+                Log.Print("[fluidtest] split render scene up — source -> splitter -> two storages");
                 return;
             }
 
@@ -6183,21 +6183,21 @@ namespace UnturnedGodot
                 AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
                 AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
                 AddChild(new Camera3D { Position = new Vector3(0f, 3.2f, 8f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
-                GD.Print("[fluidtest] render scene up — source full, storage filling live");
+                Log.Print("[fluidtest] render scene up — source full, storage filling live");
                 return;   // no quit; the movie harness's --quit-after ends it
             }
 
-            GD.Print($"[fluidtest] start: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0}");
+            Log.Print($"[fluidtest] start: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0}");
             const float dt = 0.1f;
             for (int i = 0; i < 100; i++)   // 10 s of 0.1 s ticks -> ~500 units moved (50/s), conserved to 1000
             {
                 FluidNet.Tick(GetTree(), dt);
                 if (i == 9 || i == 49 || i == 99)
-                    GD.Print($"[fluidtest] t={(i + 1) * dt:0.0}s: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0} flow={sto.Ports[0].Flow:0} flowing={sto.Ports[0].Flowing}");
+                    Log.Print($"[fluidtest] t={(i + 1) * dt:0.0}s: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0} flow={sto.Ports[0].Flow:0} flowing={sto.Ports[0].Flowing}");
             }
             float total = src.Tank.Amount + sto.Tank.Amount;
             bool ok = sto.Tank.Amount > 400f && src.Tank.Amount < 600f && Mathf.Abs(total - 1000f) < 0.5f;
-            GD.Print($"[fluidtest] RESULT {(ok ? "PASS" : "FAIL")}: storage {sto.Tank.Amount:0}, source {src.Tank.Amount:0}, conserved total {total:0}/1000");
+            Log.Print($"[fluidtest] RESULT {(ok ? "PASS" : "FAIL")}: storage {sto.Tank.Amount:0}, source {src.Tank.Amount:0}, conserved total {total:0}/1000");
             GetTree().Quit();
         }
 
@@ -6217,14 +6217,14 @@ namespace UnturnedGodot
             var spA = srcA.PortNodes[0]; var cpA = stoA.PortNodes[0];
             var vA = FluidHoseRule.Completion(spA.Kind, cpA.Kind,
                 srcA.Tank.Type == FluidType.None, stoA.Tank.Type == FluidType.None, srcA.Tank.Type == stoA.Tank.Type, false, false);
-            GD.Print($"[hosetool] case A verdict={vA} (want Ok)");
+            Log.Print($"[hosetool] case A verdict={vA} (want Ok)");
             if (vA != HoseVerdict.Ok) ok = false;
             else
             {   // connect exactly as CompleteHose does: order by kind, empty adopts, build + register the hose
                 if (stoA.Tank.Type == FluidType.None) stoA.Tank.Type = srcA.Tank.Type;   // adopt
                 var hA = new Hose { Source = spA.Node, Consumer = cpA.Node }; AddChild(hA);
                 for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-                GD.Print($"[hosetool] case A: storage={stoA.Tank.Amount:0} type={FluidDef.Name(stoA.Tank.Type)}");
+                Log.Print($"[hosetool] case A: storage={stoA.Tank.Amount:0} type={FluidDef.Name(stoA.Tank.Type)}");
                 if (!(stoA.Tank.Amount > 400f && stoA.Tank.Type == FluidType.Fuel)) ok = false;   // filled + adopted Fuel
             }
 
@@ -6235,7 +6235,7 @@ namespace UnturnedGodot
             AddChild(srcB); AddChild(stoB);
             var vB = FluidHoseRule.Completion(srcB.PortNodes[0].Kind, stoB.PortNodes[0].Kind,
                 srcB.Tank.Type == FluidType.None, stoB.Tank.Type == FluidType.None, srcB.Tank.Type == stoB.Tank.Type, false, false);
-            GD.Print($"[hosetool] case B verdict={vB} (want Mismatch)");
+            Log.Print($"[hosetool] case B verdict={vB} (want Mismatch)");
             if (vB != HoseVerdict.Mismatch) ok = false;
 
             // --- Case C (F4): a SPLITTER fans one source to two storages (each hose downhill: src above splitter above stores) ---
@@ -6252,10 +6252,10 @@ namespace UnturnedGodot
             for (int i = 0; i < 100; i++)
             {
                 FluidNet.Tick(GetTree(), 0.1f);
-                if (i == 5) GD.Print($"[hosetool] case C t=0.6: sto0 accepts={stoC0.Ports[0].SolveRate:0} sto1 accepts={stoC1.Ports[0].SolveRate:0} srcLoad={srcC.Ports[0].Load:0} (want 50/50/100 — Flow OFFERED is higher through a splitter)");
+                if (i == 5) Log.Print($"[hosetool] case C t=0.6: sto0 accepts={stoC0.Ports[0].SolveRate:0} sto1 accepts={stoC1.Ports[0].SolveRate:0} srcLoad={srcC.Ports[0].Load:0} (want 50/50/100 — Flow OFFERED is higher through a splitter)");
             }
             float totalC = srcC.Tank.Amount + stoC0.Tank.Amount + stoC1.Tank.Amount;
-            GD.Print($"[hosetool] case C: sto0={stoC0.Tank.Amount:0} sto1={stoC1.Tank.Amount:0} src={srcC.Tank.Amount:0} total={totalC:0}/2000 (want both filled + conserved)");
+            Log.Print($"[hosetool] case C: sto0={stoC0.Tank.Amount:0} sto1={stoC1.Tank.Amount:0} src={srcC.Tank.Amount:0} total={totalC:0}/2000 (want both filled + conserved)");
             if (!(stoC0.Tank.Amount > 400f && stoC1.Tank.Amount > 400f && Mathf.Abs(totalC - 2000f) < 1f)) ok = false;
 
             // --- Case D (F4): a COMBINER merges two sources into one storage (each source above the combiner above the store) ---
@@ -6271,7 +6271,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = comb.Ports[2], Consumer = stoD.Ports[0] });    // combiner passthrough (Ports[2]) -> storage
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
             float totalD = srcD0.Tank.Amount + srcD1.Tank.Amount + stoD.Tank.Amount;
-            GD.Print($"[hosetool] case D: storage={stoD.Tank.Amount:0} src0={srcD0.Tank.Amount:0} src1={srcD1.Tank.Amount:0} total={totalD:0}/10000 (want storage filled + conserved)");
+            Log.Print($"[hosetool] case D: storage={stoD.Tank.Amount:0} src0={srcD0.Tank.Amount:0} src1={srcD1.Tank.Amount:0} total={totalD:0}/10000 (want storage filled + conserved)");
             if (!(stoD.Tank.Amount > 4000f && Mathf.Abs(totalD - 10000f) < 1f)) ok = false;
 
             // --- Case E (F5): a POWERED pump LIFTS fluid uphill (source low -> pump -> HIGH tank, past the gravity gate) ---
@@ -6284,7 +6284,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = pumpE.Ports[1], Consumer = hiE.Ports[0] });    // pump passthrough -> HIGH tank (uphill)
             bool pumpIsConsumer = pumpE.PowerPorts.Count >= 1 && pumpE.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && pumpE.PowerPorts[0].Role == DeployableDef.SwitchRole.None && pumpE.IsInGroup("deployables");   // [0] = power INPUT (draws PumpWatts); [1..2] = remote on/off triggers
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case E: hiTank={hiE.Tank.Amount:0} (want filled — powered pump lifted it up) · powerConsumer={pumpIsConsumer}");
+            Log.Print($"[hosetool] case E: hiTank={hiE.Tank.Amount:0} (want filled — powered pump lifted it up) · powerConsumer={pumpIsConsumer}");
             if (!(hiE.Tank.Amount > 400f && pumpIsConsumer)) ok = false;
 
             // --- Case F (F5): an UNPOWERED pump can't lift — the high tank stays empty (gravity gate holds) ---
@@ -6296,7 +6296,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = srcF.Ports[0], Consumer = pumpF.Ports[0] });
             AddChild(new Hose { Source = pumpF.Ports[1], Consumer = hiF.Ports[0] });
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case F: hiTank={hiF.Tank.Amount:0} (want ~0 — unpowered pump can't lift uphill)");
+            Log.Print($"[hosetool] case F: hiTank={hiF.Tank.Amount:0} (want ~0 — unpowered pump can't lift uphill)");
             if (hiF.Tank.Amount > 1f) ok = false;
 
             // --- Case G (F5): the REAL power bridge — a wired generator powers the pump (no debug flag), which then lifts ---
@@ -6316,7 +6316,7 @@ namespace UnturnedGodot
             PowerNet.Recompute(GetTree());     // solve the power net -> the pump's consumer port lights Powered
             bool poweredReal = pumpG.IsPowered;
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case G: pump powered by wire={poweredReal} · hiTank={hiG.Tank.Amount:0} (want powered + filled)");
+            Log.Print($"[hosetool] case G: pump powered by wire={poweredReal} · hiTank={hiG.Tank.Amount:0} (want powered + filled)");
             if (!(poweredReal && hiG.Tank.Amount > 400f)) ok = false;
 
             // --- Case H (F5b): a REFINERY transforms oil -> gas (deletes oil input, produces gas output into a tank) ---
@@ -6329,7 +6329,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = refinery.Ports[1], Consumer = gasTank.Ports[0] });   // refinery output (Source, Gas) -> tank
             bool typedPorts = refinery.PortNodes[0].EffectiveType == FluidType.Oil && refinery.PortNodes[1].EffectiveType == FluidType.Gas;
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case H: oil={oilSrc.Tank.Amount:0} gasTank={gasTank.Tank.Amount:0} · ports oil-in/gas-out={typedPorts} · refineryActive={refinery.TransformActive}");
+            Log.Print($"[hosetool] case H: oil={oilSrc.Tank.Amount:0} gasTank={gasTank.Tank.Amount:0} · ports oil-in/gas-out={typedPorts} · refineryActive={refinery.TransformActive}");
             if (!(oilSrc.Tank.Amount < 600f && gasTank.Tank.Amount > 400f && typedPorts)) ok = false;   // oil consumed + gas produced + ports carry in/out types
 
             // --- Case I (F5): pump lift PROPAGATES through a splitter — a reachable high tank fills, a too-high one blocks ---
@@ -6346,7 +6346,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = splitI.Ports[1], Consumer = lowI.Ports[0] });   // splitter -> low high-tank (Y4)
             AddChild(new Hose { Source = splitI.Ports[2], Consumer = highI.Ports[0] });  // splitter -> too-high tank (Y8)
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case I: low(Y4)={lowI.Tank.Amount:0} high(Y8)={highI.Tank.Amount:0} (want low filled via lift-through-splitter, high blocked by ceiling 6)");
+            Log.Print($"[hosetool] case I: low(Y4)={lowI.Tank.Amount:0} high(Y8)={highI.Tank.Amount:0} (want low filled via lift-through-splitter, high blocked by ceiling 6)");
             if (!(lowI.Tank.Amount > 400f && highI.Tank.Amount < 1f)) ok = false;
 
             // --- Case J (F5): a VALVE is a switch for a hose — open flows, closed stops ---
@@ -6362,7 +6362,7 @@ namespace UnturnedGodot
             valveJ.ToggleValve();   // CLOSE it
             for (int i = 0; i < 50; i++) FluidNet.Tick(GetTree(), 0.1f);   // valve CLOSED -> no more flow
             float afterClose = stoJ.Tank.Amount;
-            GD.Print($"[hosetool] case J: openFill={openFill:0} afterClose={afterClose:0} (want ~250 while open, unchanged after closing)");
+            Log.Print($"[hosetool] case J: openFill={openFill:0} afterClose={afterClose:0} (want ~250 while open, unchanged after closing)");
             if (!(openFill > 200f && Mathf.Abs(afterClose - openFill) < 1f)) ok = false;
 
             // --- Case K (items): each fluid DeployableDef places a working FluidContainer via the item/placement rail ---
@@ -6375,14 +6375,14 @@ namespace UnturnedGodot
                 bool roleOk = placed != null && placed.Role == wantRoles[k] && DeployableDef.ById(fdefs[k].Id) == fdefs[k];
                 if (fdefs[k].Fluid == FluidRole.Pump && placed is not FluidPump) roleOk = false;
                 if (fdefs[k] == DeployableDef.Purifier && placed is not FluidPurifier) roleOk = false;   // the purifier def must spawn the powered subclass
-                if (!roleOk) { itemsOk = false; GD.Print($"[hosetool] item {fdefs[k].Name} FAILED (role {placed?.Role})"); }
+                if (!roleOk) { itemsOk = false; Log.Print($"[hosetool] item {fdefs[k].Name} FAILED (role {placed?.Role})"); }
             }
             // end-to-end: place a Water Source (high) + a Fluid Tank (low) via the rail, hose, tick -> tank fills
             var wsrc = FluidDeploy.SpawnFor(DeployableDef.WaterSource, this, new Vector3(-4f, 2f, 104f), 0f) as FluidContainer;
             var wtank = FluidDeploy.SpawnFor(DeployableDef.FluidTank, this, new Vector3(4f, 0f, 104f), 0f) as FluidContainer;
             AddChild(new Hose { Source = wsrc.Ports[0], Consumer = wtank.Ports[0] });
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case K: allRolesOk={itemsOk} · placed WaterSource->FluidTank fills to {wtank.Tank.Amount:0} (want >400)");
+            Log.Print($"[hosetool] case K: allRolesOk={itemsOk} · placed WaterSource->FluidTank fills to {wtank.Tank.Amount:0} (want >400)");
             if (!(itemsOk && wtank.Tank.Amount > 400f)) ok = false;
 
             // --- Case L (items by name): `give <name>` resolves each fluid item to the right id (exact-match branch) ---
@@ -6394,9 +6394,9 @@ namespace UnturnedGodot
             foreach (var (nm, id) in byNameChecks)
             {
                 var a = System.Linq.Enumerable.FirstOrDefault(SDG.Unturned.Assets.all(), x => string.Equals(x.itemName, nm, System.StringComparison.OrdinalIgnoreCase));
-                if (a == null || a.id != id) { byName = false; GD.Print($"[hosetool] name '{nm}' -> {(a?.id.ToString() ?? "MISSING")} (want {id})"); }
+                if (a == null || a.id != id) { byName = false; Log.Print($"[hosetool] name '{nm}' -> {(a?.id.ToString() ?? "MISSING")} (want {id})"); }
             }
-            GD.Print($"[hosetool] case L: all fluid items resolve by name = {byName}");
+            Log.Print($"[hosetool] case L: all fluid items resolve by name = {byName}");
             if (!byName) ok = false;
 
             // --- Case M (tank buffer): a tank has an INPUT and an OUTPUT — source -> tank -> tank2, tank feeds downstream ---
@@ -6409,7 +6409,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = tankM.Ports[1], Consumer = tank2M.Ports[0] });  // tank OUTPUT (Ports[1]=Source) -> tank2 input
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
             float totalM = srcM.Tank.Amount + tankM.Tank.Amount + tank2M.Tank.Amount;
-            GD.Print($"[hosetool] case M: src={srcM.Tank.Amount:0} tank={tankM.Tank.Amount:0} tank2={tank2M.Tank.Amount:0} total={totalM:0}/3000 (want tank2 filled via the tank's OUTPUT + conserved)");
+            Log.Print($"[hosetool] case M: src={srcM.Tank.Amount:0} tank={tankM.Tank.Amount:0} tank2={tank2M.Tank.Amount:0} total={totalM:0}/3000 (want tank2 filled via the tank's OUTPUT + conserved)");
             if (!(tank2M.Tank.Amount > 400f && Mathf.Abs(totalM - 3000f) < 2f)) ok = false;   // tank2 got fluid THROUGH the buffer tank + conserved
 
             // --- Case N (inlet + outlet): a NO-HEAD infinite INLET needs a pump; an OUTLET drain deletes what enters it ---
@@ -6431,7 +6431,7 @@ namespace UnturnedGodot
             srcO.Position = new Vector3(-4f, 1f, 128f); AddChild(srcO);
             AddChild(new Hose { Source = srcO.Ports[0], Consumer = outlet.Ports[0] });
             for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case N: inlet pumpOff tank={inletOff:0} (want ~0) pumpOn tank={tankN.Tank.Amount:0} (want filled) inlet={inlet.Tank.Amount:0} (want 1000 infinite) · outlet drained src {1000 - srcO.Tank.Amount:0}, stored {outlet.Tank.Amount:0} (want >0 drained, 0 stored)");
+            Log.Print($"[hosetool] case N: inlet pumpOff tank={inletOff:0} (want ~0) pumpOn tank={tankN.Tank.Amount:0} (want filled) inlet={inlet.Tank.Amount:0} (want 1000 infinite) · outlet drained src {1000 - srcO.Tank.Amount:0}, stored {outlet.Tank.Amount:0} (want >0 drained, 0 stored)");
             if (!(inletOff < 1f && tankN.Tank.Amount > 400f && inlet.Tank.Amount > 999f && srcO.Tank.Amount < 600f && outlet.Tank.Amount < 1f)) ok = false;
 
             // --- Case O (hose removal): removing a hose (leaves the "hoses" group) stops its flow immediately ---
@@ -6444,7 +6444,7 @@ namespace UnturnedGodot
             float beforeRemove = tankP.Tank.Amount;
             hP.RemoveFromGroup("hoses");   // what RemoveHose does (then QueueFree) -> stop conducting this tick
             for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);   // hose gone -> no more flow
-            GD.Print($"[hosetool] case O: beforeRemove={beforeRemove:0} afterRemove={tankP.Tank.Amount:0} (want filled then UNCHANGED after removing the hose)");
+            Log.Print($"[hosetool] case O: beforeRemove={beforeRemove:0} afterRemove={tankP.Tank.Amount:0} (want filled then UNCHANGED after removing the hose)");
             if (!(beforeRemove > 100f && Mathf.Abs(tankP.Tank.Amount - beforeRemove) < 1f)) ok = false;
 
             // --- Case P (bug-3): the type-lock resolves THROUGH a tankless fitting. A Fuel source feeds a PUMP (no tank of
@@ -6459,7 +6459,7 @@ namespace UnturnedGodot
             var pumpType = FluidNet.ResolveNetType(GetTree(), pumpQ.PortNodes[1], new System.Collections.Generic.HashSet<FluidContainer>());   // pump OUTPUT resolves through the fitting
             var vQ = FluidHoseRule.Completion(pumpQ.PortNodes[1].Kind, waterQ.PortNodes[0].Kind,
                 pumpType == FluidType.None, waterQ.Tank.Type == FluidType.None, pumpType == waterQ.Tank.Type, false, false);
-            GD.Print($"[hosetool] case P: pump resolves to {FluidDef.Name(pumpType)} (want Fuel) · pump->water verdict={vQ} (want Mismatch)");
+            Log.Print($"[hosetool] case P: pump resolves to {FluidDef.Name(pumpType)} (want Fuel) · pump->water verdict={vQ} (want Mismatch)");
             if (!(pumpType == FluidType.Fuel && vQ == HoseVerdict.Mismatch)) ok = false;
 
             // --- Case Q (flow boost): a POWERED pump runs its line at 5x the gravity rate (125 -> 625). A plain downhill
@@ -6478,7 +6478,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = qBpump.Ports[1], Consumer = qBtank.Ports[0] });
             for (int i = 0; i < 5; i++) FluidNet.Tick(GetTree(), 0.1f);   // 0.5s: gravity ~62, pumped ~312
             float qRatio = qGtank.Tank.Amount > 1f ? qBtank.Tank.Amount / qGtank.Tank.Amount : 0f;
-            GD.Print($"[hosetool] case Q: gravity={qGtank.Tank.Amount:0} pumped={qBtank.Tank.Amount:0} ratio={qRatio:0.0} (want ~5x)");
+            Log.Print($"[hosetool] case Q: gravity={qGtank.Tank.Amount:0} pumped={qBtank.Tank.Amount:0} ratio={qRatio:0.0} (want ~5x)");
             if (!(qRatio > 4f && qRatio < 6f)) ok = false;
 
             // --- Case R (auto-shutoff): a powered pump idles (hasWork false, 0w draw) when the line has no downstream demand
@@ -6501,7 +6501,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = rPump2.Ports[1], Consumer = rTank2.Ports[0] });
             for (int i = 0; i < 10; i++) FluidNet.Tick(GetTree(), 0.1f);
             bool dryShut = !rPump2.DebugHasWork && rPump2.DebugInputWatts < 1f;
-            GD.Print($"[hosetool] case R: full-target shutoff={fullShut} (hasWork={rPump.DebugHasWork} watts={rPump.DebugInputWatts:0}) · dry-source shutoff={dryShut} · fullTank unchanged={Mathf.Abs(rFull.Tank.Amount - 500f) < 1f}");
+            Log.Print($"[hosetool] case R: full-target shutoff={fullShut} (hasWork={rPump.DebugHasWork} watts={rPump.DebugInputWatts:0}) · dry-source shutoff={dryShut} · fullTank unchanged={Mathf.Abs(rFull.Tank.Amount - 500f) < 1f}");
             if (!(fullShut && dryShut && Mathf.Abs(rFull.Tank.Amount - 500f) < 1f)) ok = false;
 
             // --- Case S (fuel a generator via hose): a fuel source hosed to a generator's FUEL INLET fills the gen's Fuel
@@ -6516,7 +6516,7 @@ namespace UnturnedGodot
             for (int i = 0; i < 40; i++) FluidNet.Tick(GetTree(), 0.1f);
             bool waterRefused = inletS != null && FluidHoseRule.Completion(FluidPortKind.Source, inletS.PortNodes[0].Kind,
                 false, inletS.Tank.Type == FluidType.None, FluidType.Water == inletS.Tank.Type, false, false) == HoseVerdict.Mismatch;
-            GD.Print($"[hosetool] case S: gen fuel={genS.Fuel:0} (want >0 — fuelled via hose) · water→fuel-inlet refused={waterRefused}");
+            Log.Print($"[hosetool] case S: gen fuel={genS.Fuel:0} (want >0 — fuelled via hose) · water→fuel-inlet refused={waterRefused}");
             if (!(inletS != null && genS.Fuel > 100f && waterRefused)) ok = false;
 
             // --- Case T (water quality): a container takes the WORST quality that enters it. Tainted source -> tainted tank;
@@ -6538,7 +6538,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = slSrc.Ports[0], Consumer = sluiceT.Ports[0] });   // clean water -> sluice input
             AddChild(new Hose { Source = sluiceT.Ports[1], Consumer = slTank.Ports[0] });  // sluice output (dirty) -> tank
             for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);
-            GD.Print($"[hosetool] case T: tainted→{tTank.Tank.Quality} (want Tainted) · clean→{cTank.Tank.Quality} (want Clean) · sluice→{slTank.Tank.Quality} (want Dirty)");
+            Log.Print($"[hosetool] case T: tainted→{tTank.Tank.Quality} (want Tainted) · clean→{cTank.Tank.Quality} (want Clean) · sluice→{slTank.Tank.Quality} (want Dirty)");
             if (!(tTank.Tank.Quality == WaterQuality.Tainted && cTank.Tank.Quality == WaterQuality.Clean && slTank.Tank.Quality == WaterQuality.Dirty)) ok = false;
 
             // --- Case U (container fill): a fluid CONTAINER item RMB-fills from a tank, type-locked + worst-quality-wins.
@@ -6553,7 +6553,7 @@ namespace UnturnedGodot
             var fuelTank = new FluidTank(FluidType.Fuel, 3000f, 3000f);
             float f2 = FluidItem.Fill(canItem, canAsset, fuelTank, out string uMsg);   // canteen holds Water + has 200 mL space -> fuel refused by TYPE-LOCK (not "full"), tank untouched
             bool uLock = f2 <= 0f && uMsg != null && uMsg.Contains("mix") && Mathf.Abs(fuelTank.Amount - 3000f) < 0.5f;
-            GD.Print($"[hosetool] case U: fill {f1:0}mL type={cuType} q={cuQ} tank={taintedTank.Amount:0} · mismatch moved={f2:0} (\"{uMsg}\")");
+            Log.Print($"[hosetool] case U: fill {f1:0}mL type={cuType} q={cuQ} tank={taintedTank.Amount:0} · mismatch moved={f2:0} (\"{uMsg}\")");
             if (!(uFill && uLock)) ok = false;
 
             // --- Case V (container drink): a sip takes 50 mL off a CLEAN water bottle + returns hydration; dirty/tainted
@@ -6566,7 +6566,7 @@ namespace UnturnedGodot
             var dirtyItem = new SDG.Unturned.Item(60002); FluidItem.Write(dirtyItem, FluidType.Water, 1000f, WaterQuality.Dirty);
             float s2 = FluidItem.Sip(dirtyItem, botAsset, out float hyd2, out string vMsg);
             bool vRefuse = s2 <= 0f && hyd2 <= 0f;
-            GD.Print($"[hosetool] case V: sip {s1:0}mL (+{hyd1:0.00}) left={vAmt:0} · dirty refused={s2 <= 0f} (\"{vMsg}\")");
+            Log.Print($"[hosetool] case V: sip {s1:0}mL (+{hyd1:0.00}) left={vAmt:0} · dirty refused={s2 <= 0f} (\"{vMsg}\")");
             if (!(vSip && vRefuse)) ok = false;
 
             // --- Case W (purifier): tainted water + POWER -> CLEAN water; DEAD without power (strawberry). A tainted source
@@ -6585,7 +6585,7 @@ namespace UnturnedGodot
             purifier.DebugForcePower = true;                                                 // wire power
             for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
             bool onClean = pTank.Tank.Amount > 400f && pTank.Tank.Quality == WaterQuality.Clean && pSrc.Tank.Amount < 5000f;
-            GD.Print($"[hosetool] case W: OFF tank={offTank:0} src={offSrc:0} (want 0/5000) · ON tank={pTank.Tank.Amount:0} q={pTank.Tank.Quality} src={pSrc.Tank.Amount:0} (want >400/Clean/<5000)");
+            Log.Print($"[hosetool] case W: OFF tank={offTank:0} src={offSrc:0} (want 0/5000) · ON tank={pTank.Tank.Amount:0} q={pTank.Tank.Quality} src={pSrc.Tank.Amount:0} (want >400/Clean/<5000)");
             if (!(offInert && onClean)) ok = false;
 
             // --- Case X (drink fluids): the new beverage fluids (soda/cola/OJ/milk/coconut/energy) are ALL drinkable + a
@@ -6601,7 +6601,7 @@ namespace UnturnedGodot
             var ojItem = new SDG.Unturned.Item(463);   // fresh -> lazily full of OJ
             float sx = FluidItem.Sip(ojItem, ojAsset, out float hydx, out _);
             bool ojSip = Mathf.Abs(sx - FluidItem.SipML) < 0.5f && hydx > 0f;
-            GD.Print($"[hosetool] case X: beverages drink={allDrink} · bad-water BLOCKED={badWaterBlocked} · fuel+syrup+glue+chem drink={elseDrinkable} · OJ sip {sx:0}mL (+{hydx:0.00})");
+            Log.Print($"[hosetool] case X: beverages drink={allDrink} · bad-water BLOCKED={badWaterBlocked} · fuel+syrup+glue+chem drink={elseDrinkable} · OJ sip {sx:0}mL (+{hydx:0.00})");
             if (!(allDrink && badWaterBlocked && elseDrinkable && ojSip)) ok = false;
 
             // --- Case Y (water tower): a map WATER TOWER is an INFINITE, TAINTED water source with head -> hose it downhill
@@ -6613,7 +6613,7 @@ namespace UnturnedGodot
             AddChild(new Hose { Source = tower.Ports[0], Consumer = towerTank.Ports[0] });   // tower output (Ports[0]=Source) -> tank
             for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
             bool towerOk = towerTank.Tank.Amount > 400f && towerTank.Tank.Quality == WaterQuality.Tainted && tower.Tank.Amount > 199999f;   // filled + tainted; tower infinite (undepleted)
-            GD.Print($"[hosetool] case Y: tank={towerTank.Tank.Amount:0} q={towerTank.Tank.Quality} (want >400/Tainted) · tower={tower.Tank.Amount:0} (want ~200000 infinite)");
+            Log.Print($"[hosetool] case Y: tank={towerTank.Tank.Amount:0} q={towerTank.Tank.Quality} (want >400/Tainted) · tower={tower.Tank.Amount:0} (want ~200000 infinite)");
             if (!towerOk) ok = false;
 
             // --- Case Z (machine status lines): the at-a-glance status a machine shows so a player can see WHY it's dead
@@ -6627,10 +6627,10 @@ namespace UnturnedGodot
             bool zPurifNoPower = FluidPurifier.Make().StatusLine().text == "no power";  // fresh purifier, never wired
             bool zPumpIdle = rPump.StatusLine().text == "idle — no supply";             // powered, target full -> no work (case R)
             bool zPurifRun = purifier.StatusLine().text == "purifying";                 // powered + water flowing (case W)
-            GD.Print($"[hosetool] case Z: valve open={zOpen} closed={zClosed} · pump noPower={zPumpNoPower} idle={zPumpIdle} · purifier noPower={zPurifNoPower} run={zPurifRun}");
+            Log.Print($"[hosetool] case Z: valve open={zOpen} closed={zClosed} · pump noPower={zPumpNoPower} idle={zPumpIdle} · purifier noPower={zPurifNoPower} run={zPurifRun}");
             if (!(zOpen && zClosed && zPumpNoPower && zPurifNoPower && zPumpIdle && zPurifRun)) ok = false;
 
-            GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
+            Log.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 
@@ -6710,7 +6710,7 @@ namespace UnturnedGodot
                         objs.Place(show, at, EditorObjects.Upright(0f));
                         cam.GlobalPosition = at + new Vector3(17f, 11f, 24f);
                         cam.LookAt(at + new Vector3(0f, 2.5f, 0f), Vector3.Up);
-                        GD.Print($"[editor] baked+placed '{baked}' at {at}");
+                        Log.Print($"[editor] baked+placed '{baked}' at {at}");
                     }
                 }
             }
@@ -6773,7 +6773,7 @@ namespace UnturnedGodot
                         int b0 = spawns.PlayerCount;
                         spawns.RemoveNear(c);   // remove the original spawn under the cam (verify remove)
                         spawns.AddSpawn(c, 45f, false); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f), 90f, false); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f), 0f, true);   // rotated x2 + an ALT
-                        GD.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
+                        Log.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
                         spawns.Save();
                     }
                     spawns.DemoGoAnimal();   // cycle to the Animal category (Fauna.dat MultiMesh)
@@ -6783,13 +6783,13 @@ namespace UnturnedGodot
                         cam.GlobalPosition = zc + new Vector3(0f, 34f, 30f);
                         cam.LookAt(zc, Vector3.Up);
                     }
-                    GD.Print($"[editorspawns] animal spawns: {spawns.Count}");
+                    Log.Print($"[editorspawns] animal spawns: {spawns.Count}");
                 };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORENV") == "1")
                 GetTree().CreateTimer(0.8).Timeout += () =>
                 {
                     env.DemoSet(0.5f, false);   // preview noon lighting through the Environment tab
-                    GD.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
+                    Log.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
                 };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORTERRAIN") == "1")
                 {   // synchronous (no timer) so the frame-45 --shot reliably captures the demoed state
@@ -6865,7 +6865,7 @@ namespace UnturnedGodot
                 SetCleanEditorLighting();
                 editor.Save();   // verify the Paths.dat round-trip (writes content/roads/editor_Paths.dat)
             }
-            GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
+            Log.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
 
         // Exit the editor back to the main menu. Simplest reliable teardown of the async world + editor = reload
@@ -6949,11 +6949,11 @@ namespace UnturnedGodot
             _worldBuild = true;   // the --shot capture waits for _worldReady (set at the end) -> it fires on a loaded frame
             var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, syncLoad: true, ActiveHoliday());
             var terr = res.Terr;
-            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); _worldReady = true; return; }
+            if (terr == null) { Log.Err("[arena] no PEI terrain (no local map?) -- can't place spawns"); _worldReady = true; return; }
             var spawns = ComputeArenaRing(terr, poiArg, out var centre, out var halfX, out var halfZ, out var poiName, out var inWall);
             if (spawns == null) { _worldReady = true; return; }
             int n = 0;
-            foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); GD.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
+            foreach (var (pos, yaw) in spawns) { AddArenaMarker(pos, new Color(0.15f, 0.95f, 1f), $"{++n}"); Log.Print($"[arena]   spawn {n}: ({pos.X:0},{pos.Y:0},{pos.Z:0})"); }
             AddArenaMarker(centre, new Color(1f, 0.25f, 0.85f), "C");
             AddArenaBorder(centre, halfX, halfZ, terr);   // the arena play-area boundary (the POI extent), on the ground
 
@@ -7011,7 +7011,7 @@ namespace UnturnedGodot
             SDG.Unturned.ItemCatalog.RegisterAll();
             string baseDir = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items";
             string outPath = ProjectSettings.GlobalizePath("res://content/blueprints.tsv");
-            if (!System.IO.Directory.Exists(baseDir)) { GD.Print($"[BPEXTRACT] no Items dir {baseDir}"); return; }
+            if (!System.IO.Directory.Exists(baseDir)) { Log.Print($"[BPEXTRACT] no Items dir {baseDir}"); return; }
             var lines = new System.Collections.Generic.List<string>();
             int items = 0, bps = 0;
             foreach (var datPath in System.IO.Directory.GetFiles(baseDir, "*.dat", System.IO.SearchOption.AllDirectories))
@@ -7030,7 +7030,7 @@ namespace UnturnedGodot
                 foreach (var bp in list) { lines.Add(bp.ToTsv()); bps++; }
             }
             System.IO.File.WriteAllLines(outPath, lines);
-            GD.Print($"[BPEXTRACT] {items} craftable items, {bps} blueprints -> content/blueprints.tsv");
+            Log.Print($"[BPEXTRACT] {items} craftable items, {bps} blueprints -> content/blueprints.tsv");
         }
 
 
@@ -7070,10 +7070,10 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(p))
                 {
                     var img = ContentProvider.LoadImage(p);
-                    if (img != null) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); GD.Print($"[BAKE] tex OK {img.GetWidth()}x{img.GetHeight()}"); }
-                    else GD.Print("[BAKE] tex img NULL");
+                    if (img != null) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); Log.Print($"[BAKE] tex OK {img.GetWidth()}x{img.GetHeight()}"); }
+                    else Log.Print("[BAKE] tex img NULL");
                 }
-                else GD.Print($"[BAKE] tex NOT FOUND: {p}");
+                else Log.Print($"[BAKE] tex NOT FOUND: {p}");
             }
             if (mat.AlbedoTexture == null) mat.AlbedoColor = new Color(0f, 1f, 0f);   // GREEN = texture-load fallback
 
@@ -7106,7 +7106,7 @@ namespace UnturnedGodot
                 cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
             }
             cam.Current = true;
-            GD.Print($"[BAKE] {modelsStr} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
+            Log.Print($"[BAKE] {modelsStr} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
@@ -7178,7 +7178,7 @@ namespace UnturnedGodot
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();
-            GD.Print("[INV] inventory dashboard open, real items populated");
+            Log.Print("[INV] inventory dashboard open, real items populated");
         }
 
         // Drops a spread of items into the world (rarity markers + names) and runs a pickup check, viewed from an
@@ -7222,7 +7222,7 @@ namespace UnturnedGodot
             overview.LookAt(new Vector3(0f, 0.3f, -3.0f), Vector3.Up);
 
             player.TryPickup();   // the Maplestrike at -1.4 is within reach -> [pickup]
-            GD.Print("[DROP] dropped 5 world items; ran a pickup check");
+            Log.Print("[DROP] dropped 5 world items; ran a pickup check");
         }
 
         // Scatters loot around the world (LootSpawner) and views it from a high overview for a screenshot.
@@ -7257,7 +7257,7 @@ namespace UnturnedGodot
             AddChild(overview);
             overview.Position = new Vector3(0f, 26f, 20f);
             overview.LookAt(new Vector3(0f, 0f, -3f), Vector3.Up);
-            GD.Print("[LOOT] scattered loot around the world");
+            Log.Print("[LOOT] scattered loot around the world");
         }
 
         // Places a storage crate in front of the player, seeds it with loot, and opens it -> the dashboard shows the
@@ -7343,7 +7343,7 @@ namespace UnturnedGodot
             WorldItem.Spawn(this, new SDG.Unturned.Item(14),    new Vector3(-0.6f, 0.3f, 1.2f));   // Water Bottle
 
             player.OpenNearestCrate();   // within 2.5 m -> loads the crate into STORAGE + opens the dashboard
-            GD.Print("[CRATE] opened a storage crate");
+            Log.Print("[CRATE] opened a storage crate");
         }
 
         // A reference scene under a fast day/night cycle -- montage the --write-movie to see dawn -> noon -> dusk -> night.
@@ -7381,7 +7381,7 @@ namespace UnturnedGodot
             var propBasis = new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
             string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
             var propMesh = ObjMesh.Load(objDir + "Traffic_Light_0.obj");
-            if (propMesh == null) { GD.PrintErr("[trafficlight] Traffic_Light_0.obj missing"); return; }
+            if (propMesh == null) { Log.Err("[trafficlight] Traffic_Light_0.obj missing"); return; }
 
             // The prop's REAL palette texture. NEAREST is mandatory -- it is a 4x2 palette and linear sampling would
             // blend the red lens into the amber one two texels away.
@@ -7424,7 +7424,7 @@ namespace UnturnedGodot
                     "flash" => side ? TrafficLight.Phase.FlashRed : TrafficLight.Phase.FlashAmber,
                     _ => TrafficLight.Phase.Red,
                 }, level);
-                GD.Print($"[TRAFFICLIGHT] head {h}: state={st} phase={tl.CurrentPhase} lens={TrafficLight.LensIndexFor(tl.CurrentPhase)} level={level:F2}");
+                Log.Print($"[TRAFFICLIGHT] head {h}: state={st} phase={tl.CurrentPhase} lens={TrafficLight.LensIndexFor(tl.CurrentPhase)} level={level:F2}");
             }
 
             // Looking along +X at the lens faces -- the lenses sit on the housing's -X side, and the mast arm runs to
@@ -7435,7 +7435,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(-9f, 6.6f, -5.4f);
             cam.LookAt(new Vector3(0f, 6.3f, -5.4f), Vector3.Up);
-            GD.Print($"[TRAFFICLIGHT] side={side} day={day} heads={headMeshes?.Length ?? 0}");
+            Log.Print($"[TRAFFICLIGHT] side={side} day={day} heads={headMeshes?.Length ?? 0}");
         }
 
         // --beamtest: the lighthouse's sweeping BEAM over a dark night ground -- one static frame (the spin needs an eye).
@@ -7456,7 +7456,7 @@ namespace UnturnedGodot
 
             string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
             var m = ObjMesh.Load(objDir + "Lighthouse_0.obj");
-            if (m == null) { GD.PrintErr("[beamtest] Lighthouse_0.obj missing"); return; }
+            if (m == null) { Log.Err("[beamtest] Lighthouse_0.obj missing"); return; }
             var mat = new StandardMaterial3D { Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + "Lighthouse_0_tex.png";
             if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
@@ -7470,7 +7470,7 @@ namespace UnturnedGodot
             mi.Position = new Vector3(0f, -botY, 0f);
             var lampRoom = new Vector3(sum.X / 8f, (topY - botY) - 4.5f, sum.Z / 8f);   // gallery ring at roof-4.5 (tinyclaw)
             AddChild(LighthouseBeam.Make(lampRoom));
-            GD.Print($"[BEAMTEST] Lighthouse_0 + beam, roof {(topY - botY):0.0}m, lampRoom Y={lampRoom.Y:0.0} (want ~roof-4.5)");
+            Log.Print($"[BEAMTEST] Lighthouse_0 + beam, roof {(topY - botY):0.0}m, lampRoom Y={lampRoom.Y:0.0} (want ~roof-4.5)");
 
             var cam = new Camera3D { Current = true, Fov = 62f, Far = 900f };
             AddChild(cam);
@@ -7534,12 +7534,12 @@ namespace UnturnedGodot
             {
                 var gmat = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.33f, 0.26f), Roughness = 1f };
                 AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(4000, 4000) }, MaterialOverride = gmat, Position = new Vector3(-400f, 0f, 350f) });
-                GD.Print("[fly] ground plane ON (default; UG_SWEEP_NOGROUND=1 restores the old sky-only scene)");
+                Log.Print("[fly] ground plane ON (default; UG_SWEEP_NOGROUND=1 restores the old sky-only scene)");
             }
 
             await field.BuildTreeImpostorsAsync();
             foreach (var (name, realEnd, impBegin, impEnd) in field.DebugImpostorRangesForTest())
-                GD.Print($"[sweep] {name}: imposter on {impBegin:0.#}m, real off {realEnd:0.#}m, out to {impEnd:0}m");
+                Log.Print($"[sweep] {name}: imposter on {impBegin:0.#}m, real off {realEnd:0.#}m, out to {impEnd:0}m");
 
             // ISOLATION IS THE WHOLE MEASUREMENT. The first version of this aimed at the DENSEST clump, on the
             // reasoning that more trees is a stronger signal. It is the opposite: total non-sky pixels summed over
@@ -7557,9 +7557,9 @@ namespace UnturnedGodot
                     if (j != i && field.DebugTrunk(j) != null && field.DebugInstanceXf(j).Origin.DistanceSquaredTo(p) < 14400f) n++;
                 if (n < bestN) { bestN = n; best = i; }
             }
-            if (best < 0) { GD.PrintErr("[sweep] no trees found"); return; }
+            if (best < 0) { Log.Err("[sweep] no trees found"); return; }
             var target = field.DebugInstanceXf(best).Origin;
-            GD.Print($"[sweep] target instance {best} at {target}, {bestN} tree neighbours within 120m (isolated)");
+            Log.Print($"[sweep] target instance {best} at {target}, {bestN} tree neighbours within 120m (isolated)");
 
             var cam = new Camera3D { Current = true, Fov = 50f };
             AddChild(cam);
@@ -7652,26 +7652,26 @@ namespace UnturnedGodot
                     bool belowBoth = prev[i] < prev[i - 1] * EnvOr("UG_FLY_DIP", 0.75f)
                                   && prev[i] < prev[i + 1] * EnvOr("UG_FLY_DIP", 0.75f);
                     if (!belowBoth && ratio < EnvOr("UG_FLY_DIP", 0.75f))
-                        GD.Print($"[fly] step-edge (NOT a dip) at frame {i}: {prev[i - 1]} -> {prev[i]} -> {prev[i + 1]} "
+                        Log.Print($"[fly] step-edge (NOT a dip) at frame {i}: {prev[i - 1]} -> {prev[i]} -> {prev[i + 1]} "
                                + $"({ratio:0.00}x of the mean, but {prev[i] / (float)prev[i + 1]:0.00}x of the frame after)");
                     if (belowBoth)
                     {
                         dips++;
                         // Print the TRIPLE, not the dip alone. "Frame 177 drew fewer objects" means nothing without
                         // 176 and 178 to compare against, and the whole claim is a spike relative to neighbours.
-                        GD.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)");
+                        Log.Print($"[fly] DIP frame {i}: {prev[i]} px vs neighbours {nb:0} ({ratio:0.00}x)");
                         for (int k = i - 1; k <= i + 1 && k < prev.Count; k++)
                             if (k >= 0)
-                                GD.Print($"[fly]   f{k,-4} px={prev[k],-8} objects={objs[k],-6} prims={prims[k]}");
+                                Log.Print($"[fly]   f{k,-4} px={prev[k],-8} objects={objs[k],-6} prims={prims[k]}");
                         float objNb = 0.5f * (objs[i - 1] + objs[i + 1]);
                         float primNb = 0.5f * (prims[i - 1] + prims[i + 1]);
-                        GD.Print($"[fly]   -> objects {objs[i] / Mathf.Max(objNb, 1f):0.000}x of neighbours, "
+                        Log.Print($"[fly]   -> objects {objs[i] / Mathf.Max(objNb, 1f):0.000}x of neighbours, "
                                + $"prims {prims[i] / Mathf.Max(primNb, 1f):0.000}x  "
                                + $"({(objs[i] < objNb * 0.97f ? "A DRAW DISAPPEARED" : "same draws, the VIEW changed")})");
                     }
                 }
-                GD.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
-                GD.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- they survive with the "
+                Log.Print($"[fly] overlap={ResourceField.ImpostorOverlap:0.###} frames={prev.Count} dips={dips} worstRatio={worst:0.000}");
+                Log.Print("[fly] NOTE: dips here are NOT known to be the tree->imposter handover -- they survive with the "
                        + "handover removed (UG_TREECULL=5 UG_TREEIMPOVERLAP=10). A floor is now drawn by default because "
                        + "without one, 4 of 6 reported dips were the camera pitching into empty sky. Diff against a control before believing one.");
                 GetTree().Quit();
@@ -7701,15 +7701,15 @@ namespace UnturnedGodot
                         }
                 rows.Add((d, px));
             }
-            GD.Print($"[sweep] overlap={ResourceField.ImpostorOverlap:0.###}");
+            Log.Print($"[sweep] overlap={ResourceField.ImpostorOverlap:0.###}");
             int zeros = 0, minPx = int.MaxValue;
             foreach (var (d, px) in rows)
             {
                 if (px == 0) zeros++;
                 minPx = Mathf.Min(minPx, px);
-                GD.Print($"[sweep] {d,5:0}m  {px,7} tree px");
+                Log.Print($"[sweep] {d,5:0}m  {px,7} tree px");
             }
-            GD.Print($"[sweep] RESULT distances={rows.Count} empty={zeros} min={minPx}");
+            Log.Print($"[sweep] RESULT distances={rows.Count} empty={zeros} min={minPx}");
             GetTree().Quit();
         }
 
@@ -7739,9 +7739,9 @@ namespace UnturnedGodot
             var field = new ResourceField();
             AddChild(field);
             field.LoadResources("NONE");
-            GD.Print($"[imptest] {field.InstanceCount} instances, {field.PendingImpostorTypesForTest} tree species queued");
+            Log.Print($"[imptest] {field.InstanceCount} instances, {field.PendingImpostorTypesForTest} tree species queued");
             await field.BuildTreeImpostorsAsync();
-            GD.Print($"[imptest] {field.ImpostorInstancesForTest} billboards built");
+            Log.Print($"[imptest] {field.ImpostorInstancesForTest} billboards built");
 
             // The field placed everything at its map position, which is nowhere near the camera. Hide it and
             // rebuild a tidy row from the same baked materials instead.
@@ -7753,10 +7753,10 @@ namespace UnturnedGodot
             {
                 var quad = new QuadMesh { Size = new Vector2(w, h), Orientation = PlaneMesh.OrientationEnum.Z };
                 AddChild(new MeshInstance3D { Mesh = quad, MaterialOverride = mat, Position = new Vector3(x, h * 0.5f, 0f) });
-                GD.Print($"[imptest] {name}: quad {w:0.0} x {h:0.0} m");
+                Log.Print($"[imptest] {name}: quad {w:0.0} x {h:0.0} m");
                 x += w * 1.25f;
             }
-            if (mats.Count == 0) { GD.PrintErr("[imptest] NO impostor materials -- the bake produced nothing"); return; }
+            if (mats.Count == 0) { Log.Err("[imptest] NO impostor materials -- the bake produced nothing"); return; }
 
             var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400, 400) } };
             ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.34f, 0.24f), Roughness = 1f };
@@ -7830,7 +7830,7 @@ namespace UnturnedGodot
 
             string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
             var m = ObjMesh.Load(objDir + which + ".obj");
-            if (m == null) { GD.PrintErr($"[lamptest] {which}.obj missing"); return; }
+            if (m == null) { Log.Err($"[lamptest] {which}.obj missing"); return; }
             var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                                                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string tex = objDir + which + "_tex.png";
@@ -7858,7 +7858,7 @@ namespace UnturnedGodot
             AddChild(lamp);
             lamp.SetPowered(!off);
             if (System.Environment.GetEnvironmentVariable("UG_LAMP_OUTLINE") == "1") lamp.SetLookFocused(true);   // verify the whole-lamp look-outline (toggle lamps only)
-            GD.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
+            Log.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
 
             var cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(cam);
@@ -7949,8 +7949,8 @@ namespace UnturnedGodot
                     AddChild(lensMi);
                     lampLocal = lensMesh.GetAabb().GetCenter();   // emit from the bulb, same as WorldBuilder
                 }
-                if (broken) GD.Print($"[LIGHTTEST] BROKEN state: base kept ({baseMesh?.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length / 3 ?? 0} tri), pole hidden");
-                GD.Print($"[LIGHTTEST] prop lens split: lens={(lensMesh != null ? "yes" : "NONE")} localCentre={lampLocal}");
+                if (broken) Log.Print($"[LIGHTTEST] BROKEN state: base kept ({baseMesh?.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length / 3 ?? 0} tri), pole hidden");
+                Log.Print($"[LIGHTTEST] prop lens split: lens={(lensMesh != null ? "yes" : "NONE")} localCentre={lampLocal}");
             }
             else
             {
@@ -7996,7 +7996,7 @@ namespace UnturnedGodot
                 cam.Position = new Vector3(7.5f, 3.2f, 5.2f);      // side-on: cone shaft + ground pool together
                 cam.LookAt(new Vector3(0f, 3.4f, -1.2f), Vector3.Up);
             }
-            GD.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={camMode}");
+            Log.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={camMode}");
         }
 
         void BuildDayNightDemo()
@@ -8043,7 +8043,7 @@ namespace UnturnedGodot
                     foreach (var _p in _saEnv.Split(',')) if (float.TryParse(_p.Trim(), out var _v)) _times.Add(_v);
                     if (_times.Count > 0) { _stormWm = wm; _stormStrikes = _times.ToArray(); }
                 }
-                GD.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
+                Log.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
             }
 
             // when storming, the ground + boxes use the wet_surface shader (darken + raindrop splashes) for the full storm demo
@@ -8073,7 +8073,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(0f, 2.5f, 6f);
             cam.LookAt(new Vector3(0f, 1.4f, -4f), Vector3.Up);   // boxes + horizon/sky
-            GD.Print("[DAYNIGHT] cycle demo");
+            Log.Print("[DAYNIGHT] cycle demo");
         }
 
         // --clocktest: one Clock_0 stood upright facing the camera, its hands carved off by ClockDevice and spun to
@@ -8111,7 +8111,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(0f, 3f, 0f);   // straight above, looking down -Y at the +Y face
             cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, 1f));   // up-hint = mesh +Z (tinyclaw measured 12 o'clock at +Z) -> 12 at screen-top
-            GD.Print($"[CLOCK] time={ct}");
+            Log.Print($"[CLOCK] time={ct}");
         }
 
         // Scripts a small structure (floor tiles + walls) to show the build system, viewed from an overview.
@@ -8162,7 +8162,7 @@ namespace UnturnedGodot
                 foreach (float pz in new[] { midZ - StructureCatalog.HalfEdge, midZ + StructureCatalog.HalfEdge })
                     if (bt.Spawn(new Vector3(px, 0f, pz), EConstruct.Pillar, 2) != null) pillars++;
             bool roof = bt.Spawn(new Vector3(0f, StructureCatalog.WallHeight, midZ), EConstruct.Roof, 2) != null;
-            GD.Print($"[BUILD] corner pillars placed: {pillars}/4, roof: {roof}");
+            Log.Print($"[BUILD] corner pillars placed: {pillars}/4, roof: {roof}");
 
             // INTEGRATION proof: a barricade mounted on a structure WALL. This is the whole point of merging the
             // two branches -- the ground DeployablePlacer rejected any surface with normal.y < 0.01, so before
@@ -8171,7 +8171,7 @@ namespace UnturnedGodot
             // a doorway on the front edge: same slot class as a wall, with a hole you can actually walk through
             float frontZ = StructureCatalog.EdgeLength + StructureCatalog.HalfEdge;
             bool doorway = bt.Spawn(new Vector3(0f, 0f, frontZ), EConstruct.Doorway, 2) != null;
-            GD.Print($"[BUILD] doorway: {doorway}");
+            Log.Print($"[BUILD] doorway: {doorway}");
 
             int mounted = 0;
             foreach (var pc in StructureManager.Instance.All)
@@ -8184,7 +8184,7 @@ namespace UnturnedGodot
                 mounted++;
                 break;
             }
-            GD.Print($"[BUILD] wall-mounted barricades: {mounted}");
+            Log.Print($"[BUILD] wall-mounted barricades: {mounted}");
 
             // Framed off the LATTICE, not hardcoded metres. The old camera sat at (6, 4.5, 7) for a 3 m demo;
             // on the real 6 m tile that is INSIDE the base looking at the back of a wall, which is what the
@@ -8199,7 +8199,7 @@ namespace UnturnedGodot
             // checkable claim rather than a caption.
             overview.Position = new Vector3(span * 0.95f, span * 1.45f, span * 1.35f);
             overview.LookAt(new Vector3(StructureCatalog.HalfEdge, 1.0f, 0f), Vector3.Up);
-            GD.Print("[BUILD] scripted a small structure (floors + walls + corner pillars + roof)");
+            Log.Print("[BUILD] scripted a small structure (floors + walls + corner pillars + roof)");
         }
 
         // Building-tool demo: walls carrying openings at the MEASURED retail dimensions, so the first thing
@@ -8240,7 +8240,7 @@ namespace UnturnedGodot
 
             // UG_WALLMAT picks the retail palette; default 0. There are 52 sampled from the buildings.
             int matId = int.TryParse(System.Environment.GetEnvironmentVariable("UG_WALLMAT"), out var mi) ? mi : 0;
-            GD.Print($"[walls] material {matId} of {WallMaterials.Count}: {WallMaterials.At(matId).Name}");
+            Log.Print($"[walls] material {matId} of {WallMaterials.Count}: {WallMaterials.At(matId).Name}");
 
             WallSurface Wall(float len, Vector3 pos, float yaw)
             {
@@ -8292,7 +8292,7 @@ namespace UnturnedGodot
                 AddChild(scam);
                 scam.Position = target + new Vector3(0f, 0f, dist);
                 scam.LookAt(target, Vector3.Up);
-                GD.Print($"[walls] swatch: {n} palettes");
+                Log.Print($"[walls] swatch: {n} palettes");
                 return;
             }
 
@@ -8351,12 +8351,12 @@ namespace UnturnedGodot
                     foreach (var (label, node) in new[] { ("wall", "Mesh"), ("trim", "TrimMesh") })
                     {
                         var m = front.GetNode<MeshInstance3D>(node).Mesh;
-                        if (m == null || m.GetSurfaceCount() == 0) { GD.Print($"[walldump] {label}: empty"); continue; }
+                        if (m == null || m.GetSurfaceCount() == 0) { Log.Print($"[walldump] {label}: empty"); continue; }
                         var arr = m.SurfaceGetArrays(0);
                         int nv = ((Vector3[])arr[(int)Mesh.ArrayType.Vertex]).Length;
                         int nt = ((int[])arr[(int)Mesh.ArrayType.Index]).Length / 3;
                         float ratio = nt > 0 ? nv / (float)nt : 0f;
-                        GD.Print($"[walldump] {label}: {nt} tris, {nv} verts, {ratio:F2} verts/tri"
+                        Log.Print($"[walldump] {label}: {nt} tris, {nv} verts, {ratio:F2} verts/tri"
                                  + (ratio < 1.5f ? "  <-- SMOOTHED, corners will bulge" : ""));
                     }
                 }
@@ -8368,7 +8368,7 @@ namespace UnturnedGodot
                 cam.Position = new Vector3(13f, 7.5f, 24f);
                 cam.LookAt(new Vector3(0f, 3.4f, -3f), Vector3.Up);
             }
-            GD.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
+            Log.Print($"[walls] 6 walls; front run partitions into {UnturnedSim.WallOpenings.Solids(L, H, front.Openings).Count} solids, garage wall into {UnturnedSim.WallOpenings.Solids(L, H, back.Openings).Count}");
         }
 
         // The same room the --walls demo builds, laid out on the Buildings stage so the editor capture shows a
@@ -8469,9 +8469,9 @@ namespace UnturnedGodot
             out System.Func<Vector3, bool> inWallOut)
         {
             centre = Vector3.Zero; halfX = 0f; halfZ = 0f; poiName = null; inWallOut = _ => false;
-            if (terr == null) { GD.PrintErr("[arena] no PEI terrain (no local map?) -- can't place spawns"); return null; }
+            if (terr == null) { Log.Err("[arena] no PEI terrain (no local map?) -- can't place spawns"); return null; }
             var pois = MapNodes.Locations;
-            if (pois.Count == 0) { GD.PrintErr("[arena] no POIs in nodes.tsv"); return null; }
+            if (pois.Count == 0) { Log.Err("[arena] no POIs in nodes.tsv"); return null; }
             int idx = 0;
             if (!string.IsNullOrEmpty(poiArg))
             {
@@ -8493,7 +8493,7 @@ namespace UnturnedGodot
 
             // in-wall test: a standing box at the candidate overlapping a solid structure -> rejected.
             var space = GetViewport()?.World3D?.DirectSpaceState;
-            if (space == null) GD.PrintErr("[arena] no physics space -- spawns are NOT wall-rejected this run");
+            if (space == null) Log.Err("[arena] no physics space -- spawns are NOT wall-rejected this run");
             var probe = new BoxShape3D { Size = new Vector3(1.0f, 1.8f, 1.0f) };
             System.Func<Vector3, bool> inWall = pos =>
             {
@@ -8508,7 +8508,7 @@ namespace UnturnedGodot
 
             inWallOut = inWall;   // the caller reuses the SAME probe for gun drops -- a second one would disagree
             var ring = ArenaMode.GenerateSpawns(centre, halfX, halfZ, terr, inWall, ArenaMode.SpawnCount);
-            GD.Print($"[arena] POI '{poi.Name}': connected town = {near} buildings -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {ring.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
+            Log.Print($"[arena] POI '{poi.Name}': connected town = {near} buildings -> extent ~{halfX * 2:0}x{halfZ * 2:0}m, {ring.Count}/{ArenaMode.SpawnCount} spawns (land + clear of walls)");
             return ring;
         }
 
@@ -8536,9 +8536,9 @@ namespace UnturnedGodot
                     arenaRing = ComputeArenaRing(res.Terr, System.Environment.GetEnvironmentVariable("UG_ARENAPOI"),
                                                  out arenaCentre, out arenaHalfX, out arenaHalfZ, out var arenaPoi, out arenaInWall);
                     if (arenaRing == null || arenaRing.Count == 0)
-                        GD.PrintErr("[ARENA] no spawn ring generated -- falling back to the map's Players.dat spawns");
+                        Log.Err("[ARENA] no spawn ring generated -- falling back to the map's Players.dat spawns");
                     else
-                        GD.Print($"[ARENA] arena server on '{arenaPoi}': {arenaRing.Count} spawns, holding until {arenaMin} players");
+                        Log.Print($"[ARENA] arena server on '{arenaPoi}': {arenaRing.Count} spawns, holding until {arenaMin} players");
                 }
 
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,
@@ -8558,11 +8558,11 @@ namespace UnturnedGodot
                     AddChild(new ArenaGuns { Terr = res.Terr, Centre = arenaCentre, HalfX = arenaHalfX, HalfZ = arenaHalfZ, InWall = arenaInWall, Target = 40 });
 
                 _worldReady = res.Ready;
-                GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {PortEnv()}");
+                Log.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {PortEnv()}");
             }
             catch (System.Exception e)
             {
-                GD.PrintErr($"[DEDICATED] world build FAILED: {e}");
+                Log.Err($"[DEDICATED] world build FAILED: {e}");
                 GetTree().Quit(1);
             }
         }
@@ -8586,11 +8586,11 @@ namespace UnturnedGodot
                     syncLoad: true, activeHoliday: ActiveHoliday());
                 _worldReady = res.Ready;
                 AddChild(new NetObserver { Host = _connectHost, Port = PortEnv(), Driver = res.Sim });
-                GD.Print($"[NETOBS] scaffold up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); observing {_connectHost}:{PortEnv()}");
+                Log.Print($"[NETOBS] scaffold up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); observing {_connectHost}:{PortEnv()}");
             }
             catch (System.Exception e)
             {
-                GD.PrintErr($"[NETOBS] build FAILED: {e}");
+                Log.Err($"[NETOBS] build FAILED: {e}");
                 GetTree().Quit(1);
             }
         }
@@ -8600,7 +8600,7 @@ namespace UnturnedGodot
         void BuildServer()
         {
             AddChild(new ServerNode { Port = NetPort });
-            GD.Print($"[SERVER] demo NetWorldServer + scripted bot on udp {NetPort}");
+            Log.Print($"[SERVER] demo NetWorldServer + scripted bot on udp {NetPort}");
         }
 
         // Rendering client process (PEI_CLIENT_PLAN §3 Phases C1+C3): the REAL map world through the ONE
@@ -8621,7 +8621,7 @@ namespace UnturnedGodot
                 {
                     // FAIL-FAST (C1): a client without the retail map cannot render the world the server is
                     // simulating -- say exactly what to fix; never silently fall back to the old demo arena.
-                    GD.PrintErr($"[CLIENT] map not found at {_mapRoot} -- set UG_UNTURNED_DIR to a local Unturned install (or install Unturned). NOT joining.");
+                    Log.Err($"[CLIENT] map not found at {_mapRoot} -- set UG_UNTURNED_DIR to a local Unturned install (or install Unturned). NOT joining.");
                     var layer = new CanvasLayer { Layer = 200 };   // above the LoadingScreen (128) the aborted build left up
                     var bg = new ColorRect { Color = new Color(0.04f, 0.05f, 0.07f) };
                     bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -8648,7 +8648,7 @@ namespace UnturnedGodot
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
-                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
+                    Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
                 {
@@ -8659,12 +8659,12 @@ namespace UnturnedGodot
                     cam.Position = ctr + new Vector3(0f, 50f, 44f);
                     cam.LookAt(ctr, Vector3.Up);
                     AddChild(new ClientNode { Host = _connectHost, Port = NetPort });
-                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
+                    Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
                 }
             }
             catch (System.Exception e)
             {
-                GD.PrintErr($"[CLIENT] world build FAILED: {e}");
+                Log.Err($"[CLIENT] world build FAILED: {e}");
             }
         }
 
@@ -8693,7 +8693,7 @@ namespace UnturnedGodot
             cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
 
             AddChild(new NetDemoNode { Port = 47871 });
-            GD.Print("[NETDEMO] NetWorldServer + 2 NetWorldClients on loopback UDP (NetSession + snapshot/command planes); rendering server-synced players");
+            Log.Print("[NETDEMO] NetWorldServer + 2 NetWorldClients on loopback UDP (NetSession + snapshot/command planes); rendering server-synced players");
         }
 
         // UG_VERTEXLIGHT=1: apply vertex shading at boot, so the look can be captured in a render rather than
@@ -8704,14 +8704,14 @@ namespace UnturnedGodot
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
-            if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { GD.Print("[bakehulls] done"); GetTree().Quit(); return; }
+            if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { Log.Print("[bakehulls] done"); GetTree().Quit(); return; }
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
-            if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; GD.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
-            if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { GD.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
-            if (_zpMode) { _zpT += delta; _zpTarget = new Vector3(11f, 0f, Mathf.Sin((float)_zpT * 0.4f) * 7f); if (_zpMarker != null) _zpMarker.Position = _zpTarget + Vector3.Up * 0.9f; if (_zpf != null) _zpf.DebugAnchor = _zpTarget; if (_zpT >= _zpNextEmit) { _zpNextEmit += 2.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 25.0 && !_zpReported) { _zpReported = true; ZpathReport(); } if (_zpT >= 26.0) { GD.Print("[zpath] done"); GetTree().Quit(); } return; }   // MOVING target (a real player moves) -> the field keeps rebuilding so no stable corner-trap can hold
+            if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; Log.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
+            if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { Log.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
+            if (_zpMode) { _zpT += delta; _zpTarget = new Vector3(11f, 0f, Mathf.Sin((float)_zpT * 0.4f) * 7f); if (_zpMarker != null) _zpMarker.Position = _zpTarget + Vector3.Up * 0.9f; if (_zpf != null) _zpf.DebugAnchor = _zpTarget; if (_zpT >= _zpNextEmit) { _zpNextEmit += 2.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 25.0 && !_zpReported) { _zpReported = true; ZpathReport(); } if (_zpT >= 26.0) { Log.Print("[zpath] done"); GetTree().Quit(); } return; }   // MOVING target (a real player moves) -> the field keeps rebuilding so no stable corner-trap can hold
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts
             // whatever happened to exist yet and silently leaves the rest per-pixel -- which would make a
@@ -8721,7 +8721,7 @@ namespace UnturnedGodot
                 GraphicsOptions.VertexShading = true;
                 int n = GraphicsOptions.ApplyShading(GetTree()?.Root);
                 _vertexLightQuiet = n == 0 ? Mathf.Max(0, _vertexLightQuiet) + 1 : 0;
-                if (n > 0) GD.Print($"[vertexlight] {n} material(s) -> per-vertex");
+                if (n > 0) Log.Print($"[vertexlight] {n} material(s) -> per-vertex");
             }
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
@@ -8730,7 +8730,7 @@ namespace UnturnedGodot
             if (_stormWm != null && _stormStrikes != null && _stormStrikeIdx < _stormStrikes.Length)   // --daynight storm demo: fire each UG_STRIKE_AT strike at its time
             {
                 _stormT += delta;
-                if (_stormT >= _stormStrikes[_stormStrikeIdx]) { _stormWm.Strike(); GD.Print($"[stormdemo] strike {_stormStrikeIdx} at t={_stormT:0.00}s"); _stormStrikeIdx++; }
+                if (_stormT >= _stormStrikes[_stormStrikeIdx]) { _stormWm.Strike(); Log.Print($"[stormdemo] strike {_stormStrikeIdx} at t={_stormT:0.00}s"); _stormStrikeIdx++; }
             }
             if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
@@ -8738,16 +8738,16 @@ namespace UnturnedGodot
                 if (!_doorAnimToggle1Done && _doorAnimElapsed >= _doorAnimToggle1At)
                 {
                     _doorAnimDoor.Toggle(); _doorAnimToggle1Done = true;
-                    GD.Print($"[DOORANIM] toggle 1 (away from default) fired at t={_doorAnimElapsed:0.000}s");
+                    Log.Print($"[DOORANIM] toggle 1 (away from default) fired at t={_doorAnimElapsed:0.000}s");
                 }
                 else if (_doorAnimToggle1Done && !_doorAnimToggle2Done && _doorAnimElapsed >= _doorAnimToggle2At)
                 {
                     _doorAnimDoor.Toggle(); _doorAnimToggle2Done = true;
-                    GD.Print($"[DOORANIM] toggle 2 (back to default) fired at t={_doorAnimElapsed:0.000}s");
+                    Log.Print($"[DOORANIM] toggle 2 (back to default) fired at t={_doorAnimElapsed:0.000}s");
                 }
                 else if (_doorAnimToggle2Done && _doorAnimElapsed >= _doorAnimDoneAt)
                 {
-                    GD.Print($"[DOORANIM] sequence done at t={_doorAnimElapsed:0.000}s -- quitting");
+                    Log.Print($"[DOORANIM] sequence done at t={_doorAnimElapsed:0.000}s -- quitting");
                     GetTree().Quit();
                 }
                 return;
@@ -8785,7 +8785,7 @@ namespace UnturnedGodot
                     var mi = GetViewport().GetTexture().GetImage();
                     string p = $"{_menuShotDir}/menu_{_menuShotIdx:D2}.png";
                     mi.SavePng(p);
-                    GD.Print($"[MENUSHOT] saved {p} (frame {_frame})");
+                    Log.Print($"[MENUSHOT] saved {p} (frame {_frame})");
                     _menuShotIdx++;
                     if (_menuShotIdx >= shotAt.Length) GetTree().Quit();
                 }
@@ -8812,25 +8812,25 @@ namespace UnturnedGodot
                 if (ph < 3)
                 {
                     bool want = ph != 1;   // ON, OFF, ON
-                    if (_tpFrame == 0) GD.Print($"[terrperf] probe engaged, terrain has {Terrain.Active.GetChildCount()} children");
+                    if (_tpFrame == 0) Log.Print($"[terrperf] probe engaged, terrain has {Terrain.Active.GetChildCount()} children");
                     if (Terrain.Active.Visible != want) Terrain.Active.Visible = want;
                     int inPhase = _tpFrame % Phase;
                     if (inPhase >= 12) { _tpPrims += Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame); _tpDraws += Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame); _tpMs += Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0; _tpN++; }
                     if (inPhase == Phase - 1)
                     {
-                        GD.Print($"[terrperf] {(want ? "terrain ON " : "terrain OFF")} n={_tpN} prims={_tpPrims / _tpN:0} draws={_tpDraws / _tpN:0} processMs={_tpMs / _tpN:0.00} (lavapipe: ratio only)");
+                        Log.Print($"[terrperf] {(want ? "terrain ON " : "terrain OFF")} n={_tpN} prims={_tpPrims / _tpN:0} draws={_tpDraws / _tpN:0} processMs={_tpMs / _tpN:0.00} (lavapipe: ratio only)");
                         _tpPrims = _tpDraws = _tpMs = 0.0; _tpN = 0;
                     }
                     _tpFrame++;
                 }
-                else if (ph == 3) { GD.Print("[terrperf] done"); _tpFrame++; }
+                else if (ph == 3) { Log.Print("[terrperf] done"); _tpFrame++; }
             }
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
                 double physMs = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
                 double procMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
-                GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
+                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
@@ -8867,7 +8867,7 @@ namespace UnturnedGodot
                                 : ((bn.Contains("Shoulder") || bn.Contains("Arm") || bn.Contains("Hand") || bn.Contains("Hook")) ? (bn.StartsWith("Left") ? "ARM_L" : "ARM_R") : "TORSO"));
                             parts[grp] = parts.TryGetValue(grp, out var ab) ? ab.Expand(p) : new Aabb(p, Vector3.Zero);
                         }
-                        foreach (var g in new[] { "HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS" }) if (parts.TryGetValue(g, out var a)) GD.Print($"[mesh] st={_paStance} lean={_paLean:0} {g} Y=[{a.Position.Y:0.00}..{a.End.Y:0.00}] X=[{a.Position.X:0.00}..{a.End.X:0.00}] Z=[{a.Position.Z:0.00}..{a.End.Z:0.00}]");
+                        foreach (var g in new[] { "HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS" }) if (parts.TryGetValue(g, out var a)) Log.Print($"[mesh] st={_paStance} lean={_paLean:0} {g} Y=[{a.Position.Y:0.00}..{a.End.Y:0.00}] X=[{a.Position.X:0.00}..{a.End.X:0.00}] Z=[{a.Position.Z:0.00}..{a.End.Z:0.00}]");
                     }
                     return;
                 }
@@ -8901,7 +8901,7 @@ namespace UnturnedGodot
             {
                 _holdItemDone = true;
                 if (ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDITEM"), out var hid) && Assets.find(hid) is ItemAsset ha)
-                    GD.Print($"[holditem] {ha.itemName} ({hid}) -> hands: {_pdPlayer.EquipItemAsset(ha, new SDG.Unturned.Item(hid))} (movie frame {Engine.GetFramesDrawn()})");
+                    Log.Print($"[holditem] {ha.itemName} ({hid}) -> hands: {_pdPlayer.EquipItemAsset(ha, new SDG.Unturned.Item(hid))} (movie frame {Engine.GetFramesDrawn()})");
             }
             if (_bakeMapRes > 0 && _worldReady && !_bakeMapDone) BakeMapTick();
             // UG_SAMTEST=1: a SAM site ahead of the spawn plus an NPC helicopter flying at it, so the lock ->
@@ -8925,11 +8925,11 @@ namespace UnturnedGodot
                     float gy = terr != null ? terr.SampleHeight(at.X, at.Z) : at.Y;
                     heli.Heli.GlobalPosition = new Vector3(at.X, gy + NpcHeli.CanopyClearance, at.Z);
                 }
-                GD.Print($"[samtest] site={(site != null ? "ok" : "FAILED")} heli={(heli != null ? heli.TargetName : "FAILED")} radius={SamSite.Radius:0}m rack={SamSite.Rack} shotDelay={SamSite.ShotDelay:0.00}s reload={SamSite.ReloadDelay:0}s");
+                Log.Print($"[samtest] site={(site != null ? "ok" : "FAILED")} heli={(heli != null ? heli.TargetName : "FAILED")} radius={SamSite.Radius:0}m rack={SamSite.Rack} shotDelay={SamSite.ShotDelay:0.00}s reload={SamSite.ReloadDelay:0}s");
             }
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_menuXpDone) MenuXpTick();
             if (_peiPlayable && _pdPlayer != null && _holdItemDone && int.TryParse(System.Environment.GetEnvironmentVariable("UG_HOLDTHROW"), out var thf) && ++_holdThrowT == thf)   // UG_HOLDTHROW=N: LMB N frames after the equip (the throw swing on camera)
-            { _pdPlayer.ThrowHeld(true); GD.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
+            { _pdPlayer.ThrowHeld(true); Log.Print($"[holdthrow] threw at movie frame {Engine.GetFramesDrawn()}"); }
             if (_peiPlayable && _pdPlayer != null && _worldReady && int.TryParse(System.Environment.GetEnvironmentVariable("UG_ENTERCAR"), out var ecf) && ++_enterCarT == ecf)   // UG_ENTERCAR=N: N ticks after the world is up, spawn a sedan ahead + take the driver's seat (the in-vehicle rain muffle check, rainshot.ps1)
             {
                 var car = Vehicle.BuildByName(System.Environment.GetEnvironmentVariable("UG_ENTERCARV") ?? "sedan");   // UG_ENTERCARV=bus|quad|...: which cab to sit in (the 1P wheel-hand check)
@@ -8938,7 +8938,7 @@ namespace UnturnedGodot
                 car.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 5f + Vector3.Up * 1.0f;
                 _pdPlayer.EnterVehicle(car, 0);
                 if (System.Environment.GetEnvironmentVariable("UG_TP") == "1") _pdPlayer.DebugSetFirstPerson(false);   // UG_TP=1: the chase camera -> the glass seen from OUTSIDE
-                GD.Print($"[entercar] entered {car.Name} at movie frame {Engine.GetFramesDrawn()}");
+                Log.Print($"[entercar] entered {car.Name} at movie frame {Engine.GetFramesDrawn()}");
             }
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_glassPaneDone && System.Environment.GetEnvironmentVariable("UG_GLASSPANE") == "1")   // UG_GLASSPANE=1: a building-editor window pane 3 m ahead, facing the player (the rain-on-glass check, glassshot.ps1)
             {
@@ -8948,7 +8948,7 @@ namespace UnturnedGodot
                 _pdPlayer.GetParent()?.AddChild(pane);
                 pane.GlobalPosition = _pdPlayer.GlobalPosition + fwd * 3f + Vector3.Up * 1.0f;
                 pane.LookAt(pane.GlobalPosition - fwd, Vector3.Up);   // the pane's face toward the player
-                GD.Print($"[glasspane] pane 3 m ahead at movie frame {Engine.GetFramesDrawn()}");
+                Log.Print($"[glasspane] pane 3 m ahead at movie frame {Engine.GetFramesDrawn()}");
             }
             // UG_PDLOOK=x,y,z: point the peidrive player's eye at a world point, every frame. A still shot of anything
             // ON THE GROUND -- puddles, terrain paint, road caps -- is otherwise impossible from this harness: the spawn
@@ -8979,7 +8979,7 @@ namespace UnturnedGodot
                 {
                     _pdWearDone = true;
                     foreach (var one in wear.Split(',', System.StringSplitOptions.RemoveEmptyEntries))
-                        if (int.TryParse(one.Trim(), out int wid)) { _pdPlayer.DebugWear(wid); GD.Print($"[pdwear] wore item {wid}"); }
+                        if (int.TryParse(one.Trim(), out int wid)) { _pdPlayer.DebugWear(wid); Log.Print($"[pdwear] wore item {wid}"); }
                 }
             }
             // UG_TP=1 outside a vehicle too. It used to be set only inside the UG_ENTERCAR block, so "third person"
@@ -9029,7 +9029,7 @@ namespace UnturnedGodot
                 else if (_vmTest && _vm != null && !_vmMelee && !_vmInspected
                     && int.TryParse(System.Environment.GetEnvironmentVariable("UG_INSPECT_AT"), out var insAt) && _frame >= insAt
                     && _vm.IsEquipComplete)
-                { _vm.PlayInspect(); _vmInspected = true; GD.Print($"[vm] inspect fired at frame {_frame}"); }
+                { _vm.PlayInspect(); _vmInspected = true; Log.Print($"[vm] inspect fired at frame {_frame}"); }
                 else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings). UG_NOADS=1 skips the whole sequence so the gun HOLDS at hip -> a late frame shows a fully-ramped sprint/safety pose (which ADS would otherwise fade out).
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
@@ -9138,13 +9138,13 @@ namespace UnturnedGodot
                             {
                                 _htPilot.DebugSetFirstPerson(false);          // draw the seated body for the outside camera
                                 if (_vehCam != null) _vehCam.Current = true;  // seating builds a ride camera; the chase cam stays the shot
-                                GD.Print($"[helipilot] seated on tick {_frame}; chase cam re-asserted");
+                                Log.Print($"[helipilot] seated on tick {_frame}; chase cam re-asserted");
                             }
                             else if (_frame > 25)
                             {
                                 // Degrade to the EMPTY-SEAT clip rather than to no flight at all. A pilotless video
                                 // is a worse deliverable; a grounded one is a broken one.
-                                GD.PrintErr($"[helipilot] could NOT seat the pilot by tick {_frame} -- flying the sequence directly instead");
+                                Log.Err($"[helipilot] could NOT seat the pilot by tick {_frame} -- flying the sequence directly instead");
                                 _htPilot = null;   // and the null check below hands the controls straight back
                             }
                         }
@@ -9166,11 +9166,11 @@ namespace UnturnedGodot
                     {
                         float footY = _htPilot.DebugFootWorldY;
                         var vb = _veh.DebugWorldMeshAabb();
-                        GD.Print($"[seatcheck] posed foot world Y {footY:0.0000}; airframe underside {vb.Position.Y:0.0000}; "
+                        Log.Print($"[seatcheck] posed foot world Y {footY:0.0000}; airframe underside {vb.Position.Y:0.0000}; "
                                + $"foot is {(footY - vb.Position.Y):+0.0000;-0.0000} vs it (negative = THROUGH the machine); clip={_htPilot.DebugBodyLoopClip}");
                     }
                     if (_frame % 60 == 0)
-                        GD.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");
+                        Log.Print($"[helitest] t={_frame} phase={_heliPhase} alt={altH:0.0}m fwd={fwdSpd:0.0} lat={latSpd:+0.0;-0.0;0.0} vy={velH.Y:+0.0;-0.0;0.0} nose={noseDeg:+0.0;-0.0;0.0} roll={rollDeg:+0.0;-0.0;0.0} coll={coll:0.00}");
 
                     if (_vehCam != null)
                     {   // Chase cam on a WORLD-UP basis: follows position and heading, never rolls with the
@@ -9331,7 +9331,7 @@ namespace UnturnedGodot
                             if (System.Environment.GetEnvironmentVariable("UG_TAXI") == "1") { var _vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = _vt.Origin + new Vector3(0f, 13f, 0f); _vehCam.LookAt(_vt.Origin, new Vector3(0f, 0f, -1f)); }   // CLOSE top-down TRACKER, world-fixed (up=-Z): yaw jitter = nose wobbling L/R
                             else { var vt = _veh.GetGlobalTransformInterpolated(); _vehCam.GlobalPosition = vt.Origin + new Vector3(9f, 1.8f, 0f); _vehCam.LookAt(vt.Origin + new Vector3(0f, -0.2f, 0f), Vector3.Up); }
                         }
-                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1") GD.Print($"[park] f={_frame} spd={_veh.LinearVelocity.Length():F2} yawv={_veh.AngularVelocity.Y:F3} rollv={_veh.AngularVelocity.Z:F3} steer={_veh.Steering:F3}");
+                        if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1") Log.Print($"[park] f={_frame} spd={_veh.LinearVelocity.Length():F2} yawv={_veh.AngularVelocity.Y:F3} rollv={_veh.AngularVelocity.Z:F3} steer={_veh.Steering:F3}");
                         return;
                     }
                     if (System.Environment.GetEnvironmentVariable("UG_PLANEBURN") == "1")
@@ -9430,7 +9430,7 @@ namespace UnturnedGodot
                         int grounded = 0; foreach (var w in _veh.DebugWheelNodes) if (w.IsInContact()) grounded++;
                         var rb = _veh.GlobalTransform.Basis; var rfwd = -rb.Z;
                         float pitchDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(rfwd.Y, -1f, 1f)));
-                        GD.Print($"[rest] f{_frame} originY={_veh.GlobalPosition.Y:F4} pitch={pitchDeg:+0.00;-0.00}deg wheelsGrounded={grounded}/{_veh.DebugWheelNodes.Count} vel={_veh.LinearVelocity.Length():F3} deckFrontY={_veh.ToGlobal(new Vector3(0f,-0.273f,-1.5f)).Y:F4} deckRearY={_veh.ToGlobal(new Vector3(0f,-0.273f,1.5f)).Y:F4}");
+                        Log.Print($"[rest] f{_frame} originY={_veh.GlobalPosition.Y:F4} pitch={pitchDeg:+0.00;-0.00}deg wheelsGrounded={grounded}/{_veh.DebugWheelNodes.Count} vel={_veh.LinearVelocity.Length():F3} deckFrontY={_veh.ToGlobal(new Vector3(0f,-0.273f,-1.5f)).Y:F4} deckRearY={_veh.ToGlobal(new Vector3(0f,-0.273f,1.5f)).Y:F4}");
                     }
                     if (_hitchSweep) { if (_frame == 60) RunHitchSweep(); }
                     else if (_backunder)   // reverse straight back UNDER the parked trailer, couple in reach, then PULL FORWARD to prove the rig drives
@@ -9439,8 +9439,8 @@ namespace UnturnedGodot
                         {
                             _veh.Drive(-0.55f, 0f, false);
                             if (_buTrailer != null && _frame % 40 == 0)
-                                GD.Print($"[backunder] f{_frame} gap={_veh.FifthWheelWorld.DistanceTo(_buTrailer.KingpinWorld):F3} targetGhosted={(_buTrailer.CollisionLayer & 64u) != 0u} targetZ={_buTrailer.GlobalPosition.Z:F2} targetX={_buTrailer.GlobalPosition.X:F2}");
-                            if (_buTrailer != null && _veh.CoupleTo(_buTrailer)) { _buCoupledFrame = _frame; GD.Print($"[backunder] coupled OK at frame {_frame}"); }
+                                Log.Print($"[backunder] f{_frame} gap={_veh.FifthWheelWorld.DistanceTo(_buTrailer.KingpinWorld):F3} targetGhosted={(_buTrailer.CollisionLayer & 64u) != 0u} targetZ={_buTrailer.GlobalPosition.Z:F2} targetX={_buTrailer.GlobalPosition.X:F2}");
+                            if (_buTrailer != null && _veh.CoupleTo(_buTrailer)) { _buCoupledFrame = _frame; Log.Print($"[backunder] coupled OK at frame {_frame}"); }
                         }
                         else _veh.Drive(_frame > _buCoupledFrame + 50 ? 1f : 0f, _frame > _buCoupledFrame + 160 ? 0.4f : 0f, false);   // hitched -> HOLD ~50 frames (see if the magnetize centered the off-center trailer at rest) then drive forward
                     }
@@ -9546,12 +9546,12 @@ namespace UnturnedGodot
                         if (ttSeat == 0 && t == 200) _ttVeh.OccupiedSeats.Add(1);      // a gunner sits down mid-slew: the driver loses the gun and it must FREEZE
                         if (ttSeat == 0 && t == 260) _ttVeh.OccupiedSeats.Remove(1);   // ...and gets it back the moment the chair empties
                         if (t == 105 || t == 140 || t == 200 || t == 240 || t == 260 || t == 300 || t == 305)
-                            GD.Print($"[tanktest] pf{t} w{ttWeapon} barrel={_ttVeh.TurretBarrelDir(ttSeat, ttWeapon)} hasTurret={_ttVeh.HasTurret(ttSeat)} slots={_ttVeh.TurretSlotCount(ttSeat)} cd={_ttVeh.TurretCooldown(ttSeat, ttWeapon):0.00} ammo={_ttVeh.TurretAmmo(ttSeat, ttWeapon)} hp={_ttVeh.Health:0}");
+                            Log.Print($"[tanktest] pf{t} w{ttWeapon} barrel={_ttVeh.TurretBarrelDir(ttSeat, ttWeapon)} hasTurret={_ttVeh.HasTurret(ttSeat)} slots={_ttVeh.TurretSlotCount(ttSeat)} cd={_ttVeh.TurretCooldown(ttSeat, ttWeapon):0.00} ammo={_ttVeh.TurretAmmo(ttSeat, ttWeapon)} hp={_ttVeh.Health:0}");
                         if (t == 156 || t == 318)   // every live light, so a stray glow can be NAMED rather than guessed at
                         {
                             foreach (var ln in FindChildren("*", "OmniLight3D", true, false))
                                 if (ln is OmniLight3D ol && ol.IsVisibleInTree() && ol.LightEnergy > 0.01f)
-                                    GD.Print($"[tanktest] pf{t} light {ol.GetPath()} at {ol.GlobalPosition} E={ol.LightEnergy:0.0} R={ol.OmniRange:0.0}");
+                                    Log.Print($"[tanktest] pf{t} light {ol.GetPath()} at {ol.GlobalPosition} E={ol.LightEnergy:0.0} R={ol.OmniRange:0.0}");
                         }
                     }
                     _ttLastPf = pf;
@@ -9584,7 +9584,7 @@ namespace UnturnedGodot
                     if (_vmTest && _vm != null)   // the gun+arms render in the Viewmodel's own SubViewport (composited by a CanvasLayer), which GetViewport() misses -> blend it over the background so the still actually shows the weapon
                     {
                         var g = _vm.CaptureViewport();
-                        GD.Print($"[VMCAP] g={(g == null ? "null" : $"{g.GetSize()} fmt{(int)g.GetFormat()}")} main={im.GetSize()} fmt{(int)im.GetFormat()}");
+                        Log.Print($"[VMCAP] g={(g == null ? "null" : $"{g.GetSize()} fmt{(int)g.GetFormat()}")} main={im.GetSize()} fmt{(int)im.GetFormat()}");
                         if (g != null)
                         {
                             g.SavePng($"{_rigDir}/vpraw_{_rigShot:D2}.png");   // DEBUG: the raw SubViewport capture (does it hold the gun?)
@@ -9615,11 +9615,11 @@ namespace UnturnedGodot
                                     // A Disabled shape is in the tree but NOT in physics. Drawing it would
                                     // show a hitbox the game does not have, which is the whole thing being
                                     // measured here.
-                                    if (cs.Disabled) { GD.Print($"[hull] SKIPPED (disabled, not in physics): {cs.Name}"); continue; }
+                                    if (cs.Disabled) { Log.Print($"[hull] SKIPPED (disabled, not in physics): {cs.Name}"); continue; }
                                     // The bumper's shape hangs off an Area3D: a roadkill TRIGGER, not part of
                                     // the solid hitbox. Counting it would inflate the overhang with a volume
                                     // nothing ever collides with.
-                                    if (cs.GetParent() is Area3D) { GD.Print($"[hull] SKIPPED (Area3D trigger): {cs.GetParent().Name}/{cs.Name}"); continue; }
+                                    if (cs.GetParent() is Area3D) { Log.Print($"[hull] SKIPPED (Area3D trigger): {cs.GetParent().Name}/{cs.Name}"); continue; }
                                     // UG_HULLKIND=convex draws ONLY the decomposed hulls, =box only the
                                     // fitted boxes. Rendered against the body silhouette that separates
                                     // "the model's own shape, captured" from "the brick bolted around it".
@@ -9635,7 +9635,7 @@ namespace UnturnedGodot
                                         wire.GlobalTransform = cs.GlobalTransform;
                                         drawn++;
                                         var a = cs.Shape.GetDebugMesh().GetAabb();
-                                        GD.Print($"[hull] {cs.GetParent().Name}/{cs.Name} {cs.Shape.GetType().Name} " +
+                                        Log.Print($"[hull] {cs.GetParent().Name}/{cs.Name} {cs.Shape.GetType().Name} " +
                                                  $"pos=({cs.Position.X,6:0.00},{cs.Position.Y,6:0.00},{cs.Position.Z,7:0.00}) size=({a.Size.X,5:0.00},{a.Size.Y,5:0.00},{a.Size.Z,5:0.00})");
                                     }
                                 }
@@ -9668,7 +9668,7 @@ namespace UnturnedGodot
                             Dump(_veh);
                             sb.Append($"vehicle_origin {_veh.GlobalPosition.X:0.#####} {_veh.GlobalPosition.Y:0.#####} {_veh.GlobalPosition.Z:0.#####}\n");
                             Godot.FileAccess.Open(dump, Godot.FileAccess.ModeFlags.Write)?.StoreString(sb.ToString());
-                            GD.Print($"[hull] points written to {dump}");
+                            Log.Print($"[hull] points written to {dump}");
                         }
                         // UG_HULLONLY=1 hides the model so the frame is the HULL's silhouette alone.
                         // Rendered against the body-only pass from the identical camera, the pixels that
@@ -9676,8 +9676,8 @@ namespace UnturnedGodot
                         // a number, rather than me judging an overlay by eye.
                         if (System.Environment.GetEnvironmentVariable("UG_HULLONLY") == "1")
                             foreach (var mi in _bodyMeshes) if (GodotObject.IsInstanceValid(mi)) mi.Visible = false;
-                        GD.Print($"[hull] {drawn} collision shapes drawn");
-                        GD.Print($"[hull] vehicle layer={_veh.CollisionLayer} mask={_veh.CollisionMask}");
+                        Log.Print($"[hull] {drawn} collision shapes drawn");
+                        Log.Print($"[hull] vehicle layer={_veh.CollisionLayer} mask={_veh.CollisionMask}");
                         // WHAT DOES THE PLAYER ACTUALLY MEET? Cast straight down on the layers the player body
                         // and bullets scan (bit0|bit5) over a line along the car, and print where each ray
                         // stops. Over the bonnet and the boot -- the notches a convex hull fills in -- the
@@ -9693,11 +9693,11 @@ namespace UnturnedGodot
                             string what = !got ? "     -" : $"{((Vector3)hit["position"]).Y - _veh.GlobalPosition.Y,6:0.00}";
                             sb2.Append($"   z{z,6:0.00}  y={what}  {(!got ? "" : ((Node)hit["collider"]).Name.ToString())}\n");
                         }
-                        GD.Print(sb2.ToString());
+                        Log.Print(sb2.ToString());
                     }
                     string p = $"{_rigDir}/rig_{_rigShot:D2}.png";
                     im.SavePng(p);
-                    GD.Print($"[RIG] saved {p} (frame {_frame})");
+                    Log.Print($"[RIG] saved {p} (frame {_frame})");
                     _rigShot++;
                     if (_glassShotDir != null) PlaceGlassCam(_rigShot);   // move to the NEXT yaw for the next capture
                     if (_rigShot >= _rigCaptureFrames.Length) GetTree().Quit();
@@ -9711,14 +9711,14 @@ namespace UnturnedGodot
             {
                 if (!_worldReady) return;
                 if (_lmCam == null) { _lmCam = new Camera3D { Fov = 55f, Far = 3000f, Current = true }; AddChild(_lmCam); }
-                if (_lmIdx >= _lmTour.Length) { GD.Print("[LMSHOT] done"); GetTree().Quit(); return; }
+                if (_lmIdx >= _lmTour.Length) { Log.Print("[LMSHOT] done"); GetTree().Quit(); return; }
                 var lt = _lmTour[_lmIdx];
                 if (_lmFrame == 0) { _lmCam.GlobalPosition = lt.Eye; _lmCam.LookAt(lt.Look, Vector3.Up); }
                 if (++_lmFrame < ShotSettleFrames) return;
                 var lmimg = GetViewport().GetTexture()?.GetImage();
-                if (lmimg == null) { GD.PrintErr("[LMSHOT] null image -- need --rendering-driver vulkan"); GetTree().Quit(1); return; }
+                if (lmimg == null) { Log.Err("[LMSHOT] null image -- need --rendering-driver vulkan"); GetTree().Quit(1); return; }
                 lmimg.SavePng($"{_lmShotDir}/{_lmIdx:D2}_{lt.Tag}.png");
-                GD.Print($"[LMSHOT] {lt.Tag} dist~{lt.Eye.DistanceTo(lt.Look):0}m draws={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)} objs={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
+                Log.Print($"[LMSHOT] {lt.Tag} dist~{lt.Eye.DistanceTo(lt.Look):0}m draws={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)} objs={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
                 _lmIdx++; _lmFrame = 0;
                 return;
             }
@@ -9735,18 +9735,18 @@ namespace UnturnedGodot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
             else if (++_frame < 6) return; // let the renderer settle
-            if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
+            if (_spotDbg != null && IsInstanceValid(_spotDbg)) Log.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             // Draw calls + primitives at the capture frame. Frame MILLISECONDS on a software rasteriser say
             // nothing about a real GPU, but what the culler admitted into the frame is hardware-independent --
             // so this is the number to compare when changing draw distances, not fps.
             NodeCensus();
-            GD.Print($"[lodperf] drawcalls {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)}" +
+            Log.Print($"[lodperf] drawcalls {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)}" +
                      $" | primitives {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame)}" +
                      $" | objects {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
             var img = GetViewport().GetTexture().GetImage();
-            if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(1); return; }
+            if (img == null) { Log.Err("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(1); return; }
             img.SavePng(_shotPath);
-            GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
+            Log.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
         }
 
@@ -9794,9 +9794,9 @@ namespace UnturnedGodot
                 // the right instrument for an A/B on the sample-point count, and a whole-frame pixel diff is
                 // the WRONG one: other systems (the shadow budget's timer, async load frame counts) differ
                 // between two runs, so the frame moves for reasons that have nothing to do with items.
-                GD.Print($"[census] worlditems {items}: {settled} settled (frozen), {airborne} still moving, {items - settled - airborne} idle-unfrozen, {shown} VISIBLE");
-            GD.Print($"[census] {total} nodes across {byClass.Count} classes");
-            GD.Print($"[census] top: {sb}");
+                Log.Print($"[census] worlditems {items}: {settled} settled (frozen), {airborne} still moving, {items - settled - airborne} idle-unfrozen, {shown} VISIBLE");
+            Log.Print($"[census] {total} nodes across {byClass.Count} classes");
+            Log.Print($"[census] top: {sb}");
         }
 
         // Frames to let the world settle before capturing. 45 is right for a golden image, but each frame on
@@ -9838,13 +9838,13 @@ namespace UnturnedGodot
             if (now - _shotLastReportMs >= 15000)   // heartbeat: even if an OUTER timeout kills us, the log says why
             {
                 _shotLastReportMs = now;
-                GD.Print($"[SHOT] still waiting after {waited / 1000}s -- {ShotBlockedOn()}");
+                Log.Print($"[SHOT] still waiting after {waited / 1000}s -- {ShotBlockedOn()}");
             }
             if (waited < budgetSec * 1000) return false;
 
             _shotTimedOut = true;
-            GD.PrintErr($"[SHOT] TIMED OUT after {waited / 1000}s without capturing to {_shotRequested}");
-            GD.PrintErr($"[SHOT] blocked on: {ShotBlockedOn()}");
+            Log.Err($"[SHOT] TIMED OUT after {waited / 1000}s without capturing to {_shotRequested}");
+            Log.Err($"[SHOT] blocked on: {ShotBlockedOn()}");
             // Name the state we can actually SEE rather than asserting a cause we never checked. The old line
             // here said flatly "most common cause: UG_UNTURNED_DIR is unset" -- which sent me hunting a missing
             // map for five minutes while UG_UNTURNED_DIR was set correctly the whole time and the real answer was
@@ -9853,8 +9853,8 @@ namespace UnturnedGodot
             string envHint = string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_UNTURNED_DIR"))
                 ? "UG_UNTURNED_DIR is NOT set -- if this scene needs the real map, that is very likely why."
                 : "UG_UNTURNED_DIR IS set, so this is probably NOT a missing map.";
-            GD.PrintErr($"[SHOT] {envHint}");
-            GD.PrintErr("[SHOT] also note: the showcase modes (UG_HELITEST/UG_PLANETEST/UG_SHIPSHOW) return before "
+            Log.Err($"[SHOT] {envHint}");
+            Log.Err("[SHOT] also note: the showcase modes (UG_HELITEST/UG_PLANETEST/UG_SHIPSHOW) return before "
                       + "the capture hook and never arm one -- for those the MOVIE is the artifact and this timeout "
                       + "is the normal end of the run. Set UG_SHOT_TIMEOUT=0 to opt out and bound the run yourself.");
             GetTree().Quit(1);

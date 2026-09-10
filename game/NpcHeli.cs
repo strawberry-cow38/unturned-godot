@@ -295,7 +295,7 @@ namespace UnturnedGodot
                     onTarget = Heli.TurretBarrelDir(seat).AngleTo(want.Normalized()) < Mathf.DegToRad(FireConeDeg);
             }
             if (DebugCombat && Engine.GetPhysicsFrames() % 25 == 0)
-                GD.Print($"[COMBAT] mode={Mode} mount={m}/seat{seat} live={DebugLiveMounts} eyesOn={eyesOn} onTarget={onTarget} " +
+                Log.Print($"[COMBAT] mode={Mode} mount={m}/seat{seat} live={DebugLiveMounts} eyesOn={eyesOn} onTarget={onTarget} " +
                          $"want=({wantYaw:0.0},{wantPitch:0.0}) cur=({_turYaw[m]:0.0},{_turPitch[m]:0.0}) burstLeft={_burstLeft}");
             if (eyesOn && onTarget && _burstWait <= 0f)
             {

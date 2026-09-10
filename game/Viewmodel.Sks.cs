@@ -84,7 +84,7 @@ namespace UnturnedGodot
                     Position = new Vector3(0f, 0.0345f, 0f), MaterialOverride = copper });
                 _sksRounds[i] = round;
             }
-            GD.Print("[vm] SKS action: original carrier/right handle split; ten-round top-loading clip");
+            Log.Print("[vm] SKS action: original carrier/right handle split; ten-round top-loading clip");
         }
 
         void StartSksAction(string action, float speed)

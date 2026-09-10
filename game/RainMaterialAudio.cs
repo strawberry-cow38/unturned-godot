@@ -172,7 +172,7 @@ namespace UnturnedGodot
             Drive(_metal, metalPos, rint);
             Drive(_tarp, tarpPos, rint);
             if (System.Environment.GetEnvironmentVariable("UG_RAINMATDBG") != null)
-                GD.Print($"[rainmat] car={carPos.HasValue}({carD:0.0}m) foliage={folPos.HasValue}({folD:0.0}m) metal={metalPos.HasValue}({metalD:0.0}m) tarp={tarpPos.HasValue}({tarpD:0.0}m) canopyShelter={CanopyShelter:0.00} rint={rint:0.00} surfaces={RainSurfaces.Count}");
+                Log.Print($"[rainmat] car={carPos.HasValue}({carD:0.0}m) foliage={folPos.HasValue}({folD:0.0}m) metal={metalPos.HasValue}({metalD:0.0}m) tarp={tarpPos.HasValue}({tarpD:0.0}m) canopyShelter={CanopyShelter:0.00} rint={rint:0.00} surfaces={RainSurfaces.Count}");
         }
 
         /// <summary>StructureCatalog.Tiers is ordered weakest -> strongest and the order IS the upgrade path,

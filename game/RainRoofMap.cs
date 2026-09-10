@@ -67,7 +67,7 @@ namespace UnturnedGodot
             _win = new float[Res * Res];
             _bytes = new byte[Res * Res * 4];
             _q = new PhysicsRayQueryParameters3D { CollisionMask = SolidMask, HitBackFaces = true };
-            GD.Print($"[rainroof] {Res}x{Res} window over a cached 1 m grid, {RaysPerFrame} rays/frame while filling, {_tiles.Count} tiles cached");
+            Log.Print($"[rainroof] {Res}x{Res} window over a cached 1 m grid, {RaysPerFrame} rays/frame while filling, {_tiles.Count} tiles cached");
         }
 
         public override void _ExitTree() { if (Current == this) Current = null; }
@@ -336,7 +336,7 @@ namespace UnturnedGodot
                 float rayY = Cast(space, Mathf.FloorToInt(p.X / Cell), Mathf.FloorToInt(p.Z / Cell), fp.Y + Above);
                 if (rayY <= NoHit * 0.5f) rayY = float.MinValue;
                 float mapY = RoofYAt(p);
-                GD.Print($"[rainroof] check off=({off.X:0},{off.Z:0}) ray {rayY:0.00} map {mapY:0.00} {(Mathf.Abs(rayY - mapY) < 0.01f ? "OK" : "MISMATCH")} (tiles {_tiles.Count}, casts {CastCount})");
+                Log.Print($"[rainroof] check off=({off.X:0},{off.Z:0}) ray {rayY:0.00} map {mapY:0.00} {(Mathf.Abs(rayY - mapY) < 0.01f ? "OK" : "MISMATCH")} (tiles {_tiles.Count}, casts {CastCount})");
             }
         }
     }

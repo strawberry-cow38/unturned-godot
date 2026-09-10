@@ -259,7 +259,7 @@ namespace UnturnedGodot
                 if (jStart >= 0) _roads.BindRoadEnd(road, atEnd: false, jStart);
                 if (jEnd >= 0) _roads.BindRoadEnd(road, atEnd: true, jEnd);
             }
-            GD.Print($"[road-draw] drew road {road} with {_pts.Count} joints, ends -> nodes ({jStart}, {jEnd})" +
+            Log.Print($"[road-draw] drew road {road} with {_pts.Count} joints, ends -> nodes ({jStart}, {jEnd})" +
                      $" -> {_roads.JunctionCount} nodes, {_roads.Junctions().Count} of them connecting 2+ roads");
             _pts.Clear();
             BuildNodeMarkers();

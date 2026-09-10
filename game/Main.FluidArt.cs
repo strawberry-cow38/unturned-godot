@@ -77,7 +77,7 @@ namespace UnturnedGodot
                 Reference("Generator_0", new Vector3(0,0,-3.4f));
                 Reference("Propane_0", new Vector3(2.1f,0,-3.4f));
                 cam.Size = 15.3f; cam.Position = new Vector3(9,12,17); cam.LookAt(new Vector3(0,.6f,.6f));
-                GD.Print("[fluidart] gallery: 11 placed devices, 4 retail references; LOD0 forced for comparison");
+                Log.Print("[fluidart] gallery: 11 placed devices, 4 retail references; LOD0 forced for comparison");
             }
             else if (mode == "flow")
             {
@@ -106,7 +106,7 @@ namespace UnturnedGodot
                 gen.TogglePower();PowerNet.Recompute(GetTree());
                 for (int i=0;i<20;i++) FluidNet.Tick(GetTree(),.1f);
                 pump.HubTick(.03);
-                GD.Print($"[fluidart] flow: power={pump.IsPowered}, drive={pump.DriveActive}, received={dst.Tank.Amount}, drum={pump.GetNode<MeshInstance3D>("PumpDrum").Position}");
+                Log.Print($"[fluidart] flow: power={pump.IsPowered}, drive={pump.DriveActive}, received={dst.Tank.Amount}, drum={pump.GetNode<MeshInstance3D>("PumpDrum").Position}");
                 cam.Size=11;cam.Position=new Vector3(6,7,12);cam.LookAt(new Vector3(0,1.1f,0));
             }
             else if (ushort.TryParse(mode,out ushort id) && DeployableDef.ById(id)?.Fluid != null)
@@ -131,7 +131,7 @@ namespace UnturnedGodot
                 cam.Position=target+dir*(low ? c.GetNode<MeshInstance3D>("FluidBody").VisibilityRangeEnd+10 : 8f);
                 cam.LookAt(target);
                 Label(c.Def.Name + (low ? " — LOD1" : "") + $"  {Mathf.RoundToInt(Mathf.RadToDeg(az))}°",new Vector3(0,-.15f,.55f));
-                GD.Print($"[fluidart] placed {id}: {c.PortNodes.Count} hose ports, mesh={c.GetNode<MeshInstance3D>("FluidBody").Mesh.GetAabb()}");
+                Log.Print($"[fluidart] placed {id}: {c.PortNodes.Count} hose ports, mesh={c.GetNode<MeshInstance3D>("FluidBody").Mesh.GetAabb()}");
             }
         }
 
@@ -164,7 +164,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = bounds.GetCenter()+new Vector3(3,2.4f,4).Normalized()*4;
             cam.LookAt(bounds.GetCenter());
-            GD.Print($"[fluidart] icon {id}: manifest model {bounds}, transparent render");
+            Log.Print($"[fluidart] icon {id}: manifest model {bounds}, transparent render");
         }
     }
 }

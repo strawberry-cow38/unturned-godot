@@ -707,7 +707,7 @@ namespace UnturnedGodot
             {
                 _armDbgT += 1;
                 if (_armDbgT == 1 || _armDbgT == 120)
-                    GD.Print($"[armtrim] frame {_armDbgT}: clip={CurrentClip} trimL={wantL} trimR={wantR}, left reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
+                    Log.Print($"[armtrim] frame {_armDbgT}: clip={CurrentClip} trimL={wantL} trimR={wantR}, left reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
             }
         }
         int[] _trimShoulders;
@@ -1111,7 +1111,7 @@ namespace UnturnedGodot
                     bw.Write(r.arms != null);
                     if (r.arms != null) { bw.Write(r.arms.vcount); W(bw, r.arms.positions); W(bw, r.arms.normals); W(bw, r.arms.uvs); W(bw, r.arms.skin_index); W(bw, r.arms.skin_weight); W(bw, r.arms.faces); }
                     bw.Write(0x444E4521);
-                    GD.Print($"[rig] cached {resPath} -> {path}");
+                    Log.Print($"[rig] cached {resPath} -> {path}");
                 }
                 catch (System.Exception e) { GD.PushWarning($"[rig] could not write cache: {e.Message}"); }
             }
@@ -1220,7 +1220,7 @@ namespace UnturnedGodot
                         RigBin.TrySaveClips("res://content/consumable_anims.json", _consumableAnims);
                         src = "json";
                     }
-                    if (LoadProf) GD.Print($"[rigprof] consumable_anims parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - tc) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
+                    if (LoadProf) Log.Print($"[rigprof] consumable_anims parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - tc) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
                 }
             }
             return _consumableAnims;
@@ -1258,14 +1258,14 @@ namespace UnturnedGodot
                 if (rigData == null)
                 {
                     using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
-                    if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
+                    if (f == null) { Log.Err($"[rig] cannot open {resPath}"); return null; }
                     var bytes = f.GetBuffer((long)f.GetLength());   // parse the UTF-8 bytes directly: GetAsText() built a 44 MB UTF-16 copy first
                     rigData = JsonSerializer.Deserialize<RigData>(bytes, JsonOpts);
                     RigBin.TrySave(resPath, rigData);
                     src = "json";
                 }
                 _rigCache[resPath] = rigData;
-                if (LoadProf) GD.Print($"[rigprof] {resPath} parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
+                if (LoadProf) Log.Print($"[rigprof] {resPath} parsed from {src} in {(System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             return BuildFrom(rigData, tint, armsOnly, albedoTexPath, faceTexPath);
         }
@@ -1454,7 +1454,7 @@ namespace UnturnedGodot
                 }
                 built = (lib, names.ToArray());
                 _animCache[(rig, armsOnly)] = built;
-                if (LoadProf) GD.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
+                if (LoadProf) Log.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             ap.AddAnimationLibrary("", built.lib);
             root._ap = ap;

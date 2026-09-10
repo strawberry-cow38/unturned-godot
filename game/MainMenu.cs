@@ -325,7 +325,7 @@ namespace UnturnedGodot
                 barn.Position = new Vector3(-(mn.X + mx.X) * 0.5f, -mn.Y, -(mn.Z + mx.Z) * 0.5f);
                 AddChild(barn);
             }
-            else GD.PrintErr("[menu] Barn_0.obj failed to load");
+            else Log.Err("[menu] Barn_0.obj failed to load");
             }
 
             // FOV 90, not the 60 authored in the scene. OptionsSettings computes the menu camera's vertical
@@ -346,7 +346,7 @@ namespace UnturnedGodot
         void LoadMenuScene()
         {
             string jf = G("res://content/menu/menu_scene.json");
-            if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_scene.json missing"); return; }
+            if (!System.IO.File.Exists(jf)) { Log.Err("[menu] menu_scene.json missing"); return; }
             var arr = Json.ParseString(System.IO.File.ReadAllText(jf)).AsGodotArray();
             bool noTrees = System.Environment.GetEnvironmentVariable("UG_MENUNOTREES") == "1";   // dev: showcase the props
             // Per-placement albedo = the material's _Color * its _MainTex (content/menu/tex). _MainTex defaults to
@@ -370,7 +370,7 @@ namespace UnturnedGodot
                         mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                         mat.TextureFilter = leafy ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps : BaseMaterial3D.TextureFilterEnum.Nearest;
                     }
-                    else GD.PrintErr($"[menu] texture load failed, _Color only: {tex}");
+                    else Log.Err($"[menu] texture load failed, _Color only: {tex}");
                 }
                 if (leafy)
                 {
@@ -391,9 +391,9 @@ namespace UnturnedGodot
                     string mn = d["mesh"].AsString();
                     if (noTrees && (mn.StartsWith("Birch") || mn.StartsWith("Pine") || mn.StartsWith("Maple") || mn.Contains("Foliage"))) { skipTree++; continue; }
                     string op = G($"res://content/menu/mesh/{mn}.obj");
-                    if (!System.IO.File.Exists(op)) { GD.PrintErr($"[menu] mesh missing: {mn}"); skipNoMesh++; continue; }   // ObjMesh.Load THROWS on a missing file
+                    if (!System.IO.File.Exists(op)) { Log.Err($"[menu] mesh missing: {mn}"); skipNoMesh++; continue; }   // ObjMesh.Load THROWS on a missing file
                     var mesh = ObjMesh.Load(op);
-                    if (mesh == null) { GD.PrintErr($"[menu] mesh empty: {mn}"); skipNoMesh++; continue; }
+                    if (mesh == null) { Log.Err($"[menu] mesh empty: {mn}"); skipNoMesh++; continue; }
                     Vector3 V(string k) { var a = d[k].AsGodotArray(); return new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle()); }
                     var basis = new Basis(V("xaxis"), V("yaxis"), V("zaxis"));
                     string tex = (d.ContainsKey("tex") && d["tex"].VariantType != Variant.Type.Nil) ? d["tex"].AsString() : "";
@@ -404,9 +404,9 @@ namespace UnturnedGodot
                     AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(tex, albedo, cutoff, leafy), Transform = new Transform3D(basis, V("origin")) });
                     placed++;
                 }
-                catch (System.Exception ex) { GD.PrintErr($"[menu] placement error: {ex.Message}"); errored++; }
+                catch (System.Exception ex) { Log.Err($"[menu] placement error: {ex.Message}"); errored++; }
             }
-            GD.Print($"[menu] diorama: placed {placed} | skipped gizmo {skipGizmo}, tree {skipTree}, no-mesh {skipNoMesh}, errored {errored}");
+            Log.Print($"[menu] diorama: placed {placed} | skipped gizmo {skipGizmo}, tree {skipTree}, no-mesh {skipNoMesh}, errored {errored}");
         }
 
         // The real menu's own 6 lamps (Light docs extracted from Menu_Base into content/menu/menu_lamps.json:
@@ -415,7 +415,7 @@ namespace UnturnedGodot
         void LoadMenuLamps()
         {
             string jf = G("res://content/menu/menu_lamps.json");
-            if (!System.IO.File.Exists(jf)) { GD.PrintErr("[menu] menu_lamps.json missing"); return; }
+            if (!System.IO.File.Exists(jf)) { Log.Err("[menu] menu_lamps.json missing"); return; }
             // Godot energy vs Unity intensity relate differently at different RANGES (godot's falloff vs unity's), so
             // ONE global factor can't hold: the range-4 point lamps and range-64 spots need factors ~11x apart
             // (measured -- a single 4.0 blew out the point-lit workbench ~11x). Per-family. UG_LAMPSCALE_PT/_SP override.
@@ -458,12 +458,12 @@ namespace UnturnedGodot
                         AddChild(new OmniLight3D { Position = V("pos"), LightColor = c, LightEnergy = intensity * ptScale, OmniRange = range,
                                                    OmniAttenuation = ParseF(System.Environment.GetEnvironmentVariable("UG_OMNIATTEN"), 2.0f) });
                     else
-                        GD.PrintErr($"[menu] unhandled lamp type {type} (Menu_Base has only Point/Spot)");
+                        Log.Err($"[menu] unhandled lamp type {type} (Menu_Base has only Point/Spot)");
                     lamps++;
                 }
-                catch (System.Exception ex) { GD.PrintErr($"[menu] lamp error: {ex.Message}"); }
+                catch (System.Exception ex) { Log.Err($"[menu] lamp error: {ex.Message}"); }
             }
-            GD.Print($"[menu] placed {lamps} real lamps (point x{ptScale}, spot x{spScale})");
+            Log.Print($"[menu] placed {lamps} real lamps (point x{ptScale}, spot x{spScale})");
         }
 
         // The Hero -- the skinned survivor the whole diorama is arranged around (the Survivors camera frames it).
@@ -489,9 +489,9 @@ namespace UnturnedGodot
                 hero.LookAt(svCam, Vector3.Up);
                 hero.RotateY(Mathf.DegToRad(ParseF(System.Environment.GetEnvironmentVariable("UG_HEROYAW"), 0f)));
                 hero.PlayLoop(hero.IdleClip);
-                GD.Print("[menu] placed Hero (RiggedCharacter, Idle_Stand)");
+                Log.Print("[menu] placed Hero (RiggedCharacter, Idle_Stand)");
             }
-            catch (System.Exception ex) { GD.PrintErr($"[menu] hero failed: {ex.Message}"); }
+            catch (System.Exception ex) { Log.Err($"[menu] hero failed: {ex.Message}"); }
         }
 
         static float ParseF(string s, float def) => float.TryParse(s, out var v) ? v : def;

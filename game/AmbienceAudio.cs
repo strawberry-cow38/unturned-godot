@@ -73,7 +73,7 @@ namespace UnturnedGodot
 
             _day = MakeBed("day");
             _night = MakeBed("night");
-            if (_day == null && _night == null) GD.Print($"[ambience] no beds for map '{MapKey}' -- silent");
+            if (_day == null && _night == null) Log.Print($"[ambience] no beds for map '{MapKey}' -- silent");
         }
 
         AudioStreamPlayer MakeBed(string which)

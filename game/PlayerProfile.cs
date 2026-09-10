@@ -36,7 +36,7 @@ namespace UnturnedGodot
             Load();
             _face = UnturnedGodot.Net.PlayerProfileReplication.ClampFace(face);
             try { var cfg = new ConfigFile(); cfg.Load(FaceCfg); cfg.SetValue("character", "face", (int)_face); cfg.Save(FaceCfg); }
-            catch (System.Exception e) { GD.PrintErr($"[profile] could not save {FaceCfg}: {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[profile] could not save {FaceCfg}: {e.Message}"); }
         }
         static void LoadFace()
         {
@@ -70,7 +70,7 @@ namespace UnturnedGodot
             string raw = System.Environment.GetEnvironmentVariable(NameEnv);
             _name = ProfileRules.SanitizeName(raw, out bool changed);
             if (!string.IsNullOrEmpty(raw) && changed)
-                GD.Print($"[profile] name '{raw}' is not usable as-is -> '{_name}'");
+                Log.Print($"[profile] name '{raw}' is not usable as-is -> '{_name}'");
 
             string path = System.Environment.GetEnvironmentVariable(AvatarEnv);
             if (string.IsNullOrEmpty(path)) return;
@@ -78,27 +78,27 @@ namespace UnturnedGodot
             try
             {
                 var info = new System.IO.FileInfo(path);
-                if (!info.Exists) { GD.Print($"[profile] no picture at {path}"); return; }
+                if (!info.Exists) { Log.Print($"[profile] no picture at {path}"); return; }
                 // Check the SIZE before reading, not after: the point of a cap is to not have the bytes in
                 // memory, and File.ReadAllBytes on a pathological path would defeat it.
                 if (info.Length > ProfileRules.MaxAvatarBytes)
                 {
-                    GD.Print($"[profile] picture is {info.Length / 1024} KB, over the {ProfileRules.MaxAvatarBytes / 1024} KB limit -- ignored");
+                    Log.Print($"[profile] picture is {info.Length / 1024} KB, over the {ProfileRules.MaxAvatarBytes / 1024} KB limit -- ignored");
                     return;
                 }
                 var bytes = System.IO.File.ReadAllBytes(path);
                 var verdict = ProfileRules.CheckAvatarPng(bytes);
                 if (verdict != ProfileRules.AvatarVerdict.Ok)
                 {
-                    GD.Print($"[profile] picture refused: {ProfileRules.Explain(verdict)}");
+                    Log.Print($"[profile] picture refused: {ProfileRules.Explain(verdict)}");
                     return;
                 }
                 _avatar = bytes;
-                GD.Print($"[profile] {_name} + a {bytes.Length / 1024f:0.0} KB picture");
+                Log.Print($"[profile] {_name} + a {bytes.Length / 1024f:0.0} KB picture");
             }
             catch (System.Exception ex)
             {
-                GD.Print($"[profile] could not read the picture ({ex.GetType().Name}) -- continuing without one");
+                Log.Print($"[profile] could not read the picture ({ex.GetType().Name}) -- continuing without one");
             }
         }
 

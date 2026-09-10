@@ -117,7 +117,7 @@ namespace UnturnedGodot
         {
             string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
             string manifest = dir + "resources.txt";
-            if (!File.Exists(manifest)) { GD.Print("[resources] no resources.txt -- skipping"); return; }
+            if (!File.Exists(manifest)) { Log.Print("[resources] no resources.txt -- skipping"); return; }
             // UG_NOLOD=1 keeps the old hardcoded 320/180 -- the A/B control for what retail's distances changed.
             if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1")
                 LodTable.LoadResources(dir + "lods.txt");   // retail per-asset LODGroup; layer cull is LodTable.DefaultCullDistance
@@ -274,9 +274,9 @@ namespace UnturnedGodot
                         _pendingImpostors.Add(new ImpostorSpec { Name = name, Dir = dir, Parts = parts, Xf = xf, ByCell = byCell, RealCull = cullRange });
                 }
                 total += xf.Count; types++;
-                GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
+                Log.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
             }
-            GD.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
+            Log.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
         }
 
         // ---------------------------------------------------------------------------------------------------
@@ -400,10 +400,10 @@ namespace UnturnedGodot
                     made += lst.Count;
                 }
                 _impostorMats.Add((spec.Name, mat, quadW, quadH));
-                GD.Print($"[imposter] {spec.Name}: {spec.Xf.Count} billboards, on at {spec.RealCull * ImpostorOverlap:0}m, real trees off at {spec.RealCull:0}m, out to {ImpostorRange:0}m");
+                Log.Print($"[imposter] {spec.Name}: {spec.Xf.Count} billboards, on at {spec.RealCull * ImpostorOverlap:0}m, real trees off at {spec.RealCull:0}m, out to {ImpostorRange:0}m");
             }
             ImpostorInstancesForTest = made;
-            GD.Print($"[imposter] {made} billboards across {_pendingImpostors.Count} species");
+            Log.Print($"[imposter] {made} billboards across {_pendingImpostors.Count} species");
             _pendingImpostors.Clear();
         }
 
@@ -462,7 +462,7 @@ namespace UnturnedGodot
             if (img == null || img.IsEmpty()) return (null, 0f, 0f);
             // A fully transparent bake means the camera framed nothing -- return null so the species just has no
             // far field, instead of every distant tree becoming an invisible quad that still costs a draw.
-            if (!HasAnyOpaque(img)) { GD.PrintErr($"[imposter] {spec.Name}: bake came out empty, skipping"); return (null, 0f, 0f); }
+            if (!HasAnyOpaque(img)) { Log.Err($"[imposter] {spec.Name}: bake came out empty, skipping"); return (null, 0f, 0f); }
             img.GenerateMipmaps();
             return (ImageTexture.CreateFromImage(img), bakeW, bakeH);
         }
@@ -604,7 +604,7 @@ namespace UnturnedGodot
             // NO LOGS YET (strawberry 2026-09-09: "only produce logs once theyve despawned"). They are dropped by
             // the debris cleanup timer instead, along the trunk that is lying there -- see SpawnDebris.
             GetTree().CreateTimer(Reset).Timeout += Regrow;   // retail asset.reset: it grows back
-            GD.Print($"[tree] felled #{Index}");
+            Log.Print($"[tree] felled #{Index}");
         }
 
         // Retail ResourceManager.damage on death: Reward_Min..Reward_Max items rolled off the tree's spawn table
@@ -1063,7 +1063,7 @@ namespace UnturnedGodot
             Field?.SetAlive(Index, false);   // zero-scale the rock out of its MultiMesh + drop the collider to layer 0
             DropScrap();
             GetTree().CreateTimer(Reset).Timeout += Regrow;
-            GD.Print($"[ore] mined #{Index}");
+            Log.Print($"[ore] mined #{Index}");
         }
 
         // Reward_Min..Max Metal Scrap scattered round the node, deterministic per node so peers agree without a wire

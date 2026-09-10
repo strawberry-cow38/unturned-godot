@@ -79,9 +79,9 @@ namespace UnturnedGodot
             var sm = StructureManager.Instance;
             int was = piece.Tier;
             if (sm.Upgrade(piece))
-                GD.Print($"[build] upgraded {piece.Construct}: {StructureCatalog.TierAt(was).Name} -> {StructureCatalog.TierAt(piece.Tier).Name} ({piece.Health} hp)");
+                Log.Print($"[build] upgraded {piece.Construct}: {StructureCatalog.TierAt(was).Name} -> {StructureCatalog.TierAt(piece.Tier).Name} ({piece.Health} hp)");
             else
-                GD.Print($"[build] {piece.Construct} is already {StructureCatalog.TierAt(piece.Tier).Name} (top tier)");
+                Log.Print($"[build] {piece.Construct} is already {StructureCatalog.TierAt(piece.Tier).Name} (top tier)");
         }
 
         /// <summary>The structure piece under the crosshair, or null. Shared by salvage/upgrade/melee so all
@@ -155,14 +155,14 @@ namespace UnturnedGodot
             if (HasBlowtorch)
             {
                 int healed = sm.Repair(piece, Mathf.RoundToInt(amount));
-                if (healed > 0) GD.Print($"[build] repaired {piece.Construct} +{healed}");
+                if (healed > 0) Log.Print($"[build] repaired {piece.Construct} +{healed}");
                 return true;
             }
             var c = piece.Construct;
             int tier = piece.Tier;
             bool broke = sm.Damage(piece, Mathf.RoundToInt(amount));
             MeleeImpactFx(piece.Pos, false, metal ? Surf.Metal : Surf.Wood);
-            GD.Print(broke
+            Log.Print(broke
                 ? $"[build] destroyed {StructureCatalog.TierAt(tier).Name} {c}"
                 : $"[build] hit {c} for {amount:0} ({piece.Health}/{piece.MaxHealth})");
             return true;
@@ -187,7 +187,7 @@ namespace UnturnedGodot
             HitmarkerHUD.Instance?.ShowCircle();
             Surf sf = dn.HasMeta(SurfMeta) ? (Surf)(int)dn.GetMeta(SurfMeta) : Surf.Wood;
             MeleeImpactFx(point, false, sf);
-            GD.Print($"[melee] hit destructible {dn.Name} for {amount:0}");
+            Log.Print($"[melee] hit destructible {dn.Name} for {amount:0}");
             return true;
         }
 
@@ -211,7 +211,7 @@ namespace UnturnedGodot
                 var pt = (Vector3)hit["position"];
                 tt.Chop(amount, pt, fwd);
                 MeleeImpactFx(pt, false, Surf.Wood);
-                GD.Print($"[melee] chopped tree for {amount:0}");
+                Log.Print($"[melee] chopped tree for {amount:0}");
                 return true;
             }
             if (col is GlassPane gp)
@@ -222,13 +222,13 @@ namespace UnturnedGodot
                 // change has no business touching -- Concrete is the hard-surface tick. The glass audio that
                 // matters is the shatter, and GlassPane.Shatter owns that already.
                 MeleeImpactFx(pt, false, Surf.Concrete);
-                GD.Print($"[melee] hit glass for {amount:0}");
+                Log.Print($"[melee] hit glass for {amount:0}");
                 return true;
             }
             if (col is OreRock ore && !ore.Mined)   // metal ore: only a PICKAXE (axe_pick) mines it -> Metal Scrap; other tools just clink
             {
                 var pt = (Vector3)hit["position"];
-                if (_heldMeleeName == "axe_pick") { float md = _melee?.ResourceDamage ?? amount; ore.Mine(md, pt, fwd); GD.Print($"[melee] mined ore for {md:0}"); }   // _heldItem is null for a melee; resources take Resource_Damage (pickaxe=100), not Zombie_Damage(34)
+                if (_heldMeleeName == "axe_pick") { float md = _melee?.ResourceDamage ?? amount; ore.Mine(md, pt, fwd); Log.Print($"[melee] mined ore for {md:0}"); }   // _heldItem is null for a melee; resources take Resource_Damage (pickaxe=100), not Zombie_Damage(34)
                 MeleeImpactFx(pt, false, Surf.Metal);   // metal clink either way (feedback that you need a pickaxe)
                 return true;
             }
@@ -244,7 +244,7 @@ namespace UnturnedGodot
             if (piece == null) return;
             var c = piece.Construct;
             int tier = StructureManager.Instance.Salvage(piece);
-            if (tier >= 0) GD.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {c}");
+            if (tier >= 0) Log.Print($"[build] salvaged {StructureCatalog.TierAt(tier).Name} {c}");
         }
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
@@ -1018,7 +1018,7 @@ namespace UnturnedGodot
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
-                    GD.Print($"[wire] started from {_wirePort.InfoLine()}");
+                    Log.Print($"[wire] started from {_wirePort.InfoLine()}");
                 }
                 return;
             }
@@ -1156,7 +1156,7 @@ namespace UnturnedGodot
                 {
                     _roping = true; _ropeSrc = _ropeLookVeh;
                     _ropePreview = new TowRope(); GetParent().AddChild(_ropePreview);
-                    GD.Print("[rope] tow started (rear)");
+                    Log.Print("[rope] tow started (rear)");
                 }
                 return;
             }
@@ -1172,7 +1172,7 @@ namespace UnturnedGodot
                 // loopback-host path too -- never rope a vehicle a REMOTE client is actively driving (NetDriverId != 0
                 // = a remote holds the seat; a held/client-auth body must not become a rope end).
                 else if (_ropeSrc is Vehicle towerV && _ropeLookVeh is Vehicle towedV
-                         && towerV.NetDriverId == 0 && towedV.NetDriverId == 0 && towerV.AttachTow(towedV)) GD.Print("[rope] towing");
+                         && towerV.NetDriverId == 0 && towedV.NetDriverId == 0 && towerV.AttachTow(towedV)) Log.Print("[rope] towing");
                 CancelRope();
             }
         }
@@ -1248,7 +1248,7 @@ namespace UnturnedGodot
             if (RequestConnectWire(src, cons))
             {   // MP: the link is a REQUEST -- drop the local preview; the committed wire renders when
                 // WireConnected echoes through the replica view (server wires are 2-point, nodes are SP cosmetics)
-                GD.Print($"[wire] connect requested {src.ProviderName} -> {cons.ProviderName} (wire)");
+                Log.Print($"[wire] connect requested {src.ProviderName} -> {cons.ProviderName} (wire)");
                 CancelWire();
                 return;
             }
@@ -1258,7 +1258,7 @@ namespace UnturnedGodot
             _wirePreview.SetPoints(pts, valid: true);
             _wirePreview.AddToGroup("wires");
             PowerNet.MarkDirty();   // a new wire changes the graph
-            GD.Print($"[wire] connected {src.ProviderName} -> {cons.ProviderName} ({_wireNodes.Count} nodes)");
+            Log.Print($"[wire] connected {src.ProviderName} -> {cons.ProviderName} ({_wireNodes.Count} nodes)");
             _wirePreview = null; _wiring = false; _wireSrc = null; _wireNodes.Clear();
         }
 
@@ -1404,7 +1404,7 @@ namespace UnturnedGodot
                     _hosing = true; _hoseSrc = _hosePort; _hoseNodes.Clear();
                     _hoseSrc.SetHighlight(HosePort.PortHi.Focus);
                     _hosePreview = new Hose(); GetParent().AddChild(_hosePreview);   // preview: null endpoints -> FluidNet skips it until committed
-                    GD.Print($"[hose] started from {_hosePort.InfoLine()}");
+                    Log.Print($"[hose] started from {_hosePort.InfoLine()}");
                 }
                 return;
             }
@@ -1440,7 +1440,7 @@ namespace UnturnedGodot
             if (!_hosePreview.IsInGroup("hoses")) _hosePreview.AddToGroup("hoses");
             if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
             if (IsInstanceValid(target)) target.SetHighlight(HosePort.PortHi.None);
-            GD.Print($"[hose] connected {srcPort.Owner?.Role} -> {consPort.Owner?.Role} ({_hoseNodes.Count} nodes)");
+            Log.Print($"[hose] connected {srcPort.Owner?.Role} -> {consPort.Owner?.Role} ({_hoseNodes.Count} nodes)");
             _hosePreview = null; _hosing = false; _hoseSrc = null; _hoseNodes.Clear();
         }
 
@@ -1516,7 +1516,7 @@ namespace UnturnedGodot
             hose.Consumer = null;
             hose.RemoveFromGroup("hoses");   // stop conducting immediately
             _hosePreview = hose; _hosing = true;
-            GD.Print($"[hose] unplugged -> routing from source with {_hoseNodes.Count} kept nodes");
+            Log.Print($"[hose] unplugged -> routing from source with {_hoseNodes.Count} kept nodes");
         }
 
         // In/out arrows on every fluid port while the hose tool is out (mirror UpdateWireArrows): blue where you can hose,
@@ -1620,7 +1620,7 @@ namespace UnturnedGodot
             wire.Consumer = null;
             wire.RemoveFromGroup("wires"); PowerNet.MarkDirty();   // stop delivering power immediately
             _wirePreview = wire; _wiring = true;
-            GD.Print($"[wire] unplugged -> routing from source with {_wireNodes.Count} kept nodes");
+            Log.Print($"[wire] unplugged -> routing from source with {_wireNodes.Count} kept nodes");
         }
 
         // In/out arrows on every connection point while the wire tool is out: blue where you can wire, red where the
@@ -1726,7 +1726,7 @@ namespace UnturnedGodot
             // reaches that check, because it never reaches the server at all.
             if (NetPickupDeployable != null)
             {
-                GD.Print($"[deploy] pickup refused: {d.Def?.Name} is world scenery the server does not own (NetId 0)");
+                Log.Print($"[deploy] pickup refused: {d.Def?.Name} is world scenery the server does not own (NetId 0)");
                 return;
             }
             ushort id = d.Def?.Id ?? 0;
@@ -1745,7 +1745,7 @@ namespace UnturnedGodot
                 if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
                 else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (a deployable re-enters placement mode)
             }
-            GD.Print($"[deploy] picked up #{id} ({name})");
+            Log.Print($"[deploy] picked up #{id} ({name})");
         }
 
         // Hold F over a placed fluid device to pick it back up into the bag (mirror of UpdateDeployPickup): its hoses (and a
@@ -1830,7 +1830,7 @@ namespace UnturnedGodot
                 if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
                 else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (re-enters placement mode)
             }
-            GD.Print($"[fluid] picked up #{id} ({name})");
+            Log.Print($"[fluid] picked up #{id} ({name})");
         }
 
         // A center-screen pickup readout (fluid devices have no per-device progress billboard like a generator's).
@@ -2036,7 +2036,7 @@ namespace UnturnedGodot
                 var wentShelf = Inventory.tryAddItemAuto(grabbed, out byte shelfSlot);
                 if (wentShelf != PlayerInventory.AutoPlace.None)
                 {
-                    GD.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
+                    Log.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
                     AfterAutoPickup(wentShelf, shelfSlot, grabbed, freeHands);
                 }
                 else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
@@ -2048,7 +2048,7 @@ namespace UnturnedGodot
             var went = Inventory.tryAddItemAuto(wi.Item, out byte slot);
             if (went == PlayerInventory.AutoPlace.None) return;
             var item = wi.Item; var asset = item.GetAsset();
-            GD.Print($"[pickup] {asset?.itemName} -> {went}");
+            Log.Print($"[pickup] {asset?.itemName} -> {went}");
             wi.QueueFree();
             _focusItem = null;
             AfterAutoPickup(went, slot, item, wasUnarmed);
@@ -2109,7 +2109,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { MeleeMesh = $"{meleeName}.txt", MeleeAlbedo = $"{meleeName}_albedo.png" };   // show the melee weapon in-hand (arms + model, no gun FX)
             AddChild(_viewmodel);
             RelinkViewmodelLighting();   // re-take the world lighting on the new viewmodel (else fullbright)
-            GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
+            Log.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 
         // Put whatever's in hand away -> UNARMED (bare fists). The src has no "holding nothing" combat state: empty
@@ -2216,12 +2216,12 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { Fists = true };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print("[equip] unarmed -> fists (LMB/RMB to punch)");
+            Log.Print("[equip] unarmed -> fists (LMB/RMB to punch)");
         }
 
         // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
         public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y)> HotbarBinds = new();
-        public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); GD.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
+        public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); Log.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
         static int? HotbarSlot(InputEvent e) => Keybinds.HotbarSlot(e);   // shared logic lives in Keybinds so equip + bind-item read one key space
 
         public void EquipHotbar(int n)
@@ -2294,7 +2294,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true };   // the ripped 1P gas-can model held with BOTH HANDS (NaturalHold -> plays the can's own two-handed Fuel_Equip carry anim, source animations.prefab); HoldingDeployable stays false (no _deployable) so RMB still extracts
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[fuel] holding {asset?.itemName} -- {FluidDef.Litres(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f)}/{FluidDef.Litres(asset?.fuelCapacity ?? 0f)} (RMB a powered pump to fill)");
+            Log.Print($"[fuel] holding {asset?.itemName} -- {FluidDef.Litres(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f)}/{FluidDef.Litres(asset?.fuelCapacity ?? 0f)} (RMB a powered pump to fill)");
         }
 
         // Equip a fishing rod into the hand (UseableFisher). The rod mesh isn't ripped yet -> EmptyHands hold (the
@@ -2314,7 +2314,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { EmptyHands = true };   // no rod mesh yet -> bare arms in the ready hold
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[fishing] holding {asset?.itemName} -- hold LMB to charge the cast, release to fling, LMB again on the bite to reel it in");
+            Log.Print($"[fishing] holding {asset?.itemName} -- hold LMB to charge the cast, release to fling, LMB again on the bite to reel it in");
         }
 
         // ---- BINOCULARS (master 2026-09-05: "equipable, not a primary or secondary slot item. copy the scope viewport thing
@@ -2347,11 +2347,11 @@ namespace UnturnedGodot
                 foreach (float sx in new[] { -OpticEyeX, OpticEyeX })
                     ok &= _viewmodel.AddHeldLens(lens, new Vector3(sx, OpticEyeY + OpticLensInset, 0f), new Vector3(90f, 0f, 0f), OpticLensR * 1.05f);   // sunk up the barrel, still facing -Y (the eye)
                 _opticLensesDone = ok;
-                if (ok) GD.Print("[optic] PiP lenses on the carried pair");
+                if (ok) Log.Print("[optic] PiP lenses on the carried pair");
             }
             if (want && !_bino.Raised) _opticBaseFov = _cam.Fov;   // rising edge: remember the UN-zoomed FOV first (reading it after the zoom below stacked 75 -> 18.75 -> 4.7)
             if (want) _cam.Fov = _opticBaseFov / Mathf.Max(1f, _bino.Zoom);   // RAISED = retail PlayerLook.enableZoom: the MAIN camera zooms (kept per tick so LMB's zoom step lands at once)
-            if (System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1" && ++_opticDbgT % 60 == 0) GD.Print($"[opticdbg] want={want} raised={_bino.Raised} vm={_viewmodel?.ShownDebug} fov={_cam.Fov:0.0}");
+            if (System.Environment.GetEnvironmentVariable("UG_LENSDBG") == "1" && ++_opticDbgT % 60 == 0) Log.Print($"[opticdbg] want={want} raised={_bino.Raised} vm={_viewmodel?.ShownDebug} fov={_cam.Fov:0.0}");
             _viewmodel?.SetShown(!want);   // every tick, not on the edge: the first edge can land before the Viewmodel's _Ready (no layer yet -> a silent no-op, the pair stayed on screen while raised)
             if (want == _bino.Raised) return;
             _bino.Raised = want;
@@ -2372,7 +2372,7 @@ namespace UnturnedGodot
             _bino = new BinocularsView { Zoom = OpticZoomLevels[0], Raised = false, Vm = _viewmodel };   // RAISED only while RMB is held (UpdateOptic); Vm so the CARRIED pip looks down the barrels rather than down your eyeline
             AddChild(_bino);
             _opticForceRaise = System.Environment.GetEnvironmentVariable("UG_ADS") == "1";   // harness: hold them up for a render
-            GD.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");
+            Log.Print($"[optic] {asset?.itemName} up at {OpticZoomLevels[0]}x -- LMB cycles {string.Join("/", OpticZoomLevels)}x");
         }
         void ClearHeldOptic()
         {
@@ -2452,7 +2452,7 @@ namespace UnturnedGodot
             _throwDef = Throwables.Find(asset.id);
             _throwTint = WorldItem.PaletteColor(asset.id) ?? Colors.White;   // the canister's own paint -> the smoke/flare colour
             BuildThrowableViewmodel();
-            GD.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
+            Log.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
         }
 
         void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; }   // switching away mid-swing drops the pending release + tail with it
@@ -2505,7 +2505,7 @@ namespace UnturnedGodot
             _throwPendingT = useLen * ThrowReleaseFraction;
             _throwPendingStrong = strong;
             _throwCd = useLen;
-            GD.Print($"[throw] swing ({(strong ? "strong" : "weak")}), release in {_throwPendingT:0.00}s, busy {useLen:0.00}s");
+            Log.Print($"[throw] swing ({(strong ? "strong" : "weak")}), release in {_throwPendingT:0.00}s, busy {useLen:0.00}s");
         }
 
         /// <summary>The moment in the swing where the item actually leaves the hand -- computed HERE, off the aim at
@@ -2532,7 +2532,7 @@ namespace UnturnedGodot
                 GetParent()?.AddChild(g);   // the player's own parent, as ThrowGrenade has always done -- NOT CurrentScene, which escapes an L1 test's sandbox world
                 g.GlobalPosition = origin;
             }
-            GD.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
+            Log.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
 
             // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner
             // echo empties the cell; in SP we remove it ourselves.
@@ -2588,7 +2588,7 @@ namespace UnturnedGodot
             bool added = asset != null && Inventory != null && Inventory.tryAddItem(new SDG.Unturned.Item(caught.ItemId));
             Skills.AwardExperience((uint)caught.Experience);
             _invUI?.Refresh();
-            GD.Print($"[fishing] caught {(asset?.itemName ?? $"#{caught.ItemId}")}{(added ? "" : " (no bag room)")} +{caught.Experience} fishing xp");
+            Log.Print($"[fishing] caught {(asset?.itemName ?? $"#{caught.ItemId}")}{(added ? "" : " (no bag room)")} +{caught.Experience} fishing xp");
         }
 
         // Per-frame fishing update (UseableFisher.tock + simulate + UpdateBobber). Charges the gauge at a steady 50 Hz,
@@ -2730,7 +2730,7 @@ namespace UnturnedGodot
             if (asset == null || !asset.IsFuelContainer) return;
             float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
             float space = asset.fuelCapacity - canFuel;
-            if (space <= 0.01f) { GD.Print("[fuel] can is full"); return; }
+            if (space <= 0.01f) { Log.Print("[fuel] can is full"); return; }
             if (IsInstanceValid(_focusGasPump))
             {
                 // A2 (SP/MP-unify): a REPLICATED pump (NetId!=0, consuming loopback / joined client) routes the
@@ -2739,16 +2739,16 @@ namespace UnturnedGodot
                 // direct tank-drain is DISABLED under consume; a local add would double-count + desync). Powered is
                 // checked server-side (a fresh Solve). Direct SP pumps (NetId==0) take the local path below.
                 if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
-                if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
+                if (!_focusGasPump.IsPowered) { Log.Print("[fuel] that pump has no power"); return; }
                 float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
-                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
+                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); Log.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)   // siphon fuel out of a car
             {
                 float pulled = Mathf.Min(space, _focusVehicle.Fuel);
-                if (pulled <= 0.01f) { GD.Print("[fuel] that vehicle is empty"); return; }
+                if (pulled <= 0.01f) { Log.Print("[fuel] that vehicle is empty"); return; }
                 _focusVehicle.Fuel -= pulled; _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh();
-                GD.Print($"[fuel] siphoned {FluidDef.Litres(pulled)} from {_focusVehicle.DisplayName} -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}");
+                Log.Print($"[fuel] siphoned {FluidDef.Litres(pulled)} from {_focusVehicle.DisplayName} -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}");
             }
         }
 
@@ -2763,23 +2763,23 @@ namespace UnturnedGodot
             var asset = _heldFuelItem.GetAsset();
             if (asset == null || !asset.IsFuelContainer) return;
             float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
-            if (canFuel <= 0.01f) { GD.Print("[fuel] can is empty"); return; }
+            if (canFuel <= 0.01f) { Log.Print("[fuel] can is empty"); return; }
             if (IsInstanceValid(_focusDeployable) && _focusDeployable.FuelMax > 0f)
             {
                 float space = _focusDeployable.FuelMax - _focusDeployable.Fuel;
-                if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
+                if (space <= 0.01f) { Log.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusDeployable.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
                 PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
-                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusDeployable.Def?.Name} {FluidDef.Litres(_focusDeployable.Fuel)}/{FluidDef.Litres(_focusDeployable.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
+                Log.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusDeployable.Def?.Name} {FluidDef.Litres(_focusDeployable.Fuel)}/{FluidDef.Litres(_focusDeployable.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)
             {
                 float space = _focusVehicle.FuelMax - _focusVehicle.Fuel;
-                if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
+                if (space <= 0.01f) { Log.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusVehicle.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
-                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusVehicle.DisplayName} {FluidDef.Litres(_focusVehicle.Fuel)}/{FluidDef.Litres(_focusVehicle.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
+                Log.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusVehicle.DisplayName} {FluidDef.Litres(_focusVehicle.Fuel)}/{FluidDef.Litres(_focusVehicle.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
         }
 
@@ -2800,7 +2800,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh), LeftHook = an.LeftHook };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[fluid] holding {FluidItem.Label(backing, asset)}  ([LMB] sip · aim a tank + [RMB] to fill)");
+            Log.Print($"[fluid] holding {FluidItem.Label(backing, asset)}  ([LMB] sip · aim a tank + [RMB] to fill)");
         }
 
         // Test seams (headless L1): the fill/sip TRANSFER logic itself is pure (FluidItem.Fill/Sip on Item + FluidTank) and
@@ -2821,7 +2821,7 @@ namespace UnturnedGodot
             _invUI?.Refresh();
             FluidItem.Read(_heldFluidItem, asset, out var t, out var amt, out var q);
             FluidToast($"filled {FluidDef.Litres(moved)} {FluidDef.WaterName(t, q)}");
-            GD.Print($"[fluid] filled {asset.itemName} +{FluidDef.Litres(moved)} -> {FluidDef.Litres(amt)} {FluidDef.WaterName(t, q)}");
+            Log.Print($"[fluid] filled {asset.itemName} +{FluidDef.Litres(moved)} -> {FluidDef.Litres(amt)} {FluidDef.WaterName(t, q)}");
         }
 
         // LMB with a fluid container in hand + NOT aimed at a tank: take a 50 mL sip. Only clean water / soda / cola are
@@ -2840,7 +2840,7 @@ namespace UnturnedGodot
             _invUI?.Refresh();
             _viewmodel?.PlayConsumeUse();   // drink animation (reuses the drink archetype's Use clip)
             FluidToast($"drank {FluidDef.Litres(drank)}  (+{hydration * 100f:0}% water)");
-            GD.Print($"[fluid] chugged {FluidDef.Litres(drank)} from {asset.itemName} -> water {Water:0.00}");
+            Log.Print($"[fluid] chugged {FluidDef.Litres(drank)} from {asset.itemName} -> water {Water:0.00}");
         }
 
         // The held-container HUD: a persistent centered line while a fluid container is in hand (its contents + a hint),
@@ -3008,7 +3008,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(meshName), LeftHook = an.LeftHook };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[consume] holding {asset?.itemName ?? meshName} ({an.Use}, {_consumeUseLen:0.0}s) -- click to eat/drink");
+            Log.Print($"[consume] holding {asset?.itemName ?? meshName} ({an.Use}, {_consumeUseLen:0.0}s) -- click to eat/drink");
         }
 
         // LMB while holding a consumable: begin eating/drinking (plays the Use anim + starts the use timer).
@@ -3027,7 +3027,7 @@ namespace UnturnedGodot
             _consumeTimer = _consumeUseLen;   // source-accurate: the length of THIS item's Use animation
             _viewmodel?.PlayConsumeUse();
             PlayConsumeSound(_heldConsumable.id);   // source playConsume: player.playSound(asset.use) at use start
-            GD.Print($"[consume] eating {_heldConsumable?.itemName}...");
+            Log.Print($"[consume] eating {_heldConsumable?.itemName}...");
         }
 
         // Ticked each frame: run the eat timer; when it elapses, apply the consumable's effects (source consume()).
@@ -3042,7 +3042,7 @@ namespace UnturnedGodot
                 int eatenQuality = eaten?.quality ?? 100;                    // ...so the moldy penalty scores against what is actually eaten
                 Consume(_heldConsumable, eatenQuality, eaten?.cooked ?? 0, (ECookStyle)(eaten?.cookStyle ?? 0));   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
-                GD.Print($"[consume] consumed {_heldConsumable.itemName}");
+                Log.Print($"[consume] consumed {_heldConsumable.itemName}");
                 _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearHeldOptic(); ClearHeldThrowable();   // one use per item: this one leaves the hand + is deleted (master). THIRD site where ClearHeldOptic() was swallowed by this trailing // comment (cow tools spotted this one); harmless in practice because you cannot be holding an optic while eating, but a call that only LOOKS present is exactly what made the gun and melee sites wrong. A sweep of game/ + core/ for the same shape found no others.
                 int left;
                 if (NetConsume != null)
@@ -3126,7 +3126,7 @@ namespace UnturnedGodot
             // make every generator and crate unplaceable on the ground.
             _placer.CanAttach = StructureManager.BarricadeAttachHook;
             _placer.SetDef(def);            // carries the def's own mount family (Floor / Wall / Sticky)
-            GD.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
+            Log.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
         }
 
         // Equip the Wire tool (item 65): the wiring tool held in hand. Wiring interaction (select node / route / place /
@@ -3146,7 +3146,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[tool] holding the {def.Name}");
+            Log.Print($"[tool] holding the {def.Name}");
         }
 
         public void EquipWireTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Wire, backing);   // Wire (item 65) = the power wiring tool
@@ -3168,7 +3168,7 @@ namespace UnturnedGodot
         internal void TryDetonateCharges()
         {
             int n = Deployable.DetonateAllCharges(GetTree());
-            GD.Print($"[detonator] plunge -> fired {n} charge(s)");
+            Log.Print($"[detonator] plunge -> fired {n} charge(s)");
         }
 
         // Put the held deployable away (called whenever another item is equipped).
@@ -3214,7 +3214,7 @@ namespace UnturnedGodot
                         // open, since the server's crate is keyed to the replicated NetId.
                         if (NetPlaceDeployable == null) FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
-                        GD.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
+                        Log.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
@@ -3247,7 +3247,7 @@ namespace UnturnedGodot
                         if (isDoor) DoorDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         else FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
-                        GD.Print($"[{(isDoor ? "door" : "fluid")}] placed {_deployable.Name} at {_placePoint}");
+                        Log.Print($"[{(isDoor ? "door" : "fluid")}] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
@@ -3275,7 +3275,7 @@ namespace UnturnedGodot
                         // stay local; the revert decision predicts the echo's spend (count - 1).
                         RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
-                        GD.Print($"[deploy] place requested: {_deployable.Name} at {_placePoint} (wire)");
+                        Log.Print($"[deploy] place requested: {_deployable.Name} at {_placePoint} (wire)");
                         if (_deployItem != null && Inventory != null && Inventory.getItemCount(_deployItem.id) <= 1)
                         { (_revertEquip ?? EquipUnarmed)(); return; }   // the last one just went over the wire -> revert
                         _viewmodel?.PlayDeployHold();
@@ -3293,7 +3293,7 @@ namespace UnturnedGodot
                     else
                         Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
                     PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
-                    GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
+                    Log.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
                     // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.
                     if (_deployItem != null && Inventory != null)
                     {
@@ -3709,14 +3709,14 @@ namespace UnturnedGodot
                 && (_focusVehicle.GlobalPosition - GlobalPosition).Length() < range + 3f)   // vehicles are big -> generous reach
             {
                 if (HasBlowtorch) { if (_focusVehicle.Hurt) _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); }
-                else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusVehicle.GlobalPosition, false, Surf.Metal); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusVehicle.GlobalPosition, false, Surf.Metal); Log.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && !_focusDeployable.IsWreck
                 && (_focusDeployable.GlobalPosition - GlobalPosition).Length() < range + 2f)   // looking at a placed generator: melee damages it (a blowtorch is for salvaging the wreck, not smashing)
             {
                 if (HasBlowtorch) { if (_focusDeployable.Hurt) _focusDeployable.Repair(_melee?.VehicleDamage ?? 10f); }   // blowtorch repairs a hurt generator (continuous heal is in UpdateSalvage)
-                else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusDeployable.GlobalPosition, false, Surf.Metal); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); MeleeImpactFx(_focusDeployable.GlobalPosition, false, Surf.Metal); Log.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             // Barricades take hits like a generator does. Without this doors and beds carried Health and a
@@ -3800,7 +3800,7 @@ namespace UnturnedGodot
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
-            if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
+            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }
 
         float _grenadeCd;
@@ -3854,7 +3854,7 @@ namespace UnturnedGodot
                 if (wscene != null) SpawnWaterSplash(wscene, new Vector3(point.X, Terrain.SeaLevelY, point.Z), Mathf.Clamp(radius / 5f, 2f, 4f));
             }
             SpawnBlastFx(point, radius);
-            GD.Print($"[explode] r={radius} at {point}");
+            Log.Print($"[explode] r={radius} at {point}");
         }
 
         // Explosion line-of-sight (source ExplosionDamageParameters.LineOfSightTest): raycast from the blast to the target
@@ -3898,13 +3898,13 @@ namespace UnturnedGodot
             {
                 if (vel.Length() > 47.5f) vel = vel.Normalized() * 47.5f;   // stay under the server's 48 m/s sanity cap (a sprint-throw must not get silently rejected)
                 NetGrenade(origin, vel, 254);
-                GD.Print("[grenade] thrown (wire)");
+                Log.Print("[grenade] thrown (wire)");
                 return;
             }
             var g = new Grenade { Thrower = this, Vel = vel, Def = Throwables.Find(254), ItemId = 254 };
             GetParent().AddChild(g);
             g.GlobalPosition = origin;
-            GD.Print("[grenade] thrown");
+            Log.Print("[grenade] thrown");
         }
 
         StorageCrate _openCrate;
@@ -3951,7 +3951,7 @@ namespace UnturnedGodot
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             (near as StoreShelf)?.BeginLiveDisplay(Inventory.items[PlayerInventory.STORAGE]);   // live-update the shelf models as the grid is edited (not just on close)
-            GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
+            Log.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
             _invUI?.Open();      // Open() also scans the AREA (Nearby) page for dropped ground loot
             Input.MouseMode = Input.MouseModeEnum.Visible;
             return true;
@@ -4048,7 +4048,7 @@ namespace UnturnedGodot
             if (OpenCookerKind == null || _openCrateNetId == 0) return;
             OpenCookerOn = !OpenCookerOn;
             NetSetCookerOn?.Invoke(_openCrateNetId, OpenCookerOn);
-            GD.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
+            Log.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
         }
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
         /// <summary>L1: is the cooker's on/off button DRAWN, as opposed to merely knowable? See
@@ -5744,7 +5744,7 @@ namespace UnturnedGodot
         Vector3 SafeSpot(Vector3 want, string why)
         {
             if (want.LengthSquared() >= 4f || GlobalPosition.LengthSquared() < 4f) return want;
-            GD.Print($"[place] refused an origin spot from {why} ({want}) -- staying at {GlobalPosition}");
+            Log.Print($"[place] refused an origin spot from {why} ({want}) -- staying at {GlobalPosition}");
             return GlobalPosition;
         }
 
@@ -5994,7 +5994,7 @@ namespace UnturnedGodot
                     if (alt.LengthSquared() < 4f && RespawnPoints != null)
                         foreach (var rp in RespawnPoints) if (rp.pos.LengthSquared() >= 4f) { alt = rp.pos; break; }
                     if (alt.LengthSquared() < 4f) alt = GlobalPosition;   // nothing real anywhere: stay where the corpse is, never teleport to the corner of the world
-                    GD.Print($"[respawn] refused an origin spawn ({target}) -- using {alt}");
+                    Log.Print($"[respawn] refused an origin spawn ({target}) -- using {alt}");
                     target = alt;
                 }
                 GlobalPosition = target;
@@ -6180,7 +6180,7 @@ namespace UnturnedGodot
                       : System.Array.IndexOf(modes, FireMode.Auto) >= 0 ? FireMode.Auto
                       : modes[0];
             _burstLeft = 0;
-            GD.Print($"[gun] {Gun.Id}: dmg={Gun.Damage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={PelletsPerShot} feed={(UsesShells ? "shells" : UsesMagItem ? "mag" : "none")} mode={_firemode}");
+            Log.Print($"[gun] {Gun.Id}: dmg={Gun.Damage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={PelletsPerShot} feed={(UsesShells ? "shells" : UsesMagItem ? "mag" : "none")} mode={_firemode}");
         }
 
         public string HeldGunName => _gunName;
@@ -6223,7 +6223,7 @@ namespace UnturnedGodot
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
             ApplyInstalledAttachments(backingItem);   // ...and re-MOUNT what is actually fitted; the mask alone cannot (see below)
-            GD.Print($"[gun] holding {_gunName}");
+            Log.Print($"[gun] holding {_gunName}");
         }
 
         // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
@@ -6361,7 +6361,7 @@ namespace UnturnedGodot
             _skillsUI = new SkillsUI { Player = this };
             AddChild(_skillsUI);
             _build = new BuildTool { Cam = _cam };
-            if (_loadProf) { long _ppZ = System.Diagnostics.Stopwatch.GetTimestamp(); GD.Print($"[playerprof] pre={PpMs(_pp0, _ppA):0} body(rig)={PpMs(_ppA, _ppB):0} viewmodel..clothing={PpMs(_ppB, _ppC):0} clothing={PpMs(_ppC, _ppD):0} invUI+notes={PpMs(_ppD, _ppE):0} craft={PpMs(_ppE, _ppF):0} skills+build={PpMs(_ppF, _ppZ):0}  total={PpMs(_pp0, _ppZ):0} ms"); }
+            if (_loadProf) { long _ppZ = System.Diagnostics.Stopwatch.GetTimestamp(); Log.Print($"[playerprof] pre={PpMs(_pp0, _ppA):0} body(rig)={PpMs(_ppA, _ppB):0} viewmodel..clothing={PpMs(_ppB, _ppC):0} clothing={PpMs(_ppC, _ppD):0} invUI+notes={PpMs(_ppD, _ppE):0} craft={PpMs(_ppE, _ppF):0} skills+build={PpMs(_ppF, _ppZ):0}  total={PpMs(_pp0, _ppZ):0} ms"); }
             GetParent().AddChild(_build);   // structures live in the scene, not under the player
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
@@ -6633,7 +6633,7 @@ namespace UnturnedGodot
                 // (master: "the main cannon and hmg are on 1 and 2 keys, overriding whatevers in ur primary and
                 // secondary slots"). Tank: 1 = cannon, 2 = HMG. A seat with no mount falls through to the bag.
                 _turretSlot = mtSlot - 1;
-                GD.Print($"[turret] slot {mtSlot}: {_driving.TurretFor(_seatIndex, _turretSlot)?.GunId ?? "?"}");
+                Log.Print($"[turret] slot {mtSlot}: {_driving.TurretFor(_seatIndex, _turretSlot)?.GunId ?? "?"}");
             }
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
                 EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
@@ -6791,7 +6791,7 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
-                { GD.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
+                { Log.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
             else if (Keybinds.JustPressed(GameAction.Melee, @event))
                 MeleeAttack();        // dedicated melee swing (default G) at a zombie in reach
             else if (Keybinds.JustPressed(GameAction.Grenade, @event))
@@ -6818,7 +6818,7 @@ namespace UnturnedGodot
                 // The look hulls are not gone -- they keep their own state and their own draw, and the console's
                 // `hitbox` verb still gives finer control over this overlay (client/server/off) than a single
                 // key can. This just points the key at the more useful of the two.
-                GD.Print(HitboxDebugOverlay.Console("client", GetTree()));
+                Log.Print(HitboxDebugOverlay.Console("client", GetTree()));
             }
             else if (Keybinds.Matches(GameAction.AttachMenu, @event) && @event is not InputEventKey { Echo: true })
             {
@@ -7771,7 +7771,7 @@ namespace UnturnedGodot
                             // NOT an early return: this runs inside StepBullets' `for (i = _bullets.Count-1; ...)`,
                             // so returning would abandon every other bullet in flight this frame -- a shotgun would
                             // lose its remaining pellets the moment one pellet found a window.
-                            GD.Print($"[glass] {veh.DisplayName} {Vehicle.GlassPaneDisplay(veh.GlassLabel(gpane))} shattered");
+                            Log.Print($"[glass] {veh.DisplayName} {Vehicle.GlassPaneDisplay(veh.GlassLabel(gpane))} shattered");
                         }
                         else
                         {
@@ -7784,7 +7784,7 @@ namespace UnturnedGodot
                             int tire = lamp >= 0 ? -1 : veh.ResolveHitTire(point);
                             if (lamp >= 0 && veh.BreakLamp(lamp))
                             {
-                                GD.Print($"[lamp] {veh.DisplayName} {Vehicle.LampDisplay(veh.LampLabel(lamp))} shot out");
+                                Log.Print($"[lamp] {veh.DisplayName} {Vehicle.LampDisplay(veh.LampLabel(lamp))} shot out");
                             }
                             else if (tire >= 0 && veh.PopTire(tire))
                             {
@@ -7793,7 +7793,7 @@ namespace UnturnedGodot
                                 // anything -- but lamps are checked first because their tolerance is a flat
                                 // radius while a tire's scales with the wheel, and a bus wheel's would otherwise
                                 // reach up and swallow shots aimed at the headlight above it.
-                                GD.Print($"[tire] {veh.DisplayName} {Vehicle.TireDisplay(tire, veh.TireCount)} blown out");
+                                Log.Print($"[tire] {veh.DisplayName} {Vehicle.TireDisplay(tire, veh.TireCount)} blown out");
                             }
                             else
                             {
@@ -7899,7 +7899,7 @@ namespace UnturnedGodot
                     if (b.BlastRadius > 0f)
                     {
                         Explode(point, b.BlastRadius, b.BlastZombieDamage, b.BlastPlayerDamage, b.BlastVehicleDamage);
-                        GD.Print($"[blast] warhead detonated (r={b.BlastRadius})");
+                        Log.Print($"[blast] warhead detonated (r={b.BlastRadius})");
                     }
                     // WALLBANG. Checked AFTER the impact fx and damage above, so a pierced surface still splashes,
                     // sparks and takes its hit -- the round carries on behind it rather than the surface being
@@ -8146,7 +8146,7 @@ namespace UnturnedGodot
             pl.GlobalPosition = pos;
             pl.Play();
             pl.Finished += () => { if (IsInstanceValid(pl)) pl.QueueFree(); };
-            if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") GD.Print($"[impactaudio] played @ {pos.Round()}");
+            if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") Log.Print($"[impactaudio] played @ {pos.Round()}");
         }
 
         // The traveling tracer: a CROSSED QUAD (two perpendicular teardrop planes sharing the flight axis, so it reads solid
@@ -9310,7 +9310,7 @@ namespace UnturnedGodot
             // but a freed node leaves a non-null C# wrapper, so a despawned wreck or a torn-down node under a rider turned
             // the next tick into either a zero transform (the player driven to the origin) or a throw that took the whole
             // physics tick with it, every tick, for as long as the stale reference was held. Step out where we stand.
-            if (!IsInstanceValid(_driving)) { GD.Print("[vehicle] the vehicle we were in is gone -- stepping out in place"); _driving = null; ExitVehicleAt(GlobalPosition); return; }
+            if (!IsInstanceValid(_driving)) { Log.Print("[vehicle] the vehicle we were in is gone -- stepping out in place"); _driving = null; ExitVehicleAt(GlobalPosition); return; }
             if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
             // PASSENGERS RIDE, THEY DO NOT STEER (strawberry 2026-08-16: "only F1 is the drivers seat"). Bail
             // before any input is read, so a passenger holding W is not merely ignored by the vehicle but never
@@ -9645,7 +9645,7 @@ namespace UnturnedGodot
             if (!NetAvatar) TickGunStateFlush(delta);
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
-            if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
+            if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { Log.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
             if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             StepLean((float)delta);   // BEFORE the driving/riding returns below: those bail out of the tick entirely, so a lean
                                       //  polled after them would freeze at whatever it was when you got into the car and stay there.
@@ -9818,7 +9818,7 @@ namespace UnturnedGodot
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
-            if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) GD.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
+            if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) Log.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
             if (_throwRevertAtEnd && _throwCd <= 0f) { _throwRevertAtEnd = false; (_revertEquip ?? EquipUnarmed)(); }   // the last one is gone and the follow-through is done
             TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting

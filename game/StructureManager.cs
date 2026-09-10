@@ -84,7 +84,7 @@ namespace UnturnedGodot
             if (Persists)
             {
                 int n = LoadFromDisk();
-                if (n > 0) GD.Print($"[structures] restored {n} piece(s) from {SavePath}");
+                if (n > 0) Log.Print($"[structures] restored {n} piece(s) from {SavePath}");
             }
         }
 
@@ -478,7 +478,7 @@ namespace UnturnedGodot
                     // Say so. Without a space there is no shielding at all -- the rule the header calls "the
                     // whole reason a base is a base" -- and a caller cannot otherwise tell "nothing was in the
                     // way" from "the check never ran".
-                    if (!_warnedNoSpace) { _warnedNoSpace = true; GD.PrintErr("[structures] Explode has no physics space: line-of-sight shielding is NOT being applied"); }
+                    if (!_warnedNoSpace) { _warnedNoSpace = true; Log.Err("[structures] Explode has no physics space: line-of-sight shielding is NOT being applied"); }
                 }
                 if (range > 0.01f && space != null)
                 {
@@ -560,7 +560,7 @@ namespace UnturnedGodot
             // failure must never be upgraded into a write.
             if (_loadFailed && _all.Count == 0)
             {
-                GD.PrintErr("[structures] refusing to save: the last load FAILED, so an empty world here would destroy the file");
+                Log.Err("[structures] refusing to save: the last load FAILED, so an empty world here would destroy the file");
                 return false;
             }
             try
@@ -570,14 +570,14 @@ namespace UnturnedGodot
                 string tmp = path + ".tmp";
                 using (var f = Godot.FileAccess.Open(tmp, Godot.FileAccess.ModeFlags.Write))
                 {
-                    if (f == null) { GD.PrintErr($"[structures] save open failed: {Godot.FileAccess.GetOpenError()}"); return false; }
+                    if (f == null) { Log.Err($"[structures] save open failed: {Godot.FileAccess.GetOpenError()}"); return false; }
                     f.StoreString(Serialize());
                 }
                 var err = DirAccess.RenameAbsolute(ProjectSettings.GlobalizePath(tmp), ProjectSettings.GlobalizePath(path));
-                if (err != Error.Ok) { GD.PrintErr($"[structures] save rename failed: {err}"); return false; }
+                if (err != Error.Ok) { Log.Err($"[structures] save rename failed: {err}"); return false; }
                 return true;
             }
-            catch (System.Exception e) { GD.PrintErr($"[structures] save failed: {e.Message}"); return false; }
+            catch (System.Exception e) { Log.Err($"[structures] save failed: {e.Message}"); return false; }
         }
 
         /// <summary>Load, returning how many pieces came back. A MISSING file is not an error -- it is a world
@@ -589,10 +589,10 @@ namespace UnturnedGodot
             try
             {
                 using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
-                if (f == null) { _loadFailed = true; GD.PrintErr($"[structures] load open failed: {Godot.FileAccess.GetOpenError()}"); return 0; }
+                if (f == null) { _loadFailed = true; Log.Err($"[structures] load open failed: {Godot.FileAccess.GetOpenError()}"); return 0; }
                 return Deserialize(f.GetAsText());
             }
-            catch (System.Exception e) { _loadFailed = true; GD.PrintErr($"[structures] load failed: {e.Message}"); return 0; }
+            catch (System.Exception e) { _loadFailed = true; Log.Err($"[structures] load failed: {e.Message}"); return 0; }
         }
 
         public void Remove(Piece p)
@@ -645,7 +645,7 @@ namespace UnturnedGodot
             if (string.IsNullOrWhiteSpace(json)) return 0;
             List<Dictionary<string, JsonElement>> rows;
             try { rows = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(json); }
-            catch (System.Exception e) { GD.PrintErr($"[structures] load failed: {e.Message}"); return 0; }
+            catch (System.Exception e) { Log.Err($"[structures] load failed: {e.Message}"); return 0; }
             if (rows == null) return 0;
             int n = 0;
             foreach (var r in rows)

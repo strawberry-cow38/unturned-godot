@@ -2102,8 +2102,8 @@ namespace UnturnedGodot
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
                 System.IO.File.WriteAllText(SavePath, WallSave.Write(plans));
             }
-            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] save failed: {e.Message}"); return 0; }
-            GD.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
+            catch (System.Exception e) { Log.Err($"[editor-buildings] save failed: {e.Message}"); return 0; }
+            Log.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
             return plans.Count;
         }
 
@@ -2113,14 +2113,14 @@ namespace UnturnedGodot
             if (!System.IO.File.Exists(SavePath)) return 0;
             List<WallPlan> plans;
             try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath)); }
-            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] load failed: {e.Message}"); return 0; }
+            catch (System.Exception e) { Log.Err($"[editor-buildings] load failed: {e.Message}"); return 0; }
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
                 SpawnWall(new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, pl.Material,
                           pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
                           pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1, pl.MaterialBack, pl.TexelBack);
-            GD.Print($"[editor-buildings] loaded {plans.Count} walls");
+            Log.Print($"[editor-buildings] loaded {plans.Count} walls");
             return plans.Count;
         }
 
@@ -2164,7 +2164,7 @@ namespace UnturnedGodot
                     // MatFor's palette ceiling. Returning texel 0 means the overflow walls silently wear the
                     // FIRST material's colour, and the magenta canary cannot fire because 0 is a real texel --
                     // so say so, or a five-material building looks merely odd rather than broken.
-                    GD.PrintErr($"[editor-buildings] more than 16 distinct colours in one building; extra walls will wear the first palette entry");
+                    Log.Err($"[editor-buildings] more than 16 distinct colours in one building; extra walls will wear the first palette entry");
                     return 0;
                 }
                 colours.Add(c);
@@ -2252,9 +2252,9 @@ namespace UnturnedGodot
                 if (openingLines.Count > 0) System.IO.File.WriteAllText(dir + name + "_openings.txt", string.Join("\n", openingLines) + "\n");   // window-opening markers -> window barricades on the baked prop
                 RegisterBaked(name);
             }
-            catch (System.Exception e) { GD.PrintErr($"[editor-buildings] bake failed: {e.Message}"); return null; }
+            catch (System.Exception e) { Log.Err($"[editor-buildings] bake failed: {e.Message}"); return null; }
 
-            GD.Print($"[editor-buildings] baked '{name}': {tris.Count / 3} tris, {colours.Count} palette colours");
+            Log.Print($"[editor-buildings] baked '{name}': {tris.Count / 3} tris, {colours.Count} palette colours");
             _editor?.Objects?.ReloadCatalog();
             return name;
         }
@@ -2582,7 +2582,7 @@ namespace UnturnedGodot
         {
             if (string.IsNullOrWhiteSpace(buildingName)) return 0;
             string obj = ProjectSettings.GlobalizePath("res://content/objects/") + buildingName + ".obj";
-            if (!System.IO.File.Exists(obj)) { GD.PrintErr($"[editor-buildings] no mesh for {buildingName}"); return 0; }
+            if (!System.IO.File.Exists(obj)) { Log.Err($"[editor-buildings] no mesh for {buildingName}"); return 0; }
 
             int mat = 0;
             for (int i = 0; i < WallMaterials.Count; i++)
@@ -2631,7 +2631,7 @@ namespace UnturnedGodot
                     var rt = new Vector3(Mathf.Cos(Mathf.DegToRad(pl.Yaw)), 0f, -Mathf.Sin(Mathf.DegToRad(pl.Yaw)));
                     var o = new Vector3(pl.X, pl.Y, pl.Z);
                     var e = o + rt * pl.Length + Vector3.Up * pl.Height;
-                    GD.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
+                    Log.Print($"[import]  {pl.Kind,-10} {pl.Length,6:0.0} x {pl.Height,5:0.0}  yaw {pl.Yaw,7:0.0}  pitch {pl.Pitch,6:0.0}"
                              + $"  thick {pl.Thickness:0.00}  gable {pl.GableRise:0.0}  ops {pl.Openings.Count}"
                              + $"  inset L {pl.InsetL0:0.0}/{pl.InsetL1:0.0} R {pl.InsetR0:0.0}/{pl.InsetR1:0.0}"
                              + $"  texel {pl.Texel}  y0 {pl.Y:0.000} y1 {pl.Y + pl.Height:0.000}"
@@ -2639,8 +2639,8 @@ namespace UnturnedGodot
                              + $"  Y {Mathf.Min(o.Y, e.Y),6:0.0}..{Mathf.Max(o.Y, e.Y),6:0.0}"
                              + $"  Z {Mathf.Min(o.Z, e.Z),6:0.0}..{Mathf.Max(o.Z, e.Z),6:0.0}");
                 }
-            GD.Print($"[editor-buildings] {solved} surfaces extended to close corners");
-            GD.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
+            Log.Print($"[editor-buildings] {solved} surfaces extended to close corners");
+            Log.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
                      + $"({nw} wall, {nr} roof, {nfl} floor, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;
         }

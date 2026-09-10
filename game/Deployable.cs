@@ -440,7 +440,7 @@ namespace UnturnedGodot
             {
                 int killed = StructureManager.Instance.Explode(
                     GlobalPosition, Def.TrapBlast, Mathf.RoundToInt(Def.TrapStructureDamage), out int hurt);
-                if (hurt > 0) GD.Print($"[trap] blast hit {hurt} structure piece(s), destroyed {killed}");
+                if (hurt > 0) Log.Print($"[trap] blast hit {hurt} structure piece(s), destroyed {killed}");
             }
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
         }
@@ -821,7 +821,7 @@ namespace UnturnedGodot
                             bm.AlbedoColor = new Color(bc.R, bc.G, bc.B, BeamAlpha * disp);
                         }
                     }
-                if (DbgFlicker) GD.Print($"[FLICK] lvl={_lampLevel:0.00} disp={disp:0.00} vis={vis}");
+                if (DbgFlicker) Log.Print($"[FLICK] lvl={_lampLevel:0.00} disp={disp:0.00} vis={vis}");
             }
 
             if (!_lookFocused || _info == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)

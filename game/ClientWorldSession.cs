@@ -85,8 +85,8 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             // net diagnostics (hardening Part B) -- same toggle as the server: UG_NETLOG=1 or --netlog
-            NetLog.Sink = s => GD.Print(s);
-            NetLog.ErrorSink = s => GD.PrintErr(s);
+            NetLog.Sink = s => Log.Print(s);
+            NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
 
             Client = new NetWorldClient(TransportOverride ?? new UdpClientTransport(Host, Port), PlayerName, contentHash: NetContent.Hash);
@@ -95,7 +95,7 @@ namespace UnturnedGodot
             // (corrections touch the NODE only; replicas mirror snapshots verbatim).
             Client.DesyncDetected += report =>
             {
-                GD.PrintErr($"[CLIENT] DESYNC DETECTED -- {report}");
+                Log.Err($"[CLIENT] DESYNC DETECTED -- {report}");
                 _desyncAlert = $"!! DESYNC detected (system {report.SystemId} @ tick {report.ServerTick}) -- state may be out of sync";
             };
             Client.Connect();
@@ -146,7 +146,7 @@ namespace UnturnedGodot
                 _localVehicle.NetHoldTeleport(new Transform3D(basis, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z)));
                 _vehRecovAck = e.RecovCounter;
                 _vehRecovHold = true;
-                GD.Print($"[CLIENT] vehicle recov #{e.RecovCounter} -- rolled back to ({e.Pos.x:0.0},{e.Pos.y:0.0},{e.Pos.z:0.0})");
+                Log.Print($"[CLIENT] vehicle recov #{e.RecovCounter} -- rolled back to ({e.Pos.x:0.0},{e.Pos.y:0.0},{e.Pos.z:0.0})");
             };
             // C5 (§3): the remaining world-state views -- all read-only replica consumers. World items as
             // static visuals, the synced clock anchoring the local sky, and server-felled resources dropping
@@ -183,7 +183,7 @@ namespace UnturnedGodot
             Client.HitConfirmed += e =>
             {
                 HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
-                GD.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
+                Log.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
             };
             // WE got hit. Only sent to the victim, so no PlayerId filter needed -- unlike PlayerFired above,
             // there is no "was this my own action" case to skip.
@@ -240,7 +240,7 @@ namespace UnturnedGodot
             {
                 // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the
                 // player "no room" instead of silence (the request made no local change to roll back)
-                GD.Print($"[CLIENT] pickup denied (world item {e.NetId}) -- no room in the bag");
+                Log.Print($"[CLIENT] pickup denied (world item {e.NetId}) -- no room in the bag");
                 if (_toast != null) { _toast.Text = "No room in inventory"; _toastT = 2.5f; }
             };
             // Phase 6 owner inventory (pickup Step 4): the shell's bag MIRRORS the server's authoritative
@@ -392,7 +392,7 @@ namespace UnturnedGodot
                 RecovsApplied++;
                 Shell.TeleportTo(new Vector3(rc.Pos.x, rc.Pos.y, rc.Pos.z));
                 Shell.NetRecovRestore(rc.Vel);
-                GD.Print($"[CLIENT] walk recov #{rc.RecovCounter} -- rolled back to ({rc.Pos.x:0.0},{rc.Pos.y:0.0},{rc.Pos.z:0.0})");
+                Log.Print($"[CLIENT] walk recov #{rc.RecovCounter} -- rolled back to ({rc.Pos.x:0.0},{rc.Pos.y:0.0},{rc.Pos.z:0.0})");
             }
 
             // 2) stream this tick's transform (the VehicleState analogue, @50 Hz): position on the exact
@@ -460,7 +460,7 @@ namespace UnturnedGodot
             _localVehicle = v;
             _vehRecovAck = 0; _vehRecovHold = false;
             Shell.EnterVehicle(v);   // the EXACT SP direct-drive seat (hide shell, free cam, HUD binds, engine on)
-            GD.Print($"[CLIENT] driving {key} LOCALLY (NetId {_ridingNetId}) -- Part A client authority, 0-tick wheel");
+            Log.Print($"[CLIENT] driving {key} LOCALLY (NetId {_ridingNetId}) -- Part A client authority, 0-tick wheel");
         }
 
         void SendVehicleState()
@@ -619,7 +619,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             Shell = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            GD.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");
+            Log.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");
         }
 
         // C6 exit: unhide the shell BESIDE THE DOOR -- at the AUTHORITATIVE spot the event carries

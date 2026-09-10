@@ -21,7 +21,7 @@ namespace UnturnedGodot
             var aabb = _mesh.GetAabb();
             _scale = 1.8f / Mathf.Max(0.05f, aabb.Size.Y);
             _footOffset = -aabb.Position.Y * _scale;
-            GD.Print($"[CharacterModel] bundled character loaded (scale {_scale:F3})");
+            Log.Print($"[CharacterModel] bundled character loaded (scale {_scale:F3})");
         }
 
         public static Node3D Build(Color tint)

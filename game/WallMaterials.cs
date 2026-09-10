@@ -62,7 +62,7 @@ namespace UnturnedGodot
             string path = ProjectSettings.GlobalizePath("res://content/wall_palettes.tsv");
             if (!System.IO.File.Exists(path))
             {
-                GD.PrintErr($"[walls] no wall_palettes.tsv at {path}; falling back to one flat colour");
+                Log.Err($"[walls] no wall_palettes.tsv at {path}; falling back to one flat colour");
                 return list;
             }
             var parsed = WallPalettes.Parse(System.IO.File.ReadAllLines(path));

@@ -122,7 +122,7 @@ namespace UnturnedGodot
                     _server.Interactables.RegisterSeat(ps.NetId, new UVector3(p.X, p.Y, p.Z));
                 }
             }
-            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {_seats.Count} seat(s) + {_objectDoors.Count} prop door(s) as server-authoritative");
+            Log.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {_seats.Count} seat(s) + {_objectDoors.Count} prop door(s) as server-authoritative");
         }
 
         void SeedDeadzones(DeadzoneField field)
@@ -132,7 +132,7 @@ namespace UnturnedGodot
             // which the vitals and combat blocks already carry.
             foreach (var v in field.Volumes)
                 _server.Deadzones.AddVolume(v.Center, v.HalfExtent, v.Zone);
-            GD.Print($"[interactables] seeded {_server.Deadzones.VolumeCount} deadzone volume(s) server-side");
+            Log.Print($"[interactables] seeded {_server.Deadzones.VolumeCount} deadzone volume(s) server-side");
         }
 
         static IEnumerable<Node> Walk(Node n)

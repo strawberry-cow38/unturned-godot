@@ -63,7 +63,7 @@ namespace UnturnedGodot
                 float px = F32(); o += 4; float pz = F32();         // x, skip y, z
                 _pts.Add(new Pt { Type = type, X = px, Z = -pz });   // negate-Z
             }
-            GD.Print($"[animals] {_pts.Count} Fauna spawn points loaded, {tcount} tables");
+            Log.Print($"[animals] {_pts.Count} Fauna spawn points loaded, {tcount} tables");
         }
 
         static uint Hash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; x ^= x >> 16; return x; }

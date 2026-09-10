@@ -279,7 +279,7 @@ namespace UnturnedGodot
                     Transparency = alpha != Image.AlphaMode.None ? BaseMaterial3D.TransparencyEnum.AlphaScissor : BaseMaterial3D.TransparencyEnum.Disabled,
                     AlphaScissorThreshold = 0.5f,
                 };
-                if (alpha != Image.AlphaMode.None) GD.Print($"[heldparts] {texFile} is an alpha cutout -> scissor");
+                if (alpha != Image.AlphaMode.None) Log.Print($"[heldparts] {texFile} is an alpha cutout -> scissor");
                 partMats[texFile] = made;
                 return made;
             }
@@ -313,7 +313,7 @@ namespace UnturnedGodot
                 drawn++;
             }
             if (built > 0)
-                GD.Print($"[heldparts] {stem}: {built} nodes, {drawn} drawn (LOD0), {partMats.Count} textures, {ConsumableRegistry.AnimatedParts(stem).Count} animated, under {attach.GetPath()}; tracks expect '{RiggedCharacter.HeldPartParent}Item_Root/...'");
+                Log.Print($"[heldparts] {stem}: {built} nodes, {drawn} drawn (LOD0), {partMats.Count} textures, {ConsumableRegistry.AnimatedParts(stem).Count} animated, under {attach.GetPath()}; tracks expect '{RiggedCharacter.HeldPartParent}Item_Root/...'");
             return built;
         }
 
@@ -553,7 +553,7 @@ namespace UnturnedGodot
                 if (a.Length >= 1 && PC(0) > 1f)
                 {
                     _cam.Fov = PC(0);
-                    GD.Print($"[vm] harness fov {_cam.Fov:0.#} (position ignored on purpose: the arms are this camera's child)");
+                    Log.Print($"[vm] harness fov {_cam.Fov:0.#} (position ignored on purpose: the arms are this camera's child)");
                 }
             }   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
             _vp.AddChild(_cam);
@@ -606,7 +606,7 @@ namespace UnturnedGodot
                 int meshes = 0; long verts = 0;
                 void Walk(Node n) { if (n is MeshInstance3D mi) { meshes++; verts += mi.Mesh?.GetFaces()?.Length ?? 0; } foreach (Node c in n.GetChildren()) Walk(c); }
                 if (_arms != null) Walk(_arms);
-                GD.Print($"[vmarms] built={_arms != null} visible={_arms?.Visible} meshes={meshes} faceVerts={verts} clothesMat={(_arms?.HasClothesMaterialForTest ?? false)}");
+                Log.Print($"[vmarms] built={_arms != null} visible={_arms?.Visible} meshes={meshes} faceVerts={verts} clothesMat={(_arms?.HasClothesMaterialForTest ?? false)}");
             }
             if (_arms != null)
             {
@@ -667,13 +667,13 @@ namespace UnturnedGodot
                                  : DeployableMesh != null ? (NaturalHold ? (_arms.ClipLength("Fuel_Equip") > 0f ? "Fuel_Equip" : "Deploy_Equip") : (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip"))   // deployable: the src barricade "Equip" raise-to-hold; NaturalHold (gas can) = its OWN TWO-HANDED Fuel_Equip carry (both hands on the can, source animations.prefab)
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
-                GD.Print($"[vm] hold clip {equipClip} (capGun {capGun}, len {_arms.ClipLength(equipClip):0.###}s)");   // which per-item hold posed the hands (bow frame audit)
+                Log.Print($"[vm] hold clip {equipClip} (capGun {capGun}, len {_arms.ClipLength(equipClip):0.###}s)");   // which per-item hold posed the hands (bow frame audit)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
                 _holdClip = equipClip;   // remember THIS item's hold so sprint-exit (etc.) restores it, not the gun pose
                 if (Fists) _arms.SnapToEnd(equipClip);   // fists: snap straight to the guard pose -- don't play a jab-on-equip when you put an item away
                 else _arms.Play(equipClip);
                 _equipLen = Fists ? 0f : _arms.ClipLength(equipClip);
-                GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
+                Log.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
                 var skel = _arms.Skeleton;
                 int hb = skel.FindBone(LeftHook ? "Left_Hook" : "Right_Hook");   // retail EquipableModelParent: bows parent to the LEFT hook
@@ -705,7 +705,7 @@ namespace UnturnedGodot
                     ArrayMesh bodyMesh;
                     if (isGunBody) { var _sp = ContentProvider.ParseObjSplitByAlbedoMarker($"res://content/{gv.Gun}", albedoImg); bodyMesh = _sp.body; sightDots = _sp.markers; }
                     else bodyMesh = ContentProvider.ParseObj($"res://content/{gv.Gun}");
-                    if (bodyMesh != null) GD.Print($"[vm] gun mesh {gv.Gun} aabb pos={bodyMesh.GetAabb().Position} size={bodyMesh.GetAabb().Size}");   // which axis is the long one -- the bow frame audit (2026-09-04)
+                    if (bodyMesh != null) Log.Print($"[vm] gun mesh {gv.Gun} aabb pos={bodyMesh.GetAabb().Position} size={bodyMesh.GetAabb().Size}");   // which axis is the long one -- the bow frame audit (2026-09-04)
                     var mi = new MeshInstance3D { Mesh = bodyMesh };
                     // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
                     // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"
@@ -1636,7 +1636,7 @@ namespace UnturnedGodot
         {
             if (_lensDbg.Count == 0 || ++_lensDbgT % 60 != 0) return;
             var d = _lensDbg[0];
-            GD.Print($"[lensdbg] disc {d.GlobalPosition} vis={d.IsVisibleInTree()} gun {_gun?.GlobalPosition} gunVis={_gun?.IsVisibleInTree()} gunChildren={_gun?.GetChildCount()} cam {_cam?.GlobalPosition} camFwd {-_cam?.GlobalTransform.Basis.Z} gunAabb={(_gun as MeshInstance3D)?.GetAabb()} gunType={_gun?.GetType().Name}");
+            Log.Print($"[lensdbg] disc {d.GlobalPosition} vis={d.IsVisibleInTree()} gun {_gun?.GlobalPosition} gunVis={_gun?.IsVisibleInTree()} gunChildren={_gun?.GetChildCount()} cam {_cam?.GlobalPosition} camFwd {-_cam?.GlobalTransform.Basis.Z} gunAabb={(_gun as MeshInstance3D)?.GetAabb()} gunType={_gun?.GetType().Name}");
         }
         public static readonly Vector2 ViewportOversize = new Vector2(VpOverX, VpOverY);   // for a SCREEN_UV-sampling material drawn in the arms viewport
 

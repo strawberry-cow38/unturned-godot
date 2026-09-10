@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             var sh = GD.Load<Shader>("res://content/underwater.gdshader");
-            if (sh == null) { GD.PrintErr("[underwater] underwater.gdshader missing -- no submerged view"); return; }
+            if (sh == null) { Log.Err("[underwater] underwater.gdshader missing -- no submerged view"); return; }
             _mat = new ShaderMaterial { Shader = sh };
             _quad = new MeshInstance3D
             {
@@ -94,11 +94,11 @@ namespace UnturnedGodot
             if (string.IsNullOrEmpty(v) || root == null) return null;
             if (!float.TryParse(v, out float depth) || depth <= 0f) depth = 4f;
             var cam = root.GetViewport()?.GetCamera3D();
-            if (cam == null) { GD.PrintErr("[underwater] UG_UNDERWATER set but there is no current camera"); return null; }
+            if (cam == null) { Log.Err("[underwater] UG_UNDERWATER set but there is no current camera"); return null; }
             var u = new Underwater { _forceDepth = depth };
             cam.AddChild(u);
             u.ApplyForce();   // in case _Ready already ran on AddChild
-            GD.Print($"[underwater] forced on at {depth:0.0} m");
+            Log.Print($"[underwater] forced on at {depth:0.0} m");
             return u;
         }
     }

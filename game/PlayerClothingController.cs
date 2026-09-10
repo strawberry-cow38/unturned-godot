@@ -33,7 +33,7 @@ namespace UnturnedGodot
                 if (ReferenceEquals(_arms, value)) return;
                 _arms = value;
                 if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
-                    GD.Print($"[clothes] viewmodel arms {(value == null ? "detached" : "attached")} -> shirt/pants re-applied to both rigs");
+                    Log.Print($"[clothes] viewmodel arms {(value == null ? "detached" : "attached")} -> shirt/pants re-applied to both rigs");
                 ApplyShirt(); ApplyPants();
             }
         }

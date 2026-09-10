@@ -70,7 +70,7 @@ namespace UnturnedGodot
             var p = System.IO.File.ReadAllText(SavePath).Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
             if (p.Length >= 1 && float.TryParse(p[0], out var t)) _dayNight.Time = t;
             if (p.Length >= 2) _dayNight.Overcast = p[1] == "1";
-            GD.Print($"[editor-env] loaded time={_dayNight.Time:0.00} overcast={_dayNight.Overcast}");
+            Log.Print($"[editor-env] loaded time={_dayNight.Time:0.00} overcast={_dayNight.Overcast}");
         }
 
         public int Save()   // Editor.Save() fan-out (source Editor.save -> EditorEnvironment lighting)
@@ -78,7 +78,7 @@ namespace UnturnedGodot
             if (_dayNight == null) return 0;
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
             System.IO.File.WriteAllText(SavePath, $"{_dayNight.Time:0.###} {(_dayNight.Overcast ? 1 : 0)}");
-            GD.Print($"[editor-env] saved time={_dayNight.Time:0.00} overcast={_dayNight.Overcast}");
+            Log.Print($"[editor-env] saved time={_dayNight.Time:0.00} overcast={_dayNight.Overcast}");
             return 1;
         }
 

@@ -215,10 +215,10 @@ namespace UnturnedGodot
                 AddChild(_decal);
             }
             if (DebugLightPose && _decal != null)
-                GD.Print($"[lampdecal] gpos={_decal.GlobalPosition} size={_decal.Size} " +
+                Log.Print($"[lampdecal] gpos={_decal.GlobalPosition} size={_decal.Size} " +
                          $"emit={_decal.EmissionEnergy} albedoTex={_decal.TextureAlbedo != null} visible={_decal.Visible}");
             if (DebugLightPose)
-                GD.Print($"[lamplight] kind={_kind} node={_light.GetType().Name} gpos={_light.GlobalPosition} " +
+                Log.Print($"[lamplight] kind={_kind} node={_light.GetType().Name} gpos={_light.GlobalPosition} " +
                          $"fwd={-_light.GlobalTransform.Basis.Z} energy={_light.LightEnergy} " +
                          (_light is SpotLight3D sp ? $"angle={sp.SpotAngle} range={sp.SpotRange}" : $"range={((OmniLight3D)_light).OmniRange}"));
 

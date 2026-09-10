@@ -332,7 +332,7 @@ namespace UnturnedGodot
                 if (made == null)
                 {
                     // SAY SO rather than leaving an empty hole that looks like a design choice.
-                    GD.PrintErr($"[door] opening {want[k]}: '{o.DoorProp}' has no catalog entry -- no door built");
+                    Log.Err($"[door] opening {want[k]}: '{o.DoorProp}' has no catalog entry -- no door built");
                     continue;
                 }
                 if (k < _doors.Count)

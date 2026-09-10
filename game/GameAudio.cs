@@ -32,8 +32,8 @@ namespace UnturnedGodot
             foreach (var g in new[] { "lightwading", "mediumwading", "heavywading" }) want.Add(("swim", g));
             want.Add(("explosions", "bomb_fire")); want.Add(("misc", "popup_ui_menu_popup")); want.Add(("animals", "cow_panic")); want.Add(("animals", "pig_panic")); want.Add(("ambience", "thunder_lightning_strike_rumble"));
             int empty = 0;
-            foreach (var (f, pfx) in want) if (Bank(f, pfx).Length == 0) { empty++; GD.PrintErr($"[audio] EMPTY BANK {f}/{pfx}"); }
-            GD.Print($"[audio] bank audit: {want.Count - empty}/{want.Count} present");
+            foreach (var (f, pfx) in want) if (Bank(f, pfx).Length == 0) { empty++; Log.Err($"[audio] EMPTY BANK {f}/{pfx}"); }
+            Log.Print($"[audio] bank audit: {want.Count - empty}/{want.Count} present");
             // The other half (tinyclaw): banks ON DISK that no code path can ask for. Different query; a Surf value
             // the enum lacks (gravel, ice, mud, snow, dirtloose, metalhigh...) shows up here, not above.
             var asked = new HashSet<string>(); foreach (var (f, pfx) in want) asked.Add(f + "/" + pfx);
@@ -49,7 +49,7 @@ namespace UnturnedGodot
                     if (m.Success && seen.Add(m.Groups[1].Value) && !asked.Contains(folder + "/" + m.Groups[1].Value)) orphan.Add(folder + "/" + m.Groups[1].Value);
                 }
             }
-            if (orphan.Count > 0) GD.Print($"[audio] {orphan.Count} banks on disk nothing asks for: {string.Join(", ", orphan)}");
+            if (orphan.Count > 0) Log.Print($"[audio] {orphan.Count} banks on disk nothing asks for: {string.Join(", ", orphan)}");
         }
 
         /// <summary>All clips named `<prefix>_NN.wav|ogg` under content/audio/<folder>, in order. Empty if none.</summary>
@@ -67,7 +67,7 @@ namespace UnturnedGodot
                 files.Sort(System.StringComparer.OrdinalIgnoreCase);
                 foreach (var f in files) { var s = Load(f); if (s != null) list.Add(s); }
             }
-            if (_dbg) GD.Print($"[audio] bank {key}: {list.Count} clips");
+            if (_dbg) Log.Print($"[audio] bank {key}: {list.Count} clips");
             return _banks[key] = list.ToArray();
         }
 
@@ -90,7 +90,7 @@ namespace UnturnedGodot
                 if (path.EndsWith(".ogg", System.StringComparison.OrdinalIgnoreCase)) return AudioStreamOggVorbis.LoadFromFile(path);
                 return PlayerController.LoadWavOneShot("res://content/audio/" + path.Substring(ProjectSettings.GlobalizePath("res://content/audio/").Length).Replace('\\', '/'));
             }
-            catch (System.Exception e) { GD.PrintErr($"[audio] {path}: {e.Message}"); return null; }
+            catch (System.Exception e) { Log.Err($"[audio] {path}: {e.Message}"); return null; }
         }
 
         /// <summary>Random member of a bank, never the same index twice in a row (retail's variation rule).</summary>
@@ -111,7 +111,7 @@ namespace UnturnedGodot
         {
             if (a == null || scene == null || !scene.IsInsideTree()) return null;
             var pl = new AudioStreamPlayer3D { Stream = a, UnitSize = unitSize, MaxDistance = maxDistance, VolumeDb = volumeDb, PitchScale = pitch };
-            if (_dbg) GD.Print($"[audio3d] {a.ResourcePath}{(a.ResourcePath == "" ? a.GetType().Name : "")} at {pos} vol={volumeDb:0}");
+            if (_dbg) Log.Print($"[audio3d] {a.ResourcePath}{(a.ResourcePath == "" ? a.GetType().Name : "")} at {pos} vol={volumeDb:0}");
             scene.GetTree().Root.AddChild(pl);
             pl.GlobalPosition = pos;
             pl.Play();

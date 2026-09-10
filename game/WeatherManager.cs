@@ -200,7 +200,7 @@ namespace UnturnedGodot
                 float cabin = seatVeh != null && seatVeh.HasCabin ? seatVeh.CabinOpenness : 1f;
                 _shelterTarget = cabin < 1f ? cabin : (ShelterProbe.IsSheltered(cam.GetWorld3D(), cam.GlobalPosition) ? 0f : 1f);
                 if (_shelterTarget != _lastShelterLog && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
-                { _lastShelterLog = _shelterTarget; GD.Print($"[shelter] target={_shelterTarget:0.00} cabin={(cabin < 1f ? seatVeh.Name : "none")} (movie frame {Engine.GetFramesDrawn()})"); }
+                { _lastShelterLog = _shelterTarget; Log.Print($"[shelter] target={_shelterTarget:0.00} cabin={(cabin < 1f ? seatVeh.Name : "none")} (movie frame {Engine.GetFramesDrawn()})"); }
             }
             _shelter = Mathf.MoveToward(_shelter, _shelterTarget, dt / ShelterFadeSeconds);
             return _shelter;
@@ -282,7 +282,7 @@ namespace UnturnedGodot
             if (_dbgFrames < 8 && System.Environment.GetEnvironmentVariable("UG_WEATHER") != null)
             {
                 _dbgFrames++;
-                GD.Print($"[WDBG] f{_dbgFrames} type='{Sim.Active?.Name}' stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} rint={rint:0.000} wind={WindField.WeatherWind:0.00}");
+                Log.Print($"[WDBG] f{_dbgFrames} type='{Sim.Active?.Name}' stage={Sim.Stage} blend={a:0.000} severity={Severity:0.00} rint={rint:0.000} wind={WindField.WeatherWind:0.00}");
             }
 
             TickLightning(dt);
@@ -361,7 +361,7 @@ namespace UnturnedGodot
             var pl = _thunderPool[_thunderPoolNext];
             _thunderPoolNext = (_thunderPoolNext + 1) % _thunderPool.Length;
             pl.Stream = stream; pl.VolumeDb = volDb; pl.Play();
-            GD.Print($"[weather] thunder #{pick} {volDb:0.0}dB");
+            Log.Print($"[weather] thunder #{pick} {volDb:0.0}dB");
         }
 
         /// <summary>One lightning flash. Public so the console + tests can fire it without waiting 15-60 s.</summary>
@@ -380,7 +380,7 @@ namespace UnturnedGodot
             // queue this strike's boom: flash→boom gap cut ~40% (bitvox); sample by distance (near=sharp crack, far=deep rumble)
             if (_thunderPool != null)
                 _pendingThunder.Add((Mathf.Lerp(0.24f, 2.4f, dist), Mathf.Lerp(-0.5f, -8.5f, dist), dist < 0.4f ? 1 : (dist > 0.72f ? 2 : 0)));   // vol range -0.5..-8.5 (compressed from -3..-18, then +1.5dB for bitvox's "+15%"). near still clears clipping vs the deep-ducked rain (measured crack peak ~-1.9dBFS)
-            GD.Print("[weather] lightning");
+            Log.Print("[weather] lightning");
         }
 
         public int StrikeCountDebug { get; private set; }

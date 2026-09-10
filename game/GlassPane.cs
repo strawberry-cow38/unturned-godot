@@ -196,7 +196,7 @@ namespace UnturnedGodot
             scene.AddChild(ps);
             ps.GlobalPosition = centre;
             ps.Emitting = true;   // THE FIX: arm the one-shot AFTER AddChild+position -> a clean emission cycle regardless of the spawning (physics) tick
-            if (System.Environment.GetEnvironmentVariable("UG_SHARDDBG") == "1") GD.Print($"[shards] size {fx.SizeMin}..{fx.SizeMax} x SizeScale {ParticleFx.SizeScale} x mul {sizeMul} -> scale {ps.ScaleAmountMin:0.000}..{ps.ScaleAmountMax:0.000} amount {ps.Amount} ext {halfExt}");
+            if (System.Environment.GetEnvironmentVariable("UG_SHARDDBG") == "1") Log.Print($"[shards] size {fx.SizeMin}..{fx.SizeMax} x SizeScale {ParticleFx.SizeScale} x mul {sizeMul} -> scale {ps.ScaleAmountMin:0.000}..{ps.ScaleAmountMax:0.000} amount {ps.Amount} ext {halfExt}");
             var t = scene.GetTree().CreateTimer(ps.Lifetime + 0.6f);
             t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
         }

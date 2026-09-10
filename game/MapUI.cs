@@ -227,12 +227,12 @@ namespace UnturnedGodot
                         if (xy.Length == 2 && float.TryParse(xy[0], out float nx) && float.TryParse(xy[1], out float ny))
                             AddMarker(new Vector2(nx, ny));
                     }
-                GD.Print($"[mapdbg] folder={MapFolder} levelSize={Info().size} nodes={MapNodes.Locations.Count} zoom={_zoom:0.00} pan=({_pan.X:0},{_pan.Y:0}) marks={_markers.Count} labels={LabelsShown}/{LabelsTotal} base={_baseSize:0} clip={_clip.Position}+{_clip.Size} mapPos={_map.Position} mapSize={_map.Size}");
-                foreach (var m in _markers) GD.Print($"[mapmark] norm=({m.Norm.X:0.000},{m.Norm.Y:0.000}) pin={m.Pin.Position} vis={m.Pin.Visible}");
+                Log.Print($"[mapdbg] folder={MapFolder} levelSize={Info().size} nodes={MapNodes.Locations.Count} zoom={_zoom:0.00} pan=({_pan.X:0},{_pan.Y:0}) marks={_markers.Count} labels={LabelsShown}/{LabelsTotal} base={_baseSize:0} clip={_clip.Position}+{_clip.Size} mapPos={_map.Position} mapSize={_map.Size}");
+                foreach (var m in _markers) Log.Print($"[mapmark] norm=({m.Norm.X:0.000},{m.Norm.Y:0.000}) pin={m.Pin.Position} vis={m.Pin.Visible}");
                 foreach (var (nm, pos) in MapNodes.Locations)
                 {
                     var n = WorldToNorm(pos);
-                    GD.Print($"[mapnode] {nm} world=({pos.X:0},{pos.Z:0}) norm=({n.X:0.000},{n.Y:0.000})");
+                    Log.Print($"[mapnode] {nm} world=({pos.X:0},{pos.Z:0}) norm=({n.X:0.000},{n.Y:0.000})");
                 }
             }
         }
@@ -767,9 +767,9 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(b)) name = BakedImageName;
             }
             string p = ProjectSettings.GlobalizePath("res://content/" + name);
-            if (!System.IO.File.Exists(p)) { GD.Print($"[map] missing content/{name}"); return null; }
+            if (!System.IO.File.Exists(p)) { Log.Print($"[map] missing content/{name}"); return null; }
             var img = ContentProvider.LoadImage(p);
-            if (img != null) GD.Print($"[map] {name} {img.GetWidth()}x{img.GetHeight()} for a {Info().size:0} m level");
+            if (img != null) Log.Print($"[map] {name} {img.GetWidth()}x{img.GetHeight()} for a {Info().size:0} m level");
             return img == null ? null : ImageTexture.CreateFromImage(img);
         }
     }

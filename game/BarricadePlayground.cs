@@ -52,7 +52,7 @@ namespace UnturnedGodot
         {
             if (_placer == null || !_placer.Valid) return null;
             var d = Barricade.PlaceOnSurface(GetParent(), Current, _placer.Point, _placer.Normal, _placer.Yaw, _placer.Mount);
-            GD.Print($"[barricadeplay] placed {Current.Name} ({_placer.Mount}) at {_placer.Point}");
+            Log.Print($"[barricadeplay] placed {Current.Name} ({_placer.Mount}) at {_placer.Point}");
             return d;
         }
 
@@ -61,14 +61,14 @@ namespace UnturnedGodot
             if (_defs == null || _defs.Length == 0) return;
             _defIx = ((slot % _defs.Length) + _defs.Length) % _defs.Length;
             _placer.SetDef(Current);   // SetDef adopts the def's own mount family
-            GD.Print($"[barricadeplay] def -> {Current.Name} (mount {_placer.Mount})");
+            Log.Print($"[barricadeplay] def -> {Current.Name} (mount {_placer.Mount})");
             UpdateHud();
         }
 
         public void CycleMount()   // override the def's mount family to try Floor/Wall/Sticky on any surface
         {
             _placer.Mount = (BarricadeMount)(((int)_placer.Mount + 1) % 3);
-            GD.Print($"[barricadeplay] mount -> {_placer.Mount}");
+            Log.Print($"[barricadeplay] mount -> {_placer.Mount}");
             UpdateHud();
         }
 

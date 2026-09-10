@@ -296,7 +296,7 @@ namespace UnturnedGodot
             var mesh = Lm("Harbor_0_gantry");
             if (mesh == null || mesh.GetSurfaceCount() == 0) return;
             var vRaw = mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            if (vRaw == null || vRaw.Length == 0) { GD.Print("[FRAMEBOX] no verts"); return; }
+            if (vRaw == null || vRaw.Length == 0) { Log.Print("[FRAMEBOX] no verts"); return; }
             Vector3 big = new Vector3(1e9f, 1e9f, 1e9f);
             Vector3 mn = Upright * vRaw[0], mx = mn;
             var verts = new Vector3[vRaw.Length];

@@ -73,7 +73,7 @@ namespace UnturnedGodot
                 // A save we cannot read is REPORTED, never silently skipped. The failure mode this avoids is a
                 // player losing a base to a format bump and seeing only an ordinary empty world, with nothing
                 // anywhere saying why. The file is left on disk so it can still be recovered by hand.
-                GD.PrintErr($"[save] refusing {_path}: {error}. Starting a FRESH world; the file is untouched.");
+                Log.Err($"[save] refusing {_path}: {error}. Starting a FRESH world; the file is untouched.");
                 return "save refused (" + error + ") -- fresh world, file kept";
             }
 
@@ -122,7 +122,7 @@ namespace UnturnedGodot
             }
             catch (Exception ex)
             {
-                GD.PrintErr($"[save] write failed: {ex.GetType().Name}: {ex.Message}");
+                Log.Err($"[save] write failed: {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
         }
@@ -167,7 +167,7 @@ namespace UnturnedGodot
             if (!DirAccess.DirExistsAbsolute(dir))
             {
                 var err = DirAccess.MakeDirRecursiveAbsolute(dir);
-                if (err != Error.Ok) { GD.PrintErr($"[save] cannot create {dir}: {err}"); return false; }
+                if (err != Error.Ok) { Log.Err($"[save] cannot create {dir}: {err}"); return false; }
             }
             // Write to a temp file and swap. A crash midway through a direct write leaves a TRUNCATED save --
             // which parses as far as it goes and then fails, costing the whole world. The swap makes the file
@@ -175,7 +175,7 @@ namespace UnturnedGodot
             string tmp = path + ".tmp";
             using (var f = Godot.FileAccess.Open(tmp, Godot.FileAccess.ModeFlags.Write))
             {
-                if (f == null) { GD.PrintErr($"[save] cannot open {tmp}: {Godot.FileAccess.GetOpenError()}"); return false; }
+                if (f == null) { Log.Err($"[save] cannot open {tmp}: {Godot.FileAccess.GetOpenError()}"); return false; }
                 f.StoreString(text);
             }
             var d = DirAccess.Open(path.GetBaseDir());

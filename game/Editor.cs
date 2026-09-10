@@ -106,7 +106,7 @@ namespace UnturnedGodot
             _history.RemoveAt(_history.Count - 1);
             e.undo();
             MarkDirty();   // undoing is itself a change against what is on disk
-            GD.Print($"[editor] undo: {e.label} ({_history.Count} left)");
+            Log.Print($"[editor] undo: {e.label} ({_history.Count} left)");
             return true;
         }
         public int UndoDepth => _history.Count;
@@ -135,7 +135,7 @@ namespace UnturnedGodot
             int b2 = Buildings?.Save() ?? 0;
             IsDirty = false; SecondsSinceSave = 0.0;
             LastSaveLabel = autosave ? "autosaved" : "saved";
-            GD.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls)");
+            Log.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls)");
             EmitSignal(SignalName.Saved, autosave);
         }
 

@@ -83,13 +83,13 @@ namespace UnturnedGodot
         static System.IO.StreamWriter _log;
         float _dbg, _chatter, _prevThr;
 
-        public static void Log(string line)
+        public static void DriverLog(string line)
         {
             if (!AiDbg) return;
             if (_log == null)
             {
                 try { _log = new System.IO.StreamWriter(AiDbgPath, false) { AutoFlush = true }; }
-                catch (System.Exception e) { GD.PrintErr($"[aidbg] cannot write {AiDbgPath}: {e.Message}"); return; }
+                catch (System.Exception e) { Log.Err($"[aidbg] cannot write {AiDbgPath}: {e.Message}"); return; }
             }
             _log.WriteLine(line);
         }
@@ -343,7 +343,7 @@ namespace UnturnedGodot
                 _chatter += Mathf.Abs(_throttle - _prevThr); _prevThr = _throttle;
                 if (_dbg >= 0.5f)
                 {
-                    Log($"[aidbg] {Name} t={Time.GetTicksMsec() / 1000f:0.0} r{_path.Road}/l{_path.Lane}{(_path.Forward ? "f" : "r")} v={fwd:0.0} tgt={target:0.0} thr={_throttle:+0.00;-0.00} steer={steer:+0.00;-0.00} cross={cross:0.00}m chatter={_chatter / _dbg:0.00}/s rem={remaining:0}{(_uTurning ? " UTURN" : "")}{(_flipping > 0f ? (_shuffleRev ? " FLIP-REV" : " FLIP") : "")}{(_unstick > 0f ? " UNSTICK" : "")}{(_lost > 0f ? " LOST" : "")}");
+                    DriverLog($"[aidbg] {Name} t={Time.GetTicksMsec() / 1000f:0.0} r{_path.Road}/l{_path.Lane}{(_path.Forward ? "f" : "r")} v={fwd:0.0} tgt={target:0.0} thr={_throttle:+0.00;-0.00} steer={steer:+0.00;-0.00} cross={cross:0.00}m chatter={_chatter / _dbg:0.00}/s rem={remaining:0}{(_uTurning ? " UTURN" : "")}{(_flipping > 0f ? (_shuffleRev ? " FLIP-REV" : " FLIP") : "")}{(_unstick > 0f ? " UNSTICK" : "")}{(_lost > 0f ? " LOST" : "")}");
                     _dbg = 0f; _chatter = 0f;
                 }
             }

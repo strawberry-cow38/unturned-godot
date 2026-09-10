@@ -322,7 +322,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // is fix (b) (bounded visual/interaction suppression) vs (a) (make LootField/salvage entity-primary);
                 // (a) was rejected as it would rewrite MP-shared node-streaming + lose the physics-settle transform
                 // the server has no world-item body to reproduce. Proven by UnifyTests.unify.passive_loot_single.
-                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables + world-items as replicas + SERVER-AUTHORITATIVE inventory (direct player drop/pickup/deploy paths disabled)");
+                Log.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables + world-items as replicas + SERVER-AUTHORITATIVE inventory (direct player drop/pickup/deploy paths disabled)");
             }
             else
             {
@@ -397,12 +397,12 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
             // defaults. Doors are the known gap: a loopback deliberately leaves them unregistered (see the note
             // above), so door state is dedicated-only and simply finds nothing to match in SP.
             Save = new WorldSaveDriver(Server, MapId, DayNight);
-            GD.Print("[SAVE] " + Save.LoadIntoWorld());
+            Log.Print("[SAVE] " + Save.LoadIntoWorld());
             Server.Transactions.WipeSaveHandler = () => Save.Wipe();
             Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
-            GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
+            Log.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);   // Godot -> Unity vector for the Send* signatures (mirrors ClientWorldSession:76)

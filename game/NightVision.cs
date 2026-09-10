@@ -77,7 +77,7 @@ namespace UnturnedGodot
             var nv = new NightVision();
             root.AddChild(nv);
             nv.Set(true, mode == "military");
-            GD.Print($"[nightvision] harness goggles on: {mode}");
+            Log.Print($"[nightvision] harness goggles on: {mode}");
         }
     }
 }

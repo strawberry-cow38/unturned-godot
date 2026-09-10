@@ -21,7 +21,7 @@ namespace SDG.Unturned
         {
             _bySeed.Clear();
             const string path = "res://content/farms.tsv";
-            if (!Godot.FileAccess.FileExists(path)) { GD.Print("[farms] no farms.tsv"); return; }
+            if (!Godot.FileAccess.FileExists(path)) { UnturnedGodot.Log.Print("[farms] no farms.tsv"); return; }
             using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
             while (f != null && !f.EofReached())
             {
@@ -34,7 +34,7 @@ namespace SDG.Unturned
                 bool ignoreSoil = c.Length > 3 && c[3].Trim() == "1";
                 _bySeed[id] = new FarmDef { Id = id, Growth = growth, Grow = grow, IgnoreSoil = ignoreSoil };
             }
-            GD.Print($"[farms] loaded {_bySeed.Count} crop defs");
+            UnturnedGodot.Log.Print($"[farms] loaded {_bySeed.Count} crop defs");
         }
 
         public static bool IsSeed(ushort id) => _bySeed.ContainsKey(id);

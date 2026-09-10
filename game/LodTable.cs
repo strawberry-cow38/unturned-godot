@@ -92,7 +92,7 @@ namespace UnturnedGodot
         {
             _byGuid.Clear();
             Loaded = false;
-            if (!Godot.FileAccess.FileExists(path) && !System.IO.File.Exists(path)) { GD.Print($"[lod] no table at {path} -- props will not cull"); return; }
+            if (!Godot.FileAccess.FileExists(path) && !System.IO.File.Exists(path)) { Log.Print($"[lod] no table at {path} -- props will not cull"); return; }
             foreach (var raw in System.IO.File.ReadAllLines(path))
             {
                 if (raw.Length == 0 || raw[0] == '#') continue;
@@ -113,7 +113,7 @@ namespace UnturnedGodot
                 };
             }
             Loaded = _byGuid.Count > 0;
-            GD.Print($"[lod] {_byGuid.Count} props, cull {DefaultCullDistance:0}m (LARGE) / {DefaultCullDistance * 0.5f:0}m / {DefaultCullDistance * 0.125f:0}m, lodBias {LodBias:0.0}");
+            Log.Print($"[lod] {_byGuid.Count} props, cull {DefaultCullDistance:0}m (LARGE) / {DefaultCullDistance * 0.5f:0}m / {DefaultCullDistance * 0.125f:0}m, lodBias {LodBias:0.0}");
         }
 
         /// <summary>Unity's LODUtility conversion: how far away this prop still covers `h` of the screen height.</summary>
@@ -163,7 +163,7 @@ namespace UnturnedGodot
                 if (hs.Count == 0) continue;
                 _byGeneratedName[p[0]] = new Entry { Layer = p[1], Size = size, Heights = hs.ToArray() };
             }
-            GD.Print($"[lod] {_byGeneratedName.Count} generated bands (props retail shipped with no LODGroup)");
+            Log.Print($"[lod] {_byGeneratedName.Count} generated bands (props retail shipped with no LODGroup)");
         }
 
         /// <summary>Bands for a prop, preferring retail's authored GUID row and falling back to a generated
@@ -238,7 +238,7 @@ namespace UnturnedGodot
         public static void LoadResources(string path)
         {
             _byResource.Clear();
-            if (!System.IO.File.Exists(path)) { GD.Print($"[lod] no resource table at {path} -- trees keep the built-in fallback"); return; }
+            if (!System.IO.File.Exists(path)) { Log.Print($"[lod] no resource table at {path} -- trees keep the built-in fallback"); return; }
             foreach (var raw in System.IO.File.ReadAllLines(path))
             {
                 if (raw.Length == 0 || raw[0] == '#') continue;
@@ -259,7 +259,7 @@ namespace UnturnedGodot
                     Heights = hs,
                 };
             }
-            GD.Print($"[lod] {_byResource.Count} resources, layer cull {DefaultCullDistance:0}m");
+            Log.Print($"[lod] {_byResource.Count} resources, layer cull {DefaultCullDistance:0}m");
         }
 
         /// <summary>Draw distance for a resource by asset name (case-insensitive). 0 = unknown, caller keeps

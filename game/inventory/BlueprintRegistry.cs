@@ -51,14 +51,14 @@ namespace UnturnedGodot
             Loaded = true;   // set even on a missing/empty file: the attempt is what EnsureLoaded must not repeat
             LoadCountForTests++;
             string path = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(path)) { GD.PrintErr($"[bp] catalog missing: {path}"); return 0; }
+            if (!System.IO.File.Exists(path)) { Log.Err($"[bp] catalog missing: {path}"); return 0; }
             foreach (var line in System.IO.File.ReadAllLines(path))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 var bp = BlueprintDef.FromTsv(line);
                 if (bp != null) _all.Add(bp);
             }
-            GD.Print($"[bp] loaded {_all.Count} blueprints from {resPath}");
+            Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath}");
             return _all.Count;
         }
 

@@ -103,7 +103,7 @@ namespace UnturnedGodot
                                     Up = new Vector3(u[0].AsSingle(), u[1].AsSingle(), u[2].AsSingle()), Ok = true };
                         }
                 }
-                catch (System.Exception e) { GD.PrintErr($"[store-shelf] item_poses load failed: {e.Message}"); }
+                catch (System.Exception e) { Log.Err($"[store-shelf] item_poses load failed: {e.Message}"); }
             }
             return _poses.TryGetValue(id, out var v) ? v : default;
         }
@@ -483,7 +483,7 @@ namespace UnturnedGodot
             base._Ready();   // Storage grid + BuildVisual (shelf mesh + label) + "crates" group
             if (!ServerOwned) RollInto(Storage, MinItems, MaxItems, TableIndex);   // A1: a replicated shelf is stocked by the server -> its display arrives via ApplyDisplay(digest), not a local roll
             if (ShowItems && !ServerOwned) SyncDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
-            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
+            Log.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
         }
 
         // A1 (MP): a REPLICATED shelf's tier display, driven by the server's display digest (each cell's index is the
@@ -621,7 +621,7 @@ namespace UnturnedGodot
             }
 
             if (System.Environment.GetEnvironmentVariable("UG_SHELFDBG") == "1")
-                GD.Print($"[shelf-item] id={id} dims=({s.X:0.00},{s.Y:0.00},{s.Z:0.00}) flat={flatSlab} poseOk={pose.Ok} up={pose.Up} front={pose.Front} -> {(pose.Ok && !lieFlat ? "STAND" : "LIE")}");
+                Log.Print($"[shelf-item] id={id} dims=({s.X:0.00},{s.Y:0.00},{s.Z:0.00}) flat={flatSlab} poseOk={pose.Ok} up={pose.Up} front={pose.Front} -> {(pose.Ok && !lieFlat ? "STAND" : "LIE")}");
 
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
             // height to the tier gap.

@@ -51,7 +51,7 @@ namespace UnturnedGodot
             if (_roads.SavePaths(SavePath))
             {
                 _roads.SaveGraph(GraphPath);   // together, always -- positional links
-                GD.Print($"[editor-roads] saved -> {SavePath} ({_roads.JunctionCount} junction nodes)");
+                Log.Print($"[editor-roads] saved -> {SavePath} ({_roads.JunctionCount} junction nodes)");
                 return 1;
             }
             return 0;
@@ -65,7 +65,7 @@ namespace UnturnedGodot
             if (_roads != null && System.IO.File.Exists(SavePath) && _roads.ReloadPaths(SavePath))
             {
                 _roads.LoadGraph(GraphPath);   // AFTER the roads: the links are positional against them
-                GD.Print("[editor-roads] loaded saved road edits");
+                Log.Print("[editor-roads] loaded saved road edits");
             }
             _editor.ModeChanged += _ => { if (_editor.Mode != EEditorMode.Environment && _paving) SetPaving(false); };
         }
@@ -80,7 +80,7 @@ namespace UnturnedGodot
             for (int r = 0; r < _roads.RoadCount; r++)
                 for (int j = 0; j < _roads.JointCount(r); j++)
                     AddMarker(_markers, vmesh, _roads.JointPos(r, j) + Vector3.Up * 1.2f, VertColor, 1.7f, r, j, -1);
-            GD.Print($"[editor-roads] paving ON: {_markers.Count} joints across {_roads.RoadCount} roads");
+            Log.Print($"[editor-roads] paving ON: {_markers.Count} joints across {_roads.RoadCount} roads");
         }
 
         void ShowRoadHandles(int road)   // reveal the tangent handles (+ lines) for one road only -> uncluttered
@@ -258,7 +258,7 @@ namespace UnturnedGodot
         public void DemoMove(int road, int joint, Vector3 to)
         {
             SetPaving(true);
-            if (road < _roads.RoadCount && joint < _roads.JointCount(road)) { _roads.SetJointPos(road, joint, to); RefreshAndSelect(road, joint, -1); GD.Print($"[editor-roads] demo moved road {road} joint {joint}"); }
+            if (road < _roads.RoadCount && joint < _roads.JointCount(road)) { _roads.SetJointPos(road, joint, to); RefreshAndSelect(road, joint, -1); Log.Print($"[editor-roads] demo moved road {road} joint {joint}"); }
         }
 
         public Vector3 DemoAddVertex(int road, Vector3 offset)
@@ -269,7 +269,7 @@ namespace UnturnedGodot
             Vector3 at = _roads.JointPos(road, last) + offset;
             int ni = _roads.AddVertexNearSelected(road, last, at);
             RefreshAndSelect(road, ni, -1);
-            GD.Print($"[editor-roads] demo added vertex to road {road} -> joint {ni} at {at}");
+            Log.Print($"[editor-roads] demo added vertex to road {road} -> joint {ni} at {at}");
             return at;
         }
 
@@ -278,7 +278,7 @@ namespace UnturnedGodot
             if (road >= _roads.RoadCount) return;
             int before = _roads.JointCount(road);
             bool removedRoad = _roads.RemoveVertex(road, joint);
-            GD.Print($"[editor-roads] demo removed road {road} joint {joint}: {before} joints -> {(removedRoad ? "ROAD removed" : _roads.JointCount(road) + " joints")}");
+            Log.Print($"[editor-roads] demo removed road {road} joint {joint}: {before} joints -> {(removedRoad ? "ROAD removed" : _roads.JointCount(road) + " joints")}");
         }
 
         public Vector3 DemoMoveTangent(int road, int joint, int ti, Vector3 handleWorld)
@@ -288,13 +288,13 @@ namespace UnturnedGodot
             {
                 _roads.SetTangent(road, joint, ti, handleWorld);
                 RefreshAndSelect(road, joint, ti);
-                GD.Print($"[editor-roads] demo moved road {road} joint {joint} tangent {ti} -> handle {handleWorld} (mode {ModeNames[_roads.JointMode(road, joint)]})");
+                Log.Print($"[editor-roads] demo moved road {road} joint {joint} tangent {ti} -> handle {handleWorld} (mode {ModeNames[_roads.JointMode(road, joint)]})");
             }
             // undo self-test (headless): snapshot, add a road, undo, confirm the count reverts
             int before = _roads.RoadCount;
             SnapUndo("test"); _roads.AddRoad(new Vector3(120f, 0f, 120f));
             int mid = _roads.RoadCount; _editor.Undo();
-            GD.Print($"[editor-roads] undo self-test: {before} -> {mid} -> {_roads.RoadCount} roads (expect {before})");
+            Log.Print($"[editor-roads] undo self-test: {before} -> {mid} -> {_roads.RoadCount} roads (expect {before})");
             return handleWorld;
         }
 
@@ -303,7 +303,7 @@ namespace UnturnedGodot
             if (road >= _roads.RoadCount) return;
             int before = _roads.RoadMaterial(road);
             _roads.SetRoadMaterial(road, m);
-            GD.Print($"[editor-roads] demo set road {road} material {before} -> {_roads.RoadMaterial(road)} ({_roads.RoadMaterialName(road)}, of {_roads.MaterialCount})");
+            Log.Print($"[editor-roads] demo set road {road} material {before} -> {_roads.RoadMaterial(road)} ({_roads.RoadMaterialName(road)}, of {_roads.MaterialCount})");
         }
 
         public Vector3 DemoDataModel(int road)   // inc-polish: loop toggle + per-joint offset + ignore-terrain
@@ -312,7 +312,7 @@ namespace UnturnedGodot
             if (road >= _roads.RoadCount) return Vector3.Zero;
             _roads.SetRoadLoop(road, true);   // close the road into a loop (adds the return segment -> visible)
             if (_roads.JointCount(road) > 1) { _roads.SetJointOffset(road, 1, 6f); _roads.SetJointIgnoreTerrain(road, 1, true); }
-            GD.Print($"[editor-roads] demo road {road}: loop={_roads.RoadIsLoop(road)} j1 offset={_roads.JointOffset(road, 1)} ignore={_roads.JointIgnoreTerrain(road, 1)}");
+            Log.Print($"[editor-roads] demo road {road}: loop={_roads.RoadIsLoop(road)} j1 offset={_roads.JointOffset(road, 1)} ignore={_roads.JointIgnoreTerrain(road, 1)}");
             Vector3 c = Vector3.Zero; int n = _roads.JointCount(road);
             for (int j = 0; j < n; j++) c += _roads.JointPos(road, j);
             RefreshAndSelect(road, 1, -1);

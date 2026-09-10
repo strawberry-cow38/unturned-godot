@@ -32,7 +32,7 @@ namespace UnturnedGodot
                 var item = Assets.makeLoot((ushort)id);
                 if (item != null) { Add(item); added++; }
             }
-            GD.Print($"[loot-crate] table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {added} items");
+            Log.Print($"[loot-crate] table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {added} items");
         }
     }
 }

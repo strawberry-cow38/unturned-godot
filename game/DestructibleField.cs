@@ -445,7 +445,7 @@ namespace UnturnedGodot
         {
             var map = new Dictionary<string, Rubble>();
             string path = ProjectSettings.GlobalizePath("res://content/objects/rubble.txt");
-            if (!File.Exists(path)) { GD.Print("[rubble] no rubble.txt -- destructibles disabled"); return map; }
+            if (!File.Exists(path)) { Log.Print("[rubble] no rubble.txt -- destructibles disabled"); return map; }
             foreach (var line in File.ReadAllLines(path))
             {
                 var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
@@ -456,7 +456,7 @@ namespace UnturnedGodot
                 map[sp[0].ToLowerInvariant()] = new Rubble(health, (long)System.Math.Round(resetSecs * 50f), effectId);
             }
             ApplyOverrides(map);
-            GD.Print($"[rubble] catalog {map.Count} destructible object types");
+            Log.Print($"[rubble] catalog {map.Count} destructible object types");
             return map;
         }
 

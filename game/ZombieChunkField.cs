@@ -97,7 +97,7 @@ namespace UnturnedGodot
         public void LoadFromPei(string peiRoot)
         {
             string path = System.IO.Path.Combine(peiRoot, "Spawns", "Animals.dat");
-            if (!System.IO.File.Exists(path)) { GD.Print("[zchunk] no Animals.dat -- no zombie spawns"); return; }
+            if (!System.IO.File.Exists(path)) { Log.Print("[zchunk] no Animals.dat -- no zombie spawns"); return; }
             var b = System.IO.File.ReadAllBytes(path); int o = 0;
             byte version = b[o++];
             if (version == 0) return;
@@ -137,7 +137,7 @@ namespace UnturnedGodot
                 c.Cap = Mathf.Min(ChunkMaxLive, Mathf.CeilToInt(c.SpawnPts.Count * SpawnChance));
                 capSum += c.Cap;
             }
-            GD.Print($"[zchunk] {kept}/{total} Animals.dat pts ({water} water dropped) -> {_chunks.Count} chunks @ {ChunkSize}m; " +
+            Log.Print($"[zchunk] {kept}/{total} Animals.dat pts ({water} water dropped) -> {_chunks.Count} chunks @ {ChunkSize}m; " +
                      $"map population potential = {capSum} zombies (Σ min({ChunkMaxLive}, ceil(pts*{SpawnChance})))");
         }
 

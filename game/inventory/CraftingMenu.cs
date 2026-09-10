@@ -681,7 +681,7 @@ void fragment() {
             var inv = new Crafting.PlayerInvAdapter(Inv);
             int outAmt = job.Bp.Outputs.Count > 0 ? job.Bp.Outputs[0].Amount : 1;
             if (job.Out != null) inv.Add((ushort)job.Out.id, outAmt);
-            GD.Print($"[craft] produced {Title(job.Bp)}");
+            Log.Print($"[craft] produced {Title(job.Bp)}");
         }
 
         // cancel: hand the escrowed ingredients for the REMAINING units back to the bag, drop the job.

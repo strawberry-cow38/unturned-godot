@@ -69,7 +69,7 @@ namespace UnturnedGodot
 
         void Build(Mesh body)
         {
-            if (body == null) { GD.PrintErr($"[radio] {PropName}: no body mesh"); return; }
+            if (body == null) { Log.Err($"[radio] {PropName}: no body mesh"); return; }
             var aabb = body.GetAabb();
             _bodyCenterLocal = aabb.Position + aabb.Size * 0.5f;
 

@@ -35,14 +35,14 @@ namespace UnturnedGodot
             if (int.TryParse(Environment.GetEnvironmentVariable("UG_VM_ACTION_AT"), out int at)) _vmActionAt = at;
             if (float.TryParse(Environment.GetEnvironmentVariable("UG_VM_SPEED"), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out float speed) && speed > 0f) _vmActionSpeed = speed;
-            GD.Print($"[vm-study] action={_vmAction}, at={_vmActionAt}, speed={_vmActionSpeed}, captures={string.Join(',', _rigCaptureFrames)}");
+            Log.Print($"[vm-study] action={_vmAction}, at={_vmActionAt}, speed={_vmActionSpeed}, captures={string.Join(',', _rigCaptureFrames)}");
             if (float.TryParse(Environment.GetEnvironmentVariable("UG_VM_SNAPSHOT_TIME"), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out float poseTime) && poseTime >= 0f)
             {
                 _vm.CaptureAnimationPose(_vmAction, poseTime);
                 _vmActionStarted = _vmActionStopped = true;
                 _vmAction = "snapshot";
-                GD.Print($"[vm-study] frozen clip sample at {poseTime:0.###}s");
+                Log.Print($"[vm-study] frozen clip sample at {poseTime:0.###}s");
             }
         }
 
@@ -60,7 +60,7 @@ namespace UnturnedGodot
                     case "sprint": _vm.SetLocomotion(true, EPlayerStance.SPRINT); break;
                     case "ads": _vm.SetAiming(true); break;
                 }
-                GD.Print($"[vm-study] {_vmAction} fired at frame {_frame}, reload={_vm.ReloadLength:0.###}s, hammer={_vm.HammerLength:0.###}s");
+                Log.Print($"[vm-study] {_vmAction} fired at frame {_frame}, reload={_vm.ReloadLength:0.###}s, hammer={_vm.HammerLength:0.###}s");
             }
             else if (_vmActionStarted)
             {

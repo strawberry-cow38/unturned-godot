@@ -41,7 +41,7 @@ namespace UnturnedGodot
                     var c = ln.Split('\t');
                     if (c.Length >= 2 && ushort.TryParse(c[0], out var id)) _byId[id] = c[1].Trim();
                 }
-            else GD.Print("[consumables] no consumables.tsv");
+            else Log.Print("[consumables] no consumables.tsv");
             string ap = ProjectSettings.GlobalizePath("res://content/consumable_anims.tsv");
             if (System.IO.File.Exists(ap))
                 foreach (var ln in System.IO.File.ReadAllLines(ap))
@@ -72,7 +72,7 @@ namespace UnturnedGodot
                     var c = ln.Split('\t');   // mesh, comma-separated part names the clips drive
                     if (c.Length >= 2) _animPartsByMesh[c[0].Trim()] = new HashSet<string>(c[1].Split(','), System.StringComparer.Ordinal);
                 }
-            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds, {_colorByMesh.Count} flat colors, {_animPartsByMesh.Count} part sets");
+            Log.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds, {_colorByMesh.Count} flat colors, {_animPartsByMesh.Count} part sets");
         }
 
         // flat _Color for a no-texture consumable mesh (cheese/potato/etc.), or null if it has a real albedo texture.

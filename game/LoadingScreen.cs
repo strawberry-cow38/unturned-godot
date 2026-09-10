@@ -135,14 +135,20 @@ namespace UnturnedGodot
             // This readout hangs over whatever screen you land on for eight seconds after every load, and it was
             // bare text with a 6 px outline doing the legibility work -- the one thing left in the UI wearing no
             // theme at all. Same panel, same type colour, same corner radius as the rest of the design system.
-            // ⚠ BELOW THE CONSOLE (strawberry 2026-09-10: "move the loading screen profiler down so it doesnt
-            // cover the f1 console"). DevConsole draws its log at y=10 and its input at y=34..64, and this panel
-            // sits on Layer 128 against the console's 100 -- so at y=12 it won the z-order and covered the thing
-            // you had just opened. 140 clears the input plus room for a multi-line response.
+            // ⚠ OFF THE CONSOLE ENTIRELY (strawberry 2026-09-10: "move the loading screen profiler down so it
+            // doesnt cover the f1 console"). This panel is on Layer 128 against the console's 100, so wherever the
+            // two meet the profiler wins the z-order and covers the thing you just opened.
             //
-            // Down rather than to the bottom-left, which is the vitals bar (HUD lifeBox anchors there), and not to
-            // the right because the console's input is 820 wide and would still collide in a narrow window.
-            var tbox = new PanelContainer { Position = new Vector2(16, TimingsY), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            // "Down" was the answer while the console was one line plus an input. It is not any more: the console
+            // grew a real scrollback in the same pass, and it now runs from y=72 down the left side -- so moving
+            // down the left just meets it lower. Pinned to the TOP-RIGHT instead, which the console cannot reach
+            // (its input is 820 wide from x=14) and which is clear of the HUD's bottom-left vitals and
+            // bottom-right ammo. Different placement from the literal instruction, same requirement met; say the
+            // word and it moves.
+            var tbox = new PanelContainer { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            tbox.AnchorLeft = 1f; tbox.AnchorRight = 1f; tbox.AnchorTop = 0f; tbox.AnchorBottom = 0f;
+            tbox.GrowHorizontal = Control.GrowDirection.Begin;   // content-sized, extending LEFT from the right edge
+            tbox.Position = new Vector2(-16f, 12f);
             var tsb = UITheme.Box(new Color(0.06f, 0.07f, 0.09f, 0.88f), UITheme.RadiusCell, new Color(1f, 1f, 1f, 0.10f), 1);
             tsb.ContentMarginLeft = tsb.ContentMarginRight = 12;
             tsb.ContentMarginTop = tsb.ContentMarginBottom = 8;
@@ -157,7 +163,6 @@ namespace UnturnedGodot
             SetProcess(true);
         }
 
-        const float TimingsY = 140f;   // clear of the DevConsole's log + input (see the note where tbox is built)
         bool _finishPending;
         double _warmWait;
         string _timingsText = "";
@@ -198,7 +203,7 @@ namespace UnturnedGodot
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"LOAD {total:0} ms");
             foreach (var kv in timings) sb.AppendLine($"  {kv.Key,-10} {kv.Value,6:0} ms  ({(total > 0 ? kv.Value / total * 100 : 0):0}%)");
-            GD.Print("[load] " + sb.ToString().Replace("\n", " | "));
+            Log.Print("[load] " + sb.ToString().Replace("\n", " | "));
             // ⚠ DO NOT DROP THE COVER YET IF THE SHADER WARM IS STILL DRAWING. Its quads live 0.6 m in front of the
             // camera and must actually rasterise to compile their pipelines, so they cannot be hidden -- only
             // covered. Uncovering here is what put a flash of coloured quads on the world you had just loaded into.

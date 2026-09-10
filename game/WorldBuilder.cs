@@ -118,7 +118,7 @@ namespace UnturnedGodot
             foreach (var kv in System.Linq.Enumerable.OrderByDescending(_vehProfAcc, k => k.Value.build + k.Value.add))
                 sb.Append($" | {kv.Key}: {kv.Value.n}  {kv.Value.build:0}  {kv.Value.add:0}  ({(kv.Value.build + kv.Value.add) / kv.Value.n:0.0})");
             sb.Append($" | TOTAL build={tb:0} add={ta:0}");
-            GD.Print(sb.ToString());
+            Log.Print(sb.ToString());
         }
         public static bool SkipPhase(string name) { var v = System.Environment.GetEnvironmentVariable("UG_SKIP"); return v != null && v.Contains(name); }
 
@@ -506,7 +506,7 @@ namespace UnturnedGodot
                 var ground = new StaticBody3D { CollisionLayer = 1u << 0 };
                 ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
                 root.AddChild(ground);
-                GD.Print("[WORLD] dedicated: no map data (set UG_UNTURNED_DIR) -> flat fallback ground, no objects/nav");
+                Log.Print("[WORLD] dedicated: no map data (set UG_UNTURNED_DIR) -> flat fallback ground, no objects/nav");
                 // The interactables belong on the fallback world too. This branch is what CI and every L1
                 // test actually run, so a dedicated server that only grows doors when retail map data is
                 // present is one whose doors no automated test ever sees.
@@ -1649,27 +1649,27 @@ namespace UnturnedGodot
             // path, since their groups would never be flushed.
             propBatch.Flush(root);
             batchOpen = false;
-            if (bakeOmitted > 0) GD.Print($"[bakemap] {bakeOmitted} prop placement(s) omitted by {BakeOmitFile(MapUI.MapFolder)}");
+            if (bakeOmitted > 0) Log.Print($"[bakemap] {bakeOmitted} prop placement(s) omitted by {BakeOmitFile(MapUI.MapFolder)}");
             if (propBatch.Batched > 0)
                 // NODES, not simultaneous draws -- the LOD levels of one prop are separate groups but their
                 // distance bands do not overlap, so at most one of them can draw at a time, and frustum +
                 // distance culling then takes most of what is left. Counting these as "draws" would overstate
                 // the runtime cost and understate the saving; the honest figure is what replaced what.
-                GD.Print($"[batch] {propBatch.Batched} prop visuals -> {propBatch.GroupCount} MultiMesh nodes ({PropBatcher.Cell:0}m cells x LOD level x material)");
+                Log.Print($"[batch] {propBatch.Batched} prop visuals -> {propBatch.GroupCount} MultiMesh nodes ({PropBatcher.Cell:0}m cells x LOD level x material)");
             destField.SetCount(destN);   // reserve the whole deterministic index space (built + unbuilt holiday slots)
             result.Destructibles = destField;
-            if (destN > 0) GD.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
-            if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
+            if (destN > 0) Log.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
+            if (converted > 0) Log.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
-            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
-            if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
-            GD.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
-            GD.Print($"[medical] {monitorsPlaced} patient monitors");
-            GD.Print($"[radio] {radios} radio sets");   // unconditional, same reason: a zero is the tell that the prop stopped being placed   // printed unconditionally: a zero here is the tell that the prop stopped being placed
-            if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
-            GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
-            GD.Print($"[lod] generated-band lookups: {LodTable.GeneratedHits} hit, {LodTable.GeneratedMisses} missed (table has {LodTable.GeneratedCount})");
-            GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
+            Log.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
+            Log.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
+            Log.Print($"[medical] {monitorsPlaced} patient monitors");
+            Log.Print($"[radio] {radios} radio sets");   // unconditional, same reason: a zero is the tell that the prop stopped being placed   // printed unconditionally: a zero here is the tell that the prop stopped being placed
+            if (signals > 0) Log.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
+            Log.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
+            Log.Print($"[lod] generated-band lookups: {LodTable.GeneratedHits} hit, {LodTable.GeneratedMisses} missed (table has {LodTable.GeneratedCount})");
+            Log.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
@@ -1679,7 +1679,7 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
-                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT) * _f:0} ms"); }
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT) * _f:0} ms"); }
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");
@@ -1700,7 +1700,7 @@ namespace UnturnedGodot
                         ff.LoadGrass();
                         result.Foliage = ff;   // the editor's foliage brush paints into this instance
                     }
-                    else GD.Print("[world] foliage SKIPPED (UG_SKIP)");
+                    else Log.Print("[world] foliage SKIPPED (UG_SKIP)");
                 }
                 // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
                 {
@@ -1734,7 +1734,7 @@ namespace UnturnedGodot
             async System.Threading.Tasks.Task SpawnPeiVehicles()
             {
                 await Phase("Vehicles");
-                if (SkipPhase("Vehicles")) { GD.Print("[world] vehicles SKIPPED (UG_SKIP)"); return; }
+                if (SkipPhase("Vehicles")) { Log.Print("[world] vehicles SKIPPED (UG_SKIP)"); return; }
                 string vpath = mapRoot + "/Spawns/Vehicles.dat";
                 int nv = 0;
                 if (System.IO.File.Exists(vpath))
@@ -1767,7 +1767,7 @@ namespace UnturnedGodot
                             root.AddChild(boat);
                             boat.GlobalPosition = new Vector3(px, Terrain.SeaLevelY + 0.5f, gz);   // just above the waterline -> gentle settle (NOT terr.SampleHeight = the seabed)
                             boat.RotationDegrees = new Vector3(0f, -ang, 0f);
-                            GD.Print($"[pei-boat] runabout at ({px:F0}, {(Terrain.SeaLevelY + 0.5f):F1}, {gz:F0})  seaLevelY={Terrain.SeaLevelY:F1}");
+                            Log.Print($"[pei-boat] runabout at ({px:F0}, {(Terrain.SeaLevelY + 0.5f):F1}, {gz:F0})  seaLevelY={Terrain.SeaLevelY:F1}");
                             nv++;
                             continue;
                         }
@@ -1812,7 +1812,7 @@ namespace UnturnedGodot
                     }
                 }
                 if (_vehProf) VehProfDump();
-                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf/wagon/car_trailer command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
+                Log.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf/wagon/car_trailer command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
             }
 
             // DOORS / BEDS / DEADZONES: the three ported interactables, placed in the REAL world so they are
@@ -1845,7 +1845,7 @@ namespace UnturnedGodot
                     // respawn after it able to land there. PlayerController.Respawn guards the same case again for the
                     // paths that never come through here.
                     int originRows = regs.RemoveAll(r => r.x * r.x + r.z * r.z < 4f);
-                    if (originRows > 0) GD.Print($"[world] dropped {originRows} spawn row(s) at the origin from the respawn pool");
+                    if (originRows > 0) Log.Print($"[world] dropped {originRows} spawn row(s) at the origin from the respawn pool");
                     if (regs.Count > 0)
                     {
                         var rng = new RandomNumberGenerator(); rng.Randomize();   // TRUE random spawn each launch -- was a fixed Seed = 7 (same point every load)
@@ -1870,7 +1870,7 @@ namespace UnturnedGodot
                         {
                             sx = ax; sz = az; gotSpawn = true;
                             if (q.Length >= 3 && float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float ay)) spawnYaw = ay;
-                            GD.Print($"[spawn] UG_SPAWNAT override -> ({sx}, {sz}) yaw {spawnYaw}");
+                            Log.Print($"[spawn] UG_SPAWNAT override -> ({sx}, {sz}) yaw {spawnYaw}");
                         }
                     }
                 }
@@ -1905,7 +1905,7 @@ namespace UnturnedGodot
                 var player = new PlayerController { CaptureMouse = true };
                 long _pl2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 root.AddChild(player);
-                if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; GD.Print($"[playerphase] LoadBundled={(_pl1 - _pl0) * _f:0} ctor={(_pl2 - _pl1) * _f:0} AddChild(_Ready)={(System.Diagnostics.Stopwatch.GetTimestamp() - _pl2) * _f:0} ms"); }
+                if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[playerphase] LoadBundled={(_pl1 - _pl0) * _f:0} ctor={(_pl2 - _pl1) * _f:0} AddChild(_Ready)={(System.Diagnostics.Stopwatch.GetTimestamp() - _pl2) * _f:0} ms"); }
                 player.EquipUnarmed();   // spawn UNARMED (bare fists) -- pick items up to equip them (strawberry)
                 result.Player = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
@@ -1920,7 +1920,7 @@ namespace UnturnedGodot
                 // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked, flow-field horde streamed on the player off
                 // PEI's real Spawns/Animals.dat points. Only the ~64 nearest the player ever fully simulate (HOT bodies);
                 // the rest are cheap chunk data / frozen. Sight-chase + sound-lure targeting.
-                if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
+                if (ZombiesDisabled) Log.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
                 else
                 {
                     await Phase("Zombies");
@@ -1960,7 +1960,7 @@ namespace UnturnedGodot
                     }
                 }
                 root.GetWindow().Mode = Window.ModeEnum.Maximized;
-                GD.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
+                Log.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
             }
             else if (mode == WorldMode.Dedicated)
             {
@@ -2053,7 +2053,7 @@ namespace UnturnedGodot
                         // frames later than the trees, which is invisible -- they only draw past 335 m anyway.
                         _ = rsfDeferred.BuildTreeImpostorsAsync();
                     }
-                    GD.Print($"[WORLD] client holiday content applied: {holiday} ({placed - before} props of {deferredHoliday?.Count ?? 0} deferred, + resources)");
+                    Log.Print($"[WORLD] client holiday content applied: {holiday} ({placed - before} props of {deferredHoliday?.Count ?? 0} deferred, + resources)");
                 };
             }
             else
@@ -2088,8 +2088,8 @@ namespace UnturnedGodot
                     yields.TryGetValue(kv.Key, out double y);
                     parts.Add($"{kv.Key} {kv.Value:F0}(+{y:F0}y)"); sum += kv.Value; ysum += y;
                 }
-                GD.Print($"[loadprof] {string.Join(" | ", parts)}");
-                GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
+                Log.Print($"[loadprof] {string.Join(" | ", parts)}");
+                Log.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
             // (zombie navmesh bake removed 2026-08-25 -- master: rip out everything zombie)
             if (mode != WorldMode.Dedicated) ShaderWarm.Begin(root);   // every content shader compiled behind the load, not on its first sight (GPU-timeout class, 2026-09-04)
@@ -2139,7 +2139,7 @@ namespace UnturnedGodot
             var deadzones = new DeadzoneField();
             root.AddChild(deadzones);
             if (result != null) result.Deadzones = deadzones;
-            GD.Print($"[interactables] {(demoFurniture ? "door + bed" : "no furniture")} at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
+            Log.Print($"[interactables] {(demoFurniture ? "door + bed" : "no furniture")} at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
         }
 
         /// <summary>Where the ported interactables stand, from MAP DATA alone.
@@ -2358,11 +2358,11 @@ namespace UnturnedGodot
             float jjx = sx + 2.2f;
             jeep.GlobalPosition = new Vector3(jjx, terr.SampleHeight(jjx, sz) + 1.5f, sz);
 
-            GD.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
+            Log.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
 
             // ZOMBIES (rewrite -- docs/ZOMBIE_REDESIGN.md): the chunked flow-field horde, streamed on the player off the
             // real Animals.dat spawns. Only the ~64 near you fully simulate; sight-chase + sound-lure.
-            if (ZombiesDisabled) GD.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
+            if (ZombiesDisabled) Log.Print("[world] zombies OFF (UG_NOZOMBIES=1)");
             else { var zf = new ZombieChunkField { Player = player, Terr = terr }; root.AddChild(zf); zf.LoadFromPei(mapRoot); }
             ShaderWarm.Begin(root);   // every content shader compiled behind the load (see ShaderWarm)
             result.Ready = true;

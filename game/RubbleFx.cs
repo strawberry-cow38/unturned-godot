@@ -48,7 +48,7 @@ namespace UnturnedGodot
             if (_byId != null) return;
             _byId = new Dictionary<int, FxDef>();
             string path = ProjectSettings.GlobalizePath("res://content/effects/rubble_fx.json");
-            if (!File.Exists(path)) { GD.Print("[rubblefx] no rubble_fx.json -- generic break VFX"); return; }
+            if (!File.Exists(path)) { Log.Print("[rubblefx] no rubble_fx.json -- generic break VFX"); return; }
             var parsed = Json.ParseString(File.ReadAllText(path));
             if (parsed.VariantType != Variant.Type.Dictionary) return;
             var dict = parsed.AsGodotDictionary();
@@ -89,7 +89,7 @@ namespace UnturnedGodot
                 }
                 _byId[id] = fx;
             }
-            GD.Print($"[rubblefx] loaded {_byId.Count} retail break effects");
+            Log.Print($"[rubblefx] loaded {_byId.Count} retail break effects");
         }
 
         static int Num(Godot.Collections.Dictionary d, string k, int def) => d.ContainsKey(k) ? (int)d[k].AsDouble() : def;

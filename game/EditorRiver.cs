@@ -300,7 +300,7 @@ namespace UnturnedGodot
                 SnapUndo("carve river");
                 _terr.CarveRiverPath(_anchors, _halfWidth, _depth);
                 BuildHandles();
-                GD.Print($"[river] carved {_anchors.Count} anchors, half-width {_halfWidth:0.#}m, depth {_depth:0.#}m -> {_terr.RiverSegmentCount} segments total");
+                Log.Print($"[river] carved {_anchors.Count} anchors, half-width {_halfWidth:0.#}m, depth {_depth:0.#}m -> {_terr.RiverSegmentCount} segments total");
             }
             CancelPath();
         }

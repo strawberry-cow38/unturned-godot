@@ -140,7 +140,7 @@ namespace UnturnedGodot
         public void DebugQueueAll(System.Collections.Generic.IEnumerable<string> names)
         {
             foreach (var n in names) if (n != null && !_thumbs.ContainsKey(n) && _queued.Add(n)) _queue.Add(n);
-            GD.Print($"[icon] queued {_queue.Count} thumbnails for dump");
+            Log.Print($"[icon] queued {_queue.Count} thumbnails for dump");
         }
 
         /// <summary>Ask for a prop's thumbnail. Returns it immediately if it is already drawn; otherwise queues
@@ -262,7 +262,7 @@ namespace UnturnedGodot
                 if (img != null && img.GetWidth() > 0 && !HasInk(img) && _tries < RetryLimit)
                 {
                     _tries++; RetriesForTest++;
-                    if (DebugDump) GD.Print($"[icon] {_inFlight,-24} blank, retry {_tries}/{RetryLimit}");
+                    if (DebugDump) Log.Print($"[icon] {_inFlight,-24} blank, retry {_tries}/{RetryLimit}");
                     _thumbVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
                     _settle = SettleFrames + _tries;   // give each retry a longer runway than the attempt that failed
                     return;
@@ -274,10 +274,10 @@ namespace UnturnedGodot
                     // A thumbnail can succeed at every step and still be EMPTY -- the readback returns a valid
                     // image of nothing. In the palette that is indistinguishable from no icon at all, and the two
                     // have completely different causes, so count the ink rather than trusting the texture.
-                    if (DebugDump) GD.Print($"[icon] {_inFlight,-24} {img.GetWidth()}x{img.GetHeight()} opaque={OpaqueCount(img)}");
+                    if (DebugDump) Log.Print($"[icon] {_inFlight,-24} {img.GetWidth()}x{img.GetHeight()} opaque={OpaqueCount(img)}");
                     ThumbReady?.Invoke(_inFlight, tex);
                 }
-                else { _thumbs[_inFlight] = null; if (DebugDump) GD.Print($"[icon] {_inFlight,-24} READBACK-NULL"); }   // remember the failure too, or it re-queues forever
+                else { _thumbs[_inFlight] = null; if (DebugDump) Log.Print($"[icon] {_inFlight,-24} READBACK-NULL"); }   // remember the failure too, or it re-queues forever
                 _inFlight = null; _tries = 0;
                 return;
             }
@@ -287,7 +287,7 @@ namespace UnturnedGodot
             _queue.RemoveAt(0);
             _queued.Remove(name);
             _thumbPivot.Basis = Basis.Identity;
-            if (!Dress(_thumbPivot, _thumbMi, _thumbCam, name)) { _thumbs[name] = null; if (DebugDump) GD.Print($"[icon] {name,-24} NO-MESH"); return; }
+            if (!Dress(_thumbPivot, _thumbMi, _thumbCam, name)) { _thumbs[name] = null; if (DebugDump) Log.Print($"[icon] {name,-24} NO-MESH"); return; }
             _thumbVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
             _inFlight = name;
             _tries = 0;

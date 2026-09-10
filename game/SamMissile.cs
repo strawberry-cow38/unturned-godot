@@ -256,7 +256,7 @@ namespace UnturnedGodot
             {
                 _noseLogged = true;
                 float noseErr = Mathf.RadToDeg(_vis.GlobalTransform.Basis.Y.Normalized().AngleTo(_vel.Normalized()));
-                GD.Print($"[sam] nose vs velocity: {noseErr:0.0} deg  ({(noseErr < 15f ? "NOSE FIRST" : noseErr > 165f ? "TAIL FIRST -- sign flipped" : "SIDEWAYS")})");
+                Log.Print($"[sam] nose vs velocity: {noseErr:0.0} deg  ({(noseErr < 15f ? "NOSE FIRST" : noseErr > 165f ? "TAIL FIRST -- sign flipped" : "SIDEWAYS")})");
             }
 
             float sp = Mathf.Min(MaxSpeed, _vel.Length() + Accel * dt);

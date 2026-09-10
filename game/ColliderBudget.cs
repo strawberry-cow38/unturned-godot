@@ -105,7 +105,7 @@ namespace UnturnedGodot
             }
             _built = true;
             int shapes = 0; foreach (var c in _chunks.Values) shapes += c.Shapes.Count;
-            GD.Print($"[collbudget] {shapes} collision shapes in {_chunks.Count} cells, radius {(Flat > 0f ? $"{Flat:0}m flat" : "per-prop (LodTable cull)")}");
+            Log.Print($"[collbudget] {shapes} collision shapes in {_chunks.Count} cells, radius {(Flat > 0f ? $"{Flat:0}m flat" : "per-prop (LodTable cull)")}");
         }
 
         float _settle;
@@ -163,7 +163,7 @@ namespace UnturnedGodot
                 _reported = true;
                 int on = 0, total = 0;
                 foreach (var c in _chunks.Values) { total += c.Shapes.Count; if (c.On) on += c.Shapes.Count; }
-                GD.Print($"[collbudget] first pass: {on} of {total} collision shapes resident ({(total > 0 ? 100.0 * on / total : 0):0.0}%)");
+                Log.Print($"[collbudget] first pass: {on} of {total} collision shapes resident ({(total > 0 ? 100.0 * on / total : 0):0.0}%)");
             }
         }
         bool _reported;

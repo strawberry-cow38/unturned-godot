@@ -70,7 +70,7 @@ namespace UnturnedGodot
         {
             if (_terr == null || !_terr.Dirty) return 0;
             _terr.SaveHeightmap(SavePath);
-            GD.Print($"[editor-terrain] saved heightmap -> {SavePath}");
+            Log.Print($"[editor-terrain] saved heightmap -> {SavePath}");
             return 1;
         }
 
@@ -78,7 +78,7 @@ namespace UnturnedGodot
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _terr = terr;
             LayerNames = LoadLayerNames();   // map-aware paint labels -- Washington's layers differ from PEI's
-            if (_terr != null && _terr.LoadHeightmap(SavePath)) GD.Print("[editor-terrain] loaded saved sculpt");
+            if (_terr != null && _terr.LoadHeightmap(SavePath)) Log.Print("[editor-terrain] loaded saved sculpt");
             _ring = new Node3D { Visible = false };
             _ring.AddChild(new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.93f, OuterRadius = 1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.2f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true } });
             AddChild(_ring);
@@ -187,14 +187,14 @@ namespace UnturnedGodot
             _terr.EditHeight(at.X, at.Z, 45f, 110f);
             for (int i = 0; i < 4; i++) _terr.EditSmooth(at.X, at.Z, 62f, 0.5f);
             _terr.FlushColliders();
-            GD.Print("[editorterrain] raised + smoothed a demo hill");
+            Log.Print("[editorterrain] raised + smoothed a demo hill");
         }
 
         public void DemoPaint(Vector3 at, int layer)
         {
             if (_terr == null) return;
             _terr.PaintSplat(at.X, at.Z, 55f, layer);
-            GD.Print($"[editorterrain] painted a {LayerNames[layer]} patch (splat layer {layer})");
+            Log.Print($"[editorterrain] painted a {LayerNames[layer]} patch (splat layer {layer})");
         }
 
         // harness (UG_EDITORTERRAIN UG_TERRAMP): grade a ramp between two points so a render shows the RAMP tool
@@ -202,7 +202,7 @@ namespace UnturnedGodot
         {
             if (_terr == null) return;
             _terr.EditRamp(a, b, 40f);
-            GD.Print($"[editorterrain] ramped {a} -> {b}");
+            Log.Print($"[editorterrain] ramped {a} -> {b}");
         }
     }
 }

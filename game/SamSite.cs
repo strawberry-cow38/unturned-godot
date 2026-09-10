@@ -359,7 +359,7 @@ namespace UnturnedGodot
             // UG_SAMTEST only: says WHEN a round is in the air, so a timed --shot (UG_SHOTTIME) can be aimed at a
             // moment when there is something to photograph instead of guessing and re-rendering.
             if (System.Environment.GetEnvironmentVariable("UG_SAMTEST") == "1")
-                GD.Print($"[sam] launch at frame {Engine.GetFramesDrawn()} (t={Engine.GetFramesDrawn() / 60f:0.00}s at --fixed-fps 60, the clock UG_SHOTTIME counts on -- NOT wall time, which runs ahead of it during the load)");
+                Log.Print($"[sam] launch at frame {Engine.GetFramesDrawn()} (t={Engine.GetFramesDrawn() / 60f:0.00}s at --fixed-fps 60, the clock UG_SHOTTIME counts on -- NOT wall time, which runs ahead of it during the load)");
         }
 
         /// <summary>Drop a site on the ground at a world point (console `sam`, the render harness).</summary>

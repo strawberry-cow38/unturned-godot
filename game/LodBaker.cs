@@ -44,7 +44,7 @@ namespace UnturnedGodot
 
         public static void BakeAll(string dir, bool dryRun)
         {
-            if (!Directory.Exists(dir)) { GD.PrintErr($"[bakelods] no such dir {dir}"); return; }
+            if (!Directory.Exists(dir)) { Log.Err($"[bakelods] no such dir {dir}"); return; }
             // WHICH PROPS ARE OURS TO TOUCH. The criterion is "retail authored a LODGroup for it", read from
             // lods.txt -- NOT "a _lod1.obj exists on disk". Those differ the moment this tool has run once: the
             // file-existence test skipped all 281 props it had just written, produced an empty band table, and
@@ -62,7 +62,7 @@ namespace UnturnedGodot
                     foreach (var h in c[4].Split(',')) if (h.Trim().Length > 0 && h.Trim() != "-") levels++;
                     if (levels > 1) retailAuthored.Add(c[1]);
                 }
-            GD.Print($"[bakelods] retail authored a lower LOD for {retailAuthored.Count} props -- leaving those alone");
+            Log.Print($"[bakelods] retail authored a lower LOD for {retailAuthored.Count} props -- leaving those alone");
 
             var bases = new List<string>();
             foreach (var p in Directory.GetFiles(dir, "*.obj"))
@@ -73,7 +73,7 @@ namespace UnturnedGodot
                 bases.Add(n);
             }
             bases.Sort();
-            GD.Print($"[bakelods] {bases.Count} props with no LOD chain{(dryRun ? " (DRY RUN)" : "")}");
+            Log.Print($"[bakelods] {bases.Count} props with no LOD chain{(dryRun ? " (DRY RUN)" : "")}");
 
             int made = 0, skipped = 0, totalBefore = 0, totalAfter = 0;
             var table = new List<string>();
@@ -115,7 +115,7 @@ namespace UnturnedGodot
 
                 totalBefore += beforeTris; totalAfter += afterTris;
                 made++;
-                GD.Print($"[bakelods] {name,-26} {beforeTris,6} -> {afterTris,6} tris  ({100f * (1f - (float)afterTris / beforeTris):0}% off, {levels} levels offered)");
+                Log.Print($"[bakelods] {name,-26} {beforeTris,6} -> {afterTris,6} tris  ({100f * (1f - (float)afterTris / beforeTris):0}% off, {levels} levels offered)");
                 if (!dryRun) WriteObj(Path.Combine(dir, name + "_lod1.obj"), arrays, lodIdx);
                 var ab = src.GetAabb();
                 float size = Mathf.Max(ab.Size.X, Mathf.Max(ab.Size.Y, ab.Size.Z));
@@ -134,9 +134,9 @@ namespace UnturnedGodot
                   + "# h0/h1 are the MEDIAN authored screen heights across the 201 props retail DID author\n"
                   + $"# ({H0} / {H1}); using retail's own central values rather than numbers of my choosing.\n"
                   + string.Join("\n", table) + "\n");
-                GD.Print($"[bakelods] wrote {GeneratedTable} with {table.Count} bands");
+                Log.Print($"[bakelods] wrote {GeneratedTable} with {table.Count} bands");
             }
-            GD.Print($"[bakelods] wrote {made}, skipped {skipped}; {totalBefore} -> {totalAfter} tris "
+            Log.Print($"[bakelods] wrote {made}, skipped {skipped}; {totalBefore} -> {totalAfter} tris "
                    + $"({(totalBefore > 0 ? 100f * (1f - (float)totalAfter / totalBefore) : 0f):0}% off across the set)");
         }
 

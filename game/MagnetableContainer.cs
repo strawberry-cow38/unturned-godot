@@ -104,7 +104,7 @@ namespace UnturnedGodot
             ApplySwing();
             // Say how many leaves were actually found. A container that silently loaded ZERO doors still renders as a
             // perfectly good container, so "it looks right" cannot distinguish working doors from no doors at all.
-            GD.Print($"[MAGCONTAINER] {PropName}: {_leaves.Count} door leaf/leaves, mass {Mass:0} kg, bounds {_localBounds.Size}, magnet point local (0, {_localBounds.End.Y:0.00}, 0)");
+            Log.Print($"[MAGCONTAINER] {PropName}: {_leaves.Count} door leaf/leaves, mass {Mass:0} kg, bounds {_localBounds.Size}, magnet point local (0, {_localBounds.End.Y:0.00}, 0)");
             SetPhysicsProcess(_leaves.Count > 0);
         }
 

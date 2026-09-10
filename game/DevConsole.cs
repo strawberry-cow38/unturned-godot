@@ -79,7 +79,9 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             Layer = 100;
-            _log = new Label { Position = new Vector2(14, 10), Modulate = new Color(0.72f, 1f, 0.72f), Visible = false };
+            // SCROLLBACK, below the input (strawberry 2026-09-10: "move to an actual in-game console"). This was a
+            // one-line Label at y=10 that each reply overwrote -- fine as a command echo, useless as a log.
+            _log = new Label { Position = new Vector2(14, 72), Modulate = new Color(0.72f, 1f, 0.72f), Visible = false };
             _log.AddThemeFontSizeOverride("font_size", 15);
             AddChild(_log);
             _input = new LineEdit
@@ -91,6 +93,25 @@ namespace UnturnedGodot
             };
             AddChild(_input);
             _input.TextSubmitted += OnSubmit;
+            SetProcess(true);
+        }
+
+        ulong _shownSeq = ulong.MaxValue;
+        const int ScrollbackLines = 14;
+
+        public override void _Process(double delta)
+        {
+            // Repaint only when the buffer actually moved: this is a Label rebuild, not something to do at 60 fps
+            // behind a closed console.
+            if (_log == null || !_log.Visible) return;
+            ulong seq = UnturnedGodot.Log.Sequence;
+            if (seq == _shownSeq) return;
+            _shownSeq = seq;
+            var all = UnturnedGodot.Log.Lines;
+            int from = Mathf.Max(0, all.Length - ScrollbackLines);
+            var sb = new System.Text.StringBuilder();
+            for (int i = from; i < all.Length; i++) sb.AppendLine(all[i]);
+            _log.Text = sb.ToString();
         }
 
         public override void _Input(InputEvent e)
@@ -112,6 +133,7 @@ namespace UnturnedGodot
             bool open = !_input.Visible;
             _input.Visible = open;
             _log.Visible = open;
+            if (open) _shownSeq = ulong.MaxValue;   // force a repaint on open rather than waiting for the next print
             if (open) { _input.GrabFocus(); Input.MouseMode = Input.MouseModeEnum.Visible; }
             else
             {
@@ -158,10 +180,10 @@ namespace UnturnedGodot
             // toggleGlobalPower is: the guard below turns a no-arg command into a usage line.
             if (verb == "report")
             {
-                if (arg.Length == 0) { Log("usage: report <what went wrong>"); return; }
+                if (arg.Length == 0) { Echo("usage: report <what went wrong>"); return; }
                 var br = BugReporter.Instance;
-                if (br == null || !IsInstanceValid(br)) { Log("bug reporter is not running"); return; }
-                Log(br.SubmitTyped(arg) != null ? "report queued" : "could not write the report");
+                if (br == null || !IsInstanceValid(br)) { Echo("bug reporter is not running"); return; }
+                Echo(br.SubmitTyped(arg) != null ? "report queued" : "could not write the report");
                 return;
             }
 
@@ -179,9 +201,9 @@ namespace UnturnedGodot
                     if (!_resultHooked)
                     {
                         _resultHooked = true;
-                        RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Log(e.Text); };
+                        RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Echo(e.Text); };
                     }
-                    Log(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
+                    Echo(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
                     return;
                 }
                 string g = arg.ToLowerInvariant();
@@ -189,7 +211,7 @@ namespace UnturnedGodot
                         : g == "off" || g == "0" || g == "false" ? false
                         : !PowerNet.GlobalPower;
                 PowerNet.SetGlobalPower(on);   // flips the flag + MarkDirty()s so the graph recomputes (Circuit_0 sources turn on/off)
-                Log($"grid power {(PowerNet.GlobalPower ? "ON" : "OFF")}");
+                Echo($"grid power {(PowerNet.GlobalPower ? "ON" : "OFF")}");
                 return;
             }
 
@@ -201,12 +223,12 @@ namespace UnturnedGodot
             if (verb is "hurtmain" or "killmain" or "hurttail" or "killtail")
             {
                 var heli = Player?.Driving;
-                if (heli == null || !heli.IsHeli) { Log($"{verb}: you're not flying a helicopter"); return; }
+                if (heli == null || !heli.IsHeli) { Echo($"{verb}: you're not flying a helicopter"); return; }
                 bool tail = verb.EndsWith("tail");
                 if (verb.StartsWith("kill")) { if (tail) heli.KillTailRotor(); else heli.KillMainRotor(); }
                 else if (tail) heli.DamageTailRotor(heli.TailRotorHealth * 0.5f + 1f);
                 else heli.DamageMainRotor(heli.MainRotorHealth * 0.5f + 1f);
-                Log($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
+                Echo($"{verb}: main {heli.MainRotorHealth:0} ({heli.MainRotorNorm * 100f:0}%), tail {heli.TailRotorHealth:0} ({heli.TailRotorNorm * 100f:0}%)"
                     + (heli.MainRotorDead ? " -- MAIN DEAD, no lift" : "") + (heli.TailRotorDead ? " -- TAIL DEAD, spinning" : ""));
                 return;
             }
@@ -217,10 +239,10 @@ namespace UnturnedGodot
             // In MP, TakeDamage forwards to the server damage sink (server owns death), so this stays correct there.
             if (verb == "kill")
             {
-                if (Player == null) { Log("kill: no player"); return; }
-                if (Player.IsDead) { Log("kill: you're already dead"); return; }
+                if (Player == null) { Echo("kill: no player"); return; }
+                if (Player.IsDead) { Echo("kill: you're already dead"); return; }
                 Player.TakeDamage(9999f);   // 9999 = the game's standard instant-kill (OOB fall PlayerController:7314, --pdie, riding-explosion all use it) -> Health <= 0 -> Die()
-                Log("kill: you died");
+                Echo("kill: you died");
                 return;
             }
 
@@ -235,12 +257,12 @@ namespace UnturnedGodot
             // was correct on read and had already been quietly overwritten by the time the shot was taken.
             if (verb == "sethp" && arg.Length > 0)
             {
-                if (Player == null) { Log("sethp: no player"); return; }
+                if (Player == null) { Echo("sethp: no player"); return; }
                 if (!float.TryParse(arg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hp))
-                { Log("sethp: not a number"); return; }
+                { Echo("sethp: not a number"); return; }
                 float dmg = Mathf.Max(0f, Player.Health - Mathf.Clamp(hp, 0f, Player.MaxHealth));
                 if (dmg > 0f) Player.TakeDamage(dmg);
-                Log($"sethp: took {dmg:0} damage -> {Player.Health:0}/{Player.MaxHealth:0}");
+                Echo($"sethp: took {dmg:0} damage -> {Player.Health:0}/{Player.MaxHealth:0}");
                 return;
             }
 
@@ -251,7 +273,7 @@ namespace UnturnedGodot
             // scene fires through UG_BOOTCMD to make the indicator renderable at all.
             if (verb.StartsWith("hurttest"))
             {
-                if (Player == null) { Log("hurttest: no player"); return; }
+                if (Player == null) { Echo("hurttest: no player"); return; }
                 Vector3 off = arg.ToLowerInvariant() switch
                 {
                     "n" => new Vector3(0f, 0f, -10f), "s" => new Vector3(0f, 0f, 10f),
@@ -267,9 +289,9 @@ namespace UnturnedGodot
                     Vector3 camFwd = -Player.Camera.GlobalTransform.Basis.Z; camFwd.Y = 0f;
                     Vector3 camRight = Player.Camera.GlobalTransform.Basis.X; camRight.Y = 0f;
                     float bearing = Mathf.RadToDeg(Mathf.Atan2(camRight.Normalized().Dot(off.Normalized()), camFwd.Normalized().Dot(off.Normalized())));
-                    Log($"hurttest: hit from {arg.ToLowerInvariant()}, bearing {bearing:0}deg (0=ahead/top, +90=right, 180=behind/bottom, -90=left)");
+                    Echo($"hurttest: hit from {arg.ToLowerInvariant()}, bearing {bearing:0}deg (0=ahead/top, +90=right, 180=behind/bottom, -90=left)");
                 }
-                else Log($"hurttest: hit from {arg.ToLowerInvariant()}");
+                else Echo($"hurttest: hit from {arg.ToLowerInvariant()}");
                 return;
             }
 
@@ -288,7 +310,7 @@ namespace UnturnedGodot
                 // flip, and the terrain and grass are both ShaderMaterial -- so a big `changed` number on its own
                 // still reads as "vertex lighting measured" when a large share of the frame never moved.
                 int shaderOnly = GraphicsOptions.CountShaderMaterialRenderers(GetTree()?.Root);
-                Log($"vertex lighting {(GraphicsOptions.VertexShading ? "ON" : "OFF")} -- {changed} material(s) changed"
+                Echo($"vertex lighting {(GraphicsOptions.VertexShading ? "ON" : "OFF")} -- {changed} material(s) changed"
                     + (changed == 0 ? " (nothing matched -- the switch did nothing, do not read the fps as a result)" : "")
                     + (shaderOnly > 0 ? $"; {shaderOnly} shader-material renderer(s) UNCHANGED (terrain/grass -- their lighting is in the shader, so this is a partial A/B)" : ""));
                 return;
@@ -309,16 +331,16 @@ namespace UnturnedGodot
             if (verb == "structures" || verb == "struct")
             {
                 var sm = StructureManager.Instance;
-                if (sm == null) { Log("structures: no StructureManager in this world (build mode provisions one -- press B)"); return; }
+                if (sm == null) { Echo("structures: no StructureManager in this world (build mode provisions one -- press B)"); return; }
                 string a = arg.Trim().ToLowerInvariant();
-                if (a == "save") { Log(sm.SaveToDisk() ? $"structures: saved {sm.Count} piece(s)" : "structures: SAVE FAILED"); return; }
-                if (a == "load") { int n = sm.LoadFromDisk(); Log($"structures: loaded {n} piece(s)"); return; }
-                if (a == "clear") { int had = sm.Count; sm.Clear(); Log($"structures: cleared {had} piece(s)"); return; }
+                if (a == "save") { Echo(sm.SaveToDisk() ? $"structures: saved {sm.Count} piece(s)" : "structures: SAVE FAILED"); return; }
+                if (a == "load") { int n = sm.LoadFromDisk(); Echo($"structures: loaded {n} piece(s)"); return; }
+                if (a == "clear") { int had = sm.Count; sm.Clear(); Echo($"structures: cleared {had} piece(s)"); return; }
                 var byTier = new int[StructureCatalog.TierCount];
                 foreach (var pc in sm.All) byTier[Mathf.Clamp(pc.Tier, 0, byTier.Length - 1)]++;
                 var tierBits = new System.Collections.Generic.List<string>();
                 for (int i = 0; i < byTier.Length; i++) if (byTier[i] > 0) tierBits.Add($"{byTier[i]} {StructureCatalog.TierAt(i).Name}");
-                Log($"structures: {sm.Count} piece(s){(tierBits.Count > 0 ? " -- " + string.Join(", ", tierBits) : "")}");
+                Echo($"structures: {sm.Count} piece(s){(tierBits.Count > 0 ? " -- " + string.Join(", ", tierBits) : "")}");
                 return;
             }
 
@@ -328,7 +350,7 @@ namespace UnturnedGodot
                 Vehicle.InfiniteFuel = f == "on" || f == "1" || f == "true" ? true
                                      : f == "off" || f == "0" || f == "false" ? false
                                      : !Vehicle.InfiniteFuel;
-                Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
+                Echo($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
                 return;
             }
 
@@ -342,14 +364,14 @@ namespace UnturnedGodot
                 PlayerController.InfiniteAmmo = a2 == "on" || a2 == "1" || a2 == "true" ? true
                                               : a2 == "off" || a2 == "0" || a2 == "false" ? false
                                               : !PlayerController.InfiniteAmmo;
-                Log($"infAmmo {(PlayerController.InfiniteAmmo ? $"ON -- held gun refills after {PlayerController.InfAmmoIdle:0.#}s without firing" : "OFF -- ammo drains normally")}");
+                Echo($"infAmmo {(PlayerController.InfiniteAmmo ? $"ON -- held gun refills after {PlayerController.InfAmmoIdle:0.#}s without firing" : "OFF -- ammo drains normally")}");
                 return;
             }
 
             if (verb == "units" || verb == "measurement")   // global client measurement system: metric | imperial | both (default both)
             {
-                if (arg.Length > 0 && !Units.TrySet(arg)) { Log("usage: units <metric|imperial|both>"); return; }
-                Log($"units = {Units.System}   (e.g. {Units.Length(100)} · {Units.SpeedKph(100)} · {Units.Temperature(20)})");
+                if (arg.Length > 0 && !Units.TrySet(arg)) { Echo("usage: units <metric|imperial|both>"); return; }
+                Echo($"units = {Units.System}   (e.g. {Units.Length(100)} · {Units.SpeedKph(100)} · {Units.Temperature(20)})");
                 return;
             }
 
@@ -363,7 +385,7 @@ namespace UnturnedGodot
                 FluidNet.SetGlobalWater(w == "on" || w == "1" || w == "true" ? true
                                       : w == "off" || w == "0" || w == "false" ? false
                                       : !FluidNet.GlobalWater);
-                Log(FluidNet.GlobalWater
+                Echo(FluidNet.GlobalWater
                     ? "mains water ON -- hydrants (tainted, 4 outlets) / towers (tainted) / sinks (clean) are infinite"
                     : "mains water OFF -- every municipal source is dead; rain, rivers and what you stored");
                 return;
@@ -379,7 +401,7 @@ namespace UnturnedGodot
                 TrafficLight.BatteryBackup = b == "on" || b == "1" || b == "true" ? true
                                            : b == "off" || b == "0" || b == "false" ? false
                                            : !TrafficLight.BatteryBackup;
-                Log(TrafficLight.BatteryBackup
+                Echo(TrafficLight.BatteryBackup
                     ? $"signal battery backup ON -- junctions breathe amber for {TrafficLight.BatteryDays:0.#} in-game days after a blackout, then flicker out"
                     : "signal battery backup OFF -- junctions die with the grid");
                 return;
@@ -397,19 +419,19 @@ namespace UnturnedGodot
             if (verb == "procisland")
             {
                 var terr = Terrain.Active;
-                if (terr == null) { Log("procisland: no terrain loaded (open or create a map first)"); return; }
+                if (terr == null) { Echo("procisland: no terrain loaded (open or create a map first)"); return; }
                 int seed = int.TryParse(arg.Trim(), out var ps) ? ps : (int)(Time.GetTicksMsec() & 0x7FFFFFFF);
                 var pois = terr.GenerateIsland(seed);
-                Log($"procisland: seed {seed}, {pois.Count} monuments, {terr.IslandLinks.Count} links -- same seed always gives the same island.");
-                for (int i = 0; i < pois.Count; i++) Log($"  [{i}] {pois[i]}");
-                foreach (var l in terr.IslandLinks) Log($"  {l.Kind} {l.A}<->{l.B} ({l.Length:0} m)");
+                Echo($"procisland: seed {seed}, {pois.Count} monuments, {terr.IslandLinks.Count} links -- same seed always gives the same island.");
+                for (int i = 0; i < pois.Count; i++) Echo($"  [{i}] {pois[i]}");
+                foreach (var l in terr.IslandLinks) Echo($"  {l.Kind} {l.A}<->{l.B} ({l.Length:0} m)");
                 return;
             }
 
             if (verb == "heliphys")
             {
                 var hpArgs = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                if (hpArgs.Length == 0) { Log(HeliPhysStatus()); return; }
+                if (hpArgs.Length == 0) { Echo(HeliPhysStatus()); return; }
                 string k = hpArgs[0].ToLowerInvariant();
                 string val = hpArgs.Length > 1 ? hpArgs[1].ToLowerInvariant() : "";
                 bool on = val is "on" or "1" or "true" or "yes";
@@ -420,13 +442,13 @@ namespace UnturnedGodot
                         Vehicle.HeaveDampScale = 1f; Vehicle.DragScale = 1f;
                         Vehicle.BackstopEnabled = true; Vehicle.ShaftAlignedDescent = true;   // reset means the SHIPPING default, which is now on
                         Vehicle.HeaveRedirect = 0f;
-                        Log("reset to shipping calibration\n" + HeliPhysStatus());
+                        Echo("reset to shipping calibration\n" + HeliPhysStatus());
                         return;
                     case "redirect":
                         if (!float.TryParse(val, out float r) || r < 0f)
-                        { Log("usage: heliphys redirect <0..1>   (0 = shipped, 1 = full sink-to-speed conversion)"); return; }
+                        { Echo("usage: heliphys redirect <0..1>   (0 = shipped, 1 = full sink-to-speed conversion)"); return; }
                         Vehicle.HeaveRedirect = r;
-                        Log(HeliPhysStatus()); return;
+                        Echo(HeliPhysStatus()); return;
                     case "heave":
                     case "drag":
                         // UPPER BOUND, because the damper is explicit Euler: heave is applied once per tick as
@@ -434,61 +456,61 @@ namespace UnturnedGodot
                         // rings, and past ~267 it diverges outright -- a debug knob should not be able to blow up
                         // the integrator on a typo.
                         if (!float.TryParse(val, out float x) || x < 0f || x > 50f)
-                        { Log($"usage: heliphys {k} <scale 0..50>   (1 = shipping, 0 = off entirely)"); return; }
+                        { Echo($"usage: heliphys {k} <scale 0..50>   (1 = shipping, 0 = off entirely)"); return; }
                         if (k == "heave") Vehicle.HeaveDampScale = x; else Vehicle.DragScale = x;
-                        Log(HeliPhysStatus()); return;
+                        Echo(HeliPhysStatus()); return;
                     case "backstop":
                     case "shaft":
-                        if (!on && !off) { Log($"usage: heliphys {k} <on|off>"); return; }
+                        if (!on && !off) { Echo($"usage: heliphys {k} <on|off>"); return; }
                         if (k == "backstop") Vehicle.BackstopEnabled = on; else Vehicle.ShaftAlignedDescent = on;
-                        Log(HeliPhysStatus()); return;
+                        Echo(HeliPhysStatus()); return;
                 }
-                Log("usage: heliphys [heave <scale> | drag <scale> | redirect <0..1> | backstop <on|off> | shaft <on|off> | reset]");
+                Echo("usage: heliphys [heave <scale> | drag <scale> | redirect <0..1> | backstop <on|off> | shaft <on|off> | reset]");
                 return;
             }
             if (verb == "simspeed")
             {
-                if (arg.Length == 0) { Log($"simSpeed = {(float)Engine.TimeScale:0.##}x   (usage: simSpeed <multiplier>)"); return; }
-                if (!float.TryParse(arg, out float x) || x < 0f) { Log("usage: simSpeed <multiplier>  (e.g. 0.5, 1, 5)"); return; }
+                if (arg.Length == 0) { Echo($"simSpeed = {(float)Engine.TimeScale:0.##}x   (usage: simSpeed <multiplier>)"); return; }
+                if (!float.TryParse(arg, out float x) || x < 0f) { Echo("usage: simSpeed <multiplier>  (e.g. 0.5, 1, 5)"); return; }
                 Engine.TimeScale = x;
-                Log($"sim speed = {x:0.##}x (whole simulation)");
+                Echo($"sim speed = {x:0.##}x (whole simulation)");
                 return;
             }
             if (verb == "time" || verb == "timeset" || verb == "timeadd" || verb == "timespeed" || verb == "daylength")
             {
                 var dnc = DayNight();
-                if (dnc == null) { Log("no day/night cycle in this scene"); return; }
+                if (dnc == null) { Echo("no day/night cycle in this scene"); return; }
                 if (verb == "time")
                 {
-                    Log($"time {FormatTime(dnc.Time)}  ·  dayLength {dnc.DayLength / 60f:0.#} min  ·  timeSpeed {dnc.Speed:0.##}x  ·  simSpeed {(float)Engine.TimeScale:0.##}x");
+                    Echo($"time {FormatTime(dnc.Time)}  ·  dayLength {dnc.DayLength / 60f:0.#} min  ·  timeSpeed {dnc.Speed:0.##}x  ·  simSpeed {(float)Engine.TimeScale:0.##}x");
                     return;
                 }
-                if (arg.Length == 0) { Log($"usage: {verb} <value>"); return; }
+                if (arg.Length == 0) { Echo($"usage: {verb} <value>"); return; }
                 if (verb == "timeset")
                 {
-                    if (!ParseClock(arg, out float h, allowNeg: false)) { Log($"bad time '{arg}' (try: noon, midnight, 8am, 6pm, 1800, 18:30)"); return; }
+                    if (!ParseClock(arg, out float h, allowNeg: false)) { Echo($"bad time '{arg}' (try: noon, midnight, 8am, 6pm, 1800, 18:30)"); return; }
                     dnc.Time = Mathf.PosMod(h / 24f, 1f);
-                    Log($"time set to {FormatTime(dnc.Time)}");
+                    Echo($"time set to {FormatTime(dnc.Time)}");
                 }
                 else if (verb == "timeadd")
                 {
-                    if (!ParseClock(arg, out float dh, allowNeg: true)) { Log($"bad amount '{arg}' (try: 2, 1:30, -3, 0200)"); return; }
+                    if (!ParseClock(arg, out float dh, allowNeg: true)) { Echo($"bad amount '{arg}' (try: 2, 1:30, -3, 0200)"); return; }
                     int d0 = dnc.Day;
                     dnc.Advance(dh / 24f);   // laps midnight -> bumps Day -> fast-forwards food spoilage that many days
                     int laps = dnc.Day - d0;
-                    Log($"time -> {FormatTime(dnc.Time)}  ({(dh >= 0 ? "+" : "")}{dh:0.##} h{(laps > 0 ? $", +{laps} day{(laps == 1 ? "" : "s")}" : "")})");
+                    Echo($"time -> {FormatTime(dnc.Time)}  ({(dh >= 0 ? "+" : "")}{dh:0.##} h{(laps > 0 ? $", +{laps} day{(laps == 1 ? "" : "s")}" : "")})");
                 }
                 else if (verb == "timespeed")
                 {
-                    if (!float.TryParse(arg, out float sp) || sp < 0f) { Log("usage: timeSpeed <multiplier>  (0 = freeze the clock)"); return; }
+                    if (!float.TryParse(arg, out float sp) || sp < 0f) { Echo("usage: timeSpeed <multiplier>  (0 = freeze the clock)"); return; }
                     dnc.Speed = sp;
-                    Log($"time speed = {sp:0.##}x (day/night clock{(sp <= 0f ? " -- FROZEN" : "")})");
+                    Echo($"time speed = {sp:0.##}x (day/night clock{(sp <= 0f ? " -- FROZEN" : "")})");
                 }
                 else // daylength
                 {
-                    if (!int.TryParse(arg, out int min) || min < 1) { Log("usage: dayLength <minutes>  (a whole minute count)"); return; }
+                    if (!int.TryParse(arg, out int min) || min < 1) { Echo("usage: dayLength <minutes>  (a whole minute count)"); return; }
                     dnc.DayLength = min * 60f;
-                    Log($"day length = {min} min ({(min == 1 ? "1 minute" : $"{min} minutes")} per full cycle)");
+                    Echo($"day length = {min} min ({(min == 1 ? "1 minute" : $"{min} minutes")} per full cycle)");
                 }
                 return;
             }
@@ -498,24 +520,24 @@ namespace UnturnedGodot
             if (verb == "date" || verb == "dateset" || verb == "whenblackout" || verb == "triggerglobalbrownout")
             {
                 var dnc = DayNight();
-                if (dnc == null) { Log("no day/night cycle in this scene"); return; }
-                if (verb == "date") { Log($"day {dnc.Day}  {FormatTime(dnc.Time)}"); return; }
+                if (dnc == null) { Echo("no day/night cycle in this scene"); return; }
+                if (verb == "date") { Echo($"day {dnc.Day}  {FormatTime(dnc.Time)}"); return; }
                 if (verb == "whenblackout")
                 {
                     int away = dnc.BlackoutDay - dnc.Day;
-                    Log($"global blackout on day {dnc.BlackoutDay}  ({(away > 0 ? $"{away} day{(away == 1 ? "" : "s")} away" : away == 0 ? "TODAY" : "already happened")})");
+                    Echo($"global blackout on day {dnc.BlackoutDay}  ({(away > 0 ? $"{away} day{(away == 1 ? "" : "s")} away" : away == 0 ? "TODAY" : "already happened")})");
                     return;
                 }
                 if (verb == "triggerglobalbrownout")
                 {
                     dnc.TriggerGlobalBrownout();
-                    Log("brownout -- streetlights flicker");
+                    Echo("brownout -- streetlights flicker");
                     return;
                 }
-                if (arg.Length == 0) { Log($"usage: dateset <day>  (currently day {dnc.Day})"); return; }
-                if (!int.TryParse(arg, out int nd) || nd < 0) { Log("usage: dateset <whole day number>"); return; }
+                if (arg.Length == 0) { Echo($"usage: dateset <day>  (currently day {dnc.Day})"); return; }
+                if (!int.TryParse(arg, out int nd) || nd < 0) { Echo("usage: dateset <whole day number>"); return; }
                 dnc.Day = nd;
-                Log($"date set to day {nd}");
+                Echo($"date set to day {nd}");
                 return;
             }
 
@@ -523,17 +545,17 @@ namespace UnturnedGodot
             // placed tank (strawberry). Held bottle wins if both; a fitting (splitter/pump) has no tank -> not a target.
             if (verb == "fill" || verb == "empty")
             {
-                if (Player == null) { Log("no player"); return; }
+                if (Player == null) { Echo("no player"); return; }
                 bool held = Player.HoldingFluidContainer;
                 bool tank = !held && Player.FocusedFluidTank != null;
                 string tgt = held ? "held container" : "tank";
-                if (!held && !tank) { Log("hold a fluid container, or look at a tank"); return; }
-                if (verb == "empty") { if (held) Player.EmptyHeldContainer(); else Player.EmptyFocusedTank(); Log($"emptied the {tgt}"); return; }
-                if (arg.Length == 0) { Log("usage: fill <fluid>[:<flag>] [amount]  (e.g. fill water:dirty 500, fill soda 1L)"); return; }
+                if (!held && !tank) { Echo("hold a fluid container, or look at a tank"); return; }
+                if (verb == "empty") { if (held) Player.EmptyHeldContainer(); else Player.EmptyFocusedTank(); Echo($"emptied the {tgt}"); return; }
+                if (arg.Length == 0) { Echo("usage: fill <fluid>[:<flag>] [amount]  (e.g. fill water:dirty 500, fill soda 1L)"); return; }
                 var fp = arg.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
                 var fq = fp[0].Split(':', 2);
                 if (!FluidDef.TryParse(fq[0], out var type))
-                { Log($"unknown fluid '{fq[0]}' (water, soda, cola, fuel, oil, gas, orangejuice, milk, coconut, energy, apple, grape, syrup, glue, chemicals)"); return; }
+                { Echo($"unknown fluid '{fq[0]}' (water, soda, cola, fuel, oil, gas, orangejuice, milk, coconut, energy, apple, grape, syrup, glue, chemicals)"); return; }
                 var quality = WaterQuality.Clean;
                 if (fq.Length > 1 && fq[1].Length > 0)
                 {
@@ -542,13 +564,13 @@ namespace UnturnedGodot
                         case "clean": quality = WaterQuality.Clean; break;
                         case "tainted": quality = WaterQuality.Tainted; break;
                         case "dirty": quality = WaterQuality.Dirty; break;
-                        default: Log($"unknown flag '{fq[1]}' (clean, tainted, dirty)"); return;
+                        default: Echo($"unknown flag '{fq[1]}' (clean, tainted, dirty)"); return;
                     }
                 }
                 float ml = -1f;   // no amount -> fill to capacity
-                if (fp.Length > 1 && !ParseVolume(fp[1], out ml)) { Log($"bad amount '{fp[1]}' (mL, or with an L suffix: 500, 1.5L)"); return; }
+                if (fp.Length > 1 && !ParseVolume(fp[1], out ml)) { Echo($"bad amount '{fp[1]}' (mL, or with an L suffix: 500, 1.5L)"); return; }
                 if (held) Player.FillHeldContainer(type, quality, ml); else Player.FillFocusedTank(type, quality, ml);
-                Log($"filled the {tgt}: {(ml < 0f ? "full" : FluidDef.Litres(ml))} of {FluidDef.WaterName(type, quality)}");
+                Echo($"filled the {tgt}: {(ml < 0f ? "full" : FluidDef.Litres(ml))} of {FluidDef.WaterName(type, quality)}");
                 return;
             }
 
@@ -564,7 +586,7 @@ namespace UnturnedGodot
                 // how strawberry reported it ("i dont think the console is recognizing the command") when
                 // spawnMagnetableContainer landed here. Echoing the verb back makes the failure self-diagnosing:
                 // "it wants an argument" and "it does not exist" stop looking identical.
-                Log(System.Array.IndexOf(Verbs, verb) >= 0 || Verbs.Any(v => v.ToLowerInvariant() == verb)
+                Echo(System.Array.IndexOf(Verbs, verb) >= 0 || Verbs.Any(v => v.ToLowerInvariant() == verb)
                     ? $"{verb}: needs an argument (or add it to NoArgVerbs if it should run bare)"
                     : $"unknown command '{verb}' -- try: give <item> | vehicle <name>");
                 return;
@@ -577,13 +599,13 @@ namespace UnturnedGodot
                 // RunConsole parses. The old local Player.TeleportTo never moved the server entity, so the
                 // reconciler dragged the shell straight back -- the MP "teleport doesn't stick" snapback.
                 if ((verb == "teleport" || verb == "tp") && !TryResolveTeleport(arg, out cmd, out _))
-                { Log($"no location '{arg}'"); return; }
+                { Echo($"no location '{arg}'"); return; }
                 if (!_resultHooked)
                 {
                     _resultHooked = true;
-                    RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Log(e.Text); };
+                    RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Echo(e.Text); };
                 }
-                Log(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
+                Echo(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
                 return;
             }
 
@@ -597,15 +619,15 @@ namespace UnturnedGodot
             // shows is what a player gets rather than a staged copy of it.
             if (verb == "throw")
             {
-                if (Player == null) { Log("throw: no player"); return; }
+                if (Player == null) { Echo("throw: no player"); return; }
                 var ta = ResolveItem(arg);
-                if (ta == null) { Log($"no item matching '{arg}'"); return; }
+                if (ta == null) { Echo($"no item matching '{arg}'"); return; }
                 if (!SDG.Unturned.Throwables.Is(ta.id))
-                { Log($"{ta.itemName} (#{ta.id}) is not a throwable -- try a grenade, a flare or a smoke"); return; }
+                { Echo($"{ta.itemName} (#{ta.id}) is not a throwable -- try a grenade, a flare or a smoke"); return; }
                 if ((Player.Inventory?.getItemCount(ta.id) ?? 0) == 0) Player.Inventory?.tryAddItem(new SDG.Unturned.Item(ta.id));
                 Player.EquipItemAsset(ta, null);
                 Player.ThrowHeld();
-                Log($"threw {ta.itemName} (#{ta.id}) -- {SDG.Unturned.Throwables.FuseSeconds:0.#}s fuse");
+                Echo($"threw {ta.itemName} (#{ta.id}) -- {SDG.Unturned.Throwables.FuseSeconds:0.#}s fuse");
             }
             else if (verb == "give")
             {
@@ -628,13 +650,13 @@ namespace UnturnedGodot
                         if (head != null) { asset = head; want = q; }
                     }
                 }
-                if (asset == null) { Log($"no item matching '{arg}'"); return; }
+                if (asset == null) { Echo($"no item matching '{arg}'"); return; }
 
                 if (want <= 0)   // no quantity given -> exactly the old behaviour, one makeLoot item
                 {
                     var one = SDG.Unturned.Assets.makeLoot(asset.id);   // magazines come full, etc.
-                    if (Player?.Inventory != null && Player.Inventory.tryAddItem(one)) Log($"gave {asset.itemName} (#{asset.id}) -> bag");
-                    else { Player?.DropWorldItem(one, at + Vector3.Up * 2f); Log($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }
+                    if (Player?.Inventory != null && Player.Inventory.tryAddItem(one)) Echo($"gave {asset.itemName} (#{asset.id}) -> bag");
+                    else { Player?.DropWorldItem(one, at + Vector3.Up * 2f); Echo($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }
                     return;
                 }
 
@@ -654,7 +676,7 @@ namespace UnturnedGodot
                     left -= units; stacks++;
                     if (stacks > 400) break;                            // guard: never loop forever on a weird asset
                 }
-                Log($"gave {bagged + dropped}x {asset.itemName} (#{asset.id}) in {stacks} stack(s) of up to {cap}"
+                Echo($"gave {bagged + dropped}x {asset.itemName} (#{asset.id}) in {stacks} stack(s) of up to {cap}"
                     + (dropped > 0 ? $" -- {bagged} to the bag, {dropped} dropped above the orb" : " -> bag"));
             }
             else if (verb == "fridge")   // demo: a Refrigerator wired + powered by its own generator + a plain Crate, each seeded with perishables, to see preservation
@@ -671,13 +693,13 @@ namespace UnturnedGodot
                 }
                 gen.TogglePower(); PowerNet.Recompute(GetTree());
                 for (int i = 0; i < 3; i++) { fridge.Add(new SDG.Unturned.Item(329, 1, 100)); crate.Add(new SDG.Unturned.Item(329, 1, 100)); }   // 3 fresh carrots each
-                Log($"spawned a Refrigerator wired to + powered by a generator (powered={fridge.Preserves}) + a plain Crate, each with 3 fresh carrots. timeAdd 240 then F-open both: the crate's rot, the fridge's stay fresh (F the generator to cut its power and the fridge spoils too).");
+                Echo($"spawned a Refrigerator wired to + powered by a generator (powered={fridge.Preserves}) + a plain Crate, each with 3 fresh carrots. timeAdd 240 then F-open both: the crate's rot, the fridge's stay fresh (F the generator to cut its power and the fridge spoils too).");
             }
             else if (verb == "vehicle" || verb == "veh")
             {
                 string name = Vehicle.SpecNames.FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
                            ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
-                if (name == null) { Log($"no vehicle '{arg}' (try: {string.Join(", ", Vehicle.SpecNames)})"); return; }
+                if (name == null) { Echo($"no vehicle '{arg}' (try: {string.Join(", ", Vehicle.SpecNames)})"); return; }
                 var v = Vehicle.BuildByName(name, (int)(GD.Randi() % 8));
                 // Keep the drop clear of the player: `at` is the look-point, so looking down near your own feet
                 // makes a multi-ton RigidBody vehicle materialize overlapping the player capsule, and the first
@@ -705,36 +727,36 @@ namespace UnturnedGodot
                 // with them already through the terrain (which the solver answers by launching it).
                 if (v.IsHeli || (v.IsPlane && v.HasWheels)) v.PlaceOnGround(at);   // no suspension (heli) / a long low airframe on gear (wheeled plane): SEAT it exactly instead of dropping 1.5m, which bounced/clipped it. A FLOATPLANE keeps the drop (buoyancy catches it on the water; PlaceOnGround could seat it under the surface).
                 else v.GlobalPosition = at + Vector3.Up * 1.5f;
-                Log($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)"
+                Echo($"spawned {name}" + (v.IsHeli ? $" (seated on skids, {v.GroundClearance:0.##} m clearance -- F to board, W/S collective, A/D yaw, mouse to fly)"
                                                  : v.IsPlane ? " (F to board -- W/S throttle, A/D rudder, mouse pitch/roll, hold Ctrl to taxi; floatplane needs water, wheeled needs runway)" : ""));
             }
             else if (verb == "spawnheli")
             {
                 string hname = Vehicle.SpecNames.FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
                             ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
-                if (hname == null) { Log($"no vehicle '{arg}'"); return; }
+                if (hname == null) { Echo($"no vehicle '{arg}'"); return; }
                 var probe = Vehicle.BuildByName(hname);
                 bool isHeli = probe.IsHeli; probe.QueueFree();
-                if (!isHeli) { Log($"'{hname}' is not a helicopter"); return; }
+                if (!isHeli) { Echo($"'{hname}' is not a helicopter"); return; }
                 var ai = NpcHeli.Spawn(Player?.GetParent() ?? GetTree().Root, hname, WorldTerrain, at);
-                if (ai == null) { Log("no map nodes to fly to (nodes.tsv empty?)"); return; }
-                Log($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
+                if (ai == null) { Echo("no map nodes to fly to (nodes.tsv empty?)"); return; }
+                Echo($"npc {hname} inbound from the map edge -> {ai.TargetName}, holding {NpcHeli.CanopyClearance:0} m over the terrain, will circle at {NpcHeli.OrbitRadius:0} m");
             }
             else if (verb == "sam")
             {
                 var site = SamSite.Spawn(Player?.GetParent() ?? GetTree().Root, WorldTerrain, at);
-                if (site == null) { Log("could not place a SAM site here"); return; }
-                Log($"SAM site placed -- locks any helicopter inside {SamSite.Radius:0} m, {SamSite.Rack} missiles at {SamSite.ShotDelay:0.00}s, {SamSite.ReloadDelay:0}s to reload");
+                if (site == null) { Echo("could not place a SAM site here"); return; }
+                Echo($"SAM site placed -- locks any helicopter inside {SamSite.Radius:0} m, {SamSite.Rack} missiles at {SamSite.ShotDelay:0.00}s, {SamSite.ReloadDelay:0}s to reload");
             }
             else if (verb == "spawntrain")
             {
                 var roads = WorldRoads;
-                if (roads == null) { Log("no road network in this world"); return; }
+                if (roads == null) { Echo("no road network in this world"); return; }
                 Vector3 near = Player?.GlobalPosition ?? at;
                 string ttype = string.IsNullOrWhiteSpace(arg) ? "engine" : arg;
                 var tr = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near, ttype);
-                if (tr == null) { Log(Train.ResolveType(ttype) == null ? $"unknown car '''{arg}''' -- types: {Train.TypeList}" : "no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
-                Log($"spawned a {Train.ResolveType(ttype)} car on the nearest track (drive an engine into it to couple)");
+                if (tr == null) { Echo(Train.ResolveType(ttype) == null ? $"unknown car '''{arg}''' -- types: {Train.TypeList}" : "no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                Echo($"spawned a {Train.ResolveType(ttype)} car on the nearest track (drive an engine into it to couple)");
             }
             else if (verb == "spawncrane")
             {
@@ -743,32 +765,32 @@ namespace UnturnedGodot
                 Vector3 cnear = (Player?.GlobalPosition ?? at) + cfwd * 35f;
                 float cyaw = Player != null ? Player.RotationDegrees.Y : 0f;
                 var cr = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, cnear, cyaw);
-                Log(cr != null ? "spawned a harbor crane -- F board, W/S drive, A/D gantry, Q/E hoist, Shift magnet (lift a magcontainer)" : "crane spawn failed");
+                Echo(cr != null ? "spawned a harbor crane -- F board, W/S drive, A/D gantry, Q/E hoist, Shift magnet (lift a magcontainer)" : "crane spawn failed");
             }
             else if (verb == "spawncraneontrack")
             {
                 var roads = WorldRoads;
-                if (roads == null) { Log("no road network in this world"); return; }
+                if (roads == null) { Echo("no road network in this world"); return; }
                 Vector3 near = Player?.GlobalPosition ?? at;
-                if (!roads.NearestTrack(near, out int troad, out float ts)) { Log("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                if (!roads.NearestTrack(near, out int troad, out float ts)) { Echo("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
                 roads.EvaluateAlong(troad, ts, out Vector3 tpos, out Vector3 ttan, snapTerrain: false);
                 ttan.Y = 0f; ttan = ttan.LengthSquared() > 1e-4f ? ttan.Normalized() : Vector3.Forward;
                 float ctyaw = Mathf.RadToDeg(Mathf.Atan2(-ttan.X, -ttan.Z));   // crane drive axis (local -Z) along the track tangent -> the gantry rolls ALONG the rails
                 var crt = HarborCrane.Spawn(Player?.GetParent() ?? GetTree().Root, tpos, ctyaw);
-                Log(crt != null ? "spawned a harbor crane aligned to the nearest track" : "crane spawn failed");
+                Echo(crt != null ? "spawned a harbor crane aligned to the nearest track" : "crane spawn failed");
             }
             else if (verb == "spawncontainerflatbed")
             {
                 var roads = WorldRoads;
-                if (roads == null) { Log("no road network in this world"); return; }
+                if (roads == null) { Echo("no road network in this world"); return; }
                 Vector3 near = Player?.GlobalPosition ?? at;
                 var fb = Train.Spawn(Player?.GetParent() ?? GetTree().Root, roads, near, "flatbed");
-                if (fb == null) { Log("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
+                if (fb == null) { Echo("no train track nearby -- only Yukon has rails (tracks = road material 4)"); return; }
                 var deck = fb.FirstDeck();
-                if (deck == null) { Log("flatbed has no deck?!"); return; }
+                if (deck == null) { Echo("flatbed has no deck?!"); return; }
                 var mc = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, deck.GlobalPosition);
                 deck.Load(mc);
-                Log("spawned a flatbed on the nearest track with a container loaded (crane can lift it off)");
+                Echo("spawned a flatbed on the nearest track with a container loaded (crane can lift it off)");
             }
             else if (verb == "spawnelevator")
             {
@@ -781,7 +803,7 @@ namespace UnturnedGodot
                 ev.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-outward.Z, outward.X)), 0f);   // -X door faces back toward you
                 ev.Position = new Vector3(spot.X, gy + ev.BaseLift, spot.Z);   // set BEFORE AddChild so _Ready latches _baseY at the ground
                 (Player?.GetParent() ?? GetTree().Root).AddChild(ev);
-                Log($"elevator {spot.DistanceTo(eye):0.#} m ahead -- walk in, look at a floor button + press F: doors shut, it rides, doors reopen. stops at ground / +4 / +8 m. (stand near the middle -- only the floor's solid.)");
+                Echo($"elevator {spot.DistanceTo(eye):0.#} m ahead -- walk in, look at a floor button + press F: doors shut, it rides, doors reopen. stops at ground / +4 / +8 m. (stand near the middle -- only the floor's solid.)");
             }
             else if (verb == "spawnmagnetablecontainer" || verb == "magcontainer")
             {
@@ -797,7 +819,7 @@ namespace UnturnedGodot
                 outward = outward.LengthSquared() > 0.01f ? outward.Normalized() : Vector3.Forward;
                 Vector3 spot = at + outward * 4.5f + Vector3.Up * 1.2f;
                 var c = MagnetableContainer.Spawn(Player?.GetParent() ?? GetTree().Root, spot);
-                Log($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg) {spot.DistanceTo(eye):0.#} m ahead -- doors + a fixed magnet point on the roof centre; fly the skycrane over it and hit Shift");
+                Echo($"spawned magnetable container ({MagnetableContainer.ContainerMass:0} kg) {spot.DistanceTo(eye):0.#} m ahead -- doors + a fixed magnet point on the roof centre; fly the skycrane over it and hit Shift");
             }
             else if (verb == "teleport" || verb == "tp")
             {
@@ -805,9 +827,9 @@ namespace UnturnedGodot
                 // UNCONDITIONALLY -- so "teleported to X" printed whether the move happened, whether it was undone a
                 // tick later, or whether nothing was called at all. strawberry could only report "it doesn't work",
                 // because the console said the same thing in every failure mode.
-                if (Player == null) { Log("no player"); return; }
+                if (Player == null) { Echo("no player"); return; }
                 var m = MapNodes.Locations.Where(n => n.Name.Replace(" ", "").StartsWith(arg.Replace(" ", ""), System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Name.Length).ToList();
-                if (m.Count == 0) { Log($"no location '{arg}' (in {MapNodes.MapNodeFile})"); return; }
+                if (m.Count == 0) { Echo($"no location '{arg}' (in {MapNodes.MapNodeFile})"); return; }
                 var dest = m[0].Pos + Vector3.Up * 3f;
                 var from = Player.TruePhysicsPosition;
                 Player.TeleportTo(dest);                          // teleport the vehicle if driving, else the player (master)
@@ -817,9 +839,9 @@ namespace UnturnedGodot
                 var now = Player.TruePhysicsPosition;
                 string where = $"{m[0].Name} ({dest.X:0}, {dest.Y:0}, {dest.Z:0})";
                 if (now.DistanceTo(dest) > 1.5f)
-                    Log($"teleport to {where} DID NOT TAKE -- still at ({now.X:0}, {now.Y:0}, {now.Z:0}); riding={Player.IsRidingForDebug}");
+                    Echo($"teleport to {where} DID NOT TAKE -- still at ({now.X:0}, {now.Y:0}, {now.Z:0}); riding={Player.IsRidingForDebug}");
                 else
-                    Log($"teleported to {where} from ({from.X:0}, {from.Y:0}, {from.Z:0})  ·  {MapNodes.MapNodeFile}");
+                    Echo($"teleported to {where} from ({from.X:0}, {from.Y:0}, {from.Z:0})  ·  {MapNodes.MapNodeFile}");
             }
             else if (verb == "plant")
             {
@@ -834,26 +856,26 @@ namespace UnturnedGodot
                     if (RemoteClient != null)
                     {
                         if (!CropRegistry.TryByName(pp[0].ToLowerInvariant(), out var cd) || cd.SeedId == 0)
-                        { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
-                        Log(RemoteClient.SendPlantCrop(cd.SeedId, new UnityEngine.Vector3(at.X, at.Y, at.Z))
+                        { Echo($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
+                        Echo(RemoteClient.SendPlantCrop(cd.SeedId, new UnityEngine.Vector3(at.X, at.Y, at.Z))
                             ? $"-> plant {pp[0]} sent to server" : "not connected");
                         return;
                     }
-                    Log("no crop manager in this scene"); return;
+                    Echo("no crop manager in this scene"); return;
                 }
                 var crop = CropManager.Plant(pp[0], at, grown);
-                if (crop == null) { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
-                Log($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");
+                if (crop == null) { Echo($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
+                Echo($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");
             }
             else if (verb == "skill")
             {
                 // skill <name> [level]  -- set a skill's level (e.g. `skill crafting 3`, `skill agriculture`) for testing gates/effects
-                if (Player?.Skills == null) { Log("no player skills"); return; }
+                if (Player?.Skills == null) { Echo("no player skills"); return; }
                 var pp = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                if (!Player.Skills.TryFind(pp[0], out var sk, out var label)) { Log($"no skill '{pp[0]}' (try: crafting, agriculture, sharpshooter, strength...)"); return; }
+                if (!Player.Skills.TryFind(pp[0], out var sk, out var label)) { Echo($"no skill '{pp[0]}' (try: crafting, agriculture, sharpshooter, strength...)"); return; }
                 int target = pp.Length > 1 && int.TryParse(pp[1], out var lv) ? lv : sk.level + 1;
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
-                Log($"{label} skill -> level {sk.level}/{sk.max}");
+                Echo($"{label} skill -> level {sk.level}/{sk.max}");
             }
             else if (verb == "hold")
             {
@@ -862,19 +884,19 @@ namespace UnturnedGodot
                 // than being force-fed to EquipHeldConsumable -- which is what this did to every item, and which
                 // for a non-consumable means the wrong mesh and the wrong animation with no error.
                 var asset = ResolveItem(arg);
-                if (asset == null) { Log($"no item '{arg}'"); return; }
-                if (Player.EquipItemAsset(asset, null)) { Log($"holding {asset.itemName}"); return; }
+                if (asset == null) { Echo($"no item '{arg}'"); return; }
+                if (Player.EquipItemAsset(asset, null)) { Echo($"holding {asset.itemName}"); return; }
                 string mesh = asset.itemName.ToLowerInvariant().Replace(" ", "_");
                 Player.EquipHeldConsumable(asset, mesh);   // nothing claimed it -> the old consumable guess, mesh by name
-                Log($"holding {asset.itemName} -- LMB to eat/drink");
+                Echo($"holding {asset.itemName} -- LMB to eat/drink");
             }
             else if (verb == "xp")
             {
                 // xp <n>  -- grant n experience to spend in the skills menu (J). For testing the leveling economy.
-                if (Player?.Skills == null) { Log("no player skills"); return; }
-                if (!uint.TryParse(arg.Split(' ')[0], out var amt)) { Log("usage: xp <amount>"); return; }
+                if (Player?.Skills == null) { Echo("no player skills"); return; }
+                if (!uint.TryParse(arg.Split(' ')[0], out var amt)) { Echo("usage: xp <amount>"); return; }
                 Player.Skills.AwardExperience(amt);
-                Log($"+{amt} XP (now {Player.Skills.experience}) -- open skills with J");
+                Echo($"+{amt} XP (now {Player.Skills.experience}) -- open skills with J");
             }
             else if (verb == "deploy")
             {
@@ -887,17 +909,17 @@ namespace UnturnedGodot
                                   : (a == "split4" || a == "splitter4") ? DeployableDef.Splitter4
                                   : (a == "combine2" || a == "combiner2") ? DeployableDef.Combiner2
                                   : DeployableDef.All.FirstOrDefault(d => a == d.Id.ToString() || d.Name.ToLowerInvariant().Replace(" ", "").Contains(a));   // any deployable by id or name (battery/switch/windturbine/future)
-                if (def == null) { Log("usage: deploy <" + string.Join("|", DeployableDef.All.Select(d => d.Name.ToLowerInvariant().Replace(" ", ""))) + ">"); return; }
-                if (Player == null) { Log("no player"); return; }
+                if (def == null) { Echo("usage: deploy <" + string.Join("|", DeployableDef.All.Select(d => d.Name.ToLowerInvariant().Replace(" ", ""))) + ">"); return; }
+                if (Player == null) { Echo("no player"); return; }
                 Player.EquipHeldDeployable(def);
-                Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+                Echo($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
             }
             else if (verb == "wellshaft")
             {
                 // wellshaft [on|off]  -- the bottomless-well disc; persisted in graphics.cfg, applies on the next map load
                 string a = (arg ?? "").Trim().ToLowerInvariant();
                 if (a == "on" || a == "off") { GraphicsOptions.WellShaft = a == "on"; GraphicsOptions.Save(); }
-                Log($"well shaft: {(GraphicsOptions.WellShaft ? "ON" : "OFF")}{(a == "on" || a == "off" ? " (applies on the next map load)" : "")}");
+                Echo($"well shaft: {(GraphicsOptions.WellShaft ? "ON" : "OFF")}{(a == "on" || a == "off" ? " (applies on the next map load)" : "")}");
                 return;
             }
             else if (verb == "weather")
@@ -906,18 +928,18 @@ namespace UnturnedGodot
                 // Weather is normally SCHEDULED off PEI's Weather_Types table, so this is how you see it on demand
                 // instead of waiting out a 2.3-5.6 day-cycle forecast.
                 var wm = GetTree().GetNodesInGroup("weather").Count > 0 ? GetTree().GetNodesInGroup("weather")[0] as WeatherManager : null;
-                if (wm == null || wm.Sim == null) { Log("no weather manager in this world"); return; }
+                if (wm == null || wm.Sim == null) { Echo("no weather manager in this world"); return; }
                 string a = (arg ?? "").Trim();
                 if (a.Length == 0)
                 {
                     var act = wm.Sim.Active;
-                    Log(act == null
+                    Echo(act == null
                         ? $"clear -- next weather in {wm.Sim.ForecastTimer:0}s"
                         : $"{act.Value.Name} -- stage {wm.Sim.Stage}, blend {wm.Sim.BlendAlpha:0.00}, {wm.Sim.ActiveTimer:0}s left");
                     return;
                 }
-                if (wm.ApplyCommand(a)) Log($"weather -> {a}");
-                else Log("usage: weather [clear|rain|heavy|lightning]");
+                if (wm.ApplyCommand(a)) Echo($"weather -> {a}");
+                else Echo("usage: weather [clear|rain|heavy|lightning]");
             }
             else if (verb == "credits")
             {
@@ -925,23 +947,23 @@ namespace UnturnedGodot
                 // text, so print the WHOLE file in ONE call -- line-by-line would leave only the last line on screen,
                 // which is exactly where the CC-BY entry that legally must be shown was hiding.
                 var cp = ProjectSettings.GlobalizePath("res://content/CREDITS.md");
-                Log(System.IO.File.Exists(cp) ? System.IO.File.ReadAllText(cp).Trim() : "no credits file");
+                Echo(System.IO.File.Exists(cp) ? System.IO.File.ReadAllText(cp).Trim() : "no credits file");
             }
             else if (verb == "unarmed")
             {
                 // unarmed  -- go to the bare-fists state (LMB weak / RMB strong punch)
-                if (Player == null) { Log("no player"); return; }
+                if (Player == null) { Echo("no player"); return; }
                 Player.EquipUnarmed();
-                Log("unarmed -> fists (LMB/RMB to punch)");
+                Echo("unarmed -> fists (LMB/RMB to punch)");
             }
             else if (verb == "fluid")
             {
                 // fluid [split|combine]  -- debug fluid-IO rigs, then equip the hose tool. Aim a green/cyan port -> LMB ->
                 // aim an orange port -> LMB. Bare = source + empty + water tanks; split = source->splitter->2 tanks;
                 // combine = 2 sources->combiner->1 tank. Fittings sit between (source ABOVE fitting ABOVE tanks, gravity).
-                if (Player == null) { Log("no player"); return; }
+                if (Player == null) { Echo("no player"); return; }
                 var world = Player.GetParent();
-                if (world == null) { Log("no world"); return; }
+                if (world == null) { Echo("no world"); return; }
                 if (GetTree().GetNodesInGroup("fluid_managers").Count == 0) world.AddChild(new FluidManager());
                 Vector3 p = Player.GlobalPosition;
                 Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
@@ -955,7 +977,7 @@ namespace UnturnedGodot
                     var valve = FluidContainer.MakeValve(); valve.Position = c + Vector3.Up * 1.0f; world.AddChild(valve);
                     SpawnFluidRig(world, FluidRole.Source, FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 1.6f, valve.Position);   // source WEST, high
                     SpawnFluidRig(world, FluidRole.Storage, FluidType.None, 0f, c + wx * 4f, valve.Position);   // tank EAST, low
-                    Log("valve rig (WORLD X): a high fuel SOURCE + a VALVE + a low empty tank. hose source->the valve's LEFT (orange) input, then its RIGHT (cyan) output->the tank. RMB the valve's port to open/close it (handle = green open / red closed).");
+                    Echo("valve rig (WORLD X): a high fuel SOURCE + a VALVE + a low empty tank. hose source->the valve's LEFT (orange) input, then its RIGHT (cyan) output->the tank. RMB the valve's port to open/close it (handle = green open / red closed).");
                 }
                 else if (fa.StartsWith("refine") || fa.StartsWith("sluice"))
                 {
@@ -968,7 +990,7 @@ namespace UnturnedGodot
                     var xf = FluidContainer.MakeTransformer(inT, outT, 50f, 1f); xf.DirtiesWater = sl; xf.Position = c + Vector3.Up * 1.0f; world.AddChild(xf);
                     SpawnFluidRig(world, FluidRole.Source,  inT,          2000f, c - wx * 4f + Vector3.Up * 2.4f, xf.Position);   // input source WEST, high
                     SpawnFluidRig(world, FluidRole.Storage, FluidType.None,  0f, c + wx * 4f, xf.Position);                       // output tank EAST, low (adopts out fluid)
-                    Log($"{(sl ? "sluice" : "refine")} rig (WORLD X): a {FluidDef.Name(inT)} SOURCE (west, high) + a TRANSFORMER + an empty tank (east, low). hose source->the transformer's LEFT (orange) input, then its RIGHT (green) output->the tank. it deletes {FluidDef.Name(inT)} and makes {FluidDef.Name(outT)}.");
+                    Echo($"{(sl ? "sluice" : "refine")} rig (WORLD X): a {FluidDef.Name(inT)} SOURCE (west, high) + a TRANSFORMER + an empty tank (east, low). hose source->the transformer's LEFT (orange) input, then its RIGHT (green) output->the tank. it deletes {FluidDef.Name(inT)} and makes {FluidDef.Name(outT)}.");
                 }
                 else if (fa.StartsWith("pump"))
                 {
@@ -986,7 +1008,7 @@ namespace UnturnedGodot
                         wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pump.PowerPorts[0].GlobalPosition }, valid: true);
                     }
                     gen.TogglePower(); PowerNet.Recompute(GetTree());
-                    Log("pump rig (WORLD X): low fuel SOURCE (west) + an electric PUMP + a HIGH empty tank (east, 3m up) + a wired generator. once the gen spins up (~1s) the pump lifts fluid UPHILL. hose source->pump input, then pump output->the high tank.");
+                    Echo("pump rig (WORLD X): low fuel SOURCE (west) + an electric PUMP + a HIGH empty tank (east, 3m up) + a wired generator. once the gen spins up (~1s) the pump lifts fluid UPHILL. hose source->pump input, then pump output->the high tank.");
                 }
                 else if (fa.StartsWith("purif"))
                 {
@@ -1004,7 +1026,7 @@ namespace UnturnedGodot
                         wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, purifier.PowerPorts[0].GlobalPosition }, valid: true);
                     }
                     gen.TogglePower(); PowerNet.Recompute(GetTree());
-                    Log("purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a wired generator. hose source->the purifier's LEFT (orange) input, then its RIGHT (green) output->the tank -> CLEAN water. cut the gen's power and it stops cleaning.");
+                    Echo("purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a wired generator. hose source->the purifier's LEFT (orange) input, then its RIGHT (green) output->the tank -> CLEAN water. cut the gen's power and it stops cleaning.");
                 }
                 else if (fa.StartsWith("split") || fa.StartsWith("combine"))
                 {
@@ -1018,7 +1040,7 @@ namespace UnturnedGodot
                         SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f, fit);
                         SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz * -1.5f, fit);
                         SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz *  1.5f, fit);
-                        Log("split rig (laid along WORLD X): fuel SOURCE (west, high) + a SPLITTER (cyan outputs) + two empty STORAGES (east, low). hose source->splitter input, then each cyan output->a tank.");
+                        Echo("split rig (laid along WORLD X): fuel SOURCE (west, high) + a SPLITTER (cyan outputs) + two empty STORAGES (east, low). hose source->splitter input, then each cyan output->a tank.");
                     }
                     else
                     {
@@ -1026,7 +1048,7 @@ namespace UnturnedGodot
                         SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz * -1.5f, fit);
                         SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz *  1.5f, fit);
                         SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f, fit);
-                        Log("combine rig (laid along WORLD X): two fuel SOURCES (west, high) + a COMBINER + an empty STORAGE (east, low). hose each source->a combiner input, then the cyan output->the tank.");
+                        Echo("combine rig (laid along WORLD X): two fuel SOURCES (west, high) + a COMBINER + an empty STORAGE (east, low). hose each source->a combiner input, then the cyan output->the tank.");
                     }
                 }
                 else
@@ -1034,7 +1056,7 @@ namespace UnturnedGodot
                     SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel,  1000f, p + fwd * 4f + Vector3.Up * 1.6f, p);   // raised so gravity feeds
                     SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, p + fwd * 4f + right * 2f, p);          // empty -> adopts + fills
                     SpawnFluidRig(world, FluidRole.Storage, FluidType.Water,  200f, p + fwd * 4f - right * 2f, p);          // water -> "cannot mix fluids"
-                    Log("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
+                    Echo("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
                 }
                 Player.EquipHoseTool();
             }
@@ -1045,32 +1067,32 @@ namespace UnturnedGodot
                 PlayerController.SurvivalDrain = a == "on" || a == "1" || a == "true" ? true
                                                : a == "off" || a == "0" || a == "false" ? false
                                                : !PlayerController.SurvivalDrain;
-                Log($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
+                Echo($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
             }
             else if (verb == "wear")
             {
                 // wear <clothing item id|name>  -- equip clothing (shirt/pants -> body paint; hat/vest/... -> bone mesh)
                 var asset = ResolveItem(arg);
-                if (asset == null) { Log($"no item matching '{arg}'"); return; }
-                if (System.Array.IndexOf(ClothingTypes, asset.type) < 0) { Log($"{asset.itemName} (#{asset.id}) is {asset.type}, not clothing"); return; }
+                if (asset == null) { Echo($"no item matching '{arg}'"); return; }
+                if (System.Array.IndexOf(ClothingTypes, asset.type) < 0) { Echo($"{asset.itemName} (#{asset.id}) is {asset.type}, not clothing"); return; }
                 Player?.WearClothing(new Item(asset.id));
-                Log($"wearing {asset.itemName} (#{asset.id}) [{asset.type}]");
+                Echo($"wearing {asset.itemName} (#{asset.id}) [{asset.type}]");
             }
             else if (verb == "unwear")
             {
                 // unwear <slot>  -- remove a worn slot (shirt|pants|hat|vest|mask|glasses|backpack)
                 if (!System.Enum.TryParse<EItemType>(arg.Trim(), true, out var slot) || System.Array.IndexOf(ClothingTypes, slot) < 0)
-                { Log("usage: unwear <shirt|pants|hat|vest|mask|glasses|backpack>"); return; }
+                { Echo("usage: unwear <shirt|pants|hat|vest|mask|glasses|backpack>"); return; }
                 Player?.UnwearClothing(slot);
-                Log($"removed {slot.ToString().ToLowerInvariant()}");
+                Echo($"removed {slot.ToString().ToLowerInvariant()}");
             }
             else if (verb == "hitbox" || verb == "hb")
             {
                 // hitbox client|server|off -- collision wireframe overlays (cyan = this process's colliders,
                 // magenta = the server's, reconstructed from replicas). Client-LOCAL debug: never server-gated.
-                Log(HitboxDebugOverlay.Console(arg, GetTree()));
+                Echo(HitboxDebugOverlay.Console(arg, GetTree()));
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / toggleGlobalPower / wear / unwear");
+            else Echo($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / toggleGlobalPower / wear / unwear");
         }
 
         /// <summary>MP teleport (#27): location name -> the numeric `teleport <x> <y> <z>` wire form
@@ -1233,7 +1255,9 @@ namespace UnturnedGodot
             return $"{H:00}:{M:00}{name}";
         }
 
-        void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
+        // Console replies go into the SHARED buffer, so the scrollback holds command output and game prints in
+        // the order they actually happened rather than the reply overwriting a one-line label.
+        void Echo(string msg) { UnturnedGodot.Log.Print("[console] " + msg); }
     }
 
     // PEI's real named LOCATION nodes (towns/POIs), ripped byte-exact from Maps/PEI/Environment/Nodes.dat -> content/nodes.tsv

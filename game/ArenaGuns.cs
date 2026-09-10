@@ -41,7 +41,7 @@ namespace UnturnedGodot
             }
             _mat ??= new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.08f), EmissionEnabled = true, Emission = new Color(1f, 0.55f, 0.08f), EmissionEnergyMultiplier = 1.8f, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             for (int guard = 0; _guns.Count < Target && guard < Target * 5; guard++) TrySpawn();   // seed the ground full at match start (retry: a dense town rejects many points); _Process then churns
-            GD.Print($"[arenaguns] guns={_gunIds.Count} scopes={_scopeIds.Count} seeded={_guns.Count}");
+            Log.Print($"[arenaguns] guns={_gunIds.Count} scopes={_scopeIds.Count} seeded={_guns.Count}");
         }
 
         // iron sights + the 1x electronic optics (Dot / Halo / Kobra red-dot) -> not "scopes"; master wants magnified only

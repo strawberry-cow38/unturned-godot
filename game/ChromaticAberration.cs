@@ -75,7 +75,7 @@ namespace UnturnedGodot
             Enabled = true; Intensity = amt;
             var ca = new ChromaticAberration();
             root.AddChild(ca);
-            GD.Print($"[chromatic] harness on at intensity {amt}");
+            Log.Print($"[chromatic] harness on at intensity {amt}");
             return ca;
         }
     }

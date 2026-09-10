@@ -33,7 +33,7 @@ namespace UnturnedGodot
         {
             LoadTables(System.IO.Path.Combine(peiRoot, "Spawns", "Items.dat"));
             LoadPoints(System.IO.Path.Combine(peiRoot, "Spawns", "Jars.dat"));
-            GD.Print($"[loot] {_pts.Count} item spawn points loaded, {(_tblName?.Length ?? 0)} tables");
+            Log.Print($"[loot] {_pts.Count} item spawn points loaded, {(_tblName?.Length ?? 0)} tables");
         }
 
         void LoadTables(string path)

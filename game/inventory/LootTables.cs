@@ -23,7 +23,7 @@ namespace UnturnedGodot
         {
             if (_loaded) return;
             _loaded = true;
-            if (!System.IO.File.Exists(itemsDatPath)) { GD.PrintErr($"[loot-tables] not found: {itemsDatPath}"); return; }
+            if (!System.IO.File.Exists(itemsDatPath)) { Log.Err($"[loot-tables] not found: {itemsDatPath}"); return; }
             var b = System.IO.File.ReadAllBytes(itemsDatPath); int o = 0;
             byte U8() => b[o++];
             ushort U16() { var v = System.BitConverter.ToUInt16(b, o); o += 2; return v; }
@@ -50,7 +50,7 @@ namespace UnturnedGodot
                     _tiers[t][ti] = (chance, ids);
                 }
             }
-            GD.Print($"[loot-tables] loaded {tcount} PEI item tables");
+            Log.Print($"[loot-tables] loaded {tcount} PEI item tables");
         }
 
         // roll one item id from a table: weighted tier pick (by chance), uniform id within the tier. -1 = nothing.

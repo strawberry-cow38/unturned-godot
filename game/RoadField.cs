@@ -135,8 +135,8 @@ namespace UnturnedGodot
                 BuildRoadNode(r);
                 built++;
             }
-            GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {_mats.Count} materials)");
-            GD.Print($"[lanes] {_lanes.Count} AI lane paths, {LanePointCount()} points (lane width {LaneWidth} m)");
+            Log.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {_mats.Count} materials)");
+            Log.Print($"[lanes] {_lanes.Count} AI lane paths, {LanePointCount()} points (lane width {LaneWidth} m)");
             if (LaneDbg) ReportLanes();
             if (LaneDraw) DrawLanes();
         }
@@ -146,7 +146,7 @@ namespace UnturnedGodot
         {
             _mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
             _roads.Clear();
-            GD.Print($"[roads] new-map materials loaded ({_mats.Count})");
+            Log.Print($"[roads] new-map materials loaded ({_mats.Count})");
         }
 
         /// <summary>Lane centrelines for one road. Lane k of n is offset from the centre by
@@ -665,7 +665,7 @@ namespace UnturnedGodot
                 _roads.Add(r);
                 if (r.Joints.Count >= 2 && r.Material >= 0 && r.Material < _mats.Count) BuildRoadNode(r);
             }
-            GD.Print($"[roads] reloaded {_roads.Count} roads from saved edits ({pathsFile})");
+            Log.Print($"[roads] reloaded {_roads.Count} roads from saved edits ({pathsFile})");
             return true;
         }
 
@@ -736,7 +736,7 @@ namespace UnturnedGodot
             if (!File.Exists(path)) return false;
             using var br = new BinaryReader(File.OpenRead(path));
             byte version = br.ReadByte();
-            if (version != 1) { GD.PrintErr($"[roads] junction graph version {version} not understood -- ignoring"); return false; }
+            if (version != 1) { Log.Err($"[roads] junction graph version {version} not understood -- ignoring"); return false; }
             int jn = br.ReadUInt16();
             for (int i = 0; i < jn; i++) _junctions.Add(new Junction { Pos = new Vector3(br.ReadSingle(), br.ReadSingle(), -br.ReadSingle()) });
             int rn = br.ReadUInt16();
@@ -744,11 +744,11 @@ namespace UnturnedGodot
             {
                 // Positional links against a different road list would bind the wrong rails to the wrong
                 // nodes -- silently, and in a way that looks like a routing bug much later. Refuse instead.
-                GD.PrintErr($"[roads] junction sidecar lists {rn} roads but the field has {_roads.Count} -- stale, dropping the links (nodes kept)");
+                Log.Err($"[roads] junction sidecar lists {rn} roads but the field has {_roads.Count} -- stale, dropping the links (nodes kept)");
                 return false;
             }
             for (int i = 0; i < rn; i++) { _roads[i].StartJunction = br.ReadInt16(); _roads[i].EndJunction = br.ReadInt16(); }
-            GD.Print($"[roads] loaded {_junctions.Count} junction nodes, {Junctions().Count} of them connecting 2+ roads");
+            Log.Print($"[roads] loaded {_junctions.Count} junction nodes, {Junctions().Count} of them connecting 2+ roads");
             return true;
         }
 
@@ -824,7 +824,7 @@ namespace UnturnedGodot
                 var a = kv.Value;
                 int per = a.roads > 0 ? a.lanes / a.roads : 0;
                 bool inside = a.widest + LaneWidth * 0.5f <= a.half + 0.01f;
-                GD.Print($"[lanes] material {kv.Key}: {a.roads} roads x {per} lanes, road half-width {a.half:0.00} m, "
+                Log.Print($"[lanes] material {kv.Key}: {a.roads} roads x {per} lanes, road half-width {a.half:0.00} m, "
                        + $"outermost lane centre {a.widest:0.00} m -> edge {a.widest + LaneWidth * 0.5f:0.00} m {(inside ? "INSIDE the road" : "*** OUTSIDE THE ROAD ***")}");
             }
         }

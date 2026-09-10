@@ -77,7 +77,7 @@ namespace UnturnedGodot
         /// can report a content problem it can't fix; a no-op when there is no HUD (dedicated server, tests).</summary>
         public static void Alert(string text, float seconds = 3f)
         {
-            GD.Print($"[alert] {text}");   // always logged, HUD or not -- a headless run still records it
+            Log.Print($"[alert] {text}");   // always logged, HUD or not -- a headless run still records it
             if (Current == null || !GodotObject.IsInstanceValid(Current) || Current._alert == null) return;
             Current._alert.Text = text;
             Current._alertLeft = seconds;

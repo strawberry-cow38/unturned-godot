@@ -20,7 +20,7 @@ namespace UnturnedGodot
         static ShaderMaterial MakeGrassMaterial()
         {
             var sh = GD.Load<Shader>("res://content/grass_displace.gdshader");
-            if (sh == null) { GD.PrintErr("[foliage] grass_displace.gdshader missing -- grass will not displace"); return null; }
+            if (sh == null) { Log.Err("[foliage] grass_displace.gdshader missing -- grass will not displace"); return null; }
             GrassDisplacers.EnsureGlobals();   // the grass shader's globals MUST exist BEFORE this material is built, or it links them invalid ("removed at some point") + renders with NO displacement at all
             return new ShaderMaterial { Shader = sh };
         }
@@ -33,7 +33,7 @@ namespace UnturnedGodot
         {
             GrassDisplacers.EnsureGlobals();   // flowers read `wind_vec` too -- same rule as the grass material above, and this path never had it
             var sh = GD.Load<Shader>("res://content/foliage_up.gdshader");
-            if (sh == null) { GD.PrintErr("[foliage] foliage_up.gdshader missing -- flowers/pebbles keep the dark-backface bug"); return null; }
+            if (sh == null) { Log.Err("[foliage] foliage_up.gdshader missing -- flowers/pebbles keep the dark-backface bug"); return null; }
             return new ShaderMaterial { Shader = sh };
         }
 
@@ -53,7 +53,7 @@ namespace UnturnedGodot
         public void LoadGrass()
         {
             string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
-            if (!Directory.Exists(dir)) { GD.Print($"[foliage] no baked foliage for this map ({MapDir}) -- skipping"); return; }
+            if (!Directory.Exists(dir)) { Log.Print($"[foliage] no baked foliage for this map ({MapDir}) -- skipping"); return; }
             foreach (var bin in Directory.GetFiles(dir, "*.bin"))
                 LoadType(Path.GetFileNameWithoutExtension(bin));
         }
@@ -62,9 +62,9 @@ namespace UnturnedGodot
         {
             string dir = ProjectSettings.GlobalizePath($"res://content/{MapDir}/");
             string binPath = dir + nm + ".bin", objPath = dir + nm + ".obj";
-            if (!File.Exists(binPath) || !File.Exists(objPath)) { GD.Print($"[foliage] skip {nm} (missing files)"); return; }
+            if (!File.Exists(binPath) || !File.Exists(objPath)) { Log.Print($"[foliage] skip {nm} (missing files)"); return; }
             var mesh = ObjMesh.Load(objPath);
-            if (mesh == null) { GD.Print($"[foliage] skip {nm} (mesh load failed)"); return; }
+            if (mesh == null) { Log.Print($"[foliage] skip {nm} (mesh load failed)"); return; }
 
             var mat = new StandardMaterial3D
             {
@@ -135,7 +135,7 @@ namespace UnturnedGodot
             int count = br.ReadInt32();
             int version = 1;
             if (count < 0) { version = br.ReadInt32(); count = br.ReadInt32(); }
-            if (count <= 0) { GD.Print($"[foliage] {nm}: 0 instances"); return; }
+            if (count <= 0) { Log.Print($"[foliage] {nm}: 0 instances"); return; }
             // Bucket into spatial CELLS -> one MultiMesh per cell, each with a distance cutoff, so foliage far from
             // the camera stops rendering (master: cull grass far from the player). Trees aren't foliage, untouched.
             // Retail draws foliage in 32m TILES out to FoliageSettings.drawDistance tiles, set per quality:
@@ -181,7 +181,7 @@ namespace UnturnedGodot
                 AddChild(fmi);
                 RegisterAuthoringCell(nm, kv.Key, fmi, mesh, (Material)(isGrass ? grassMat : foliageUpMat) ?? mat, lst, manualByCell[kv.Key]);
             }
-            GD.Print($"[foliage] {nm}: {count} instances in {byCell.Count} cells (culled beyond {CullRange}m)");
+            Log.Print($"[foliage] {nm}: {count} instances in {byCell.Count} cells (culled beyond {CullRange}m)");
         }
     }
 }

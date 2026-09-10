@@ -47,7 +47,7 @@ namespace UnturnedGodot
             var e = new Elevator { SyncToPhysics = true };   // move it in _PhysicsProcess -> riders on top are carried by the solver
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var mesh = ObjMesh.Load(dir + "Elevator_0.obj");
-            if (mesh == null) { GD.Print("[elevator] no Elevator_0.obj mesh"); return e; }
+            if (mesh == null) { Log.Print("[elevator] no Elevator_0.obj mesh"); return e; }
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + "Elevator_0_tex.png";
             if (Godot.FileAccess.FileExists(tp)) { var img = ContentProvider.LoadImage(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
@@ -192,8 +192,8 @@ namespace UnturnedGodot
             var q = PhysicsRayQueryParameters3D.Create(p + new Vector3(-0.05f, 2.0f, 0f), p + new Vector3(-0.05f, -0.5f, 0f));
             q.CollisionMask = 1u << 10;
             var hit = ss.IntersectRay(q);
-            if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; GD.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
-            else GD.Print("[elev-floor] NO floor hit");
+            if (hit.Count > 0) { float fy = hit["position"].AsVector3().Y; Log.Print($"[elev-floor] floor {_curFloor}: elevator floor top world Y = {fy:0.000} (car base Y = {p.Y:0.000})"); }
+            else Log.Print("[elev-floor] NO floor hit");
             float zmin = 9f, zmax = -9f;
             for (float z = -2.5f; z <= 2.5f; z += 0.05f) {
                 var h = ss.IntersectRay(PhysicsRayQueryParameters3D.Create(p + new Vector3(-4f, 1.5f, z), p + new Vector3(4f, 1.5f, z), 1u << 10));
@@ -208,7 +208,7 @@ namespace UnturnedGodot
                 if (open) { if (dBot < 0f) dBot = y; dTop = y; }
                 else if (dBot >= 0f) break;   // was open, now solid => that's the lintel; the door opening ends here
             }
-            GD.Print($"[elev-door] opening Z [{zmin:0.00}, {zmax:0.00}] (w {zmax - zmin:0.00}); door Y [{dBot:0.00}, {dTop:0.00}] (h {dTop - dBot:0.00}) contiguous floor->lintel");
+            Log.Print($"[elev-door] opening Z [{zmin:0.00}, {zmax:0.00}] (w {zmax - zmin:0.00}); door Y [{dBot:0.00}, {dTop:0.00}] (h {dTop - dBot:0.00}) contiguous floor->lintel");
         }
 
         // COSMETIC winch (master 2026-08-29 "add a black rope with a gray box at the top of the lift's travel. purely

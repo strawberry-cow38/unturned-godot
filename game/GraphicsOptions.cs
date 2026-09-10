@@ -302,9 +302,9 @@ namespace UnturnedGodot
                     if (all[i].Trim() == "[rendering]" && (i + 1 >= all.Count || all[i + 1].Trim() == "" || all[i + 1].TrimStart().StartsWith("["))) all.RemoveAt(i);
                 if (all.TrueForAll(l => l.Trim() == "")) { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
                 else System.IO.File.WriteAllLines(path, all);
-                GD.Print($"[graphics] {what} on next start ({path})");
+                Log.Print($"[graphics] {what} on next start ({path})");
             }
-            catch (System.Exception e) { GD.PrintErr($"[graphics] could not write override.cfg: {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[graphics] could not write override.cfg: {e.Message}"); }
         }
 
         // ---- PERSISTENCE (strawberry 2026-09-04 "make all persist"): user://graphics.cfg holds every graphics + controls row.
@@ -335,7 +335,7 @@ namespace UnturnedGodot
                 cfg.SetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity);
                 cfg.Save(ConfigPath);
             }
-            catch (System.Exception e) { GD.PrintErr($"[graphics] could not save {ConfigPath}: {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[graphics] could not save {ConfigPath}: {e.Message}"); }
         }
         public static void Load()
         {
@@ -368,7 +368,7 @@ namespace UnturnedGodot
                 ControlsOptions.InvertPlanePitch = (bool)cfg.GetValue("controls", "invert_plane_pitch", ControlsOptions.InvertPlanePitch);
                 ControlsOptions.HeliSensitivity = Mathf.Clamp((float)cfg.GetValue("controls", "heli_sensitivity", ControlsOptions.HeliSensitivity), ControlsOptions.HeliSensMin, ControlsOptions.HeliSensMax);
             }
-            catch (System.Exception e) { GD.PrintErr($"[graphics] could not load {ConfigPath}: {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[graphics] could not load {ConfigPath}: {e.Message}"); }
         }
         public static void ApplyAll(Node ctx)
         {

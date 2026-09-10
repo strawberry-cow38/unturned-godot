@@ -34,8 +34,8 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             // net diagnostics -- same toggle as the server/client: UG_NETLOG=1 or --netlog
-            NetLog.Sink = s => GD.Print(s);
-            NetLog.ErrorSink = s => GD.PrintErr(s);
+            NetLog.Sink = s => Log.Print(s);
+            NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
 
             Client = new NetWorldClient(new UdpClientTransport(Host, Port), "netobserver", contentHash: NetContent.Hash);
@@ -43,7 +43,7 @@ namespace UnturnedGodot
             // defs through these schemas -- register them exactly like ClientWorldSession does
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             CropNetSchema.RegisterAll(Client.Crops.Schema);
-            Client.DesyncDetected += report => GD.PrintErr($"[NETOBS] DESYNC DETECTED -- {report}");
+            Client.DesyncDetected += report => Log.Err($"[NETOBS] DESYNC DETECTED -- {report}");
             Client.Connect();
 
             // the replica under test: server vehicles -> dead-reckoned puppets (its _Process is pure
@@ -53,7 +53,7 @@ namespace UnturnedGodot
 
             // ClientWorldSession's §2.5 net pump, verbatim: receive datagrams + apply snapshots + ack
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Client.Tick(), "net.client.pump"));
-            GD.Print($"[NETOBS] observer up; connecting to {Host}:{Port} (contentHash {NetContent.Hash:x16})");
+            Log.Print($"[NETOBS] observer up; connecting to {Host}:{Port} (contentHash {NetContent.Hash:x16})");
         }
 
         public override void _PhysicsProcess(double delta)
@@ -62,7 +62,7 @@ namespace UnturnedGodot
 
             if (Client.State != _lastState)
             {
-                GD.Print($"[NETOBS] session state {_lastState} -> {Client.State}");
+                Log.Print($"[NETOBS] session state {_lastState} -> {Client.State}");
                 _lastState = Client.State;
             }
 
@@ -72,7 +72,7 @@ namespace UnturnedGodot
             if (!_announced && Client.State == NetSessionState.Connected && Client.JoinSnapshotsApplied > 0)
             {
                 _announced = true;
-                GD.Print($"[NETOBS] connected as player {Client.PlayerId}; join snapshot applied (server tick {Client.Applier.LastAppliedServerTick}): vehicles={Client.Vehicles.Count} players={Client.Players.Count}");
+                Log.Print($"[NETOBS] connected as player {Client.PlayerId}; join snapshot applied (server tick {Client.Applier.LastAppliedServerTick}): vehicles={Client.Vehicles.Count} players={Client.Players.Count}");
             }
 
             if (++_sinceHb >= 50)   // 1 s liveness: distinguishes "connected, nothing moving" from wedged
@@ -81,7 +81,7 @@ namespace UnturnedGodot
                 // joinfulls = reliable full/join snapshots applied (the drive-freeze fix's recovery-full
                 // fingerprint: +1 after an induced ack gap = a reliable recovery full landed over real UDP);
                 // deltas resuming after a wedge = the client is back in normal delta flow
-                GD.Print($"[NETOBS] hb state={Client.State} tick={Client.Applier.LastAppliedServerTick} vehicles={Client.Vehicles.Count} players={Client.Players.Count} puppets={VehicleView.PuppetCount} joinfulls={Client.JoinSnapshotsApplied} fulls={Client.Applier.Diag.FullSnapshotsApplied} deltas={Client.Applier.Diag.DeltaSnapshotsApplied}");
+                Log.Print($"[NETOBS] hb state={Client.State} tick={Client.Applier.LastAppliedServerTick} vehicles={Client.Vehicles.Count} players={Client.Players.Count} puppets={VehicleView.PuppetCount} joinfulls={Client.JoinSnapshotsApplied} fulls={Client.Applier.Diag.FullSnapshotsApplied} deltas={Client.Applier.Diag.DeltaSnapshotsApplied}");
             }
 
             if (++_sinceLog < 25) return;   // 0.5 s vehicle report
@@ -92,7 +92,7 @@ namespace UnturnedGodot
                 string puppet = VehicleView.TryGetPuppet(e.NetIdValue, out var pup)
                     ? $"({pup.GlobalPosition.X:0.00},{pup.GlobalPosition.Y:0.00},{pup.GlobalPosition.Z:0.00})"
                     : "none";
-                GD.Print($"[NETOBS] veh={e.NetIdValue} drv={e.DriverPlayerId} vel={e.LinVel.magnitude:0.00} epos=({e.Pos.x:0.00},{e.Pos.y:0.00},{e.Pos.z:0.00}) puppet={puppet}");
+                Log.Print($"[NETOBS] veh={e.NetIdValue} drv={e.DriverPlayerId} vel={e.LinVel.magnitude:0.00} epos=({e.Pos.x:0.00},{e.Pos.y:0.00},{e.Pos.z:0.00}) puppet={puppet}");
             }
         }
 

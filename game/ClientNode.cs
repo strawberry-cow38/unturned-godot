@@ -27,8 +27,8 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             // net diagnostics (hardening Part B) -- same toggle as the server: UG_NETLOG=1 or --netlog
-            NetLog.Sink = s => GD.Print(s);
-            NetLog.ErrorSink = s => GD.PrintErr(s);
+            NetLog.Sink = s => Log.Print(s);
+            NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
 
             _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player", contentHash: NetContent.Hash);
@@ -36,7 +36,7 @@ namespace UnturnedGodot
             // snapshot; a confirmed replica mismatch lands here -- log loudly + banner the player
             _client.DesyncDetected += report =>
             {
-                GD.PrintErr($"[CLIENT] DESYNC DETECTED -- {report}");
+                Log.Err($"[CLIENT] DESYNC DETECTED -- {report}");
                 _desyncAlert = $"!! DESYNC detected (system {report.SystemId} @ tick {report.ServerTick}) -- state may be out of sync";
             };
             _client.Connect();

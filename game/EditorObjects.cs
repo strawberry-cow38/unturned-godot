@@ -121,7 +121,7 @@ namespace UnturnedGodot
                     if (c is StaticBody3D sb) { _pickToObj[sb.GetRid()] = wrap; break; }   // its collider -> the wrapper root, for click-picking
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] ingested {n} loaded map objects (selectable/movable/deletable)");
+            if (n > 0) Log.Print($"[editor] ingested {n} loaded map objects (selectable/movable/deletable)");
         }
 
         // level-visibility toggles (source EditorLevelVisibilityUI): F1 objects, F3 foliage (F2 roads lives on EditorRoads)
@@ -169,7 +169,7 @@ namespace UnturnedGodot
                 _catalog.Insert(4 + n, name);   // grouped just under the pinned specials, above the retail list
                 n++;
             }
-            if (n > 0) GD.Print($"[editor-objects] {n} baked building(s) in the palette");
+            if (n > 0) Log.Print($"[editor-objects] {n} baked building(s) in the palette");
         }
 
         /// <summary>Rebuild the palette after a bake, so a building you just made is placeable without
@@ -420,7 +420,7 @@ namespace UnturnedGodot
                 var gp = p.GlobalPosition;
                 w.WriteLine($"{gp.X:0.#} {(-gp.Z):0.#}");   // -Z back to file space, matching Save() above
             }
-            GD.Print($"[editor] {rows.Count} prop(s) omitted from the map bake -> {BakeOmitPath}");
+            Log.Print($"[editor] {rows.Count} prop(s) omitted from the map bake -> {BakeOmitPath}");
         }
 
         /// <summary>Re-apply the saved flags to whatever is in _placed, by the same position key. Runs after both
@@ -438,7 +438,7 @@ namespace UnturnedGodot
                 p.SetMeta(OmitMeta, true);
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] {n} prop(s) flagged omit-from-bake");
+            if (n > 0) Log.Print($"[editor] {n} prop(s) flagged omit-from-bake");
         }
 
         public bool CrateSelected => Primary != null && Primary.HasMeta("loot_table");   // any loot container (crate OR shelf) -> the table dropdown applies
@@ -676,7 +676,7 @@ namespace UnturnedGodot
                 _selection.Clear();
                 foreach (var (g, x) in cap) { var nn = RePlace(g, x); if (nn != null) _selection.Add(nn); }
                 if (uncapturable > 0)
-                    GD.PrintErr($"[editor] undo: {uncapturable} placement(s) could not be restored " +
+                    Log.Err($"[editor] undo: {uncapturable} placement(s) could not be restored " +
                                 "(loot crate / store shelf / grid power / gas pump / baked building -- no guid to re-place from)");
                 _gizmo.Attach(Primary); RefreshMarkers();
                 AttachGizmo(); RefreshMarkers();
@@ -693,7 +693,7 @@ namespace UnturnedGodot
                 string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : "";
                 if (g.Length > 0) _copies.Add((g, sel.GlobalTransform));
             }
-            GD.Print($"[editor] copied {_copies.Count} prop(s)");
+            Log.Print($"[editor] copied {_copies.Count} prop(s)");
         }
 
         void PasteSelection()
@@ -705,7 +705,7 @@ namespace UnturnedGodot
                 if (_guidToName.TryGetValue(g, out var name)) { var nn = Place(name, x.Origin, x.Basis); if (nn != null) { _selection.Add(nn); pasted.Add(nn); } }
             AttachGizmo(); RefreshMarkers();
             if (pasted.Count > 0) _editor.PushUndo("paste", () => { foreach (var n in pasted) RemoveProp(n); });
-            GD.Print($"[editor] pasted {_selection.Count} prop(s)");
+            Log.Print($"[editor] pasted {_selection.Count} prop(s)");
         }
 
         static Rect2 RectFrom(Vector2 a, Vector2 b) => new Rect2(new Vector2(Mathf.Min(a.X, b.X), Mathf.Min(a.Y, b.Y)), (b - a).Abs());
@@ -730,7 +730,7 @@ namespace UnturnedGodot
                 if (rect.HasPoint(_cam.UnprojectPosition(prop.GlobalPosition)) && !_selection.Contains(prop)) _selection.Add(prop);
             }
             AttachGizmo(); RefreshMarkers();
-            GD.Print($"[editor] box-select: {_selection.Count} selected");
+            Log.Print($"[editor] box-select: {_selection.Count} selected");
         }
 
         // group-gizmo: the gizmo drives Primary; the rest of the multi-selection rigidly follows its transform delta
@@ -866,7 +866,7 @@ namespace UnturnedGodot
             SaveGridPower();
             SaveGasPump();
             SaveBakeOmit();
-            GD.Print($"[editor] saved {n} placed props -> {SavePath}");
+            Log.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
 
@@ -881,7 +881,7 @@ namespace UnturnedGodot
                 var gp = c.GlobalPosition;
                 cw.WriteLine($"{tbl} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###}");   // gpos.Z negates back (map convention)
             }
-            if (crates.Count > 0) GD.Print($"[editor] saved {crates.Count} loot crates -> {CratesPath}");
+            if (crates.Count > 0) Log.Print($"[editor] saved {crates.Count} loot crates -> {CratesPath}");
         }
 
         // inverse of FromEuler (B = Ry(180-ey)*Rx(ex)*Rz(-ez)); Godot GetEuler(Yxz) gives (x,y,z) with B=Ry(y)Rx(x)Rz(z)
@@ -916,7 +916,7 @@ namespace UnturnedGodot
                 Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez) * Basis.FromScale(new Vector3(sx, sy, sz)));   // gpos=(px,py,-pz); PEI euler + scale
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] loaded {n} saved props");
+            if (n > 0) Log.Print($"[editor] loaded {n} saved props");
         }
 
         void LoadLootCrates()   // restore placed loot crates (markers) on open
@@ -933,7 +933,7 @@ namespace UnturnedGodot
                 UpdateCrateLabel(root);
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] loaded {n} loot crates");
+            if (n > 0) Log.Print($"[editor] loaded {n} loot crates");
         }
 
         string ShelvesPath => Dir + $"editor_{_editor.MapName}_shelves.txt";   // per-map store-shelf placements (table + world pos + yaw)
@@ -948,7 +948,7 @@ namespace UnturnedGodot
                 float yawDeg = Mathf.RadToDeg(s.GlobalTransform.Basis.GetEuler().Y);   // yaw-only root
                 sw.WriteLine($"{tbl} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###}");
             }
-            if (shelves.Count > 0) GD.Print($"[editor] saved {shelves.Count} store shelves -> {ShelvesPath}");
+            if (shelves.Count > 0) Log.Print($"[editor] saved {shelves.Count} store shelves -> {ShelvesPath}");
         }
         void LoadStoreShelves()   // restore placed store shelves (markers) on open
         {
@@ -964,7 +964,7 @@ namespace UnturnedGodot
                 if (root != null) { root.SetMeta("loot_table", tbl); UpdateCrateLabel(root); }
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] loaded {n} store shelves");
+            if (n > 0) Log.Print($"[editor] loaded {n} store shelves");
         }
 
         string GridPath => Dir + $"editor_{_editor.MapName}_gridpower.txt";   // per-map grid-power boxes (watts + world pos + yaw + name)
@@ -980,7 +980,7 @@ namespace UnturnedGodot
                 float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
                 w.WriteLine($"{watts:0.###} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {nm}");   // name LAST (may contain spaces)
             }
-            if (boxes.Count > 0) GD.Print($"[editor] saved {boxes.Count} grid-power boxes -> {GridPath}");
+            if (boxes.Count > 0) Log.Print($"[editor] saved {boxes.Count} grid-power boxes -> {GridPath}");
         }
         void LoadGridPower()
         {
@@ -997,7 +997,7 @@ namespace UnturnedGodot
                 if (root != null) { root.SetMeta("grid_watts", watts); root.SetMeta("grid_name", nm); UpdateGridLabel(root); }
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] loaded {n} grid-power boxes");
+            if (n > 0) Log.Print($"[editor] loaded {n} grid-power boxes");
         }
 
         string GasPumpPath => Dir + $"editor_{_editor.MapName}_gaspump.txt";   // per-map editor gas pumps (station id + world pos + yaw)
@@ -1012,7 +1012,7 @@ namespace UnturnedGodot
                 float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
                 w.WriteLine($"{st} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###}");
             }
-            if (pumps.Count > 0) GD.Print($"[editor] saved {pumps.Count} gas pumps -> {GasPumpPath}");
+            if (pumps.Count > 0) Log.Print($"[editor] saved {pumps.Count} gas pumps -> {GasPumpPath}");
         }
         void LoadGasPump()
         {
@@ -1028,7 +1028,7 @@ namespace UnturnedGodot
                 if (root != null) { root.SetMeta("station_id", st); UpdateGasPumpLabel(root); }
                 n++;
             }
-            if (n > 0) GD.Print($"[editor] loaded {n} gas pumps");
+            if (n > 0) Log.Print($"[editor] loaded {n} gas pumps");
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)
@@ -1038,7 +1038,7 @@ namespace UnturnedGodot
             if (Primary == null) return;
             _copyPos = Primary.GlobalPosition; _copyBasis = Primary.GlobalTransform.Basis;
             _copyFull = _gizmo.LocalSpace; _hasCopyXform = true;
-            GD.Print($"[editor] copied transform ({(_copyFull ? "pos+rot+scale, local" : "position only, global")})");
+            Log.Print($"[editor] copied transform ({(_copyFull ? "pos+rot+scale, local" : "position only, global")})");
         }
         void PasteTransform()
         {
@@ -1051,14 +1051,14 @@ namespace UnturnedGodot
                 foreach (var s in _selection) s.GlobalPosition += delta;
             }
             AttachGizmo(); PositionMarkers();
-            GD.Print($"[editor] pasted transform ({(_copyFull ? "full" : "position")}) to {_selection.Count}");
+            Log.Print($"[editor] pasted transform ({(_copyFull ? "full" : "position")}) to {_selection.Count}");
         }
 
         // harness hook (--editor): scatter a few props so a headless render shows placement working
         public readonly List<Vector3> DemoPositions = new();
         public void DemoPlace()
         {
-            if (_catalog.Count == 0) { GD.Print("[editordemo] empty catalog"); return; }
+            if (_catalog.Count == 0) { Log.Print("[editordemo] empty catalog"); return; }
             int n = 0;
             for (int i = 0; i < 6; i++)
                 if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, Upright(i * 30f)) != null) { DemoPositions.Add(pt); n++; }
@@ -1074,23 +1074,23 @@ namespace UnturnedGodot
                 var re = FromEuler(ex, ey, ez);
                 float err = (a.X - re.X).Length() + (a.Y - re.Y).Length() + (a.Z - re.Z).Length();
                 var sc = pr.GlobalTransform.Basis.Scale;
-                GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#}) scale=({sc.X:0.##},{sc.Y:0.##},{sc.Z:0.##})");
+                Log.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#}) scale=({sc.X:0.##},{sc.Y:0.##},{sc.Z:0.##})");
                 // verify multi-select + copy/paste programmatically (headless can't drive real clicks)
                 if (_placed.Count > 3)
                 {
                     Select(_placed[2], false); Select(_placed[3], true);   // Shift-add -> 2 selected
                     int sel = _selection.Count; CopySelection();
                     int before = _placed.Count; PasteSelection();
-                    GD.Print($"[editordemo] multi-select={sel}, pasted {_placed.Count - before} (now {_selection.Count} selected)");
+                    Log.Print($"[editordemo] multi-select={sel}, pasted {_placed.Count - before} (now {_selection.Count} selected)");
                 }
                 BoxSelect(new Rect2(Vector2.Zero, new Vector2(100000f, 100000f)), false);   // verify box drag-select: full-viewport rect selects every in-frame prop
-                GD.Print($"[editordemo] box-select all-in-frame: {_selection.Count}");
+                Log.Print($"[editordemo] box-select all-in-frame: {_selection.Count}");
                 if (_placed.Count > 3)   // verify group-gizmo: moving Primary carries the rest of the selection rigidly
                 {
                     Select(_placed[2], false); Select(_placed[3], true);
                     var os = _placed[2].GlobalPosition; BeginGroupDrag();
                     _pivot.GlobalPosition += new Vector3(10f, 0f, 0f); ApplyGroupDrag();   // drive the centroid pivot; the whole selection follows
-                    GD.Print($"[editordemo] group-drag: other followed {(_placed[2].GlobalPosition - os).Length():0.#} (expect ~10)");
+                    Log.Print($"[editordemo] group-drag: other followed {(_placed[2].GlobalPosition - os).Length():0.#} (expect ~10)");
                 }
                 Select(pr, false);   // single-select the transformed prop for a clean outline in the render
                 _gizmo.LocalSpace = false; CopyTransform();   // verify: global Ctrl+B = position only
@@ -1101,9 +1101,9 @@ namespace UnturnedGodot
             if (_catalog.Count > 0 && Raycast(new Vector2(640, 400), TerrainLayer, out var up, out _))
             {
                 var t = Place(_catalog[0], up, Upright(0f));
-                if (t != null) { _editor.PushUndo("test", () => RemoveProp(t)); int b = _placed.Count; _editor.Undo(); GD.Print($"[editordemo] undo self-test: {b} -> {_placed.Count} placed (expect {b - 1})"); }
+                if (t != null) { _editor.PushUndo("test", () => RemoveProp(t)); int b = _placed.Count; _editor.Undo(); Log.Print($"[editordemo] undo self-test: {b} -> {_placed.Count} placed (expect {b - 1})"); }
             }
-            GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
+            Log.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
     }
 

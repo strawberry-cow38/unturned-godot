@@ -188,7 +188,7 @@ void fragment() {
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { GD.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
+                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { Log.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
@@ -1527,7 +1527,7 @@ void fragment() {
             _dirty = true;
             RebuildAll();
             int rebuilt = _rivers.Count;
-            GD.Print($"[river] rebuilt {rebuilt} river(s) from their anchors");
+            Log.Print($"[river] rebuilt {rebuilt} river(s) from their anchors");
             return rebuilt;
         }
 
@@ -1901,7 +1901,7 @@ void fragment() {
             arr[(int)Mesh.ArrayType.Index] = idx.ToArray();
             var m = new ArrayMesh();
             if (idx.Count >= 3) m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
-            GD.Print($"[terrain] ocean masked: {idx.Count / 3}/{subX * subZ * 2} tris kept (buried-under-land cells dropped)");
+            Log.Print($"[terrain] ocean masked: {idx.Count / 3}/{subX * subZ * 2} tris kept (buried-under-land cells dropped)");
             return m;
         }
         public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
@@ -1992,7 +1992,7 @@ void fragment() {
             terr._chunkMi = new MeshInstance3D[terr._chunksX, terr._chunksY];
             terr._chunkBody = new StaticBody3D[terr._chunksX, terr._chunksY];
             terr.RebuildAll();
-            GD.Print($"[terrain] flat NEW map {tilesX}x{tilesZ} tiles ({GW}x{GH} verts)");
+            Log.Print($"[terrain] flat NEW map {tilesX}x{tilesZ} tiles ({GW}x{GH} verts)");
             return terr;
         }
 
@@ -2018,7 +2018,7 @@ void fragment() {
         {
             if (!Directory.Exists(heightmapsDir))   // real map terrain is read live from a local Unturned install (not shipped in-repo)
             {
-                GD.PrintErr($"[map] Unturned map terrain not found at '{heightmapsDir}'. Install Unturned via Steam, or set the UG_UNTURNED_DIR env var to your Unturned folder if it's in a non-default location.");
+                Log.Err($"[map] Unturned map terrain not found at '{heightmapsDir}'. Install Unturned via Steam, or set the UG_UNTURNED_DIR env var to your Unturned folder if it's in a non-default location.");
                 return null;
             }
             // UG_TERRAIN_PROF=1 breaks the load down by phase. Off by default (it is noise in a normal boot), but the
@@ -2026,7 +2026,7 @@ void fragment() {
             // Each _phase() call records the time since the PREVIOUS call -- so it belongs AFTER the work it names.
             bool _prof = System.Environment.GetEnvironmentVariable("UG_TERRAIN_PROF") == "1";
             var _sw = System.Diagnostics.Stopwatch.StartNew(); long _last = 0;
-            void _phase(string n) { long ms = _sw.ElapsedMilliseconds; if (_prof) GD.Print($"[terrain-prof] {n,-22} {ms - _last,6} ms"); _last = ms; }
+            void _phase(string n) { long ms = _sw.ElapsedMilliseconds; if (_prof) Log.Print($"[terrain-prof] {n,-22} {ms - _last,6} ms"); _last = ms; }
             var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
             var splats = new System.Collections.Generic.Dictionary<(int, int), byte[,]>();   // dominant splatmap layer per 256x256 texel
             var splatRaw = new System.Collections.Generic.Dictionary<(int, int), byte[]>();   // raw 256x256x8 layer weights per tile, for the blend shader
@@ -2093,7 +2093,7 @@ void fragment() {
             ImageTexture s0t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat0Img) : null;
             ImageTexture s1t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat1Img) : null;
             var texMat = splats.Count > 0 ? BuildTerrainMaterial(s0t, s1t) : null;   // real per-layer albedos, blended by per-texel splat weights
-            GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
+            Log.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
             _phase("images+textures");
             terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // SampleHeight (spawns) + chunk sculpt
             terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // SampleDominantLayer + chunk vertex colours
@@ -2139,13 +2139,13 @@ void fragment() {
                 if (seaLevel01 >= 0.99f)
                 {
                     HasWater = false;
-                    GD.Print($"[terrain] seaLevel {seaLevel01:F3} = no legacy ocean -> global water plane SKIPPED (map water is per-volume)");
+                    Log.Print($"[terrain] seaLevel {seaLevel01:F3} = no legacy ocean -> global water plane SKIPPED (map water is per-volume)");
                 }
                 else
                 {
                 float waterY = seaLevel01 * 256f;   // Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 SeaLevelY = waterY;                 // swim submersion (PlayerController water state) + explosion splashes
-                GD.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
+                Log.Print($"[terrain] sea level {seaLevel01:F3} -> world-Y {waterY:F1}");
                 float wsx = (maxX - minX + 1) * TILE_SIZE + 400f, wsdz = (maxY - minY + 1) * TILE_SIZE + 400f;
                 // subdivide so the vertex-displaced waves have geometry to move (~5 m quads); capped for perf on huge maps
                 int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsdz / 4f), 64, 600);   // ~4 m quads; per-pixel normal in the shader hides the rest of the facets
@@ -2176,7 +2176,7 @@ void fragment() {
                 }
             }
             _phase("water plane");
-            if (_prof) GD.Print($"[terrain-prof] TOTAL {_sw.ElapsedMilliseconds} ms");
+            if (_prof) Log.Print($"[terrain-prof] TOTAL {_sw.ElapsedMilliseconds} ms");
             return terr;   // (grid/dom/material/chunks all stored above, before RebuildAll)
         }
     }

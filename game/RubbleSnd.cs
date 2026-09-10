@@ -32,7 +32,7 @@ namespace UnturnedGodot
             if (_byId != null) return;
             _byId = new Dictionary<int, AudioStream>();
             string path = ProjectSettings.GlobalizePath("res://content/effects/rubble_snd.json");
-            if (!File.Exists(path)) { GD.Print("[rubblesnd] no rubble_snd.json -- silent breaks"); return; }
+            if (!File.Exists(path)) { Log.Print("[rubblesnd] no rubble_snd.json -- silent breaks"); return; }
             var parsed = Json.ParseString(File.ReadAllText(path));
             if (parsed.VariantType != Variant.Type.Dictionary) return;
             var dict = parsed.AsGodotDictionary();
@@ -53,7 +53,7 @@ namespace UnturnedGodot
                 var wav = AudioStreamWav.LoadFromFile(sp, new Godot.Collections.Dictionary());
                 if (wav != null) _byId[id] = wav;
             }
-            GD.Print($"[rubblesnd] loaded {_byId.Count} retail break sounds");
+            Log.Print($"[rubblesnd] loaded {_byId.Count} retail break sounds");
         }
     }
 }

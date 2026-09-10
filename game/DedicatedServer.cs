@@ -70,7 +70,7 @@ namespace UnturnedGodot
             if (live == MatchLive && Server.Combat.PvPEnabled == live) return;
             MatchLive = live;
             Server.Combat.PvPEnabled = live;
-            GD.Print($"[ARENA] match {(live ? "LIVE" : "WAITING")} -- {n} player{(n == 1 ? "" : "s")} connected, need {ArenaMinPlayers}");
+            Log.Print($"[ARENA] match {(live ? "LIVE" : "WAITING")} -- {n} player{(n == 1 ? "" : "s")} connected, need {ArenaMinPlayers}");
         }
 
         public override void _Ready()
@@ -84,15 +84,15 @@ namespace UnturnedGodot
 
             // net diagnostics (hardening Part B): route the engine-free NetLog through Godot so it lands in
             // journald; OFF unless UG_NETLOG=1 or --netlog (zero overhead when off -- call sites are gated)
-            NetLog.Sink = s => GD.Print(s);
-            NetLog.ErrorSink = s => GD.PrintErr(s);
+            NetLog.Sink = s => Log.Print(s);
+            NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
 
             var srvTransport = TransportOverride ?? new UdpServerTransport(Port);
             _statusTransport = srvTransport as UdpServerTransport;   // null under a test MemTransport; else answers browser status-reqs
             if (_statusTransport != null) _statusTransport.StatusVersion = NetContent.Hash;   // browser grays + blocks join on a version mismatch
             Server = new NetWorldServer(srvTransport,
-                (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
+                (conn, reason, isError) => Log.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
                 activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
@@ -100,8 +100,8 @@ namespace UnturnedGodot
             // see water). Read once here rather than per tick -- SeaLevelY does not move during a session.
             Server.HasWater = Terrain.HasWater; Server.SeaLevelY = Terrain.SeaLevelY;
             Server.Vitals.SurvivalDrain = SurvivalDrain;   // B5: default false = the coarse-HP path is byte-untouched (no starvation, no passive regen)
-            Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
-            Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
+            Server.Session.PeerConnected += peer => Log.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
+            Server.Session.PeerDisconnected += (peer, reason) => Log.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
             // MP pickup Step 4 (decision, ITEM_PICKUP_WIRING_PLAN §4.1): joiners get the DEMO KIT granted
             // into the SERVER grid -- the same bag the client shell always showed locally, now authoritative
             // (without it the owner-block adoption would empty the bag at join and reload/consume would have
@@ -208,7 +208,7 @@ namespace UnturnedGodot
                     var pick = ring[(playerId - 1) % ring.Count];
                     return new UnityEngine.Vector3(pick.Pos.X, pick.Pos.Y, pick.Pos.Z);
                 };
-                GD.Print($"[ARENA] spawn ring armed ({ring.Count} points)");
+                Log.Print($"[ARENA] spawn ring armed ({ring.Count} points)");
             }
 
             // The match gate. "Wait for >1 player before starting" has to MEAN something, and on a server whose
@@ -271,7 +271,7 @@ namespace UnturnedGodot
             // real. Loading here means the first snapshot any client ever receives is of the restored world.
             // `UG_SAVE_DIR` puts the file beside the service rather than in the launching user's profile.
             Save = new WorldSaveDriver(Server, System.IO.Path.GetFileName((MapRoot ?? "world").TrimEnd('/')), DayNight);
-            GD.Print("[SAVE] " + Save.LoadIntoWorld());
+            Log.Print("[SAVE] " + Save.LoadIntoWorld());
             Server.Transactions.WipeSaveHandler = () => Save.Wipe();
             Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Save.Tick(dt), "net.save.autosave"));
@@ -303,7 +303,7 @@ namespace UnturnedGodot
             if (tick - _lastStatusTick >= 500)   // 10 s heartbeat so a headless console shows life
             {
                 _lastStatusTick = tick;
-                GD.Print($"[DEDICATED] tick {Server.Session.CurrentTick} | players {Server.Session.Peers.Count} | snapshots full={Server.Composer.Diag.FullSnapshotsComposed} delta={Server.Composer.Diag.DeltaSnapshotsComposed}");
+                Log.Print($"[DEDICATED] tick {Server.Session.CurrentTick} | players {Server.Session.Peers.Count} | snapshots full={Server.Composer.Diag.FullSnapshotsComposed} delta={Server.Composer.Diag.DeltaSnapshotsComposed}");
             }
         }
 

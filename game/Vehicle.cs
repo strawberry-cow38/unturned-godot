@@ -864,12 +864,12 @@ namespace UnturnedGodot
         public bool HasRetractGear => _gearPivots != null;   // driven vehicle has retractable gear (jet) -> G toggles it
         public void ToggleGear()
         {
-            GD.Print($"[GEAR] ToggleGear deploy={_gearDeploy:0.###} grounded={GroundedByRay()} wantDown={_gearWantDown} afloat={_afloat} pgm={_planeGroundMode} pivots={_gearPivots!=null}");
-            if (_gearPivots == null) { GD.Print("[GEAR] blocked: no pivots"); return; }
-            if (_gearDeploy > 0.001f && _gearDeploy < 0.999f) { GD.Print("[GEAR] blocked: mid-fold"); return; }
-            if (_gearWantDown && (GroundedByRay() || _planeGroundMode) && !_afloat) { GD.Print("[GEAR] blocked: ground-lock (retract only when airborne)"); return; }
+            Log.Print($"[GEAR] ToggleGear deploy={_gearDeploy:0.###} grounded={GroundedByRay()} wantDown={_gearWantDown} afloat={_afloat} pgm={_planeGroundMode} pivots={_gearPivots!=null}");
+            if (_gearPivots == null) { Log.Print("[GEAR] blocked: no pivots"); return; }
+            if (_gearDeploy > 0.001f && _gearDeploy < 0.999f) { Log.Print("[GEAR] blocked: mid-fold"); return; }
+            if (_gearWantDown && (GroundedByRay() || _planeGroundMode) && !_afloat) { Log.Print("[GEAR] blocked: ground-lock (retract only when airborne)"); return; }
             _gearWantDown = !_gearWantDown;
-            GD.Print($"[GEAR] TOGGLED -> wantDown={_gearWantDown}");
+            Log.Print($"[GEAR] TOGGLED -> wantDown={_gearWantDown}");
         }
         public bool HasWheels => _wNodes != null && _wNodes.Length > 0;   // a WHEELED plane seats on spawn; a floatplane (no wheels) drops onto the water
         float _groundClearance;
@@ -2635,7 +2635,7 @@ namespace UnturnedGodot
                 float theirs = ImpactVehicleDmg * closing * other.ImpactMassScale;
                 other.TakeDamage(Mathf.Floor(ours));    // we hit them with OUR weight
                 TakeDamage(Mathf.Floor(theirs));        // they resist with THEIRS
-                GD.Print($"[RAM] {DisplayName} -> {other.DisplayName} closing={closing:0.0} dealt={ours:0} taken={theirs:0}");
+                Log.Print($"[RAM] {DisplayName} -> {other.DisplayName} closing={closing:0.0} dealt={ours:0} taken={theirs:0}");
                 return;
             }
 
@@ -4192,7 +4192,7 @@ namespace UnturnedGodot
                         v._turretHatch.AddChild(new MeshInstance3D { Name = "tank_top_hatch", Mesh = lid, MaterialOverride = bodyMat, Position = -TankTopHatchHinge });
                         v.TurretPivot.AddChild(v._turretHatch);
                     }
-                    GD.Print($"[tank] turret peeled: gun box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, lid {(lid != null ? "ok" : "MISSING")}, rest {(rest != null ? "ok" : "MISSING")}");
+                    Log.Print($"[tank] turret peeled: gun box {(box != null ? "ok" : "MISSING")}, barrel {(barrel != null ? "ok" : "MISSING")}, lid {(lid != null ? "ok" : "MISSING")}, rest {(rest != null ? "ok" : "MISSING")}");
                 }
                 if (!mounted) v.AddChild(v.TurretPivot);
                 if (mounted && v._turretHatch != null)   // the turret and the gun COLLIDE (master 2026-09-06): direct children of the body, posed to the pivots each tick
@@ -4226,7 +4226,7 @@ namespace UnturnedGodot
                         if (cap != null) v._driverHatch.AddChild(new MeshInstance3D { Name = "tank_driver_hatch_cap", Mesh = cap, MaterialOverride = bodyMat, Position = -TankDriverHatchHinge, Scale = new Vector3(1f, 1.02f, 1.02f) });
                         v.AddChild(v._driverHatch);
                     }
-                    else GD.Print("[tank] driver visor NOT peeled (zone matched nothing)");
+                    else Log.Print("[tank] driver visor NOT peeled (zone matched nothing)");
                 }
                 if (s.GunMesh != null)
                 {
@@ -5754,7 +5754,7 @@ namespace UnturnedGodot
         static Mesh LoadOptionalObj(string file)
         {
             string abs = ProjectSettings.GlobalizePath($"res://content/{file}");
-            if (!System.IO.File.Exists(abs)) { GD.Print($"[heli] {file} missing -- falling back to primitive blades (run tools/extract_huey.py)"); return null; }
+            if (!System.IO.File.Exists(abs)) { Log.Print($"[heli] {file} missing -- falling back to primitive blades (run tools/extract_huey.py)"); return null; }
             return ContentProvider.ParseObj($"res://content/{file}");
         }
 
@@ -7115,7 +7115,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                                     var ab = half.GetAabb(); var c = ab.GetCenter();
                                     float z = isHead ? ab.Position.Z - 0.06f : ab.End.Z + 0.06f;
                                     (isHead ? v._autoSpot : v._autoTail).Add(new Vector3(c.X, c.Y, z));
-                                    if (System.Environment.GetEnvironmentVariable("UG_LAMPDBG") == "1") GD.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
+                                    if (System.Environment.GetEnvironmentVariable("UG_LAMPDBG") == "1") Log.Print($"[lamp] {s.Name} auto {(isHead ? "head" : "tail")} emitter at ({c.X:F2}, {c.Y:F2}, {z:F2}) from {txt}");
                                 }
                             }
                             foreach (var (half, side) in new[] { (lhalf, "l"), (rhalf, "r") })
@@ -8184,7 +8184,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
 
             // FLIGHT DEBUG (UG_PLANEDBG=1): airspeed / altitude / lift / pitch so I can read the takeoff envelope
             if (System.Environment.GetEnvironmentVariable("UG_PLANEDBG") == "1" && ++_planeDbgFrame % 20 == 0)
-                GD.Print($"[plane] t={_planeDbgFrame} spd={LinearVelocity.Length():F1} air={airspeed:F1} alt={GlobalPosition.Y:F1} aoa={aoaDeg:F0} cl={cl:F2} spool={spool:F2} thr={throttle:F2} noseDeg={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-b.Z.Y, -1f, 1f))):F0} roll={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.X.Y, -1f, 1f))):F0} angv={AngularVelocity.Length():F1} hdg={Mathf.RadToDeg(Mathf.Atan2(-b.Z.X, -b.Z.Z)):F0} grnd={grounded} afloat={_afloat}");
+                Log.Print($"[plane] t={_planeDbgFrame} spd={LinearVelocity.Length():F1} air={airspeed:F1} alt={GlobalPosition.Y:F1} aoa={aoaDeg:F0} cl={cl:F2} spool={spool:F2} thr={throttle:F2} noseDeg={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-b.Z.Y, -1f, 1f))):F0} roll={Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(b.X.Y, -1f, 1f))):F0} angv={AngularVelocity.Length():F1} hdg={Mathf.RadToDeg(Mathf.Atan2(-b.Z.X, -b.Z.Z)):F0} grnd={grounded} afloat={_afloat}");
 
             // CRASH: full-3D speed like the heli (a plane's defining crash is a nose-in dive, not a lateral
             // bonk). Guarded by the spawn grace so the placement drop doesn't count.
@@ -9266,7 +9266,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 _awakeLogT = 0; int asleep = 0, frozen = 0, awake = 0, proc = 0;
                 foreach (var v in _live) { if (!GodotObject.IsInstanceValid(v)) continue; if (v.Freeze) frozen++; else if (v.Sleeping) asleep++; else awake++; if (v.IsProcessing()) proc++; }
-                GD.Print($"[vehawake] live={_live.Count} awake={awake} asleep={asleep} frozen={frozen} processing={proc}");
+                Log.Print($"[vehawake] live={_live.Count} awake={awake} asleep={asleep} frozen={frozen} processing={proc}");
             }
             for (int i = _live.Count - 1; i >= 0; i--)
             {
@@ -9782,7 +9782,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 {
                     _dustLogT = 1f;
                     bool anyEmit = false; foreach (var d in _wheelDust) if (d != null && d.Emitting) { anyEmit = true; break; }
-                    GD.Print($"[wheeldust] spd={spd:0.0} surf0={_wheelSurf[0]} anyEmit={anyEmit}");
+                    Log.Print($"[wheeldust] spd={spd:0.0} surf0={_wheelSurf[0]} anyEmit={anyEmit}");
                 }
             }
             if (_exploded)   // master: explosion smoke/fire emits from the ENGINE bay (like the hurt smoke) but rises STRAIGHT UP -- world-space so the plume doesn't tilt with the tumbling wreck
@@ -10007,7 +10007,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (gen is StaticBody3D sb)
                         foreach (var cs in sb.GetChildren())
                             if (cs is CollisionShape3D csh && csh.Shape is ConvexPolygonShape3D) shapes.Add(csh.Shape);
-                GD.Print($"[DECOMP] region tris={_decomposeMesh.GetFaces().Length / 3} -> {shapes.Count} convex hulls");
+                Log.Print($"[DECOMP] region tris={_decomposeMesh.GetFaces().Length / 3} -> {shapes.Count} convex hulls");
                 _decomposeCache[_decomposeKey] = shapes;
                 SaveBakedHulls(_decomposeKey, shapes);   // next load on this machine reads the bake instead of decomposing
                 mi.QueueFree();   // takes the generated body with it; the shapes themselves are refcounted and survive
@@ -10033,9 +10033,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     if (ch is CollisionShape3D cs && !cs.Disabled
                         && (cs.Name == "BellyBox" || cs.Name == "RoofBox")) { cs.Disabled = true; off++; }
                 DebugBoxHullsDisabled = off;
-                GD.Print($"[DECOMP] fitted boxes taken out of physics: {off} (kept in the tree for look-focus)");
+                Log.Print($"[DECOMP] fitted boxes taken out of physics: {off} (kept in the tree for look-focus)");
             }
-            GD.Print($"[DECOMP] hulls harvested: {shapes.Count}");
+            Log.Print($"[DECOMP] hulls harvested: {shapes.Count}");
             _decomposeMesh = null;
         }
 
@@ -10078,7 +10078,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                         for (int k = 0; k < n; k++) pts[k] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
                         shapes.Add(new ConvexPolygonShape3D { Points = pts });
                     }
-                    if (shapes != null && shapes.Count > 0) { GD.Print($"[DECOMP] baked hulls: {shapes.Count} from {dir}{fn}"); return shapes; }
+                    if (shapes != null && shapes.Count > 0) { Log.Print($"[DECOMP] baked hulls: {shapes.Count} from {dir}{fn}"); return shapes; }
                 }
                 catch (System.Exception e) { GD.PushWarning($"[DECOMP] bad hull bake {path}: {e.Message}"); }
             }
@@ -10098,7 +10098,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                     bw.Write(pts.Length);
                     foreach (var pt in pts) { bw.Write(pt.X); bw.Write(pt.Y); bw.Write(pt.Z); }
                 }
-                GD.Print($"[DECOMP] baked {shapes.Count} hulls -> user://vehicle_hulls/{HullFileName(key)}  (key: {key})");
+                Log.Print($"[DECOMP] baked {shapes.Count} hulls -> user://vehicle_hulls/{HullFileName(key)}  (key: {key})");
             }
             catch (System.Exception e) { GD.PushWarning($"[DECOMP] could not bake hulls: {e.Message}"); }
         }
@@ -10606,7 +10606,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
                 if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
             }
-            if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
+            if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") Log.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
         }
     }
 }

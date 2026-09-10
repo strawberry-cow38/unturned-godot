@@ -70,7 +70,7 @@ namespace UnturnedGodot
             {
                 if (objs.Place(b.Prop, PosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
             }
-            GD.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
+            Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);
         }
     }

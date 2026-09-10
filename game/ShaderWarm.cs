@@ -77,10 +77,10 @@ namespace UnturnedGodot
                     n++;
                 }
             }
-            catch (System.Exception e) { GD.PrintErr($"[shaderwarm] {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[shaderwarm] {e.Message}"); }
             int c = WarmCanvasShaders(dir);
             LastCount = n + c;
-            GD.Print($"[shaderwarm] {n} spatial + {c} canvas shaders drawn for {Frames} frames behind the load");
+            Log.Print($"[shaderwarm] {n} spatial + {c} canvas shaders drawn for {Frames} frames behind the load");
             if (n + c == 0) { QueueFree(); return; }
             Busy = true;
         }
@@ -116,7 +116,7 @@ namespace UnturnedGodot
                 }
                 if (c > 0) AddChild(layer); else layer.QueueFree();
             }
-            catch (System.Exception e) { GD.PrintErr($"[shaderwarm/canvas] {e.Message}"); }
+            catch (System.Exception e) { Log.Err($"[shaderwarm/canvas] {e.Message}"); }
             return c;
         }
 

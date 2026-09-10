@@ -35,7 +35,7 @@ namespace UnturnedGodot
         {
             var d = new Dictionary<string, List<Point>>();
             string path = ProjectSettings.GlobalizePath("res://content/objects/road_connectors.txt");
-            if (!System.IO.File.Exists(path)) { GD.Print("[connectors] no road_connectors.txt -- prop snapping off"); return d; }
+            if (!System.IO.File.Exists(path)) { Log.Print("[connectors] no road_connectors.txt -- prop snapping off"); return d; }
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(path))
             {
@@ -49,7 +49,7 @@ namespace UnturnedGodot
                     new Vector3(float.Parse(p[4], ci), float.Parse(p[5], ci), float.Parse(p[6], ci))));
                 n++;
             }
-            GD.Print($"[connectors] {n} connection points across {d.Count} props");
+            Log.Print($"[connectors] {n} connection points across {d.Count} props");
             return d;
         }
 

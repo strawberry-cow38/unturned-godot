@@ -631,11 +631,11 @@ namespace UnturnedGodot
 
         void Build(ArrayMesh body)
         {
-            if (body == null) { GD.PrintErr($"[tv] {PropName}: no body mesh"); return; }
+            if (body == null) { Log.Err($"[tv] {PropName}: no body mesh"); return; }
             // Split the screen texel off the body. Bucket[0] = matched (screen) tris; Build() returns null for an
             // empty bucket, so a null bucket means the predicate matched nothing (wrong prop / re-extracted UVs).
             var screenMesh = SplitScreen(body, _kind);
-            if (screenMesh == null) { GD.PrintErr($"[tv] {PropName}: screen split matched no triangles"); return; }
+            if (screenMesh == null) { Log.Err($"[tv] {PropName}: screen split matched no triangles"); return; }
 
             // ALWAYS loaded, whatever program this set draws. The SMPTE image and its composite are shared statics --
             // one texture and one composite per glass colour for the whole map -- so wiring them costs nothing, and the
@@ -828,7 +828,7 @@ namespace UnturnedGodot
             if (pred == null) return null;
             var parts = ObjMesh.SplitByUv(body, key, pred);
             var mesh = parts != null && parts.Length >= 1 ? parts[0] : null;
-            if (mesh == null) { GD.PrintErr($"[tv] {PropName}: LED split matched no triangles"); return null; }
+            if (mesh == null) { Log.Err($"[tv] {PropName}: LED split matched no triangles"); return null; }
 
             mat = new StandardMaterial3D
             {
@@ -1107,7 +1107,7 @@ namespace UnturnedGodot
             if (_pngCache.TryGetValue(resPath, out var hit)) return hit;
             var img = new Image();
             string p = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { Log.Err($"[tv] {resPath} missing/failed"); _pngCache[resPath] = null; return null; }
             var t = ImageTexture.CreateFromImage(img);
             _pngCache[resPath] = t;
             return t;
@@ -1149,7 +1149,7 @@ namespace UnturnedGodot
             if (_pattern != null) return _pattern;
             var img = new Image();   // raw png at runtime: Image.Load, not GD.Load (game feedback)
             string p = ProjectSettings.GlobalizePath("res://content/objects/smpte_pattern.png");
-            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { GD.PrintErr("[tv] smpte_pattern.png missing/failed"); return null; }
+            if (!System.IO.File.Exists(p) || !ContentProvider.LoadOk(img, p)) { Log.Err("[tv] smpte_pattern.png missing/failed"); return null; }
             _pattern = ImageTexture.CreateFromImage(img);
             return _pattern;
         }
@@ -1727,7 +1727,7 @@ namespace UnturnedGodot
         {
             if (_screenShader != null) return _screenShader;
             _screenShader = GD.Load<Shader>("res://content/screen.gdshader");
-            if (_screenShader == null) GD.PrintErr("[tv] screen.gdshader failed to load -- every screen will be blank");
+            if (_screenShader == null) Log.Err("[tv] screen.gdshader failed to load -- every screen will be blank");
             return _screenShader;
         }
 

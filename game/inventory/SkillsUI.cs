@@ -308,17 +308,17 @@ namespace UnturnedGodot
             while (_debugTakeIdx < _debugTake.Length)
             {
                 var n = _tree.NodeOf(_debugTake[_debugTakeIdx]);
-                if (n == null) { GD.PrintErr($"[skilltake] no node '{_debugTake[_debugTakeIdx]}'"); _debugTakeIdx++; continue; }
+                if (n == null) { Log.Err($"[skilltake] no node '{_debugTake[_debugTakeIdx]}'"); _debugTakeIdx++; continue; }
                 uint cost = Prog.Take(_tree, n, sk.experience);
                 if (cost == 0u)
                 {
                     Prog.CanTake(_tree, n, sk.experience, out string why);
-                    GD.Print($"[skilltake] holding at '{n.Id}': {why}");
+                    Log.Print($"[skilltake] holding at '{n.Id}': {why}");
                     return;   // not yet -- try again next tick rather than skipping past it
                 }
                 sk.TrySpend(cost);
                 _debugTakeIdx++;
-                GD.Print($"[skilltake] learned '{n.Id}' for {cost} XP ({sk.experience} left)");
+                Log.Print($"[skilltake] learned '{n.Id}' for {cost} XP ({sk.experience} left)");
             }
         }
 

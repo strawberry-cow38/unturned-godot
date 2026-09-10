@@ -116,7 +116,7 @@ namespace UnturnedGodot
                 btn.Pressed += () =>
                 {
                     if (_v != null && IsInstanceValid(_v) && _v.RepairGlass(idx))
-                        GD.Print($"[mechanics] repaired {Vehicle.GlassPaneDisplay(_v.GlassLabel(idx))} on {_v.DisplayName}");
+                        Log.Print($"[mechanics] repaired {Vehicle.GlassPaneDisplay(_v.GlassLabel(idx))} on {_v.DisplayName}");
                 };
                 row.AddChild(lbl); row.AddChild(btn);
                 _glassBox.AddChild(row);
@@ -145,7 +145,7 @@ namespace UnturnedGodot
                 btn.Pressed += () =>
                 {
                     if (_v != null && IsInstanceValid(_v) && _v.RepairLamp(idx))
-                        GD.Print($"[mechanics] repaired {Vehicle.LampDisplay(_v.LampLabel(idx))} on {_v.DisplayName}");
+                        Log.Print($"[mechanics] repaired {Vehicle.LampDisplay(_v.LampLabel(idx))} on {_v.DisplayName}");
                 };
                 row.AddChild(lbl); row.AddChild(btn);
                 _lampBox.AddChild(row);
@@ -173,7 +173,7 @@ namespace UnturnedGodot
                 btn.Pressed += () =>
                 {
                     if (_v != null && IsInstanceValid(_v) && _v.RepairTire(idx))
-                        GD.Print($"[mechanics] replaced {Vehicle.TireDisplay(idx, _v.TireCount)} on {_v.DisplayName}");
+                        Log.Print($"[mechanics] replaced {Vehicle.TireDisplay(idx, _v.TireCount)} on {_v.DisplayName}");
                 };
                 row.AddChild(lbl); row.AddChild(btn);
                 _tireBox.AddChild(row);

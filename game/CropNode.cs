@@ -18,7 +18,7 @@ namespace UnturnedGodot
         {
             _byName.Clear(); _bySeed.Clear();
             string p = ProjectSettings.GlobalizePath("res://content/crops.tsv");
-            if (!File.Exists(p)) { GD.Print("[crops] no crops.tsv"); return; }
+            if (!File.Exists(p)) { Log.Print("[crops] no crops.tsv"); return; }
             foreach (var ln in File.ReadAllLines(p))
             {
                 var c = ln.Split('\t');
@@ -29,7 +29,7 @@ namespace UnturnedGodot
                 _byName[c[0]] = new CropDef { Name = c[0], SeedId = sid, Dirt = col };
                 if (sid != 0) _bySeed[sid] = c[0];
             }
-            GD.Print($"[crops] loaded {_byName.Count} crop defs");
+            Log.Print($"[crops] loaded {_byName.Count} crop defs");
         }
 
         static float Pf(string s) => float.Parse(s, CultureInfo.InvariantCulture);
