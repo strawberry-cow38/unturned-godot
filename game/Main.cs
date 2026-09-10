@@ -1729,6 +1729,20 @@ namespace UnturnedGodot
             // item's Use clip on a loop so a movie catches the whole thing: a chip bag has 7.5 s of animation and
             // the interesting half is a bag opening, not the pose it starts in.
             if (isConsumable) AddChild(new ConsumeUseDriver { VM = _vm, Period = Mathf.Max(1.5f, _cUseLen + 0.6f) });
+            // ⚠ AND MAKE IT WATCHABLE. The viewmodel renders in its OWN SubViewport with its own camera, so the
+            // harness camera above cannot frame it -- every eat render so far has been a face-full of knuckles, and
+            // "opens up vs opens sideways" is exactly the thing that view cannot answer. UG_VMTUNE="x,y,z" shifts
+            // the arms in that viewport (the same offset the ESC sliders drive), which is the only handle there is.
+            if (System.Environment.GetEnvironmentVariable("UG_VMTUNE") is string _vt && _vt.Split(',').Length == 3)
+            {
+                // ⚠ Trim quotes: routed through ssh -> powershell the value arrives as literal 'x,y,z' WITH the
+                // quotes, so the first and last components fail to parse and silently read 0. That is how a Z of
+                // -0.55 became 0 and the camera never moved.
+                var a = _vt.Trim('\'', '"').Split(',');
+                float PF(string v) => float.TryParse(v.Trim().Trim('\'', '"'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : 0f;
+                Viewmodel.TuneOffset = new Vector3(PF(a[0]), PF(a[1]), PF(a[2]));
+                GD.Print($"[vm] tune offset {Viewmodel.TuneOffset} from raw '{_vt}' parts={string.Join('|', a)}");
+            }
             // ⚠ NOT for a consumable. isMelee is still TRUE for one -- it is computed from "<name>.txt exists",
             // and every food ships that -- so reordering the viewmodel branch was not enough: the swing driver kept
             // attaching alongside the consume driver and the poor sod punched with his chip bag on a loop

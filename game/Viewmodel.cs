@@ -502,7 +502,23 @@ namespace UnturnedGodot
             _vpMargin = ((Vector2)_vp.Size - _scr) * 0.5f;   // viewport px -> screen px = subtract this; the lean-roll corner margin will be re-done as a wider vm-cam FOV ("render more") instead.
             AddChild(_vp);
 
-            _cam = new Camera3D { KeepAspect = Camera3D.KeepAspectEnum.Width, Fov = OversizeFov(SourceFov), Current = true };   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
+            _cam = new Camera3D { KeepAspect = Camera3D.KeepAspectEnum.Width, Fov = OversizeFov(SourceFov), Current = true };
+            // HARNESS FRAMING. The arms live in THIS viewport with THIS camera, so the scene camera cannot frame
+            // them and moving the arms only slides them around a view that is still pressed against them -- which
+            // is why every eat render was a face-full of knuckles and could not answer "does the bag open UP".
+            // UG_VMCAM="x,y,z[,fov]" moves the camera instead of the subject, which is the handle that was missing.
+            if (System.Environment.GetEnvironmentVariable("UG_VMCAM") is string _vc)
+            {
+                var a = _vc.Trim('\'', '"').Split(',');
+                float PC(int i) => a.Length > i && float.TryParse(a[i].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : 0f;
+                if (a.Length >= 3)
+                {
+                    _cam.Position = new Vector3(PC(0), PC(1), PC(2));
+                    if (a.Length >= 4 && PC(3) > 1f) _cam.Fov = PC(3);
+                    _cam.LookAt(Vector3.Zero, Vector3.Up);   // aim back at the hands wherever it is put
+                    GD.Print($"[vm] harness cam at {_cam.Position} fov {_cam.Fov:0.#}");
+                }
+            }   // width-locked: the fov is horizontal, the extra height follows the taller viewport at the same px/deg
             _vp.AddChild(_cam);
             _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
             _vp.AddChild(_vpLight);
