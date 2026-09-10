@@ -66,12 +66,26 @@ namespace UnturnedGodot
             bool wall = n.Y < 0.01f;                      // vertical wall / ceiling -> blocked
             Point = hp;                                   // the surface contact; the base sits here (ghost is lifted in Apply)
             Valid = !wall && !Overlap(space, hp + Vector3.Up * Def.Offset, Def.Radius);   // clearance sphere at the src offset height
-            // a submersible device (inlet) is valid ONLY on submerged seabed within its water-depth band
-            if (Valid && Def.WaterDepthMin >= 0f)
+            // A submersible device (the inlet) is valid ONLY on submerged seabed within its water-depth
+            // band -- and it is the ONE exception to the underwater rule below, because being under is
+            // the whole point of it.
+            if (Def.WaterDepthMin >= 0f)
             {
-                float depth = DeployableDef.SeaLevel - hp.Y;   // how far below the water plane the seabed sits here
-                Valid = depth >= Def.WaterDepthMin && depth <= Def.WaterDepthMax;
+                if (Valid)
+                {
+                    float depth = DeployableDef.SeaLevel - hp.Y;   // how far below the water plane the seabed sits here
+                    Valid = depth >= Def.WaterDepthMin && depth <= Def.WaterDepthMax;
+                }
             }
+            // NOTHING ELSE GOES UNDER THE WATER (strawberry 2026-09-10). A generator on the seabed was
+            // placeable and worked, which is not a thing that should be true.
+            //
+            // GATED ON Terrain.HasWater, and that is not belt-and-braces. Water is a single global plane at
+            // SeaLevelY, which DEFAULTS to 25.6 (PEI's) and is only overwritten per build -- so in a world
+            // with no water at all, ground at Y=0 reads as 25 m submerged and every placement anywhere is
+            // blocked. Without this the flat no-map harness world could not place anything, which is how I
+            // found it: deploy.placer_aim and deploy.splitter_placement both went red.
+            else if (Valid && Terrain.HasWater && hp.Y < DeployableDef.SeaLevel) Valid = false;
             Apply();
             return Valid;
         }
@@ -84,7 +98,12 @@ namespace UnturnedGodot
             {
                 Shape = new SphereShape3D { Radius = r },
                 Transform = new Transform3D(Basis.Identity, p),
-                CollisionMask = 1u << 0,
+                // THE PLAYER IS NOT ON BIT 0, which is exactly why you could plant a tank inside yourself:
+                // this sphere only ever scanned world/structures/vehicles. Bit 3 is the local player and
+                // RemotePlayerLayer is everyone else (they are deliberately off bit 0 -- see the note on
+                // PlayerController's mask), so standing in the spot now reads as an obstruction and the
+                // ghost goes red like any other. (strawberry 2026-09-10)
+                CollisionMask = (1u << 0) | (1u << 3) | (uint)RemotePlayers.RemotePlayerLayer,
             };
             return space.IntersectShape(pq, 1).Count > 0;
         }

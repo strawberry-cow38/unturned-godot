@@ -24,7 +24,12 @@ namespace UnturnedGodot
                 // StorageCrate). Keeping them out makes ServerPlace no-op their ids (no phantom replica)
                 // while OnPlaceDeployable still SPENDS the item -> their place routes the spend server-side
                 // without a spawn.
-                if (def.Fluid != null || def.DoorProp != null) continue;
+                // REGISTERED, not skipped -- with LocalOnly set. Leaving them out of the schema was meant
+                // to stop ServerPlace spawning a phantom replica, and it did, but the schema is the whole
+                // server def table: an absent id ALSO fails CanPlace, which is this command's validator, so
+                // the place was rejected before OnPlaceDeployable could spend the item. The client had
+                // already skipped its own local spend expecting the server to do it, so they were free.
+                bool localOnly = def.Fluid != null || def.DoorProp != null;
                                                     // server-replicated deployables. Keeping them out of the schema makes the server's
                                                     // ServerPlace no-op a fluid id (no phantom replica) while OnPlaceDeployable still
                                                     // SPENDS the item -> the fluid place routes its spend server-side without a spawn.
@@ -33,6 +38,7 @@ namespace UnturnedGodot
                     ports[i] = new DeployablePortSpec { Kind = (byte)Kind(def.Ports[i].Kind), Watts = def.Ports[i].Watts };
                 schema.Register(new DeployableNetDef
                 {
+                    LocalOnly = localOnly,
                     DefId = def.Id,
                     Health = def.Health,
                     FuelCapacity = def.Fuel,

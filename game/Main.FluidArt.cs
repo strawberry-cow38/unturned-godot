@@ -113,12 +113,22 @@ namespace UnturnedGodot
                 if (id==9115 && System.Environment.GetEnvironmentVariable("UG_FLUIDCLOSED")=="1")
                 {c.ToggleValve();c.HubTick(.2);}
                 bool low=System.Environment.GetEnvironmentVariable("UG_FLUIDLOD1")=="1";
-                cam.Size=2.5f;
-                var target=new Vector3(0,FluidArt.Bounds(c.Def).Size.Y/2,0);
-                cam.Position=low ? target + new Vector3(1.7f,1.6f,2.4f).Normalized() *
-                    (c.GetNode<MeshInstance3D>("FluidBody").VisibilityRangeEnd + 10) : new Vector3(1.7f,1.6f,2.4f);
+                var bs=FluidArt.Bounds(c.Def).Size;
+                // FRAME FROM THE BOUNDS, not a fixed 2.5. The enlarged machines outgrew the hard-coded
+                // size and came back cropped -- the refinery is 2.78 m tall now.
+                cam.Size=Mathf.Max(Mathf.Max(bs.X,bs.Z),bs.Y)*1.35f+.4f;
+                // UG_FLUIDANGLE orbits the camera so a prop can be shot from several sides. strawberry
+                // 2026-09-10: "give astra multiple angles of its props" -- one three-quarter view hides
+                // exactly the seams and open ends that need looking at.
+                float az=Mathf.DegToRad(float.TryParse(System.Environment.GetEnvironmentVariable("UG_FLUIDANGLE"),
+                    System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var a)?a:35f);
+                float el=Mathf.DegToRad(float.TryParse(System.Environment.GetEnvironmentVariable("UG_FLUIDELEV"),
+                    System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var e)?e:28f);
+                var target=new Vector3(0,bs.Y/2,0);
+                var dir=new Vector3(Mathf.Sin(az)*Mathf.Cos(el),Mathf.Sin(el),Mathf.Cos(az)*Mathf.Cos(el)).Normalized();
+                cam.Position=target+dir*(low ? c.GetNode<MeshInstance3D>("FluidBody").VisibilityRangeEnd+10 : 8f);
                 cam.LookAt(target);
-                Label(c.Def.Name + (low ? " — LOD1" : " — LOD0"),new Vector3(0,-.15f,.55f));
+                Label(c.Def.Name + (low ? " — LOD1" : "") + $"  {Mathf.RoundToInt(Mathf.RadToDeg(az))}°",new Vector3(0,-.15f,.55f));
                 GD.Print($"[fluidart] placed {id}: {c.PortNodes.Count} hose ports, mesh={c.GetNode<MeshInstance3D>("FluidBody").Mesh.GetAabb()}");
             }
         }
