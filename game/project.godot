@@ -46,3 +46,20 @@ driver/threads/thread_model=2
 ; The Graphics row "Fog quality" writes Low (32, unfiltered) / High (64) into override.cfg; Medium = these lines.
 environment/volumetric_fog/volume_size=48
 environment/volumetric_fog/volume_depth=48
+
+[animation]
+
+; ⚠ TURNED OFF DELIBERATELY, not to hide a bug (strawberry 2026-09-10: "every animation spams warnings when it
+; completes" / "while in a car, warnings go CRAZY").
+;
+; The viewmodel arms share ONE AnimationLibrary holding all 72 consumable clips, because building them per
+; character was about a third of the player load phase. Every one of those clips carries Item_Root/<part> tracks
+; for ITS OWN item's pieces -- and you can only hold one food at a time, so the other 71 items' part tracks can
+; never resolve. The mixer re-warns for the whole library on every cache rebuild, which driving does constantly.
+;
+; The warning is therefore structural: it reports 71 items you are not holding, once per rebuild, forever. What it
+; used to be genuinely useful for -- catching a clip whose track names do not match the nodes we build -- is now
+; covered statically and for ALL 78 items by the test viewmodel.held_part_hierarchy, which cross-references the
+; clip data against the rip. That is strictly better coverage than a runtime warning about whichever item happens
+; to be in your hand, so this trades a real diagnostic for a better one rather than simply muting it.
+warnings/check_invalid_track_paths=false

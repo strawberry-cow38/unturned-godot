@@ -81,6 +81,13 @@ def rip(name):
     tr = comp_of(pf.read_typetree(), ("Transform",))
     if not tr: return None
     rows, alb = [], False
+    # ⚠ A PART CAN HAVE ITS OWN MATERIAL, and the interesting ones do (strawberry 2026-09-10: "the chips
+    # themselves are missing a texture and render as white squares"). bag_chips' Bone_3/Bone_4 -- the actual
+    # crisps -- use Material_Chips_Filling/Texture_Chips_Filling, not the bag's; canned_beans' Bone_0/Bone_2/
+    # Bone_3 use Material_Can_Beans_Filling. This tool used to take the FIRST meshed part's albedo and paint
+    # every part with it, so every food with a filling rendered its filling in the wrapper's texture on
+    # filling-shaped UVs -- i.e. white. Rip the texture PER PART and let each one name its own.
+    texfiles = {}
 
     # ⚠ WHICH PARTS ARE ACTUALLY DRAWN IS DATA, NOT A NAMING CONVENTION. The prefab carries an LODGroup and its
     # LOD0 names exactly the renderers retail shows up close -- bag_chips LOD0 is Bone_0..Bone_4 with Model_1 as
@@ -108,30 +115,40 @@ def rip(name):
         gtt = cgo.read_typetree() if cgo else {}
         mf = comp_of(gtt, ("MeshFilter",)) if gtt else None
         mesh = pptr(mf.read_typetree().get("m_Mesh", {})) if mf else None
-        fn = "-"
+        fn, tex = "-", "-"
         if mesh:
             body, _ = convert(mesh, part, name)
             fn = "%s_%s.txt" % (nl, part.lower())
             open(os.path.join(OUT, fn), "w").write(body)
-            if not alb:
-                mr = comp_of(gtt, ("MeshRenderer",))
-                mats = mr.read_typetree().get("m_Materials", []) if mr else []
-                mo = pptr(mats[0]) if mats else None
-                if mo:
-                    for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
-                        nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
-                        if nm == "_MainTex" and isinstance(val, dict):
-                            to = pptr(val.get("m_Texture", {}))
-                            if to:
-                                to.read().image.convert("RGBA").save(os.path.join(OUT, nl + "_albedo.png")); alb = True
+            mr = comp_of(gtt, ("MeshRenderer",))
+            mats = mr.read_typetree().get("m_Materials", []) if mr else []
+            mo = pptr(mats[0]) if mats else None
+            if mo:
+                for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
+                    nmp, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
+                    if nmp != "_MainTex" or not isinstance(val, dict): continue
+                    to = pptr(val.get("m_Texture", {}))
+                    if not to: break
+                    key = to.path_id
+                    if key not in texfiles:
+                        # The FIRST texture keeps the historical <item>_albedo.png name: the old single-mesh hold
+                        # path still asks for it by that name, so renaming it would break every un-ripped item.
+                        if not alb:
+                            texfiles[key] = nl + "_albedo.png"; alb = True
+                        else:
+                            safe = "".join(ch if ch.isalnum() else "_" for ch in str(to.read_typetree().get("m_Name", "tex"))).strip("_").lower()
+                            texfiles[key] = "%s_%s.png" % (nl, safe or "tex")
+                        to.read().image.convert("RGBA").save(os.path.join(OUT, texfiles[key]))
+                    tex = texfiles[key]
+                    break
         lp, ls = ctt.get("m_LocalPosition", {}), ctt.get("m_LocalScale", {})
         qx, qy, qz, qw = yaw180(ctt.get("m_LocalRotation", {}))
         # draw flag: LOD0 membership when the prefab has an LODGroup; otherwise everything meshed, and the
         # caller de-duplicates any Model_n chain by index (the pre-LODGroup fallback, now only a safety net).
         draw = 1 if (fn != "-" and (part in lod0 if has_group else True)) else 0
-        rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f\t%s\t%d" % (
+        rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f\t%s\t%d\t%s" % (
             part, fn, lp.get("x", 0.0), lp.get("y", 0.0), -lp.get("z", 0.0),
-            qx, qy, qz, qw, ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0), parent, draw))
+            qx, qy, qz, qw, ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0), parent, draw, tex))
 
     def walk(tr_tt, parent):
         """ RECURSIVE. The old version read only the prefab root's DIRECT children, but the clips address paths

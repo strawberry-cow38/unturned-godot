@@ -232,8 +232,8 @@ namespace UnturnedGodot
             {
                 string ln = f.GetLine();
                 if (string.IsNullOrWhiteSpace(ln)) continue;
-                var cc = ln.Split('\t');   // part, meshfile, pos, rot, scale, parent, drawInLod0
-                if (cc.Length >= 7) rows.Add(cc);
+                var cc = ln.Split('\t');   // part, meshfile, pos, rot, scale, parent, drawInLod0, texture
+                if (cc.Length >= 8) rows.Add(cc);
             }
             if (rows.Count == 0) return 0;
 
@@ -242,6 +242,30 @@ namespace UnturnedGodot
             // one direction or the other: "Model_n is an LOD, Bone_n is the model" threw away canned_beans'
             // Model_0/Model_2/Model_3 (all three are LOD0), and drawing every part rendered bag_chips' Model_1 --
             // which is the LOD1 copy of the same bag -- on top of Bone_0.
+
+            // ⚠ A PART CAN HAVE ITS OWN MATERIAL. bag_chips' Bone_3/Bone_4 -- the crisps you actually take out --
+            // are Material_Chips_Filling, not the bag's material; canned_beans' beans are Material_Can_Beans_Filling.
+            // Painting every part with the first one put the wrapper's texture on filling-shaped UVs and they came
+            // out white. One material per distinct texture, shared across the parts that use it.
+            var partMats = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
+            StandardMaterial3D MatFor(string texFile)
+            {
+                if (string.IsNullOrEmpty(texFile) || texFile == "-") return mat;
+                if (partMats.TryGetValue(texFile, out var have)) return have;
+                string gp = ProjectSettings.GlobalizePath($"res://content/{texFile}");
+                var img = System.IO.File.Exists(gp) ? ContentProvider.LoadImage(gp) : null;
+                // TextureFilter.Nearest for the same reason the gun body needs it: a runtime-loaded ImageTexture has
+                // no mipmaps, and the default linear-mipmap filter samples black once it minifies.
+                var made = img == null ? mat : new StandardMaterial3D
+                {
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    AlbedoTexture = ImageTexture.CreateFromImage(img),
+                };
+                partMats[texFile] = made;
+                return made;
+            }
 
             float P(string[] arr, int i) => arr.Length > i && float.TryParse(arr[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
             var nodes = new System.Collections.Generic.Dictionary<string, Node3D>();
@@ -268,11 +292,11 @@ namespace UnturnedGodot
                 // The mesh goes on a CHILD, not on the node itself: the node's scale is animation data (retail
                 // hides a piece by parking it at 0.001 and scales it to 1.0 when it should appear), and a
                 // MeshInstance3D that IS the animated node would need its own transform for the same job.
-                n.AddChild(new MeshInstance3D { Name = "Mesh", Mesh = mesh, MaterialOverride = mat });
+                n.AddChild(new MeshInstance3D { Name = "Mesh", Mesh = mesh, MaterialOverride = MatFor(col[7]) });
                 drawn++;
             }
             if (built > 0)
-                GD.Print($"[heldparts] {stem}: {built} nodes, {drawn} drawn (LOD0), {ConsumableRegistry.AnimatedParts(stem).Count} animated, under {attach.GetPath()}; tracks expect '{RiggedCharacter.HeldPartParent}Item_Root/...'");
+                GD.Print($"[heldparts] {stem}: {built} nodes, {drawn} drawn (LOD0), {partMats.Count} textures, {ConsumableRegistry.AnimatedParts(stem).Count} animated, under {attach.GetPath()}; tracks expect '{RiggedCharacter.HeldPartParent}Item_Root/...'");
             return built;
         }
 

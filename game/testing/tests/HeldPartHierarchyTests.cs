@@ -55,8 +55,9 @@ namespace UnturnedGodot.Testing
             T.Check("bag_chips specifically is a left-hook item",
                 hook.TryGetValue("bag_chips", out var bch) && bch == "Left");
 
-            int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0;
-            string firstMissing = null, firstBadParent = null, firstNoDraw = null;
+            int checkedItems = 0, missingParts = 0, badParent = 0, noDraw = 0, undrawnMeshed = 0, missingTex = 0;
+            string firstMissing = null, firstBadParent = null, firstNoDraw = null, firstMissingTex = null;
+            int multiTexItems = 0;
 
             foreach (var kv in animParts)
             {
@@ -67,6 +68,7 @@ namespace UnturnedGodot.Testing
                 checkedItems++;
 
                 var seen = new HashSet<string>();
+                var texNames = new HashSet<string>();
                 int roots = 0, drawn = 0;
                 foreach (var r in rows)
                 {
@@ -76,13 +78,22 @@ namespace UnturnedGodot.Testing
                     if (r[5] == "-") roots++;
                     else if (!seen.Contains(r[5])) { badParent++; firstBadParent ??= $"{kv.Key}: '{r[0]}' parent '{r[5]}' comes later"; }
                     seen.Add(r[0]);
-                    if (r[6] == "1") drawn++;
+                    if (r[6] == "1")
+                    {
+                        drawn++;
+                        // A part naming a texture the rip never wrote renders white -- which is exactly how the
+                        // chips shipped, before the ripper knew a part could carry its own material.
+                        if (r[7] != "-" && !Godot.FileAccess.FileExists($"res://content/{r[7]}"))
+                        { missingTex++; firstMissingTex ??= $"{kv.Key}/{r[0]} -> {r[7]}"; }
+                        if (r[7] != "-") texNames.Add(r[7]);
+                    }
                     else if (r[1] != "-") undrawnMeshed++;
                 }
                 if (roots != 1) { badParent++; firstBadParent ??= $"{kv.Key}: {roots} rows have no parent, want exactly 1"; }
                 if (!seen.Contains("Item_Root")) { badParent++; firstBadParent ??= $"{kv.Key}: no Item_Root row"; }
                 // Nothing drawn = the invisible bug, exactly as reported.
                 if (drawn == 0) { noDraw++; firstNoDraw ??= kv.Key; }
+                if (texNames.Count > 1) multiTexItems++;
 
                 // ⭐ THE ONE THAT MATTERS. Every name the clips drive must exist as a node. This is the assertion
                 // that fails on "AnimationMixer: couldn't resolve track", and it fails HERE instead of in a warning
@@ -101,6 +112,10 @@ namespace UnturnedGodot.Testing
             // CONTROL. Without this the draw flag could be all-1s -- every mesh drawn, LOD copies stacked on the
             // parts they duplicate -- and the "nothing blank" check above would still pass happily.
             T.Check($"...and the draw flag actually excludes something ({undrawnMeshed} meshed parts held back as LODs)", undrawnMeshed > 0);
+            T.Check($"every texture a drawn part names was actually ripped ({missingTex} missing{(firstMissingTex != null ? ", first " + firstMissingTex : "")})", missingTex == 0);
+            // CONTROL for the one above: if the ripper regressed to one-texture-per-item, the check would pass by
+            // having nothing to get wrong. bag_chips' crisps and canned_beans' beans carry their own material.
+            T.Check($"...and parts really do carry their own materials ({multiTexItems} items use more than one texture)", multiTexItems > 0);
             yield break;
         }
     }
