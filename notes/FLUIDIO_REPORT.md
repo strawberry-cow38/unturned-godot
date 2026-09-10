@@ -223,3 +223,108 @@ python3 tools/shot.py fluidflow
 - The renderer produced fresh, nonblank PNGs, then logged the engine's `finalize can only be called from the render thread` shutdown error. One retained capture log also contains `p_image.is_null() || p_image->is_empty()`; its final viewport PNG was saved and inspected. Engine runs emitted ObjectDB/RID cleanup warnings as well. These are recorded in the evidence; I did not establish or fix their underlying cause and do not claim a clean Godot shutdown. The C# build succeeds.
 - The ring scan is exhaustive over the listed mesh files for regular closed 5–64-sided edge rings, including tilted rings. It does not classify partial arcs, ellipses, deformed organic sections, or four-sided prisms as rings; `0 detected` in the measurements is not proof that a mesh has no curved surface.
 - The complete non-fluid game test suite was not run. No multiplayer deployment or push was performed.
+
+---
+
+# Revision 2 — strawberry's pass, 2026-09-10
+
+> "the water tank should just be a barrel with those hose connections. the purifier, refinery, pump and
+> sluice should be much bigger (keeping the Io pipes the same size.). fill gaps and weird edges and
+> inconsistent geometry, and any gaps/holes. change the valve handle to be red and more accurate to a
+> real valve. also make sure it has an animated turn on/off animation. the pump should have some part
+> of it that spins, but making sense."
+
+## The barrel is now Barrel_0's own profile, not an approximation of it
+
+Read straight off the retail OBJ (source Z-up, translated to sit on Y=0):
+
+| | shell radius | band radius | bands (axial) |
+|---|---|---|---|
+| Barrel_0, measured | 0.500000 | 0.543261 | 0–0.1, 0.641859–0.741859, 1.2218–1.3218, end pair straddling the caps |
+| was | 0.456739 | 0.500000 | 0, 0.6, 1.2, none straddling |
+
+`0.543261 − 0.043261 == 0.500000` exactly, so the unchanged ±0.5 hose anchors land precisely on a true
+barrel's shell — the drum had been one band-projection too narrow, which is what made it read slim next
+to the reference.
+
+The fittings moved DOWN to y=0.45. At 0.7 they sat dead-centre on the middle rolling hoop and came out
+half-buried in it.
+
+## The four machines
+
+Envelopes, with every HEX/BORE fitting untouched:
+
+| | was | now |
+|---|---|---|
+| Pump 9114 | 1.36 × 1.48 × 0.84 | **1.96 × 1.41 × 1.10** |
+| Refinery 9116 | 1.36 × 1.75 × 0.90 | **1.96 × 2.78 × 1.04** |
+| Sluice 9117 | 1.36 × 0.84 × 0.90 | **2.20 × 1.05 × 1.00** |
+| Purifier 9121 | 1.36 × 1.34 × 0.90 | **2.06 × 1.95 × 1.04** |
+
+Because the fittings deliberately did not grow, the hose anchors had to travel out to the new body
+sides (`portX` in the catalog; 0.80 / 0.80 / 0.92 / 0.85). Two things fell out of that and both were
+caught by rendering it rather than by reasoning about it:
+
+- **the spigots floated in mid-air**, because nothing bridged body to anchor. Every port now has a stub
+  pipe off the body wall.
+- **the refinery's cross-pipe skewered its own vessel** — one pipe spanning the full width ran straight
+  through the retort and out the far side. It is two stubs now, one per port.
+
+The sluice's trough FALLS along its length, so its two ends are at different heights while every device
+presents its hose at one height; end headers bridge that rather than moving the port and breaking the
+level hose run.
+
+## Gaps, holes and inconsistent geometry
+
+`tools/audit_fluid_geometry.py` is new. It splits each mesh into connected solids and requires each to
+be closed on its own — overlapping solids are correct and deliberate here, so "not watertight as one
+surface" is not the defect; a solid with edges used once is. It also reports degenerate triangles,
+non-manifold seams, normals that oppose their winding, and near-but-unwelded vertices.
+
+| | before | after |
+|---|---|---|
+| meshes with findings | **30 of 30** | **0 of 30** |
+
+What it found:
+
+- **every mesh was wound backwards relative to the rest of the game.** Measured against the retail art:
+  Barrel_0 has its face normal agreeing with its winding 156/156 and Generator_0 132/132; these were
+  0/256. They were the only meshes in the game built that way. `verify_fluid_art.py` had been asserting
+  the backwards convention, so it agreed with them — its assert is flipped and cites the measurement.
+- **the recessed hose mouths were open**, 6 boundary edges each and the single most common finding.
+  They are protruding closed spigots now, which also fixes a mouth that a barrel band sat in front of.
+- the drain bowl was an open lathe welded flush to a separate disc: one closed solid now.
+- the inlet's strainer cage butted flush into its end caps, putting four faces on the shared ring; it
+  overlaps them instead.
+
+## Valve and pump
+
+**Valve** — red handwheel in BOTH states: a rim, a hub and five spokes, on a chunkier flanged body
+(the first attempt read as a lollipop). The colour no longer carries the state; the TURN does, and it
+is 2.5 turns over ~1.1 s like a real gate valve rather than the old quarter turn in 0.2 s.
+
+**Pump** — the part that spins is the BELT PULLEY on the motor shaft, with a belt down to a sheave on
+the volute shaft, so it is visibly driving the casing the fluid crosses. The old animation jittered the
+whole motor drum on the spot, which is not a thing a pump does. It spins down rather than stopping dead.
+
+**A readback bug found by the tests, not by me.** Both animations originally read the angle back off
+`Rotation.Y` and stepped from there. Godot normalises euler angles to (−π, π], so a 5π target is
+unreachable and `MoveToward` chases a value that wraps underneath it; and once the pulley is stood
+upright a local-Y spin does not appear in `Rotation.Y` at all. Both parts now keep their own accumulated
+angle and WRITE the transform, never reading it back.
+
+## Verified
+
+- `dotnet build` clean; `./test.sh --l1 --only 'fluid.*'` **10 passed, 0 failed**.
+- `audit_fluid_geometry.py`: 30 meshes, 6976 triangles, 0 findings.
+- `verify_fluid_art.py`: 21 hose anchors each carry a modelled spigot collar — read from the catalog
+  the game itself reads, so mesh and port cannot silently drift apart. That check caught a real
+  mismatch mid-pass: the inlet and drain meshes were at 0.7 while their published port had moved to 0.6.
+- Rendered and looked at: gallery, pump, tank, closed valve, powered circuit.
+
+## Not verified
+
+- No hardware GPU, no night, no full island world, no multiplayer. Software Vulkan under xvfb.
+- Stills only. The valve turn and the pulley spin are asserted numerically over ticks; I have not
+  watched either as video.
+- The non-fluid test suite was not run.

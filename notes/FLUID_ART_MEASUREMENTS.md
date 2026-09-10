@@ -1475,7 +1475,7 @@
 | ambulance_siren1.txt | 16 | 8 | 8 | 0.456345, 0.322977, 0.672525 | 0 detected | no paired PNG | — | — | — |
 | ambulance_steer.txt | 142 | 66 | 122 | 0.767780, 0.771825, 0.311454 | 12×4 | no paired PNG | — | — | — |
 | ambulance_taillights.txt | 56 | 16 | 20 | 2.226929, 0.329079, 0.189916 | 0 detected | no paired PNG | — | — | — |
-| animal_trailer_body.txt | 96 | 96 | 152 | 3.100000, 3.250001, 7.973885 | 0 detected | no paired PNG | — | — | — |
+| animal_trailer_body.txt | 96 | 96 | 152 | 3.100000, 3.212432, 7.973885 | 0 detected | no paired PNG | — | — | — |
 | animal_trailer_taillights.txt | 56 | 16 | 20 | 2.804810, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | antibiotics.txt | 130 | 48 | 78 | 0.205344, 0.205344, 0.249832 | 12×4 | no paired PNG | — | — | — |
 | apc_body.txt | 372 | 110 | 182 | 3.661945, 2.586414, 7.713795 | 6×4 | no paired PNG | — | — | — |
@@ -1657,7 +1657,7 @@
 | cue.txt | 40 | 12 | 20 | 0.078124, 1.375000, 0.078124 | 0 detected | no paired PNG | — | — | — |
 | desert_falcon_gun.txt | 216 | 88 | 124 | 0.101668, 0.516299, 0.343833 | 0 detected | no paired PNG | — | — | — |
 | determinator_gun.txt | 320 | 149 | 235 | 0.159378, 0.798728, 0.340340 | 8×2, 12×2 | no paired PNG | — | — | — |
-| dinky_trailer_body.txt | 72 | 72 | 108 | 2.099994, 1.576570, 5.098181 | 0 detected | no paired PNG | — | — | — |
+| dinky_trailer_body.txt | 72 | 72 | 108 | 2.099994, 1.539001, 5.098181 | 0 detected | no paired PNG | — | — | — |
 | dinky_trailer_taillights.txt | 56 | 16 | 20 | 1.804804, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | dolphinfish_cooked.txt | 24 | 16 | 28 | 0.207855, 0.672369, 0.036497 | 0 detected | no paired PNG | — | — | — |
 | dolphinfish_raw.txt | 60 | 28 | 40 | 0.293352, 0.966446, 0.096082 | 0 detected | no paired PNG | — | — | — |
@@ -1759,7 +1759,7 @@
 | hockey.txt | 54 | 20 | 36 | 0.369930, 1.095449, 0.070946 | 0 detected | no paired PNG | — | — | — |
 | honeybadger_gun.txt | 568 | 227 | 366 | 0.145052, 1.079859, 0.335815 | 6×7, 8×2 | no paired PNG | — | — | — |
 | honeybadger_sight.txt | 269 | 107 | 181 | 0.066750, 0.601744, 0.107875 | 0 detected | no paired PNG | — | — | — |
-| horsebox_trailer_body.txt | 80 | 80 | 120 | 3.100000, 3.250001, 7.973885 | 0 detected | no paired PNG | — | — | — |
+| horsebox_trailer_body.txt | 80 | 80 | 120 | 3.100000, 3.212432, 7.973885 | 0 detected | no paired PNG | — | — | — |
 | horsebox_trailer_taillights.txt | 56 | 16 | 20 | 2.804810, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | huey_body.txt | 639 | 184 | 332 | 3.500002, 4.776756, 11.200545 | 6×2 | no paired PNG | — | — | — |
 | huey_body_1.txt | 360 | 100 | 192 | 3.500002, 4.276756, 11.200545 | 0 detected | no paired PNG | — | — | — |
@@ -1808,7 +1808,7 @@
 | knife_military.txt | 113 | 50 | 85 | 0.181101, 0.921528, 0.068844 | 0 detected | no paired PNG | — | — | — |
 | knife_swiss.txt | 36 | 15 | 20 | 0.103603, 0.828181, 0.055102 | 0 detected | no paired PNG | — | — | — |
 | kryzkarek_gun.txt | 184 | 68 | 102 | 0.101668, 0.489682, 0.346435 | 0 detected | no paired PNG | — | — | — |
-| large_trailer_body.txt | 72 | 72 | 108 | 3.100000, 1.576570, 7.973885 | 0 detected | no paired PNG | — | — | — |
+| large_trailer_body.txt | 72 | 72 | 108 | 3.100000, 1.539001, 7.973885 | 0 detected | no paired PNG | — | — | — |
 | large_trailer_taillights.txt | 56 | 16 | 20 | 2.804810, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | launcher_rocket_gun.txt | 102 | 40 | 70 | 0.330086, 1.103951, 0.417430 | 8×4 | no paired PNG | — | — | — |
 | launcher_rocket_sight.txt | 172 | 72 | 130 | 0.045092, 0.476454, 0.125085 | 0 detected | no paired PNG | — | — | — |
@@ -1864,7 +1864,7 @@
 | masterkey_gun.txt | 212 | 74 | 118 | 0.183632, 1.572012, 0.342399 | 6×4 | no paired PNG | — | — | — |
 | matamorez_gun.txt | 262 | 106 | 176 | 0.126658, 1.541679, 0.324617 | 8×2 | no paired PNG | — | — | — |
 | matamorez_sight.txt | 232 | 88 | 132 | 0.060538, 0.551536, 0.060110 | 6×4 | no paired PNG | — | — | — |
-| medium_trailer_body.txt | 72 | 72 | 108 | 2.850000, 1.576570, 6.928175 | 0 detected | no paired PNG | — | — | — |
+| medium_trailer_body.txt | 72 | 72 | 108 | 2.850000, 1.539001, 6.928175 | 0 detected | no paired PNG | — | — | — |
 | medium_trailer_taillights.txt | 56 | 16 | 20 | 2.554810, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | medkit.txt | 80 | 32 | 52 | 0.485780, 0.616706, 0.200562 | 0 detected | no paired PNG | — | — | — |
 | military_100_mag.txt | 96 | 32 | 52 | 0.410724, 0.174013, 0.298643 | 6×4 | no paired PNG | — | — | — |
@@ -2067,7 +2067,7 @@
 | skycrane_steer.txt | 120 | 32 | 60 | 0.715812, 0.354806, 0.180505 | 0 detected | no paired PNG | — | — | — |
 | skycrane_taillights.txt | 40 | 8 | 20 | 0.174106, 0.500000, 0.500000 | 0 detected | no paired PNG | — | — | — |
 | sledgehammer.txt | 92 | 32 | 54 | 0.458342, 1.043521, 0.244398 | 0 detected | no paired PNG | — | — | — |
-| small_trailer_body.txt | 72 | 72 | 108 | 2.224994, 1.576570, 5.882464 | 0 detected | no paired PNG | — | — | — |
+| small_trailer_body.txt | 72 | 72 | 108 | 2.224994, 1.539001, 5.882464 | 0 detected | no paired PNG | — | — | — |
 | small_trailer_taillights.txt | 56 | 16 | 20 | 1.929804, 0.329078, 0.189916 | 0 detected | no paired PNG | — | — | — |
 | snayperskya_gun.txt | 252 | 102 | 176 | 0.126658, 1.630097, 0.324617 | 8×2 | no paired PNG | — | — | — |
 | snayperskya_sight.txt | 196 | 80 | 116 | 0.066576, 0.712110, 0.070358 | 0 detected | no paired PNG | — | — | — |

@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "krLiEzIQ2ks=",
+  "dgSpecHash": "J52Clvb9uZo=",
   "success": true,
-  "projectFilePath": "/tmp/snow/bigtrailer/core/UnturnedDat/UnturnedDat.csproj",
+  "projectFilePath": "/home/ec2-user/ug-fluidio-wt/core/UnturnedDat/UnturnedDat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

@@ -12,13 +12,18 @@ namespace UnturnedGodot.Testing
         public override string Name => "fluid.art_placements_and_flow";
         public override double TimeoutSimSeconds => 30;
 
-        static Vector3[] Anchors(ushort id) => id switch
+        // WHERE the ports are is now the art catalog's business: the four machines strawberry enlarged
+        // carry their hose anchors further out, because their fittings deliberately did NOT grow with
+        // them. Hard-coding the positions here would just be a second copy to forget to update -- what
+        // is worth asserting is that the port and the modelled spigot agree, and the geometric half of
+        // that is verify_fluid_art.py's "every anchor carries a spigot collar" check.
+        static Vector3[] Anchors(DeployableDef def) => def.Id switch
         {
-            9111 or 9119 or 9120 => new[] {new Vector3(0,.7f,.55f)},
-            9112 => new[] {new Vector3(-.5f,.6f,0),new Vector3(.5f,.6f,-.32f),new Vector3(.5f,.6f,.32f)},
-            9113 => new[] {new Vector3(-.5f,.6f,-.32f),new Vector3(-.5f,.6f,.32f),new Vector3(.5f,.6f,0)},
-            9110 => new[] {new Vector3(-.5f,.7f,0),new Vector3(.5f,.7f,0)},
-            _ => new[] {new Vector3(-.5f,.6f,0),new Vector3(.5f,.6f,0)},
+            9111 or 9119 or 9120 => new[] {FluidArt.Port(def,0,.7f,.55f)},
+            9112 => new[] {FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,.5f,.6f,-.32f),FluidArt.Port(def,.5f,.6f,.32f)},
+            9113 => new[] {FluidArt.Port(def,-.5f,.6f,-.32f),FluidArt.Port(def,-.5f,.6f,.32f),FluidArt.Port(def,.5f,.6f,0)},
+            9110 => new[] {FluidArt.Port(def,-.5f,.7f,0),FluidArt.Port(def,.5f,.7f,0)},
+            _ => new[] {FluidArt.Port(def,-.5f,.6f,0),FluidArt.Port(def,.5f,.6f,0)},
         };
 
         public override IEnumerable<Step> Run()
@@ -54,14 +59,14 @@ namespace UnturnedGodot.Testing
                 var lod=body.GetNode<MeshInstance3D>("Lod1");
                 T.Check($"{id}: both runtime meshes loaded and LOD split has no gap",body.Mesh is ArrayMesh && lod.Mesh is ArrayMesh && body.VisibilityRangeEnd>0 && Mathf.Abs(body.VisibilityRangeEnd-lod.VisibilityRangeBegin)<.00001f);
                 yield return Ticks(2); // let physical HosePort bodies register with the space
-                var anchors=Anchors(id);
+                var anchors=Anchors(c.Def);
                 T.Check($"{id}: port count retained",c.PortNodes.Count==anchors.Length);
                 for (int i=0;i<anchors.Length;i++)
                 {
                     var p=c.PortNodes[i];var outward=new Vector3(p.Position.X,0,p.Position.Z).Normalized();
                     var ray=PhysicsRayQueryParameters3D.Create(c.ToGlobal(p.Position+outward*.3f),c.ToGlobal(p.Position-outward*.02f),HosePort.PortLayer);
                     var hit=c.GetWorld3D().DirectSpaceState.IntersectRay(ray);
-                    T.Check($"{id}: anchor {i} unchanged and ray resolves its HosePort",p.Position.IsEqualApprox(anchors[i]) && hit.Count>0 && hit["collider"].AsGodotObject()==p && p.Node==c.Ports[i]);
+                    T.Check($"{id}: anchor {i} matches the art catalog and a ray resolves its HosePort",p.Position.IsEqualApprox(anchors[i]) && hit.Count>0 && hit["collider"].AsGodotObject()==p && p.Node==c.Ports[i]);
                 }
                 Deployable powerSource=null;
                 if (c is FluidPump || c is FluidPurifier)
@@ -104,32 +109,43 @@ namespace UnturnedGodot.Testing
                 if (c is IPowerDevice power)T.Check($"{id}: electrical ports still attached",power.PowerPorts.Count>0 && System.Linq.Enumerable.All(power.PowerPorts,p=>p.GetParent()==c));
                 if (c is FluidPump pump)
                 {
-                    var drum=pump.GetNode<MeshInstance3D>("PumpDrum");var rest=new Vector3(0,1.25f,0);
+                    var drum=pump.GetNode<MeshInstance3D>("PumpDrum");
                     T.Check("pump is powered AND flowing",pump.DriveActive);
-                    pump.HubTick(.03);var moved=drum.Position;
+                    float a0=pump.DebugPumpAngle;var b0=drum.Basis;
+                    for(int i=0;i<6;i++)pump.HubTick(.03);
+                    float a1=pump.DebugPumpAngle;
+                    T.Check("driven pulley turns about its own axis",a1-a0>.01f && !drum.Basis.IsEqualApprox(b0));
+                    T.Check("lower pulley follows the same transform",drum.GetNode<MeshInstance3D>("Lod1").GlobalTransform.IsEqualApprox(drum.GlobalTransform));
+                    powerSource.TogglePower();PowerNet.Recompute(Tree);
+                    // a loaded rotor has inertia: it must COAST rather than stop dead on the same tick
                     pump.HubTick(.03);
-                    T.Check("named drum vibrates between ticks",moved.DistanceTo(rest)>.001f && drum.Position.DistanceTo(moved)>.001f);
-                    T.Check("lower drum follows same transform",drum.GetNode<MeshInstance3D>("Lod1").GlobalPosition.IsEqualApprox(drum.GlobalPosition));
-                    powerSource.TogglePower();PowerNet.Recompute(Tree);pump.HubTick(.03);
-                    T.Check("unpowered drum returns to rest",drum.Position.IsEqualApprox(rest));
+                    T.Check("unpowered pulley coasts, not an instant stop",pump.DebugPumpAngle>a1);
+                    for(int i=0;i<40;i++)pump.HubTick(.03);
+                    float a3=pump.DebugPumpAngle;pump.HubTick(.03);
+                    T.Check("pulley comes to rest once spun down",Mathf.IsEqualApprox(a3,pump.DebugPumpAngle));
                 }
                 if (id==9115)
                 {
                     var handle=c.GetNode<MeshInstance3D>("ValveHandle");
                     c.ToggleValve();c.HubTick(.1);
-                    T.Check("valve handle moves through an intermediate angle",handle.Rotation.Y>0 && handle.Rotation.Y<Mathf.Pi/2);
-                    c.HubTick(.1);float before=outputs[0].Tank.Amount;
+                    T.Check("valve handle moves through an intermediate angle",c.DebugValveAngle>0 && c.DebugValveAngle<FluidContainer.ValveTravel);
+                    // wind it the rest of the way: a real gate valve is ~2.5 turns and takes ~1.1 s,
+                    // where the old quarter turn was done in 0.2 s. Flow stops on the toggle either way.
+                    for(int i=0;i<15;i++)c.HubTick(.1);float before=outputs[0].Tank.Amount;
                     for(int i=0;i<10;i++)FluidNet.Tick(Tree,.1f);
-                    T.Check("closed valve stops real flow and finishes quarter turn",Mathf.Abs(outputs[0].Tank.Amount-before)<.001f && Mathf.Abs(handle.Rotation.Y-Mathf.Pi/2)<.001f);
-                    T.Check("closed handle samples red palette cell",((StandardMaterial3D)handle.MaterialOverride).Uv1Offset.X==.5f);
+                    T.Check("closed valve stops real flow and winds fully shut",Mathf.Abs(outputs[0].Tank.Amount-before)<.001f && Mathf.Abs(c.DebugValveAngle-FluidContainer.ValveTravel)<.001f);
+                    // RED IN BOTH STATES (strawberry: "change the valve handle to be red"). The wheel
+                    // used to swap palette cell to show closed; the turn shows it now, so assert the
+                    // colour does NOT move -- otherwise reintroducing the swap would pass silently.
+                    T.Check("handle stays on the red palette cell when closed",((StandardMaterial3D)handle.MaterialOverride).Uv1Offset.X==0f);
                     powerSource=Deployable.Spawn(stage,DeployableDef.Generator,new Vector3(-3,0,-4),0);
                     var control=new Wire {Source=powerSource.Ports.Find(p=>p.Kind==DeployableDef.PortKind.Output),Consumer=((IPowerDevice)c).PowerPorts[0]};
                     stage.AddChild(control);control.AddToGroup("wires");powerSource.TogglePower();PowerNet.Recompute(Tree);
-                    c.HubTick(.03);c.HubTick(.2); // trigger state is applied after the base animation tick
+                    c.HubTick(.03);for(int i=0;i<15;i++)c.HubTick(.1); // trigger state is applied after the base animation tick
                     for(int i=0;i<10;i++)FluidNet.Tick(Tree,.1f);
-                    T.Check("wired OPEN trigger reopens, turns and resumes flow",outputs[0].Tank.Amount>before && Mathf.Abs(handle.Rotation.Y)<.001f && ((StandardMaterial3D)handle.MaterialOverride).Uv1Offset.X==0);
-                    control.Consumer=((IPowerDevice)c).PowerPorts[1];PowerNet.Recompute(Tree);c.HubTick(.03);c.HubTick(.2);
-                    T.Check("wired CLOSE trigger closes and turns the handle",c.Blocked && Mathf.Abs(handle.Rotation.Y-Mathf.Pi/2)<.001f);
+                    T.Check("wired OPEN trigger reopens, turns and resumes flow",outputs[0].Tank.Amount>before && Mathf.Abs(c.DebugValveAngle)<.001f && ((StandardMaterial3D)handle.MaterialOverride).Uv1Offset.X==0);
+                    control.Consumer=((IPowerDevice)c).PowerPorts[1];PowerNet.Recompute(Tree);c.HubTick(.03);for(int i=0;i<15;i++)c.HubTick(.1);
+                    T.Check("wired CLOSE trigger closes and turns the handle",c.Blocked && Mathf.Abs(c.DebugValveAngle-FluidContainer.ValveTravel)<.001f);
                 }
                 stage.QueueFree();yield return Ticks(2);
             }

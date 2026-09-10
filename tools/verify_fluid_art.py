@@ -40,6 +40,11 @@ def main():
                 assert abs(length(normal)-1)<2e-5,(p,'nonunit normal')
                 # Smooth 8/12-sided shells preserve radial corner normals; the
                 # measured barrel uses these, while caps and hex fittings are flat.
+                # Smooth 8/12-sided shells preserve radial corner normals; the measured barrel uses
+                # these, while caps and hex fittings are flat. CLOCKWISE front: ParseObj preserves file
+                # winding, unlike ObjMesh.Load (retail props) which reverses it -- so the retail files
+                # are NOT a valid comparison here. Flipping this to match them rendered everything
+                # inside out (strawberry 2026-09-10: "all are rendering inside out").
                 assert dot(geometric,normal)/length(geometric)<-.9,(p,'clockwise outward normal mismatch')
             assert len({k[1] for k in f})==1,(p,'triangle interpolates across palette cells')
         lo=[min(x[i] for x in v) for i in range(3)];hi=[max(x[i] for x in v) for i in range(3)]
@@ -47,18 +52,27 @@ def main():
         assert {r['n'] for r in rings(v,fs)} <= {6,8,12},p
         total+=len(fs)
         print(f"PASS {p.name}: {len(v)} v, {len(fs)} tris; AABB {lo} -> {hi}")
-    # Independently pin the pre-art port contract; inspect body vertices for all
-    # six points of an actual annular opening at each old HosePort centre.
+    # THE FITTING MUST BE WHERE THE PORT IS. The four machines strawberry enlarged moved their hose
+    # anchors outward (their fittings did not grow), so the old hard-coded table is gone and this reads
+    # the catalog the game itself reads -- which is the point: if the mesh and the port ever disagree,
+    # the spigot ends up floating in mid-air detached from the body, which is exactly what the first
+    # render of the enlarged pump showed. The spigot now PROTRUDES, so at the anchor plane the body
+    # carries the collar ring at radius HEX rather than a bore.
+    catalog=json.loads((DIR/'catalog.json').read_text())
+    checked=0
     for id in [9110,9111,9112,9113,9114,9115,9116,9117,9119,9120,9121]:
-        if id in [9111,9119,9120]: ports=[(0,.7,.55)]
-        elif id==9112: ports=[(-.5,.6,0),(.5,.6,-.32),(.5,.6,.32)]
-        elif id==9113: ports=[(-.5,.6,-.32),(-.5,.6,.32),(.5,.6,0)]
-        else: ports=[(-.5,.7 if id==9110 else .6,0),(.5,.7 if id==9110 else .6,0)]
+        spec=catalog[str(id)]; px=spec['portX']; py=spec['portY']
+        if id in [9111,9119,9120]: ports=[(0,py,.55)]
+        elif id==9112: ports=[(-px,py,0),(px,py,-.32),(px,py,.32)]
+        elif id==9113: ports=[(-px,py,-.32),(-px,py,.32),(px,py,0)]
+        else: ports=[(-px,py,0),(px,py,0)]
         v,_,_,_,_=parse(DIR/f'{id}_body.txt')
         for port in ports:
             axis=2 if id in [9111,9119,9120] else 0
-            ring=[p for p in v if abs(p[axis]-port[axis])<1e-6 and abs(length(sub(p,port))-.08847)<2e-6]
-            assert len(ring)==6,(id,port,len(ring),'missing socket bore at port')
+            ring=[q for q in v if abs(q[axis]-port[axis])<1e-6 and abs(length(sub(q,port))-.15249)<2e-6]
+            assert len(ring)==6,(id,port,len(ring),'no spigot collar at the port anchor')
+            checked+=1
+
     # Match the reference's component colour assignment through the actual V flip,
     # not just the list of RGBs in the PNG (which would miss swapped shell/bands).
     for id,reference in [(9110,'Barrel_0'),(9111,'Barrel_1')]:
@@ -74,6 +88,6 @@ def main():
                     for corner in fields[1:]:
                         u,v=vt[int(corner.split('/')[1])-1]
                         assert palette.getpixel((int(u*2),int((1-v)*2)))==expected,(id,group,'reference palette mismatch')
-    print(f'PASS: {len(claimed)} meshes / {total} triangles, all 21 unchanged hose anchors have modelled mouths')
+    print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} hose anchors carry a modelled spigot')
 
 if __name__=='__main__':main()
