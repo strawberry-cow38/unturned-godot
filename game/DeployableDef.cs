@@ -364,8 +364,8 @@ namespace UnturnedGodot
         }
         public static readonly DeployableDef FluidTank    = MakeFluid(9110, "Fluid Tank",    FluidRole.Storage);   // empty; adopts what's piped in
         public static readonly DeployableDef WaterSource  = MakeFluid(9111, "Fluid Water Source",  FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidCapacity = 200000f; d.FluidQuality = WaterQuality.Tainted; });   // a filled water reservoir (200 L) -- bulk natural water = TAINTED (purify or bottle for clean)
-        public static readonly DeployableDef FluidSplitter = MakeFluid(9112, "Fluid Splitter", FluidRole.Splitter);
-        public static readonly DeployableDef FluidCombiner = MakeFluid(9113, "Fluid Combiner", FluidRole.Combiner);
+        public static readonly DeployableDef FluidSplitter = MakeFluid(9112, "Fluid Splitter", FluidRole.Splitter, d => d.FluidWays = 3);
+        public static readonly DeployableDef FluidCombiner = MakeFluid(9113, "Fluid Combiner", FluidRole.Combiner, d => d.FluidWays = 3);
         public static readonly DeployableDef FluidPumpDef  = MakeFluid(9114, "Fluid Pump",     FluidRole.Pump);      // draws power; head lift
         public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
         public static readonly DeployableDef Refinery      = MakeFluid(9116, "Fluid Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas

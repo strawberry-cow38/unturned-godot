@@ -9,10 +9,26 @@ import json
 import math
 from PIL import Image
 from measure_fluid_art import parse, sub, dot, cross, length, rings
+from audit_fluid_geometry import audit, load, components
 
 ROOT=Path(__file__).resolve().parents[1]
 DIR=ROOT/'game/content/fluid'
 MANIFEST=ROOT/'notes/FLUID_MESH_BOUNDS.json'
+
+def inside(point, vertices, comp):
+    """Ray parity inside one closed solid; oblique ray avoids axial cap triangulation."""
+    direction=(1.,.173,.297); hits=[]
+    for t,_ in comp:
+        a,b,c=[vertices[k[0]] for k in t]
+        edge1=sub(b,a); edge2=sub(c,a); h=cross(direction,edge2); det=dot(edge1,h)
+        if abs(det)<1e-10: continue
+        s=sub(point,a); u=dot(s,h)/det
+        if u<0 or u>1: continue
+        q=cross(s,edge1); v=dot(direction,q)/det
+        if v<0 or u+v>1: continue
+        distance=dot(edge2,q)/det
+        if distance>1e-8 and all(abs(distance-d)>1e-7 for d in hits): hits.append(distance)
+    return len(hits)%2==1
 
 def main():
     claimed=json.loads(MANIFEST.read_text())
@@ -63,15 +79,26 @@ def main():
     for id in [9110,9111,9112,9113,9114,9115,9116,9117,9119,9120,9121]:
         spec=catalog[str(id)]; px=spec['portX']; py=spec['portY']
         if id in [9111,9119,9120]: ports=[(0,py,.55)]
-        elif id==9112: ports=[(-px,py,0),(px,py,-.32),(px,py,.32)]
-        elif id==9113: ports=[(-px,py,-.32),(-px,py,.32),(px,py,0)]
+        elif id==9112: ports=[(-px,py,0)]+[(px,py,z) for z in spec['branchZ']]
+        elif id==9113: ports=[(-px,py,z) for z in spec['branchZ']]+[(px,py,0)]
         else: ports=[(-px,py,0),(px,py,0)]
-        v,_,_,_,_=parse(DIR/f'{id}_body.txt')
-        for port in ports:
-            axis=2 if id in [9111,9119,9120] else 0
-            ring=[q for q in v if abs(q[axis]-port[axis])<1e-6 and abs(length(sub(q,port))-.15249)<2e-6]
-            assert len(ring)==6,(id,port,len(ring),'no spigot collar at the port anchor')
-            checked+=1
+        for suffix in ['', '_lod1']:
+            v,_,ts=load(DIR/f'{id}_body{suffix}.txt')
+            backing=components(v,[(t,g) for t,g in ts if g!='hose_fitting'])
+            for port in ports:
+                axis=2 if id in [9111,9119,9120] else 0
+                ring=[q for q in v if abs(q[axis]-port[axis])<1e-6 and abs(length(sub(q,port))-.15249)<2e-6]
+                assert len(ring)==6,(id,suffix,port,len(ring),'no spigot collar at the port anchor')
+                # A collar is not a connection if the pipe stops short of it. Sample its centre and
+                # six bore points 12 mm INSIDE the collar, requiring a non-fitting solid behind them.
+                axes=[k for k in range(3) if k!=axis]; sign=1 if port[axis]>0 else -1
+                for i in range(7):
+                    p=list(port); p[axis]+=.012*sign
+                    if i:
+                        p[axes[0]]+=.07*math.cos(math.tau*(i-1)/6)
+                        p[axes[1]]+=.07*math.sin(math.tau*(i-1)/6)
+                    assert any(inside(p,v,comp) for comp in backing),(id,suffix,port,'floating collar',p)
+                if not suffix:checked+=1
 
     # Match the reference's component colour assignment through the actual V flip,
     # not just the list of RGBs in the PNG (which would miss swapped shell/bands).
@@ -88,6 +115,23 @@ def main():
                     for corner in fields[1:]:
                         u,v=vt[int(corner.split('/')[1])-1]
                         assert palette.getpixel((int(u*2),int((1-v)*2)))==expected,(id,group,'reference palette mismatch')
-    print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} hose anchors carry a modelled spigot')
+    items=json.loads((ROOT/'game/content/items/items_manifest.json').read_text())
+    for id in range(9110,9122):
+        spec=items[str(id)]; path=ROOT/'game/content/items'/spec['obj']
+        assert path.suffix=='.obj' and path.is_file(),path
+        assert not audit(path)[0],(path,audit(path)[0])
+        v,vt,vn,fs,widths=parse(path)
+        assert set(widths)=={3} and all(len(c)==3 for f in fs for c in f),path
+        lo=[min(p[i] for p in v) for i in range(3)]; hi=[max(p[i] for p in v) for i in range(3)]
+        assert max(hi[i]-lo[i] for i in range(3))<=.872201,(id,'oversized drop')
+        assert all(abs(spec['box'][i]-(hi[i]-lo[i]))<2e-6 for i in range(3)),id
+        assert all(abs(spec['center'][i]-(hi[i]+lo[i])/2)<2e-6 for i in range(3)),id
+        palette=Image.open(path.with_name(spec['tex'])); assert palette.size==(2,2)
+        assert vt==[(.25,.75),(.75,.75),(.25,.25),(.75,.25)],(id,'item palette UVs')
+        icon=Image.open(ROOT/f'game/content/items/icons/{id}.png')
+        assert icon.mode=='RGBA' and icon.size==(256,256),(id,'icon convention')
+        alpha=icon.getchannel('A'); bbox=alpha.getbbox()
+        assert alpha.getextrema()==(0,255) and bbox and min(bbox)>0 and max(bbox)<256,(id,'icon transparency/framing')
+    print(f'PASS: {len(claimed)} meshes / {total} triangles, {checked} connected hose anchors at both LODs; 12 item meshes and icons')
 
 if __name__=='__main__':main()

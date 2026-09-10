@@ -20,6 +20,7 @@ namespace UnturnedGodot
             public float Radius { get; set; }
             public float PortX { get; set; }
             public float PortY { get; set; }
+            public float[] BranchZ { get; set; }
         }
 
         static readonly Lazy<Dictionary<ushort, Spec>> Catalog = new(() =>
@@ -48,6 +49,10 @@ namespace UnturnedGodot
             var spec = Catalog.Value[def.Id];
             return new Aabb(Vec(spec.BoundsMin), Vec(spec.BoundsSize));
         }
+
+        public static float BranchZ(DeployableDef def, int i, float fallback) =>
+            HasArt(def) && Catalog.Value.TryGetValue(def.Id, out var spec) && spec.BranchZ != null
+                ? spec.BranchZ[i] : fallback;
 
         public static void Configure(DeployableDef def)
         {

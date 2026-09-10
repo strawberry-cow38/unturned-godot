@@ -194,10 +194,10 @@ namespace UnturnedGodot
                     AddPort(FluidPortKind.Consumer, FlowRate, FluidArt.Port(Def, PortLocalPos.X, PortLocalPos.Y, PortLocalPos.Z)); break;
                 case FluidRole.Splitter:   // 0-rate relay input (left) + N passthrough outputs (right)
                     AddPort(FluidPortKind.Consumer, 0f, FluidArt.Port(Def, -0.5f, 0.6f, 0f));
-                    for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, Fan(i, Ways)));
+                    for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Passthrough, 0f, FluidArt.Port(Def, 0.5f, 0.6f, Fan(i, Ways)));
                     break;
                 case FluidRole.Combiner:   // N relay inputs (left) + 1 passthrough output (right)
-                    for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, Fan(i, Ways)));
+                    for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Consumer, 0f, FluidArt.Port(Def, -0.5f, 0.6f, Fan(i, Ways)));
                     AddPort(FluidPortKind.Passthrough, 0f, FluidArt.Port(Def, 0.5f, 0.6f, 0f));
                     break;
                 case FluidRole.Pump:       // inline: a 0-rate relay input (left) + one passthrough output (right)
@@ -224,7 +224,8 @@ namespace UnturnedGodot
             PortNodes.Add(fp); AddChild(fp);
         }
 
-        static float Fan(int i, int n) => n <= 1 ? 0f : Mathf.Lerp(-0.32f, 0.32f, i / (float)(n - 1));   // spread ports across a face
+        float Fan(int i, int n) => FluidArt.BranchZ(Def, i,
+            n <= 1 ? 0f : Mathf.Lerp(-0.32f, 0.32f, i / (float)(n - 1))); // catalog: -.32, 0, +.32; legacy fittings keep their fan
 
         protected virtual void BuildVisuals()
         {

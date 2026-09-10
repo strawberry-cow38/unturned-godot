@@ -328,3 +328,122 @@ angle and WRITE the transform, never reading it back.
 - Stills only. The valve turn and the pulley spin are asserted numerically over ticks; I have not
   watched either as video.
 - The non-fluid test suite was not run.
+
+## Second art pass — 2026-09-10
+
+The supplied front and 90° sheets exposed daylight between the manifold branches and their collars,
+and between the inlet/drain necks and their collars. Their runs ended at 0.40/0.45 m while their
+collars started at 0.50/0.55 m: **100 mm gaps**. The valve had the same fault at 0.42 → 0.50 m:
+**80 mm gaps**. The three-quarter projection overlapped these disconnected pieces on screen. The
+pump and refinery in this checkout already include the review's separate stubs; I did not rediscover
+the earlier floating pump or cross-vessel skewer in these supplied meshes. The remaining curved-skin
+joins still needed broad seats instead of a flat hexagon touching a round body at its outermost point.
+
+The original fifth view is useful for silhouettes, but its +6° elevation still looks downward, with
+the ground obscuring the bottom. The contact sheets now retain all five views and add **145° azimuth,
+−22° elevation with the ground hidden**, so the underside can actually be inspected. Individual shots
+explicitly select LOD0 unless LOD1 is requested. Failed captures cannot silently reuse old frames.
+
+**Winding convention remains clockwise-front.** Explicit outward normals oppose the stored triangle
+winding. The earlier paragraph in this report claiming that the retail file convention was correct
+is superseded: `ObjMesh.Load` and `ContentProvider.ParseObj` have different winding transformations.
+Neither the existing winding emitter nor the audit's convention was changed in this pass.
+
+### Geometry and measurements
+
+| Change | Measurement and resulting geometry |
+|---|---|
+| Curved-body seats | Collar radius stays **0.152490 m**, spout radius **0.1282815 m**, collar/spout lengths **0.06/0.12 m**. Boss radius is collar + measured barrel lip = **0.195751 m**. Each boss starts inside the body by its circular sag + polygon sag + **25 mm**. A triangulated loft transitions from the body's **12/8 segments to 6**, with a six-sided continuation into the collar. LOD1 uses six-sided seats. |
+| Fitting joins | Supporting solids extend **25 mm into each collar**, rather than ending at its back plane. Tanks/source, pump, valve, refinery, sluice and purifier use the new seats; manifold runs and swept endpoints also overlap their collars. The verifier samples the centre and six points on a **70 mm radius**, **12 mm inside** every collar, requiring non-fitting geometry at every point. It checks both LODs as well as the published six-vertex anchor ring. |
+| Inlet and drain elbows | Preserve the existing **0.088470 m run radius**. A **0.18 m centreline-radius, 90° bend** has six 15° steps at LOD0 and three 30° steps at LOD1, with tangent vertical/horizontal runs in one capped solid. The run transitions to the existing spout radius before entering the fitting at Z=0.55. |
+| Refinery | Envelope **1.96 × 2.78 × 1.04 → 2.56 × 3.64 × 1.40 m**: +30.61% width, +30.94% height, +34.62% depth. Retort radius **0.44 → 0.58 m**; shell/shoulder reaches Y=2.82. Three **0.12 m** bands begin at Y=0.94, 1.72 and 2.48. The cap ends at Y=2.90; the flared stack reaches Y=3.64 with a **0.18 m shaft radius**. The larger firebox has a visible door. Inlet terminates in the firebox; discharge has its own retort seat. There is no pipe spanning through the retort. |
+| Splitter/combiner | Each now has **four hose ports**: 1:3 / 3:1. A collector widens from a **0.24 m throat to a 0.88 m branch face**, instead of a uniform cross-manifold. Three hex branches use **0.32 m pitch**, leaving **55.9 mm** between the collars' Z silhouettes. Each branch enters the collector and overlaps its fitting; its gland and run both use six sides. |
+| Inlet cage | Eight radial ribs at uniform **45° spacing**, centred on the octagon's faces. Each is **40 mm radial depth × 41.16 mm tangential thickness × 250 mm height**, with **20 mm overlap into both caps**. Outer rib face radius **0.228 m** stays inside the cap apothem **0.230970 m**. The top is lowered from **0.50 to 0.38 m** to leave room for the real elbow while preserving the Y=0.60 hose anchor. Overall cage width drops from the irregular **0.541160 to 0.500000 m**. |
+| Drain grate | Bars previously floated at Y=0.10 over the Y=0.05 floor and stopped before the rim. They now begin at **Y=0.075** and extend **±0.48 m** (centre) / **±0.385 m** (outer pair) into the bowl wall. The central riser foot overlaps the bowl floor and supports the middle bar. The bowl remains a closed solid. |
+| Pump belt / preview | A six-sided **0.15 m** sheave reaches Z=±0.129904, but the old straps began at \|Z\|=0.172: a **42.1 mm miss**. Sloped straps now bridge centres at \|Z\|≈0.14 and 0.245 between the lower and upper pulleys. The preview and dropped model also apply the catalog's **−90° Z rotation** to the pump pulley, matching the placed assembly instead of leaving it horizontal. |
+| Electrical input backing | The new pump side sheet still showed its grey power cube floating away from the motor; the purifier used the same unsupported anchor. Both cubes are **0.13 m wide at (0, 1.25, 0.42)**, with inner face Z=0.355. New glands run into the motor/cabinet and end at **Z=0.385 / 0.39**, overlapping the cubes by **30 / 35 mm**. Their electrical anchors do not move. |
+
+The refinery's published **portX changes from 0.80 to 1.10 m**; portY stays 0.60. All other existing
+anchor coordinates are retained. Splitter/combiner `branchZ` is now published as **[−0.32, 0, +0.32]**
+in `catalog.json`, and `FluidContainer.Fan()` reads it. `BuildPorts` now sends branch X/Y through
+`FluidArt.Port` too. Their deployable defs set `FluidWays=3`, and item descriptions say three hoses.
+Port count and all branches' actual flow are exercised by the existing placement/flow test.
+
+| Device | LOD0 / LOD1 triangles, before → after | Dropped OBJ dimensions, metres |
+|---|---|---|
+| 9110 Tank | 264 / 60 → 376 / 124 | 0.680000 × 0.660900 × 0.543260 |
+| 9111 Water Source | 240 / 60 → 276 / 72 | 0.543260 × 0.660900 × 0.636630 |
+| 9112 Splitter | 236 / 164 → 380 / 284 | 0.680000 × 0.376244 × 0.510000 |
+| 9113 Combiner | 236 / 164 → 380 / 284 | 0.680000 × 0.376244 × 0.510000 |
+| 9114 Pump | 660 / 288 → 736 / 348 | 0.872200 × 0.623000 × 0.489500 |
+| 9115 Valve | 492 / 252 → 596 / 340 | 0.680000 × 0.745000 × 0.300000 |
+| 9116 Refinery | 360 / 176 → 572 / 284 | 0.613416 × 0.872200 × 0.335462 |
+| 9117 Sluice | 272 / 176 → 296 / 200 | 0.872200 × 0.416278 × 0.396454 |
+| 9118 Hose Tool | item only, 376 triangles | 0.581200 × 0.556000 × 0.196930 |
+| 9119 Inlet | 236 / 120 → 324 / 172 | 0.250000 × 0.366030 × 0.490000 |
+| 9120 Drain | 180 / 104 → 288 / 176 | 0.500000 × 0.366030 × 0.615000 |
+| 9121 Purifier | 364 / 180 → 440 / 240 | 0.872200 × 0.825626 × 0.440334 |
+
+### Inventory and dropped items
+
+Measured all **1,862 existing icons**: 1,177 are 256×256, with a 256 px long edge throughout the set.
+Sample alpha bounds: Generator 458 **(1,13)–(255,243)** on 256²; Gas Can 28 **(1,1)–(256,255)** on 256²;
+Blowtorch 76 **(13,0)–(115,255)** on 128×256. All twelve fluid items have square inventory cells, so
+their new icons are **256×256 RGBA**, centred with the rendered silhouette's long edge at **254 px**.
+`shot.py fluidicon` renders a single manifest model in Godot against transparency, with back-face
+culling enabled; Pillow only crops transparent margins and downsamples that render. These are not
+drawn approximations. `python3 tools/fluid_item_icons.py` generates all twelve and a review sheet at
+`notes/fluid_art/item_icons.png`.
+
+The existing dropped Rain Barrel 1208 measures **0.56 × 0.75 × 0.6466 m**; Portable Generator 458
+measures **0.7635 × 0.6819 × 0.8722 m**. Their manifest has no separate scale field: dimensions are
+baked into the mesh. The new device drops use **min(0.5, 0.8722 / longest placed dimension)**, with
+their complete LOD0 assembly centred at the origin. Thus the 3.64 m refinery becomes 0.8722 m tall,
+and the pump becomes 0.8722 m wide. Each has its own `.obj`, palette PNG and exact box/centre entry
+under `game/content/items/`. The existing manifest entries are semantically unchanged.
+
+9118 is handled separately as a **coiled hose with two metal couplings**, not as a device: two
+12-section closed coils with six-sided tube cross-sections. It has an icon, palette and dropped OBJ,
+and no deployable def or extra mesh in the 30-mesh fluid catalog.
+
+### Verification and limits
+
+- `python3 tools/author_fluid_art.py`: regenerated all device and item assets. A second regeneration
+  was checked by SHA-256 across 68 mesh/palette/metadata files and produced byte-identical files.
+- `python3 tools/audit_fluid_geometry.py`: **30 meshes, 9,208 triangles, 0 with findings**.
+- `python3 tools/verify_fluid_art.py`: **23 connected hose anchors at both LODs**, palette/bounds/
+  explicit-normal/triangle checks passed; **all 12 item meshes and RGBA icons passed**. The dropped
+  models also passed closure checks and a separate positive-outward-volume check per solid.
+- `dotnet build game/UnturnedGodot.csproj`: final build **0 warnings, 0 errors**. The earlier full
+  compilation emitted 22 existing warnings; the final incremental build above did not.
+- `./test.sh --l1 --only 'fluid.*'`: **11 passed, 0 failed**. `fluid.art_placements_and_flow` now has
+  **210 checks**, including all twelve inventory lookups, actual manifest model loading, reduced
+  collision boxes with the standard 15% pickup margin, physical floor landing, every new branch's
+  flow, placement/raycast anchors, and the existing animation/power checks. Test runs were serial.
+- Icon renders were inspected together in `notes/fluid_art/item_icons.png`. The pump and purifier
+  icons were refreshed after their electrical glands were added.
+- **All 11 final contact sheets were opened and inspected: six views each, 66 frames**, including
+  the 90° joins and the new view from underneath. The first long batch was terminated with SIGTERM
+  during the final device, so the purifier was rerendered with `FLUID_DEVICES=9121`; that run completed
+  successfully. The pump also received a successful six-view rerender after its electrical gland
+  was added. All final sheets are 2700×450. The side views show connected collars and curved endpoints;
+  the added underside views show closed barrel bottoms, skid/base slabs and drain bowl.
+
+What I could not verify:
+
+- **No hardware GPU, night, underwater render, or full-island play session.** These are software Vulkan
+  captures under xvfb. The inlet's water-depth placement and fluid behaviour are tested numerically.
+- **LOD1 has closure/normal/anchor coverage, but no fresh six-angle visual review.** The final contact
+  sheets show LOD0. I did not benchmark the extra geometry: the 30 delivered device mesh files grow
+  from 6,976 to 9,208 triangles (+32.0%); the largest placed assembly is the 736-triangle pump.
+- **No inventory-grid screenshot or manual dropped-item pickup session.** The icon sheet uses real
+  manifest models, inventory icon loading is tested, and all twelve physics drops land in the headless
+  test. Those checks do not demonstrate how the icons read at every UI scale or how drops look in grass.
+- **No animation video.** Valve travel and powered pulley motion pass numeric tick/transform checks;
+  stills cannot demonstrate belt motion over time.
+- **No multiplayer playtest or existing-network migration check.** Newly placed three-way devices are
+  covered. Adding the middle branch changes branch indices, and the combiner's output index moves from
+  2 to 3; I have not verified a consumer of old port-index layouts against this change.
+- Godot logs a render-thread `finalize` error on shutdown after saving captures. The PNGs are decoded
+  and checked for fresh output, framing and transparency, but that shutdown error was not diagnosed.
+- The non-fluid test suite was not run.
