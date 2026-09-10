@@ -37,9 +37,18 @@ namespace UnturnedGodot
         public Vector3 PortLocalPos = new Vector3(0f, 0.7f, 0.55f);   // where a single-port tank's cube sits (front face); placement sets it per-face
         public float LastFlow;             // debug / fill-bar readout
         InfoBillboard _info;
-        StandardMaterial3D _valveHandleMat;   // valve: the handle wheel material (green open / red closed)
+        StandardMaterial3D _valveHandleMat;   // ONLY the legacy primitive handle recolours; the authored wheel is red in both states
         MeshInstance3D _valveHandle;         // authored wheel and its lower LOD rotate together
-        MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase;   // pump motor drum: vibrates when the pump is DRIVING (powered + fluid flowing)
+        // THE ANGLE IS OURS, NOT THE NODE'S. Reading it back off Rotation.Y cannot work here: Godot
+        // normalises euler angles to (-pi, pi], so a 5-turn target is unreachable and MoveToward would
+        // chase a value that wraps under it. Both moving parts therefore keep their own accumulated
+        // angle and WRITE the transform, and never read it back to decide the next step.
+        float _valveAngle, _pumpAngle; Basis _partRest = Basis.Identity; bool _partRestSet;
+        internal float DebugValveAngle => _valveAngle;      // the tests assert on the real angle, not a wrapped euler
+        internal float DebugPumpAngle => _pumpAngle;
+        MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase; float _pumpRpm;   // pump belt pulley: spins while DRIVING (powered + fluid flowing), and spins down when it stops
+        internal const float PumpSpinRate = 9.0f;      // rad/s at full drive -- fast enough to read, slow enough not to strobe at 30 Hz
+        internal const float ValveTravel = Mathf.Pi * 5f;   // 2.5 turns from open to shut, like a real gate valve
 
         // True when the device is actively working and should animate (a powered pump with fluid moving through it).
         // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.
@@ -160,32 +169,32 @@ namespace UnturnedGodot
             switch (Role)
             {
                 case FluidRole.Source:
-                    AddPort(FluidPortKind.Source, FlowRate, PortLocalPos); break;
+                    AddPort(FluidPortKind.Source, FlowRate, FluidArt.Port(Def, PortLocalPos.X, PortLocalPos.Y, PortLocalPos.Z)); break;
                 case FluidRole.Storage:    // a buffer TANK: a Consumer INPUT (fill, left face, Ports[0]) + a Source OUTPUT (draw, right face)
-                    AddPort(FluidPortKind.Consumer, FlowRate, new Vector3(-0.5f, 0.7f, 0f));
-                    AddPort(FluidPortKind.Source, FlowRate, new Vector3(0.5f, 0.7f, 0f));
+                    AddPort(FluidPortKind.Consumer, FlowRate, FluidArt.Port(Def, -0.5f, 0.7f, 0f));
+                    AddPort(FluidPortKind.Source, FlowRate, FluidArt.Port(Def, 0.5f, 0.7f, 0f));
                     break;
                 case FluidRole.Consumer:   // a pure sink: one Consumer input (deletes)
-                    AddPort(FluidPortKind.Consumer, FlowRate, PortLocalPos); break;
+                    AddPort(FluidPortKind.Consumer, FlowRate, FluidArt.Port(Def, PortLocalPos.X, PortLocalPos.Y, PortLocalPos.Z)); break;
                 case FluidRole.Splitter:   // 0-rate relay input (left) + N passthrough outputs (right)
-                    AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Consumer, 0f, FluidArt.Port(Def, -0.5f, 0.6f, 0f));
                     for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, Fan(i, Ways)));
                     break;
                 case FluidRole.Combiner:   // N relay inputs (left) + 1 passthrough output (right)
                     for (int i = 0; i < Ways; i++) AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, Fan(i, Ways)));
-                    AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Passthrough, 0f, FluidArt.Port(Def, 0.5f, 0.6f, 0f));
                     break;
                 case FluidRole.Pump:       // inline: a 0-rate relay input (left) + one passthrough output (right)
-                    AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, 0f));
-                    AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Consumer, 0f, FluidArt.Port(Def, -0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Passthrough, 0f, FluidArt.Port(Def, 0.5f, 0.6f, 0f));
                     break;
                 case FluidRole.Transformer:   // a Consumer INPUT (deletes TransformIn) + a Source OUTPUT (produces TransformOut)
-                    AddPort(FluidPortKind.Consumer, FlowRate, new Vector3(-0.5f, 0.6f, 0f), TransformIn);
-                    AddPort(FluidPortKind.Source, FlowRate * TransformRatio, new Vector3(0.5f, 0.6f, 0f), TransformOut);
+                    AddPort(FluidPortKind.Consumer, FlowRate, FluidArt.Port(Def, -0.5f, 0.6f, 0f), TransformIn);
+                    AddPort(FluidPortKind.Source, FlowRate * TransformRatio, FluidArt.Port(Def, 0.5f, 0.6f, 0f), TransformOut);
                     break;
                 case FluidRole.Valve:      // inline switch: a 0-rate relay input + one passthrough output (dead when Blocked/closed)
-                    AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, 0f));
-                    AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Consumer, 0f, FluidArt.Port(Def, -0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Passthrough, 0f, FluidArt.Port(Def, 0.5f, 0.6f, 0f));
                     break;
             }
         }
@@ -290,11 +299,10 @@ namespace UnturnedGodot
         }
         protected void RefreshValveVisual()
         {
-            if (_valveHandle != null)
-            {
-                _valveHandleMat.Uv1Offset = new Vector3(Blocked ? 0.5f : 0f, 0, 0);
-                return;
-            }
+            // The AUTHORED wheel is red in both states (strawberry: "change the valve handle to be
+            // red"), so nothing here recolours it -- HubTick turns it instead, which is the state
+            // readout AND the animation. Only the old primitive handle still swaps colour.
+            if (_valveHandle != null) return;
             if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
         }
 
@@ -321,22 +329,43 @@ namespace UnturnedGodot
                 _ => $"Fluid {Role}",
             };
 
+        // The part's authored resting orientation (the pump's pulley is stood upright onto the motor
+        // shaft), captured once so a spin composes onto it instead of overwriting it.
+        Basis PartRest(MeshInstance3D part)
+        {
+            if (!_partRestSet) { _partRest = part.Basis; _partRestSet = true; }
+            return _partRest;
+        }
+
         public virtual void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
+            // A gate valve is wound shut over SEVERAL turns, not a quarter turn -- that is what the
+            // wheel is geared for and it is what makes the open/closed state readable at a glance now
+            // the colour no longer changes. ~2.5 turns over ~1.1 s, following manual and remote alike.
             if (_valveHandle != null)
             {
-                float angle = Mathf.MoveToward(_valveHandle.Rotation.Y, Blocked ? Mathf.Pi / 2f : 0f,
-                    (float)delta * Mathf.Pi * 2.5f);   // quarter turn in 0.2 s; follows both manual and remote state
-                _valveHandle.Rotation = new Vector3(0, angle, 0);
+                float next = Mathf.MoveToward(_valveAngle, Blocked ? ValveTravel : 0f, (float)delta * ValveTravel / 1.1f);
+                if (!Mathf.IsEqualApprox(next, _valveAngle))
+                {
+                    _valveAngle = next;
+                    _valveHandle.Transform = new Transform3D(PartRest(_valveHandle) * new Basis(Vector3.Up, _valveAngle), _valveHandle.Position);
+                }
             }
-            // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
-            // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
+            // A powered pump with fluid moving through it SPINS ITS BELT PULLEY (strawberry: "the pump
+            // should have some part of it that spins, but making sense"). The pulley sits on the motor
+            // shaft under the belt guard, so what turns is the thing actually driving the volute --
+            // where the old animation jittered the whole motor drum on the spot, which no pump does.
+            // It SPINS DOWN rather than stopping dead, because a loaded rotor has inertia.
             if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))
             {
-                if (DriveActive)
+                _pumpRpm = Mathf.MoveToward(_pumpRpm, DriveActive ? PumpSpinRate : 0f, (float)delta * PumpSpinRate * 1.6f);
+                if (_pumpRpm > 0.001f)
                 {
+                    _pumpAngle += _pumpRpm * (float)delta;
+                    _pumpDrum.Basis = PartRest(_pumpDrum) * new Basis(Vector3.Up, _pumpAngle);
+                    // a small sympathetic shake while it is actually driving, on the BODY axis
                     _vibePhase += (float)delta * 42f;
-                    _pumpDrum.Position = _pumpDrumBase + new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.01f;
+                    _pumpDrum.Position = _pumpDrumBase + new Vector3(0f, Mathf.Sin(_vibePhase), 0f) * 0.004f * (_pumpRpm / PumpSpinRate);
                 }
                 else if (_pumpDrum.Position != _pumpDrumBase) _pumpDrum.Position = _pumpDrumBase;
             }
