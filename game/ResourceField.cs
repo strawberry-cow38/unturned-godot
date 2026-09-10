@@ -75,6 +75,15 @@ namespace UnturnedGodot
             if (r.Canopy.Mm == null || !r.Alive) return;
             if (r.Shake <= 0f) _shaken.Add(index);
             r.Shake = 1f;                    // each hit re-arms it to full rather than accumulating
+            // ⚠ WRITTEN NOW, not next frame. _Process was the only thing that pushed Shake into the buffer, and it
+            // decays BEFORE it writes -- so the channel never saw 1.0 at all, it saw one frame of decay, and on the
+            // frame you actually swung it still held whatever it held before. "have them shake with each hit"
+            // (strawberry 2026-09-09) means on the hit, not a frame after it.
+            //
+            // world.tree_hit_shake read the buffer straight after the hit and got 0, which is what the game was
+            // drawing too. Writing here also takes the assertion off a knife edge: reading one frame late gives
+            // 0.912 at 60 fps against a 0.9 threshold, and 0.833 at 30.
+            r.Canopy.Mm?.SetInstanceCustomData(r.Canopy.Slot, new Color(r.Shake, 0f, 0f, 0f));
             SetProcess(true);
         }
 

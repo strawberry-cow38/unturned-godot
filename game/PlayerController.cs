@@ -9496,6 +9496,7 @@ namespace UnturnedGodot
             PositionDriveCam(vt);
         }
         internal Camera3D CamForTest => _cam;
+        internal (float dist, float size, float zoom, float lookPitch, float lookYaw) DebugPlaneCam;   // last plane chase-cam inputs, for the test's diagnosis
 
         void PositionDriveCam(Transform3D vt)   // SP driving: the cam math below, fed by the driven Vehicle's eye + size
         {
@@ -9676,6 +9677,11 @@ namespace UnturnedGodot
                     Basis plook = pb * new Basis(Vector3.Up, Mathf.DegToRad(_flyLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_flyLookPitch));   // ALT free-look, now in the aircraft's own frame
                     var ptarget = vt.Origin + pup * 0.4f;
                     var peye = vt.Origin + plook.Z * (dist * 0.9f) + plook.Y * (dist * PlaneCamUp + size * PlaneCamUpSize);
+                    // Recorded for vehicle.plane_chase_cam. The formula predicts ~17.5 deg above the axis for the
+                    // jet (size ~21.6 -> dist ~13.4), and the sweep measured 48.8 -- so one of these inputs is not
+                    // what I think it is in the harness, and guessing which would be the third theory today that
+                    // read plausibly and was wrong. The test prints them; the next sweep answers it.
+                    DebugPlaneCam = (dist, size, _driveCamZoom, _flyLookPitch, _flyLookYaw);
                     peye = CamCollide(ptarget, peye);
                     _cam.GlobalTransform = new Transform3D(Basis.Identity, peye).LookingAt(ptarget, pup);
                 }
