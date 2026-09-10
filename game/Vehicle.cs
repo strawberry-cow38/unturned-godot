@@ -3077,13 +3077,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -3.429615f),
             HitchYawLimit = 59.988005f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.499091f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.599091f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.399091f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -2.499091f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -2.599091f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.399091f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Dinky Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.250000f, 0.250000f, 0.313713f, false), (1.250000f, 0.250000f, 0.313713f, false) },
+            { (-1.250000f, 0.064590f, 0.313713f, false), (1.250000f, 0.064590f, 0.313713f, false) },
             TailPos = new[] { new Vector3(-0.737863f, 0.476570f, 1.510794f), new Vector3(0.737862f, 0.476570f, 1.510802f) },
             Parts = new (string, Color)[] { ("dinky_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -3112,13 +3112,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -3.821757f),
             HitchYawLimit = 58.566199f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -2.891232f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -2.991232f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.791232f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -2.891232f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -2.991232f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -2.791232f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Small Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.312500f, 0.250000f, 0.392141f, false), (1.312500f, 0.250000f, 0.392141f, false) },
+            { (-1.312500f, 0.066835f, 0.392141f, false), (1.312500f, 0.066835f, 0.392141f, false) },
             TailPos = new[] { new Vector3(-0.800363f, 0.476570f, 1.902936f), new Vector3(0.800362f, 0.476570f, 1.902944f) },
             Parts = new (string, Color)[] { ("small_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -3147,13 +3147,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -4.344612f),
             HitchYawLimit = 52.076764f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.414087f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -3.514087f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.314087f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -3.414087f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -3.514087f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.314087f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Medium Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.625003f, 0.250000f, -0.128287f, false), (1.625003f, 0.250000f, -0.128287f, false), (-1.625003f, 0.250000f, 1.121713f, false), (1.625003f, 0.250000f, 1.121713f, false) },
+            { (-1.625003f, 0.073232f, -0.128287f, false), (1.625003f, 0.073232f, -0.128287f, false), (-1.625003f, 0.073232f, 1.121713f, false), (1.625003f, 0.073232f, 1.121713f, false) },
             TailPos = new[] { new Vector3(-1.112866f, 0.476570f, 2.425791f), new Vector3(1.112865f, 0.476570f, 2.425799f) },
             Parts = new (string, Color)[] { ("medium_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -3182,13 +3182,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -4.867467f),
             HitchYawLimit = 49.758873f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.936943f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -3.936943f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Large Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.750003f, 0.250000f, 0.394568f, false), (1.750003f, 0.250000f, 0.394568f, false), (-1.750003f, 0.250000f, 1.644568f, false), (1.750003f, 0.250000f, 1.644568f, false) },
+            { (-1.750003f, 0.089618f, 0.394568f, false), (1.750003f, 0.089618f, 0.394568f, false), (-1.750003f, 0.089618f, 1.644568f, false), (1.750003f, 0.089618f, 1.644568f, false) },
             TailPos = new[] { new Vector3(-1.237866f, 0.476570f, 2.948646f), new Vector3(1.237865f, 0.476570f, 2.948654f) },
             Parts = new (string, Color)[] { ("large_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -3218,13 +3218,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -4.867467f),
             HitchYawLimit = 49.758873f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.936943f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -3.936943f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Horsebox Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.750003f, 0.250000f, 0.394568f, false), (1.750003f, 0.250000f, 0.394568f, false), (-1.750003f, 0.250000f, 1.644568f, false), (1.750003f, 0.250000f, 1.644568f, false) },
+            { (-1.750003f, 0.089955f, 0.394568f, false), (1.750003f, 0.089955f, 0.394568f, false), (-1.750003f, 0.089955f, 1.644568f, false), (1.750003f, 0.089955f, 1.644568f, false) },
             TailPos = new[] { new Vector3(-1.237866f, 0.476570f, 2.948646f), new Vector3(1.237865f, 0.476570f, 2.948654f) },
             Parts = new (string, Color)[] { ("horsebox_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -3254,13 +3254,13 @@ namespace UnturnedGodot
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -4.867467f),
             HitchYawLimit = 49.758873f, // front rail corner remains behind pivot at full yaw
-            LandingGearSize = new Vector3(0.200000f, 0.521079f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.339460f, -3.936943f),
-            LandingLegZoneMin = new Vector3(0.050000f, -0.600000f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
+            LandingGearSize = new Vector3(0.200000f, 0.483510f, 0.200000f), LandingGearCenter = new Vector3(0.150000f, -0.320676f, -3.936943f),
+            LandingLegZoneMin = new Vector3(0.050000f, -0.562431f, -4.036943f), LandingLegZoneMax = new Vector3(0.250000f, -0.078921f, -3.836943f),
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
             Sound = null, Fuel = 1000f, Health = 450.000000f, Name = "Animal Trailer",
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             Wheels = new (float, float, float, bool)[]
-            { (-1.750003f, 0.250000f, 0.394568f, false), (1.750003f, 0.250000f, 0.394568f, false), (-1.750003f, 0.250000f, 1.644568f, false), (1.750003f, 0.250000f, 1.644568f, false) },
+            { (-1.750003f, 0.089955f, 0.394568f, false), (1.750003f, 0.089955f, 0.394568f, false), (-1.750003f, 0.089955f, 1.644568f, false), (1.750003f, 0.089955f, 1.644568f, false) },
             TailPos = new[] { new Vector3(-1.237866f, 0.476570f, 2.948646f), new Vector3(1.237865f, 0.476570f, 2.948654f) },
             Parts = new (string, Color)[] { ("animal_trailer_taillights.txt", new Color(0.556863f, 0.125490f, 0.125490f)) },   // the sedan's own tail-lamp texel
         };
@@ -9946,6 +9946,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         /// <summary>Test seam: the bit that means "solid" for THIS vehicle. Exposed so a test can assert the
         /// un-ghosted layer was restored without hard-coding a layer scheme that has now changed twice.</summary>
         public uint DebugSolidBit => SolidBit;
+        public System.Collections.Generic.IReadOnlyList<VehicleWheel3D> DebugWheelNodes => _wNodes;   // harness: is a parked trailer actually sitting on its tyres?
 
         public int DebugBoxHullsDisabled;   // fitted boxes taken out of physics once the hulls landed
         public int DebugHitMeshTris;        // triangles in the mesh hitbox, 0 when it is off

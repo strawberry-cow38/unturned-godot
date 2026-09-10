@@ -9245,6 +9245,13 @@ namespace UnturnedGodot
                 else if (_vehTest && _veh != null)
                 {
                     // settle, then auto-drive a course for the video: straight -> right curve -> left curve
+                    if (System.Environment.GetEnvironmentVariable("UG_RESTCHECK") == "1" && (_frame == 200 || _frame == 400 || _frame == 600))
+                    {
+                        int grounded = 0; foreach (var w in _veh.DebugWheelNodes) if (w.IsInContact()) grounded++;
+                        var rb = _veh.GlobalTransform.Basis; var rfwd = -rb.Z;
+                        float pitchDeg = Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(rfwd.Y, -1f, 1f)));
+                        GD.Print($"[rest] f{_frame} originY={_veh.GlobalPosition.Y:F4} pitch={pitchDeg:+0.00;-0.00}deg wheelsGrounded={grounded}/{_veh.DebugWheelNodes.Count} vel={_veh.LinearVelocity.Length():F3} deckFrontY={_veh.ToGlobal(new Vector3(0f,-0.273f,-1.5f)).Y:F4} deckRearY={_veh.ToGlobal(new Vector3(0f,-0.273f,1.5f)).Y:F4}");
+                    }
                     if (_hitchSweep) { if (_frame == 60) RunHitchSweep(); }
                     else if (_backunder)   // reverse straight back UNDER the parked trailer, couple in reach, then PULL FORWARD to prove the rig drives
                     {
