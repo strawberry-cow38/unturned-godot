@@ -1819,6 +1819,33 @@ namespace UnturnedGodot
         void PickupFluid(FluidContainer c)
         {
             if (c == null || !IsInstanceValid(c)) return;
+            // ⚠ REFUSED WHILE THE BAG IS SERVER-OWNED (strawberry 2026-09-10: "the items i get from picking up
+            // deployables are phantom ... when i update the inv they disappear").
+            //
+            // The grant below is a bare local tryAddItem with no net seam, and every path -- singleplayer
+            // included, since SP runs through MpLoopback -- has a server-owned inventory. So the item appeared,
+            // the server never heard, and the next owner echo took it straight back out. It did not "disappear on
+            // refresh": it was never real.
+            //
+            // The server cannot simply be told to hand it over, either. Fluid defs are LocalOnly, so ServerPlace
+            // bails before registering an entity (DeployableReplication:450) -- validated and spent, never
+            // recorded. There is nothing for it to verify a pickup against, and a command that refunds on the
+            // client's say-so is just a free-item exploit.
+            //
+            // So this refuses rather than lying, which at least keeps the device standing and the item in the
+            // world. The real fix is making fluid devices server-tracked -- the "fluid MP replication is a
+            // fast-follow" note below, coming due -- and pickup then falls out of the validated
+            // OnPickupDeployable path that already refunds correctly. tinyclaw owns that migration; it is the
+            // same one already made for the fridge in DeployableReplicaView.
+            //
+            // Deliberately NOT gated on the device being fluid-specific: the sibling prop path refuses on exactly
+            // this condition too (PickupDeployable, NetId 0), for exactly this reason.
+            if (InventoryIsServerOwned)
+            {
+                FluidPickupHudSet("can't pick this up yet");
+                Log.Print($"[fluid] pickup refused: {c.Def?.Name} is not server-tracked, and the bag is (see PickupFluid)");
+                return;
+            }
             ushort id = c.Def?.Id ?? 0;
             string name = c.Def?.Name;
             Vector3 pos = c.GlobalPosition;
