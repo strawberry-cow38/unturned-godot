@@ -363,7 +363,6 @@ namespace UnturnedGodot
         public float MaxHealth { get => _vitals.MaxHealth; set => _vitals.MaxHealth = value; }
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
-        double _bleedTimer;
         public bool Broken;        // PlayerLife.isBroken: broken legs (from a hard fall) -- blocks sprint + jump until mended
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
@@ -400,7 +399,7 @@ namespace UnturnedGodot
             // raising infection = the bar drains (inverted). IMMUNITY cuts it (inside Infect).
             float moldy = FoodSpoil.MoldyInfection(a.useFood, a.useWater, quality);
             if (moldy > 0f) Infect(moldy);
-            if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
+            if (a.useStopsBleeding) Bleeding = false;   // a dressing is now the ONLY thing that stops it
             if (a.useHealBroken) Broken = false;   // Bones_Modifier Heal (Medkit/Splint) mends broken legs
         }
 
@@ -3828,7 +3827,12 @@ namespace UnturnedGodot
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
-            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
+            // ...and it ACTUALLY breaks the legs now. This line has logged "legs broken" since it was written
+            // and never set the flag, so Broken had no source anywhere -- PlayerVitalsReplication says as much
+            // in its own comment ("server has no source yet -> false"). Jump was already gated on it and the
+            // splint/medkit cure was already wired (ItemAsset.useHealBroken), so the whole feature was one
+            // assignment short of existing.
+            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); Broken = true; TakeDamage(dmg); }
         }
 
         float _grenadeCd;
@@ -5588,13 +5592,13 @@ namespace UnturnedGodot
             // AdoptReplicatedFineVitals deliberately doesn't adopt it, so surface it locally on a real hit BEFORE the
             // server-owned-body early-returns below -- else a hit on the loopback host / MP shell never shows the
             // bleeding icon. NOT on NetAvatar (a remote puppet must not sprout our bleeding state).
-            if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) { Bleeding = true; _bleedTimer = 5.0; }
+            if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) Bleeding = true;
             if (NetDamageSink != null) { NetDamageSink(amount); return; }
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
             Health -= amount;
-            if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
+            if (amount > 1f) Bleeding = true;   // a real hit opens a wound; only a dressing closes it
 
             ShowHurtCosmetics(amount, fromPos);
             if (Health <= 0f) { Deaths++; Die(); }
@@ -6088,8 +6092,8 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310)
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
@@ -9727,7 +9731,6 @@ namespace UnturnedGodot
                 else GlobalPosition = _interpCurr;
             }
             _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
-            if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
             {
                 _deathTimer -= delta;
