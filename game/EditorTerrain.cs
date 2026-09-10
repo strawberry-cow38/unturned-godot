@@ -31,20 +31,12 @@ namespace UnturnedGodot
         // PEI's layer semantics -- the FALLBACK. Per map the real labels come from content/<Terrain.MapDir>/layers.txt
         // (tools/terrain_map.py writes it from the actual materials), so e.g. Washington's layer6 reads "Grass 01" (a
         // second grass) instead of PEI's hardcoded "Snow", its layer1 "Corn" not "Wheat", layer5 "Gravel Shore" not "Sand".
-        static readonly string[] DefaultLayerNames = { "Dirt", "Wheat", "Grass", "Gravel", "Road", "Sand", "Snow", "Stone" };
-        string[] LayerNames = DefaultLayerNames;
+        // The loader moved to Terrain (2026-09-10) so the paint palette and the SOUND underfoot read one list:
+        // Terrain.SurfAt now keys the footstep/landing/bullet surface off these same names, and two copies of
+        // "which slot is snow" is exactly the kind of pair that drifts.
+        string[] LayerNames = Terrain.DefaultLayerNames;
 
-        static string[] LoadLayerNames()
-        {
-            string p = ProjectSettings.GlobalizePath($"res://content/{Terrain.MapDir}/layers.txt");
-            if (System.IO.File.Exists(p))
-            {
-                var names = new System.Collections.Generic.List<string>();
-                foreach (var ln in System.IO.File.ReadAllLines(p)) { var t = ln.Trim(); if (t.Length > 0) names.Add(t); }
-                if (names.Count > 0) return names.ToArray();
-            }
-            return DefaultLayerNames;
-        }
+        static string[] LoadLayerNames() => Terrain.LayerNames();
         public static readonly string[] BrushNames = { "Raise", "Lower", "Flatten", "Smooth", "Ramp", "Dig hole", "Fill hole" };
 
         // --- accessors for the EditorTerrainPanel buttons/sliders ---

@@ -173,14 +173,27 @@ namespace UnturnedGodot
             var w = n.GetWorld3D();
             return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);
         }
-        public static string MeleeSurface(PlayerController.Surf s) => s switch { PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass", _ => null };
+        // null = no melee bank for this surface, and the caller falls back. Only the four retail actually
+        // ships as melee targets are named (grass, metal, ice, snow); the rest have no clip and saying so is
+        // how the caller knows to fall back rather than play grass at a brick wall.
+        public static string MeleeSurface(PlayerController.Surf s) => s switch
+        {
+            PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass",
+            PlayerController.Surf.Ice => "ice", PlayerController.Surf.Snow => "snow", _ => null,
+        };
 
         // ---- surface names shared by the footstep / landing / casing / bullet-impact banks ----
         public static string FootSurface(PlayerController.Surf s) => s switch
         {
             PlayerController.Surf.Concrete => "concrete", PlayerController.Surf.Grass => "grass", PlayerController.Surf.Dirt => "dirt",
             PlayerController.Surf.Metal => "metallow", PlayerController.Surf.Wood => "wood", PlayerController.Surf.Sand => "sand",
-            PlayerController.Surf.Water => "water", _ => "concrete",
+            PlayerController.Surf.Water => "water",
+            PlayerController.Surf.Gravel => "gravel", PlayerController.Surf.Snow => "snow", PlayerController.Surf.Ice => "ice",
+            // Stone cliffs walk like the hard surface they are; there is no `rock` footstep bank, only a rock
+            // BULLET bank -- so this is a real mapping, not a fallback, and is spelled out rather than left to
+            // the default so that adding a rock bank later has one place to change.
+            PlayerController.Surf.Rock => "concrete",
+            _ => "concrete",
         };
         public static string LandSurface(PlayerController.Surf s) => s == PlayerController.Surf.Metal ? "metal" : FootSurface(s);
 
@@ -271,7 +284,8 @@ namespace UnturnedGodot
             PlayerController.Surf.Wood => "wood",
             PlayerController.Surf.Water => "water",
             PlayerController.Surf.Grass => "foliage",
-            PlayerController.Surf.Dirt or PlayerController.Surf.Sand => "gravel",
+            PlayerController.Surf.Dirt or PlayerController.Surf.Sand or PlayerController.Surf.Gravel => "gravel",
+            PlayerController.Surf.Snow => "snow",   // the one impacts bank that exists only as a _static
             _ => "concrete",
         }) + "_static");
 
@@ -279,6 +293,7 @@ namespace UnturnedGodot
         {
             PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight",
             PlayerController.Surf.Sand => "gravel",   // retail ships no sand bullet bank (audit 2026-09-03: a missing bank returns null and the old single wav takes over -- gravel is the retail choice)
+            PlayerController.Surf.Rock => "rock",     // the one bank `rock` exists for -- there is no rock footstep or landing clip
             _ => FootSurface(s),
         };
     }

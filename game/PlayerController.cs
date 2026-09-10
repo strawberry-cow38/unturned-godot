@@ -8169,7 +8169,15 @@ namespace UnturnedGodot
 
         // surface materials for bullet impacts (a slice of the source EPhysicsMaterial set). Tagged on colliders via
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
-        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water }
+        // ⚠ APPEND-ONLY. The value is written into colliders as SurfMeta and read back by Terrain/Vehicle/
+        // RemotePlayers, so reordering renames every tagged prop in the world at once.
+        //
+        // Gravel/Snow/Ice/Rock were added 2026-09-10: the retail rip ships full footstep/landing/bullet/melee
+        // banks for all four, and the enum having no value for them was the reason ~217 clips looked unused.
+        // Mud and DirtLoose have banks too and are deliberately NOT here -- no terrain layer and no prop in
+        // any of the three maps is either, so a value nothing can produce would be a bank that stays dark
+        // while looking wired.
+        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water, Gravel, Snow, Ice, Rock }
         public const string SurfMeta = "surf";
 
         // WALLBANG (strawberry 2026-08-21: "projectile hits surface, loses x velocity and damage, hits behind").

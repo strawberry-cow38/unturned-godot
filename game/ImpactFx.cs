@@ -48,7 +48,12 @@ namespace UnturnedGodot
         static string MatName(Surf s) => s switch
         {
             Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "gravel",
-            Surf.Grass => "foliage", Surf.Dirt => "gravel", Surf.Water => "water", _ => "concrete",
+            Surf.Grass => "foliage", Surf.Dirt => "gravel", Surf.Water => "water",
+            // The rip ships impact sprites for concrete/flesh/foliage/gravel/metal/water/wood and no more, so
+            // loose ground takes the gravel chips and everything hard takes concrete. Snow and ice have no
+            // debris sprite at all -- flagged rather than dressed up: they throw grey chips until one exists.
+            Surf.Gravel => "gravel", Surf.Rock => "concrete", Surf.Snow => "concrete", Surf.Ice => "concrete",
+            _ => "concrete",
         };
         static ImageTexture DebrisTex(Surf s)
             => _debris.TryGetValue(s, out var t) ? t : (_debris[s] = LoadTex($"res://content/impact_{MatName(s)}_static_0.png"));

@@ -1086,6 +1086,19 @@ namespace UnturnedGodot
                 PlayerController.Surf.Dirt => GripDirt,
                 PlayerController.Surf.Grass => GripGrass,
                 PlayerController.Surf.Sand => GripSand,
+                // Added with the Surf values themselves (2026-09-10). These are NOT new handling: before the
+                // terrain surface map was fixed, gravel already reported as Concrete and snow as Dirt, so
+                // keeping gravel loose-but-firm and snow at the dirt figure is what the map has always driven
+                // -- naming them stops the fix from silently changing how Yukon drives.
+                PlayerController.Surf.Gravel => GripDirt,
+                PlayerController.Surf.Snow => GripDirt,
+                // Stone is hard ground and grips like it. This IS a change: layer 7 used to fall through to
+                // Grass, so cliffs and quarries were as slippery as a field.
+                PlayerController.Surf.Rock => GripConcrete,
+                // ⚠ ICE IS NOT SLIPPERY, deliberately. Skating vehicles is a handling change nobody asked
+                // for, and no terrain layer on the three shipped maps is ice anyway -- it arrives with a map
+                // that paints one, and should be decided then rather than smuggled in with an audio fix.
+                PlayerController.Surf.Ice => GripConcrete,
                 _ => GripConcrete,   // concrete/metal/wood/water: a hard or unlabelled floor is the reference
             };
             return offRoad ? Mathf.Lerp(k, 1f, OffRoadRecovery) : k;
