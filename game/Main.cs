@@ -1729,7 +1729,11 @@ namespace UnturnedGodot
             // item's Use clip on a loop so a movie catches the whole thing: a chip bag has 7.5 s of animation and
             // the interesting half is a bag opening, not the pose it starts in.
             if (isConsumable) AddChild(new ConsumeUseDriver { VM = _vm, Period = Mathf.Max(1.5f, _cUseLen + 0.6f) });
-            if (isMelee) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
+            // ⚠ NOT for a consumable. isMelee is still TRUE for one -- it is computed from "<name>.txt exists",
+            // and every food ships that -- so reordering the viewmodel branch was not enough: the swing driver kept
+            // attaching alongside the consume driver and the poor sod punched with his chip bag on a loop
+            // (strawberry: "the guy just punches over and over lol"). One driver per hand.
+            if (isMelee && !isConsumable) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
             if (isDeploy) AddChild(new DeployUseDriver { VM = _vm });   // periodic place motion so the --vm render shows the Deploy_Use anim
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
         }
