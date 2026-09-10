@@ -1,0 +1,1378 @@
+{
+  "commit": "9bdd4bce4afcc8137e61516f44811a98de86a01e",
+  "files": {
+    "game/content/fluid/9110_body.txt": "3a7ddedc7c45b858d943ae19224e972ddc997764fc16d93d97875bd21c6bda78",
+    "game/content/fluid/9110_body_lod1.txt": "8fd44528319aada9cd0648a04f941c2ecf28fddba8a460e521b1b6bec0048c96",
+    "game/content/fluid/9110_palette.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/fluid/9111_palette.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/fluid/9112_palette.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/fluid/9113_palette.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/fluid/9114_palette.png": "02d490552489693d8febf31a8972dc50d39e1c0dac9496fd86a6b9409d1382af",
+    "game/content/fluid/9115_palette.png": "1e574a7436d4f76f529ea4f02e1cf46a5b659316ca0af00c27b352c565b4db38",
+    "game/content/fluid/9115_part.txt": "88fb9c18d7ef61defc2c8f7d67f3de8da3cf2739b5be236b27f781be09e3b95b",
+    "game/content/fluid/9115_part_lod1.txt": "5d3a0cdf27927d9c8cc11a25c5faa6e8090432b4fb7cf5da7ffcea42ade5b28a",
+    "game/content/fluid/9116_palette.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/fluid/9117_palette.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/fluid/9119_body.txt": "c389241af861592644f1d719f088bcde60c69755b1a3d40ad3bf560728fd8483",
+    "game/content/fluid/9119_body_lod1.txt": "dd603b796523db0a912e0e903fe4aa675e2bd40d2e37e91129363ed92defe21d",
+    "game/content/fluid/9119_palette.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/fluid/9120_body.txt": "1e4572776b1b9389dc3f371c36afaaa866162378009e94b9afc07ac195a4f65c",
+    "game/content/fluid/9120_body_lod1.txt": "c9b28ebaaf17c117aaa22b57647a34a8383409eb8fdbc75c0da2c436ac20f2f0",
+    "game/content/fluid/9120_palette.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/fluid/9121_palette.png": "227a687ae0c336e267fd7aff3a03572a52a1611b05d96dea83ecbdb8b160eb82",
+    "game/content/fluid/9111_body.txt": "1e039256964bef38f4e7eb13e1a37ade76ddf164c08050d3254e0bad6fbeb540",
+    "game/content/fluid/9111_body_lod1.txt": "2a126731f3a5067362d8a526f0c8cc25f2da36414e58d057969d7d3b34636cfc",
+    "game/content/fluid/9112_body.txt": "bfab148fafdf97e3f298f9269ec34e07f39a6cbdb2d83cbcf1fdcc2529754933",
+    "game/content/fluid/9112_body_lod1.txt": "08f1da47d380443d7efc37bb52f862ffa9319a6a20b15603ac6af1ca93af26b3",
+    "game/content/fluid/9113_body.txt": "735e81257736f9e5359e55593a6700b46aa963051d8fafa8da05c222a3bc0dd6",
+    "game/content/fluid/9113_body_lod1.txt": "c0b29b33a91994320c0d125d3c8318fd9b180ca6d1db0f3c804787d5c479f7b5",
+    "game/content/fluid/9114_body.txt": "e05693265031f5af433bf76baf6a19e12be93c71957bf87059f55a2ca9fb288a",
+    "game/content/fluid/9114_body_lod1.txt": "4f14edd9adf4e35335148c795cca69b5623d5ac7f6106340f1f1822c35a83d60",
+    "game/content/fluid/9114_part.txt": "198a324dc5b10f9687ae07c4076e7edb560d1a62222f79f98c013a24d7af8fb1",
+    "game/content/fluid/9114_part_lod1.txt": "a8e53fa3659a47346640b26e4d775d257a23b13ddc72b8105982555ddcb41139",
+    "game/content/fluid/9114_preview.txt": "9dd8af01945f3eea5f2659010c4eaecc53ba12a33765c6d5d95a37578b377a73",
+    "game/content/fluid/9114_preview_lod1.txt": "e03a1ac4c678ecc778f21e524d4bfa7e621f3d7b8d6c81628cd9ab1915988b40",
+    "game/content/fluid/9116_body.txt": "3387ea48dc97aff35f27417580fca301add92f02e7e32aae8514a985f18980b7",
+    "game/content/fluid/9116_body_lod1.txt": "95cc902b4c042f9177788ed38f79227937995e7a87e078d6342a18df1552ce5f",
+    "game/content/fluid/9117_body.txt": "a5b374cbba9adcd666d213d66dacfe381f39753fec2b470e5dac9b3bbf118194",
+    "game/content/fluid/9117_body_lod1.txt": "8dbf9ed9b8a532183516e87f8c0f88ba7c0b11d281a55702944b1b331f0e3882",
+    "game/content/fluid/9121_body.txt": "61335639b3575c3f8ac660eeaaac828b9bab9206e39f77f2daf30ee303b04295",
+    "game/content/fluid/9121_body_lod1.txt": "4717b2e7f636a0526750560af365ed9092f44ab337128eb75193eec138178410",
+    "game/content/fluid/catalog.json": "ec17d1433d03b0900ed3f2383faff935a46b6dcf120039beee35dec423f5d941",
+    "game/content/fluid/9115_body.txt": "26dee08789ad22bd75c573ec2b2416d4483d94e184fa933d08110b5a3025024d",
+    "game/content/fluid/9115_body_lod1.txt": "14450793bf3abb5e5d4d59181718835cc7728045929c6a7ba1ffdd794d31fe2c",
+    "game/content/fluid/9115_preview.txt": "18a735798407c40bfac72377b7e4d3eb5e1678ef17b31bbdf7e0cc35ff07ea3e",
+    "game/content/fluid/9115_preview_lod1.txt": "d25536c454c7c44204e4ddf749b810b743d2f303b22e6bc5165c711dc510d362",
+    "game/content/items/9110.obj": "9abb5821e537635f20c39eafc85f4dba8462862b0da6aec26cd25d9d35121618",
+    "game/content/items/9110.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9111.obj": "98d5166aef4c5660b2a9182e143ca9fedc183604bca57f1cf10be9e9bcb60bc2",
+    "game/content/items/9111.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/items/9112.obj": "b038c103712c62cd50a9c21cfd0f7f5d0e4989435151b93cdb4635a645c127af",
+    "game/content/items/9112.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9113.obj": "4e94599b7eb6f45804f335c73276e72a58077999d4bdabe708cfe7f71cfe7098",
+    "game/content/items/9113.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/items/9114.obj": "eba2ca19a7e66649ce5f8c100918de18f4677f45f4b63aa3c93aef4b8573610b",
+    "game/content/items/9114.png": "02d490552489693d8febf31a8972dc50d39e1c0dac9496fd86a6b9409d1382af",
+    "game/content/items/9115.obj": "e5a5fce959ee2feaed48a65d169f105d4ffbb311ca869509e5e27e9d9b52efff",
+    "game/content/items/9115.png": "1e574a7436d4f76f529ea4f02e1cf46a5b659316ca0af00c27b352c565b4db38",
+    "game/content/items/9116.obj": "d2b99b36cfdab91541b9b7e6fa7c681e5d376cdfe4387092978f88594681c3b0",
+    "game/content/items/9116.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/items/9117.obj": "d1411ed7c27d8b99c1873c6cc638c57ac1e3df2a6be64fb1e942a1e95bac201d",
+    "game/content/items/9117.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/items/9118.obj": "792c8b96dcc8ffda17d6b5e473763309c73257a8bf67fe53e782e129b56d8c08",
+    "game/content/items/9118.png": "5d5f5b1c2aecd9517f5e8117933c60af34a59f54e84b0325cad8130f7497b36b",
+    "game/content/items/9119.obj": "3f4074cbf055415d6c23715860b36d25d1ee95c6bf8f3e33856d66fe0080ed64",
+    "game/content/items/9119.png": "dbc5016c0b979bff170429e78c44c01c32858b6ac262234022672583f161a523",
+    "game/content/items/9120.obj": "e5f0ec93aabecc420cb04abfc5a4a68889f6b127ffc7877fc680f66185e0252f",
+    "game/content/items/9120.png": "1530d09f5f84c992b6a57f7aae35eb5e59ae8975d91b9590995413686bd1238e",
+    "game/content/items/9121.obj": "e7a2bd6c0bbe4e59cad15ce9322562e107f0ce6acb8fc0006c31376b98b08f95",
+    "game/content/items/9121.png": "227a687ae0c336e267fd7aff3a03572a52a1611b05d96dea83ecbdb8b160eb82",
+    "game/content/items/icons/9110.png": "637a546cab606786c0f00519790f1058429ab1a4ef6a684559080885d1051a70",
+    "game/content/items/icons/9111.png": "c1ae3cc714883f581f9b8e6f9bb736b28f027e517d538699c65fe249af6e68e9",
+    "game/content/items/icons/9112.png": "0b90ebc06f65646c7b3fe3027d09057f51626474485aa5f1b6958a0bd70e34a1",
+    "game/content/items/icons/9113.png": "a7e8bf204e39f5869a1c4e0105d82330feb8ddbd9b54d402efc84565e9f3f864",
+    "game/content/items/icons/9114.png": "686ab74600d1dc609c8fd991916edf729814932c03e63a1262fe3beffc786d59",
+    "game/content/items/icons/9115.png": "b331d040ba7df59d31d9e5fffb306c257527513c23b9a93cfda30f649a23ee41",
+    "game/content/items/icons/9116.png": "c77724f48cc2c011ae88dfca03caa8484f1d837709f87bb0e9dac5f090daa563",
+    "game/content/items/icons/9117.png": "b94852a73a824becc97ec5de62b82532507dbc535721a85ea68f913719c79433",
+    "game/content/items/icons/9118.png": "aba28952a452e9b6e1cda896e28e67cb5f629cc7108f49b5af18a0309dab6123",
+    "game/content/items/icons/9119.png": "d8d2e873301988e022b9dbca4872a80a356543e6aebe3e2934a9d2afa0ede56c",
+    "game/content/items/icons/9120.png": "ad6ada3f2f00fd7649c5076db718a4944b74dcecf670c883ae2d979f08f25603",
+    "game/content/items/icons/9121.png": "09a8220e7e960e48519ddd7e841bbe659ecd8d5a5444d6162d42d32ee03b95e5"
+  },
+  "catalog": {
+    "9110": {
+      "name": "Tank",
+      "palette": [
+        [
+          87,
+          104,
+          118
+        ],
+        [
+          99,
+          119,
+          135
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.45,
+      "mesh": {
+        "file": "9110_body.txt",
+        "vertices": 204,
+        "triangles": 376,
+        "min": [
+          -0.68,
+          0.0,
+          -0.543261
+        ],
+        "max": [
+          0.68,
+          1.3218,
+          0.543261
+        ],
+        "groups": {
+          "bands": 132,
+          "hose_fitting": 88,
+          "seated_boss": 112,
+          "vessel": 44
+        }
+      },
+      "lod1": {
+        "file": "9110_body_lod1.txt",
+        "vertices": 72,
+        "triangles": 124,
+        "min": [
+          -0.68,
+          0,
+          -0.470478
+        ],
+        "max": [
+          0.68,
+          1.3218,
+          0.470478
+        ],
+        "groups": {
+          "hose_fitting": 40,
+          "seated_boss": 64,
+          "vessel": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0.0,
+        -0.543261
+      ],
+      "boundsSize": [
+        1.36,
+        1.3218,
+        1.086522
+      ],
+      "offset": 0.6609,
+      "radius": 0.5
+    },
+    "9111": {
+      "name": "Water source",
+      "palette": [
+        [
+          87,
+          119,
+          90
+        ],
+        [
+          99,
+          135,
+          102
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.45,
+      "mesh": {
+        "file": "9111_body.txt",
+        "vertices": 362,
+        "triangles": 700,
+        "min": [
+          -0.968367,
+          0.0,
+          -0.968367
+        ],
+        "max": [
+          0.968367,
+          2.397558,
+          0.968367
+        ],
+        "groups": {
+          "bands": 288,
+          "hose_fitting": 56,
+          "sagging_tarp": 96,
+          "support_rod": 80,
+          "tarp_drain": 64,
+          "vessel": 116
+        }
+      },
+      "lod1": {
+        "file": "9111_body_lod1.txt",
+        "vertices": 232,
+        "triangles": 440,
+        "min": [
+          -0.968367,
+          0.0,
+          -0.968367
+        ],
+        "max": [
+          0.968367,
+          2.397558,
+          0.968367
+        ],
+        "groups": {
+          "bands": 144,
+          "hose_fitting": 32,
+          "sagging_tarp": 64,
+          "support_rod": 80,
+          "tarp_drain": 64,
+          "vessel": 56
+        }
+      },
+      "boundsMin": [
+        -0.968367,
+        0.0,
+        -0.968367
+      ],
+      "boundsSize": [
+        1.936734,
+        2.397558,
+        1.936734
+      ],
+      "offset": 1.198779,
+      "radius": 0.5
+    },
+    "9114": {
+      "name": "Pump",
+      "palette": [
+        [
+          213,
+          167,
+          44
+        ],
+        [
+          99,
+          119,
+          135
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": [
+        -0.38,
+        0.92,
+        -0.66
+      ],
+      "partRot": [
+        90,
+        0,
+        0
+      ],
+      "portX": 0.8,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9114_preview.txt",
+        "vertices": 940,
+        "triangles": 1660,
+        "min": [
+          -0.98,
+          0,
+          -1.27
+        ],
+        "max": [
+          0.98,
+          1.38,
+          0.403464
+        ],
+        "groups": {
+          "axial_suction": 236,
+          "bearing_foot": 12,
+          "bearing_housing": 28,
+          "bedplate": 12,
+          "coupling": 28,
+          "coupling_guard": 80,
+          "coupling_key": 12,
+          "cover_bolt": 120,
+          "drive_shaft": 20,
+          "electrical_panel": 12,
+          "hose_fitting": 112,
+          "motor": 28,
+          "motor_fan_cover": 28,
+          "motor_feet": 24,
+          "motor_fin": 160,
+          "panel_contact_off": 20,
+          "panel_contact_on": 20,
+          "panel_contact_power": 20,
+          "panel_face": 12,
+          "panel_off_mark": 64,
+          "panel_on_mark": 12,
+          "panel_power_mark": 60,
+          "panel_screw": 80,
+          "panel_socket_off": 12,
+          "panel_socket_on": 12,
+          "panel_socket_power": 12,
+          "panel_stand": 24,
+          "skids": 24,
+          "spiral_volute": 50,
+          "suction_cover": 28,
+          "tangential_discharge": 236,
+          "volute_face": 50,
+          "volute_pedestal": 12
+        }
+      },
+      "lod1": {
+        "file": "9114_preview_lod1.txt",
+        "vertices": 524,
+        "triangles": 900,
+        "min": [
+          -0.98,
+          0,
+          -1.27
+        ],
+        "max": [
+          0.98,
+          1.38,
+          0.403464
+        ],
+        "groups": {
+          "axial_suction": 104,
+          "bearing_foot": 12,
+          "bearing_housing": 20,
+          "bedplate": 12,
+          "coupling": 20,
+          "coupling_guard": 80,
+          "coupling_key": 12,
+          "drive_shaft": 20,
+          "electrical_panel": 12,
+          "hose_fitting": 64,
+          "motor": 20,
+          "motor_fan_cover": 20,
+          "motor_feet": 24,
+          "panel_contact_off": 20,
+          "panel_contact_on": 20,
+          "panel_contact_power": 20,
+          "panel_face": 12,
+          "panel_off_mark": 64,
+          "panel_on_mark": 12,
+          "panel_power_mark": 60,
+          "panel_socket_off": 12,
+          "panel_socket_on": 12,
+          "panel_socket_power": 12,
+          "panel_stand": 24,
+          "skids": 24,
+          "spiral_volute": 26,
+          "suction_cover": 20,
+          "tangential_discharge": 104,
+          "volute_face": 26,
+          "volute_pedestal": 12
+        }
+      },
+      "boundsMin": [
+        -0.98,
+        0,
+        -1.27
+      ],
+      "boundsSize": [
+        1.96,
+        1.39,
+        1.673464
+      ],
+      "offset": 0.695,
+      "radius": 0.5
+    },
+    "9115": {
+      "name": "Valve",
+      "palette": [
+        [
+          99,
+          135,
+          102
+        ],
+        [
+          162,
+          32,
+          32
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": [
+        0,
+        1.44,
+        0
+      ],
+      "partRot": [
+        0,
+        0,
+        0
+      ],
+      "portX": 0.5,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9115_preview.txt",
+        "vertices": 480,
+        "triangles": 832,
+        "min": [
+          -0.68,
+          0,
+          -0.3
+        ],
+        "max": [
+          0.68,
+          1.49,
+          0.3
+        ],
+        "groups": {
+          "base": 12,
+          "bonnet": 28,
+          "electrical_panel": 12,
+          "flange": 56,
+          "handle_hub": 28,
+          "handle_rim": 96,
+          "handle_spoke": 60,
+          "hose_fitting": 88,
+          "panel_blank_power": 12,
+          "panel_contact_off": 20,
+          "panel_contact_on": 20,
+          "panel_face": 12,
+          "panel_mount": 12,
+          "panel_off_mark": 64,
+          "panel_on_mark": 12,
+          "panel_screw": 80,
+          "panel_socket_off": 12,
+          "panel_socket_on": 12,
+          "pedestal": 12,
+          "seated_boss": 104,
+          "stem": 12,
+          "valve_body": 28,
+          "valve_pipe": 20,
+          "yoke": 20
+        }
+      },
+      "lod1": {
+        "file": "9115_preview_lod1.txt",
+        "vertices": 292,
+        "triangles": 492,
+        "min": [
+          -0.68,
+          0,
+          -0.3
+        ],
+        "max": [
+          0.68,
+          1.48,
+          0.3
+        ],
+        "groups": {
+          "base": 12,
+          "bonnet": 20,
+          "electrical_panel": 12,
+          "flange": 40,
+          "handle": 20,
+          "hose_fitting": 40,
+          "panel_blank_power": 12,
+          "panel_contact_off": 20,
+          "panel_contact_on": 20,
+          "panel_face": 12,
+          "panel_mount": 12,
+          "panel_off_mark": 64,
+          "panel_on_mark": 12,
+          "panel_socket_off": 12,
+          "panel_socket_on": 12,
+          "pedestal": 12,
+          "seated_boss": 88,
+          "stem": 12,
+          "valve_body": 20,
+          "valve_pipe": 20,
+          "yoke": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0,
+        -0.3
+      ],
+      "boundsSize": [
+        1.36,
+        1.49,
+        0.6
+      ],
+      "offset": 0.745,
+      "radius": 0.3
+    },
+    "9116": {
+      "name": "Refinery",
+      "palette": [
+        [
+          112,
+          68,
+          68
+        ],
+        [
+          131,
+          87,
+          87
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 1.1,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9116_body.txt",
+        "vertices": 254,
+        "triangles": 460,
+        "min": [
+          -1.28,
+          0,
+          -0.7
+        ],
+        "max": [
+          1.28,
+          3.64,
+          0.7
+        ],
+        "groups": {
+          "base": 12,
+          "firebox": 12,
+          "firebox_door": 12,
+          "firebox_hood": 12,
+          "hose_fitting": 112,
+          "retort": 68,
+          "retort_band": 132,
+          "retort_cap": 44,
+          "stack": 56
+        }
+      },
+      "lod1": {
+        "file": "9116_body_lod1.txt",
+        "vertices": 128,
+        "triangles": 220,
+        "min": [
+          -1.28,
+          0,
+          -0.7
+        ],
+        "max": [
+          1.28,
+          3.64,
+          0.7
+        ],
+        "groups": {
+          "base": 12,
+          "firebox": 12,
+          "firebox_door": 12,
+          "firebox_hood": 12,
+          "hose_fitting": 64,
+          "retort": 32,
+          "retort_cap": 20,
+          "stack": 56
+        }
+      },
+      "boundsMin": [
+        -1.28,
+        0,
+        -0.7
+      ],
+      "boundsSize": [
+        2.56,
+        3.64,
+        1.4
+      ],
+      "offset": 1.82,
+      "radius": 0.5
+    },
+    "9117": {
+      "name": "Sluice",
+      "palette": [
+        [
+          112,
+          68,
+          68
+        ],
+        [
+          131,
+          87,
+          87
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.92,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9117_body.txt",
+        "vertices": 156,
+        "triangles": 256,
+        "min": [
+          -1.1,
+          0,
+          -0.5
+        ],
+        "max": [
+          1.1,
+          1.05,
+          0.5
+        ],
+        "groups": {
+          "base": 12,
+          "hose_fitting": 112,
+          "inlet_header": 12,
+          "outlet_header": 12,
+          "riffles": 48,
+          "trestle": 24,
+          "trough_floor": 12,
+          "trough_wall": 24
+        }
+      },
+      "lod1": {
+        "file": "9117_body_lod1.txt",
+        "vertices": 100,
+        "triangles": 160,
+        "min": [
+          -1.1,
+          0,
+          -0.5
+        ],
+        "max": [
+          1.1,
+          1.05,
+          0.5
+        ],
+        "groups": {
+          "base": 12,
+          "hose_fitting": 64,
+          "inlet_header": 12,
+          "outlet_header": 12,
+          "trestle": 24,
+          "trough_floor": 12,
+          "trough_wall": 24
+        }
+      },
+      "boundsMin": [
+        -1.1,
+        0,
+        -0.5
+      ],
+      "boundsSize": [
+        2.2,
+        1.05,
+        1.0
+      ],
+      "offset": 0.525,
+      "radius": 0.48384000000000005
+    },
+    "9121": {
+      "name": "Purifier",
+      "palette": [
+        [
+          219,
+          219,
+          219
+        ],
+        [
+          99,
+          119,
+          135
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.85,
+      "portY": 0.975,
+      "mesh": {
+        "file": "9121_body.txt",
+        "vertices": 332,
+        "triangles": 568,
+        "min": [
+          -1.03,
+          0,
+          -0.52
+        ],
+        "max": [
+          1.03,
+          1.95,
+          0.52
+        ],
+        "groups": {
+          "base": 12,
+          "cabinet_hood": 12,
+          "control_cabinet": 12,
+          "electrical_panel": 12,
+          "filter": 88,
+          "filter_clamp": 112,
+          "hose_fitting": 112,
+          "panel_blank_off": 12,
+          "panel_blank_on": 12,
+          "panel_contact_power": 20,
+          "panel_face": 12,
+          "panel_power_mark": 60,
+          "panel_screw": 80,
+          "panel_socket_power": 12
+        }
+      },
+      "lod1": {
+        "file": "9121_body_lod1.txt",
+        "vertices": 184,
+        "triangles": 304,
+        "min": [
+          -1.03,
+          0,
+          -0.52
+        ],
+        "max": [
+          1.03,
+          1.95,
+          0.52
+        ],
+        "groups": {
+          "base": 12,
+          "cabinet_hood": 12,
+          "control_cabinet": 12,
+          "electrical_panel": 12,
+          "filter": 64,
+          "hose_fitting": 64,
+          "panel_blank_off": 12,
+          "panel_blank_on": 12,
+          "panel_contact_power": 20,
+          "panel_face": 12,
+          "panel_power_mark": 60,
+          "panel_socket_power": 12
+        }
+      },
+      "boundsMin": [
+        -1.03,
+        0,
+        -0.52
+      ],
+      "boundsSize": [
+        2.06,
+        1.95,
+        1.04
+      ],
+      "offset": 0.975,
+      "radius": 0.5
+    },
+    "9112": {
+      "name": "Splitter",
+      "palette": [
+        [
+          87,
+          104,
+          118
+        ],
+        [
+          99,
+          119,
+          135
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.6,
+      "branchZ": [
+        -0.32,
+        0.0,
+        0.32
+      ],
+      "mesh": {
+        "file": "9112_body.txt",
+        "vertices": 304,
+        "triangles": 568,
+        "min": [
+          -0.68,
+          0,
+          -0.45206
+        ],
+        "max": [
+          0.68,
+          0.75249,
+          0.45206
+        ],
+        "groups": {
+          "feet": 24,
+          "header_elbows": 252,
+          "hose_fitting": 224,
+          "pipe_stand": 40,
+          "through_tee": 28
+        }
+      },
+      "lod1": {
+        "file": "9112_body_lod1.txt",
+        "vertices": 184,
+        "triangles": 328,
+        "min": [
+          -0.68,
+          0,
+          -0.45206
+        ],
+        "max": [
+          0.68,
+          0.75249,
+          0.45206
+        ],
+        "groups": {
+          "feet": 24,
+          "header_elbows": 116,
+          "hose_fitting": 128,
+          "pipe_stand": 40,
+          "through_tee": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0,
+        -0.45206
+      ],
+      "boundsSize": [
+        1.36,
+        0.75249,
+        0.90412
+      ],
+      "offset": 0.376245,
+      "radius": 0.33508499999999997
+    },
+    "9113": {
+      "name": "Combiner",
+      "palette": [
+        [
+          87,
+          119,
+          90
+        ],
+        [
+          99,
+          135,
+          102
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.6,
+      "branchZ": [
+        -0.32,
+        0.0,
+        0.32
+      ],
+      "mesh": {
+        "file": "9113_body.txt",
+        "vertices": 304,
+        "triangles": 568,
+        "min": [
+          -0.68,
+          0,
+          -0.45206
+        ],
+        "max": [
+          0.68,
+          0.75249,
+          0.45206
+        ],
+        "groups": {
+          "feet": 24,
+          "header_elbows": 252,
+          "hose_fitting": 224,
+          "pipe_stand": 40,
+          "through_tee": 28
+        }
+      },
+      "lod1": {
+        "file": "9113_body_lod1.txt",
+        "vertices": 184,
+        "triangles": 328,
+        "min": [
+          -0.68,
+          0,
+          -0.45206
+        ],
+        "max": [
+          0.68,
+          0.75249,
+          0.45206
+        ],
+        "groups": {
+          "feet": 24,
+          "header_elbows": 116,
+          "hose_fitting": 128,
+          "pipe_stand": 40,
+          "through_tee": 20
+        }
+      },
+      "boundsMin": [
+        -0.68,
+        0,
+        -0.45206
+      ],
+      "boundsSize": [
+        1.36,
+        0.75249,
+        0.90412
+      ],
+      "offset": 0.376245,
+      "radius": 0.33508499999999997
+    },
+    "9119": {
+      "name": "Inlet",
+      "palette": [
+        [
+          87,
+          119,
+          90
+        ],
+        [
+          99,
+          135,
+          102
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9119_body.txt",
+        "vertices": 186,
+        "triangles": 324,
+        "min": [
+          -0.25,
+          0,
+          -0.25
+        ],
+        "max": [
+          0.25,
+          0.73206,
+          0.73
+        ],
+        "groups": {
+          "hose_fitting": 44,
+          "strainer_base": 28,
+          "strainer_ribs": 96,
+          "strainer_top": 28,
+          "swept_elbow": 128
+        }
+      },
+      "lod1": {
+        "file": "9119_body_lod1.txt",
+        "vertices": 96,
+        "triangles": 172,
+        "min": [
+          -0.25,
+          0,
+          -0.216506
+        ],
+        "max": [
+          0.25,
+          0.73206,
+          0.73
+        ],
+        "groups": {
+          "hose_fitting": 20,
+          "strainer": 20,
+          "strainer_base": 20,
+          "strainer_top": 20,
+          "swept_elbow": 92
+        }
+      },
+      "boundsMin": [
+        -0.25,
+        0,
+        -0.25
+      ],
+      "boundsSize": [
+        0.5,
+        0.73206,
+        0.98
+      ],
+      "offset": 0.36603,
+      "radius": 0.25
+    },
+    "9120": {
+      "name": "Drain",
+      "palette": [
+        [
+          112,
+          68,
+          68
+        ],
+        [
+          131,
+          87,
+          87
+        ],
+        [
+          59,
+          59,
+          59
+        ],
+        [
+          138,
+          138,
+          138
+        ]
+      ],
+      "part": null,
+      "partRot": null,
+      "portX": 0.5,
+      "portY": 0.6,
+      "mesh": {
+        "file": "9120_body.txt",
+        "vertices": 158,
+        "triangles": 288,
+        "min": [
+          -0.5,
+          0,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.73206,
+          0.73
+        ],
+        "groups": {
+          "drain_bowl": 60,
+          "grate": 36,
+          "hose_fitting": 44,
+          "riser_foot": 20,
+          "swept_elbow": 128
+        }
+      },
+      "lod1": {
+        "file": "9120_body_lod1.txt",
+        "vertices": 96,
+        "triangles": 176,
+        "min": [
+          -0.5,
+          0,
+          -0.433013
+        ],
+        "max": [
+          0.5,
+          0.73206,
+          0.73
+        ],
+        "groups": {
+          "drain_bowl": 44,
+          "hose_fitting": 20,
+          "riser_foot": 20,
+          "swept_elbow": 92
+        }
+      },
+      "boundsMin": [
+        -0.5,
+        0,
+        -0.5
+      ],
+      "boundsSize": [
+        1.0,
+        0.73206,
+        1.23
+      ],
+      "offset": 0.36603,
+      "radius": 0.32487
+    }
+  },
+  "items": {
+    "9110": {
+      "name": "Fluid Tank",
+      "type": "Generic",
+      "obj": "9110.obj",
+      "tex": "9110.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.6609,
+        0.54326
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9111": {
+      "name": "Fluid Water source",
+      "type": "Generic",
+      "obj": "9111.obj",
+      "tex": "9111.png",
+      "color": null,
+      "box": [
+        0.704558,
+        0.8722,
+        0.704558
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9114": {
+      "name": "Fluid Pump",
+      "type": "Generic",
+      "obj": "9114.obj",
+      "tex": "9114.png",
+      "color": null,
+      "box": [
+        0.8722,
+        0.6141,
+        0.744692
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9115": {
+      "name": "Fluid Valve",
+      "type": "Generic",
+      "obj": "9115.obj",
+      "tex": "9115.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.745,
+        0.3
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9116": {
+      "name": "Fluid Refinery",
+      "type": "Generic",
+      "obj": "9116.obj",
+      "tex": "9116.png",
+      "color": null,
+      "box": [
+        0.613416,
+        0.8722,
+        0.335462
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9117": {
+      "name": "Fluid Sluice",
+      "type": "Generic",
+      "obj": "9117.obj",
+      "tex": "9117.png",
+      "color": null,
+      "box": [
+        0.8722,
+        0.416278,
+        0.396454
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9121": {
+      "name": "Fluid Purifier",
+      "type": "Generic",
+      "obj": "9121.obj",
+      "tex": "9121.png",
+      "color": null,
+      "box": [
+        0.8722,
+        0.825626,
+        0.440334
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9112": {
+      "name": "Fluid Splitter",
+      "type": "Generic",
+      "obj": "9112.obj",
+      "tex": "9112.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.376244,
+        0.45206
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9113": {
+      "name": "Fluid Combiner",
+      "type": "Generic",
+      "obj": "9113.obj",
+      "tex": "9113.png",
+      "color": null,
+      "box": [
+        0.68,
+        0.376244,
+        0.45206
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9119": {
+      "name": "Fluid Inlet",
+      "type": "Generic",
+      "obj": "9119.obj",
+      "tex": "9119.png",
+      "color": null,
+      "box": [
+        0.25,
+        0.36603,
+        0.49
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9120": {
+      "name": "Fluid Drain",
+      "type": "Generic",
+      "obj": "9120.obj",
+      "tex": "9120.png",
+      "color": null,
+      "box": [
+        0.5,
+        0.36603,
+        0.615
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    },
+    "9118": {
+      "name": "Hose Tool",
+      "type": "Generic",
+      "obj": "9118.obj",
+      "tex": "9118.png",
+      "color": null,
+      "box": [
+        0.5812,
+        0.556,
+        0.19693
+      ],
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "parts": 1
+    }
+  }
+}

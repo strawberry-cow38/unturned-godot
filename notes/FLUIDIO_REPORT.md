@@ -725,3 +725,83 @@ The previous process completed report-only commit `04bb7efe` while this pass was
 and review artifacts were preserved. Pre-existing build-output changes and unrelated verification
 files were not included in this pass's commit. All work used the `astra-fluidio` worktree; no push or
 source edits in `/home/ec2-user/projects/unturned-godot` were performed.
+
+## Fifth pass — pump fit and finish (2026-09-10)
+
+Author request: "put the panel by the motor. shrink the base to just fit the unit. reduce the length
+of the long pipe. tidy up the motor". Baseline: `9bdd4bce4afcc8137e61516f44811a98de86a01e`, on
+`astra-fluidio`. This pass changes only pump art and its electrical mount; the valve and purifier
+still use the same `electrical_panel(m, id, low)` builder and regenerate byte-identically.
+
+| Adjustment | Delivered result |
+|---|---|
+| Panel on the motor | Removed both tall panel legs. The unchanged shared enclosure now overlaps the motor's flat crown at both LODs. Its origin moves from **(0, 1.25, 0.42)** to **(−0.48, 1.25, −0.70)**. `FluidElectricalPanel.Mount` supplies the pump mount, and `Anchor` adds the existing ON / power / OFF offsets. Python reads the signed C# constants. All three pump wire inputs move with the enclosure; their roles and ordering are unchanged. Valve and purifier mounts remain unchanged. |
+| Fitted baseplate | **1.57 × 1.61 m → 0.95 × 1.28 m**, a **51.9% area reduction**. Rear fan clearance is 30 mm; the panel has 30 / 40 mm clearance to the plate's left / right edges. The two skids are narrowed and moved inside the smaller plate. Fixed hose ends project beyond the plate. |
+| Shorter suction | Move the casing and complete coaxial drive **100 mm toward the inlet and 110 mm forward**. Change the two suction bend radii from **180 / 140 mm to 220 / 100 mm**, retaining tangent joins and axial entry. The actual LOD0 sampled centreline falls **0.846221 → 0.636221 m**, exactly **210 mm (24.8%)** shorter. LOD1 falls **0.841933 → 0.631933 m**. These numbers measure the emitted polyline; earlier report entries used ideal circular arc lengths. |
+| Outlet fit | Two shallow **45°** bends replace the two 90° bends, bringing the discharge onto the unchanged hose plane from its new casing position. Its LOD0 sampled centreline also falls **1.420557 → 1.398078 m**. It remains tangent to the volute's bottom cutwater, level at **Y=0.60 m**, and clear of the drive. |
+| Square, quieter motor | The motor and fan polygons have horizontal top and bottom faces at both LODs. Two wider rectangular feet overlap the plate and motor. **Eight thin fin rods become two shallow rectangular ribs** at LOD0; LOD1 retains its plain shell. The motor, bearing, shaft, suction cover and pulley share **X=−0.48, Y=0.92**, along Z. |
+
+The pump's hose anchors are still **(−0.80, 0.60, 0)** and **(+0.80, 0.60, 0)**. Every device's
+`portX`, `portY` and `branchZ` fields match the baseline. Plain hex bushings, volute dimensions,
+clockwise-front emission and explicit outward normals are preserved; no annular cap behavior changed.
+
+Both separate local pulley meshes remain **byte-identical**. Their pivot moves with the drive to
+**[−0.48, 0.92, −0.55]**, retaining **partRot=[90, 0, 0]** and animation about their own local Y.
+The assembled preview and dropped mesh follow that pivot. Pump triangle counts fall
+**1660 / 900 → 1500 / 876** at LOD0 / LOD1; its collision envelope becomes
+**1.960000 × 1.390000 × 1.282060 m**. Only the pump catalog and item records change.
+
+The verifier now handles panel X translation when checking the real wire inputs. It also checks
+that the motor has a level underside spanning its length and that the panel and motor share an
+interior contact point at both LODs. Existing checks still cover uniform panel geometry, exposed
+electrical anchors, shaft alignment, rotor guard clearance and connected hose spigots.
+
+### Frozen tank and scope proof
+
+All six **9110** asset hashes, including its dropped mesh and icon, match the baseline and the frozen
+ledger. Its complete catalog and item records are unchanged. The requested literal-prefix command
+and the wildcard that selects all tank files both produce no output:
+
+```bash
+git diff --stat -- game/content/fluid/9110_
+git diff --stat -- 'game/content/fluid/9110_*'
+```
+
+`.verify/fluid_fifth/frozen_and_dimensions.json` records the tank and pulley hashes, unchanged hose
+metadata, measured pipe lengths and base dimensions. Work remained in this worktree; nothing was
+pushed or edited in the other checkout. Generated build-output changes are excluded from delivery.
+
+### Verification and visual review
+
+- `python3 tools/author_fluid_art.py`: completed on the final geometry.
+- `python3 tools/audit_fluid_geometry.py`: **30 meshes, 13,760 triangles, 0 with findings**.
+- `python3 tools/verify_fluid_art.py`: passed, including **23 connected hose anchors at both LODs**,
+  six frozen tank hashes, all item/icon formats, three uniform shared panels and the new motor checks.
+  It was run again after refreshing the pump icon.
+- `dotnet build game/UnturnedGodot.csproj`: **22 existing warnings, 0 errors**. The test runner's
+  subsequent incremental build passed with **0 warnings, 0 errors**.
+- `./test.sh --l1 --only 'fluid.*'`: **10 passed, 0 failed**. The art/placement/flow test passed all
+  **217 checks**, including raycasts to the relocated electrical inputs, real generator power,
+  local-Y pulley rotation along the Z shaft, shared LOD transforms and spin-down. One test runner
+  was used; no concurrent `test.sh` was started.
+- `DEVICE=9114 python3 tools/shot.py fluiddevice -o /tmp/pump5.png`: **exit 0**, fresh **900 × 900**
+  final frame opened and inspected. The committed copy is `notes/fluid_art/9114.png`.
+- `FLUID_DEVICES=9114 python3 tools/fluid_contact_sheet.py`: **exit 0**, six fresh views opened in
+  `notes/fluid_angles/9114_angles.png` (**2700 × 450**). The 90° side frame was also inspected at full
+  resolution: motor and shaft are level, the panel is directly seated, and the suction enters axially.
+  Rear, low and underside views show the smaller plate, attached supports and closed solids.
+- Fresh **35° LOD1** and **256 × 256 transparent pump icon** captures also exited 0 and were opened.
+  LOD1 keeps the seated panel, flat motor shell and separate coupling. The icon now matches this
+  assembly; `notes/fluid_art/item_icons.png` was retiled using the updated pump icon.
+
+Logs, the LOD1 capture and review hashes are in `.verify/fluid_fifth/`.
+
+What this pass **could not verify**: a clean Godot shutdown free of diagnostics. Fresh captures
+completed and the screenshot commands exited 0, but Godot still logs the render-thread `finalize`
+error and leaked-object warning during shutdown. Those engine issues were not fixed.
+
+What was **not exercised**: hardware GPU rendering, a manual full-island session, animation video,
+the non-fluid suite, or multiplayer/saved-world migration of existing wire polylines after moving
+the pump's three electrical inputs. Rotation and wire access were checked numerically in the fluid
+tests; visual review used still frames on software Vulkan. LOD1 visual coverage is one angle.
+Only the changed pump icon was refreshed; the other icons were merely retiled.

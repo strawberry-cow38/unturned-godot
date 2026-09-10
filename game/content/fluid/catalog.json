@@ -193,9 +193,9 @@
       ]
     ],
     "part": [
-      -0.38,
+      -0.48,
       0.92,
-      -0.66
+      -0.55
     ],
     "partRot": [
       90,
@@ -206,17 +206,17 @@
     "portY": 0.6,
     "mesh": {
       "file": "9114_preview.txt",
-      "vertices": 940,
-      "triangles": 1660,
+      "vertices": 844,
+      "triangles": 1500,
       "min": [
         -0.98,
         0,
-        -1.27
+        -1.15
       ],
       "max": [
         0.98,
         1.38,
-        0.403464
+        0.13206
       ],
       "groups": {
         "axial_suction": 236,
@@ -233,7 +233,7 @@
         "motor": 28,
         "motor_fan_cover": 28,
         "motor_feet": 24,
-        "motor_fin": 160,
+        "motor_fin": 24,
         "panel_contact_off": 20,
         "panel_contact_on": 20,
         "panel_contact_power": 20,
@@ -245,7 +245,6 @@
         "panel_socket_off": 12,
         "panel_socket_on": 12,
         "panel_socket_power": 12,
-        "panel_stand": 24,
         "skids": 24,
         "spiral_volute": 50,
         "suction_cover": 28,
@@ -256,17 +255,17 @@
     },
     "lod1": {
       "file": "9114_preview_lod1.txt",
-      "vertices": 524,
-      "triangles": 900,
+      "vertices": 508,
+      "triangles": 876,
       "min": [
         -0.98,
         0,
-        -1.27
+        -1.15
       ],
       "max": [
         0.98,
         1.38,
-        0.403464
+        0.13206
       ],
       "groups": {
         "axial_suction": 104,
@@ -292,7 +291,6 @@
         "panel_socket_off": 12,
         "panel_socket_on": 12,
         "panel_socket_power": 12,
-        "panel_stand": 24,
         "skids": 24,
         "spiral_volute": 26,
         "suction_cover": 20,
@@ -304,12 +302,12 @@
     "boundsMin": [
       -0.98,
       0,
-      -1.27
+      -1.15
     ],
     "boundsSize": [
       1.96,
       1.39,
-      1.673464
+      1.28206
     ],
     "offset": 0.695,
     "radius": 0.5

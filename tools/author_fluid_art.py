@@ -51,11 +51,11 @@ RED=(162,32,32); RUST=(112,68,68); RUST_LIGHT=(131,87,87)
 YELLOW=(213,167,44); WHITE=(219,219,219)
 # C# owns the electrical anchors; do not maintain a second coordinate table here.
 PANEL_ANCHORS={name:float(value) for name,value in re.findall(
-    r'public const float (\w+) = ([\d.]+)f;', (ROOT/'game/FluidElectricalPanel.cs').read_text())}
+    r'public const float (\w+) = (-?[\d.]+)f;', (ROOT/'game/FluidElectricalPanel.cs').read_text())}
 
 def panel_origin(id):
-    kind='Valve' if id==9115 else 'Powered'
-    return (0,PANEL_ANCHORS[kind+'Y'],PANEL_ANCHORS[kind+'Z'])
+    kind='Pump' if id==9114 else 'Valve' if id==9115 else 'Powered'
+    return (PANEL_ANCHORS.get(kind+'X',0),PANEL_ANCHORS[kind+'Y'],PANEL_ANCHORS[kind+'Z'])
 
 class Mesh:
     def __init__(self): self.v=[]; self.faces=[]; self.groups=[]
@@ -364,10 +364,12 @@ def pump(low):
     to the outlet. Neither pipe crosses the motor or the visible coupling.
     """
     m=Mesh(); px=PORTX[9114]; n=6 if low else 8; steps=3 if low else 6
-    cx=-.38; cy=.92
-    for x in [-.61,.65]: m.box((x-.07,0,-1.27),(x+.07,.12,.34),2,'skids')
-    m.box((-.73,.12,-1.27),(.84,.22,.34),2,'bedplate')
-    m.box((-.58,.21,-.43),(-.18,.68,-.20),1,'volute_pedestal')
+    cx=-.48; cy=.92; forward=.11
+    # The plate follows the motor/panel and casing; the fixed hose ends overhang it.
+    for x in [-.83,-.12]: m.box((x-.06,0,-1.15),(x+.06,.12,.13),2,'skids')
+    m.box((-.95,.12,-1.15),(0,.22,.13),2,'bedplate')
+    unit=Mesh()
+    unit.box((cx-.20,.21,-.43),(cx+.20,.68,-.20),1,'volute_pedestal')
     # Bottom cutwater: radius .19 -> .32 m, zero radial slope at each end so
     # the final tangent is exactly +X at Y=.60, the unchanged hose height.
     count=12 if low else 24
@@ -376,65 +378,79 @@ def pump(low):
         t=i/count; r=.19+.13*t*t*(3-2*t)
         outline.append((cx+r*math.sin(math.tau*t),cy-r*math.cos(math.tau*t)))
     rings=[[(x,y,z) for x,y in outline] for z in [-.18,-.44]]
-    m.loft(rings,1,'spiral_volute',caps=False)
+    unit.loft(rings,1,'spiral_volute',caps=False)
     for j,ring in enumerate(rings):
         order=ring if j==0 else ring[::-1]
         centre=(cx-.025,cy,ring[0][2])
-        for a,b in zip(order,order[1:]+order[:1]): m.face([centre,a,b],1,'volute_face')
-    cylinder(m,.19,-.20,-.154,n,3,'z',(cx,cy,0),'suction_cover')
+        for a,b in zip(order,order[1:]+order[:1]): unit.face([centre,a,b],1,'volute_face')
+    cylinder(unit,.19,-.20,-.154,n,3,'z',(cx,cy,0),'suction_cover')
     if not low:
         for i in range(6):
             a=math.tau*(i+.5)/6
-            cylinder(m,.021,-.169,-.142,6,2,'z',(cx+.169*math.cos(a),cy+.169*math.sin(a),0),'cover_bolt')
+            cylinder(unit,.021,-.169,-.142,6,2,'z',(cx+.169*math.cos(a),cy+.169*math.sin(a),0),'cover_bolt')
     # Two tangent quarter bends: +X -> +Y -> -Z into the axial eye. The
-    # .18 + .14 m lift is fixed by .92 shaft height minus .60 hose height.
-    sections=[((-.825,PORTY,0),(1,0,0)),((-.56,PORTY,0),(1,0,0))]
+    # .22 + .10 m lift is fixed by .92 shaft height minus .60 hose height.
+    # Bringing the unit 100 mm left and 110 mm forward removes 210 mm of run
+    # without changing either published hose anchor or the axial entry tangent.
+    sections=[((-.825,PORTY,0),(1,0,0)),((cx-.22,PORTY,0),(1,0,0))]
     for i in range(1,steps+1):
         a=math.pi/2*i/steps
-        sections.append(((-.56+.18*math.sin(a),.78-.18*math.cos(a),0),(math.cos(a),math.sin(a),0)))
+        sections.append(((cx-.22+.22*math.sin(a),.82-.22*math.cos(a),0),(math.cos(a),math.sin(a),0)))
     for i in range(1,steps+1):
         a=math.pi/2*i/steps
-        sections.append(((cx,.78+.14*math.sin(a),-.14+.14*math.cos(a)),(0,math.cos(a),-math.sin(a))))
-    sections.append(((cx,cy,-.22),(0,0,-1)))
+        sections.append(((cx,.82+.10*math.sin(a),-.10+.10*math.cos(a)),(0,math.cos(a),-math.sin(a))))
+    sections.append(((cx,cy,-.22+forward),(0,0,-1)))
     pipe(m,sections,BORE,n,1,'axial_suction',normal=(0,0,1))
     m.socket((-px,PORTY,0),'x',-1,low,seat=.03)
-    # A horizontal run off the BOTTOM tangent of the volute. Two 155 mm
-    # bends shift Z by .31 m onto the anchor plane, all at Y=.60.
-    sections=[((cx-.04,PORTY,-.31),(1,0,0)),((.30,PORTY,-.31),(1,0,0))]
+    # A horizontal run off the BOTTOM tangent of the volute. Two shallow 45-deg
+    # bends shift Z by .20 m onto the anchor plane, all at Y=.60. The gentler jog
+    # also shortens this outlet despite moving the casing toward the inlet.
+    turn=math.pi/4; radius=.10/(1-math.cos(turn))
+    start=.61-2*radius*math.sin(turn)
+    sections=[((cx-.04,PORTY,-.20),(1,0,0)),((start,PORTY,-.20),(1,0,0))]
     for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((.30+.155*math.sin(a),PORTY,-.155-.155*math.cos(a)),(math.cos(a),0,math.sin(a))))
+        a=turn*i/steps
+        sections.append(((start+radius*math.sin(a),PORTY,-.20+radius*(1-math.cos(a))),
+                         (math.cos(a),0,math.sin(a))))
     for i in range(1,steps+1):
-        a=math.pi/2*i/steps
-        sections.append(((.61-.155*math.cos(a),PORTY,-.155+.155*math.sin(a)),(math.sin(a),0,math.cos(a))))
+        a=turn*(1-i/steps)
+        sections.append(((.61-radius*math.sin(a),PORTY,-radius*(1-math.cos(a))),
+                         (math.cos(a),0,math.sin(a))))
     sections.append(((.825,PORTY,0),(1,0,0)))
     pipe(m,sections,BORE,n,1,'tangential_discharge')
     m.socket((px,PORTY,0),'x',1,low,seat=.03)
     # Behind the casing: bearing, exposed coupling, motor, fan. One shaft axis.
-    cylinder(m,.105,-.565,-.42,n,3,'z',(cx,cy,0),'bearing_housing')
-    m.box((cx-.09,.21,-.55),(cx+.09,.87,-.46),3,'bearing_foot')
-    cylinder(m,.043,-.81,-.53,6,3,'z',(cx,cy,0),'drive_shaft')
-    cylinder(m,.24,-1.18,-.76,n,0,'z',(cx,cy,0),'motor')
-    cylinder(m,.25,-1.23,-1.14,n,2,'z',(cx,cy,0),'motor_fan_cover')
-    for z in [-1.11,-.83]: m.box((cx-.19,.21,z-.045),(cx+.19,.76,z+.045),2,'motor_feet')
+    cylinder(unit,.105,-.565,-.42,n,3,'z',(cx,cy,0),'bearing_housing')
+    unit.box((cx-.09,.21,-.55),(cx+.09,.87,-.46),3,'bearing_foot')
+    cylinder(unit,.043,-.81,-.53,6,3,'z',(cx,cy,0),'drive_shaft')
+    # Clock the polygon around the existing shaft, so both LODs have horizontal
+    # top/bottom faces. The motor and fan are static; only the local-Y part spins.
+    motor=Mesh()
+    cylinder(motor,.24,-1.18,-.76,n,0,'z',group='motor')
+    cylinder(motor,.25,-1.23,-1.14,n,2,'z',group='motor_fan_cover')
+    phase=math.pi/2-math.pi/n; c=math.cos(phase); s=math.sin(phase)
+    unit.add(motor,transform=lambda p:(cx+c*p[0]-s*p[1],cy+s*p[0]+c*p[1],p[2]))
+    for z in [-1.11,-.83]:
+        unit.box((cx-.22,.21,z-.055),(cx+.22,.73,z+.055),2,'motor_feet')
     if not low:
-        for i in range(8):
-            a=math.tau*(i+.5)/8
-            rod(m,(cx+.236*math.cos(a),cy+.236*math.sin(a),-1.15),
-                  (cx+.236*math.cos(a),cy+.236*math.sin(a),-.79),.015,0,'motor_fin')
+        # Two broad, shallow cast ribs replace eight thin rods around the shell.
+        for sign in [-1,1]:
+            x=cx+sign*.225
+            unit.box((x-.012,cy-.026,-1.12),(x+.012,cy+.026,-.81),0,'motor_fin')
     # Two small guard rails leave the keyed rotating coupling visible from
-    # either side. Turn inward only AFTER the rotor's front end at Z=-.57;
+    # either side. Turn inward only AFTER the rotor's front end (Z=-.57 before
+    # the unit translation below);
     # a diagonal rail to the bearing cut through the keyed rotor's swept volume.
     for sign in [-1,1]:
-        rod(m,(cx+sign*.16,.86,-.80),(cx+sign*.16,.86,-.53),.018,2,'coupling_guard')
-        rod(m,(cx+sign*.16,.86,-.545),(cx+sign*.07,.86,-.50),.018,2,'coupling_guard')
-    for x in [-.32,.32]:
-        m.box((x-.025,.21,.26),(x+.025,1.18,.31),3,'panel_stand')
+        rod(unit,(cx+sign*.16,.86,-.80),(cx+sign*.16,.86,-.53),.018,2,'coupling_guard')
+        rod(unit,(cx+sign*.16,.86,-.545),(cx+sign*.07,.86,-.50),.018,2,'coupling_guard')
+    m.add(unit,offset=(0,0,forward))
+    # Enclosure bottom overlaps the flat motor crown, with no free-standing legs.
     electrical_panel(m,9114,low)
     coupling=Mesh()
     cylinder(coupling,.112,-.09,.09,n,3,group='coupling')
     coupling.box((-.025,-.078,.095),(.025,.078,.122),2,'coupling_key')
-    return m,coupling,(cx,cy,-.66)
+    return m,coupling,(cx,cy,-.66+forward)
 
 def valve(low):
     """A gate valve: flanged body, bonnet, rising stem, and a RED handwheel on top.

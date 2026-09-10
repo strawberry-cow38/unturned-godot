@@ -88,17 +88,17 @@
   },
   {
     "file": "9114_body.txt",
-    "vertices": 916,
-    "triangles": 1620,
+    "vertices": 820,
+    "triangles": 1460,
     "min": [
       -0.98,
       0,
-      -1.27
+      -1.15
     ],
     "max": [
       0.98,
       1.38,
-      0.403464
+      0.13206
     ],
     "groups": {
       "axial_suction": 236,
@@ -113,7 +113,7 @@
       "motor": 28,
       "motor_fan_cover": 28,
       "motor_feet": 24,
-      "motor_fin": 160,
+      "motor_fin": 24,
       "panel_contact_off": 20,
       "panel_contact_on": 20,
       "panel_contact_power": 20,
@@ -125,7 +125,6 @@
       "panel_socket_off": 12,
       "panel_socket_on": 12,
       "panel_socket_power": 12,
-      "panel_stand": 24,
       "skids": 24,
       "spiral_volute": 50,
       "suction_cover": 28,
@@ -155,17 +154,17 @@
   },
   {
     "file": "9114_preview.txt",
-    "vertices": 940,
-    "triangles": 1660,
+    "vertices": 844,
+    "triangles": 1500,
     "min": [
       -0.98,
       0,
-      -1.27
+      -1.15
     ],
     "max": [
       0.98,
       1.38,
-      0.403464
+      0.13206
     ],
     "groups": {
       "axial_suction": 236,
@@ -182,7 +181,7 @@
       "motor": 28,
       "motor_fan_cover": 28,
       "motor_feet": 24,
-      "motor_fin": 160,
+      "motor_fin": 24,
       "panel_contact_off": 20,
       "panel_contact_on": 20,
       "panel_contact_power": 20,
@@ -194,7 +193,6 @@
       "panel_socket_off": 12,
       "panel_socket_on": 12,
       "panel_socket_power": 12,
-      "panel_stand": 24,
       "skids": 24,
       "spiral_volute": 50,
       "suction_cover": 28,
@@ -205,17 +203,17 @@
   },
   {
     "file": "9114_body_lod1.txt",
-    "vertices": 504,
-    "triangles": 868,
+    "vertices": 488,
+    "triangles": 844,
     "min": [
       -0.98,
       0,
-      -1.27
+      -1.15
     ],
     "max": [
       0.98,
       1.38,
-      0.403464
+      0.13206
     ],
     "groups": {
       "axial_suction": 104,
@@ -239,7 +237,6 @@
       "panel_socket_off": 12,
       "panel_socket_on": 12,
       "panel_socket_power": 12,
-      "panel_stand": 24,
       "skids": 24,
       "spiral_volute": 26,
       "suction_cover": 20,
@@ -269,17 +266,17 @@
   },
   {
     "file": "9114_preview_lod1.txt",
-    "vertices": 524,
-    "triangles": 900,
+    "vertices": 508,
+    "triangles": 876,
     "min": [
       -0.98,
       0,
-      -1.27
+      -1.15
     ],
     "max": [
       0.98,
       1.38,
-      0.403464
+      0.13206
     ],
     "groups": {
       "axial_suction": 104,
@@ -305,7 +302,6 @@
       "panel_socket_off": 12,
       "panel_socket_on": 12,
       "panel_socket_power": 12,
-      "panel_stand": 24,
       "skids": 24,
       "spiral_volute": 26,
       "suction_cover": 20,
