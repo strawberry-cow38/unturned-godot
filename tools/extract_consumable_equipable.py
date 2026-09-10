@@ -18,8 +18,10 @@ Same Unity->Godot convention as the gun/consumable rips: negate X and Z and reve
 components, which is a different (and wrong) transform.
 
 Outputs per item: <name>_<part>.txt for every part, <name>_albedo.png, and <name>_parts.tsv --
-    part <TAB> meshfile <TAB> px py pz <TAB> qx qy qz qw <TAB> sx sy sz
-in the prefab's own child order, which is the order the clips address them in."""
+    part <TAB> meshfile <TAB> px py pz <TAB> qx qy qz qw <TAB> sx sy sz <TAB> parent
+in the prefab's own child order, which is the order the clips address them in. `meshfile` is "-" for a
+node that carries no geometry but is still animated or still parents geometry; `parent` is "-" on the
+Item_Root row."""
 import UnityPy, sys, os
 
 MB = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle"
@@ -85,44 +87,64 @@ if not prefab:
 
 root_tr = comp_of(prefab.read_typetree(), ("Transform",))
 rows, albedo_written = [], False
-for ch in root_tr.read_typetree().get("m_Children", []):
-    ct = by_id.get(ch.get("m_PathID"))
-    if not ct:
-        continue
-    ctt = ct.read_typetree()
+
+def emit(ctt, part, parent):
+    """ One node -> one row. Nodes with NO mesh are emitted too (meshfile '-'): Stat_Tracker is animated by
+    canned_beans' clips, and Bone_5 parents Bone_6 in several items, so skipping meshless nodes both breaks track
+    resolution and orphans real geometry. """
+    global albedo_written
+    fn = "-"
     cgo = by_id.get(ctt.get("m_GameObject", {}).get("m_PathID"))
-    if not cgo:
-        continue
-    gtt = cgo.read_typetree()
-    part = str(gtt.get("m_Name"))
-    mf = comp_of(gtt, ("MeshFilter",))
+    gtt = cgo.read_typetree() if cgo else {}
+    mf = comp_of(gtt, ("MeshFilter",)) if gtt else None
     mesh = pptr(mf.read_typetree().get("m_Mesh", {})) if mf else None
-    if not mesh:
-        continue                                    # Icon / Effect / Stat_Tracker carry no geometry
-    body, nv = convert_mesh(mesh, part)
-    fn = "%s_%s.txt" % (nl, part.lower())
-    open(os.path.join(OUTDIR, fn), "w").write(body)
+    nv = 0
+    if mesh:
+        body, nv = convert_mesh(mesh, part)
+        fn = "%s_%s.txt" % (nl, part.lower())
+        open(os.path.join(OUTDIR, fn), "w").write(body)
+        if not albedo_written:
+            mr = comp_of(gtt, ("MeshRenderer",))
+            mats = mr.read_typetree().get("m_Materials", []) if mr else []
+            mo = pptr(mats[0]) if mats else None
+            if mo:
+                for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
+                    nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
+                    if nm == "_MainTex" and isinstance(val, dict):
+                        to = pptr(val.get("m_Texture", {}))
+                        if to:
+                            to.read().image.convert("RGBA").save(os.path.join(OUTDIR, nl + "_albedo.png"))
+                            albedo_written = True
     lp = ctt.get("m_LocalPosition", {})
     ls = ctt.get("m_LocalScale", {})
     qx, qy, qz, qw = yaw180(ctt.get("m_LocalRotation", {}))
-    rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f" % (
+    rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f\t%s" % (
         part, fn,
         -lp.get("x", 0.0), lp.get("y", 0.0), -lp.get("z", 0.0),
         qx, qy, qz, qw,
-        ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0)))
-    if not albedo_written:
-        mr = comp_of(gtt, ("MeshRenderer",))
-        mats = mr.read_typetree().get("m_Materials", []) if mr else []
-        mo = pptr(mats[0]) if mats else None
-        if mo:
-            for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
-                nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
-                if nm == "_MainTex" and isinstance(val, dict):
-                    to = pptr(val.get("m_Texture", {}))
-                    if to:
-                        to.read().image.convert("RGBA").save(os.path.join(OUTDIR, nl + "_albedo.png"))
-                        albedo_written = True
-    print("   %-12s verts=%-5d -> %s" % (part, nv, fn))
+        ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0), parent))
+    print("   %-14s parent=%-10s verts=%-5d -> %s" % (part, parent, nv, fn))
+
+def walk(tr_tt, parent):
+    """ RECURSIVE, and it must be. The old version read only the prefab root's DIRECT children, but the clips
+    address paths like .../Item_Root/Bone_5/Bone_6 -- ten curves across five items nest a second level. A flat
+    list cannot express that, and a Bone_6 keyed in Bone_5's space but parented to the root lands nowhere. """
+    for ch in tr_tt.get("m_Children", []):
+        ct = by_id.get(ch.get("m_PathID"))
+        if not ct: continue
+        ctt = ct.read_typetree()
+        cgo = by_id.get(ctt.get("m_GameObject", {}).get("m_PathID"))
+        if not cgo: continue
+        part = str(cgo.read_typetree().get("m_Name"))
+        emit(ctt, part, parent)
+        walk(ctt, part)
+
+# The prefab ROOT is the node retail renames to the item id and hangs off the hand hook -- the "13" in
+# .../Right_Hook/13/Bone_0 -- and it carries its own Pos/Rot/Scale curves. Emit it under a stable name so the
+# game can build it and the clips can drive it; see batch_consumable_anims.tname().
+rtt = root_tr.read_typetree()
+emit(rtt, "Item_Root", "-")
+walk(rtt, "Item_Root")
 
 if not rows:
     print("NO parts for", NAME); sys.exit(1)

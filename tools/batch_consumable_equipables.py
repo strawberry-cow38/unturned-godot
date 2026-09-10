@@ -81,36 +81,78 @@ def rip(name):
     tr = comp_of(pf.read_typetree(), ("Transform",))
     if not tr: return None
     rows, alb = [], False
-    for ch in tr.read_typetree().get("m_Children", []):
-        ct = by_id.get(ch.get("m_PathID"))
-        if not ct: continue
-        ctt = ct.read_typetree()
+
+    # ⚠ WHICH PARTS ARE ACTUALLY DRAWN IS DATA, NOT A NAMING CONVENTION. The prefab carries an LODGroup and its
+    # LOD0 names exactly the renderers retail shows up close -- bag_chips LOD0 is Bone_0..Bone_4 with Model_1 as
+    # the LOD1 copy, while canned_beans LOD0 is Model_0 + Model_2 + Model_3 + Bone_0..Bone_3. So "Model_n is an
+    # LOD" and "Bone_n is the model" are BOTH wrong, and every rule I invented from the names lost real geometry
+    # or drew a mesh on top of itself. Read the group instead.
+    lod0, has_group = set(), False
+    lg = comp_of(pf.read_typetree(), ("LODGroup",))
+    if lg:
+        lods = lg.read_typetree().get("m_LODs", [])
+        if lods:
+            has_group = True
+            for r in lods[0].get("renderers", []):
+                ro = by_id.get(r.get("renderer", {}).get("m_PathID"))
+                if not ro: continue
+                g = by_id.get(ro.read_typetree().get("m_GameObject", {}).get("m_PathID"))
+                if g: lod0.add(str(g.read_typetree().get("m_Name")))
+
+    def emit(ctt, part, parent):
+        """ One node -> one row. Meshless nodes are emitted too (meshfile "-"): Stat_Tracker is animated by
+        canned_beans' clips, and Bone_5 parents Bone_6 in several items, so dropping them both breaks track
+        resolution and orphans real geometry. """
+        nonlocal alb
         cgo = by_id.get(ctt.get("m_GameObject", {}).get("m_PathID"))
-        if not cgo: continue
-        gtt = cgo.read_typetree()
-        part = str(gtt.get("m_Name"))
-        mf = comp_of(gtt, ("MeshFilter",))
+        gtt = cgo.read_typetree() if cgo else {}
+        mf = comp_of(gtt, ("MeshFilter",)) if gtt else None
         mesh = pptr(mf.read_typetree().get("m_Mesh", {})) if mf else None
-        if not mesh: continue
-        body, _ = convert(mesh, part, name)
-        fn = "%s_%s.txt" % (nl, part.lower())
-        open(os.path.join(OUT, fn), "w").write(body)
+        fn = "-"
+        if mesh:
+            body, _ = convert(mesh, part, name)
+            fn = "%s_%s.txt" % (nl, part.lower())
+            open(os.path.join(OUT, fn), "w").write(body)
+            if not alb:
+                mr = comp_of(gtt, ("MeshRenderer",))
+                mats = mr.read_typetree().get("m_Materials", []) if mr else []
+                mo = pptr(mats[0]) if mats else None
+                if mo:
+                    for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
+                        nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
+                        if nm == "_MainTex" and isinstance(val, dict):
+                            to = pptr(val.get("m_Texture", {}))
+                            if to:
+                                to.read().image.convert("RGBA").save(os.path.join(OUT, nl + "_albedo.png")); alb = True
         lp, ls = ctt.get("m_LocalPosition", {}), ctt.get("m_LocalScale", {})
         qx, qy, qz, qw = yaw180(ctt.get("m_LocalRotation", {}))
-        rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f" % (
+        # draw flag: LOD0 membership when the prefab has an LODGroup; otherwise everything meshed, and the
+        # caller de-duplicates any Model_n chain by index (the pre-LODGroup fallback, now only a safety net).
+        draw = 1 if (fn != "-" and (part in lod0 if has_group else True)) else 0
+        rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f\t%s\t%d" % (
             part, fn, lp.get("x", 0.0), lp.get("y", 0.0), -lp.get("z", 0.0),
-            qx, qy, qz, qw, ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0)))
-        if not alb:
-            mr = comp_of(gtt, ("MeshRenderer",))
-            mats = mr.read_typetree().get("m_Materials", []) if mr else []
-            mo = pptr(mats[0]) if mats else None
-            if mo:
-                for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
-                    nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
-                    if nm == "_MainTex" and isinstance(val, dict):
-                        to = pptr(val.get("m_Texture", {}))
-                        if to:
-                            to.read().image.convert("RGBA").save(os.path.join(OUT, nl + "_albedo.png")); alb = True
+            qx, qy, qz, qw, ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0), parent, draw))
+
+    def walk(tr_tt, parent):
+        """ RECURSIVE. The old version read only the prefab root's DIRECT children, but the clips address paths
+        like .../Item_Root/Bone_5/Bone_6 -- ten curves across five items nest a second level, and a Bone_6 keyed
+        in Bone_5's space but parented to the root lands nowhere at all. """
+        for ch in tr_tt.get("m_Children", []):
+            ct = by_id.get(ch.get("m_PathID"))
+            if not ct: continue
+            ctt = ct.read_typetree()
+            cgo = by_id.get(ctt.get("m_GameObject", {}).get("m_PathID"))
+            if not cgo: continue
+            part = str(cgo.read_typetree().get("m_Name"))
+            emit(ctt, part, parent)
+            walk(ctt, part)
+
+    # The prefab ROOT is the node retail renames to the item id and hangs off the hand hook -- the "13" in
+    # .../Right_Hook/13/Bone_0 -- and it carries its own Pos/Rot/Scale curves. It is what places the item
+    # relative to the hand, so the bag the other hand reaches into does not ride the fist holding it.
+    rtt = tr.read_typetree()
+    emit(rtt, "Item_Root", "-")
+    walk(rtt, "Item_Root")
     if not rows: return None
     open(os.path.join(OUT, nl + "_parts.tsv"), "w").write("\n".join(rows) + "\n")
     return rows

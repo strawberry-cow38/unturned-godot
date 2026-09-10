@@ -2796,7 +2796,8 @@ namespace UnturnedGodot
             string mesh = FluidItem.HeldMesh(asset);   // most match the item name; the OJ/milk cartons map to box_orange/box_milk
             var an = ConsumableRegistry.Anims(mesh);   // reuse the drink archetype's equip/use clips so the bottle equips + a sip animates naturally
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh) };
+            // LeftHook: 17 of the 75 animated consumables parent under Left_Hook in retail (bag_chips among them).
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh), LeftHook = an.LeftHook };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[fluid] holding {FluidItem.Label(backing, asset)}  ([LMB] sip · aim a tank + [RMB] to fill)");
@@ -2988,7 +2989,7 @@ namespace UnturnedGodot
             var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
             _consumeUseLen = an.UseLen > 0f ? an.UseLen : ConsumeUseTime;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(meshName) };
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(meshName), LeftHook = an.LeftHook };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[consume] holding {asset?.itemName ?? meshName} ({an.Use}, {_consumeUseLen:0.0}s) -- click to eat/drink");

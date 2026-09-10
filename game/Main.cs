@@ -1660,6 +1660,7 @@ namespace UnturnedGodot
         // so the viewmodel never shows there). Floor + backdrop wall + FP camera + Viewmodel; kick at f20.
         string _cEquipClip = "", _cUseClip = "";
         float _cUseLen;
+        bool _cLeftHook;   // retail parents 17 of the 75 animated consumables under Left_Hook (bag_chips is one)
         /// <summary>Is this --vm= name a consumable, and if so what are its own clips? Read from the shipped
         /// consumable_anims.tsv rather than a list in the harness, so the harness cannot disagree with the game
         /// about which clip an item eats with.</summary>
@@ -1673,6 +1674,7 @@ namespace UnturnedGodot
                 if (c.Length >= 3 && c[0].Trim() == name)
                 {
                     _cEquipClip = c[1].Trim(); _cUseClip = c[2].Trim();
+                    _cLeftHook = c.Length > 4 && c[4].Trim() == "Left";
                     _cUseLen = c.Length > 3 && float.TryParse(c[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var l) ? l : 2f;
                     return true;
                 }
@@ -1717,7 +1719,7 @@ namespace UnturnedGodot
                 ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
                 : isConsumable   // ⚠ BEFORE isMelee: a consumable ships <name>.txt too, so isMelee would swallow every food
                 ? new Viewmodel { ConsumableMesh = $"{gunName}.txt", ConsumableAlbedo = $"{gunName}_albedo.png",   // .txt, EXACTLY as EquipHeldConsumable builds it -- a harness that passes a different shape can pass while the game fails
-                                  ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip }   // food/drink/med: its OWN CE_n/CU_n, and (since b5d2b4f3) its equipable's real parts
+                                  ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip, LeftHook = _cLeftHook }   // food/drink/med: its OWN CE_n/CU_n, its hook side, and its equipable's real parts
                 : isMelee
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top

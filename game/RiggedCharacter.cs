@@ -1455,28 +1455,37 @@ namespace UnturnedGodot
             return root;
         }
 
-        /// <summary>Where a consumable's own parts hang: under the hand attachment the held mesh already uses, so
-        /// they inherit the hand and the clip only has to supply their local motion.</summary>
-        /// <summary>⚠ The parts hang off the SKELETON, not off the hand attachment (strawberry 2026-09-10: "i think
-        /// its cuz ur anchoring the chips to the right hand. when the right hand grabs chips from the bag").
+        /// <summary>Where a held item's own parts hang: under the SAME hand attachment the held mesh uses, as a
+        /// subtree rooted at "Item_Root".
         ///
-        /// Each Bone_n track carries 228 keys of position and rotation -- the clip places these pieces outright, so
-        /// they need a STATIC parent. Parenting them to GunAttach, which rides Right_Hook, applied the hand's motion
-        /// AND the clip's on top of each other. Everything then followed the right hand, including the bag the right
-        /// hand is supposed to be reaching INTO, so the whole thing swung as one lump instead of a hand taking
-        /// chips out of a bag held in the other one.</summary>
-        internal const string HeldPartPath = "Skeleton3D/";
+        /// ⚠ This mirrors retail exactly, and getting it wrong cost three attempts. A retail curve path is
+        ///     Skeleton/Spine/Right_Shoulder/Right_Arm/Right_Hand/Right_Hook/13/Bone_0
+        /// where "13" is the ITEM ID -- Unturned instances the equipable prefab under the hook and renames it to
+        /// the item's id, and that node carries its own Pos/Rot/Scale curves. It is the node that positions the
+        /// whole assembly relative to the hand, which is how the bag one hand reaches INTO does not ride the fist
+        /// holding it (strawberry: "i think its cuz ur anchoring the chips to the right hand").
+        ///
+        /// The extractor used to keep only the leaf of that path, which lost three separate things: the item-root
+        /// track survived as a track named "13" pointing at a node nobody built; Bone_n keys, which are local to
+        /// that root, got applied straight to the hand so the hand's motion counted twice; and the hook SIDE was
+        /// lost, so bag_chips -- a LEFT hook item -- hung off the right hand. Hanging them off Skeleton3D instead
+        /// (the next attempt) resolved nothing at all and the item went invisible, because Bone_1..4 rest at scale
+        /// 0.001 and only the clip scales them up.</summary>
+        internal const string HeldPartParent = "Skeleton3D/GunAttach/";
         /// <summary>Re-resolve every animation track against the CURRENT scene tree. An AnimationMixer caches
         /// track path -> node once, and the held item's parts are added AFTER the rig and its clips are built --
-        /// so the Bone_n tracks resolved to nothing, cached that, and never looked again. The parts rendered,
-        /// sat exactly where the hand put them, and did not move: "the chip bag is glued to the right hand".</summary>
+        /// so the Item_Root tracks resolved to nothing, cached that, and never looked again.</summary>
         public void RefreshAnimCaches()
         {
             _ap?.ClearCaches();
             _gunAp?.ClearCaches();
         }
 
-        internal static bool IsHeldPartTrack(string n) => n.StartsWith("Bone_") || n.StartsWith("Model_");
+        /// <summary>A track the held item owns rather than the arm skeleton. The extractor emits these as an
+        /// item-RELATIVE PATH ("Item_Root", "Item_Root/Bone_0", "Item_Root/Bone_5/Bone_6") rather than a leaf
+        /// name, which is what lets one shared Animation resource serve every item: a clip archetype is one
+        /// equipable prefab shape, so everything sharing CU_2 shares CU_2's hierarchy.</summary>
+        internal static bool IsHeldPartTrack(string n) => n == "Item_Root" || n.StartsWith("Item_Root/");
 
         static Animation BuildAnim(ClipData c)
         {
@@ -1494,7 +1503,10 @@ namespace UnturnedGodot
                 //
                 // Retail's own naming is the discriminator: Model_n / Bone_n are item parts, everything else is a
                 // bone. rig.json's 17 bones use none of those prefixes, so this cannot collide.
-                string path = IsHeldPartTrack(kv.Key) ? HeldPartPath + kv.Key : "Skeleton3D:" + kv.Key;
+                // Item parts are NODES under the hand attachment; skeleton bones are properties of Skeleton3D.
+                // The two need different path syntax, and a wrong one resolves to nothing IN SILENCE -- which is
+                // exactly how a 7.5 s eat animation played with none of its item motion for weeks.
+                string path = IsHeldPartTrack(kv.Key) ? HeldPartParent + kv.Key : "Skeleton3D:" + kv.Key;
                 var tr = kv.Value;
                 if (tr.rot != null && tr.rot.Length > 0)
                 {

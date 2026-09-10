@@ -9,11 +9,26 @@ namespace UnturnedGodot
     {
         static readonly Dictionary<ushort, string> _byId = new();
         // mesh -> its own eat/drink archetype clips + source useTime (Use-clip length). From content/consumable_anims.tsv.
-        public readonly struct AnimSet { public readonly string Equip, Use; public readonly float UseLen; public AnimSet(string e, string u, float l) { Equip = e; Use = u; UseLen = l; } }
+        /// <summary>LeftHook: retail parents the equipable prefab under Left_Hook for 17 of the 75 animated
+        /// consumables -- bag_chips among them. Holding one off the RIGHT hand is why the bag travelled with the
+        /// hand that was supposed to be reaching into it (strawberry 2026-09-10).</summary>
+        public readonly struct AnimSet { public readonly string Equip, Use; public readonly float UseLen; public readonly bool LeftHook; public AnimSet(string e, string u, float l, bool lh = false) { Equip = e; Use = u; UseLen = l; LeftHook = lh; } }
         static readonly Dictionary<string, AnimSet> _animsByMesh = new();
         static readonly Dictionary<ushort, string> _soundById = new();   // id -> use-sound file stem (content/sounds/<x>.wav)
         static readonly Dictionary<string, Color> _colorByMesh = new();  // mesh -> flat _Color for NO-texture items (cheese/potato); else absent
         static bool _loaded;
+        // mesh -> the part names the item's OWN clips drive. This is what separates an LOD from a moving piece:
+        // canned_beans ships Model_0..Model_3 where Model_0/Model_1 are the LOD chain and Model_2/Model_3 are
+        // animated parts, so "Model_n means LOD" (what the code used to assume) both hid real geometry and drew
+        // LODs on top of each other. Only the clips know which is which.
+        static readonly Dictionary<string, HashSet<string>> _animPartsByMesh = new();
+
+        /// <summary>Part names this item's clips animate; empty for a static item.</summary>
+        public static HashSet<string> AnimatedParts(string mesh)
+        {
+            if (!_loaded) Load();
+            return _animPartsByMesh.TryGetValue(mesh, out var s) ? s : new HashSet<string>();
+        }
 
         public static void Load()
         {
@@ -32,7 +47,7 @@ namespace UnturnedGodot
                 foreach (var ln in System.IO.File.ReadAllLines(ap))
                 {
                     var c = ln.Split('\t');   // mesh, equipClip, useClip, useLen
-                    if (c.Length >= 4) { float.TryParse(c[3], out var ul); _animsByMesh[c[0].Trim()] = new AnimSet(c[1].Trim(), c[2].Trim(), ul); }
+                    if (c.Length >= 4) { float.TryParse(c[3], out var ul); _animsByMesh[c[0].Trim()] = new AnimSet(c[1].Trim(), c[2].Trim(), ul, c.Length >= 5 && c[4].Trim() == "Left"); }
                 }
             string sp = ProjectSettings.GlobalizePath("res://content/consumable_sounds.tsv");
             if (System.IO.File.Exists(sp))
@@ -49,7 +64,15 @@ namespace UnturnedGodot
                     if (c.Length >= 4 && float.TryParse(c[1], out var r) && float.TryParse(c[2], out var g) && float.TryParse(c[3], out var b))
                         _colorByMesh[c[0].Trim()] = new Color(r, g, b);
                 }
-            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds, {_colorByMesh.Count} flat colors");
+            _animPartsByMesh.Clear();
+            string pp = ProjectSettings.GlobalizePath("res://content/consumable_animparts.tsv");
+            if (System.IO.File.Exists(pp))
+                foreach (var ln in System.IO.File.ReadAllLines(pp))
+                {
+                    var c = ln.Split('\t');   // mesh, comma-separated part names the clips drive
+                    if (c.Length >= 2) _animPartsByMesh[c[0].Trim()] = new HashSet<string>(c[1].Split(','), System.StringComparer.Ordinal);
+                }
+            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds, {_colorByMesh.Count} flat colors, {_animPartsByMesh.Count} part sets");
         }
 
         // flat _Color for a no-texture consumable mesh (cheese/potato/etc.), or null if it has a real albedo texture.

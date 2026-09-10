@@ -213,70 +213,66 @@ namespace UnturnedGodot
         public bool EmptyHands;   // holding-something-with-no-arm-model (e.g. a deployable) -> arms in a static rest hold, no weapon mesh
         public bool Fists;        // UNARMED combat state -> bare arms in the melee ready hold + weak/strong punch swings, no mesh (src: empty hands = hardcoded fists)
         public string ConsumableMesh, ConsumableAlbedo;   // set (instead of GunName) to HOLD a consumable (food/drink/medical): mesh + albedo, Equip hold + Use eat/drink anim, no gun FX
-        /// <summary>Build a consumable's real held model: every Model_n / Bone_n from its equipable.prefab, as its
-        /// own node under the hand attachment, named so the Use clip's tracks land on it. Returns how many parts
-        /// were built -- 0 means this item has not been re-ripped yet and the caller keeps the old single mesh, so
-        /// the two rips can coexist while the 170 are converted.</summary>
-        static int AttachHeldParts(Node3D partRoot, string meshName, StandardMaterial3D mat)
+        /// <summary>Build a held item's real model: the whole equipable.prefab subtree -- Item_Root, every
+        /// Model_n / Bone_n / Stat_Tracker under it, at their prefab-rest transforms -- parented to the hand
+        /// attachment and named so the clip's tracks land on them. Returns how many nodes were built; 0 means this
+        /// item has not been re-ripped yet and the caller keeps the old single mesh, so the two rips coexist.</summary>
+        static int AttachHeldParts(Node3D attach, string meshName, StandardMaterial3D mat)
         {
             // ⚠ ConsumableMesh carries its EXTENSION ("bag_chips.txt") -- EquipHeldConsumable sets it that way and
             // ParseObj wants it. Building the sidecar name off it verbatim asked for "bag_chips.txt_parts.tsv",
-            // which never exists, so this returned 0 and fell back to the old single mesh WITHOUT A WORD. That is
-            // why the parts appeared to do nothing in game while everything built green.
+            // which never exists, so this returned 0 and fell back to the old single mesh WITHOUT A WORD.
             string stem = meshName.EndsWith(".txt") ? meshName[..^4] : meshName;
             string tsv = $"res://content/{stem}_parts.tsv";
             if (!Godot.FileAccess.FileExists(tsv)) return 0;
             using var f = Godot.FileAccess.Open(tsv, Godot.FileAccess.ModeFlags.Read);
             if (f == null) return 0;
-            // ⚠ Model_n ARE LODs, Bone_n ARE THE MODEL. An equipable's LODGroup picks ONE Model_n by distance --
-            // canned_beans ships Model_0..Model_3 -- and the Bone_n are the pieces the Use clip animates. Drawing
-            // every part meant drawing the whole LOD chain on top of itself: for bag_chips, Model_1 (24 verts) is
-            // simply the low-detail copy of Bone_0 (88), so the bag was rendered twice, one of them coarse and
-            // neither of them going away. Same trap as the trees (bake LOD0 only) and the tank (Model_0/_1 =
-            // LOD0/LOD1, render ONE), which I had written down and still walked into.
-            //
-            // So: if this item has Bone_n, THEY are the model and every Model_n is skipped. An item with no Bone_n
-            // is static, and takes its lowest-numbered Model_n -- lowest, not Model_0, because bag_chips proves
-            // Model_0 is not always present.
             var rows = new System.Collections.Generic.List<string[]>();
             while (!f.EofReached())
             {
                 string ln = f.GetLine();
                 if (string.IsNullOrWhiteSpace(ln)) continue;
-                var cc = ln.Split('\t');
-                if (cc.Length >= 5) rows.Add(cc);
+                var cc = ln.Split('\t');   // part, meshfile, pos, rot, scale, parent, drawInLod0
+                if (cc.Length >= 7) rows.Add(cc);
             }
-            bool hasBones = rows.Exists(r => r[0].StartsWith("Bone_"));
-            string keepModel = null;
-            if (!hasBones)
-            {
-                int best = int.MaxValue;
-                foreach (var r in rows)
-                    if (r[0].StartsWith("Model_") && int.TryParse(r[0][6..], out int idx) && idx < best) { best = idx; keepModel = r[0]; }
-            }
-            int built = 0;
+            if (rows.Count == 0) return 0;
+
+            // ⚠ WHICH PARTS ARE DRAWN IS DATA, NOT A NAMING CONVENTION. The last column is LOD0 membership, read
+            // straight off the prefab's LODGroup by the ripper. Every rule I invented from the names was wrong in
+            // one direction or the other: "Model_n is an LOD, Bone_n is the model" threw away canned_beans'
+            // Model_0/Model_2/Model_3 (all three are LOD0), and drawing every part rendered bag_chips' Model_1 --
+            // which is the LOD1 copy of the same bag -- on top of Bone_0.
+
+            float P(string[] arr, int i) => arr.Length > i && float.TryParse(arr[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
+            var nodes = new System.Collections.Generic.Dictionary<string, Node3D>();
+            int built = 0, drawn = 0;
             foreach (var col in rows)
             {
-                if (col[0].StartsWith("Model_") && col[0] != keepModel) continue;   // an LOD copy of something already drawn
-                var mesh = ContentProvider.ParseObj($"res://content/{col[1]}");
-                if (mesh == null) continue;
+                // The TSV is in prefab child order, so a parent is always emitted before its children. A row whose
+                // parent is missing is dropped rather than reparented to the hand -- silently promoting it would
+                // put it in the wrong space, which is the whole class of bug this rewrite is fixing.
+                Node3D parent = col[5] == "-" ? attach : (nodes.TryGetValue(col[5], out var pn) ? pn : null);
+                if (parent == null) { GD.PushWarning($"[heldparts] {stem}: '{col[0]}' has no parent '{col[5]}'"); continue; }
                 var pv = col[2].Split(' '); var qv = col[3].Split(' '); var sv = col[4].Split(' ');
-                float P(string[] a, int i) => a.Length > i && float.TryParse(a[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
                 var basis = new Basis(new Quaternion(P(qv, 0), P(qv, 1), P(qv, 2), qv.Length > 3 ? P(qv, 3) : 1f).Normalized())
                             .Scaled(new Vector3(sv.Length > 0 ? P(sv, 0) : 1f, sv.Length > 1 ? P(sv, 1) : 1f, sv.Length > 2 ? P(sv, 2) : 1f));
-                partRoot.AddChild(new MeshInstance3D
-                {
-                    Name = col[0],   // EXACTLY the clip's track name -- Model_0 / Bone_3 / ...
-                    Mesh = mesh,
-                    MaterialOverride = mat,
-                    Transform = new Transform3D(basis, new Vector3(P(pv, 0), P(pv, 1), P(pv, 2))),
-                });
+                var n = new Node3D { Name = col[0], Transform = new Transform3D(basis, new Vector3(P(pv, 0), P(pv, 1), P(pv, 2))) };
+                parent.AddChild(n);
+                nodes[col[0]] = n;
                 built++;
+                // Meshless nodes (Item_Root, Icon, Effect, Stat_Tracker) still get built: they are animated and
+                // they parent geometry, so skipping them breaks track resolution and orphans real parts.
+                if (col[1] == "-" || col[6] != "1") continue;
+                var mesh = ContentProvider.ParseObj($"res://content/{col[1]}");
+                if (mesh == null) continue;
+                // The mesh goes on a CHILD, not on the node itself: the node's scale is animation data (retail
+                // hides a piece by parking it at 0.001 and scales it to 1.0 when it should appear), and a
+                // MeshInstance3D that IS the animated node would need its own transform for the same job.
+                n.AddChild(new MeshInstance3D { Name = "Mesh", Mesh = mesh, MaterialOverride = mat });
+                drawn++;
             }
-            // DIAGNOSTIC, and the reason this exists: the parts render but do not move, which means the clip's
-            // Bone_n tracks are not reaching these nodes. Print the path they ACTUALLY live at, so it can be
-            // compared against RiggedCharacter.HeldPartPath instead of assumed equal to it.
-            if (built > 0) GD.Print($"[heldparts] {stem}: built {built} under {partRoot.GetPath()} (clip tracks expect '{RiggedCharacter.HeldPartPath}<name>')");
+            if (built > 0)
+                GD.Print($"[heldparts] {stem}: {built} nodes, {drawn} drawn (LOD0), {ConsumableRegistry.AnimatedParts(stem).Count} animated, under {attach.GetPath()}; tracks expect '{RiggedCharacter.HeldPartParent}Item_Root/...'");
             return built;
         }
 
@@ -689,11 +685,12 @@ namespace UnturnedGodot
                     // each its own mesh, and the item's Use clip animates them -- that is how a chip bag opens and
                     // how a canned meal's spoon moves. `mi` above is the old single-mesh rip of the WORLD model; if
                     // this item has the real parts ripped, they replace it wholesale rather than sitting on top of
-                    // it, and they are named exactly as the clip's tracks address them (see
-                    // RiggedCharacter.HeldPartPath, which binds "Bone_0" to a node instead of a nonexistent bone).
-                    // Parts go on the SKELETON, not on `att`: the clip positions them absolutely, so a parent that
-                    // moves (the hand) gets applied twice. See RiggedCharacter.HeldPartPath.
-                    if (ConsumableMesh != null && AttachHeldParts(skel, ConsumableMesh, mat) > 0)
+                    // it, named exactly as the clip's tracks address them.
+                    //
+                    // They hang off `att` -- the hand hook -- because that is where retail hangs them, under an
+                    // Item_Root node that has its OWN animation. That root is what moves the item relative to the
+                    // hand; it is not the hand's motion applied twice. See RiggedCharacter.HeldPartParent.
+                    if (ConsumableMesh != null && AttachHeldParts(att, ConsumableMesh, mat) > 0)
                     {
                         mi.Visible = false;
                         _arms?.RefreshAnimCaches();   // the clips were bound before these nodes existed; re-resolve or they stay inert
