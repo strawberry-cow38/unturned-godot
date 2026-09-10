@@ -15,7 +15,7 @@ twice, in opposite directions. A component with edges used once has a literal ho
 Also reported, because they are what "weird edges" looks like in practice:
   - degenerate triangles (zero area) -- render as nothing, break normals
   - edges used 3+ times, i.e. a non-manifold seam, usually two solids welded instead of overlapped
-  - faces whose stored normal disagrees with their winding, which lights the surface inside-out
+  - faces whose stored normal does not OPPOSE their winding (these files are clockwise-front; see below)
   - vertices closer than 1 mm but not welded -- a crack that shows as a flickering seam
 
 Exit 1 on any closure failure or wound-backwards face, so it can gate a build.
@@ -96,13 +96,15 @@ def audit(path):
         if area < AREA:
             degen += 1
             continue
-        # The stored normal must agree with the winding, or the surface lights inside-out. ParseObj
-        # honours per-corner vn, so a mesh can be wound one way and shaded the other and still "work"
-        # right up until it is lit -- which is exactly the kind of thing that reads as a weird edge.
+        # THESE FILES ARE CLOCKWISE-FRONT, so the stored outward normal OPPOSES the right-hand-rule
+        # winding normal, and that is correct. Do not compare this against the retail .obj props: they
+        # load through ObjMesh.Load, which negates an axis and always reverses winding, while these load
+        # through ContentProvider.ParseObj, which preserves it. I ran exactly that comparison, "found"
+        # all 30 meshes wound backwards, flipped them, and shipped a set that rendered inside out.
         ni = t[0][1]
         if ni is not None and ni < len(vn):
             stored = vn[ni]
-            if sum(stored[k] * n[k] for k in range(3)) / area < -0.2:
+            if sum(stored[k] * n[k] for k in range(3)) / area > 0.2:
                 backwards += 1
     if degen:
         out.append(f'{degen} degenerate (zero-area) triangles')

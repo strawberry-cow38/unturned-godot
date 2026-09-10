@@ -40,10 +40,12 @@ def main():
                 assert abs(length(normal)-1)<2e-5,(p,'nonunit normal')
                 # Smooth 8/12-sided shells preserve radial corner normals; the
                 # measured barrel uses these, while caps and hex fittings are flat.
-                # AGREES with the winding, which is how every retail mesh in this game is built --
-                # measured with tools/audit_fluid_geometry.py: Barrel_0 156/156, Generator_0 132/132.
-                # This asserted the opposite, and these were the only meshes in the game wound that way.
-                assert dot(geometric,normal)/length(geometric)>.9,(p,'outward normal opposes winding')
+                # Smooth 8/12-sided shells preserve radial corner normals; the measured barrel uses
+                # these, while caps and hex fittings are flat. CLOCKWISE front: ParseObj preserves file
+                # winding, unlike ObjMesh.Load (retail props) which reverses it -- so the retail files
+                # are NOT a valid comparison here. Flipping this to match them rendered everything
+                # inside out (strawberry 2026-09-10: "all are rendering inside out").
+                assert dot(geometric,normal)/length(geometric)<-.9,(p,'clockwise outward normal mismatch')
             assert len({k[1] for k in f})==1,(p,'triangle interpolates across palette cells')
         lo=[min(x[i] for x in v) for i in range(3)];hi=[max(x[i] for x in v) for i in range(3)]
         assert max(abs(x-y) for x,y in zip(lo+hi,spec['min']+spec['max']))<1e-6,(p,lo,hi)

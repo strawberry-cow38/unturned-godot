@@ -61,12 +61,14 @@ class Mesh:
             ids.append(i)
         normal=unit(cross(sub(points[1],points[0]),sub(points[2],points[0])))
         if normals is None: normals=[normal]*len(points)
-        # WIND THE WAY THE GAME'S OWN ART DOES. Measured with tools/audit_fluid_geometry.py: every
-        # retail mesh has its face normal AGREEING with its winding (Barrel_0 156/156, Generator_0
-        # 132/132). These were emitted reversed -- 0/256 agreeing -- so they were the only meshes in
-        # the game wound backwards, which is what "inconsistent geometry" looks like from outside.
+        # CLOCKWISE FRONT, and do not "fix" this against the retail art -- I did, and it rendered every
+        # device inside out. The retail .obj props go through ObjMesh.Load, which negates an axis AND
+        # "ALWAYS reverse[s] winding: Unity(LH) verts in Godot(RH) face" (its own comment), so their
+        # FILE winding is the opposite of their RUNTIME winding. These files go through
+        # ContentProvider.ParseObj, which does neither -- file winding IS runtime winding. Comparing the
+        # two on disk measures a real number and answers a different question.
         for i in range(1,len(ids)-1):
-            self.faces.append(([ids[0],ids[i],ids[i+1]],colour,[normals[0],normals[i],normals[i+1]],group))
+            self.faces.append(([ids[0],ids[i+1],ids[i]],colour,[normals[0],normals[i+1],normals[i]],group))
     def box(self, lo, hi, colour=0, group='frame'):
         x,y,z=lo; X,Y,Z=hi
         for p in [((x,y,z),(x,y,Z),(x,Y,Z),(x,Y,z)),((X,y,Z),(X,y,z),(X,Y,z),(X,Y,Z)),
@@ -136,12 +138,12 @@ class Mesh:
         self.add(tmp,transform=tr)
     def add(self, other, offset=(0,0,0), transform=None):
         for ids,c,n,g in other.faces:
-            # Stored faces are already outward CCW (see face()); pass them straight back through.
-            ps=[other.v[i] for i in ids]
+            # Stored faces are clockwise; reconstruct outward CCW for face().
+            ps=[other.v[i] for i in ids[::-1]]
             ps=[transform(p) if transform else tuple(x+y for x,y in zip(p,offset)) for p in ps]
             ns=None
             if len(set(n))>1:
-                ns=[unit(sub(transform(a),transform((0,0,0)))) if transform else a for a in n]
+                ns=[unit(sub(transform(a),transform((0,0,0)))) if transform else a for a in n[::-1]]
             self.face(ps,c,g,ns)
     def write(self,path):
         normals=[]
@@ -150,7 +152,7 @@ class Mesh:
                 n=tuple(round(x,6) for x in n)
                 if n not in normals: normals.append(n)
         lines=['# Authored by tools/author_fluid_art.py after notes/FLUID_ART_MEASUREMENTS.md',
-               '# Y-up metres, explicit normals, triangle-only; wound like the retail art (normal agrees with winding); palette V-up']
+               '# Y-up metres, explicit normals, triangle-only, CLOCKWISE front (ParseObj preserves file winding); palette V-up']
         lines += ['v '+' '.join(f'{x:.6f}' for x in p) for p in self.v]
         lines += ['vt 0.25 0.75','vt 0.75 0.75','vt 0.25 0.25','vt 0.75 0.25']
         lines += ['vn '+' '.join(f'{x:.6f}' for x in p) for p in normals]
