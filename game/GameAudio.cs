@@ -196,6 +196,30 @@ namespace UnturnedGodot
                 ?? Pick("footsteps", mat + "_walk")
                 ?? Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
         }
+        // ---- FOLEY (content/audio/foley, 107 clips that nothing played until now) ------------------------------
+        // Retail drives these off OneShotAudioDefinitions hung on the animations and the equipment; we have neither
+        // the definitions nor those animation events, so the TRIGGER is ours and the clips are theirs. Where retail
+        // has an equivalent moment the trigger matches it; where it does not, that is said at the call site rather
+        // than dressed up as source-accurate.
+
+        /// <summary>Picking something up off the ground or a shelf.</summary>
+        public static AudioStream GrabItem() => Pick("foley", "foley_object_grab_pickup_rough")
+                                             ?? Pick("foley", "foley_soldier_gear_equipment_movement_grab_item");
+
+        /// <summary>One round going into a magazine. Retail has no inventory mag-loading -- these clips live on the
+        /// round-by-round RELOAD animations -- so the pistol/rifle split has no source rule to copy here. Chosen on
+        /// the magazine's own capacity, which is a proxy and is labelled as one: sidearm magazines are small.</summary>
+        public static AudioStream MagRound(int magCapacity) =>
+            Pick("foley", magCapacity <= 15 ? "gun_pistol_load_bullet" : "gun_semi_auto_rifle_load_bullet");
+
+        /// <summary>Kit moving on the body while you walk. Retail scales this by what is actually worn, so the bank
+        /// steps with the count of carried gear rather than playing one rattle for a vest and a rucksack alike.</summary>
+        public static AudioStream GearMovement(int wornPieces) => wornPieces >= 4
+            ? Pick("foley", "foley_soldier_gear_equipment_metal_cloth_heavy_movement_med")
+            : wornPieces >= 2
+            ? Pick("foley", "foley_soldier_gear_equipment_rattle_movement_light")
+            : Pick("foley", "foley_cloth_light_fast_movement");
+
         public static string BulletSurface(PlayerController.Surf s) => s switch
         {
             PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight",

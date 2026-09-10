@@ -1004,6 +1004,7 @@ void fragment() {
                 Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
                                            0, 0, 0, (ushort)bid, true);
                 op.done++;
+                MagRoundSound(mA);
                 return op.done < op.batch && op.mag.amount > 0;
             }
             // LOAD: pull a round from the stack into the mag
@@ -1021,7 +1022,20 @@ void fragment() {
             jar.item.amount = (byte)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
             op.done++;
+            MagRoundSound(mA);
             return op.done < op.batch;
+        }
+
+        /// <summary>One click per round in or out of a magazine. The wheel steps a round at a time and made no
+        /// sound at all, so a ten-round load was a silent progress ring.
+        ///
+        /// 2D rather than positional: you are stood in a menu looking at the grid, and the round is going into a
+        /// magazine in your hands, not somewhere in the world. Retail has no inventory mag-loading to copy, so the
+        /// trigger is ours -- the CLIPS are theirs, off the round-by-round reload animations.</summary>
+        void MagRoundSound(SDG.Unturned.ItemAsset mA)
+        {
+            var clip = GameAudio.MagRound(mA?.magCapacity ?? 0);
+            if (clip != null) GameAudio.Play2D(this, clip, -9f, (float)GD.RandRange(0.96, 1.04));
         }
         int BulletIdForRound(string round)   // the loose-round item id for a cartridge (reverse of bullet.magRound)
         {
