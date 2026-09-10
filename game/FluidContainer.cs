@@ -22,6 +22,17 @@ namespace UnturnedGodot
         public FluidTank Tank;             // null for a fitting (splitter/combiner)
         public FluidRole Role;
         public DeployableDef Def;          // the item def this was placed from -> hold-F pickup returns that item (set by FluidDeploy)
+        // The server entity this device mirrors, stamped by DeployableReplicaView when it materializes one.
+        // 0 = not server-tracked (a device built by a pure-SP path with no net seam). Hold-F pickup dispatches
+        // on it exactly the way Deployable.NetId does: non-zero asks the server to remove + refund, zero takes
+        // the local path. Fluid devices used to be LocalOnly and so were ALWAYS 0, which is what made pickup
+        // hand out items the server had never agreed to (strawberry: "phantom ... disappear when i update the inv").
+        // (Was declared THREE times -- FluidPump, FluidValve, FluidPurifier each had their own, each
+        // feeding `PowerNetId => NetId`. Adding a fourth on the base would have HIDDEN those, so the
+        // replica view would set one field and the power wiring would read another: a split-brain of
+        // exactly the kind this change exists to remove. The compiler said so -- CS0108 x3.)
+        public uint NetId;
+
         public string DisplayName;         // an explicit in-world name (water tower / fuel inlet); else RoleLabel falls back to the item Def name
         public bool Blocked;               // a clogged/closed-valve container stops conducting (F5)
         public bool Infinite;              // a submersible INLET: an infinite source (never depletes)

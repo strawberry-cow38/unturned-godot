@@ -13,7 +13,6 @@ namespace UnturnedGodot
     {
         public const float PumpWatts = 500f;   // drawn off the power net while wired + running
         public float HeadLift = 6f;            // metres of rise a powered pump can push fluid up (overrides gravity)
-        public uint NetId;                     // MP replica id (0 = SP/local)
         public bool DebugForcePower;           // headless tests: pretend the pump is wired + powered
 
         readonly List<ConnectionPort> _powerPorts = new();

@@ -1819,31 +1819,24 @@ namespace UnturnedGodot
         void PickupFluid(FluidContainer c)
         {
             if (c == null || !IsInstanceValid(c)) return;
-            // ⚠ REFUSED WHILE THE BAG IS SERVER-OWNED (strawberry 2026-09-10: "the items i get from picking up
-            // deployables are phantom ... when i update the inv they disappear").
+            // A SERVER-TRACKED device: ask the server to remove it and refund the item, exactly the way the
+            // prop path does two hundred lines up (`if (d.NetId != 0) { NetPickupDeployable?.Invoke(d.NetId); return; }`).
+            // OnPickupDeployable already validates ownership/reach and stamps quality+fuel onto the returned
+            // item, and the removal echo retires the node through DeployableReplicaView -- so this must NOT
+            // despawn it locally, or the placer sees it vanish before the server has agreed.
             //
-            // The grant below is a bare local tryAddItem with no net seam, and every path -- singleplayer
-            // included, since SP runs through MpLoopback -- has a server-owned inventory. So the item appeared,
-            // the server never heard, and the next owner echo took it straight back out. It did not "disappear on
-            // refresh": it was never real.
-            //
-            // The server cannot simply be told to hand it over, either. Fluid defs are LocalOnly, so ServerPlace
-            // bails before registering an entity (DeployableReplication:450) -- validated and spent, never
-            // recorded. There is nothing for it to verify a pickup against, and a command that refunds on the
-            // client's say-so is just a free-item exploit.
-            //
-            // So this refuses rather than lying, which at least keeps the device standing and the item in the
-            // world. The real fix is making fluid devices server-tracked -- the "fluid MP replication is a
-            // fast-follow" note below, coming due -- and pickup then falls out of the validated
-            // OnPickupDeployable path that already refunds correctly. tinyclaw owns that migration; it is the
-            // same one already made for the fridge in DeployableReplicaView.
-            //
-            // Deliberately NOT gated on the device being fluid-specific: the sibling prop path refuses on exactly
-            // this condition too (PickupDeployable, NetId 0), for exactly this reason.
+            // This replaces the interim refusal (78f8ab9b). The bag is server-owned on EVERY path, singleplayer
+            // included -- SP runs through MpLoopback -- so the old bare local tryAddItem below appeared to work
+            // and was then deleted by the next owner echo (strawberry 2026-09-10: "the items i get from picking
+            // up deployables are phantom ... when i update the inv they disappear"). It was never real.
+            if (c.NetId != 0 && NetPickupDeployable != null) { NetPickupDeployable(c.NetId); return; }
+            // NetId 0 = a device no server ever registered (a pure-SP world with no seam). The local grant below
+            // is correct there and only there. If the seam IS live and the id is still 0, refuse rather than lie:
+            // that is a device the server cannot be asked about, and granting it would be the free-item exploit.
             if (InventoryIsServerOwned)
             {
                 FluidPickupHudSet("can't pick this up yet");
-                Log.Print($"[fluid] pickup refused: {c.Def?.Name} is not server-tracked, and the bag is (see PickupFluid)");
+                Log.Print($"[fluid] pickup refused: {c.Def?.Name} carries no NetId and the bag is server-owned (see PickupFluid)");
                 return;
             }
             ushort id = c.Def?.Id ?? 0;
@@ -3271,16 +3264,22 @@ namespace UnturnedGodot
                     if (_deployable.Fluid != null || _deployable.DoorProp != null)
                     {
                         bool isDoor = _deployable.DoorProp != null;
+                        // A DOOR is still LocalOnly, so it spawns here on every path. A FLUID device is
+                        // server-tracked now: with the net seam live the server places it and
+                        // DeployableReplicaView materializes it for everybody INCLUDING the placer, so
+                        // spawning locally as well would leave the placer looking at two pumps in the same
+                        // spot -- one real and shared, one a ghost only he can see and only he can pick up.
+                        // Exactly the reason the storage branch above stopped spawning its own fridge.
                         if (isDoor) DoorDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
-                        else FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        else if (NetPlaceDeployable == null) FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         Log.Print($"[{(isDoor ? "door" : "fluid")}] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
                             if (NetPlaceDeployable != null)
-                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
-                                // then ServerPlace no-ops the fluid id (filtered from the schema) so NO phantom replica spawns.
+                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it --
+                                // and now ALSO places the fluid device for real, since fluid defs are no longer LocalOnly.
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
                                 { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }

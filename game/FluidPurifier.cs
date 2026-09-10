@@ -14,7 +14,6 @@ namespace UnturnedGodot
     public partial class FluidPurifier : FluidContainer, IPowerDevice
     {
         public const float PurifierWatts = 750f;   // drawn off the power net while wired (a hungry appliance)
-        public uint NetId;                          // MP replica id (0 = SP/local)
         public bool DebugForcePower;                // headless tests: pretend it's wired + powered
 
         readonly List<ConnectionPort> _powerPorts = new();
