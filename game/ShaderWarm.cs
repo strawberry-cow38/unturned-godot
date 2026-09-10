@@ -25,6 +25,15 @@ namespace UnturnedGodot
         int _frames = Frames;
         readonly List<MeshInstance3D> _quads = new();
         public static int LastCount { get; private set; }
+        /// <summary>True while the warm quads are on screen. The loading screen holds its cover up until this
+        /// clears, so the pass happens BEHIND the load rather than as a flash of coloured quads on the world the
+        /// player just arrived in (strawberry 2026-09-10: "hide the shader pre-load that happens when loading
+        /// into a map"). It cannot be hidden any other way: an invisible mesh is not drawn, and a shader that is
+        /// not drawn is not compiled, which is the entire point of the pass.</summary>
+        public static bool Busy { get; private set; }
+        /// <summary>Test seam: drive Busy without a GPU. The thing under test is the loading screen's REACTION to
+        /// it -- that it waits, and that it stops waiting -- which needs no real shader compile to exercise.</summary>
+        public static void SetBusyForTest(bool v) => Busy = v;
 
         public static void Begin(Node root)
         {
@@ -72,8 +81,13 @@ namespace UnturnedGodot
             int c = WarmCanvasShaders(dir);
             LastCount = n + c;
             GD.Print($"[shaderwarm] {n} spatial + {c} canvas shaders drawn for {Frames} frames behind the load");
-            if (n + c == 0) QueueFree();
+            if (n + c == 0) { QueueFree(); return; }
+            Busy = true;
         }
+
+        // Belt and braces: whatever frees this node -- the countdown, a scene change, a failed load -- releases the
+        // loading screen. A cover that never comes down would be a far worse bug than the flash it replaces.
+        public override void _ExitTree() => Busy = false;
 
         /// <summary>Same trick on a CanvasLayer: one transparent pixel per canvas_item shader, behind everything.
         /// It builds the pipeline without being visible, and rides the same Frames countdown -- the layer is a child
@@ -110,7 +124,7 @@ namespace UnturnedGodot
         {
             var cam = GetViewport()?.GetCamera3D();
             if (cam != null) GlobalTransform = new Transform3D(cam.GlobalTransform.Basis, cam.GlobalPosition - cam.GlobalTransform.Basis.Z * 0.6f);   // 0.6 m ahead, facing the camera
-            if (--_frames <= 0) QueueFree();
+            if (--_frames <= 0) { Busy = false; QueueFree(); }
         }
     }
 }

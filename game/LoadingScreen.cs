@@ -135,7 +135,14 @@ namespace UnturnedGodot
             // This readout hangs over whatever screen you land on for eight seconds after every load, and it was
             // bare text with a 6 px outline doing the legibility work -- the one thing left in the UI wearing no
             // theme at all. Same panel, same type colour, same corner radius as the rest of the design system.
-            var tbox = new PanelContainer { Position = new Vector2(16, 12), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            // ⚠ BELOW THE CONSOLE (strawberry 2026-09-10: "move the loading screen profiler down so it doesnt
+            // cover the f1 console"). DevConsole draws its log at y=10 and its input at y=34..64, and this panel
+            // sits on Layer 128 against the console's 100 -- so at y=12 it won the z-order and covered the thing
+            // you had just opened. 140 clears the input plus room for a multi-line response.
+            //
+            // Down rather than to the bottom-left, which is the vitals bar (HUD lifeBox anchors there), and not to
+            // the right because the console's input is 820 wide and would still collide in a narrow window.
+            var tbox = new PanelContainer { Position = new Vector2(16, TimingsY), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
             var tsb = UITheme.Box(new Color(0.06f, 0.07f, 0.09f, 0.88f), UITheme.RadiusCell, new Color(1f, 1f, 1f, 0.10f), 1);
             tsb.ContentMarginLeft = tsb.ContentMarginRight = 12;
             tsb.ContentMarginTop = tsb.ContentMarginBottom = 8;
@@ -149,6 +156,15 @@ namespace UnturnedGodot
 
             SetProcess(true);
         }
+
+        const float TimingsY = 140f;   // clear of the DevConsole's log + input (see the note where tbox is built)
+        bool _finishPending;
+        double _warmWait;
+        string _timingsText = "";
+
+        /// <summary>Test seam: is the opaque cover still up? The shader warm draws real quads in front of the
+        /// camera, so this is what decides whether the player sees them.</summary>
+        public bool DebugCoverVisible => _root != null && _root.Visible;
 
         public void SetTotal(int n) => _total = Mathf.Max(1, n);
 
@@ -183,14 +199,32 @@ namespace UnturnedGodot
             sb.AppendLine($"LOAD {total:0} ms");
             foreach (var kv in timings) sb.AppendLine($"  {kv.Key,-10} {kv.Value,6:0} ms  ({(total > 0 ? kv.Value / total * 100 : 0):0}%)");
             GD.Print("[load] " + sb.ToString().Replace("\n", " | "));
+            // ⚠ DO NOT DROP THE COVER YET IF THE SHADER WARM IS STILL DRAWING. Its quads live 0.6 m in front of the
+            // camera and must actually rasterise to compile their pipelines, so they cannot be hidden -- only
+            // covered. Uncovering here is what put a flash of coloured quads on the world you had just loaded into.
+            _timingsText = sb.ToString();
+            _finishPending = true;
+            _warmWait = 2.0;   // ...but never strand the player behind the cover if the warm node dies oddly
+            TryReveal(0.0);
+        }
+
+        /// <summary>Drop the loading cover and show the timings -- once the shader warm has finished drawing, or
+        /// the patience for it runs out.</summary>
+        void TryReveal(double delta)
+        {
+            if (!_finishPending) return;
+            _warmWait -= delta;
+            if (ShaderWarm.Busy && _warmWait > 0.0) return;
+            _finishPending = false;
             if (_root != null) _root.Visible = false;
-            if (_timings != null) { _timings.Text = sb.ToString(); if (_timingsBox != null) _timingsBox.Visible = true; }
-            _timingsHold = 8.0;
+            if (_timings != null) { _timings.Text = _timingsText; if (_timingsBox != null) _timingsBox.Visible = true; }
+            _timingsHold = 8.0;   // starts when it becomes VISIBLE, not when the load finished
         }
 
         public override void _Process(double delta)
         {
             if (_loading) return;
+            if (_finishPending) { TryReveal(delta); return; }   // still covering the warm; the 8 s has not started
             if (_timingsHold > 0.0)
             {
                 _timingsHold -= delta;
