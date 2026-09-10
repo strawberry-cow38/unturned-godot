@@ -281,7 +281,7 @@
   {
     "file": "9115_part.txt",
     "vertices": 104,
-    "triangles": 180,
+    "triangles": 184,
     "min": [
       -0.26,
       -0.05,
@@ -294,14 +294,14 @@
     ],
     "groups": {
       "handle_hub": 28,
-      "handle_rim": 92,
+      "handle_rim": 96,
       "handle_spoke": 60
     }
   },
   {
     "file": "9115_preview.txt",
     "vertices": 344,
-    "triangles": 596,
+    "triangles": 600,
     "min": [
       -0.68,
       0,
@@ -317,7 +317,7 @@
       "bonnet": 28,
       "flange": 56,
       "handle_hub": 28,
-      "handle_rim": 92,
+      "handle_rim": 96,
       "handle_spoke": 60,
       "hose_fitting": 88,
       "pedestal": 12,

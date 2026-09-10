@@ -330,7 +330,12 @@ def valve(low):
     if low:
         cylinder(wheel,.26,-.04,.04,6,1,group='handle')
     else:
-        wheel.lathe([(-.045,.175),(-.045,.26),(.045,.26),(.045,.175)],12,1,'handle_rim',caps=True)
+        # A RIM WITH A HOLE IN IT. This profile runs .175 -> .26 -> .26 -> .175, and with caps=True the
+        # lathe puts a disc across BOTH open faces -- which filled the middle and buried the hub and all
+        # five spokes inside a solid plate. It rendered as exactly the thing strawberry asked it to stop
+        # being ("a flat disc"), and I had already looked at it and not seen it. Closing the cross-section
+        # back on itself instead (and dropping the caps) gives a real annulus you can see through.
+        wheel.lathe([(-.045,.175),(-.045,.26),(.045,.26),(.045,.175),(-.045,.175)],12,1,'handle_rim',caps=False)
         cylinder(wheel,.075,-.05,.05,8,1,group='handle_hub')   # a lathe to radius 0 makes n zero-area faces
         for i in range(5):
             wheel.box_oriented((.06,-.024,-.024),(.245,.024,.024),math.tau*i/5,1,'handle_spoke')
