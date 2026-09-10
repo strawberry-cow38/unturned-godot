@@ -136,22 +136,61 @@ def truck_wall():
 
 
 
-def _unrake(src):
-    """Square the nose off, so the raked-nose check has something to reject.
 
-    Every `v` line is written before any `g` marker, so this cannot select the sideboard's vertices by
-    walking groups -- it works on Z instead: any vertex whose Z is neither the body's front plane nor
-    its back plane is a raked top-front corner, and gets pulled forward onto the front."""
+
+def inner_face_outer(group, z):
+    """The |x| of a sideboard's OUTER face at a given Z."""
+    m=obj(BODY);V=[];cur=''
+    for line in BODY.read_text().splitlines():
+        if line.startswith('g '):cur=line[2:]
+        elif line.startswith('f ') and cur==group:
+            V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
+    near=min(V,key=lambda v:abs(v[2]-z))[2]
+    return max(abs(v[0]) for v in V if abs(v[2]-near)<1e-6)
+
+
+def _untaper(src):
+    """Square the nose off, so the taper check has something to reject: pull every vertex out to the
+    body's own half-width. Selected by |x| rather than by group, because save() writes every `v` line
+    before any `g` marker and walking groups to find a wall's vertices finds nothing at all."""
     lines=src.splitlines()
-    zs=sorted({round(float(l.split()[3]),6) for l in lines if l.startswith('v ')})
-    front,back=zs[0],zs[-1]
+    half=max(abs(float(l.split()[1])) for l in lines if l.startswith('v '))
     out=[]
     for l in lines:
         if l.startswith('v '):
             x,y,z=[float(q) for q in l.split()[1:4]]
-            if front < round(z,6) < back: l=f'v {x:.9f} {y:.9f} {front:.9f}'
+            if abs(x) > 1e-6: l=f'v {(half if x>0 else -half):.9f} {y:.9f} {z:.9f}'
         out.append(l)
     return '\n'.join(out)+'\n'
+
+
+def inner_face(group, z):
+    """The |x| of a sideboard's INNER face at a given Z. Constant on a straight wall, and on a tapered
+    one it follows the taper -- which is the point: a gate spans the sides where the gate actually is."""
+    m=obj(BODY);V=[];cur=''
+    for line in BODY.read_text().splitlines():
+        if line.startswith('g '):cur=line[2:]
+        elif line.startswith('f ') and cur==group:
+            V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
+    near=min(V,key=lambda v:abs(v[2]-z))[2]
+    xs=[v[0] for v in V if abs(v[2]-near)<1e-6]
+    return min(xs,key=abs)
+
+
+def wall_thickness(group):
+    """Panel thickness measured where the wall is STRAIGHT -- at the tailgate end.
+
+    A tapered side's AABB spans from its outer face at the rear to its inner face at the nose, so
+    hi.x - lo.x on the bounding box reports the whole taper as if it were the panel's thickness. Take
+    the X spread among only the vertices sitting on the rearmost Z plane instead."""
+    m=obj(BODY);V=[];cur=''
+    for line in BODY.read_text().splitlines():
+        if line.startswith('g '):cur=line[2:]
+        elif line.startswith('f ') and cur==group:
+            V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
+    back=max(v[2] for v in V)
+    xs=[v[0] for v in V if abs(v[2]-back)<1e-6]
+    return max(xs)-min(xs)
 
 
 def _shift_axles(src,name,dz):
@@ -184,14 +223,15 @@ def expected(cls='dinky'):
     # An ENCLOSED class runs its walls up to a roof taken from a fleet body instead of the truck bed's
     # own 1.000. Re-measured here off that body's mesh, not imported from the generator.
     roof_top=obj(CONTENT/s[CLASSES[cls]['roof_ref']]['fields']['Body'].strip('"'))['hi'][1] if CLASSES[cls].get('roof_ref') else None
-    # RAKE: the proportion the donor's box front leans back over its own height, re-measured here off
-    # that body's mesh. Applied to whatever wall height this class ends up with, so the nose angle is
-    # the donor's angle rather than a distance that would flatten out as the roof rose.
-    rake_frac=None
-    if CLASSES[cls].get('rake_ref'):
-        rm=obj(CONTENT/s[CLASSES[cls]['rake_ref']]['fields']['Body'].strip('"'))
-        top=[v for v in rm['vertices'] if v[1] >= rm['hi'][1]-.02]
-        rake_frac=(min(v[2] for v in top)-rm['lo'][2])/(rm['hi'][1]-rm['lo'][1])
+    # NOSE TAPER, re-measured off the donor. Every road body in the fleet narrows to the SAME fraction
+    # of its half-width at its front face, so that number is a fleet constant rather than this donor's
+    # quirk; what the donor supplies is how far back the taper runs as a fraction of its own length.
+    nose_frac=nose_run_frac=None
+    if CLASSES[cls].get('nose_ref'):
+        nm=obj(CONTENT/s[CLASSES[cls]['nose_ref']]['fields']['Body'].strip('"'))
+        nose_frac=max(abs(v[0]) for v in nm['vertices'] if abs(v[2]-nm['lo'][2])<.02)/nm['hi'][0]
+        full=min(v[2] for v in nm['vertices'] if abs(abs(v[0])-nm['hi'][0])<.01)
+        nose_run_frac=(full-nm['lo'][2])/nm['size'][2]
     t=wall_t/5
     # The class table is the SPECIFICATION -- a length fraction and a count of half-wall-sections --
     # so importing it is importing the intent, not the answer. Everything it is applied to (the Golf's
@@ -216,10 +256,10 @@ def expected(cls='dinky'):
                     # the sedan's own lamp inset from its body side -- re-measured here, not imported
                     lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                     axles=C['axles'], display=C['display'], cls=cls, wide=C['wide'], roof_top=roof_top,
+                    nose_w=None if nose_frac is None else W/2*nose_frac, nose_run=L*(nose_run_frac or 0.),
                     wall_t=wall_t,bed_wall_h=wall_h,track=track,wheel=wheel,bed_w=bed_w,
-                    wall_h=(WH:=(roof_top-wall_t-(wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])))
-                           if roof_top is not None else wall_h),
-                    rake=WH*rake_frac if rake_frac is not None else 0.)
+                    wall_h=(roof_top-wall_t-(wall_t-((g['Wheels'][0][1]-.25)-obj(CONTENT/g['fields']['Body'].strip('"'))['lo'][1])))
+                           if roof_top is not None else wall_h)
 
 def source_names(src):
     src=uncomment(src);return re.findall(r'"([^"]+)"',braced(src,src.index('{',src.index('string[] SpecNames'))))
@@ -337,7 +377,7 @@ def cases(cls='dinky'):
         require(close(hi[1],dy+d['wall_h']),
                 'enclosed: sideboard top is not the roof underside' if d['roof_top'] is not None
                 else 'sideboard top is not the truck bed wall height')
-        require(close(hi[0]-lo[0],d['wall_t']),'sideboard is not the truck bed wall thickness')
+        require(close(wall_thickness('side_1'),d['wall_t']),'sideboard is not the truck bed wall thickness')
         require(close(hi[0],W/2))
     def ride():
         """Off the MESH and the SPEC, not off expected()'s own arithmetic -- the first version of this
@@ -362,7 +402,7 @@ def cases(cls='dinky'):
         floor=group_bounds('deck')[1][1]
         for group in ('side_-1','side_1'):
             low,high=group_bounds(group)
-            require(close(high[0]-low[0],thickness),group+' thickness differs from the measured truck bed')
+            require(close(wall_thickness(group),thickness),group+' thickness differs from the measured truck bed')
             if d['roof_top'] is None:
                 require(close(high[1]-floor,height),group+' does not reach the bed wall height')
             else:
@@ -374,30 +414,23 @@ def cases(cls='dinky'):
                 rl,rh=group_bounds('roof')
                 require(close(high[1],(rl[1]+rh[1])/2,1e-5),
                         group+f' ends at {high[1]:.4f}, not the roof mid-height {(rl[1]+rh[1])/2:.4f}')
-    if d['rake']:
-        def raked_nose():
-            """The front leans BACK as it rises -- the horsebox silhouette, and the only thing that
-            separates it from a tall van at this poly count. Measured off the mesh: the sideboard's
-            topmost front vertex sits `rake` behind its bottom-most one, and the roof begins there.
+    if d['nose_w']:
+        def tapered_nose():
+            """The sides converge toward the front -- the animal-trailer silhouette, and the only thing
+            that separates this from the plain horsebox at the same dimensions.
 
-            An AABB cannot see this. group_bounds() on a raked wall returns exactly the rectangle it
-            would return unraked, so every other check in this file passed the flat-fronted version
-            without noticing -- which is why the shape needs a check that reads vertices, not bounds."""
-            # Vertices come from the group's FACES: save() writes every `v` line before any `g`
-            # marker, so scanning for `v` lines while a group is open finds nothing at all.
-            m=obj(BODY);V=[];cur=''
-            for line in BODY.read_text().splitlines():
-                if line.startswith('g '):cur=line[2:]
-                elif line.startswith('f ') and cur=='side_1':
-                    V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
-            lo,hi=group_bounds('side_1')
-            bot=min(v[2] for v in V if abs(v[1]-lo[1])<1e-6)
-            top=min(v[2] for v in V if abs(v[1]-hi[1])<1e-6)
-            require(close(top-bot,d['rake'],1e-4),f'front rakes back {top-bot:.4f}, expected {d["rake"]:.4f}')
-            require(close(group_bounds('roof')[0][2],top,1e-4),'roof does not start where the raked front reaches it')
-        add('raked nose: the front leans back as it rises, and the roof starts there',raked_nose,
-            (BODY,move_group('roof',(0,0,-.3)),'run the roof out over the nose'),
-            (BODY,_unrake,'square the nose off'))
+            AABB checks are blind to it: group_bounds() on a tapered side returns a rectangle, and every
+            dimension check in this file passes the untapered version unchanged. So this reads the
+            sideboard's OUTER face at two Z planes and compares the narrowing to the fleet's own."""
+            back=inner_face_outer('side_1',b_z:=obj(BODY)['hi'][2])
+            nose=inner_face_outer('side_1',obj(BODY)['lo'][2]+1e-3)
+            require(close(back,d['W']/2,1e-4),f'side is not full width at the tailgate: {back:.4f}')
+            require(close(nose,d['nose_w'],1e-3),f'nose half-width {nose:.4f}, expected {d["nose_w"]:.4f}')
+            require(close(group_bounds('headboard')[1][0],d['nose_w']-d['wall_t']/2,1e-3),
+                    'headboard is not cut to the nose width')
+        add('tapered nose: the sides converge to the fleet nose fraction at the front',tapered_nose,
+            (BODY,_untaper,'square the nose off'),
+            (BODY,move_group('headboard',(.4,0,0)),'slide the headboard off the nose'))
     add('trailer wall section equals the truck bed, derived two ways',donor_wall,
         (CONTENT/'truck_body.txt',lambda x:re.sub(r'^v 0\.980968 ','v 0.900968 ',x,flags=re.M),'thicken the truck bed wall'),
         # HEIGHT COMES FROM A DIFFERENT DONOR PER CLASS. Raising the truck bed's wall is a mutation for
@@ -557,7 +590,11 @@ def cases(cls='dinky'):
             low,high=(list(v) for v in group_bounds(group))
             if group not in ('coupler','roof'):low[1]=floor  # main slab covers the wall below the floor
             if group in ('headboard','tailgate'):
-                low[0]=group_bounds('side_-1')[1][0];high[0]=group_bounds('side_1')[0][0]
+                # The gates span between the sideboards' inner faces AT THEIR OWN END. Taking the
+                # sides' global bounds instead gave the tailgate the NOSE's inner faces on a tapered
+                # class, because that is where a tapered side's AABB reaches its minimum |x|.
+                zc=(low[2]+high[2])/2
+                low[0]=inner_face('side_-1',zc);high[0]=inner_face('side_1',zc)
             require(close(tuple(centre[i]-size[i]/2 for i in range(3)),low) and
                     close(tuple(centre[i]+size[i]/2 for i in range(3)),high),group+' collider does not follow mesh')
     add('wall and socket colliders follow saved mesh around the open cargo space',wall_colliders,

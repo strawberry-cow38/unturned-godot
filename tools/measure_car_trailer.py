@@ -99,10 +99,14 @@ CLASSES = {
     # same track, same tandem, same rear-axle setback. What makes it a horsebox is that it is ENCLOSED:
     # walls to a roof instead of open sideboards. Roof height comes off the fleet, see roof_ref below.
     'horsebox': dict(length=1.15, width_steps=4, axles=2, wide=True, display='Horsebox Trailer',
-                     # roof: the TALLEST enclosed body in the fleet. rake: the proportion the
-                     # ambulance's box front leans back over its own height -- the fleet's own
-                     # box-behind-a-nose profile, scaled to whatever height the roof lands at.
-                     rear_setback_from='medium', roof_ref='bus', rake_ref='ambulance'),
+                     # roof: the TALLEST enclosed body in the fleet.
+                     rear_setback_from='medium', roof_ref='bus'),
+    # THE SAME BOX WITH A TAPERED NOSE (strawberry: "dupe another one and have the front slope inwards
+    # on both sides at the front end like an animal trailer/horsebox"). Taper is in PLAN -- the sides
+    # converge toward the front -- where the reverted rake was in elevation. nose_ref supplies both
+    # numbers off one fleet body, see below.
+    'animal':   dict(length=1.15, width_steps=4, axles=2, wide=True, display='Animal Trailer',
+                     rear_setback_from='medium', roof_ref='bus', nose_ref='ambulance'),
 }
 
 
@@ -130,11 +134,17 @@ def design(specs, rear, cls='small'):
     # enclosed bodies sit in two tiers -- van and truck top out at 2.125, ambulance and Ural at 2.375 --
     # and a horsebox takes the taller one, because the thing it carries has to stand up in it.
     roof_top = obj(CONTENT/specs[C['roof_ref']]['fields']['Body'].strip('"'))['hi'][1] if C.get('roof_ref') else None
-    rake_frac = None
-    if C.get('rake_ref'):
-        rm = obj(CONTENT/specs[C['rake_ref']]['fields']['Body'].strip('"'))
-        top = [v for v in rm['vertices'] if v[1] >= rm['hi'][1]-.02]
-        rake_frac = (min(v[2] for v in top)-rm['lo'][2])/(rm['hi'][1]-rm['lo'][1])
+    # NOSE TAPER, both numbers measured off one fleet body. Every road body in the fleet narrows to the
+    # SAME 42.1% of its half-width at its front face -- van, bus, truck, Ural, firetruck, sedan and Golf
+    # all agree -- so that fraction is a fleet constant rather than this donor's quirk. What the donor
+    # supplies is how far back the taper runs: the ambulance is the only body whose nose is a real
+    # taper (2.104 m) rather than a 67 mm corner chamfer, and 39.3% of its own length is what scales.
+    nose_frac = nose_run_frac = None
+    if C.get('nose_ref'):
+        nm = obj(CONTENT/specs[C['nose_ref']]['fields']['Body'].strip('"'))
+        nose_frac = max(abs(v[0]) for v in nm['vertices'] if abs(v[2]-nm['lo'][2]) < .02)/nm['hi'][0]
+        full = min(v[2] for v in nm['vertices'] if abs(abs(v[0])-nm['hi'][0]) < .01)
+        nose_run_frac = (full-nm['lo'][2])/nm['size'][2]
     # BOX FIRST, THEN THE TRACK (strawberry: "remove the axle and have the wheels flush with the
     # trailer walls"). The box keeps the width the previous pass sized it to -- the Golf track plus
     # half a truck wall section, less the tyre and its clearance -- but the wheels no longer stand
@@ -188,14 +198,16 @@ def design(specs, rear, cls='small'):
     deck_y = wall_t-ride
     if roof_top is not None:
         wall_h = roof_top-wall_t-deck_y     # walls run from the floor to the roof's underside
-    rake = wall_h*rake_frac if rake_frac is not None else 0.
     return dict(t=t, radius=radius, tyre_width=tyre_width, track=track,
                 deck_l=deck_l,deck_w=deck_w,front=front,back=back,draw=draw,
                 king=king,ground=ground,wheel_y=wheel_y,wheel_center_y=wheel_center_y,
                 axle_z=axle_z,deck_y=deck_y,rail_y=deck_y+wall_h,wall_t=wall_t,wall_h=wall_h,bed=bed,
                 hitch_projection=hitch_projection, mass=quad['Mass'], ride=ride,
                 cls=cls, axles=C['axles'], axle_zs=axle_zs, axle_spacing=axle_spacing,
-                roof_top=roof_top, lamp_y=deck_y+bed['wall_h']/2, rake=rake, rake_frac=rake_frac,
+                roof_top=roof_top, lamp_y=deck_y+bed['wall_h']/2,
+                nose_w=deck_w/2*nose_frac if nose_frac else None,
+                nose_run=deck_l*nose_run_frac if nose_run_frac else 0.,
+                nose_frac=nose_frac, nose_run_frac=nose_run_frac,
                 display=C['display'], key=cls+'_trailer',
                 lamp_inset=obj(CONTENT/'sedan_body.txt')['size'][0]/2-obj(CONTENT/'sedan_taillights.txt')['hi'][0],
                 wheel_mesh=wheel_mesh, wheel_tex=wheel_tex)

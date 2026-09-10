@@ -577,22 +577,38 @@ inside it. The audit caught both surviving.
 
 **282 named checks, 1149 mutations**, over five classes.
 
-### Correction within the ninth pass: taller, with the raked nose
+## Tenth pass: the rake reverted, taller, and a tapered sibling
 
-strawberry: *"needs to be taller and have the distinct horsebox shape at the front"*.
+strawberry: *"revert to the previous version, make it taller, then dupe another one and have the front
+slope inwards on both sides at the front end like an animal trailer/horsebox"*.
 
-**Taller:** `roof_ref` moves from the ambulance to the **bus** — the tallest enclosed body in the fleet.
-Roof top 2.775 (was 2.375), walls 2.548 from floor to roof underside.
+The raked-nose commit is reverted — `horsebox_trailer` is the plain enclosed box again. **Taller:**
+`roof_ref` moves from the ambulance to the **bus**, the tallest enclosed body in the fleet, so the roof
+tops out at **2.775** against 2.375 and the walls run 2.548.
 
-**The nose is the shape.** A plain tall box reads as a van; a box with a wedge nose reads as a horsebox.
-The front now leans back as it rises, and the roof begins where the lean reaches it. The angle is the
-**ambulance's own**: its box front rakes back 28.0% of its height, and that PROPORTION is applied
-here rather than its distance — a fixed distance would have flattened out as the roof rose. Rake works
-out at **0.714** over a 2.548 wall. Both sideboards and the headboard are prisms with a trapezoid
-Y/Z profile instead of boxes.
+**`animal_trailer` is the dupe**, identical in every dimension, with the front tapering in PLAN — the
+sides converge toward the nose — where the reverted version leaned back in elevation.
 
-**The existing checks were blind to it, all of them.** `group_bounds()` on a raked wall returns exactly
-the rectangle it returns unraked, so every dimension check in the file passed the flat-fronted version
-without noticing. The new check reads the group's **vertices** — topmost front vertex against
-bottom-most — and carries a `square the nose off` mutation so the blindness is demonstrated rather than
-asserted. **283 named checks, 1151 mutations.**
+Both taper numbers are measured, and they come from different places for a reason. **Every** road body
+in the fleet narrows to the same **41.5%** of its half-width at its front face — van, bus, truck, Ural,
+firetruck, sedan and Golf all agree — so that fraction is a fleet constant, not one donor's quirk. What
+the donor supplies is how far back the taper runs: the ambulance is the only body whose nose is a real
+taper (2.104 m) rather than a 67 mm corner chamfer, and **39.3%** of its own length is what scales.
+Nose half-width **0.643** from 1.550, over a **2.363** run.
+
+**A bent strip is not a prism.** A tapered sideboard is a strip that changes direction, which is
+non-convex in plan, and `prism()`'s cap is a triangle fan from one vertex. Splitting it into two convex
+prisms makes them share a face, which `save()` welds into an edge carrying four triangles. It is built
+as a chain of cells with the seams unemitted, and each cell winds against **its own** centroid: a bent
+strip's overall centroid sits in the empty air inside the bend, so "away from the centre" is the wrong
+test there and produced the same 12 bad edges by a different route.
+
+Three checks had to stop using bounding boxes, all for the same reason. Sideboard **thickness** is
+measured at the tailgate end, because a tapered side's AABB spans from its outer face at the rear to
+its inner face at the nose and reports the whole taper as thickness. The **gates** span the sideboards'
+inner faces *at their own end*, not the sides' global bounds. And the taper itself gets a check that
+reads the outer face at two Z planes, with a `square the nose off` mutation — because, exactly as with
+the rake, `group_bounds()` on a tapered wall returns the rectangle it would return untapered, and every
+other check in the file passes the flat version unchanged.
+
+**340 named checks, 1382 mutations**, over six classes.
