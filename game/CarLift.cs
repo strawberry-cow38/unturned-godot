@@ -26,7 +26,21 @@ namespace UnturnedGodot
     /// A lift, not a hinge. Anything that tried to swing this would have been wrong in a way no build catches.</summary>
     public partial class CarLift : StaticBody3D, IPowerDevice
     {
-        /// <summary>Source: the Skeleton/Hinge position curve runs 1.15 m end to end.</summary>
+        /// <summary>WHICH WAY IS UP FOR A PROP. ObjMesh negates Z and reverses winding and does NOTHING else
+        /// -- there is no Z-up to Y-up conversion anywhere in the load -- so a prop mesh keeps the OBJ
+        /// convention and its tall axis is local **Z**. Car_Lift_0 measures X 4.43, Y 3.77, **Z 4.50** with
+        /// the frame spanning Z -0.12..+4.38: those are the posts.
+        ///
+        /// ⚠ This shipped as local +Y first and master caught it ("you move it on the wrong axis"). The
+        /// render did not catch it because the proptest hook parents the lift to a node carrying
+        /// UG_PROPROT=-90,0,0, and R_x(-90) maps local +Y to world -Z -- so the platform slid HORIZONTALLY
+        /// and uncovered the base plate, which looks identical to rising when that is what you expect to see.
+        /// The test did not catch it either, because it asserted the internal Height scalar rather than where
+        /// the platform actually went. Both now check the axis itself.</summary>
+        public static readonly Vector3 UpLocal = new Vector3(0f, 0f, 1f);
+
+        /// <summary>Source: the Skeleton/Hinge position curve runs 1.15 m end to end -- along the BONE's local
+        /// Z, which is the same Z the prop convention calls up.</summary>
         public const float TravelMetres = 1.15f;
         /// <summary>Source: 60 keys at a 30 Hz sample rate.</summary>
         public const float TravelSeconds = 1.967f;
@@ -47,6 +61,8 @@ namespace UnturnedGodot
         public bool Raised => _height >= TravelMetres - 0.001f;
         public bool Moving { get; private set; }
         public float Height => _height;
+        /// <summary>Where the platform actually IS, for a test that must not settle for the counter.</summary>
+        public Vector3 RampLocalPosition => _ramp != null ? _ramp.Position : Vector3.Zero;
         public bool IsPowered => DebugForcePower
                               || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered);
 
@@ -108,7 +124,7 @@ namespace UnturnedGodot
             // easing is the flagged approximation rather than a silently invented curve.
             float step = TravelMetres / TravelSeconds * (float)delta;
             _height = Mathf.Clamp(_height + (_rising ? step : -step), 0f, TravelMetres);
-            if (_ramp != null) _ramp.Position = new Vector3(0f, _height, 0f);
+            if (_ramp != null) _ramp.Position = UpLocal * _height;
             if ((_rising && _height >= TravelMetres) || (!_rising && _height <= 0f)) Moving = false;
         }
 

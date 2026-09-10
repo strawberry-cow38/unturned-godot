@@ -61,10 +61,23 @@ namespace UnturnedGodot.Testing
             T.Check($"it reaches the top and stops ({lift.Height:0.000} m)", lift.Raised && !lift.Moving);
             T.Check("...without overshooting", lift.Height <= CarLift.TravelMetres + 0.001f);
 
+            // ---- AND IT WENT THE RIGHT WAY. This is the assertion the first cut was missing: it checked the
+            // Height COUNTER, which is right whichever axis the platform is actually shoved along, so the
+            // build was green and the render was ambiguous while the ramp slid sideways. A prop's up is local
+            // Z -- ObjMesh does no Z-up-to-Y-up conversion -- so the platform must move on Z and on nothing
+            // else. master caught this one: "you move it on the wrong axis".
+            var rp = lift.RampLocalPosition;
+            T.Check($"the platform rose along the prop's UP axis, local Z ({rp.Z:0.000})",
+                    Mathf.Abs(rp.Z - CarLift.TravelMetres) < 0.001f);
+            T.Check($"...and not along Y, which is the prop's DEPTH ({rp.Y:0.000})", Mathf.Abs(rp.Y) < 0.001f);
+            T.Check($"...nor X, its width ({rp.X:0.000})", Mathf.Abs(rp.X) < 0.001f);
+            T.Check("the up axis is local Z", CarLift.UpLocal == new Vector3(0f, 0f, 1f));
+
             // ---- AND BACK DOWN.
             T.Check("F sends it back down", lift.Toggle());
             yield return Until(() => !lift.Moving, 6);
             T.Check($"it returns to the floor ({lift.Height:0.000} m)", Mathf.Abs(lift.Height) < 0.001f);
+            T.Check("...all the way back on Z", Mathf.Abs(lift.RampLocalPosition.Z) < 0.001f);
 
             // ---- NO REVERSING MID-TRAVEL. A lift that flips direction under a car is how you trap one.
             T.Check("F starts it up again", lift.Toggle());
