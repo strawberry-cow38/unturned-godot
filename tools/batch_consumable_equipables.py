@@ -30,7 +30,15 @@ def pptr(v):
     return by_id.get(v.get("m_PathID")) if isinstance(v, dict) else None
 
 def yaw180(q):
-    """Map a Unity local rotation into the X/Z-negated Godot frame.
+    """Map a Unity local rotation into the frame THE CLIPS USE.
+
+    ⚠ These parts are driven by the consumable Use clips, so they have to live in the clips' frame, not the
+    held-mesh one. batch_consumable_anims converts a bone position as (x, y, -z) and a bone rotation as
+    (-x, -y, z, w) -- negate Z, not X and Z. Ripping the parts in the OTHER convention (X and Z, which is what
+    extract_consumable uses for a static held mesh) left them resting in one frame and animating in another, so
+    the bag opened sideways instead of up (strawberry: "its oriented wrong. the bag should open directly up").
+    Vertices, rest position and rest rotation all follow the clip now. One negated axis flips handedness, so the
+    winding reversal below stays correct.
 
     ⚠ The frame change N negates X and Z, so a rotation transforms by CONJUGATION -- R_g = N R_u N, not N R_u.
     Multiplying by the 180-degree Y turn once (which is what I shipped first) leaves every part carrying a
@@ -38,7 +46,7 @@ def yaw180(q):
     ripped tsv and would have mirrored every spoon. Conjugating by a 180-degree Y turn is just "negate the axis
     the same way a position is negated", so the vector part takes N and the angle is untouched."""
     qx, qy, qz, qw = q.get("x", 0.0), q.get("y", 0.0), q.get("z", 0.0), q.get("w", 1.0)
-    return (-qx, qy, -qz, qw)
+    return (-qx, -qy, qz, qw)
 
 def convert(mesh_obj, label, name):
     txt = mesh_obj.read().export()
@@ -46,8 +54,8 @@ def convert(mesh_obj, label, name):
     for line in txt.splitlines():
         p = line.split()
         if not p: continue
-        if p[0] == "v":    Vs.append((-float(p[1]), float(p[2]), -float(p[3])))
-        elif p[0] == "vn": Ns.append((-float(p[1]), float(p[2]), -float(p[3])))
+        if p[0] == "v":    Vs.append((float(p[1]), float(p[2]), -float(p[3])))
+        elif p[0] == "vn": Ns.append((float(p[1]), float(p[2]), -float(p[3])))
         elif p[0] == "vt": Ts.append((p[1], p[2]))
         elif p[0] == "f":
             idx = []
@@ -90,7 +98,7 @@ def rip(name):
         lp, ls = ctt.get("m_LocalPosition", {}), ctt.get("m_LocalScale", {})
         qx, qy, qz, qw = yaw180(ctt.get("m_LocalRotation", {}))
         rows.append("%s\t%s\t%.6f %.6f %.6f\t%.6f %.6f %.6f %.6f\t%.6f %.6f %.6f" % (
-            part, fn, -lp.get("x", 0.0), lp.get("y", 0.0), -lp.get("z", 0.0),
+            part, fn, lp.get("x", 0.0), lp.get("y", 0.0), -lp.get("z", 0.0),
             qx, qy, qz, qw, ls.get("x", 1.0), ls.get("y", 1.0), ls.get("z", 1.0)))
         if not alb:
             mr = comp_of(gtt, ("MeshRenderer",))
