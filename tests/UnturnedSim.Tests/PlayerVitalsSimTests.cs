@@ -228,5 +228,72 @@ namespace UnturnedSim.Tests
             Assert.That(died, Is.False);
             Assert.That(v.Health, Is.GreaterThan(0f));
         }
+
+        // ---- temperature effects (strawberry 2026-09-10: "being cold drains food and water faster, being
+        // freezing hurts you. being hot drains water faster, being boiling hurts you") ----
+
+        static PlayerVitalsSim Exposed(PlayerTemperatureSim.Band band, int ticks, bool drain = true)
+        {
+            var v = new PlayerVitalsSim();
+            for (int i = 0; i < ticks; i++) v.Step(false, false, drain, false, band, Dt, in None);
+            return v;
+        }
+
+        [Test]
+        public void Cold_DrainsFoodAndWater_FasterThanComfortable()
+        {
+            var warm = Exposed(PlayerTemperatureSim.Band.Comfortable, 500);
+            var cold = Exposed(PlayerTemperatureSim.Band.Cold, 500);
+            Assert.That(cold.Food, Is.LessThan(warm.Food));
+            Assert.That(cold.Water, Is.LessThan(warm.Water));
+        }
+
+        [Test]
+        public void Hot_DrainsWaterFaster_ButNotFood()
+        {
+            // The asymmetry IS the feature -- a desert and a blizzard have to be different problems, not one
+            // problem at two speeds. Asserting food is UNCHANGED is what pins that.
+            var warm = Exposed(PlayerTemperatureSim.Band.Comfortable, 500);
+            var hot = Exposed(PlayerTemperatureSim.Band.Hot, 500);
+            Assert.That(hot.Water, Is.LessThan(warm.Water));
+            Assert.That(hot.Food, Is.EqualTo(warm.Food).Within(1e-5f));
+        }
+
+        [Test]
+        public void Freezing_And_Boiling_CostHealth()
+        {
+            Assert.That(Exposed(PlayerTemperatureSim.Band.Freezing, 50).Health,
+                Is.EqualTo(100f - PlayerVitalsSim.ExposureHealthPerSecond).Within(1e-3f));
+            Assert.That(Exposed(PlayerTemperatureSim.Band.Boiling, 50).Health,
+                Is.EqualTo(100f - PlayerVitalsSim.ExposureHealthPerSecond).Within(1e-3f));
+        }
+
+        [Test]
+        public void MerelyColdOrHot_DoesNotCostHealth()
+        {
+            // Control: the bands either side of the lethal ones must be survivable indefinitely, or "dress for
+            // the weather" becomes "never go outside".
+            Assert.That(Exposed(PlayerTemperatureSim.Band.Cold, 500).Health, Is.EqualTo(100f));
+            Assert.That(Exposed(PlayerTemperatureSim.Band.Hot, 500).Health, Is.EqualTo(100f));
+        }
+
+        [Test]
+        public void Exposure_IgnoresTheSurvivalToggle_ButTheDrainMultipliersDoNot()
+        {
+            // Hunger is a MODE, weather is a HAZARD. With survival off the cold must still kill you and must
+            // still not touch food or water.
+            var frozen = Exposed(PlayerTemperatureSim.Band.Freezing, 50, drain: false);
+            Assert.That(frozen.Health, Is.LessThan(100f));
+            Assert.That(frozen.Food, Is.EqualTo(1f));
+            Assert.That(frozen.Water, Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void Exposure_BlocksRegen()
+        {
+            var v = new PlayerVitalsSim { Health = 50f };
+            for (int i = 0; i < 50; i++) v.Step(false, false, false, false, PlayerTemperatureSim.Band.Freezing, Dt, in None);
+            Assert.That(v.Health, Is.LessThan(50f), "you cannot out-heal a blizzard");
+        }
 }
 }
