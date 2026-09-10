@@ -2118,7 +2118,9 @@ void fragment() {
 
         // TEST SEAM: drive a REAL click-drag on the paperdoll through _Input (the exact path the fix repairs -- the press
         // must reach the spin branch instead of being swallowed by the item-drag StartDrag/SetInputAsHandled). Returns the
-        // applied yaw delta in radians; float.NaN if the press failed to start a spin (routing still broken). +relX -> -delta.
+        // applied yaw delta in radians; float.NaN if the press failed to start a spin (routing still broken). +relX -> +delta since the 2026-09-09 inversion (66e7ac31, "drag spins the other way" -- the model follows
+        // the cursor). This line read "-delta" for a day after the handler stopped doing that, and inv.paperdoll_spin
+        // asserted the old sign right alongside it.
         public float DebugPaperdollDragSpin(float relX)
         {
             if (_pdHit == null) return float.NaN;

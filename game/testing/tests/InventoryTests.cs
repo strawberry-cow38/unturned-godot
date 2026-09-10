@@ -361,15 +361,21 @@ namespace UnturnedGodot.Testing
             ui.Open();
             yield return Ticks(2);   // let the character panel lay out so the paperdoll rect has a real size + position
 
-            // a rightward drag of +100px must spin the rig; the live handler applies _pdYaw -= relX * 0.012
+            // ⚠ THE SIGN IS +, AND THAT IS THE REQUESTED BEHAVIOUR. This asserted `_pdYaw -= relX * 0.012` and a
+            // delta of ~-1.2, which is what the handler did until strawberry asked for it inverted on 2026-09-09
+            // ("invert the rotation when click-dragging" -- dragging right turns his right shoulder toward you, so
+            // the model follows the cursor instead of opposing it). The handler changed, this did not, and the test
+            // went red the moment the requested change landed -- unnoticed only because the nightly had not run
+            // since. A stale assertion is worse than a stale comment: it fails, and it fails pointing at whoever
+            // touched the file last rather than at itself.
             float d = ui.DebugPaperdollDragSpin(100f);
             T.Check($"press on the paperdoll STARTS a spin, not an item-grab (delta={d})", !float.IsNaN(d));
-            T.Check($"a +100px drag applied the yaw step ~-1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (-100f * 0.012f)) < 0.01f);
+            T.Check($"a +100px drag applied the yaw step ~+1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (100f * 0.012f)) < 0.01f);
             T.Check("the drag released cleanly, not stuck spinning", !ui.DebugPaperdollSpinning);
 
             // dragging the other way must spin back (delta flips sign)
             float back = ui.DebugPaperdollDragSpin(-100f);
-            T.Check($"dragging left spins the opposite way (got {back})", !float.IsNaN(back) && back > 0f);
+            T.Check($"dragging left spins the opposite way (got {back})", !float.IsNaN(back) && back < 0f);
         }
     }
 

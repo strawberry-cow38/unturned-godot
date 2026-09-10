@@ -81,8 +81,23 @@ namespace UnturnedGodot
             return null;
         }
 
+        /// <summary>An installed attachment id for the wire, where 0 means NOTHING FITTED.
+        ///
+        /// ⚠ -1 IS THE SENTINEL, NOT 0. Item.gunSightId/gunBarrelId/gunGripId/gunTacticalId all default to -1
+        /// (ItemAsset.cs:154), and this used to cast that straight to ushort -- so an unfitted slot went over the
+        /// wire as 65535. That is not merely a wrong number: AttachmentFit.MountOn gates on `id > 0`, so 65535
+        /// passes the gate, MeshFor(65535) finds nothing, and a remote player's gun renders with NO iron sight
+        /// instead of falling back to its factory one. The LOCAL path never showed it, because there the int -1
+        /// fails `> 0` correctly and only the cast to ushort turns it into a positive.
+        ///
+        /// Caught by mp.attachments_replicate on its first ever execution -- the test shipped in the same commit
+        /// as the bug and had never run.</summary>
         static ushort AttId(Item gun, string slot)
-            => gun == null ? (ushort)0 : (ushort)AttachmentFit.InstalledId(gun, slot);
+        {
+            if (gun == null) return 0;
+            int id = AttachmentFit.InstalledId(gun, slot);
+            return id > 0 ? (ushort)id : (ushort)0;
+        }
         static bool SetU(ref ushort field, ushort val) { if (field == val) return false; field = val; return true; }
         static bool SetB(ref byte field, byte val) { if (field == val) return false; field = val; return true; }
     }
