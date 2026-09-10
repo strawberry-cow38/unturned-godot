@@ -116,3 +116,71 @@ For isolated review, the renders/tests here set `XDG_DATA_HOME` and `XDG_CONFIG_
 - **I did not verify a live remote-machine multiplayer session or walk PEI in-game to observe horse streaming after terrain/water filtering.** The loopback materialization and in-memory Fauna paths were exercised instead.
 - **I did not visually inspect every frame of all seven clips, nor test terrain slopes, combat against the rendered horse, or its death/ragdoll.** The inspected animation samples are Walk at 0.16 s and Eat at 1.8 s. The copied source animal rigs have no populated ragdoll definition.
 - The existing animal agents and puppets select clips without advancing their rig animation players. This change preserves that behavior; frozen sampled poses in the harness verify compatibility, not continuous world animation. One bone per leg also retains the fleet's rigid leg swing.
+
+## Second pass — closure, attachments and fleet consistency
+
+This section supersedes the first pass's geometry counts and its claim that the old validator checked “topology.” The second pass began from `91874f30`, on `astra-horse`. **The audit was implemented and run against the original asset before the generator or horse geometry was edited.** All twelve original images were opened first, including the opposite flank, Walk, Eat, front/rear, top and fleet references.
+
+### What the repaired instrument actually measures
+
+`tools/verify_horse_rig.py` now calls `tools/audit_animal_geometry.py`. The audit discovers components from shared vertex positions, independently of the generator's part labels. It welds only export noise within **0.000001 m** for this analysis; hard-normal and UV duplicates remain separate render vertices. Every solid requires each edge exactly twice in opposite directions. Distinct positions within **0.0001 m** are reported by solid name as unwelded cracks. It checks that copies of a shared bind position stay together after skinning and that posed triangles retain nonzero area.
+
+Attachment tests use the **actual triangle surfaces**, including concave outlines. A point must lie strictly inside both surfaces, with over **0.00001 m** clearance, to demonstrate positive-volume overlap. Bounding boxes only reject impossible candidates; they never establish overlap. Crossed-edge candidates also cover intersections with no contained mesh vertices. The returned clearance is a conservative witness distance, **not a measurement of the maximum joint penetration**. An additional root test requires all leg-cap corners and the low neck-root corners to remain inside the barrel; merely retaining a small overlapping sliver does not pass.
+
+The audit samples **814 poses per animal**: rest, every source key time, midpoints between adjacent distinct key times, and 25 uniform times per clip across all seven clips. The earlier 175-pose finite-number check is retained as a separate basic check. The nine adversarial tests in `tools/test_animal_geometry_audit.py` cover an open box, a missing fan triangle, reversed/duplicate faces, a 0.05 mm crack, face-corner duplicates, touching and 1 mm floating solids, crossed solids, disjoint solids with overlapping bounds, a named horse crack, and the original moving-root failure.
+
+**The fleet cross-check came out zero findings for deer, pig and cow.** Inspection corrected an assumption in the request: these three assets have a sewn body/head/leg component, rather than separate closed limb prisms. Each also has two open ear/antler roots buried inside that closed component, and two eye decals. Calling those four surfaces failed solids would be an instrument error. The audit explicitly reports them, requires every root rim to stay inside the closed core, and checks decal support throughout the sampled poses. The decal distance threshold is 7 mm, based on the existing cow's measured 6.804 mm maximum; deer measures up to 2.091 mm and pig 3.216 mm. The horse gets no open-root or decal exception: its eleven components are all closed solids, and its markings are part of the head surface.
+
+| Asset | Original audit | Final audit | Construction checked at every sampled pose |
+|---|---|---|---|
+| Deer | 0 findings | 0 findings | 1 closed core; 2 buried antler roots; 2 supported eye decals |
+| Pig | 0 findings | 0 findings | 1 closed core; 2 buried ear roots; 2 supported eye decals |
+| Cow | 0 findings | 0 findings | 1 closed core; 2 buried ear roots; 2 supported eye decals |
+| Horse | 3 open patches, 2 non-overlapping joints, exposed roots in several clips | **0 findings** | 11 closed solids; 10 overlapping attachments; buried leg/neck roots |
+
+The original horse findings, by name:
+
+- `eye_left`, `eye_right`, `blaze`: **four boundary edges each**, twelve total. These were lifted one-sided patches. The barrel and leg prisms themselves were closed; claiming missing barrel/leg triangles would be false.
+- `mane -> neck` and `tail -> body`: **no volume overlap** in rest or any of the seven clips. Their coincident boundary contact was insufficient.
+- `Left_Front -> body` and `Right_Front -> body`: exposed attachment roots during **Run**, despite some remaining volume overlap. The regression test reinstates the old rigid root binding and catches this at Run 0.133333 s.
+- `neck -> body`: exposed low attachment roots in **Eat, Glance_0, Glance_1 and Startle**.
+- No unwelded near-duplicate crack was found in the original horse or fleet. This is now tested rather than assumed.
+
+### Geometry changes and their evidence
+
+The opposite flank showed the fore/aft socket overhang and bent rear outline clearly. Walk separated the two rear silhouettes and made the old 0.09 m bend look like a zigzag. **That offset was along local X, not Z.** The top view confirmed the legs stayed inside the barrel footprint. Front/rear cameras look down local X and cannot diagnose lateral displacement from that bend. No leg centre was moved laterally: all remain at Z = ±0.73/3.
+
+| Change | Measurement or finding behind it |
+|---|---|
+| Broader upper leg profiles and tapered barrel ends | Socket ledge in both flank views. Upper X thickness is 1.5 × the existing 0.18 m hoof length = 0.27 m; the lower barrel ends taper inward by 0.18/3 = 0.06 m. The root remains at 1.07 + 0.74/3 = 1.316667 m. |
+| Buried leg tops bound to Spine | Run root failures. The hidden cap follows the barrel while the lower vertices follow the existing leg bone. Upper Z thickness rises only from 0.15 to 0.165 m; the hoof width and each leg's Z centre stay fixed. No extra bone or animation edit. |
+| Bay coat over the upper legs, black lower points | Low views exposed dark overlap edges against the brown barrel. Affine vertical UVs select the existing coat texel above half the 1.316667 m root height and black below; the nearest-filtered boundary stays consistent across triangles. No geometry or palette change. |
+| Small single rear hock | The doubled Walk zigzag. The outer bend along X is reduced from 0.18/2 = 0.09 m to 0.18/8 = 0.0225 m; the redundant inner bend is removed. Hoof position and ground clearance stay fixed. |
+| Light belly panel in the closed barrel | The fleet side references show a light underside band absent from the horse. The lower bevel is 0.74/10 = 0.074 m high and uses the existing warmer `#9E6439` texel. Its lowest surface stays at 1.07 m. No overlay or new texture colour. |
+| Tapered shoulder and anchored neck base | Hard width step in top/quarter views and posed neck-root failures. Front upper barrel width is 0.73 − 0.8 × 0.29 = 0.498 m; maximum barrel width remains 0.73 m. Neck width grows from the measured 0.29 m head reference to 0.75 × 0.73 = 0.5475 m at its buried rear base. Both basal landmarks follow Spine; the upper neck follows Skull. |
+| Continuous shoulder normals | The taper makes several quads nonplanar. Corner normals follow the surface and interpolate across the triangulation, avoiding an artificial diagonal lighting crease. |
+| Closed, inlaid eyes and blaze | Twelve open marking edges. The same square eyes and forehead diamond are triangulated into the head, sharing position edges with the surrounding surface and retaining separate palette UVs. |
+| Overlapping mane and tail | Zero-volume joint findings. The mane enters its supporting neck by 0.07/3 m at its inner profile; its base follows the same Spine attachment. The tail's upper root extends into the rump by 0.18/3 = 0.06 m in X. |
+| Five-point neck/head outlines | Removes unnecessary corners to fund the inlays and stronger leg roots. Head core extents and the overall nose/ear/tail landmarks remain unchanged. |
+
+The final horse is **336 vertices / 188 triangles**, compared with the fleet's **220–329 vertices / 124–188 triangles** and the original horse's **324 / 170**. That is seven vertices above the fleet maximum and 24 below the requested approximate ceiling of 360; triangles equal the fleet maximum. The verifier now enforces both ceilings. There are still **7 bones and 6 skin binds**. Skeleton, all seven deer clip dictionaries, and the first-pass horse bind transforms compare exactly equal. Only mesh vertices' attachment assignments changed.
+
+Withers **1.81 m**, clearance **1.07 m**, barrel length **1.80 m**, maximum width **0.73 m**, overall bounds **(−1.828, 0, −0.365) to (1.188, 2.44, 0.365)**, four grounded hoof minima, bay palette, id **7** and species **3** are preserved. The verifier checks the barrel landmarks separately from the full silhouette. In the regenerated group side image the datum is around row 577.8 and scale is 148.15 px/m: withers around row 310 gives approximately 1.81 m, and the belly edge around row 419 gives approximately 1.07 m (about ±0.01 m reading precision). No culling `GetAabb()` measurement was used, and length is local X / width local Z before the 270° rig yaw.
+
+### Frozen-asset proof
+
+Byte comparisons against `git show 91874f30:<path>` are identical for all three fleet rigs, all three fleet textures, the horse palette PNG, and `notes/ANIMAL_MEASUREMENTS.md`. The requested `git diff --stat -- game/content/deer_rig.json game/content/pig_rig.json game/content/cow_rig.json` is empty. SHA-256 values for the unchanged rigs are:
+
+- Deer: `c63bef452352f8bc3bd5b6c594af3235ea5d89f435d1d4ac09aab528f5814a1a`
+- Pig: `76bf8bf8f266bee49faf2ffb8b5b57d69ac4759680e0576c63c359280c73bd18`
+- Cow: `12ced2a8cce2c018bfa5277cc96dcf665ea78c96b85a7e66b46075f7bf3a69c4`
+
+### Second-pass validation and limits
+
+`python3 tools/build_horse.py` and `python3 tools/verify_horse_rig.py` pass on the final asset. All four animals have zero geometry findings across their 814 sampled poses. The nine audit regression tests pass. `dotnet build game/UnturnedGodot.csproj` succeeds with 0 errors and 22 existing warnings on the compiling build. Python compilation and `git diff --check` pass.
+
+`python3 tools/render_horse_views.py` reproduces the twelve original captures through `tools/shot.py` and adds six close low-angle captures: rest low/front-quarter and low/rear-quarter, Walk 0.16 s low, Eat 1.8 s low/rear, Run 0.133333 s low, and Startle 0.316667 s low/rear. Each invocation uses xvfb/Vulkan and a fresh per-run XDG rig cache inside this checkout; it requires a new output file before copying it to `notes/horse_views/`.
+
+SECOND_PASS_RESULTS_PENDING
+
+**Not verified:** continuous-time closure between the sampled instants, every possible view of every clip, a complete self-intersection analysis of every deformed triangle, continuous world animation, slopes, death/ragdoll, or a live remote multiplayer session. The audit proves closure and attachment at its sampled poses; it does not certify subjective anatomy. The fixed deer bones still impose simple leg swings and stretched triangles near the anchored roots. The neck remains visibly faceted, and overlapping solids retain some intersection/shading seams. These limitations are not being called a smooth articulated horse. No live-server checkout was read or written, and nothing was pushed.

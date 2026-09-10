@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 
 from measure_animals import ROOT, NAMES, owners, posed, read
+from audit_animal_geometry import audit
 
 
 def finite_tree(value):
@@ -48,10 +49,26 @@ def main():
     horse = read('horse')
     for d in [*fleet.values(), horse]:
         validate(d)
+    findings = []
+    for name, d in [*fleet.items(), ('horse', horse)]:
+        result = audit(d, fleet=name in NAMES)
+        print(f"Geometry audit {name}: {len(result['findings'])} findings; "
+              f"{result['solids']} closed solids, {result['components']} components, {result['poses']} poses", flush=True)
+        for note in result['notes']:
+            print('  construction:', note)
+        for finding in result['findings']:
+            print('  FAIL:', finding)
+        findings.extend(result['findings'])
+    assert not findings, 'closure / seam / attachment audit failed'
     # Byte-for-byte data equality: existing deer clips apply without retargeting.
     assert horse['bones'] == fleet['deer']['bones']
     assert horse['anims'] == fleet['deer']['anims']
     assert [s['bone'] for s in horse['skin']] == [3, 4, 5, 6, 1, 2]
+    assert horse['vcount'] <= 360 and len(horse['faces'])//3 <= 188, 'fleet geometry budget'
+    lo, hi = horse['geometry_parts']['body']
+    body = posed(horse)[lo:hi]
+    assert np.allclose([body[:, 1].min(), body[:, 1].max()], [1.07, 1.81], atol=2e-6)
+    assert np.allclose(np.ptp(body, axis=0)[[0, 2]], [1.80, .73], atol=2e-6)
     claimed_min = np.array([-1.828, 0, -.365])
     claimed_max = np.array([1.188, 2.44, .365])
     for clip in (None, 'Idle'):
@@ -75,7 +92,7 @@ def main():
                          ('bones', lambda d: len(d['bones'])), ('skin binds', lambda d: len(d['skin']))]:
         vals = [value(d) for d in fleet.values()]
         print(f'{field}: horse={value(horse)}; fleet min/median/max={min(vals)}/{statistics.median(vals)}/{max(vals)}; mean={statistics.mean(vals):.3f}')
-    print('PASS: arrays, indices into skin, skin-to-bone mapping, topology, finite data, normalized weights/normals,')
+    print('PASS: per-solid closure, posed seams and attachment overlap, arrays, skin mapping, finite data, weights/normals,')
     print('      exact deer skeleton/clips, 175 sampled clip poses, 4 grounded feet, four-colour 2x2 texture.')
     print('Rest/Idle geometry min', claimed_min.tolist(), 'max', claimed_max.tolist(),
           '; L/W/H', (claimed_max-claimed_min)[[0, 2, 1]].tolist())

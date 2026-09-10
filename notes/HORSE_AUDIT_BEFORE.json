@@ -1,0 +1,116 @@
+{
+  "deer": {
+    "findings": [],
+    "notes": [
+      "ear_or_antler_left: open root buried in closed core",
+      "ear_or_antler_right: open root buried in closed core",
+      "eye_left: supported two-triangle decal (not a solid)",
+      "eye_right: supported two-triangle decal (not a solid)"
+    ],
+    "solids": 1,
+    "components": 5,
+    "poses": 814,
+    "attachments": {}
+  },
+  "pig": {
+    "findings": [],
+    "notes": [
+      "ear_or_antler_left: open root buried in closed core",
+      "ear_or_antler_right: open root buried in closed core",
+      "eye_left: supported two-triangle decal (not a solid)",
+      "eye_right: supported two-triangle decal (not a solid)"
+    ],
+    "solids": 1,
+    "components": 5,
+    "poses": 814,
+    "attachments": {}
+  },
+  "cow": {
+    "findings": [],
+    "notes": [
+      "ear_or_antler_left: open root buried in closed core",
+      "ear_or_antler_right: open root buried in closed core",
+      "eye_left: supported two-triangle decal (not a solid)",
+      "eye_right: supported two-triangle decal (not a solid)"
+    ],
+    "solids": 1,
+    "components": 5,
+    "poses": 814,
+    "attachments": {}
+  },
+  "horse": {
+    "findings": [
+      "Left_Front -> body: exposed attachment root (Run)",
+      "Right_Front -> body: exposed attachment root (Run)",
+      "blaze: NOT CLOSED, 4 boundary edges",
+      "eye_left: NOT CLOSED, 4 boundary edges",
+      "eye_right: NOT CLOSED, 4 boundary edges",
+      "mane -> neck: NO VOLUME OVERLAP (Eat)",
+      "mane -> neck: NO VOLUME OVERLAP (Glance_0)",
+      "mane -> neck: NO VOLUME OVERLAP (Glance_1)",
+      "mane -> neck: NO VOLUME OVERLAP (Idle)",
+      "mane -> neck: NO VOLUME OVERLAP (Run)",
+      "mane -> neck: NO VOLUME OVERLAP (Startle)",
+      "mane -> neck: NO VOLUME OVERLAP (Walk)",
+      "mane -> neck: NO VOLUME OVERLAP (rest)",
+      "neck -> body: exposed attachment root (Eat)",
+      "neck -> body: exposed attachment root (Glance_0)",
+      "neck -> body: exposed attachment root (Glance_1)",
+      "neck -> body: exposed attachment root (Startle)",
+      "tail -> body: NO VOLUME OVERLAP (Eat)",
+      "tail -> body: NO VOLUME OVERLAP (Glance_0)",
+      "tail -> body: NO VOLUME OVERLAP (Glance_1)",
+      "tail -> body: NO VOLUME OVERLAP (Idle)",
+      "tail -> body: NO VOLUME OVERLAP (Run)",
+      "tail -> body: NO VOLUME OVERLAP (Startle)",
+      "tail -> body: NO VOLUME OVERLAP (Walk)",
+      "tail -> body: NO VOLUME OVERLAP (rest)"
+    ],
+    "notes": [],
+    "solids": 11,
+    "components": 14,
+    "poses": 814,
+    "attachments": {
+      "Left_Front -> body": {
+        "clearance_m": 0.0006338105825930418,
+        "pose": "Run@0.133333"
+      },
+      "Right_Front -> body": {
+        "clearance_m": 0.0006339608978179062,
+        "pose": "Run@0.133333"
+      },
+      "Left_Back -> body": {
+        "clearance_m": 0.01212930733129422,
+        "pose": "Run@0.133333"
+      },
+      "Right_Back -> body": {
+        "clearance_m": 0.012129230271511908,
+        "pose": "Run@0.133333"
+      },
+      "neck -> body": {
+        "clearance_m": 3.999999999998157e-05,
+        "pose": "Eat@2.216667"
+      },
+      "head -> neck": {
+        "clearance_m": 3.999999999986241e-05,
+        "pose": "Glance_1@1.250000"
+      },
+      "mane -> neck": {
+        "clearance_m": 0.0,
+        "pose": "rest@0.000000"
+      },
+      "tail -> body": {
+        "clearance_m": 0.0,
+        "pose": "rest@0.000000"
+      },
+      "ear_left -> head": {
+        "clearance_m": 0.007018558311692121,
+        "pose": "Eat@0.302778"
+      },
+      "ear_right -> head": {
+        "clearance_m": 0.007018618554009249,
+        "pose": "Eat@0.302778"
+      }
+    }
+  }
+}

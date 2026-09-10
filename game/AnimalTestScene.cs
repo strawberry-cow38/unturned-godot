@@ -15,7 +15,7 @@ namespace UnturnedGodot
             float Number(string key, float fallback) => float.TryParse(Env(key, ""), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out var n) ? n : fallback;
             string view = Env("UG_ANIMALCAM", "side"), clip = Env("UG_ANIMALCLIP", "Idle");
-            if (!new[] { "side", "other", "front", "rear", "top", "quarter", "threequarter" }.Contains(view))
+            if (!new[] { "side", "other", "front", "rear", "top", "quarter", "threequarter", "low", "lowrear" }.Contains(view))
             { Log.Err($"[animaltest] unknown view {view}"); GetTree().Quit(1); return; }
             float yaw = Number("UG_ANIMALYAW", 270f), time = Number("UG_ANIMALTIME", 0f);
             var names = species.Split(',');
@@ -82,6 +82,8 @@ namespace UnturnedGodot
             else if (view == "other") cam.LookAtFromPosition(new Vector3(-10f, 1.2f, 0f), new Vector3(0f, 1.2f, 0f), Vector3.Up);
             else if (view == "rear") cam.LookAtFromPosition(new Vector3(0f, 1.2f, 10f), new Vector3(0f, 1.2f, 0f), Vector3.Up);
             else if (view == "front") cam.LookAtFromPosition(new Vector3(0f, 1.2f, -10f), new Vector3(0f, 1.2f, 0f), Vector3.Up);
+            else if (view == "low") cam.LookAtFromPosition(new Vector3(10f, 0.4f, -4f), new Vector3(0f, 1.1f, 0f), Vector3.Up);
+            else if (view == "lowrear") cam.LookAtFromPosition(new Vector3(-8f, 0.4f, 6f), new Vector3(0f, 1.1f, 0f), Vector3.Up);
             else if (view == "threequarter" || view == "quarter") cam.LookAtFromPosition(new Vector3(9f, 6f, -4f), new Vector3(0f, 1.1f, 0f), Vector3.Up);
             else cam.LookAtFromPosition(new Vector3(10f, 1.2f, 0f), new Vector3(0f, 1.2f, 0f), Vector3.Up);
             // Log screen calibration after the window resize has reached the viewport.
