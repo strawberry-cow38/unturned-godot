@@ -612,3 +612,24 @@ the rake, `group_bounds()` on a tapered wall returns the rectangle it would retu
 other check in the file passes the flat version unchanged.
 
 **340 named checks, 1382 mutations**, over six classes.
+
+### Correction within the tenth pass: the drawbar was hanging outside the nose
+
+strawberry: *"adjust the hitch arm front stuff to fit the new shape of the horse trailer"*.
+
+The drawbar beams splayed to a fixed `w - 2t` = **1.450**, which is a point on the sideboard of a
+straight-sided trailer and thin air on a tapered one. At the attach Z the animal trailer is **1.220**
+half-wide, so both beams stood **230 mm proud** of the panel they are supposed to be bolted to. They
+now land on `body_half(z) - 2t` — the body's actual outer width wherever the beam reaches it.
+
+**All 340 checks were green while that was true.** The collider checks verify each beam against its own
+collider, and the body checks verify the body; nothing looked at the two together. That gap now has a
+check of its own — the beam's outermost vertex against the sideboard's outer face at the beam's own Z,
+bounded from both sides so stopping short fails as loudly as poking out.
+
+It needed one fix on the way: reading the wall's outer face by snapping to the nearest vertex plane is
+fine on a straight wall and wrong on a tapered one, which only has vertices at its corners. A beam
+landing mid-taper snapped to whichever end was nearer and was reported 380 mm adrift of a body it was
+touching. It interpolates along the outline now.
+
+**346 named checks, 1394 mutations.**

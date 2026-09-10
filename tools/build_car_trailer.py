@@ -158,7 +158,16 @@ def generate(cls='small', specs=None, rear=None):
     d=design(specs,rear,cls); key=d['key']
     t=d['t'];w=d['deck_w']/2;f=d['front'];b=d['back'];y=d['deck_y'];r=d['radius'];ky=d['king'][1];kz=d['king'][2];az=d['axle_z'];cy=d['wheel_center_y'];wt=d['wall_t'];wh=d['wall_h']
     m=Model()
-    drawbars=[((sign*t,ky,kz+4*t),(sign*(w-2*t),y-wt/2,f+d['deck_l']/4)) for sign in (-1,1)]
+    def body_half(z):
+        """The body's outer half-width at a given Z. Constant on a straight-sided class; on a tapered
+        one it follows the nose in, which is what the drawbar has to land on."""
+        if not d['nose_w'] or z >= f+d['nose_run']: return w
+        return d['nose_w']+(z-f)/d['nose_run']*(w-d['nose_w'])
+    # THE DRAWBAR LANDS ON THE BODY, wherever the body is. It used to splay to a fixed w-2t, which is
+    # outside a tapered nose: at the attach point the animal trailer is 1.220 half-wide against that
+    # 1.450, so both beams stood 230 mm proud of the panel they were supposed to be bolted to.
+    bar_z=f+d['deck_l']/4
+    drawbars=[((sign*t,ky,kz+4*t),(sign*(body_half(bar_z)-2*t),y-wt/2,bar_z)) for sign in (-1,1)]
     # ONE SLAB, NOT PLANKS. The reference is the truck's own bed (strawberry: "too much detail. look
     # at the truck bed etc"), and that floor is TWO triangles -- a single 1.616 m2 quad at Y=0.125, no
     # board lines anywhere. Modelling nine separate boards with gaps cost 72 tris to say something the

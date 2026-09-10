@@ -139,14 +139,24 @@ def truck_wall():
 
 
 def inner_face_outer(group, z):
-    """The |x| of a sideboard's OUTER face at a given Z."""
+    """The |x| of a sideboard's OUTER face at a given Z, INTERPOLATED along the wall.
+
+    Snapping to the nearest vertex plane is fine on a straight wall and wrong on a tapered one: the
+    wall only has vertices at its corners, so a query between them snapped to whichever end was closer
+    and reported a beam landing mid-taper as 380 mm adrift of a body it was actually touching."""
     m=obj(BODY);V=[];cur=''
     for line in BODY.read_text().splitlines():
         if line.startswith('g '):cur=line[2:]
         elif line.startswith('f ') and cur==group:
             V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
-    near=min(V,key=lambda v:abs(v[2]-z))[2]
-    return max(abs(v[0]) for v in V if abs(v[2]-near)<1e-6)
+    prof=sorted({(round(v[2],6),) for v in V})
+    outline=[(zz, max(abs(v[0]) for v in V if abs(v[2]-zz)<1e-6)) for (zz,) in prof]
+    if z <= outline[0][0]: return outline[0][1]
+    if z >= outline[-1][0]: return outline[-1][1]
+    for (z0,x0),(z1,x1) in zip(outline,outline[1:]):
+        if z0 <= z <= z1:
+            return x0 + (x1-x0)*((z-z0)/(z1-z0) if z1>z0 else 0)
+    return outline[-1][1]
 
 
 def _untaper(src):
@@ -431,6 +441,31 @@ def cases(cls='dinky'):
         add('tapered nose: the sides converge to the fleet nose fraction at the front',tapered_nose,
             (BODY,_untaper,'square the nose off'),
             (BODY,move_group('headboard',(.4,0,0)),'slide the headboard off the nose'))
+    def drawbar_lands_on_body():
+        """The drawbar's outboard end sits ON the sideboard it bolts to, not outside it.
+
+        Nothing was asserting this, which is why the beams could stand 230 mm proud of a tapered nose
+        with all 340 checks green: the collider checks verify the beams against their OWN colliders,
+        and the body checks verify the body, and neither looks at the two together."""
+        m=obj(BODY)
+        for sg in (-1,1):
+            V=[];cur=''
+            for line in BODY.read_text().splitlines():
+                if line.startswith('g '):cur=line[2:]
+                elif line.startswith('f ') and cur=='drawbar_'+str(sg):
+                    V.extend(m['vertices'][int(c.split('/')[0])-1] for c in line.split()[1:4])
+            tip=max(V,key=lambda v:abs(v[0]))
+            wall=inner_face_outer('side_'+str(sg),tip[2])
+            require(abs(tip[0]) <= wall+1e-6,
+                    f'drawbar {sg} reaches |x| {abs(tip[0]):.4f} where the body is only {wall:.4f} wide')
+            # The beam ends 2t inboard of the panel by construction, so the bound is 3t. A looser one
+            # (4 * wall_t) let a 500 mm inward shove pass: too far short is as wrong as too far out,
+            # and the audit caught that mutation surviving.
+            require(wall-abs(tip[0]) <= 3*d['t'],
+                    f'drawbar {sg} stops {wall-abs(tip[0]):.4f} short of the body; it should reach it')
+    add('drawbar lands on the body it bolts to, at whatever width the body is there',drawbar_lands_on_body,
+        (BODY,move_group('drawbar_1',(.5,0,0)),'splay the beam outside the body'),
+        (BODY,move_group('drawbar_-1',(.5,0,0)),'pull the beam off the body'))
     add('trailer wall section equals the truck bed, derived two ways',donor_wall,
         (CONTENT/'truck_body.txt',lambda x:re.sub(r'^v 0\.980968 ','v 0.900968 ',x,flags=re.M),'thicken the truck bed wall'),
         # HEIGHT COMES FROM A DIFFERENT DONOR PER CLASS. Raising the truck bed's wall is a mutation for

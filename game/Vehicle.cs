@@ -3248,8 +3248,8 @@ namespace UnturnedGodot
             },
             HullBoxes = new (Vector3 size, Vector3 center, float yawDeg)[]
             {
-                (new Vector3(0.100000f, 0.219510f, 3.460135f), new Vector3(-0.750000f, -0.088676f, -3.085338f), -23.866598f),
-                (new Vector3(0.100000f, 0.219510f, 3.460135f), new Vector3(0.750000f, -0.088676f, -3.085338f), 23.866598f),
+                (new Vector3(0.100000f, 0.219510f, 3.340266f), new Vector3(-0.584987f, -0.088676f, -3.085338f), -18.682657f),
+                (new Vector3(0.100000f, 0.219510f, 3.340266f), new Vector3(0.584987f, -0.088676f, -3.085338f), 18.682657f),
                 (new Vector3(3.100000f, 0.250000f, 6.012836f), new Vector3(0.000000f, -0.148431f, 0.000000f), 0f),
             },
             Kingpin = new Vector3(0.000000f, -0.028921f, -4.867467f),
