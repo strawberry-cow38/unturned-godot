@@ -3867,6 +3867,21 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_MONITOR_OFF") == "1") hm.Toggle();
                 Log.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive} lit={hm.DebugLit})");
             }
+            // UG_LIVE=1 on the car lift: attach the PLATFORM the object rip never had (Car_Lift_0's ramp is a
+            // SkinnedMeshRenderer, which extract_objects_v2 does not walk). UG_LIFT=1 raises it, so the
+            // question "is the ramp there, and does it end up in the right place when it rises" is answerable
+            // from two renders rather than from arithmetic about a bounding box.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && name == "Car_Lift_0")
+            {
+                var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
+                // parented to propMi so UG_PROPROT reorients the platform WITH the frame -- spawned at the
+                // scene root it would stay lying down while the frame stood up, and the render would show a
+                // ramp floating sideways through the posts.
+                var lift = CarLift.Spawn(propMi, Vector3.Zero, Basis.Identity, rampMesh, mat);
+                if (lift != null && System.Environment.GetEnvironmentVariable("UG_LIFT") == "1")
+                { lift.DebugForcePower = true; lift.Toggle(); }
+                Log.Print($"[PROPTEST] attached CarLift (ramp={(rampMesh != null ? "ok" : "MISSING")})");
+            }
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
             Log.Print($"[PROPTEST] {name} aabb pos={aabb.Position} size={aabb.Size}");

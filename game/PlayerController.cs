@@ -510,6 +510,7 @@ namespace UnturnedGodot
         double _interactClock;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         ForagePlant _focusForage;     // the berry bush / mushroom being LOOKED AT -> F asks the server to pick it
+        CarLift _focusCarLift;        // the car-lift platform being LOOKED AT -> F raises/lowers it
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
         RadioDevice _focusRadio;      // the radio being LOOKED AT -> F toggles it on/off
         PropSeat _focusSeat;          // the chair/couch/bench seat being LOOKED AT -> F sits in it
@@ -606,6 +607,7 @@ namespace UnturnedGodot
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
             ForagePlant hitForage = null;          // berry bush / mushroom under the ray -> F picks it (server decides what you get)
+            CarLift hitLift = null;                // car-lift platform under the ray -> F raises/lowers it (needs power)
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             Train hitTrain = null;   // train loco under the look-ray (own scan; not in ResolveFocus)
@@ -660,6 +662,7 @@ namespace UnturnedGodot
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
                     else if (rcol is ForagePlant fpl && IsInstanceValid(fpl) && fpl.Alive) hitForage = fpl;   // berry bush / mushroom -> F asks the server for it
+                    else if (rcol is Node cln && cln.HasMeta(CarLift.HitMeta) && cln.GetMeta(CarLift.HitMeta).As<CarLift>() is CarLift cld && IsInstanceValid(cld)) hitLift = cld;   // the car lift's platform -> F works it
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                     // Which pass claimed the target decides who wins below. The ray is you POINTING at something;
@@ -671,7 +674,7 @@ namespace UnturnedGodot
                 // sphere is still allowed to speak, because picking an individual item off a shelf you are looking at
                 // is exactly what it is for. The ray chain above is else-if, so at most one of these is ever set.
                 rayTerminal = hitDoor != null || hitObjectDoor != null || hitBed != null || hitDeploy != null || hitSeat != null
-                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitElevButton != null || hitNote != null || hitForage != null || rayShelfItem;
+                           || hitFluid != null || hitGasPump != null || hitGrid != null || hitTV != null || hitMonitor != null || hitLamp != null || hitElevButton != null || hitNote != null || hitForage != null || hitLift != null || rayShelfItem;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -850,6 +853,7 @@ namespace UnturnedGodot
                 _focusMonitor?.SetLookFocused(true);
             }
             _focusForage = hitForage;   // no outline pass: a bush is a MultiMesh slot, not a node with a mesh to tint
+            _focusCarLift = hitLift;
             if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
             {
                 if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
@@ -6960,6 +6964,11 @@ namespace UnturnedGodot
                     else RequestToggleObjectDoor(_focusObjectDoor);
                 }
                 else if (RequestForage(_focusForage)) { }   // looking at a berry bush / mushroom: ask the server to pick it
+                else if (_focusCarLift != null && IsInstanceValid(_focusCarLift))   // looking at the car lift: F works it, if it has power
+                {
+                    if (!_focusCarLift.Toggle())
+                        FluidPickupHudSet(_focusCarLift.IsPowered ? "the lift is still moving" : "the lift has no power");
+                }
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
                 else if (_focusRadio != null && IsInstanceValid(_focusRadio)) _focusRadio.Toggle();   // ...same for a radio set
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off

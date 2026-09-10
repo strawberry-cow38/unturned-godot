@@ -1347,6 +1347,21 @@ namespace UnturnedGodot
                 // PlaceObject at all, so this branch currently only fires for a prop placed outside that table
                 // (or a standalone --doortest spawn, which calls ObjectDoor.Spawn directly). Reconciling the two
                 // (a lootable fridge that is ALSO an openable door) is unscoped follow-up, not part of this MVP.
+                // THE CAR LIFT'S PLATFORM. Car_Lift_0's ramp is a SkinnedMeshRenderer (Hinge_0) with no
+                // MeshFilter, so extract_objects_v2 -- which walks the LODGroup for MeshFilter/MeshRenderer
+                // LOD0 -- never saw it and the world got a lift frame with nothing to lift (master: "on the
+                // main menu it has its ramp, but in game it doesnt"; the menu diorama comes through the
+                // Unity Mesh .asset path, which does).
+                //
+                // Not routed through the door catalog beside it even though extract_doors produced the mesh:
+                // this thing does not hinge. Its Hinge bone's rotation curve is two identical keys and only
+                // its POSITION moves, so an ObjectDoor would swing a platform that is meant to rise.
+                if (mode == WorldMode.Playable && name == "Car_Lift_0")
+                {
+                    var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
+                    if (rampMesh != null) CarLift.Spawn(root, gpos, basis, rampMesh, MatFor(matName));
+                }
+
                 ObjectDoor doorForBody = null;   // issue 3/5: carry the first door out of this branch to link the prop BODY collider to it
                 if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
