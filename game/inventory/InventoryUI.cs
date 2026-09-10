@@ -110,7 +110,11 @@ void fragment() {
         // taller now (440 -> 496) that is a bigger character AND more headroom in pixels than the original 1.36 at
         // 440 gave: ~0.35 m of clear air above the head on a 1.8 m body, which is still hat-sized. Nothing else
         // moves -- the panel, the widen and the camera all stay where they are.
-        const float PD_FRAME_H = 1.45f;
+        // 1.45 -> 1.22: the viewport is much larger and no longer portrait, so the horizontal squeeze that forced
+        // 1.45 is gone and the vertical is what governs. "Scale the paperdoll up to somewhat fill" it -- somewhat,
+        // not exactly, because FramePaperdoll's own note says the SubViewport renders ~15% tighter than the FOV
+        // maths, and spending that padding is the mistake that put his arms through the edge at 1.28.
+        const float PD_FRAME_H = 1.34f;
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
         Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
@@ -2232,11 +2236,20 @@ void fragment() {
                 // The paperdoll: a portrait viewport CENTERED in the character panel with margin all round
                 // (master 2026-08-26: "shrink the whole viewport down by 25%, centered in its little frame"). It
                 // fills 75% of the vertical region and keeps the arms-fitting aspect (PD_ASPECT), then sits centered.
-                float avail = _charBox.Size.Y - PDTOP - CELL - (HEADER - 6) - 2 * MARGIN - 10f - COSMH;
-                float pdH = avail * 0.75f;                            // 25% smaller than the full region
-                float pdW = Mathf.Min(pdH * PD_ASPECT, CHARW - 2 * MARGIN);   // preserve the aspect so his arms fit; never wider than the panel
-                float pdX = Mathf.Round((CHARW - pdW) / 2f);          // centered horizontally in the panel
-                float pdY = Mathf.Round(PDTOP + (avail - pdH) / 2f);  // centered vertically in the region
+                // FILL THE PANEL (strawberry 2026-09-10: "have the viewport fill front the bottom of the survivor
+                // name section's bottom, to the top of the primary/secondary text, the the left and right edges").
+                // ⚠ THIS is what sizes the paperdoll, not the constants it is built with -- LayoutDash overwrites
+                // the construction-time Size every pass, which is why widening PDW/PDWIDEN earlier only ever moved
+                // the CONTAINER and the render kept coming back portrait.
+                //
+                // Both edges are read from the things they are supposed to meet rather than typed: the name badge
+                // is Position(8, 6) Size(_, 76) so its bottom is 82, and the weapon row's own Y is the top of the
+                // PRIMARY/SECONDARY headers. Neither moves; if either ever does, this follows it.
+                float pdY = 82f;
+                float pdBot = _weaponRow != null ? _weaponRow.Position.Y
+                                                 : _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN;
+                float pdH = Mathf.Max(120f, pdBot - pdY);
+                float pdW = CHARW, pdX = 0f;                          // left and right edges of the panel
                 if (_pdVp != null && Mathf.Abs(_pdVp.Size.Y - pdH) > 1f) _pdFramed = false;   // re-frame for the new size
                 if (_pdStage != null) { _pdStage.Position = new Vector2(pdX, pdY); _pdStage.Size = new Vector2(pdW, pdH); }
                 if (_pdHit != null)   { _pdHit.Position   = new Vector2(pdX, pdY); _pdHit.Size   = new Vector2(pdW, pdH); }
