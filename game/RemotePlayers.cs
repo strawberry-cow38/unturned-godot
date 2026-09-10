@@ -54,6 +54,8 @@ namespace UnturnedGodot
             public float HullHeight = -1f;               // last height the capsule was built at
             public bool HullSeated;                      // last seated state pushed to Disabled
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
+            public bool GearStep;                        // gear foley alternates with the footfalls, as it does locally
+            public bool WornLightOn, HeldLightOn;        // their nightvision/headlamp and torch, off the appearance block
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
             public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
             public bool HeldGun;                         // a gun is in the hand (the overlay layer belongs to it, not to a melee swing)
@@ -221,6 +223,22 @@ namespace UnturnedGodot
                             var clip = GameAudio.PickFootstep(psurf, run);
                             float vol = stance switch { SDG.Unturned.EPlayerStance.PRONE => -14f, SDG.Unturned.EPlayerStance.CROUCH => -8f, SDG.Unturned.EPlayerStance.SPRINT => 0f, _ => -3f };
                             GameAudio.PlayAt(this, clip, av.Body.GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
+                            // ...and their kit, on every other stride, exactly as the local body does it. The worn
+                            // slots are already reconstructed onto av.Inv by ApplyWorn, so this needs nothing from
+                            // the wire -- a puppet in a vest and a rucksack clatters because it IS in a vest and a
+                            // rucksack.
+                            av.GearStep = !av.GearStep;
+                            if (av.GearStep && stance != SDG.Unturned.EPlayerStance.PRONE)
+                            {
+                                int worn = 0;
+                                if (av.Inv?.wornVest != null) worn++;
+                                if (av.Inv?.wornBackpack != null) worn++;
+                                if (av.Inv?.wornHat != null) worn++;
+                                if (av.Inv?.wornMask != null) worn++;
+                                if (av.Inv?.wornGlasses != null) worn++;
+                                float gvol = stance == SDG.Unturned.EPlayerStance.CROUCH ? -16f : run ? -9f : -13f;
+                                GameAudio.PlayAt(this, GameAudio.GearMovement(worn), av.Body.GlobalPosition, gvol, 3f, 16f, _rng.RandfRange(0.95f, 1.05f));
+                            }
                         }
                     }
                     else if (!grounded) av.StrideAcc = 0f;                              // airborne: land on a fresh stride, not half of one
@@ -250,6 +268,12 @@ namespace UnturnedGodot
                 }
                 else if (sitFurniture) av.Body.PlayLoop(av.Body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
                 else av.Body.SetLocomotion(av.Speed, stance);
+                // THEIR LAMPS. Pushed every tick rather than on the appearance signature: a light toggle would
+                // otherwise re-dress the whole puppet -- re-attach the gun, re-wear the clothing -- to change one
+                // float. Both calls no-op on gear with no emission bound, so driving both is safe and means the
+                // right one lights whichever they have.
+                av.Body.SetGlassesGlow(av.WornLightOn);
+                av.Body.SetMeleeGlow(av.HeldLightOn);
                 av.Body.Tick(delta);
                 if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
                 {
@@ -310,6 +334,7 @@ namespace UnturnedGodot
             ApplyWorn(av.Inv, ce);
             av.Clothing.Refresh();
             ApplyHeld(av, ce.HeldId, ce.HeldSight, ce.HeldMagazine, ce.HeldBarrel);
+            av.WornLightOn = ce.WornLightOn; av.HeldLightOn = ce.HeldLightOn;
         }
 
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same

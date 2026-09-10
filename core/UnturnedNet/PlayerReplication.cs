@@ -230,6 +230,12 @@ namespace UnturnedGodot.Net
         public const byte ButtonJump = 1 << 0;
         const int StanceShift = 1;
         const byte StanceMask = 0b11;
+        // TWO bits, not one, so a puppet cannot light the wrong lamp. The worn devices (nightvision, headlamp) and
+        // the handheld torch are separate emitters on separate meshes, and a single "a light is on" flag would
+        // make a player wearing goggles AND holding a lit torch glow at both. Bits 3-7 were headroom by the note
+        // above, and adding one is not a wire break.
+        public const byte ButtonWornLight = 1 << 3;   // nightvision or headlamp, switched on
+        public const byte ButtonHeldLight = 1 << 4;   // the handheld torch, switched on
 
         public ushort Seq;        // client-local, monotonically increasing (wrap-around via NetSeq)
         public float MoveX;       // strafe axis [-1,1] (quantized to 8 bits on the wire)
@@ -242,6 +248,8 @@ namespace UnturnedGodot.Net
         // server adopts it); MoveInput remains the demo-walker/loopback movement intent only.
 
         public bool Jump => (Buttons & ButtonJump) != 0;
+        public bool WornLight => (Buttons & ButtonWornLight) != 0;
+        public bool HeldLight => (Buttons & ButtonHeldLight) != 0;
 
         /// <summary>The on-foot stance carried in buttons bits 1-2 -- what the server avatar must
         /// integrate at so client-predicted and server-integrated per-tick distances match.</summary>

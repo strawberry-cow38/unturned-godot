@@ -2996,6 +2996,12 @@ namespace UnturnedGodot
         /// paperdoll, which is a second 3P body and should hold what the first one holds. Names only: the caller
         /// feeds them to the same RiggedCharacter.AttachGun/AttachMelee the live body uses, so the two cannot
         /// disagree about which mesh a name maps to.</summary>
+        /// <summary>A worn light that is actually ON -- nightvision or the headlamp. Both live in the glasses slot
+        /// and cannot be worn together, and both already fold in "is it even equipped".</summary>
+        public bool WornLightOn => NightVision.Active || HeadlampOn;
+        /// <summary>The handheld torch, lit and in hand.</summary>
+        public bool TorchLit => HeldLightOn && HoldingLight;
+
         public string HeldGunNameForDisplay => HasGunOut ? _gunName : null;
 
         /// <summary>What is bolted to the held gun right now, as one comparable value. Exactly the three slots

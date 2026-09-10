@@ -477,7 +477,10 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
             //    stance for the stamina drain -- stamina server-owned while the sprint decision stays client-auth.
             float yaw = Player.RotationDegrees.Y;
             ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
-                                              MoveInput.PackStance(Player.Stance), Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets
+                                              (byte)(MoveInput.PackStance(Player.Stance)
+                                                     | (Player.WornLightOn ? MoveInput.ButtonWornLight : 0)
+                                                     | (Player.TorchLit ? MoveInput.ButtonHeldLight : 0)),
+                                              Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets; + the light bits so their lenses light up
 
             // 1b) A SERVER-SIDE TELEPORT has to be adopted BEFORE step 2 overwrites it.
             //

@@ -54,6 +54,8 @@ namespace UnturnedGodot
                     changed |= SetU(ref ce.HeldSight, AttId(heldGun, "Sight"));
                     changed |= SetU(ref ce.HeldMagazine, AttId(heldGun, "Magazine"));
                     changed |= SetU(ref ce.HeldBarrel, AttId(heldGun, "Barrel"));
+                    changed |= SetBool(ref ce.WornLightOn, mi.WornLight);   // their lamps, so other clients can light the lens
+                    changed |= SetBool(ref ce.HeldLightOn, mi.HeldLight);
                 }
 
                 if (changed) _server.CombatState.MarkDirty(ce, tick);
@@ -100,5 +102,6 @@ namespace UnturnedGodot
         }
         static bool SetU(ref ushort field, ushort val) { if (field == val) return false; field = val; return true; }
         static bool SetB(ref byte field, byte val) { if (field == val) return false; field = val; return true; }
+        static bool SetBool(ref bool field, bool val) { if (field == val) return false; field = val; return true; }
     }
 }

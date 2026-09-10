@@ -473,6 +473,9 @@ namespace UnturnedGodot.Net
             // the wire -- only its id does -- so a puppet had no way to know the gun had a scope on it and every
             // other player appeared to be carrying a factory weapon. Three ids, the same three the mount renders.
             public ushort HeldSight, HeldMagazine, HeldBarrel;
+            // Whether their lamps are lit. The emitters are on the puppet already -- what never crossed was the
+            // switch, so every other player's nightvision and torch stayed dark no matter what they were doing.
+            public bool WornLightOn, HeldLightOn;
             public byte Stance;     // EPlayerStance (stand/crouch/prone/...)
             public long LastChangedTick;
 
@@ -588,6 +591,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, e.WornShirt); h = NetHash.MixUInt32(h, e.WornVest); h = NetHash.MixUInt32(h, e.WornBackpack); h = NetHash.MixUInt32(h, e.WornPants);
                 h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance);
                 h = NetHash.MixUInt32(h, e.HeldSight); h = NetHash.MixUInt32(h, e.HeldMagazine); h = NetHash.MixUInt32(h, e.HeldBarrel);
+                h = NetHash.MixByte(h, (byte)((e.WornLightOn ? 1 : 0) | (e.HeldLightOn ? 2 : 0)));
             }
             return h;
         }
@@ -603,6 +607,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16(e.WornShirt); w.WriteUInt16(e.WornVest); w.WriteUInt16(e.WornBackpack); w.WriteUInt16(e.WornPants);
             w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance);
             w.WriteUInt16(e.HeldSight); w.WriteUInt16(e.HeldMagazine); w.WriteUInt16(e.HeldBarrel);
+            w.WriteBit(e.WornLightOn); w.WriteBit(e.HeldLightOn);
         }
 
         static bool ReadEntity(NetPakReader r, out CombatEntity e)
@@ -617,10 +622,12 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort wShirt) || !r.ReadUInt16(out ushort wVest) || !r.ReadUInt16(out ushort wBackpack) || !r.ReadUInt16(out ushort wPants)) return false;
             if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance)) return false;
             if (!r.ReadUInt16(out ushort aSight) || !r.ReadUInt16(out ushort aMag) || !r.ReadUInt16(out ushort aBarrel)) return false;
+            if (!r.ReadBit(out bool wLight) || !r.ReadBit(out bool hLight)) return false;
             e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths,
                 WornHat = wHat, WornGlasses = wGlasses, WornMask = wMask, WornShirt = wShirt, WornVest = wVest,
                 WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance,
-                HeldSight = aSight, HeldMagazine = aMag, HeldBarrel = aBarrel };
+                HeldSight = aSight, HeldMagazine = aMag, HeldBarrel = aBarrel,
+                WornLightOn = wLight, HeldLightOn = hLight };
             return true;
         }
 

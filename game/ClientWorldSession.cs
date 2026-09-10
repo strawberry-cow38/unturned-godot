@@ -399,7 +399,9 @@ namespace UnturnedGodot
             //    snapshot grid + facing + sim velocity + stance/jump dressing + grounded. An adopted
             //    claim replicates back bit-exact, so observers render the owner's own view of itself.
             var p = Shell.TruePhysicsPosition;
-            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
+            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance)
+                                  | (Shell.WornLightOn ? MoveInput.ButtonWornLight : 0)
+                                  | (Shell.TorchLit ? MoveInput.ButtonHeldLight : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
                                    Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
 
