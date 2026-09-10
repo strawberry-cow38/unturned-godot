@@ -8747,7 +8747,14 @@ namespace UnturnedGodot
                 // edge, and a "clear it on open" hook only fixes the paths that remember to call it. And it does not
                 // resume on close by design -- SetAiming only moves on an input event, so you have to press RMB
                 // again, which is what "inventory open should drop all that stuff" asks for.
-                if (UiInputBlocked) _viewmodel.SetAiming(false);
+                //
+                // ⚠ EXCEPT WHEN AIM WAS FORCED. UiInputBlocked is `MouseMode != Captured`, and a HEADLESS run has
+                // no captured mouse -- so this reads "a menu is up" as permanently true off-screen and cancelled
+                // ForceAim on the very next frame. That broke combat.shot_origin (its `Until(alpha > 0.999)` timed
+                // out at 5 s) and, quietly, every UG_ADS render: the harness drives ADS through this same hook, so
+                // an aimed shot could no longer be photographed at all. In an actual session MouseMode IS Captured
+                // while playing, so the menu rule is untouched by this.
+                if (UiInputBlocked && !_aimForced) _viewmodel.SetAiming(false);
                 _viewmodel.LeanRoll = _leanAngle;   // 1P lean tilt: hand the already-lerped/obstruct-snapped roll to the viewmodel (its SubViewport can't inherit the camera pivot's roll)
                 // ALT-LOOK: the gun belongs to the BODY, not the eyes (strawberry 2026-09-09: "do not have the
                 // viewmodel follow the camera when alt-looking in 1st person"). The intent was always that it
@@ -9012,7 +9019,8 @@ namespace UnturnedGodot
         public int DebugBulletCount => _bullets.Count;
 
         public bool Suppressed => (_viewmodel?.IsSuppressed ?? false) || (Gun?.IntegrallySuppressed ?? false);
-        public void ForceAim(bool on) => _viewmodel?.SetAiming(on);   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
+        bool _aimForced;   // ADS driven by the debug/render hook rather than by RMB -- exempt from the menu-drops-the-sights rule
+        public void ForceAim(bool on) { _aimForced = on; _viewmodel?.SetAiming(on); }   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
 
         Vehicle NearestVehicle()
         {
