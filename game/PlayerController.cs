@@ -2580,6 +2580,11 @@ namespace UnturnedGodot
                 GetParent()?.AddChild(g);   // the player's own parent, as ThrowGrenade has always done -- NOT CurrentScene, which escapes an L1 test's sandbox world
                 g.GlobalPosition = origin;
             }
+            // THE PIN, AND THE PIN IS PER ITEM. Retail ships a separate activation clip for every throwable
+            // and every smoke/flare COLOUR (content/audio/items/throwables_*_use), and none of them had ever
+            // been played -- throwing anything was silent on both the MP and SP branches, so this sits after
+            // the branch rather than inside either. Played 2D: it is your own hand, not a thing in the world.
+            GameAudio.Play2D(this, GameAudio.ThrowableUse(id), -4f);
             Log.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
 
             // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner

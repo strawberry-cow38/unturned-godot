@@ -31,6 +31,19 @@ SRC = "\n".join(src)
 quoted   = set(re.findall(r'"([A-Za-z0-9_./-]{2,})"', SRC))
 prefixes = set(re.findall(r'(?:Bank|Pick)\(\s*"[a-z]+"\s*,\s*"([A-Za-z0-9_]+)"', SRC)) | quoted
 
+# ...AND the clip names that live in DATA rather than in code. Half of what a source-only pass calls dead is
+# wired through a table: consumable_sounds.tsv names a use clip per item id, effects/rubble_snd.json names one
+# per effect id, and the prop-door catalog names a clip stem. A tool that cannot read those reports phantom
+# gaps, which is worse than reporting none -- you go and "fix" something that already works.
+DATA_EXT = (".tsv", ".json", ".txt", ".dat", ".csv")
+data_words = set()
+for dp, _, fns in os.walk(CONT):
+    for fn in fns:
+        if not fn.lower().endswith(DATA_EXT): continue
+        try: txt = open(os.path.join(dp, fn), encoding="utf-8", errors="ignore").read()
+        except OSError: continue
+        data_words.update(re.findall(r"[A-Za-z0-9_.-]{3,}", txt))
+
 clips = []
 for dp, _, fns in os.walk(CONT):
     for fn in fns:
@@ -45,6 +58,7 @@ for rel, p in clips:
 def reachable(rel):
     stem = os.path.splitext(os.path.basename(rel))[0]
     if rel in SRC or stem in quoted or os.path.basename(rel) in SRC: return "named"
+    if stem in data_words or os.path.basename(rel) in data_words: return "data"
     parts = stem.split("_")
     for i in range(len(parts), 0, -1):
         if "_".join(parts[:i]) in prefixes: return "prefix"
@@ -64,7 +78,8 @@ for rel, _ in clips:
 
 tot = len(clips)
 live = sum(1 for r in state.values() if r)
-print(f"{tot} clips, {live} reachable by name or prefix, {tot - live} not")
+byhow = collections.Counter(v for v in state.values() if v)
+print(f"{tot} clips, {live} reachable ({dict(byhow)}), {tot - live} not")
 dupes = sum(len(v) - 1 for v in by_hash.values() if len(v) > 1)
 print(f"{dupes} clips are byte-identical copies of another clip in the tree\n")
 print("UNREACHABLE, and with no reachable twin -- grouped by folder:")

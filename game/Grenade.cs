@@ -117,7 +117,13 @@ namespace UnturnedGodot
                 // first frames emitting at the world origin.
                 cloud.Position = GlobalPosition + Vector3.Up * 0.35f;
                 GetParent()?.AddChild(cloud);   // our own parent (the scene in game, the sandbox world under L1) -- CurrentScene would leak the cloud out of a test world
-                GameAudio.PlayAt(this, GameAudio.Pick("casings", "general"), GlobalPosition, -2f, 6f, 40f, 0.55f);   // the canister popping (no dedicated retail clip in the rip)
+                // THE CANISTER, per colour. This used to be a brass CASING pitched down to 0.55, behind a
+                // comment saying the rip had no dedicated clip -- it ships one per smoke colour, in
+                // content/audio/items, a folder no Bank/Pick call had ever named. Retail hangs throwable
+                // audio off the item's own bundle, which is why it is filed with the items and not with the
+                // explosions.
+                GameAudio.PlayAt(this, GameAudio.SmokeVent(ItemId) ?? GameAudio.Pick("casings", "general"),
+                                 GlobalPosition, -2f, 6f, 40f, 1f);
             }
             else if (IsInstanceValid(Thrower))
             {
@@ -150,7 +156,12 @@ namespace UnturnedGodot
             Vector3 point = (Vector3)hit["position"], n = ((Vector3)hit["normal"]).Normalized();
             float speed = Vel.Length();
             if (speed > 1.5f)
-                GameAudio.PlayAt(this, GameAudio.Pick("casings", "general"), point, -6f, 4f, 30f, 0.7f);   // no dedicated bounce clip in the rip: the brass bounce, pitched down
+                // ...and the same for the bounce: throwables_grenade_bounce_use is the retail clip, named for
+                // the bundle it lives in rather than for frags only. Volume tracks how hard it landed, so a
+                // grenade rolling to a stop fades out instead of clacking at full level on every skip.
+                GameAudio.PlayAt(this, GameAudio.ThrowableBounce() ?? GameAudio.Pick("casings", "general"), point,
+                                 Mathf.Lerp(-14f, -2f, Mathf.Min(1f, speed / 12f)), 4f, 30f,
+                                 (float)GD.RandRange(0.94, 1.06));
 
             Vector3 vn = n * Vel.Dot(n), vt = Vel - vn;              // split into into-the-surface and along-it
             Vel = vt * (1f - Friction) - vn * Restitution;           // skid + bounce back out

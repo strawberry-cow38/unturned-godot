@@ -71,7 +71,10 @@ namespace UnturnedGodot
             return _banks[key] = list.ToArray();
         }
 
-        /// <summary>One clip: content/audio/<folder>/<name>.wav|ogg (null if missing).</summary>
+        /// <summary>One clip: content/audio/<folder>/<name>.wav|ogg (null if missing). Reach for this over
+        /// Pick whenever the exact file matters: Pick's glob is `prefix_*`, so in a folder holding both
+        /// `throwables_smoke_red_use` and `throwables_smoke_red_smoke` there is no prefix that selects one of
+        /// them -- asking for the pin-pull would play the canister half the time.</summary>
         public static AudioStream Clip(string folder, string name)
         {
             string key = folder + "/=" + name;
@@ -270,6 +273,38 @@ namespace UnturnedGodot
             : wornPieces >= 2
             ? Pick("foley", "foley_soldier_gear_equipment_rattle_movement_light")
             : Pick("foley", "foley_cloth_light_fast_movement");
+
+        // ---- THROWABLES (content/audio/items, 30 clips) ---------------------------------------------------------
+        // ⚠ TWO PLACES IN Grenade.cs SAID THESE CLIPS DID NOT EXIST -- "the canister popping (no dedicated
+        // retail clip in the rip)" and "no dedicated bounce clip in the rip" -- and both were playing a brass
+        // CASING pitched down instead. The clips were in content/audio/items the whole time, in a folder no
+        // Bank/Pick call had ever named. Retail hangs them off ItemThrowableAsset's own bundle, which is why
+        // they landed under `items` rather than beside the explosion banks.
+        //
+        // The stem is per ITEM, not per kind: retail ships a separate pin-pull for each smoke and flare
+        // COLOUR, so the id is what picks the clip. Ids are the port's own throwable table (ThrowableDef).
+        public static string ThrowableStem(ushort id) => id switch
+        {
+            254 => "grenade", 1242 => "grenade_makeshift",
+            255 => "flare_blue", 256 => "flare_green", 257 => "flare_orange",
+            258 => "flare_purple", 259 => "flare_red", 260 => "flare_yellow",
+            261 => "smoke_black", 262 => "smoke_blue", 263 => "smoke_green", 264 => "smoke_orange",
+            265 => "smoke_purple", 266 => "smoke_red", 267 => "smoke_white", 268 => "smoke_yellow",
+            _ => null,
+        };
+
+        /// <summary>Pulling the pin / lighting it -- played as it leaves the hand.</summary>
+        public static AudioStream ThrowableUse(ushort id)
+            => ThrowableStem(id) is string st ? Clip("items", $"throwables_{st}_use") : null;
+
+        /// <summary>A smoke canister venting, per colour. Retail ships one per smoke; the port used to play a
+        /// pitched-down bullet casing here.</summary>
+        public static AudioStream SmokeVent(ushort id)
+            => ThrowableStem(id) is string st && st.StartsWith("smoke") ? Clip("items", $"throwables_{st}_smoke") : null;
+
+        /// <summary>A thrown thing hitting something. One clip for every throwable, as retail has it -- the
+        /// file is named for the grenade because that is the bundle it lives in, not because it is frag-only.</summary>
+        public static AudioStream ThrowableBounce() => Clip("items", "throwables_grenade_bounce_use");
 
         // ---- PHYSICS IMPACTS (content/audio/impacts, 19 clips, also referenced nowhere) -------------------------
         // ⚠ THE STATIC/DYNAMIC SPLIT IS MY READING, NOT A CONFIRMED RETAIL RULE. The clips are <material>_static and
