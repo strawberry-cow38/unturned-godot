@@ -103,7 +103,7 @@ void fragment() {
         // taller now (440 -> 496) that is a bigger character AND more headroom in pixels than the original 1.36 at
         // 440 gave: ~0.35 m of clear air above the head on a 1.8 m body, which is still hat-sized. Nothing else
         // moves -- the panel, the widen and the camera all stay where they are.
-        const float PD_FRAME_H = 1.28f;
+        const float PD_FRAME_H = 1.45f;
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
         Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
@@ -399,6 +399,7 @@ void fragment() {
         long _lastSig = -1;
         DirectionalLight3D _pdKey, _pdFill;
         Godot.Environment _pdEnv;
+        static readonly bool PaperdollBgDebug = System.Environment.GetEnvironmentVariable("UG_PDBG") == "1";
 
         /// <summary>Light the paperdoll with the world's (strawberry 2026-09-09: "the inventory paperdoll should
         /// get world lighting too"). Same problem the viewmodel had: an isolated SubViewport gets no world light,
@@ -1943,7 +1944,7 @@ void fragment() {
             {
                 Size = new Vector2I(PDW + PDWIDEN, PDH),              // LOCK the render aspect; the widen is on BOTH render and display so nothing stretches
                 OwnWorld3D = true,                                    // isolated from the game world (like the viewmodel)
-                TransparentBg = true,
+                TransparentBg = !PaperdollBgDebug,   // UG_PDBG=1 paints the viewport's own render area, so its real extent is visible
                 Msaa3D = Viewport.Msaa.Msaa4X,                        // antialias the character edges
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
                 RenderTargetClearMode = SubViewport.ClearMode.Always,
@@ -1965,7 +1966,12 @@ void fragment() {
             _pdVp.AddChild(_pdFill);
             _pdEnv = new Godot.Environment
                 {
-                    BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
+                    // ⚠ DIAGNOSTIC, off unless UG_PDBG=1 (strawberry 2026-09-10: "can u show the viewport's actual
+                    // size w a purple bg behind the paperdoll"). This is the SubViewport's own clear colour, so what
+                    // it paints is exactly the render area and nothing else -- a ColorRect behind the container would
+                    // have shown the CONTROL's rect instead, which is the thing being asked about, not the answer.
+                    BackgroundMode = Godot.Environment.BGMode.Color,
+                    BackgroundColor = PaperdollBgDebug ? new Color(0.42f, 0.16f, 0.52f, 1f) : new Color(0f, 0f, 0f, 0f),
                     AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.42f, 0.42f, 0.44f), AmbientLightEnergy = 1.0f,   // neutral grey, was faintly blue
                     TonemapMode = Godot.Environment.ToneMapper.Filmic,   // ACES crushed the lit side to white; filmic keeps the shirt/skin colour
                 };
