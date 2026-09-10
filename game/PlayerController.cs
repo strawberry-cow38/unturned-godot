@@ -197,7 +197,11 @@ namespace UnturnedGodot
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
             var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * (range + 1f));
-            rq.CollisionMask = 1u << 0;   // world layer -- tree trunks live here
+            // World layer (tree trunks, ore) PLUS bit6, the glass/see-through layer (strawberry 2026-09-10: "glass
+            // isnt destructable with melee"). It was world-only, and GlassPane builds itself on bit6 -- so the swing
+            // ray could not intersect a pane at all. Not a damage-routing bug: the ray never reached it. Bullets did
+            // work, because StepBullets masks glass separately, which is why this only ever showed up on melee.
+            rq.CollisionMask = (1u << 0) | (1u << 6);
             rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(rq);
             if (hit.Count == 0) return false;
@@ -208,6 +212,17 @@ namespace UnturnedGodot
                 tt.Chop(amount, pt, fwd);
                 MeleeImpactFx(pt, false, Surf.Wood);
                 GD.Print($"[melee] chopped tree for {amount:0}");
+                return true;
+            }
+            if (col is GlassPane gp)
+            {
+                var pt = (Vector3)hit["position"];
+                gp.TakeDamage(amount);   // TakeDamage owns the Indestructible + already-shattered guards
+                // Surf has no Glass member and appending one would ripple into the footstep/impact tables this
+                // change has no business touching -- Concrete is the hard-surface tick. The glass audio that
+                // matters is the shatter, and GlassPane.Shatter owns that already.
+                MeleeImpactFx(pt, false, Surf.Concrete);
+                GD.Print($"[melee] hit glass for {amount:0}");
                 return true;
             }
             if (col is OreRock ore && !ore.Mined)   // metal ore: only a PICKAXE (axe_pick) mines it -> Metal Scrap; other tools just clink
