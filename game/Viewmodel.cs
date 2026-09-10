@@ -719,6 +719,16 @@ namespace UnturnedGodot
                     var tex = albedoImg != null ? ImageTexture.CreateFromImage(albedoImg) : null;   // texture from the image loaded above (== LoadTex)
                     // no albedo texture: a consumable uses its real flat _Color (cheese/potato); anything else falls back to the neutral gray.
                     if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = (ConsumableMesh != null || ToolMesh != null) ? gv.AlbedoTint : new Color(0.24f, 0.24f, 0.26f);
+                    // A HELD TORCH'S BULB (strawberry 2026-09-10). Same derived lens mask the 3P body and the worn
+                    // gear use, bound at zero energy so SetHeldGlow is a float write rather than a rebuild. Only
+                    // items whose albedo actually has a distinct bright cell get one, so an axe stays matte.
+                    if (MeleeMesh != null && ClothingContent.EmissionMaskFrom($"{MeleeMesh.Replace(".txt", "")}_albedo.png", MeleeMesh) is Texture2D bulb)
+                    {
+                        mat.EmissionEnabled = true;
+                        mat.EmissionTexture = bulb;
+                        mat.Emission = new Color(1f, 1f, 1f);
+                        mat.EmissionEnergyMultiplier = 0f;
+                    }
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
@@ -1326,6 +1336,13 @@ namespace UnturnedGodot
         static readonly string[] AttachSlots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
         // True only when this viewmodel is actually showing a GUN (not fists / a melee / a consumable / empty hands).
         // GetAttachMask is meaningless on a non-gun viewmodel -> callers must gate on this before saving a gun's mask.
+        /// <summary>Light the held torch's bulb in FIRST person. No-op on a held model with no emission bound.</summary>
+        public void SetHeldGlow(bool on, float energy = 3.6f)
+        {
+            if (_gun is MeshInstance3D gmi && GodotObject.IsInstanceValid(gmi) && gmi.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled)
+                m.EmissionEnergyMultiplier = on ? energy : 0f;
+        }
+
         public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
         public bool IsRopeTool;   // this tool viewmodel is the tow ROPE (item 64) -- all tools set ToolMesh; the kind bits disambiguate
         public bool IsHoseTool;   // this tool viewmodel is the fluid HOSE (item 66)

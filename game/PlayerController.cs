@@ -8537,6 +8537,11 @@ namespace UnturnedGodot
             // like the held light directly below -- there is no equip site to remember to patch.
             if (_portsShown != HoldingWireTool) { _portsShown = HoldingWireTool; ConnectionPort.SetAllVisible(GetTree(), _portsShown); }
             if (_heldLightOn && !HoldingLight) { _heldLightOn = false; ApplyHeldLight(); }
+            // ...and the torch's own bulb, on the 3P body. Same per-frame reconcile as the beam directly above,
+            // and for the same stated reason: it is derived from what is in hand, so there is no equip site to
+            // remember to patch and no path that can strand a lit bulb on a weapon you are no longer holding.
+            _body?.SetMeleeGlow(_heldLightOn && HoldingLight);
+            _viewmodel?.SetHeldGlow(_heldLightOn && HoldingLight);   // ...and in first person, where you mostly look at it
             if ((_grassT += delta) >= 1.0 / 60.0) { UpdateGrassDisplacement(_grassT); _grassT = 0; }   // PERF: 60 Hz -- the lerp takes the accumulated delta, the bend is identical
             // ...and NOT while sat on furniture, which is the same exclusion for the same reason and whose
             // absence was the "chairs sit you down where you interacted with them" report (master 2026-09-07).
@@ -8587,6 +8592,13 @@ namespace UnturnedGodot
             // Comparing the wanted state to the applied one is two field reads and cannot be bypassed.
             bool wantLamp = _headlampOn && WearingHeadlamp;
             if (wantLamp != _headlampLit) { _headlampLit = wantLamp; ApplyHeadlamp(); }
+            // ...and the LENS itself lights up on the 3P body (strawberry 2026-09-10: "should only glow when they
+            // are on, in 3p too"). Both devices live in the glasses slot and cannot be worn together, so one flag
+            // covers them: NightVision.Active is only true while goggles are worn AND on, and HeadlampOn already
+            // folds in WearingHeadlamp. Pushed on the same per-frame reconcile as the beam, and for the same
+            // reason -- three separate paths can take the gear off your face, and a lit lens stranded on a bare
+            // head is the same bug as a stranded beam.
+            _body?.SetGlassesGlow(NightVision.Active || wantLamp);
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)

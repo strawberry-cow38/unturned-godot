@@ -73,6 +73,85 @@ namespace UnturnedGodot
 
         // Load a res://content-relative PNG as a runtime ImageTexture (no mipmaps -> the clothes shader samples
         // filter_nearest for blocky Unturned pixels). Blank cell or missing file -> null (reads as transparent on-body).
+        // LENS GLOW (strawberry 2026-09-10: "add emissive lenses to both nightvisions the headlamp and the
+        // flashlight. should only glow when they are on, in 3p too").
+        //
+        // ⚠ OPT-IN BY ID, not by a rule. Every one of these albedos is a 2x2 palette: three housing greys
+        // (40,40,40 / 50,50,50 / 71,71,71) and one lens cell. Deriving "which cell is the lens" is easy -- it is
+        // the brightest -- but deciding "which ITEMS have a lens at all" is not, and a heuristic there would set
+        // some hat's brightest patch glowing. Retail ships no emission map for these three (23 other garments do
+        // have one, so the pipeline supports it; these simply are not authored that way), which is why the mask
+        // is derived rather than loaded.
+        static readonly System.Collections.Generic.HashSet<int> GlowLensIds = new() { 334, 1044, 1199 };
+        static readonly Dictionary<int, ImageTexture> _lensMask = new();
+
+        public static bool HasGlowLens(int id) => GlowLensIds.Contains(id);
+
+        /// <summary>An emission mask for a lens item: the albedo with everything BUT the lens cell blacked out, so
+        /// one material and one draw call give "only the lens glows". Null for anything not opted in.
+        ///
+        /// The lens is the BRIGHTEST cell, which is the only rule that works across all three -- the military
+        /// tube is pure green (0,255,0) but the civilian one is a desaturated (200,200,200) and the headlamp a
+        /// warm cream. A "most saturated" rule picks the military lens and misses the other two entirely.</summary>
+        public static Texture2D LensMask(int id)
+        {
+            if (!GlowLensIds.Contains(id)) return null;
+            if (_lensMask.TryGetValue(id, out var cached)) return cached;
+            var e = Get(id);
+            string rel = e?.Albedo;
+            if (string.IsNullOrEmpty(rel) || rel[0] == '#') { _lensMask[id] = null; return null; }
+            var built = EmissionMaskFrom(rel, id.ToString());
+            _lensMask[id] = built as ImageTexture;
+            return built;
+        }
+
+        static readonly Dictionary<string, ImageTexture> _maskByPath = new();
+
+        /// <summary>The same lens-mask derivation for anything that is not a garment -- the handheld flashlight is
+        /// a MELEE item and has no row in this table, but its albedo has exactly the same shape: a body colour and
+        /// a bulb. Keyed by path so the two callers share one cache.</summary>
+        public static Texture2D EmissionMaskFrom(string resRelPath, string label = null)
+        {
+            if (string.IsNullOrEmpty(resRelPath)) return null;
+            if (_maskByPath.TryGetValue(resRelPath, out var hit)) return hit;
+            string p = ProjectSettings.GlobalizePath("res://content/" + resRelPath);
+            var img = System.IO.File.Exists(p) ? ContentProvider.LoadImage(p) : null;
+            if (img == null || img.IsEmpty()) { _maskByPath[resRelPath] = null; return null; }
+            int w = img.GetWidth(), h = img.GetHeight();
+            float best = -1f; int bx = 0, by = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var c = img.GetPixel(x, y);
+                    float lum = c.R * 0.299f + c.G * 0.587f + c.B * 0.114f;   // perceptual, so a green tube beats a mid grey
+                    if (lum > best) { best = lum; bx = x; by = y; }
+                }
+            // ⚠ KEEP EVERY PIXEL OF THE LENS, not just the brightest one. These three albedos are 2x2 palettes
+            // where the lens is a single texel, so "black out all but the brightest pixel" looked right -- and it
+            // is wrong the moment a texture is bigger than its palette. The handheld flashlight's albedo is
+            // 128x128 with a 784-pixel bulb (plus a 28-pixel near-twin one unit off, from the rip), which that
+            // version would have reduced to one lit texel.
+            //
+            // So match by COLOUR against the brightest one, with enough tolerance to hold a rip's near-duplicates
+            // together and nowhere near enough to reach the housing greys -- the gap here is (247,224,148) versus
+            // (73,73,73), which is not a close call.
+            var lens = img.GetPixel(bx, by);
+            var mask = Image.CreateEmpty(w, h, false, Image.Format.Rgba8);
+            mask.Fill(new Color(0f, 0f, 0f, 1f));
+            int lit = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var c = img.GetPixel(x, y);
+                    float dr = c.R - lens.R, dg = c.G - lens.G, db = c.B - lens.B;
+                    if (dr * dr + dg * dg + db * db <= 0.02f * 0.02f * 3f) { mask.SetPixel(x, y, c); lit++; }
+                }
+            var tex = ImageTexture.CreateFromImage(mask);
+            Log.Print($"[lens] {label ?? resRelPath}: {lit} of {w * h} texels lit, from {lens}");
+            _maskByPath[resRelPath] = tex;
+            return tex;
+        }
+
         public static Texture2D LoadTex(string rel)
         {
             if (string.IsNullOrEmpty(rel)) return null;

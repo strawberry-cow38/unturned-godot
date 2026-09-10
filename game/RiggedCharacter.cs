@@ -133,7 +133,7 @@ namespace UnturnedGodot
             Face = face;
         }
 
-        void AttachGear(ref BoneAttachment3D slot, string boneName, Mesh mesh, Texture2D albedo, Vector3 offset, string name)
+        void AttachGear(ref BoneAttachment3D slot, string boneName, Mesh mesh, Texture2D albedo, Vector3 offset, string name, Texture2D emission = null)
         {
             DetachGear(ref slot);                        // source Destroy(model.gameObject) before re-instantiate
             if (Skeleton == null || mesh == null) return;
@@ -145,6 +145,16 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,            // gear .obj is Z-flipped like every ripped static mesh -> double-sided (repo convention: guns/vehicles/character), never inside-out
             };
             if (albedo != null) mat.AlbedoTexture = albedo;
+            // A lens that glows only while the device is ON. Bound here but left at ZERO energy: the material
+            // exists from the moment it is worn, and the toggle is a single float write rather than a rebuild --
+            // so switching night vision on cannot cost a mesh reload in the middle of it going dark.
+            if (emission != null)
+            {
+                mat.EmissionEnabled = true;
+                mat.EmissionTexture = emission;
+                mat.Emission = new Color(1f, 1f, 1f);
+                mat.EmissionEnergyMultiplier = 0f;
+            }
             var mi = new MeshInstance3D { Name = name, Mesh = mesh, MaterialOverride = mat, VisibilityRangeEnd = 95f };
             att.AddChild(mi);
             mi.Position = offset;                        // captured Model_0 bone-local offset (clothing_content.tsv attach_off)
@@ -159,7 +169,23 @@ namespace UnturnedGodot
 
         public void AttachHat(Mesh mesh, Texture2D albedo, Vector3 offset = default)      => AttachGear(ref _hatAtt, "Skull", mesh, albedo, offset, "Hat");
         public void AttachMask(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _maskAtt, "Skull", mesh, albedo, offset, "Mask");
-        public void AttachGlasses(Mesh mesh, Texture2D albedo, Vector3 offset = default)  => AttachGear(ref _glassesAtt, "Skull", mesh, albedo, offset, "Glasses");
+        public void AttachGlasses(Mesh mesh, Texture2D albedo, Vector3 offset = default, Texture2D emission = null) => AttachGear(ref _glassesAtt, "Skull", mesh, albedo, offset, "Glasses", emission);
+
+        /// <summary>Light the worn glasses' lens, or put it out. A no-op on gear with no emission bound, so it is
+        /// safe to call every frame from whatever owns the device's on/off state.</summary>
+        public void SetGlassesGlow(bool on, float energy = 3.2f)
+        {
+            var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
+                ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;
+            if (mi?.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled)
+                m.EmissionEnergyMultiplier = on ? energy : 0f;
+        }
+        public float DebugGlassesGlow()
+        {
+            var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
+                ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;
+            return mi?.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled ? m.EmissionEnergyMultiplier : -1f;
+        }
         public void AttachVest(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _vestAtt, "Spine", mesh, albedo, offset, "Vest");
         public void AttachBackpack(Mesh mesh, Texture2D albedo, Vector3 offset = default) => AttachGear(ref _backpackAtt, "Spine", mesh, albedo, offset, "Backpack");
 
@@ -433,7 +459,26 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
             string ap = ProjectSettings.GlobalizePath($"res://content/{meleeName}_albedo.png");
             if (System.IO.File.Exists(ap)) { var img = ContentProvider.LoadImage(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            // A torch's BULB glows while it is switched on (strawberry 2026-09-10). Bound at zero energy like the
+            // worn lenses, so the toggle is a float write; SetMeleeGlow drives it off HeldLightOn. Derived from the
+            // albedo's brightest colour -- the flashlight's is a 128x128 with a 784-texel cream bulb on a grey body.
+            var lensMask = ClothingContent.EmissionMaskFrom($"{meleeName}_albedo.png", meleeName);
+            if (lensMask != null)
+            {
+                mat.EmissionEnabled = true;
+                mat.EmissionTexture = lensMask;
+                mat.Emission = new Color(1f, 1f, 1f);
+                mat.EmissionEnergyMultiplier = 0f;
+            }
             att.AddChild(new MeshInstance3D { Name = "MeleeMesh", Mesh = mesh, MaterialOverride = mat, RotationDegrees = new Vector3(0f, 0f, 90f) });   // held-model localRotation = Euler(0,0,90), same as the viewmodel's melee
+        }
+
+        /// <summary>Light the held torch's bulb, or put it out. No-op on a melee weapon with no emission bound.</summary>
+        public void SetMeleeGlow(bool on, float energy = 3.6f)
+        {
+            var mi = Skeleton?.GetNodeOrNull("MeleeAttach")?.GetNodeOrNull<MeshInstance3D>("MeleeMesh");
+            if (mi?.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled)
+                m.EmissionEnergyMultiplier = on ? energy : 0f;
         }
         public void DetachMelee() => Skeleton?.GetNodeOrNull("MeleeAttach")?.QueueFree();
 
