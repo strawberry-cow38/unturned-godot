@@ -6929,6 +6929,7 @@ namespace UnturnedGodot
                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // Phase 8 world-state syncs (§3.7) + rubble
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
+                                      Deadzones = res.Deadzones,                            // the listen-server owns the dose (see MpLoopback.Deadzones) -- without this radiation is inert on --peidrive
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 
