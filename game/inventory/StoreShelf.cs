@@ -429,13 +429,38 @@ namespace UnturnedGodot
 
         /// <summary>Is this appliance alight? Drives the lid and the smoke; server-derived, arriving on the
         /// container entity (v38) so it is right for every player looking at it, not just its opener.</summary>
+        // A LIT APPLIANCE IS A HEAT SOURCE. Hung here rather than on the deployable because this is the one
+        // place that already knows, on every screen, whether the thing is burning: the bit is replicated per
+        // container (ContainerReplication v38, "it is LIT -> lid up + smoke, on every screen") and lands
+        // exactly here. I first went looking on the deployable node and concluded the state was not
+        // replicated at all -- it is, just on the container rather than the deployable.
+        //
+        // Numbers are a placeholder for tuning, not a measurement: retail has no ambient temperature to
+        // extract one from. 25 C at the centre over 5 m, which makes a campfire worth walking to in a
+        // blizzard without making it a room heater. SelfRadius covers a fire pit sunk into its own body.
+        const float CookerHeatC = 25f, CookerHeatRadius = 5f;
+        ThermalSource _heat;
+
         public void SetCookerOn(bool on)
         {
             if (_cookerOn == on) return;
             _cookerOn = on;
             if (_smoke != null && IsInstanceValid(_smoke)) _smoke.Emitting = on;
+            // Created on first LIGHT rather than on ready: most StoreShelves are shelves and lockers that
+            // never cook, and a world full of inert thermal sources is a group walk per player per probe for
+            // nothing.
+            if (on && (_heat == null || !IsInstanceValid(_heat)))
+            {
+                _heat = ThermalSource.AttachTo(this, CookerHeatC, CookerHeatRadius);
+                _heat.SelfRadius = 0.9f;
+            }
+            if (_heat != null && IsInstanceValid(_heat)) _heat.Active = on;
             ApplyLeaves();
         }
+
+        /// <summary>Test seam: the thermal source only exists once the appliance has been lit at least once.</summary>
+        public bool DebugHasHeatSource => _heat != null && IsInstanceValid(_heat);
+        public bool DebugHeatActive => _heat != null && IsInstanceValid(_heat) && _heat.Active;
         public bool DebugCookerOn => _cookerOn;
         public bool DebugSmoking => _smoke != null && IsInstanceValid(_smoke) && _smoke.Emitting;
 
