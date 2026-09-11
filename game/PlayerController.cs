@@ -2214,10 +2214,33 @@ namespace UnturnedGodot
         /// to arrest itself out of somebody else's handcuffs.</summary>
         public bool RequestGesture(EPlayerGesture want)
         {
+            // Refuse LOCALLY first, so the player gets a reason rather than silence. This is not the authority --
+            // the server runs the identical GestureRules test on its own copy of the stance and the hands -- it
+            // is the half that can answer instantly and say why.
             string why = GestureRules.RefusalFor(want, _gesture, Stance, HasSomethingHeld);
             if (why != null) { HUD.Alert(why); Log.Print($"[gesture] {want} refused: {why}"); return false; }
+            // MP: ASK, and ask FIRST -- the same shape the respray takes. No optimistic local play: the answer
+            // comes back on our own combat entity a beat later, and a gesture that starts and then snaps back
+            // because the server disagreed is worse than one that starts a beat late. SURRENDER in particular
+            // must never be shown locally as ON while the server thinks it is OFF -- that is a player standing
+            // with their hands up believing they cannot be shot.
+            if (NetRequestGesture != null) { NetRequestGesture((byte)want); Log.Print($"[gesture] asked the server for {want}"); return true; }
             ApplyGesture(want);
             return true;
+        }
+
+        /// <summary>The server's answer, arriving on our own combat entity. Applied with ForceGesture rather
+        /// than re-tested: it has already passed the rules on the authority, and re-running the client's copy
+        /// here would let a local disagreement veto the server.</summary>
+        public void ApplyNetGesture(EPlayerGesture g)
+        {
+            if (_gesture == g) return;
+            // The entity carries the STATE, so what arrives is where we should BE, not a transition to make.
+            // Clearing first keeps a stale looping clip from surviving a change the server made for us -- the
+            // captor's cuffs land as ARREST_START over whatever we were doing.
+            if (g == EPlayerGesture.NONE) { _gesture = EPlayerGesture.NONE; StopGestureAnim(); return; }
+            _gesture = EPlayerGesture.NONE;
+            ApplyGesture(g);
         }
 
         /// <summary>A gesture applied BY something with the authority to: the item manager's PICKUP, a captor's
@@ -4916,6 +4939,7 @@ namespace UnturnedGodot
         public System.Action<uint> NetToggleObjectDoor;              // prop-door assembly NetId -> Client.SendToggleObjectDoor
         public System.Action<int> NetForageResource;                 // resource INDEX -> Client.SendForageResource (v40)
         public System.Action<uint, ushort> NetPaintVehicle;           // (vehicle NetId, spraypaint item id) -> Client.SendPaintVehicle (v41)
+        public System.Action<byte> NetRequestGesture;                 // (EPlayerGesture) -> Client.SendRequestGesture (v42); null in SP
 
         VehiclePuppet NearestPuppet()
         {

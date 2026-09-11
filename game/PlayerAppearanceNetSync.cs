@@ -54,6 +54,16 @@ namespace UnturnedGodot
                     changed |= SetU(ref ce.HeldSight, AttId(heldGun, "Sight"));
                     changed |= SetU(ref ce.HeldMagazine, AttId(heldGun, "Magazine"));
                     changed |= SetU(ref ce.HeldBarrel, AttId(heldGun, "Barrel"));
+                    // v42: GESTURES. Resolved HERE because this is where the stance and the held item already
+                    // are -- ServerGestures parks the request and this decides it. Only LOOPING gestures reach
+                    // the entity (a one-shot wave latched into a state block would leave the puppet waving
+                    // forever), and the Broadcast filter keeps INVENTORY_START off the wire so nobody watches
+                    // you rummage.
+                    if (ServerGestures.TryTakePending(pid, out var wantGesture))
+                        changed |= SetB(ref ce.Gesture,
+                                        ServerGestures.Resolve(ce.Gesture, wantGesture,
+                                                               (SDG.Unturned.EPlayerStance)mi.Stance,
+                                                               mi.HeldItemId != 0));
                     changed |= SetBool(ref ce.WornLightOn, mi.WornLight);   // their lamps, so other clients can light the lens
                     changed |= SetBool(ref ce.HeldLightOn, mi.HeldLight);
                 }

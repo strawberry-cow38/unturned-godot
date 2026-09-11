@@ -364,7 +364,14 @@ namespace UnturnedGodot
             // health (0..100) into the shell each tick (the AdoptReplicatedSkills analogue; PlayerCombatReplication
             // has no per-echo event either). Adoption is the LAST HP writer so local regen/starve can't move it;
             // the HUD keeps its exact Player.Health read. Runs before the riding branch so HP tracks while seated too.
-            if (Client.CombatState.TryGet(Client.PlayerId, out var vit)) Shell.AdoptReplicatedVitals(vit.Health);
+            if (Client.CombatState.TryGet(Client.PlayerId, out var vit))
+            {
+                Shell.AdoptReplicatedVitals(vit.Health);
+                // v42: the server's answer to whatever gesture we asked for -- including one we did NOT ask for,
+                // which is how a captor's handcuffs arrive. Adopted rather than re-tested: it already passed the
+                // rules on the authority, and re-running our copy here would let a local disagreement veto them.
+                Shell.ApplyNetGesture((SDG.Unturned.EPlayerGesture)vit.Gesture);
+            }
             // B5 (SP/MP-unify): the owner-only fine vitals (food/water/stamina/infection) are server-authoritative
             // too -- mirror the SystemVitals(13) owner block into the shell each tick (the AdoptReplicatedVitals
             // analogue), so the HUD bars read server truth and the local PlayerVitalsSim.Step fine mutation is skipped.
@@ -609,6 +616,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
             shell.NetForageResource = index => Client.SendForageResource(index);   // v40: pick a berry bush / mushroom
             shell.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41: respray a vehicle
+            shell.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42: ASK for a gesture; the answer arrives on our own combat entity
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);

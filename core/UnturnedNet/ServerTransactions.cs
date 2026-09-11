@@ -393,6 +393,13 @@ namespace UnturnedGodot.Net
                     Cooking.SetOn(cmd.NetId, cmd.On);
                 });
 
+            // v42: a gesture REQUEST. Parked rather than decided -- the admission test needs the asker's stance
+            // and whether their hands are full, and those arrive on the input packet the appearance publisher
+            // holds. An out-of-range byte is dropped by the cast landing on a table row that is not
+            // PlayerRequestable, so a forged value is refused by the same rule a legitimate one is.
+            commands.Register<RequestGestureCommand>(ReplicationIds.CommandRequestGesture, RequestGestureCommand.TryRead,
+                (sender, cmd) => ServerGestures.Request(sender, (SDG.Unturned.EPlayerGesture)cmd.Gesture));
+
             commands.Register<SetAutoDrinkCommand>(ReplicationIds.CommandSetAutoDrink, SetAutoDrinkCommand.TryRead,
                 (sender, cmd) =>
                 {

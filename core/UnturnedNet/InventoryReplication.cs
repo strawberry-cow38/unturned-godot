@@ -285,6 +285,22 @@ namespace UnturnedGodot.Net
     /// cooking"). Addressed by the appliance's crate NetId, which is what the player already has open --
     /// and the server checks it IS a registered cooker, so a forged id for an arbitrary crate does nothing
     /// rather than conjuring an oven.</summary>
+    /// <summary>v42: "I would like to be doing this gesture." One byte -- an EPlayerGesture -- and nothing
+    /// else: the server already knows who asked, where they are standing and what is in their hands, and
+    /// anything the client could add here is something it could lie about.</summary>
+    public struct RequestGestureCommand
+    {
+        public byte Gesture;
+        public void Write(NetPakWriter w) { w.WriteUInt8(Gesture); }
+        public static bool TryRead(NetPakReader r, out RequestGestureCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte g)) return false;
+            cmd = new RequestGestureCommand { Gesture = g };
+            return true;
+        }
+    }
+
     public struct SetCookerOnCommand
     {
         public uint NetId;

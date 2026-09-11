@@ -54,6 +54,7 @@ namespace UnturnedGodot
             public float HullHeight = -1f;               // last height the capsule was built at
             public bool HullSeated;                      // last seated state pushed to Disabled
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
+            public byte Gesture;                         // v42: the looping gesture this puppet is showing (0 = none), so the clip is played on CHANGE and not every tick
             public bool WornLightOn, HeldLightOn;        // their nightvision/headlamp and torch, off the appearance block
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
             public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
@@ -321,6 +322,25 @@ namespace UnturnedGodot
             av.Clothing.Refresh();
             ApplyHeld(av, ce.HeldId, ce.HeldSight, ce.HeldMagazine, ce.HeldBarrel);
             av.WornLightOn = ce.WornLightOn; av.HeldLightOn = ce.HeldLightOn;
+            ApplyGesture(av, ce.Gesture);
+        }
+
+        /// <summary>v42: the looping gesture on a puppet -- hands up, cuffed, sat down. Played on CHANGE, because
+        /// these clips loop and re-playing one every tick would restart it every tick.
+        ///
+        /// ⚠ The teardown only fires if WE put an overlay up. StopGesture drops the whole upper-body layer, which
+        /// is also where a puppet's gun pose lives -- so calling it on every change to NONE would disarm anyone
+        /// who was simply not gesturing. Checking the PREVIOUS gesture had a clip keeps it to overlays this put
+        /// there. (A puppet cannot be holding a gun AND gesturing anyway: the server refuses a gesture with
+        /// something in hand. This guards the ordinary case, not that one.)</summary>
+        static void ApplyGesture(Av av, byte gesture)
+        {
+            if (av.Gesture == gesture || av.Body == null || !IsInstanceValid(av.Body)) return;
+            var g = (SDG.Unturned.EPlayerGesture)gesture;
+            string clip = SDG.Unturned.GestureRules.ClipOf(g);
+            if (clip != null) av.Body.PlayGesture(clip, SDG.Unturned.GestureRules.Loops(g));
+            else if (SDG.Unturned.GestureRules.ClipOf((SDG.Unturned.EPlayerGesture)av.Gesture) != null) av.Body.StopGesture();
+            av.Gesture = gesture;
         }
 
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
@@ -379,6 +399,10 @@ namespace UnturnedGodot
             M(ce.WornShirt); M(ce.WornPants); M(ce.WornHat); M(ce.WornVest);
             M(ce.WornMask); M(ce.WornGlasses); M(ce.WornBackpack); M(ce.HeldId);   // v22: a weapon swap re-dresses the hand
             M(ce.HeldSight); M(ce.HeldMagazine); M(ce.HeldBarrel);   // fitting a scope re-dresses it too, and does not change HeldId
+            M(ce.Gesture);   // v42: ...and so does putting your hands up. Dress() is the only thing that reaches
+                             // ApplyGesture, so a gesture left OUT of this signature would replicate onto the
+                             // entity and then never reach anyone's screen -- exactly the failure the
+                             // attachment ids had before they were added on the line above.
             return h;
         }
     }

@@ -477,6 +477,19 @@ namespace UnturnedGodot.Net
             // switch, so every other player's nightvision and torch stayed dark no matter what they were doing.
             public bool WornLightOn, HeldLightOn;
             public byte Stance;     // EPlayerStance (stand/crouch/prone/...)
+            // THE GESTURE THEY ARE HOLDING (v42). EPlayerGesture, and only the LOOPING ones -- hands up, cuffed,
+            // sat down. A one-shot wave is an event and does not belong in a state block: latching it here would
+            // leave the puppet waving forever, and clearing it would race the next snapshot.
+            //
+            // It rides the ENTITY rather than an RPC because SURRENDER has to survive a join: you cannot cuff
+            // someone who is not surrendering, so a player who walks up to a hostage AFTER they put their hands
+            // up must see the hands. An RPC-only broadcast reaches whoever was connected at the time and nobody
+            // else, which is the same class of bug as a car showing its spawn colour to a late joiner.
+            //
+            // INVENTORY_START is a looping gesture that must NOT be published -- it is the local "you are in your
+            // bag" notification. The publisher filters on GestureRules.Broadcast rather than listing exceptions
+            // here, so the wire cannot disagree with the table about who sees what.
+            public byte Gesture;
             public long LastChangedTick;
 
             // ---- server-only (never on the wire; replicas keep defaults) ----
@@ -589,7 +602,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, e.Deaths);
                 h = NetHash.MixUInt32(h, e.WornHat); h = NetHash.MixUInt32(h, e.WornGlasses); h = NetHash.MixUInt32(h, e.WornMask);
                 h = NetHash.MixUInt32(h, e.WornShirt); h = NetHash.MixUInt32(h, e.WornVest); h = NetHash.MixUInt32(h, e.WornBackpack); h = NetHash.MixUInt32(h, e.WornPants);
-                h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance);
+                h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance); h = NetHash.MixByte(h, e.Gesture);
                 h = NetHash.MixUInt32(h, e.HeldSight); h = NetHash.MixUInt32(h, e.HeldMagazine); h = NetHash.MixUInt32(h, e.HeldBarrel);
                 h = NetHash.MixByte(h, (byte)((e.WornLightOn ? 1 : 0) | (e.HeldLightOn ? 2 : 0)));
             }
@@ -605,7 +618,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16(e.Deaths);
             w.WriteUInt16(e.WornHat); w.WriteUInt16(e.WornGlasses); w.WriteUInt16(e.WornMask);
             w.WriteUInt16(e.WornShirt); w.WriteUInt16(e.WornVest); w.WriteUInt16(e.WornBackpack); w.WriteUInt16(e.WornPants);
-            w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance);
+            w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance); w.WriteUInt8(e.Gesture);
             w.WriteUInt16(e.HeldSight); w.WriteUInt16(e.HeldMagazine); w.WriteUInt16(e.HeldBarrel);
             w.WriteBit(e.WornLightOn); w.WriteBit(e.HeldLightOn);
         }
@@ -620,12 +633,12 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort deaths)) return false;
             if (!r.ReadUInt16(out ushort wHat) || !r.ReadUInt16(out ushort wGlasses) || !r.ReadUInt16(out ushort wMask)) return false;
             if (!r.ReadUInt16(out ushort wShirt) || !r.ReadUInt16(out ushort wVest) || !r.ReadUInt16(out ushort wBackpack) || !r.ReadUInt16(out ushort wPants)) return false;
-            if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance)) return false;
+            if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance) || !r.ReadUInt8(out byte gesture)) return false;
             if (!r.ReadUInt16(out ushort aSight) || !r.ReadUInt16(out ushort aMag) || !r.ReadUInt16(out ushort aBarrel)) return false;
             if (!r.ReadBit(out bool wLight) || !r.ReadBit(out bool hLight)) return false;
             e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths,
                 WornHat = wHat, WornGlasses = wGlasses, WornMask = wMask, WornShirt = wShirt, WornVest = wVest,
-                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance,
+                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance, Gesture = gesture,
                 HeldSight = aSight, HeldMagazine = aMag, HeldBarrel = aBarrel,
                 WornLightOn = wLight, HeldLightOn = hLight };
             return true;

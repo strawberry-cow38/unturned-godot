@@ -1122,6 +1122,11 @@ namespace UnturnedGodot.Net
                 AttachSeeded = attachSeeded,
             }.Write);
 
+        /// <summary>Ask the server to put us in a gesture (v42). Fire-and-forget: the answer comes back as the
+        /// Gesture field on our own combat entity, like every other piece of replicated appearance.</summary>
+        public bool SendRequestGesture(byte gesture)
+            => SendCommand(ReplicationIds.CommandRequestGesture, new RequestGestureCommand { Gesture = gesture }.Write);
+
         public bool SendSetAutoDrink(byte page, byte x, byte y, ushort id, bool autoDrink)
             => SendCommand(ReplicationIds.CommandSetAutoDrink, new SetAutoDrinkCommand { Page = page, X = x, Y = y, Id = id, AutoDrink = autoDrink }.Write);
 

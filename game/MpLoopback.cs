@@ -320,6 +320,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // only route from pressing F on a bush to actually getting a berry.
                 Player.NetForageResource = index => Client.SendForageResource(index);
                 Player.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41 respray
+                Player.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42 gestures
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and

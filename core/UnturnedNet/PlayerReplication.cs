@@ -172,6 +172,12 @@ namespace UnturnedGodot.Net
         /// server owns whether that can is in the bag, spends it, and publishes the colour on the vehicle
         /// entity -- a client that could assert the colour could paint without owning a can.</summary>
         public const byte CommandPaintVehicle = 50;
+        /// <summary>v42: ask to enter a gesture. The client ASKS rather than asserts, because SURRENDER is the
+        /// precondition for being handcuffed and ARREST is the state a captor puts you in -- a client that could
+        /// assert its own gesture could make itself uncuffable, or claim NONE and walk out of real handcuffs.
+        /// The server runs the same GestureRules admission test the client showed the player, and what lands on
+        /// everyone's screen is the server's answer.</summary>
+        public const byte CommandRequestGesture = 51;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.

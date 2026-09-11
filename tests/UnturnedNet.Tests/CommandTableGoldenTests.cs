@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 41.
+        // id -> name, as of NetProtocol.Version 42.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -78,6 +78,10 @@ namespace UnturnedNet.Tests
             // colour off the can it spends, because a client that could send a colour could repaint the map
             // without owning a spraypaint.
             [50] = "CommandPaintVehicle",
+
+            // v42: asking to enter a gesture. One byte. Server-validated because SURRENDER gates handcuffs and
+            // ARREST is applied BY a captor -- a client that could assert either would be uncuffable.
+            [51] = "CommandRequestGesture",
         };
 
         static Dictionary<byte, string> Actual() =>
