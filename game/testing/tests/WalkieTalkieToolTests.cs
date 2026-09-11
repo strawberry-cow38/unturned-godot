@@ -132,6 +132,67 @@ namespace UnturnedGodot.Testing
             T.Check($"...un-multiplied by a leftover tint ({mat?.AlbedoColor})",
                     mat != null && mat.AlbedoColor.IsEqualApprox(Colors.White));
 
+            // ---- LMB power toggle (strawberry: "lmb toggles it on/off. plays static") ----
+            T.Check("a fresh set is off", !p.WalkieOn);
+            p.ToggleWalkie();
+            T.Check("LMB turns it on", p.WalkieOn);
+            p.ToggleWalkie();
+            T.Check("...and off again", !p.WalkieOn);
+            p.ToggleWalkie();
+
+            // THE STATIC ITSELF, not just the flag. A loop whose LoopEnd is 0 starts and goes silent, which is
+            // indistinguishable from never playing -- so assert the player is actually running.
+            var stat = p.GetNodeOrNull<AudioStreamPlayer>(PlayerController.WalkieStaticNodeName);
+            T.Check("the walkie's OWN static player exists", stat != null);
+            T.Check("the static is playing while it is on and in hand", p.WalkieStaticPlaying);
+            if (stat?.Stream is AudioStreamWav sw)
+            {
+                T.Check($"...off a loop with a real LoopEnd ({sw.LoopEnd} samples)",
+                        sw.LoopMode == AudioStreamWav.LoopModeEnum.Forward && sw.LoopEnd > 1000);
+            }
+            p.ToggleWalkie();
+            yield return Ticks(2);
+            T.Check("switching it off stops the static", !p.WalkieStaticPlaying);
+            p.ToggleWalkie();
+
+            // ---- R panel: ONE value, TWO views ----
+            p.ToggleWalkiePanel();
+            T.Check("R opens the frequency panel", p.WalkiePanelOpen);
+            var panel = Find<WalkiePanel>(p);
+            T.Check("the panel exists", panel != null);
+            if (panel != null)
+            {
+                var numBox = Find<SpinBox>(panel);
+                var slider = Find<HSlider>(panel);
+                T.Check("it has both a number box and a slider", numBox != null && slider != null);
+
+                // ⚠ THE TRAP, asserted in BOTH directions. Driving one widget and not the other leaves the
+                // one you forgot stale, which reads as "my input didn't apply" rather than as a UI bug.
+                if (numBox != null && slider != null)
+                {
+                    numBox.Value = 500.0;                     // type into the box
+                    T.Check($"typing in the box moves the slider ({slider.Value})", Mathf.Abs(slider.Value - 500_000) < 200);
+                    T.Check($"...and the value follows ({WalkiePanel.Format(p.WalkieFrequencyKHz)})",
+                            Mathf.Abs(p.WalkieFrequencyKHz - 500_000) < 200);
+
+                    slider.Value = 700_000;                // drag the slider
+                    T.Check($"dragging the slider moves the box ({numBox.Value})", Mathf.Abs(numBox.Value - 700.0) < 0.2);
+                    T.Check($"...and the value follows ({WalkiePanel.Format(p.WalkieFrequencyKHz)})",
+                            Mathf.Abs(p.WalkieFrequencyKHz - 700_000) < 200);
+                }
+
+                // Out-of-range input is clamped and snapped rather than accepted, so two radios cannot sit
+                // fractionally apart and silently fail to match.
+                panel.Frequency = 10;
+                T.Check($"below-range clamps to the floor ({WalkiePanel.Format(panel.Frequency)})", panel.Frequency == WalkiePanel.MinKHz);
+                panel.Frequency = 99_999_999;
+                T.Check($"above-range clamps to the ceiling ({WalkiePanel.Format(panel.Frequency)})", panel.Frequency == WalkiePanel.MaxKHz);
+                panel.Frequency = WalkiePanel.MinKHz + 60;   // less than half a step in
+                T.Check($"off-step snaps to the grid ({panel.Frequency})", panel.Frequency == WalkiePanel.MinKHz);
+            }
+            p.ToggleWalkiePanel();
+            T.Check("R closes it again", !p.WalkiePanelOpen);
+
             if (capture != null && vm != null && held != null)
             {
                 yield return DrawFrames();   // the viewmodel needs frames before it has drawn anything at all

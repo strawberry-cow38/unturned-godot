@@ -35,6 +35,10 @@ namespace UnturnedGodot
 
         public static bool Enabled = true;
 
+        /// <summary>Did the click clips actually load? A counter with null clips is SILENT and looks exactly
+        /// like a correctly-quiet one at zero dose, so this is the only way a test can tell the difference.</summary>
+        public bool ClipsLoaded => _clips != null && _clips.Length > 0 && _clips[0] != null && _clips[1] != null;
+
         readonly AudioStreamPlayer[] _voices = new AudioStreamPlayer[4];   // several, so fast rates overlap instead of cutting each other off
         AudioStream[] _clips;
         int _voice;
@@ -46,11 +50,19 @@ namespace UnturnedGodot
             Current = this;
             AddToGroup("geiger");
             _rng.Randomize();
+            // ⚠ SAME BUG AS THE WALKIE'S STATIC, shipped earlier today and silent by construction: these were
+            // GD.Load, which returns NULL for a .wav with no .import sidecar. The counter ran its whole
+            // Poisson schedule, called Play() on a null stream every time, and made no sound -- and nothing
+            // failed, because a geiger that is correctly silent at zero dose looks identical to one that can
+            // never make a sound at all. Found only when the walkie's static did the same thing and I had a
+            // test watching the AudioStreamPlayer instead of the flag.
             _clips = new[]
             {
-                GD.Load<AudioStream>("res://content/audio/geiger/geiger_click_1.wav"),
-                GD.Load<AudioStream>("res://content/audio/geiger/geiger_click_2.wav"),
+                (AudioStream)PlayerController.LoadWavOneShot("res://content/audio/geiger/geiger_click_1.wav"),
+                (AudioStream)PlayerController.LoadWavOneShot("res://content/audio/geiger/geiger_click_2.wav"),
             };
+            if (_clips[0] == null || _clips[1] == null)
+                Log.Err("[geiger] click clips failed to load -- the counter will be silent");
             for (int i = 0; i < _voices.Length; i++)
             {
                 _voices[i] = new AudioStreamPlayer { Bus = "Master", VolumeDb = -6f };

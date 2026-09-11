@@ -3590,6 +3590,71 @@ namespace UnturnedGodot
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
         public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
         public bool HoldingWalkie => _viewmodel != null && _viewmodel.IsWalkieViewmodel;   // Walkie-talkie (1445) in hand -> LMB toggles it on/off, R opens the frequency panel
+
+        // --- WALKIE-TALKIE (strawberry 2026-09-11: "lmb toggles it on/off. plays static. pressing r opens a
+        // menu to set a frequency") ---
+        //
+        // The set STAYS ON when you put it away. A radio you have to switch on every time you draw it is a
+        // radio nobody leaves on, and being able to forget it is running is the point of a squelch you can
+        // hear. Only the SOUND follows what is in your hands.
+        bool _walkieOn;
+        int _walkieKHz = WalkiePanel.DefaultKHz;
+        AudioStreamPlayer _walkieStatic;
+        WalkiePanel _walkiePanel;
+
+        public bool WalkieOn => _walkieOn;
+        public int WalkieFrequencyKHz => _walkieKHz;
+        public bool WalkiePanelOpen => _walkiePanel != null && _walkiePanel.Visible;
+
+        /// <summary>The static player carries a name so a test can find THIS node rather than whichever
+        /// AudioStreamPlayer happens to be first under the player. Mine grabbed a different one and reported
+        /// "the static is playing" off a sound that had nothing to do with the radio -- a green check on the
+        /// wrong instrument.</summary>
+        public const string WalkieStaticNodeName = "WalkieStatic";
+        public bool WalkieStaticPlaying => _walkieStatic != null && _walkieStatic.Playing;
+
+        /// <summary>LMB: power toggle. Public so a test can drive it without synthesising a click.</summary>
+        public void ToggleWalkie()
+        {
+            _walkieOn = !_walkieOn;
+            UpdateWalkieAudio();
+            Log.Print($"[walkie] {(_walkieOn ? "on" : "off")} @ {WalkiePanel.Format(_walkieKHz)}");
+        }
+
+        /// <summary>The static plays only while the set is ON **and** actually in your hands.</summary>
+        void UpdateWalkieAudio()
+        {
+            bool want = _walkieOn && HoldingWalkie && !_dead;
+            if (want)
+            {
+                if (_walkieStatic == null)
+                {
+                    // ⚠ NOT GD.Load. Godot's resource loader returns NULL for a .wav with no .import
+                    // sidecar, and nothing in content/audio has one -- these files are read off disk at
+                    // runtime. GD.Load handed back null, the player got a null Stream, and Play() did
+                    // nothing at all: no error, no warning, just silence. LoadWavOneShot is the loader the
+                    // rest of the codebase already uses for exactly this, and it takes the loop flag.
+                    var wav = LoadWavOneShot("res://content/audio/radio/static_loop.wav", loop: true);
+                    _walkieStatic = new AudioStreamPlayer { Name = WalkieStaticNodeName, Bus = "Master", VolumeDb = -14f, Stream = wav };
+                    AddChild(_walkieStatic);
+                }
+                if (!_walkieStatic.Playing) _walkieStatic.Play();
+            }
+            else if (_walkieStatic != null && _walkieStatic.Playing) _walkieStatic.Stop();
+        }
+
+        /// <summary>R: the frequency panel. One value, two views -- see WalkiePanel.</summary>
+        public void ToggleWalkiePanel()
+        {
+            if (_walkiePanel == null)
+            {
+                _walkiePanel = new WalkiePanel { Visible = false };
+                AddChild(_walkiePanel);
+                _walkiePanel.Frequency = _walkieKHz;
+                _walkiePanel.Changed += f => { _walkieKHz = f; Log.Print($"[walkie] tuned to {WalkiePanel.Format(f)}"); };
+            }
+            _walkiePanel.Toggle();
+        }
         public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
@@ -3812,6 +3877,7 @@ namespace UnturnedGodot
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, HeldToolKind = def.Kind };
+            UpdateWalkieAudio();   // drawing the set resumes its static if it was left on; drawing anything ELSE goes through ClearDeployable below
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[tool] holding the {def.Name}");
@@ -3843,6 +3909,9 @@ namespace UnturnedGodot
         void ClearDeployable()
         {
             ClearFisher();   // every equip-into-hand path funnels through here -> a switch away from the rod also reels in the line
+            // ...and a switch away from the radio silences it. The SET stays on -- only the sound follows your
+            // hands -- so drawing it again picks the static straight back up.
+            CallDeferred(nameof(UpdateWalkieAudio));
             if (_deployable == null && _placer == null) return;
             _deployable = null; _deployItem = null; _placeTimer = 0f;
             _placer?.QueueFree(); _placer = null;
@@ -7319,6 +7388,7 @@ namespace UnturnedGodot
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
                 else if (HoldingDetonatorTool) TryDetonateCharges();    // detonator: LMB plunge -> fire all placed remote charges
+                else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingThrowable) ThrowHeld();                 // holding a grenade/smoke/flare: LMB lobs it (strawberry 2026-09-05)
@@ -7365,7 +7435,8 @@ namespace UnturnedGodot
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (HoldingDeployable && _placer != null) { if (Keybinds.IsDown(@event)) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
+                if (HoldingWalkie) { if (Keybinds.IsDown(@event)) ToggleWalkiePanel(); }   // walkie: R opens/closes the frequency panel (strawberry 2026-09-11)
+                else if (HoldingDeployable && _placer != null) { if (Keybinds.IsDown(@event)) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
                 else if (HasGunOut && CanOpenAmmoPie)   // shotgun / mag gun: quick TAP = reload, HOLD = ammo radial (master)
                 {
                     if (Keybinds.IsDown(@event)) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }

@@ -43,6 +43,15 @@ namespace UnturnedGodot.Testing
             T.Check($"exposure is published to the player ({player.DeadzoneSeconds:0.##} s)", player.DeadzoneSeconds > 0f);
             T.Check("...and InDeadzone reads true, which is what the HUD icon gates on", player.InDeadzone);
 
+            // ⚠ THE GEIGER'S CLIPS, asserted because silence is its correct behaviour at zero dose and
+            // therefore proves nothing. These shipped loaded with GD.Load, which returns null for a .wav with
+            // no .import sidecar -- the counter ran its whole schedule calling Play() on a null stream and
+            // made no sound, indistinguishably from working.
+            var geiger = new GeigerCounter();
+            World.AddChild(geiger);
+            yield return Ticks(2);
+            T.Check("the geiger's click clips actually loaded", geiger.ClipsLoaded);
+
             float ramp = DeadzoneOverlay.ExposureFor(player);
             T.Check($"the overlay ramp is live but not yet full ({ramp:0.###})", ramp > 0f && ramp < 1f);
 
