@@ -965,6 +965,28 @@ namespace UnturnedGodot
             SetGunOverlay(clip, 1f, loop: false);
             return ClipLength(clip);
         }
+        /// <summary>A GESTURE on the 3P body, riding the SAME upper-body overlay as the melee swing and the gun
+        /// pose -- because it is the same shape of thing: an arm action that must not stop the legs. Wave while
+        /// you walk and you keep walking.
+        ///
+        /// Returns the clip's length, or 0 when the rig has no such clip. That zero is the point: a gesture whose
+        /// clip name is wrong would otherwise be indistinguishable from a gesture that simply has no animation,
+        /// and the caller can say so instead of playing nothing and looking broken.</summary>
+        public float PlayGesture(string clip, bool loop)
+        {
+            if (string.IsNullOrEmpty(clip) || ClipLength(clip) <= 0f) return 0f;
+            if (!_gunLayer) EnableGunLayer("Gun_Aim");
+            if (_gunAp != null && _gunAp.CurrentAnimation == clip) _gunAp.Stop();   // re-doing the same gesture restarts it rather than being ignored (the melee-swing rule)
+            SetGunOverlay(clip, 1f, loop);
+            return ClipLength(clip);
+        }
+
+        /// <summary>End a gesture: hand the whole body back to locomotion. Safe to call with nothing playing.
+        /// ⚠ Tears the overlay down wholesale, which is right ONLY because a gesture requires empty hands
+        /// (GestureRules refuses one while anything is held), so there is never a gun pose underneath it to
+        /// lose. If that rule ever softens, this has to restore the gun layer instead of dropping it.</summary>
+        public void StopGesture() { if (_gunLayer) DisableGunLayer(); }
+
         public string GunOverlayClip => BaseClip(_gunAp?.CurrentAnimation ?? "");
         /// <summary>The looping locomotion/seated clip currently held (test seam).</summary>
         public string CurrentLoopClip => _loco ?? "";

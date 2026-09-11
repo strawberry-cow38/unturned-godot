@@ -2191,6 +2191,77 @@ namespace UnturnedGodot
         /// viewmodel-derived tools, so pressing 1 with a grenade or the wire tool out was a no-op; `Unarmed`
         /// misses _heldItem and throwables. Kept as the superset and cross-referenced, because a list of
         /// everything-you-can-hold maintained twice is a list that is wrong once.</summary>
+        // ---- GESTURES (retail EPlayerGesture; rules + table in core/UnturnedSim/GestureRules.cs) -----------
+        //
+        // Master 2026-09-11: "add gesture system". It exists because SURRENDER is load-bearing, not because
+        // waving is: UseableArrestStart refuses to cuff anyone who is not already in SURRENDER_START, and a
+        // retail sentry holds fire on someone in it. Handcuffs without this would be "aim at a player, click,
+        // they are cuffed", which is a griefing tool rather than the mechanic.
+        //
+        // The admission rules live in core so the server can run the SAME test rather than a lookalike; this
+        // half owns the state and the animation.
+        EPlayerGesture _gesture = EPlayerGesture.NONE;
+        float _gestureOneShotT;   // time left on a one-shot, after which the body goes back to locomotion
+
+        public EPlayerGesture Gesture => _gesture;
+        /// <summary>Hands up. Read by the arrest path (you may only cuff someone in this) and, once sentries
+        /// land, by their fire gate (InteractableSentry.cs:433 holds fire on a surrendering player).</summary>
+        public bool IsSurrendering => _gesture == EPlayerGesture.SURRENDER_START;
+        public bool IsArrested => _gesture == EPlayerGesture.ARREST_START;
+
+        /// <summary>A gesture the PLAYER asked for. Refused -- with the reason on screen -- when the rules say
+        /// no, which is the whitelist that stops a client asking to be PICKUP-ing or, more to the point, asking
+        /// to arrest itself out of somebody else's handcuffs.</summary>
+        public bool RequestGesture(EPlayerGesture want)
+        {
+            string why = GestureRules.RefusalFor(want, _gesture, Stance, HasSomethingHeld);
+            if (why != null) { HUD.Alert(why); Log.Print($"[gesture] {want} refused: {why}"); return false; }
+            ApplyGesture(want);
+            return true;
+        }
+
+        /// <summary>A gesture applied BY something with the authority to: the item manager's PICKUP, a captor's
+        /// cuffs. Deliberately skips the request whitelist -- that list exists to bound what a CLIENT may ask
+        /// for, and nothing here is a client asking.</summary>
+        public void ForceGesture(EPlayerGesture g) => ApplyGesture(g);
+
+        void ApplyGesture(EPlayerGesture g)
+        {
+            var before = _gesture;
+            _gesture = GestureRules.Apply(_gesture, g);
+            string clip = GestureRules.ClipOf(g);
+            if (clip == null)
+            {
+                // No clip is a real answer for some of these: a STOP ends the state, and T_POSE is the bind
+                // pose you get by playing nothing. Either way the overlay comes off.
+                if (_gesture == EPlayerGesture.NONE || !GestureRules.Loops(_gesture)) StopGestureAnim();
+                Log.Print($"[gesture] {before} -> {_gesture} ({g}, no clip)");
+                return;
+            }
+            float len = _body != null && IsInstanceValid(_body) ? _body.PlayGesture(clip, GestureRules.Loops(g)) : 0f;
+            _gestureOneShotT = GestureRules.Loops(g) ? 0f : len;
+            // A zero-length answer means the rig has no such clip. Say it rather than standing there doing
+            // nothing: a mis-named clip is otherwise identical to a gesture that works and is invisible.
+            if (len <= 0f && _body != null) Log.Print($"[gesture] {g}: rig has no clip '{clip}' -- nothing will play");
+            else Log.Print($"[gesture] {before} -> {_gesture} ({g}, {clip} {len:0.00}s)");
+        }
+
+        void StopGestureAnim()
+        {
+            _gestureOneShotT = 0f;
+            if (_body != null && IsInstanceValid(_body) && _bodyGunName == null) _body.StopGesture();
+        }
+
+        /// <summary>Ticked from the physics step. A one-shot hands the body back when its clip ends; a LOOPING
+        /// gesture is a state and is not on a timer -- it ends when its STOP arrives, which is the difference
+        /// between waving and having your hands up.</summary>
+        void TickGesture(float dt)
+        {
+            if (_gestureOneShotT <= 0f) return;
+            _gestureOneShotT -= dt;
+            if (_gestureOneShotT <= 0f && !GestureRules.Loops(_gesture)) StopGestureAnim();
+        }
+
         public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null || _heldOptic != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
                                      || _heldThrowable != null
@@ -10189,6 +10260,7 @@ namespace UnturnedGodot
             if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
+            TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends
             if (_paintBusyT > 0f) _paintBusyT = Mathf.Max(0f, _paintBusyT - (float)delta);                                                   // ...and the hand is busy until the clip ends
             if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) Log.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
             if (_throwRevertAtEnd && _throwCd <= 0f) { _throwRevertAtEnd = false; (_revertEquip ?? EquipUnarmed)(); }   // the last one is gone and the follow-through is done
