@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SDG.NetPak.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3fd62150cb9f771ca8a4ed5aa427de274419044e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+045828539171188859d4419bd33ddf65e1b405a1")]
 [assembly: System.Reflection.AssemblyProductAttribute("SDG.NetPak.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SDG.NetPak.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

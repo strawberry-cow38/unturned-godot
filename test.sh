@@ -159,9 +159,22 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   local _stamp="game/.godot/mono/.built_from_sha"
   local _head; _head=$(git rev-parse HEAD 2>/dev/null || echo nogit)
   local _forced=0
-  if [ -f "$_asm" ] && [ "$(cat "$_stamp" 2>/dev/null)" != "$_head" ]; then
+  # ⚠ THE WIPE MUST COVER core/ AND tests/, NOT game/. The first version of this guard wiped only game/*,
+  # which is the directory I was thinking about and NOT the one the artifacts are in: `git ls-tree` says
+  # ZERO tracked files under game/bin|obj -- all 287 live under core/SDG.Compat, core/SDG.NetPak,
+  # core/UnturnedDat and the two test projects. So a checkout of an older tree restored those, they survived
+  # a game/-only wipe, dotnet marked those three projects up-to-date and copied their committed dlls forward,
+  # and UnturnedGodot.dll rebuilt cleanly AGAINST A STALE NetPak AND UnturnedDat -- the wire codec and the
+  # .dat parser, quietly weeks old, with the post-build check passing because the GAME dll really was new.
+  # (Caught by cow tools reviewing this guard. Same mistake as the bug the guard exists for: cleaning what
+  # you pictured rather than what is there.)
+  #
+  # No stamp at all also forces: a fresh clone has no .godot/ (gitignored), so keying purely on a sha
+  # mismatch would skip the check on the first build of every bisect step -- exactly when it is needed.
+  if [ ! -f "$_stamp" ] || [ "$(cat "$_stamp" 2>/dev/null)" != "$_head" ]; then
     echo "[BUILD] HEAD is ${_head:0:8}, assembly was built from $(cat "$_stamp" 2>/dev/null || echo 'unknown') -- forcing a cold compile"
-    rm -rf game/bin game/obj game/.godot/mono/temp/bin game/.godot/mono/temp/obj 2>/dev/null
+    rm -rf game/bin game/obj game/.godot/mono/temp/bin game/.godot/mono/temp/obj \
+           core/*/bin core/*/obj tests/*/bin tests/*/obj 2>/dev/null
     _forced=1
   fi
   local _started="$RESULTS/.build_started"; mkdir -p "$RESULTS"; : > "$_started"
@@ -175,11 +188,38 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   # After a FORCED cold compile the dll was deleted, so it must have been rebuilt. If it is not newer than the
   # moment the build started, no compiler ran and something copied it back -- report that as its own failure
   # rather than letting it wear the same red as a compile error (cow tools' ask: name the assembly and the gap).
-  if [ $_forced -eq 1 ] && [ -f "$_asm" ] && [ ! "$_asm" -nt "$_started" ]; then
-    echo "[BUILD] ERROR | cold compile produced no new assembly"
-    echo "         $_asm"
-    echo "         built $(( $(date +%s) - $(stat -c %Y "$_asm") ))s ago, which is BEFORE this build started -- it was copied, not compiled."
-    return 1
+  # EVERY assembly, not just the game's. "UnturnedGodot.dll is fresh" is true while it links a five-week-old
+  # NetPak; the property actually wanted is "nothing in here is stale".
+  # ⚠ WHAT THIS CHECK CAN AND CANNOT DO -- measured, because I got it wrong twice writing it.
+  #
+  # It CANNOT catch the stale-assembly case above. `git checkout` restores the tracked obj dirs with the
+  # CHECKOUT's timestamp, and dotnet's copy into the output dir carries that forward -- so the dll sitting
+  # there is always "newer than this build started" whether a compiler ran or not. Measured at 0180289f:
+  # output SDG.NetPak.dll and its core/ obj were both 57s old, i.e. indistinguishable from a real build.
+  # That is the SAME trap this whole guard exists for -- asserting the thing the operation guarantees --
+  # and I walked into it while writing the fix for it. THE WIPE ABOVE IS THE MECHANISM; this is not.
+  #
+  # What it DOES catch is narrower and still worth having: a cold compile that produced no assembly at all
+  # (build reported success, output missing or untouched). Kept for that, and labelled honestly.
+  #
+  # OUR assemblies only, derived from the .csproj list: checking every dll flags GodotSharp.dll and
+  # GodotSharpEditor.dll -- Godot's own SDK, 163 days old, correctly never recompiled -- so the first
+  # version fired on EVERY run, and a guard that cries wolf is one somebody turns off.
+  if [ $_forced -eq 1 ]; then
+    local _ours _stale=""
+    _ours=$(find . -name '*.csproj' -not -path './.git/*' 2>/dev/null | xargs -r -n1 basename | sed 's/\.csproj$//')
+    for _n in $_ours; do
+      local _d="game/.godot/mono/temp/bin/Debug/$_n.dll"
+      [ -f "$_d" ] && [ ! "$_d" -nt "$_started" ] && _stale="$_stale$_d"$'\n'
+    done
+    _stale=$(printf '%s' "$_stale")
+    if [ -n "$_stale" ]; then
+      echo "[BUILD] ERROR | cold compile produced no fresh assembly for:"
+      echo "$_stale" | while read -r _f; do
+        echo "         $_f  ($(( $(date +%s) - $(stat -c %Y "$_f") ))s old, predating this build)"
+      done
+      return 1
+    fi
   fi
   echo "$_head" > "$_stamp" 2>/dev/null
   GAME_BUILT=1; return 0
