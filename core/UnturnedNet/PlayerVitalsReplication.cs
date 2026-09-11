@@ -118,7 +118,7 @@ namespace UnturnedGodot.Net
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
                 bool submerged = SubmergedOf != null && SubmergedOf(pid);
-                e.Sim.Step(sprinting, submerged, SurvivalDrain, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain
+                e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
                 float delta = e.Sim.Health - hpBefore;
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation

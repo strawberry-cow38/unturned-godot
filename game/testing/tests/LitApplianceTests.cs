@@ -107,6 +107,38 @@ namespace UnturnedGodot.Testing
             GD.Print($"[lit] doused: swing {red.DebugDoorSwing():0.00}, smoking {red.DebugSmoking}");
             T.Check($"...and the lid comes down when it goes out ({red.DebugDoorSwing():0.00})", red.DebugDoorSwing() < 0.5f);
             T.Check("...and the smoke stops", !red.DebugSmoking);
+
+            // A LIT APPLIANCE IS ALSO A HEAT SOURCE. Asserted through ThermalField rather than on the
+            // ThermalSource's own flag, because the flag being false is a setter working and the question is
+            // whether a player STANDING NEXT TO IT is warmed -- which is range, line of sight and the falloff
+            // curve as well. This rides the same replicated bit the lid and the smoke do, so it is visible to
+            // a player who never opened the barbecue.
+            T.Check("the doused bbq still owns its heat source", red.DebugHasHeatSource);
+            T.Check("...but it is off", !red.DebugHeatActive);
+
+            // DOUSE THE OTHER ONE TOO before asserting zero. The first version of this check did not, and it
+            // read 19.6 C off a dead fire -- because the plain barbecue is still lit a few metres away and
+            // ThermalField SUMS every source in range, which is correct and is the whole point of it. The
+            // assertion was the thing that did not isolate its subject.
+            T.Check("the server doused the plain bbq too", loop.Server.Cooking.SetOn(plainId, false));
+            yield return Until(() => !plain.DebugCookerOn, 10);
+            yield return Ticks(4);
+            float gap = red.GlobalPosition.DistanceTo(plain.GlobalPosition);
+            float cold = ThermalField.NetC(red, red.GlobalPosition + new Vector3(1.5f, 0f, 0f));
+            GD.Print($"[lit] both out: {cold:0.000} C beside the red bbq (plain one is {gap:0.0} m away)");
+            T.Check($"two dead fires warm nobody ({cold:0.000} C, other bbq {gap:0.0} m away)", Mathf.IsZeroApprox(cold));
+
+            T.Check("the server re-lit it", loop.Server.Cooking.SetOn(redId, true));
+            yield return Until(() => red.DebugCookerOn, 10);
+            yield return Ticks(4);
+            float warm = ThermalField.NetC(red, red.GlobalPosition + new Vector3(1.5f, 0f, 0f));
+            GD.Print($"[lit] heat beside the relit bbq: {warm:0.0} C");
+            T.Check($"standing beside a lit bbq warms you ({warm:0.0} C)", warm > 5f);
+
+            // CONTROL: out of range is off, not merely faint -- so the check above cannot pass on a field
+            // that returns something everywhere.
+            float away = ThermalField.NetC(red, red.GlobalPosition + new Vector3(40f, 0f, 0f));
+            T.Check($"...and across the map it is nothing ({away:0.000} C)", Mathf.IsZeroApprox(away));
         }
     }
 }

@@ -15,16 +15,16 @@ namespace UnturnedGodot
         public float Foot;                                          // ground-Y offset from the rig origin to the feet -- rigs are origin-AT-feet, so ~0
         public float BodyH = 1.0f;                                  // body height (feet to back) -> sizes the hit capsule, decoupled from Foot
         public uint Seed;
-        public byte Species;                                        // A5: AnimalCatalog index (deer/pig/cow), set by AnimalField -> published by AnimalNetSync
+        public byte Species;                                        // AnimalCatalog index, set by AnimalField -> published by AnimalNetSync
         public float Health = 100f;                                 // set per-species by AnimalField
         public byte NetAnim { get; private set; }                   // A5: current anim byte for the replica (idle/eat/glance/walk)
         public bool Dead { get; private set; }
 
-        // The animal rigs (deer/pig/cow) import facing local -X, NOT Godot's -Z. The LookAt aligns the body's -Z to
+        // All animal rigs import facing local -X, NOT Godot's -Z. The LookAt aligns the body's -Z to
         // travel, so the model walked SIDEWAYS. A +270 yaw on the RIG child (only the visual needs it -- the capsule is
         // rotationally symmetric) turns -X round to -Z = travel. MEASURED top-down via --animaltest (UG_ANIMALYAW sweep:
         // 0=-X, 90=+Z, 180=+X, 270=-Z), so 270 is the one that faces travel. (180 was my first, wrong-by-90 guess.)
-        const float RigYawFix = 270f;
+        public const float RigYawFix = 270f;
 
         Vector3 _target;
         bool _walking;
@@ -105,7 +105,7 @@ namespace UnturnedGodot
         void FleeFrom(Vector3 threat)
         {
             if (_fleeTimer <= 0.0)   // retail animals/<species>/panic_N on the startle (cow, pig; the deer has no voice clip)
-                GameAudio.PlayAt(this, GameAudio.Pick("animals", (Species == 1 ? "pig" : Species == 2 ? "cow" : "deer") + "_panic"), GlobalPosition, -2f, 8f, 90f);
+                GameAudio.PlayAt(this, GameAudio.Pick("animals", AnimalCatalog.Get(Species).Rig + "_panic"), GlobalPosition, -2f, 8f, 90f);
             _fleeTimer = 3.5;
             Vector3 away = GlobalPosition - threat; away.Y = 0f;
             away = away.LengthSquared() > 0.01f ? away.Normalized() : (_faceDir.LengthSquared() > 0.01f ? -_faceDir : Vector3.Forward);

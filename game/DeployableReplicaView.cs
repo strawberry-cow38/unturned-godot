@@ -24,6 +24,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
         readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
         readonly Dictionary<uint, Refrigerator> _fridges = new();    // placed STORAGE devices (a Refrigerator/StorageCrate, not a Deployable body)
+        readonly Dictionary<uint, FluidContainer> _fluids = new();   // placed FLUID devices (a FluidContainer/FluidPump/FluidValve, not a Deployable body)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -75,6 +76,26 @@ namespace UnturnedGodot
                     pump.FillPercent = e.Fuel;   // the replicated 0..100 percent of the shared station tank
                     continue;
                 }
+                if (def.Fluid != null)
+                {
+                    // A placed FLUID device is a FluidContainer (or a FluidPump/FluidValve/FluidPurifier),
+                    // not a plain Deployable body -- the same split FluidDeploy makes on the local path, and
+                    // the same one the fridge above makes. Falling through to Deployable.Spawn would give you
+                    // a generic body with no tank, no ports and no valve, which is why this branch has to
+                    // exist before fluid defs can leave LocalOnly at all.
+                    //
+                    // Its NetId is what hold-F pickup addresses: PickupFluid asks the server to remove and
+                    // refund exactly the way the prop path does, instead of granting the item locally and
+                    // watching the owner echo delete it.
+                    if (!_fluids.TryGetValue(e.NetIdValue, out var fluid) || !IsInstanceValid(fluid))
+                    {
+                        fluid = FluidDeploy.SpawnFor(def, parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees) as FluidContainer;
+                        if (fluid == null) continue;   // FAIL-CLOSED, like the null def above: a missing render, never a desync
+                        fluid.NetId = e.NetIdValue;
+                        _fluids[e.NetIdValue] = fluid;
+                    }
+                    continue;
+                }
                 if (def.IsStorage)
                 {
                     // A placed STORAGE device is a Refrigerator (a StorageCrate), not a plain Deployable body
@@ -106,6 +127,7 @@ namespace UnturnedGodot
             }
             RetireMissing(_nodes, seen, node => { if (IsInstanceValid(node)) node.QueueFree(); });
             RetireMissing(_fridges, seen, f => { if (IsInstanceValid(f)) f.QueueFree(); });
+            RetireMissing(_fluids, seen, c => { if (IsInstanceValid(c)) c.Pickup(); });   // Pickup() frees its hoses + a pump's power wire first, then despawns -- QueueFree alone would strand them
             RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
 

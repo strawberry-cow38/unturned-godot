@@ -6,11 +6,12 @@ namespace UnturnedGodot
     // PEI wildlife: Spawns/Fauna.dat animal spawn points, distance-streamed like LootField/ZombieField. Fauna.dat = u8 ver,
     // u8 tableCount, per table [color3 + name str + u16 tableID(if ver>2) + u8 tierCount, per tier: name str + f32 chance +
     // u8 spawnCount + spawnCount x u16 animalID], u16 pointCount, per point [u8 type + Vector3]. PEI = 60 points, 1 "Wild"
-    // table -> animal ids 1=Deer/4=Pig/6=Cow. Each point rolls its table deterministically into a rigged RiggedCharacter
-    // (deer/pig/cow_rig.json). Static rest pose for now (reads as grazing wildlife); idle/walk clips + wander are next.
+    // table -> animal ids 1=Deer/4=Pig/6=Cow, expanded in memory with 7=Horse. Each point rolls its table
+    // deterministically into an AnimalAgent with the catalog rig and shared idle/walk clip names.
     public partial class AnimalField : Node3D
     {
-        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
+        public const string Group = "animalfield";
+        public override void _Ready() { AddToGroup(Group); TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public PlayerController Player;
         public Terrain Terr;
 
@@ -23,7 +24,7 @@ namespace UnturnedGodot
         const float SpawnR = 130f, DespawnR = 165f;
         const int MaxLive = 36;
 
-        // animal id -> (rig json name, real _MainTex from the bundle, foot offset so the feet sit on the terrain).
+        // animal id -> (rig json name, palette texture, feet-to-back hit capsule height, health).
         // Cow = a 32x32 B&W Holstein texture; deer/pig = small palettes -> the accurate animal colours (white tint = show as-is).
         // rigs are origin-AT-FEET (measured ortho, --animaltest UG_ANIMALFOOT=0) -> feet sit at the agent origin, so
         // NO foot lift (the old 0.70/0.22/0.52 were the exact float amount, read off a lying skinned-mesh AABB).
@@ -33,6 +34,9 @@ namespace UnturnedGodot
             { 1, ("deer", "Animal_Deer_tex.png", 1.30f, 100f) },
             { 4, ("pig",  "Animal_Pig_tex.png",  0.75f,  80f) },
             { 6, ("cow",  "Animal_Cow_tex.png",  1.45f, 150f) },
+            // Measured cow back 1.573552 * 1.15 -> 1.81 m. Health scales cow's 150
+            // by the same back-height ratio, rounded to 10: 170. See notes/HORSE_REPORT.md.
+            { AnimalCatalog.HorseId, ("horse", "Animal_Horse_tex.png", 1.81f, 170f) },
         };
 
         public void LoadFromPei(string peiRoot)
@@ -54,6 +58,7 @@ namespace UnturnedGodot
                 byte tiers = U8();
                 var ids = new List<ushort>();
                 for (int ti = 0; ti < tiers; ti++) { RStr(); o += 4; byte sc = U8(); for (int s = 0; s < sc; s++) ids.Add(U16()); }
+                AnimalCatalog.IncludeHorse(ids);
                 _tableIds[t] = ids.ToArray();
             }
             ushort pcount = U16();
@@ -117,22 +122,13 @@ namespace UnturnedGodot
                 var ids = _tableIds[p.Type];
                 if (ids == null || ids.Length == 0) continue;
                 uint h = Hash((uint)idx + 0x51ed2701u);
-                ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic deer/pig/cow pick
+                ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic registered species pick
                 if (!Kinds.TryGetValue(id, out var def)) continue;
                 // build the visual rig only where it's actually rendered (SP/loopback host = Player set). A dedicated
                 // server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes its
                 // transform/anim/species, and remote clients render the puppet -- so no 36 wasted headless skeletons.
-                RiggedCharacter rc = null;
-                if (Player != null)
-                {
-                    rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
-                    if (rc == null) continue;
-                }
-                var agent = new AnimalAgent { Terr = Terr, Foot = 0f, BodyH = def.bodyH, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id), Health = def.health };
-                AddChild(agent);
-                agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z), p.Z);   // Foot 0: origin-at-feet rig sits on the terrain directly
-                if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
-                agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
+                var agent = BuildAnimal(id, new Vector3(p.X, 0f, p.Z), h ^ 0xA53Cu);
+                if (agent == null) continue;
                 _live[idx] = agent;
             }
             if (!_animCam && _live.Count > 0 && System.Environment.GetEnvironmentVariable("UG_ANIMALSPAWN") == "1")   // demo: frame the first live animal
@@ -145,5 +141,37 @@ namespace UnturnedGodot
             }
         }
         bool _animCam;   // UG_ANIMALSPAWN demo cam fired once
+
+        /// <summary>Build one live animal and put it in the world. The streaming spawn above and the console's
+        /// `spawnanimal` both come through here, so there is exactly ONE description of what an animal is made
+        /// of. A second copy would drift -- tonight a third copy of "what's holdable" left four features with
+        /// no menu button, and this is the same shape.
+        ///
+        /// Returns null when the id is not a registered species or its rig will not load.</summary>
+        public Node3D BuildAnimal(ushort animalId, Vector3 atGround, uint seed)
+        {
+            if (!Kinds.TryGetValue(animalId, out var def)) return null;
+            // Build the visual rig only where it is actually rendered (SP/loopback host = Player set). A
+            // dedicated server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes
+            // its transform/anim/species, so no wasted headless skeletons.
+            RiggedCharacter rc = null;
+            if (Player != null)
+            {
+                rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
+                if (rc == null) return null;
+            }
+            var agent = new AnimalAgent { Terr = Terr, Foot = 0f, BodyH = def.bodyH, Home = new Vector3(atGround.X, 0f, atGround.Z), Seed = seed, Species = AnimalCatalog.SpeciesForAnimalId(animalId), Health = def.health };
+            AddChild(agent);
+            agent.GlobalPosition = new Vector3(atGround.X, Terr?.SampleHeight(atGround.X, atGround.Z) ?? atGround.Y, atGround.Z);   // Foot 0: origin-at-feet rig sits on the terrain directly
+            if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
+            agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
+            return agent;
+        }
+
+        /// <summary>Animal ids this build can actually spawn, with the names the console accepts.</summary>
+        public static System.Collections.Generic.IEnumerable<(string name, ushort id)> SpawnableKinds()
+        {
+            foreach (var kv in Kinds) yield return (kv.Value.rig, kv.Key);
+        }
     }
 }

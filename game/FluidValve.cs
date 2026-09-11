@@ -9,7 +9,6 @@ namespace UnturnedGodot
     // start/stop. Still a tankless inline switch (FluidRole.Valve); it just ALSO exposes 0-watt sense ports on the power net.
     public partial class FluidValve : FluidContainer, IPowerDevice
     {
-        public uint NetId;   // MP replica id (0 = SP/local)
         readonly List<ConnectionPort> _powerPorts = new();
         ConnectionPort _onTrigger, _offTrigger;
 

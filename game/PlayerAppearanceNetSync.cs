@@ -111,8 +111,10 @@ namespace UnturnedGodot
         /// instead of falling back to its factory one. The LOCAL path never showed it, because there the int -1
         /// fails `> 0` correctly and only the cast to ushort turns it into a positive.
         ///
-        /// Caught by mp.attachments_replicate on its first ever execution -- the test shipped in the same commit
-        /// as the bug and had never run.</summary>
+        /// Fixed independently on two branches the same night (tinyclaw via mp.attachments_replicate, cow tools
+        /// on Staging-Nyatools) -- same clamp, same line. Kept cow tools' comment: it traces the consequence all
+        /// the way to MountOn/MeshFor, which is the half that explains why it mattered rather than just that it
+        /// did.</summary>
         static ushort AttId(Item gun, string slot)
         {
             if (gun == null) return 0;

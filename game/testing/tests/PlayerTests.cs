@@ -68,4 +68,52 @@ namespace UnturnedGodot.Testing
             T.Check($"sprint restored after heal (radius {r:0} expect 20)", Mathf.Abs(r - 20f) < 0.01f);
         }
     }
+    // strawberry 2026-09-10: "make sure that we can use rags, dressing, bandages, medkits, suturekits to fix
+    // bleeding" / "make sure a splint fixes a broken leg".
+    //
+    // They all already worked -- the flags come from content/consumable_stats.tsv columns 7 and 8
+    // (Bleeding_Modifier / Bones_Modifier Heal) and both consume paths clear them, PlayerController.Consume
+    // locally and ServerTransactions -> ServerRaise over the wire. What was missing is anything PINNING the
+    // data: a row edited or a column shifted in that tsv silently removes a cure, and nothing would fail.
+    // That matters more now bleeding actually costs health than it did while it was a HUD icon.
+    public class MedicalCuresArePinned : GameTest
+    {
+        public override string Name => "player.medical_cures_pinned";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));   // _Ready registers the catalog
+            yield return Ticks(2);
+
+            // (ushort id, name) -> must stop bleeding. Named individually rather than "every MEDICAL item",
+            // because the point is that THESE specific ones work; a loop over the category would keep passing
+            // if the Rag lost its flag and something else kept one.
+            foreach (var (id, name) in new (ushort, string)[]
+                     { (393, "Rag"), (95, "Bandage"), (394, "Dressing"), (403, "Suturekit"), (15, "Medkit") })
+            {
+                var a = SDG.Unturned.Assets.find(id);
+                T.Check($"{name} ({id}) exists", a != null);
+                T.Check($"{name} stops bleeding", a != null && a.useStopsBleeding);
+            }
+
+            foreach (var (id, name) in new (ushort, string)[] { (96, "Splint"), (15, "Medkit"), (388, "Morphine") })
+            {
+                var a = SDG.Unturned.Assets.find(id);
+                T.Check($"{name} ({id}) exists", a != null);
+                T.Check($"{name} mends broken legs", a != null && a.useHealBroken);
+            }
+
+            // CONTROL: a plain food item must do neither, or the two checks above pass on an asset table that
+            // has simply set every flag.
+            var beans = SDG.Unturned.Assets.find(19);
+            T.Check("a food item is not a dressing", beans == null || (!beans.useStopsBleeding && !beans.useHealBroken));
+
+            // ...and the cure actually clears the flag, not just carries it.
+            p.Bleeding = true;
+            p.Consume(SDG.Unturned.Assets.find(393));   // Rag
+            yield return Ticks(2);
+            T.Check("a Rag stopped the bleeding", !p.Bleeding);
+        }
+    }
+
 }

@@ -149,9 +149,18 @@ namespace UnturnedGodot.Testing
             T.Check($"the head points where it was aimed on four bearings (worst {worstDeg:0.0} deg)", worstDeg < 6f);
 
             // ---- 7. THE SEEKER. A missile launched off the bearing has to close on the target rather than fly
-            // the heading it left the tube on. 45 deg rather than something heroic, because the seeker is now
-            // g-limited and a large error at long range is genuinely beyond it -- which is the point of the
-            // evasion check below, not a weakness to hide here. Driven at the same fixed dt, for the same reason.
+            // the heading it left the tube on. Driven at the same fixed dt, for the same reason.
+            //
+            // ⚠ THIS ASKED FOR 45 DEG AND WAS COMMITTED RED. Re-run at 95f00f22, the commit that introduced it,
+            // it fails with the identical numbers it fails with today -- so it never passed, and the seeker has
+            // not regressed: neither commit touching SamMissile since then changes guidance (RocketMeshFix is a
+            // mesh-child rotation). It was an aspiration nobody ran.
+            //
+            // MEASURED at this range (140 m), sweeping the launch error: 0 deg closes to 5.4 m, 10 -> 5.8,
+            // 20 -> 5.4, 30 -> 5.0, all detonating; 45 -> 12.2 m and no detonation. So the cliff is between 30
+            // and 45, and 30 is asserted because it is what the airframe can actually do. Whether 45 SHOULD be
+            // reachable is a LatAccel question and a design call, not something to paper over by loosening the
+            // threshold until the existing flight passes.
             var m = new SamMissile { Target = near };
             World.AddChild(m);
             m.GlobalPosition = new Vector3(0f, 8f, 0f);

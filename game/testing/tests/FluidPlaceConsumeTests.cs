@@ -93,4 +93,106 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+    // strawberry 2026-09-10: "the items i get from picking up deployables are phantom. ie when i update the
+    // inv they disappear" -- on FLUID devices specifically.
+    //
+    // WHY THE OLD CODE COULD NOT DO BETTER: fluid defs were registered LocalOnly, so ServerPlace bailed before
+    // creating an entity. A placed pump therefore had NO NetId, there was nothing for a pickup to be validated
+    // against, and PickupFluid granted the item with a bare local tryAddItem. The bag is server-owned on every
+    // path -- singleplayer included, since SP runs through MpLoopback -- so the next owner echo deleted it. The
+    // item did not vanish on refresh; it was never real.
+    //
+    // TEETH. Check (a) fails on the old build outright: with LocalOnly there is no server entity to find, so
+    // there is no NetId to pick anything up by. And (f) is the one that catches a fix that only mutates the
+    // client -- it re-reads the count after further ticks, which is exactly when a phantom evaporates. A test
+    // that stopped at (e) would pass on the bug being fixed here.
+    public class FluidPickupRefunds : GameTest
+    {
+        public override string Name => "fluid.pickup_refunds_over_the_wire";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260911);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "picker" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("server holds the shell's inventory", sHave);
+            if (!sHave) yield break;
+
+            const ushort Id = 9114;   // Fluid Pump
+            sInv.Inventory.tryAddItem(new Item(Id));
+            for (int i = 0; i < 60 && sess.Shell.Inventory.getItemCount(Id) != 1; i++) yield return Ticks(2);
+            T.Check("the bag carries one Fluid Pump", sess.Shell.Inventory.getItemCount(Id) == 1);
+
+            var asset = Assets.find(Id);
+            var backing = new Item(Id);
+            T.Check("equipped from the bag", sess.Shell.EquipItemAsset(asset, backing));
+            T.Check("net place seam is wired", sess.Shell.DebugNetPlaceWired);
+            sess.Shell.DebugArmPlace(sess.Shell.GlobalPosition + new Vector3(2f, 0f, 0f));
+            sess.Shell.DebugDeployTick(0.05f);
+
+            // (a) THE WHOLE POINT OF SMALL A: the server keeps a real entity for a fluid device now. Under
+            // LocalOnly this list stayed empty for fluid ids no matter how many pumps you put down.
+            uint netId = 0;
+            for (int i = 0; i < 80 && netId == 0; i++)
+            {
+                foreach (var e in ded.Server.Deployables.All) if (e.DefId == Id) { netId = e.NetIdValue; break; }
+                if (netId == 0) yield return Ticks(2);
+            }
+            GD.Print($"[fpr] server entity for {Id}: netId={netId}");
+            T.Check("(a) the SERVER registered an entity for the placed fluid device", netId != 0);
+            if (netId == 0) yield break;
+
+            // (b) ...and it reached the client's replicated list, which is what DeployableReplicaView
+            // materializes the FluidContainer from. No entry here = the placer sees nothing at all.
+            bool onClient = false;
+            for (int i = 0; i < 60 && !onClient; i++)
+            {
+                foreach (var e in sess.Client.Deployables.All) if (e.NetIdValue == netId) { onClient = true; break; }
+                if (!onClient) yield return Ticks(2);
+            }
+            T.Check("(b) the entity replicated to the client", onClient);
+            T.Check("(c) the place spent the item", sInv.Inventory.getItemCount(Id) == 0);
+
+            // Pick it up through the SAME seam PickupFluid now dispatches to when the device carries a NetId.
+            T.Check("pickup seam is wired", sess.Shell.NetPickupDeployable != null);
+            sess.Shell.NetPickupDeployable(netId);
+
+            for (int i = 0; i < 80 && sInv.Inventory.getItemCount(Id) != 1; i++) yield return Ticks(2);
+            GD.Print($"[fpr] after pickup: server={sInv.Inventory.getItemCount(Id)} client={sess.Shell.Inventory.getItemCount(Id)}");
+            T.Check("(d) the SERVER refunded the item", sInv.Inventory.getItemCount(Id) == 1);
+
+            for (int i = 0; i < 60 && sess.Shell.Inventory.getItemCount(Id) != 1; i++) yield return Ticks(2);
+            T.Check("(e) the owner echo put it in the shell's bag", sess.Shell.Inventory.getItemCount(Id) == 1);
+
+            // (f) THE PHANTOM CHECK. A client-only grant survives the instant it is made and dies at the next
+            // owner echo, so re-reading after more ticks is the difference between a real item and the bug.
+            for (int i = 0; i < 30; i++) yield return Ticks(2);
+            GD.Print($"[fpr] settled: server={sInv.Inventory.getItemCount(Id)} client={sess.Shell.Inventory.getItemCount(Id)}");
+            T.Check("(f) it is STILL there after the grid settles -- not a phantom",
+                sess.Shell.Inventory.getItemCount(Id) == 1 && sInv.Inventory.getItemCount(Id) == 1);
+
+            // (g) and the device is gone from both sides, so the refund did not clone it.
+            bool stillServer = false; foreach (var e in ded.Server.Deployables.All) if (e.NetIdValue == netId) stillServer = true;
+            T.Check("(g) the device was removed server-side", !stillServer);
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
 }

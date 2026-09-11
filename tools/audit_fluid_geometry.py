@@ -97,7 +97,19 @@ def audit(path):
             degen += 1
             continue
         # THESE FILES ARE CLOCKWISE-FRONT, so the stored outward normal OPPOSES the right-hand-rule
-        # winding normal, and that is correct. Do not compare this against the retail .obj props: they
+        # winding normal, and that is correct.
+        #
+        # ⚠ THIS CHECK CANNOT SEE THE LOADER, and that is its real limitation. It reads files; the loader
+        # is C#. On 2026-09-11 ContentProvider.ParseObj was briefly changed to reverse every triangle --
+        # right for the retail-derived .txt meshes that share it, and it would have rendered all 30 of
+        # these inside out. This check would have gone on reporting 0 findings throughout, because nothing
+        # in the files changed.
+        #
+        # So read the number below as a CONSISTENCY assertion -- "all 30 agree with each other and with
+        # what was last confirmed by eye" -- and never as evidence the render is right. Only a render is
+        # that. (catboy's c5aa8ec8 settled the loader by deciding corner order PER TRIANGLE from the
+        # authored normal, so both families load correctly and neither generator has to move; these files
+        # stay clockwise-front. That fix is also why this convention is still the right one to assert.) Do not compare this against the retail .obj props: they
         # load through ObjMesh.Load, which negates an axis and always reverses winding, while these load
         # through ContentProvider.ParseObj, which preserves it. I ran exactly that comparison, "found"
         # all 30 meshes wound backwards, flipped them, and shipped a set that rendered inside out.

@@ -19,20 +19,23 @@ namespace UnturnedGodot
                 // it, never mind open it. It replicates like any other deployable now, and carries its grid
                 // dimensions so the server can register a crate under its NetId at placement.
                 //
-                // FLUID and DOOR devices are still local, and still deliberately: this is one class at a
-                // time, and each needs its own client materializer (a fluid tank and a door are not a
-                // StorageCrate). Keeping them out makes ServerPlace no-op their ids (no phantom replica)
-                // while OnPlaceDeployable still SPENDS the item -> their place routes the spend server-side
-                // without a spawn.
-                // REGISTERED, not skipped -- with LocalOnly set. Leaving them out of the schema was meant
-                // to stop ServerPlace spawning a phantom replica, and it did, but the schema is the whole
-                // server def table: an absent id ALSO fails CanPlace, which is this command's validator, so
-                // the place was rejected before OnPlaceDeployable could spend the item. The client had
-                // already skipped its own local spend expecting the server to do it, so they were free.
-                bool localOnly = def.Fluid != null || def.DoorProp != null;
-                                                    // server-replicated deployables. Keeping them out of the schema makes the server's
-                                                    // ServerPlace no-op a fluid id (no phantom replica) while OnPlaceDeployable still
-                                                    // SPENDS the item -> the fluid place routes its spend server-side without a spawn.
+                // Every deployable is REGISTERED, never skipped. Leaving a class out of the schema was once
+                // used to stop ServerPlace spawning a phantom replica, and it did -- but the schema is the
+                // whole server def table, so an absent id ALSO fails CanPlace, which is the place command's
+                // validator. The place was then rejected before OnPlaceDeployable could spend the item,
+                // while the client had already skipped its own local spend expecting the server to do it.
+                // Free deployables. LocalOnly is the honest way to say "no server body": it keeps the def
+                // in the table (so CanPlace passes and the item is spent) and only suppresses the spawn.
+                //
+                // DOORS are still LocalOnly -- one class at a time, and a door needs its own client
+                // materializer in DeployableReplicaView the way a fluid device now has one.
+                //
+                // FLUID devices are NOT any more. LocalOnly meant no server entity, so a placed pump had no
+                // NetId, so there was nothing for a pickup to be validated against -- PickupFluid handed out
+                // an item on the client's say-so and the next owner echo deleted it (strawberry 2026-09-10:
+                // "the items i get from picking up deployables are phantom"). They are server-tracked now and
+                // materialize through FluidDeploy in the replica view, the same migration the fridge made.
+                bool localOnly = def.DoorProp != null;
                 var ports = new DeployablePortSpec[def.Ports.Length];
                 for (int i = 0; i < def.Ports.Length; i++)
                     ports[i] = new DeployablePortSpec { Kind = (byte)Kind(def.Ports[i].Kind), Watts = def.Ports[i].Watts };

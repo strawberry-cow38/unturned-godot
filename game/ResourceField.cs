@@ -104,6 +104,17 @@ namespace UnturnedGodot
         /// <summary>Test seam: read the shake back OUT of the MultiMesh rather than off our own bookkeeping. The
         /// claim is that the per-instance channel carries it to the shader; a value we merely remembered would
         /// prove nothing about what actually got written. -1 = this instance has no leaf part.</summary>
+        /// <summary>The shake this field DECIDED to apply, from managed memory -- not read back from the
+        /// MultiMesh.
+        ///
+        /// A headless Godot boot discards MultiMesh instance data (the RenderingServer is a stub), so
+        /// CanopyShakeForTest below reads 0 no matter what was written, and an L1 test built on it returns the
+        /// same answer whether this code works or is deleted. This accessor is the workaround that keeps
+        /// teeth: it cannot prove pixels, but it proves WHICH instance got armed and that its neighbour did
+        /// not -- and index bugs are what actually break batched code.</summary>
+        internal float CanopyShakeStateForTest(int index)
+            => index < 0 || index >= _instances.Count ? -1f : _instances[index].Shake;
+
         internal float CanopyShakeForTest(int index)
         {
             if (index < 0 || index >= _instances.Count) return -1f;

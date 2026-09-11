@@ -65,10 +65,12 @@ namespace UnturnedGodot
             return new Vector3(Mathf.IsZeroApprox(x) ? x : Mathf.Sign(x) * px,
                                spec.PortY > 0f ? spec.PortY : y, z);
         }
+        /// <summary>Authored bounds, or the def's own box when it has no art row. Same reasoning as
+        /// Configure: an unauthored device renders at its declared size instead of throwing.</summary>
         public static Aabb Bounds(DeployableDef def)
         {
             if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec))
-                return new Aabb(-(def?.Size ?? Vector3.One) * 0.5f, def?.Size ?? Vector3.One);   // no art row -> the def's own box
+                return new Aabb(-(def?.Size ?? Vector3.One) * 0.5f, def?.Size ?? Vector3.One);   // no art row -> the def's own box, centered (no live caller reads Position on this path, but GetCenter() should still answer Zero)
             return new Aabb(Vec(spec.BoundsMin), Vec(spec.BoundsSize));
         }
 
@@ -84,8 +86,8 @@ namespace UnturnedGodot
         /// here surfaces as TypeInitializationException on DeployableDef and every deployable in the game
         /// stops existing -- the world build dies on the first prop that asks for a fixture. That is a
         /// catastrophic failure mode for "this id has no art row yet", which is a perfectly ordinary state for
-        /// a device whose model has not been ripped (the pump jack, 1219). Shipped exactly that and broke
-        /// master's game with it (2026-09-11); the lookup is guarded now, as Anchor's already was.</summary>
+        /// a device whose model has not been ripped (the pump jack, 1219). Fixed twice the same night on two
+        /// branches (same cause, same guard): the lookup is now TryGetValue, as Anchor's already was.</summary>
         public static void Configure(DeployableDef def)
         {
             if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec)) return;

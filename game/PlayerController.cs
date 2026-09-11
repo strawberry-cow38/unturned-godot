@@ -363,8 +363,61 @@ namespace UnturnedGodot
         public float MaxHealth { get => _vitals.MaxHealth; set => _vitals.MaxHealth = value; }
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
-        double _bleedTimer;
         public bool Broken;        // PlayerLife.isBroken: broken legs (from a hard fall) -- blocks sprint + jump until mended
+
+        /// <summary>What this player feels, as opposed to what the map is doing (WorldTemperature). Public so
+        /// the HUD and the tests can read the band without re-deriving it from six inputs.</summary>
+        public readonly PlayerTemperatureSim Temperature = new PlayerTemperatureSim();
+
+        // The environment probes (a group walk, two raycasts) are sampled at 4 Hz, not 50. The body has a 45 s
+        // time constant, so a quarter-second sample is indistinguishable from a per-tick one -- and the
+        // per-tick version is a raycast per player per frame for a number that cannot visibly move in 20 ms.
+        const float TemperatureProbeSeconds = 0.25f;
+        float _tempProbeTimer; float _tempAmbientC = 20f; float _tempSourceC; bool _tempRaining, _tempSheltered, _tempExerting;
+
+        /// <summary>The last probe readings, for the `temp` console command. Handed out rather than re-measured,
+        /// because a readout that took its own samples would be reporting a DIFFERENT probe from the one driving
+        /// the body -- and the case you reach for a readout in is exactly the case where the two disagree.</summary>
+        public (float ambientC, float sourceC, bool raining, bool sheltered, bool exerting) DebugTemperatureProbe
+            => (_tempAmbientC, _tempSourceC, _tempRaining, _tempSheltered, _tempExerting);
+
+        /// <summary>Debug: pin the perceived temperature here instead of letting it converge. `tempset` alone
+        /// decays back to ambient in about two minutes, which is long enough to look at the HUD and far too
+        /// short to watch freezing damage actually land.</summary>
+        public float? TemperatureHoldC;
+
+        void TemperatureTick(bool exerting, float dt)
+        {
+            _tempExerting = exerting;
+            _tempProbeTimer -= dt;
+            if (_tempProbeTimer <= 0f)
+            {
+                _tempProbeTimer = TemperatureProbeSeconds;
+                var dn = GetTree()?.GetFirstNodeInGroup("daynight") as DayNightCycle;
+                var wm = WeatherManager.Current;
+                string weather = wm?.Sim?.Active?.Name;
+                // RainIntensity IS the sim's blend alpha, so the temperature offset eases in and out with the
+                // storm exactly as the wind and the fog already do -- one fade, not a second one that drifts.
+                float blend = wm?.RainIntensity ?? 0f;
+                // No cycle in this scene (a test rig, the menu) -> noon on the start date rather than midnight
+                // on day zero, so a harness with no clock is not silently in a winter night.
+                float tod = dn?.Time ?? 0.5f;
+                int day = dn?.Day ?? 0;
+                _tempAmbientC = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, day), tod,
+                                                          WorldTemperature.WeatherOffsetC(weather, blend));
+                _tempSourceC = ThermalField.NetC(this, GlobalPosition);
+                _tempRaining = wm?.IsRaining ?? false;
+                _tempSheltered = _tempRaining && ShelterProbe.IsSheltered(GetWorld3D(), GlobalPosition);
+            }
+            // The BODY still steps every tick off the cached probes: the approach is exponential in dt, so
+            // stepping it at the probe rate instead would make the result depend on the probe rate.
+            Temperature.Step(_tempAmbientC, _tempSourceC, exerting, _tempRaining, _tempSheltered,
+                             Inventory?.ProofsWater ?? false,
+                             Inventory?.InsulationColdC ?? 0f, Inventory?.InsulationHeatC ?? 0f, dt);
+            // Held AFTER the step, not instead of it: wetness and the probes keep running, so `thermal` and the
+            // wetness readout stay live while the body is pinned.
+            if (TemperatureHoldC.HasValue) Temperature.BodyC = TemperatureHoldC.Value;
+        }
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
@@ -400,7 +453,7 @@ namespace UnturnedGodot
             // raising infection = the bar drains (inverted). IMMUNITY cuts it (inside Infect).
             float moldy = FoodSpoil.MoldyInfection(a.useFood, a.useWater, quality);
             if (moldy > 0f) Infect(moldy);
-            if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
+            if (a.useStopsBleeding) Bleeding = false;   // a dressing is now the ONLY thing that stops it
             if (a.useHealBroken) Broken = false;   // Bones_Modifier Heal (Medkit/Splint) mends broken legs
         }
 
@@ -1849,31 +1902,24 @@ namespace UnturnedGodot
         void PickupFluid(FluidContainer c)
         {
             if (c == null || !IsInstanceValid(c)) return;
-            // ⚠ REFUSED WHILE THE BAG IS SERVER-OWNED (strawberry 2026-09-10: "the items i get from picking up
-            // deployables are phantom ... when i update the inv they disappear").
+            // A SERVER-TRACKED device: ask the server to remove it and refund the item, exactly the way the
+            // prop path does two hundred lines up (`if (d.NetId != 0) { NetPickupDeployable?.Invoke(d.NetId); return; }`).
+            // OnPickupDeployable already validates ownership/reach and stamps quality+fuel onto the returned
+            // item, and the removal echo retires the node through DeployableReplicaView -- so this must NOT
+            // despawn it locally, or the placer sees it vanish before the server has agreed.
             //
-            // The grant below is a bare local tryAddItem with no net seam, and every path -- singleplayer
-            // included, since SP runs through MpLoopback -- has a server-owned inventory. So the item appeared,
-            // the server never heard, and the next owner echo took it straight back out. It did not "disappear on
-            // refresh": it was never real.
-            //
-            // The server cannot simply be told to hand it over, either. Fluid defs are LocalOnly, so ServerPlace
-            // bails before registering an entity (DeployableReplication:450) -- validated and spent, never
-            // recorded. There is nothing for it to verify a pickup against, and a command that refunds on the
-            // client's say-so is just a free-item exploit.
-            //
-            // So this refuses rather than lying, which at least keeps the device standing and the item in the
-            // world. The real fix is making fluid devices server-tracked -- the "fluid MP replication is a
-            // fast-follow" note below, coming due -- and pickup then falls out of the validated
-            // OnPickupDeployable path that already refunds correctly. tinyclaw owns that migration; it is the
-            // same one already made for the fridge in DeployableReplicaView.
-            //
-            // Deliberately NOT gated on the device being fluid-specific: the sibling prop path refuses on exactly
-            // this condition too (PickupDeployable, NetId 0), for exactly this reason.
+            // This replaces the interim refusal (78f8ab9b). The bag is server-owned on EVERY path, singleplayer
+            // included -- SP runs through MpLoopback -- so the old bare local tryAddItem below appeared to work
+            // and was then deleted by the next owner echo (strawberry 2026-09-10: "the items i get from picking
+            // up deployables are phantom ... when i update the inv they disappear"). It was never real.
+            if (c.NetId != 0 && NetPickupDeployable != null) { NetPickupDeployable(c.NetId); return; }
+            // NetId 0 = a device no server ever registered (a pure-SP world with no seam). The local grant below
+            // is correct there and only there. If the seam IS live and the id is still 0, refuse rather than lie:
+            // that is a device the server cannot be asked about, and granting it would be the free-item exploit.
             if (InventoryIsServerOwned)
             {
                 FluidPickupHudSet("can't pick this up yet");
-                Log.Print($"[fluid] pickup refused: {c.Def?.Name} is not server-tracked, and the bag is (see PickupFluid)");
+                Log.Print($"[fluid] pickup refused: {c.Def?.Name} carries no NetId and the bag is server-owned (see PickupFluid)");
                 return;
             }
             ushort id = c.Def?.Id ?? 0;
@@ -3932,16 +3978,22 @@ namespace UnturnedGodot
                     if (_deployable.Fluid != null || _deployable.DoorProp != null)
                     {
                         bool isDoor = _deployable.DoorProp != null;
+                        // A DOOR is still LocalOnly, so it spawns here on every path. A FLUID device is
+                        // server-tracked now: with the net seam live the server places it and
+                        // DeployableReplicaView materializes it for everybody INCLUDING the placer, so
+                        // spawning locally as well would leave the placer looking at two pumps in the same
+                        // spot -- one real and shared, one a ghost only he can see and only he can pick up.
+                        // Exactly the reason the storage branch above stopped spawning its own fridge.
                         if (isDoor) DoorDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
-                        else FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        else if (NetPlaceDeployable == null) FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         Log.Print($"[{(isDoor ? "door" : "fluid")}] placed {_deployable.Name} at {_placePoint}");
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
                             if (NetPlaceDeployable != null)
-                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
-                                // then ServerPlace no-ops the fluid id (filtered from the schema) so NO phantom replica spawns.
+                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it --
+                                // and now ALSO places the fluid device for real, since fluid defs are no longer LocalOnly.
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
                                 { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }
@@ -4495,7 +4547,11 @@ namespace UnturnedGodot
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
-            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
+            // NO `Broken = true` here. The line above already set it, gated on the worn clothing's
+            // Prevents_Falling_Broken_Bones -- I added an unconditional one on 81b8f808 believing Broken had no
+            // source at all, which silently voided that clothing feature for one commit. The claim came from a
+            // grep whose output I had truncated with `head`; the assignment was on the line above the one I read.
+            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, broken={Broken}"); TakeDamage(dmg); }
         }
 
         float _grenadeCd;
@@ -6268,13 +6324,13 @@ namespace UnturnedGodot
             // AdoptReplicatedFineVitals deliberately doesn't adopt it, so surface it locally on a real hit BEFORE the
             // server-owned-body early-returns below -- else a hit on the loopback host / MP shell never shows the
             // bleeding icon. NOT on NetAvatar (a remote puppet must not sprout our bleeding state).
-            if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) { Bleeding = true; _bleedTimer = 5.0; }
+            if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) Bleeding = true;
             if (NetDamageSink != null) { NetDamageSink(amount); return; }
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
             Health -= amount;
-            if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
+            if (amount > 1f) Bleeding = true;   // a real hit opens a wound; only a dressing closes it
 
             ShowHurtCosmetics(amount, fromPos);
             if (Health <= 0f) { Deaths++; Die(); }
@@ -6789,8 +6845,9 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310)
+            TemperatureTick(sprinting, dt);
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
@@ -10486,7 +10543,6 @@ namespace UnturnedGodot
                 else GlobalPosition = _interpCurr;
             }
             _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
-            if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
             {
                 _deathTimer -= delta;

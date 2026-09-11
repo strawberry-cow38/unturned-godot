@@ -10,7 +10,7 @@ namespace UnturnedGodot.Testing
     public sealed class TreeHarvestTests : GameTest
     {
         public override string Name => "tree.harvest";
-        public override double TimeoutSimSeconds => 20;
+        public override double TimeoutSimSeconds => 20;   // DebrisLife is shortened to 0.2 s for this test
 
         public override IEnumerable<Step> Run()
         {
@@ -27,23 +27,42 @@ namespace UnturnedGodot.Testing
             T.Check("a partial chop does not fell it (100 hp)", !trunk.Felled);
             trunk.Chop(200f, Vector3.Zero, Vector3.Forward);
             T.Check("felled once its health reaches 0", trunk.Felled);
+            yield return Ticks(1);
 
             // ⚠ THE WOOD ARRIVES WITH THE CLEANUP, NOT AT THE CHOP. Since 2026-09-09 the rewards drop on the
-            // debris timer, because they scatter along the FALLEN trunk and there is no fall direction to scatter
-            // along until it has landed. This asserted an immediate drop and had been red ever since, unseen
-            // because the nightly had not run.
+            // debris timer (strawberry: "only produce logs once theyve despawned" -- they scatter along the
+            // FALLEN trunk, and there is no fall direction to scatter along until it has landed). This asserted
+            // an immediate drop and had been red ever since, unseen because the nightly had not run -- a test
+            // nobody edited going red can mean the REQUIREMENT moved, not that the code regressed.
             //
-            // Shortened rather than waited out (11 s of a 20 s budget) and NOT bypassed: the timer wiring is the
-            // part that broke, so a seam that called DropRewards directly would pass with it deleted.
+            // Shortened rather than waited out (0.2 s of a 30 s budget via the real timer, restored below) and
+            // NOT bypassed: the timer wiring is the part that broke, so a seam that called DropRewards directly
+            // would pass with it deleted.
+            //
+            // The empty window is asserted FIRST, which the shortened-timer version alone does not cover: with
+            // DebrisLife trimmed to 0.2 s, an instant-drop regression and a correctly-delayed drop both read as
+            // "items appeared very soon", and a bare `Until(count > 0)` cannot tell them apart. Checking count is
+            // still 0 in the same frame as Felled becoming true is what makes "at the chop" and "at the cleanup"
+            // two different, distinguishable claims.
+            T.Check($"nothing drops at the moment of felling (got {CountItems()})", CountItems() == 0);
+
             int items = 0;
-            yield return Until(() => { items = 0; foreach (var c in World.GetChildren()) if (c is WorldItem) items++; return items > 0; }, 6);
-            T.Check($"felling dropped Reward_Min..Max items (2-3, logs+sticks), got {items}", items >= 2 && items <= 3);
+            yield return Until(() => { items = CountItems(); return items > 0; }, 6);
+            T.Check($"the debris cleanup drops Reward_Min..Max items (2-3, logs+sticks), got {items}",
+                    items >= 2 && items <= 3);
 
             float before = trunk.Health;
             trunk.Chop(50f, Vector3.Zero, Vector3.Forward);
             T.Check("a swing at a felled tree is a no-op", trunk.Felled && Mathf.IsEqualApprox(trunk.Health, before));
             trunk.QueueFree();
             TreeTrunk.DebrisLife = debrisWas;   // other tests (and any render after this) get the real dwell back
+        }
+
+        int CountItems()
+        {
+            int n = 0;
+            foreach (var c in World.GetChildren()) if (c is WorldItem) n++;
+            return n;
         }
     }
 }

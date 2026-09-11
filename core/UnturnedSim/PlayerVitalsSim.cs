@@ -43,18 +43,49 @@ namespace SDG.Unturned
         /// <summary>One vitals step. Returns true if health reached zero THIS step -- the caller (shell or
         /// server) owns what death means (corpse, respawn, events). Callers must not step a dead player.</summary>
         public bool Step(bool sprinting, bool survivalDrain, float dt, in Multipliers m)
-            => Step(sprinting, false, survivalDrain, dt, m);
+            => Step(sprinting, false, survivalDrain, false, dt, m);
+
+        public bool Step(bool sprinting, bool submerged, bool survivalDrain, float dt, in Multipliers m)
+            => Step(sprinting, submerged, survivalDrain, false, dt, m);
+
+        // HP per second lost while BLEEDING. Slow on purpose (strawberry: "bleeding should slowly drain hp"):
+        // ~2.2 minutes from full, so an unbandaged wound is a clock you have to answer, not a death sentence.
+        public const float BleedHealthPerSecond = 0.75f;
+        // Infection only clears ITSELF below this. Above it the virus has the upper hand and antibiotics are
+        // the only way down (strawberry: "below 50% infection drains slowly on its own"). It used to decay
+        // unconditionally, which made a bite something you could always walk off.
+        public const float InfectionSelfClearBelow = 0.50f;
+        // ...and at a full 100 it kills, rather than merely sitting at the -2 HP/s sick drain.
+        public const float InfectionFatal = 1.0f;
+
+        // TEMPERATURE EFFECTS (strawberry 2026-09-10: "being cold drains food and water faster, being
+        // freezing hurts you. being hot drains water faster, being boiling hurts you"). Cold drains BOTH
+        // because shivering burns fuel as well as water; hot drains water only, which is what makes a
+        // desert and a blizzard feel like different problems rather than one problem at two speeds.
+        public const float ColdDrainMultiplier = 1.6f;
+        public const float HotWaterMultiplier = 2.0f;
+        public const float ExposureHealthPerSecond = 1.0f;
 
         /// <summary>submerged = the player's HEAD is under water (not merely their feet, and not merely "is
         /// swimming" -- treading water at the surface has your face in the air and must not cost you a breath).</summary>
-        public bool Step(bool sprinting, bool submerged, bool survivalDrain, float dt, in Multipliers m)
+        public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding, float dt, in Multipliers m)
+            => Step(sprinting, submerged, survivalDrain, bleeding, PlayerTemperatureSim.Band.Comfortable, dt, m);
+
+        public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding,
+                         PlayerTemperatureSim.Band band, float dt, in Multipliers m)
         {
             if (sprinting) { Stamina = MathF.Max(0f, Stamina - 0.22f * dt * m.ExerciseStaminaDrain); StaminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
             else { StaminaRegenDelay = MathF.Max(0f, StaminaRegenDelay - dt); if (StaminaRegenDelay <= 0f) Stamina = MathF.Min(1f, Stamina + 0.33f * dt * m.CardioStaminaRegen); }
+            bool cold = band == PlayerTemperatureSim.Band.Cold || band == PlayerTemperatureSim.Band.Freezing;
+            bool hot = band == PlayerTemperatureSim.Band.Hot || band == PlayerTemperatureSim.Band.Boiling;
             if (survivalDrain)   // hunger/thirst OFF by default (strawberry); F1 console `survival` toggles it
             {
-                Food  = MathF.Max(0f, Food  - 0.0050f * dt * m.SurvivalDrain);
-                Water = MathF.Max(0f, Water - 0.0070f * dt * m.SurvivalDrain);
+                // Temperature MULTIPLIES the existing drain rather than adding its own, so it rides the same
+                // survival toggle. Turning survival off and still starving from the cold would be a surprise.
+                float foodMul = cold ? ColdDrainMultiplier : 1f;
+                float waterMul = cold ? ColdDrainMultiplier : hot ? HotWaterMultiplier : 1f;
+                Food  = MathF.Max(0f, Food  - 0.0050f * dt * m.SurvivalDrain * foodMul);
+                Water = MathF.Max(0f, Water - 0.0070f * dt * m.SurvivalDrain * waterMul);
             }
             // BREATH. Drains only with the head under and refills far faster than it empties -- a surfacing
             // player gets their air back in a gulp, not over half a minute. Purely a readout: see the note by
@@ -62,10 +93,20 @@ namespace SDG.Unturned
             if (submerged) Oxygen = MathF.Max(0f, Oxygen - dt / OxygenSeconds);
             else Oxygen = MathF.Min(1f, Oxygen + dt / OxygenRefillSeconds);
 
-            Infection = MathF.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
+            // The virus clears on its own ONLY below InfectionSelfClearBelow. Past that it holds, so a bad bite
+            // is a problem you have to treat rather than one you outlast.
+            if (Infection < InfectionSelfClearBelow) Infection = MathF.Max(0f, Infection - 0.01f * dt);
+            if (Infection >= InfectionFatal) { Health = 0f; return true; }   // 100% virus kills outright
             bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
-            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick)
-                Health = MathF.Min(MaxHealth, Health + 2f * dt * m.VitalityRegen);     // regen while fed + hydrated (blocked while sick)
+            // BLEEDING costs health and blocks regen -- it is no longer a HUD decoration. It does not clear on
+            // a timer either; a wound stays open until it is dressed (ItemAsset.useStopsBleeding).
+            if (bleeding) Health = MathF.Max(0f, Health - BleedHealthPerSecond * dt);
+            // EXPOSURE is deliberately NOT behind the survival toggle: hunger is a mode, weather is a hazard,
+            // and a map that can kill you with cold should still do it with hunger switched off.
+            bool exposed = band == PlayerTemperatureSim.Band.Freezing || band == PlayerTemperatureSim.Band.Boiling;
+            if (exposed) Health = MathF.Max(0f, Health - ExposureHealthPerSecond * dt);
+            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick && !bleeding && !exposed)
+                Health = MathF.Min(MaxHealth, Health + 2f * dt * m.VitalityRegen);     // regen while fed + hydrated (blocked while sick or bleeding)
             else if (Food <= 0f || Water <= 0f || sick)
                 Health = MathF.Max(0f, Health - (sick ? 2f : 1.5f) * dt);   // starve / dehydrate / infection sickness
             return Health <= 0f;

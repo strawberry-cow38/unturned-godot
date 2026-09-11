@@ -54,18 +54,24 @@ namespace UnturnedGodot
         }
 
         // roll one item id from a table: weighted tier pick (by chance), uniform id within the tier. -1 = nothing.
-        public static int Roll(int table)
+        public static int Roll(int table) => Roll(table, _rng);
+
+        /// <summary>Roll from a CALLER-SUPPLIED stream, so a container can own its own deterministic sequence
+        /// (LootSeed). The parameterless form keeps the shared static for callers that genuinely want "any
+        /// item" -- the airdrop spawner, the give console -- rather than reproducible contents.</summary>
+        public static int Roll(int table, RandomNumberGenerator rng)
         {
+            rng ??= _rng;
             if (_tiers == null || table < 0 || table >= _tiers.Length) return -1;
             var tiers = _tiers[table];
             if (tiers == null || tiers.Length == 0) return -1;
             float total = 0f; foreach (var t in tiers) total += t.chance;
             int pick = tiers.Length - 1;
-            if (total > 0f) { float acc = _rng.Randf() * total; for (int i = 0; i < tiers.Length; i++) { acc -= tiers[i].chance; if (acc <= 0f) { pick = i; break; } } }
-            else pick = _rng.RandiRange(0, tiers.Length - 1);
+            if (total > 0f) { float acc = rng.Randf() * total; for (int i = 0; i < tiers.Length; i++) { acc -= tiers[i].chance; if (acc <= 0f) { pick = i; break; } } }
+            else pick = rng.RandiRange(0, tiers.Length - 1);
             var ids = tiers[pick].ids;
             if (ids == null || ids.Length == 0) return -1;
-            return ids[_rng.RandiRange(0, ids.Length - 1)];
+            return ids[rng.RandiRange(0, ids.Length - 1)];
         }
     }
 }

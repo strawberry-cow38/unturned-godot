@@ -22,12 +22,12 @@ namespace UnturnedNet.Tests
                                            clientToServer: lossy, serverToClient: lossy);
             var fromStart = h.AddClient(() => new List<IReplicatedSystem> { new AnimalReplication() });
 
-            // a small herd: deer/pig/cow, wandering deterministically, published at the 12.5 Hz game cadence
-            var ids = new NetId[4];
+            // All four species, including horse=3, plus one animal that is later removed.
+            var ids = new NetId[5];
             for (int i = 0; i < ids.Length; i++)
             {
                 ids[i] = h.Ids.Mint();
-                serverAnimals.ServerSpawn(ids[i], (byte)(i % 3), new Vector3(i * 4f, 0f, 0f), h.Tick + 1);
+                serverAnimals.ServerSpawn(ids[i], (byte)(i % 4), new Vector3(i * 4f, 0f, 0f), h.Tick + 1);
             }
             for (int step = 0; step < 300; step++)
             {
@@ -48,7 +48,7 @@ namespace UnturnedNet.Tests
 
             // one animal grazes still (Idle) + one is despawned (streamed out); the world then goes quiet
             serverAnimals.ServerPublish(ids[1], new Vector3(1f, 0f, 0f), 0f, (byte)AnimalNetAnim.Idle, h.Tick + 1);
-            serverAnimals.ServerRemove(ids[3], h.Tick + 1);
+            serverAnimals.ServerRemove(ids[4], h.Tick + 1);
             h.Step(120);   // plenty for loss recovery (stale baselines fall back to full resends)
 
             ulong server = serverAnimals.StateHash();
@@ -56,12 +56,16 @@ namespace UnturnedNet.Tests
             var aB = (AnimalReplication)late.Systems[0];
             Assert.That(aA.StateHash(), Is.EqualTo(server), $"from-start replica == server ({h.Net.SeedInfo})");
             Assert.That(aB.StateHash(), Is.EqualTo(server), $"late joiner == server ({h.Net.SeedInfo})");
-            Assert.That(aA.Count, Is.EqualTo(3), "the streamed-out animal is gone from replicas");
+            Assert.That(aA.Count, Is.EqualTo(4), "the streamed-out animal is gone from replicas");
             Assert.That(aA.TryGet(ids[2], out var cow), Is.True);
             Assert.That(cow.Species, Is.EqualTo((byte)2), "the species byte (cow) rides the wire");
+            Assert.That(aA.TryGet(ids[3], out var horse), Is.True);
+            Assert.That(horse.Species, Is.EqualTo((byte)3), "horse species survives lossy deltas");
+            Assert.That(aB.TryGet(ids[3], out var lateHorse), Is.True);
+            Assert.That(lateHorse.Species, Is.EqualTo((byte)3), "horse species survives late-join full snapshots");
             Assert.That(aA.TryGet(ids[1], out var still), Is.True);
             Assert.That(still.AnimState, Is.EqualTo((byte)AnimalNetAnim.Idle), "the anim byte replicated");
-            Assert.That(aA.TryGet(ids[3], out _), Is.False, "the removal round-tripped");
+            Assert.That(aA.TryGet(ids[4], out _), Is.False, "the removal round-tripped");
             Assert.That(server, Is.Not.EqualTo(new AnimalReplication().StateHash()), "the scenario actually produced state");
         }
     }

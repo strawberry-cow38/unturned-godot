@@ -500,7 +500,7 @@ namespace UnturnedGodot
                 BuildPropTest(proptest);
                 return;
             }
-            if (animaltest != null) { GetWindow().Size = new Vector2I(1000, 720); _shotPath = shot; BuildAnimalTest(animaltest); return; }
+            if (animaltest != null) { GetWindow().Size = new Vector2I(animaltest.Contains(',') ? 1800 : 1200, 800); _shotPath = shot; BuildAnimalTest(animaltest); return; }
             if (treetest != null) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildTreeTest(treetest); return; }
             if (elevatorTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildElevatorTest(); return; }
             if (rainTest) { GetWindow().Size = new Vector2I(1280, 800); _shotPath = shot; BuildRainTest(); return; }
@@ -1097,70 +1097,6 @@ namespace UnturnedGodot
             }
             else if (string.IsNullOrEmpty(gun)) cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
             else cam.LookAtFromPosition(new Vector3(4.5f, 1.7f, -6.5f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
-        }
-
-        // --animaltest=<deer|pig|cow>: one animal rig posed as if walking toward -Z (Godot forward, the way AnimalAgent's
-        // LookAt aligns it). The red bar points -Z = travel; compare the model's head to it. UG_ANIMALYAW=<deg> spins the
-        // rig on the spot to find AnimalAgent.RigYawFix. 3/4 aerial so head/tail + left/right both read.
-        void BuildAnimalTest(string species)
-        {
-            var env = new Godot.Environment
-            {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
-                AmbientLightEnergy = 0.9f,
-            };
-            AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
-            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
-            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
-            AddChild(ground);
-
-            (string rig, string tex, float foot) def = species switch
-            {
-                "pig" => ("pig", "Animal_Pig_tex.png", 0.22f),
-                "cow" => ("cow", "Animal_Cow_tex.png", 0.52f),
-                _     => ("deer", "Animal_Deer_tex.png", 0.70f),
-            };
-            var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
-            if (rc == null) { Log.Err("[animaltest] rig build failed"); GetTree().Quit(); return; }
-            var holder = new Node3D();   // identity: holder -Z is world -Z = the travel direction AnimalAgent's LookAt produces
-            AddChild(holder);
-            float holderY = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALFOOT"), out var _hf) ? _hf : def.foot;   // UG_ANIMALFOOT=0 -> rig origin ON the ground, so the render shows the feet's TRUE local offset
-            holder.Position = new Vector3(0f, holderY, 0f);
-            holder.AddChild(rc);
-            float yaw = float.TryParse(System.Environment.GetEnvironmentVariable("UG_ANIMALYAW"), out var y) ? y : 0f;
-            rc.RotationDegrees = new Vector3(0f, yaw, 0f);
-            rc.Play("Idle");
-            Log.Print($"[animaltest] {def.rig}: holder faces -Z (travel), rig yaw {yaw:0}. clips: {string.Join(",", rc.ClipNames)}");
-            // FEET measurement: lowest world-Y of any rig mesh box vs the Y=0 ground. holder is at foot, so >0 = floats.
-            float _minY = 1e9f;
-            var _st = new System.Collections.Generic.Stack<Node>(); _st.Push(rc);
-            while (_st.Count > 0) { var _n = _st.Pop(); foreach (var _c in _n.GetChildren()) _st.Push(_c);
-                if (_n is VisualInstance3D _vi) { var _bb = _vi.GetAabb(); var _gt = _vi.GlobalTransform;
-                    for (int _i = 0; _i < 8; _i++) { var _cor = _bb.Position + _bb.Size * new Vector3(_i & 1, (_i >> 1) & 1, (_i >> 2) & 1); _minY = Mathf.Min(_minY, (_gt * _cor).Y); } } }
-            Log.Print($"[animalfeet] {def.rig}: feet world Y={_minY:0.000} (float above Y=0; foot={def.foot}) -> ground it with foot={(def.foot - _minY):0.000}");
-
-            var arrow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.12f, 1.4f) } };   // points -Z = travel
-            arrow.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.2f, 0.2f) };
-            arrow.Position = new Vector3(1.5f, 0.06f, -0.7f);
-            AddChild(arrow);
-
-            var xref = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.4f, 0.12f, 0.12f) } };   // blue = +X reference
-            xref.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.4f, 0.95f) };
-            xref.Position = new Vector3(0.7f, 0.06f, 1.5f);
-            AddChild(xref);
-            var cam = new Camera3D { Fov = 38f };
-            AddChild(cam);
-            if (System.Environment.GetEnvironmentVariable("UG_ANIMALCAM") == "side")
-            {
-                cam.Projection = Camera3D.ProjectionType.Orthogonal; cam.Size = 3.4f;   // ORTHO: heights map EXACTLY to screen (no perspective) -> read the feet vs the Y=0 ground line precisely
-                cam.LookAtFromPosition(new Vector3(8f, 1.0f, 0f), new Vector3(0f, 1.0f, 0f), Vector3.Up);
-            }
-            else
-                cam.LookAtFromPosition(new Vector3(0f, 9f, 0f), Vector3.Zero, new Vector3(0f, 0f, -1f));   // TOP-DOWN, unambiguous: -Z(travel, RED) to top, +X(BLUE) right
         }
 
         // --elevatortest: the Elevator_0 prop wired as an interactive lift (look at it + F rides it up/down). It
