@@ -320,7 +320,15 @@ namespace UnturnedGodot
         public string ConsumableEquipClip, ConsumableUseClip;   // this item's OWN archetype clips (CE_n/CU_n from consumable_anims), e.g. drink vs eat vs syringe; empty -> generic fallback
         public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         public string DeployableMesh, DeployableAlbedo;   // set (instead of GunName) to HOLD a deployable (generator/spotlight): item.prefab carry mesh + palette, Deploy_Equip hold + Deploy_Use place anim, no gun FX
-        public string ToolMesh; public Color? ToolColor;   // set (instead of GunName) to HOLD a tool in-hand (the Wire wiring tool): static mesh + generic ready hold, flat colour, no gun/deploy FX
+        // set (instead of GunName) to HOLD a tool in-hand: static mesh + generic ready hold, no gun/deploy FX.
+        // ToolColor is the FLAT tint used when there is no texture (the wire coil, tinted per tool); ToolAlbedo
+        // is a real texture for a tool that has one.
+        //
+        // ⚠ Tool was the only held kind WITHOUT an albedo companion -- Melee, Consumable and Deployable all had
+        // one. It did not matter while every tool shared a tinted coil, and it matters the moment a tool has a
+        // ripped mesh with a texture: retail's walkie-talkie (1445) would have come out one uniform dark slab
+        // instead of body-plus-knobs, which reads as a bad mesh rather than a missing map. (tinyclaw, 2026-09-11)
+        public string ToolMesh, ToolAlbedo; public Color? ToolColor;
         public Vector3? HoldPos, HoldRoll; public float HoldScale = 0f;   // per-item carry pose for a DeployableMesh (view-space nudge / Euler degrees / scale); unset = the gas-can defaults below
         public bool NaturalHold;   // for a DeployableMesh that is HELD not PLACED (the portable gas can): use the Melee_Equip ready-hold + tool offset instead of the low carry-to-place stance
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
@@ -684,7 +692,12 @@ namespace UnturnedGodot
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
                     var gv = ToolMesh != null
-                        ? new GunVisual { Gun = ToolMesh, Albedo = null, Ejects = false, AlbedoTint = ToolColor ?? new Color(0.647f, 0.647f, 0.647f) }   // held tool (wire): flat-colour mesh, no texture
+                        // ⚠ WHITE TINT WHEN THERE IS A TEXTURE. AlbedoTint MULTIPLIES the albedo, so carrying
+                        // the flat colour through alongside a real map would darken every texel by it -- the
+                        // texture would load, look wrong, and the map would get the blame.
+                        ? new GunVisual { Gun = ToolMesh, Albedo = ToolAlbedo, Ejects = false,
+                                          AlbedoTint = ToolAlbedo != null ? new Color(1, 1, 1)
+                                                                          : ToolColor ?? new Color(0.647f, 0.647f, 0.647f) }
                         : DeployableMesh != null
                         ? new GunVisual { Gun = DeployableMesh, Albedo = DeployableAlbedo, Ejects = false, AlbedoTint = new Color(1, 1, 1) }   // deployable: item.prefab carry mesh + palette texture, no gun FX
                         : ConsumableMesh != null

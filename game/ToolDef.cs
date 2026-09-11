@@ -14,6 +14,9 @@ namespace UnturnedGodot
         public ushort Id;
         public string Name;
         public string HeldMesh;      // the in-hand mesh (obj under content/)
+        /// <summary>An optional texture for the held mesh. Null keeps the flat <see cref="HeldColor"/> tint,
+        /// which is what the shared wire coil wants; a tool with its own ripped mesh wants its own map.</summary>
+        public string HeldAlbedo;
         public Color HeldColor;      // flat albedo tint (these meshes carry no texture)
         public ToolKind Kind;        // Wire (65) -> wiring mode / Rope (64) -> tow mode / Hose (9118) -> fluid hose mode
         public bool IsRope => Kind == ToolKind.Rope;   // the Viewmodel.IsRopeTool bit

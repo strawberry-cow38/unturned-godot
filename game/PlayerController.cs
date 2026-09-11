@@ -4077,7 +4077,7 @@ namespace UnturnedGodot
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldUmbrellaItem = null; _heldRestraintItem = null; _heldTireItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[tool] holding the {def.Name}");
