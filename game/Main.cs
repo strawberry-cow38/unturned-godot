@@ -6070,6 +6070,7 @@ namespace UnturnedGodot
             // The monuments the generator laid out are only lists until something instantiates them.
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
+            var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
             var rf = new RoadField { Terr = terr };
@@ -6728,6 +6729,7 @@ namespace UnturnedGodot
                     }
                 }
             }
+            var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;   // Npcs tab: place people (added BEFORE the dashboard reads editor.Npcs)
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
@@ -6798,6 +6800,41 @@ namespace UnturnedGodot
                         cam.LookAt(zc, Vector3.Up);
                     }
                     Log.Print($"[editorspawns] animal spawns: {spawns.Count}");
+                };
+            // headless render-verify for the Npcs tab. Places a row of people, then SAVES AND RELOADS before the
+            // shot: what you are looking at is what came back off disk, so a format that writes fine and parses
+            // wrong cannot pass by leaving the in-memory list on screen.
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORNPCS") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Npcs;
+                    if (npcs.Keys.Count == 0) { Log.Err("[editornpcs] the catalog is empty -- nothing to place"); return; }
+                    var at = spawns.Positions.Count > 0 ? spawns.Positions[0] : cam.GlobalPosition - new Vector3(0f, 8f, 0f);
+                    string[] want = { "Chef", "Mechanic", "Pilot", "Medic", "Pirate" };
+                    int n = 0;
+                    foreach (var key in want)
+                    {
+                        var def = NpcCatalog.CharacterByKey(key);
+                        if (def == null) { Log.Print($"[editornpcs] no preset '{key}'"); continue; }
+                        // A shallow arc facing the camera, so five people read as five people rather than as a
+                        // queue where the front one hides the rest.
+                        float t = (n - (want.Length - 1) * 0.5f) * 0.42f;
+                        var spot = at + new Vector3(Mathf.Sin(t) * 5.2f, 0f, Mathf.Cos(t) * 5.2f - 5.2f);
+                        // ⚠ SNAP EACH ONE. A real click raycasts the ground, so a demo that copies ONE y across
+                        // an arc is not showing what the tool does -- it is showing what the tool prevents. The
+                        // first render of this had the chef buried to the chest in a hillside and the tool was
+                        // fine; only the fixture was wrong, which is the more embarrassing way to look broken.
+                        if (res.Terr != null) spot.Y = res.Terr.SampleHeight(spot.X, spot.Z);
+                        npcs.DebugAdd(key, spot, Mathf.RadToDeg(t) + 180f);
+                        n++;
+                    }
+                    int saved = npcs.DebugSaveThenReload();
+                    Log.Print($"[editornpcs] placed {n}, saved {saved}, reloaded {npcs.Count} -- round-trip {(saved == npcs.Count && npcs.Count == n ? "OK" : "MISMATCH")}");
+                    foreach (var pl in npcs.DebugPlaced) Log.Print($"[editornpcs]   {pl.Key} at {pl.Pos} yaw {pl.Yaw:0.#}");
+                    var eye = at + new Vector3(0f, 2.6f, 4.4f);
+                    if (res.Terr != null) eye.Y = res.Terr.SampleHeight(eye.X, eye.Z) + 2.4f;
+                    cam.GlobalPosition = eye;
+                    cam.LookAt(at + new Vector3(0f, 1.1f, -5.2f), Vector3.Up);
                 };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORENV") == "1")
                 GetTree().CreateTimer(0.8).Timeout += () =>

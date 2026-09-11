@@ -10,7 +10,10 @@ namespace UnturnedGodot
     // Buildings is OURS and deliberately its own mode rather than a second Level tool: a building is authored
     // once and then placed many times, which is what retail buildings already are -- props. So you leave the
     // map, build one against a blank plane, bake it, and it turns up in the Level tab's props list.
-    public enum EEditorMode { Terrain, Environment, Spawns, Level, Buildings }
+    // Npcs is OURS, like Buildings, and a tab rather than a Spawns category on purpose: a spawn is a point with
+    // a table id, an NPC is a PERSON -- clothes, face, dialogue, a shop -- and a category picker sized for five
+    // colours of dot has nowhere to put any of that.
+    public enum EEditorMode { Terrain, Environment, Spawns, Level, Buildings, Npcs }
 
     public partial class Editor : Node3D
     {
@@ -27,6 +30,7 @@ namespace UnturnedGodot
         public EditorRiver RiverEd;                       // river carving tool (Environment tab, V) -- a spline tool, not a terrain brush
         public EditorFoliage FoliageEd;                   // foliage painting sub-editor (Environment tab)
         public EditorBuildings Buildings;                 // building tool: its own mode -- draw walls, bake a prop
+        public EditorNpcs Npcs;                           // NPC placement sub-editor (Npcs tab)
 
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
@@ -133,9 +137,10 @@ namespace UnturnedGodot
             int t = TerrainEd?.Save() ?? 0;
             int r = RoadsEd?.Save() ?? 0;
             int b2 = Buildings?.Save() ?? 0;
+            int np = Npcs?.Save() ?? 0;
             IsDirty = false; SecondsSinceSave = 0.0;
             LastSaveLabel = autosave ? "autosaved" : "saved";
-            Log.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls)");
+            Log.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls, {np} npcs)");
             EmitSignal(SignalName.Saved, autosave);
         }
 
