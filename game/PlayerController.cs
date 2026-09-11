@@ -2316,26 +2316,65 @@ namespace UnturnedGodot
             EquipItemAsset(asset, j.item);
         }
 
-        // Dispatch-equip an item into the hand by its asset type (gun / melee / consumable). True if it equipped.
+        /// <summary>WHICH hand feature claims an asset. One ordered list, consulted by both the predicate and
+        /// the dispatch below -- because when those were two separate lists they drifted, and four features
+        /// (the 32 spraypaints, the carjack, the 8 umbrellas, the throwables) ended up equipping perfectly from
+        /// a hotbar key while the right-click menu offered Drop/Close and nothing else. To a player that is
+        /// indistinguishable from the feature not existing, and master reported it as "cant equip".
+        ///
+        /// The ORDER is load-bearing and is the order the dispatch used to test in: a water bottle is both a
+        /// fluid container and a consumable and must be held as the container, a spraypaint is GENERIC and only
+        /// its id identifies it, and so on. Adding a hand feature means adding ONE case here and ONE arm to the
+        /// switch; there is no third place left to forget.</summary>
+        public enum HandKind { None, Gun, Melee, Fluid, Consumable, Deployable, Tool, Paint, Carjack, Umbrella, Fuel, Fisher, Optic, Throwable }
+
+        public static HandKind KindOf(ItemAsset asset)
+        {
+            if (asset == null) return HandKind.None;
+            if (asset.gunName != null) return HandKind.Gun;
+            if (asset.meleeName != null) return HandKind.Melee;
+            if (asset.IsFluidContainer) return HandKind.Fluid;          // BEFORE Consumable: a bottle is both, and it is held as the container
+            if (asset.IsConsumable) return HandKind.Consumable;
+            if (DeployableDef.ById(asset.id) != null) return HandKind.Deployable;
+            if (ToolDef.ById(asset.id) != null) return HandKind.Tool;   // Wire (65) / Rope (64) / future tools -- data-driven, was a hard-coded id
+            if (VehiclePaints.Is(asset.id)) return HandKind.Paint;
+            if (asset.id == CarjackItemId) return HandKind.Carjack;
+            if (Umbrellas.Is(asset.id)) return HandKind.Umbrella;
+            if (asset.IsFuelContainer) return HandKind.Fuel;
+            if (asset.type == EItemType.FISHER) return HandKind.Fisher;
+            if (asset.type == EItemType.OPTIC) return HandKind.Optic;
+            // Gated on the TABLE, not on EItemType.THROWABLE: the catalog marks flashbangs and sticky grenades
+            // Throwable too, and those mechanics do not exist yet -- an item that equips and then throws as
+            // something it is not is worse than one that will not equip.
+            if (Throwables.Is(asset.id)) return HandKind.Throwable;
+            return HandKind.None;
+        }
+
+        /// <summary>Would <see cref="EquipItemAsset"/> put this in the hand? Asked by InventoryUI to decide
+        /// whether to draw an Equip button at all -- it used to answer from its own private copy of the list,
+        /// which is how the drift above happened.</summary>
+        public static bool CanEquipItemAsset(ItemAsset asset) => KindOf(asset) != HandKind.None;
+
+        // Dispatch-equip an item into the hand. True if it equipped.
         public bool EquipItemAsset(ItemAsset asset, SDG.Unturned.Item backing)
         {
-            if (asset == null) return false;
-            if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
-            if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
-            if (asset.IsFluidContainer) { EquipHeldFluidContainer(asset, backing); return true; }   // a water bottle / soda / cola / canteen: held as a CONTAINER (RMB a tank to fill, LMB sip) -- BEFORE the consumable path so it isn't drunk whole
-            if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
-            var deploy = DeployableDef.ById(asset.id);
-            if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
-            var tool = ToolDef.ById(asset.id);
-            if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
-            if (VehiclePaints.Is(asset.id)) { EquipHeldSpraypaint(asset, backing); return true; }   // a vehicle spraypaint -> hold it, LMB the car you are aimed at
-            if (asset.id == CarjackItemId) { EquipHeldCarjack(asset, backing); return true; }   // the carjack -> hold it, LMB an empty car to flip it
-            if (Umbrellas.Is(asset.id)) { EquipHeldUmbrella(asset, backing); return true; }   // an umbrella -> hold it and drift down. Another whole retail item TYPE (Cloud) that arrived as GENERIC and equipped as nothing, like the spraypaints did.
-            if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
-            if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }
-            if (asset.type == EItemType.OPTIC) { EquipHeldOptic(asset, backing); return true; }   // binoculars -> raised at once, LMB cycles the zoom   // a fishing rod -> hold it, LMB casts (UseableFisher)
-            if (Throwables.Is(asset.id)) { EquipHeldThrowable(asset, backing); return true; }   // grenade / smoke / flare -> hold it, LMB lobs it. Gated on the TABLE, not on EItemType.THROWABLE: the catalog marks flashbangs and sticky grenades Throwable too, and those mechanics do not exist yet -- an item that equips and then throws as something it is not is worse than one that will not equip.
-            return false;
+            switch (KindOf(asset))
+            {
+                case HandKind.Gun: EquipHeldGun(asset.gunName, backing); return true;
+                case HandKind.Melee: EquipHeldMelee(asset.meleeName); return true;
+                case HandKind.Fluid: EquipHeldFluidContainer(asset, backing); return true;   // a water bottle / soda / cola / canteen: RMB a tank to fill, LMB sip
+                case HandKind.Consumable: EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true;   // EquipHeldConsumable snapshots the revert target itself
+                case HandKind.Deployable: EquipHeldDeployable(DeployableDef.ById(asset.id), backing); return true;   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
+                case HandKind.Tool: EquipTool(ToolDef.ById(asset.id), backing); return true;
+                case HandKind.Paint: EquipHeldSpraypaint(asset, backing); return true;   // a vehicle spraypaint -> hold it, LMB the car you are aimed at
+                case HandKind.Carjack: EquipHeldCarjack(asset, backing); return true;    // the carjack -> hold it, LMB an empty car to flip it
+                case HandKind.Umbrella: EquipHeldUmbrella(asset, backing); return true;  // an umbrella -> hold it and drift down
+                case HandKind.Fuel: EquipHeldFuelCan(asset, backing); return true;       // a gas can -> hold it, RMB a powered pump to fill it
+                case HandKind.Fisher: EquipHeldFisher(asset, backing); return true;      // a fishing rod -> hold it, LMB casts (UseableFisher)
+                case HandKind.Optic: EquipHeldOptic(asset, backing); return true;        // binoculars -> raised at once, LMB cycles the zoom
+                case HandKind.Throwable: EquipHeldThrowable(asset, backing); return true;   // grenade / smoke / flare -> hold it, LMB lobs it
+                default: return false;
+            }
         }
 
         /// <summary>Hold a vehicle spraypaint. Mirrors the gas can: no extracted carry model, so the hands are

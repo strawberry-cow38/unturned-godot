@@ -37,6 +37,12 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // ⚠ THIS TEST IS NOT THE GUARD IT LOOKS LIKE, and it is kept mainly to say so. It asserts one hand-built
+    // ItemAsset per KIND it already knows about, so it catches a regression in an existing branch and is blind
+    // to a NEW feature that nobody comes back to add a line for -- which is exactly what happened four more
+    // times (spraypaints, carjack, umbrellas, throwables) while this stayed green. The real guard is
+    // EquipDispatchTests.cs, which derives its coverage from the catalog instead of from a list retyped here.
+    //
     // Regression (master 2026-07-20): a HOLDABLE item must offer a hand action in its item menu, not just Drop/Close.
     // The Rope (item 64) had the equip code (EquipRopeTool) but the menu special-cased only the Wire (id==65) and never
     // consulted the Rope, so it showed just Drop/Close -- "the option to hold is NOT THERE". InventoryUI.HasHandAction is

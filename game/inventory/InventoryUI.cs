@@ -844,7 +844,8 @@ void fragment() {
             else if (ToolDef.ById(asset.id) != null) ToolSelected();
             else if (asset.type == EItemType.FISHER) FisherSelected();
             else if (asset.type == EItemType.OPTIC) OpticSelected();
-            else EquipSelected();
+            else if (asset.gunName != null || asset.meleeName != null) EquipSelected();   // a weapon also holsters to its preferred slot
+            else HandDispatchSelected();   // same fall-through as the menu: ask the dispatch, do not restate it
         }
 
         /// <summary>Put the weapon at (sp,sx,sy) into hand slot `slot`. Occupied: first try the plain drag-SWAP (the occupant
@@ -1655,8 +1656,13 @@ void fragment() {
                     AddActionButton(panel, "Equip", new Vector2(228, by), FisherSelected);   // a fishing rod -> hold it, LMB casts (UseableFisher)
                 else if (asset.type == EItemType.OPTIC)
                     AddActionButton(panel, "Equip", new Vector2(228, by), OpticSelected);    // binoculars -> raise them, LMB cycles the zoom
+                else if (asset.gunName != null || asset.meleeName != null)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);    // a weapon: EquipSelected also HOLSTERS it to its preferred slot
                 else
-                    AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
+                    // Everything else HasHandAction admits -- today the spraypaint, carjack, umbrella and
+                    // throwable, tomorrow whatever is added next. Straight through the dispatch rather than a
+                    // fifth branch here, so a new hand item needs no edit in this file at all.
+                    AddActionButton(panel, "Equip", new Vector2(228, by), HandDispatchSelected);
                 by += 44;
             }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
@@ -1690,11 +1696,28 @@ void fragment() {
         // in its menu?" Centralized + data-driven so an item can't have the equip code but NO menu option to reach it
         // (master 2026-07-20: the Rope did exactly that -- holdable in code, but its item menu showed only Drop/Close).
         // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
-        public static bool HasHandAction(ItemAsset asset) =>
-            asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
-                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer
-                || asset.type == EItemType.FISHER   // a rod is holdable (EquipHeldFisher); without this it has the equip code but NO menu option (the Rope bug)
-                || asset.type == EItemType.OPTIC);   // binoculars: holdable, not a weapon slot
+        // WAS a second, private copy of the equip chain, and it drifted: spraypaints, the carjack, umbrellas and
+        // throwables all equipped from a hotbar key and had NO menu button, because this list had never heard of
+        // them. That is the Rope bug (see the comment it used to carry) three more times. The menu now asks the
+        // dispatch itself what it can hold, and EquipDispatchTests walks the catalog to keep the two honest.
+        public static bool HasHandAction(ItemAsset asset) => PlayerController.CanEquipItemAsset(asset);
+
+        // Equip anything whose hand behaviour lives ONLY in PlayerController.EquipItemAsset -- the spraypaint,
+        // the carjack, the umbrella, the throwable. Deliberately has no type test of its own: HasHandAction already
+        // said the dispatch can hold it, and a test here would be a fourth copy of the list that started all this.
+        void HandDispatchSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || Player == null || !Player.EquipItemAsset(asset, jar.item)) return;
+            Player.NoteHeldFrom(_selPage, _selX, _selY);   // so emptying that cell later pulls it out of the hands
+            CloseSelection();
+            Close();   // leave the bag: every one of these is used by clicking at something
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
 
         void EquipSelected()
         {
