@@ -2521,7 +2521,7 @@ namespace UnturnedGodot
         /// them is re-run on the authority.</summary>
         void TryRestraintUse()
         {
-            if (_heldRestraintItem == null) return;
+            if (_heldRestraintItem == null || _arrestPendingT > 0f) return;   // one attempt at a time (source: equipment.isBusy)
             ushort id = _heldRestraintItem.id;
             bool key = SDG.Unturned.ArrestDef.IsKey(id);
             if (NetAimedPlayer == null)
@@ -2537,6 +2537,7 @@ namespace UnturnedGodot
             if (key)
             {
                 if (theirGesture != (byte)EPlayerGesture.ARREST_START) { HUD.Alert("They aren't cuffed."); return; }
+                _viewmodel?.PlayConsumeUse();   // Key_Use, 1.63 s
                 NetUnlockArrest?.Invoke(target);
                 Log.Print($"[arrest] asked the server to unlock #{target}");
                 return;
@@ -2545,8 +2546,36 @@ namespace UnturnedGodot
             // this from being "aim at anyone, click". Checked here for the message and again on the server for
             // the truth -- the server's copy is the one that counts, because this one is a client's opinion.
             if (theirGesture != (byte)EPlayerGesture.SURRENDER_START) { HUD.Alert("They have to surrender first."); return; }
-            NetArrestPlayer?.Invoke(target);
-            Log.Print($"[arrest] asked the server to cuff #{target} with {id}");
+            // SOURCE APPLIES IT WHEN THE CLIP ENDS, not on the click: UseableArrestStart sets isUsing on the
+            // press and does the arrest in simulate() once isUseable (elapsed > useTime). So the cuffs go on as
+            // the animation finishes -- you can see it happening, and someone can run in the 1.3 s it takes.
+            _arrestPendingTarget = target;
+            _arrestPendingT = RestraintUseSeconds(false);
+            _viewmodel?.PlayConsumeUse();
+            Log.Print($"[arrest] cuffing #{target} with {id} -- lands in {_arrestPendingT:0.00}s");
+        }
+
+        ushort _arrestPendingTarget; float _arrestPendingT;
+
+        /// <summary>The held restraint's "Use" length, or the ripped default if the clip did not load. Cuff_Use
+        /// is 1.30 s and Key_Use 1.63 s -- the key is the slower of the two, which is retail's own asymmetry.</summary>
+        float RestraintUseSeconds(bool key)
+        {
+            float len = _viewmodel?.ConsumeUseLength() ?? 0f;
+            return len > 0.05f ? len : (key ? 1.633f : 1.300f);
+        }
+
+        /// <summary>Ticked from the physics step: the cuffs go on when the swing finishes. Re-checks nothing --
+        /// the SERVER re-checks everything, including whether they are still surrendering and still in reach,
+        /// which is the point of asking rather than asserting.</summary>
+        void TickArrest(float dt)
+        {
+            if (_arrestPendingT <= 0f) return;
+            _arrestPendingT -= dt;
+            if (_arrestPendingT > 0f) return;
+            _arrestPendingT = 0f;
+            if (_arrestPendingTarget != 0 && _heldRestraintItem != null) NetArrestPlayer?.Invoke(_arrestPendingTarget);
+            _arrestPendingTarget = 0;
         }
 
         /// <summary>Retail UseableArrestStart raycasts 3 m. Kept as the CLIENT's aim range; the server's own
@@ -2700,7 +2729,16 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldRestraintItem = backing;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };
+            // The restraints' OWN 1P clips, ripped from items/arrest_starts|arrest_ends/*/animations.prefab by
+            // tools/extract_restraint_anims.py. The two Arrest_Starts share a pair and the key has its own --
+            // counted by the extractor, not assumed. No carry model in the rip, so the mesh is null and the
+            // hands are bare; the MOTION is what was missing.
+            _viewmodel = new Viewmodel
+            {
+                EmptyHands = true,
+                ConsumableEquipClip = key ? "Key_Equip" : "Cuff_Equip",
+                ConsumableUseClip = key ? "Key_Use" : "Cuff_Use",
+            };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print(key
@@ -10376,6 +10414,7 @@ namespace UnturnedGodot
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
             TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends
+            TickArrest((float)delta);    // ...and the cuffs go on when the swing does (source: isUseable)
             if (_paintBusyT > 0f) _paintBusyT = Mathf.Max(0f, _paintBusyT - (float)delta);                                                   // ...and the hand is busy until the clip ends
             if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) Log.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
             if (_throwRevertAtEnd && _throwCd <= 0f) { _throwRevertAtEnd = false; (_revertEquip ?? EquipUnarmed)(); }   // the last one is gone and the follow-through is done
