@@ -746,15 +746,22 @@ namespace UnturnedGodot
             // real hardware. So the code stays behind a flag for an A/B on a real GPU with the `profiler` overlay,
             // and the DEFAULT is the behaviour that is known not to be slower.
             //
-            // THAT A/B IS DONE (2026-09-11, Radeon 780M, 1080p, pinned eye, UG_BATCH the only variable):
-            //     OFF  fps 68  processMs 15.4  draws 5377
-            //     ON   fps 65  processMs 15.6  draws 5675   ([batch] 6498 visuals -> 2605 MultiMesh, 0 tripwires)
-            // processMs was THE number -- draw counts are culler-deterministic, so lavapipe had already answered
-            // that half; the open half was the CPU win the scene-object drop (1703 -> 1499) implied. It does not
-            // appear. 15.4 -> 15.6 is flat, and fps is a shade worse. Real hardware agrees with lavapipe here.
-            // KEEP THE DEFAULT OFF. Not worth re-running at 64m cells -- but this is ONE point on a curve, and
-            // UG_BATCHCELL sweeps it (8m reportedly measured pixel-identical to unbatched at 3437 groups), so a
-            // cell-size sweep is the only version of this question still open.
+            // THAT A/B IS DONE (2026-09-11, Radeon 780M, 1080p, pinned eye, UG_BATCH the only variable).
+            // What it shows, and ONLY what it shows:
+            //     processMs  15.4 (OFF) -> 15.6 (ON).  Flat: a 0.2 ms delta against a 1.5 ms night-wide spread
+            //                for identical settings, i.e. 13% of the noise floor. NO DETECTABLE CPU WIN.
+            // The run engaged for real -- "[batch] 6498 prop visuals -> 2605 MultiMesh nodes", the OFF arm logs
+            // no batch line, and the :1302 tripwire fired zero times -- so this is a null result, not a no-op.
+            //
+            // processMs is the only row that survives. fps and draws were ALSO recorded (68->65, 5377->5675) and
+            // are NOT usable: UG_TIME was unpinned, so the day/night cycle moved how many lights were live and
+            // therefore the draw count, independently of UG_BATCH. Those two rows are omitted deliberately.
+            //
+            // So: KEEP THE DEFAULT OFF -- the CPU win the scene-object drop (1703 -> 1499) implied does not show
+            // up on real hardware. That is weaker than "real hardware confirms a loss", and it is as far as the
+            // measurement reaches. Still open: cell size (this is 64m only; UG_BATCHCELL sweeps it, and 8m
+            // reportedly measured pixel-identical to unbatched at 3437 groups), and a rerun with UG_TIME pinned
+            // if anyone wants the fps/draws rows to mean something.
             bool batchOpen = System.Environment.GetEnvironmentVariable("UG_BATCH") == "1";   // also closed after the scan: deferred holiday props (Client) arrive post-Flush and take the node path
             // DERIVED from the smart-prop table rather than restated here. Every entry this list used to hold by
             // hand was a prop that carves sub-meshes off its own instance's node (a lens, a screen, clock hands, a
