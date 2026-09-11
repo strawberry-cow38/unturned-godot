@@ -3866,7 +3866,14 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
-            var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            // UG_NORMPROBE=1: paint dot(NORMAL, worldUp) instead of the texture. Up-facing surfaces come out
+            // WHITE and vertical ones BLACK, which is an ABSOLUTE answer about whether this mesh's normals
+            // point out -- unlike "does it look right", which has been wrong twice in one day here.
+            if (System.Environment.GetEnvironmentVariable("UG_NORMPROBE") == "1")
+                mat = null;
+            var propMi = new MeshInstance3D { Mesh = mesh };
+            if (mat != null) propMi.MaterialOverride = mat;
+            else propMi.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/normal_probe.gdshader") };
             { var _pr = System.Environment.GetEnvironmentVariable("UG_PROPROT"); if (!string.IsNullOrEmpty(_pr)) { var a = _pr.Split(','); propMi.RotationDegrees = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); } }   // UG_PROPROT: reorient the prop (e.g. the elevator's stand-up) for the showcase
             AddChild(propMi);
             // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing

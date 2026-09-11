@@ -115,6 +115,37 @@ namespace UnturnedGodot
         /// two rounds would tear one in half and the render would look like a mesh bug, not a range bug).
         ///
         /// Shares _meshCache under a distinct key, so the full mesh and each prefix are parsed once each.</summary>
+        /// <summary>Emit one triangle's corners in the order that makes its winding agree with its own
+        /// authored normal. Returns true when they must be reversed.
+        ///
+        /// ⚠ THIS LOADER CARRIES TWO OPPOSITE WINDING CONVENTIONS AND HAS TO SERVE BOTH. Measured over the
+        /// real files: the retail-derived .txt meshes (jeep_body, ambulance_body, jeep_wheel) are 0% opposed --
+        /// their winding already agrees with their normals -- while the GENERATED fluid art
+        /// (content/fluid/*.txt) is 100% opposed, authored clockwise-front on purpose because this loader used
+        /// to emit corners in file order.
+        ///
+        /// So neither "reverse everything" nor "reverse nothing" can be right. Reversing fixed the vehicles
+        /// (strawberry 2026-09-11: vehicles "always in shadow", and the wheels and lenses too, which is what
+        /// proved it was the mesh and not the paint shader) and would have turned every fluid device inside
+        /// out -- tinyclaw caught that before it shipped, having made the mirror of it that morning.
+        ///
+        /// Deriving it PER TRIANGLE from the normal the file already carries removes the convention question
+        /// entirely: both families load correctly, neither generator has to change, and a third convention
+        /// cannot break it either. A face with no authored normal keeps file order, which is what the retail
+        /// meshes -- the ones that never needed touching -- already want.</summary>
+        static bool TriangleNeedsReverse(List<Vector3> verts, List<Vector3> norms,
+                                         List<int> fv, List<int> fn, int baseIdx)
+        {
+            if (fn[baseIdx] < 0 || fn[baseIdx] >= norms.Count) return false;
+            Vector3 a = verts[fv[baseIdx]], b = verts[fv[baseIdx + 1]], c = verts[fv[baseIdx + 2]];
+            Vector3 geo = (b - a).Cross(c - a);
+            if (geo.LengthSquared() <= 1e-20f) return false;
+            Vector3 authored = norms[fn[baseIdx]];
+            for (int k = 1; k < 3; k++)
+                if (fn[baseIdx + k] >= 0 && fn[baseIdx + k] < norms.Count) authored += norms[fn[baseIdx + k]];
+            return geo.Dot(authored) < 0f;
+        }
+
         public static ArrayMesh ParseObjPrefix(string path, int triCount)
         {
             if (triCount <= 0) return ParseObj(path);
@@ -204,16 +235,7 @@ namespace UnturnedGodot
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;   // Unity vt is V-up (origin bottom-left); Godot samples V-down (top-left) -> flip V or the texture wraps upside-down
                     case "f":
                         if (maxTris > 0 && fv.Count >= maxTris * 3) break;   // ParseObjPrefix: stop at N triangles
-                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
-                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
-                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
-                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
-                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
-                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
-                        // wheels and the light lenses too, which is what proved it was the MESH and not the
-                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
-                        // exactly why props light correctly and anything through here did not.
-                        for (int i = 3; i >= 1 && t.Length > 3; i--)
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -226,11 +248,18 @@ namespace UnturnedGodot
 
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
-            for (int i = 0; i < fv.Count; i++)
+            for (int i = 0; i + 2 < fv.Count; i += 3)
             {
-                if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
-                if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
-                st.AddVertex(verts[fv[i]]);
+                // Corner order decided PER TRIANGLE -- see TriangleNeedsReverse. This loader serves both
+                // winding conventions and the file cannot be trusted to say which one it is.
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, i);
+                for (int k = 0; k < 3; k++)
+                {
+                    int j = i + (rev ? 2 - k : k);
+                    if (ft[j] >= 0 && ft[j] < uvs.Count) st.SetUV(uvs[ft[j]]);
+                    if (fn[j] >= 0 && fn[j] < norms.Count) st.SetNormal(norms[fn[j]]);
+                    st.AddVertex(verts[fv[j]]);
+                }
             }
             return st.Commit();
         }
@@ -272,16 +301,7 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
-                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
-                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
-                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
-                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
-                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
-                        // wheels and the light lenses too, which is what proved it was the MESH and not the
-                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
-                        // exactly why props light correctly and anything through here did not.
-                        for (int i = 3; i >= 1 && t.Length > 3; i--)
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -301,9 +321,10 @@ namespace UnturnedGodot
                 bool inside = TriInside(verts[fv[f]], verts[fv[f + 1]], verts[fv[f + 2]]);
                 var st = inside ? stIn : stOut;
                 if (inside) nIn++; else nOut++;
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
@@ -342,16 +363,7 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
-                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
-                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
-                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
-                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
-                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
-                        // wheels and the light lenses too, which is what proved it was the MESH and not the
-                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
-                        // exactly why props light correctly and anything through here did not.
-                        for (int i = 3; i >= 1 && t.Length > 3; i--)
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -371,9 +383,10 @@ namespace UnturnedGodot
             {
                 var v0 = verts[fv[f]]; var v1 = verts[fv[f + 1]]; var v2 = verts[fv[f + 2]];
                 SurfaceTool st; if (In(v0, v1, v2, groupA)) { st = stA; nA++; } else if (In(v0, v1, v2, groupB)) { st = stB; nB++; } else { st = stBody; nBody++; }
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
@@ -409,16 +422,7 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
-                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
-                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
-                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
-                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
-                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
-                        // wheels and the light lenses too, which is what proved it was the MESH and not the
-                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
-                        // exactly why props light correctly and anything through here did not.
-                        for (int i = 3; i >= 1 && t.Length > 3; i--)
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -457,9 +461,10 @@ namespace UnturnedGodot
                     st = e.tool;
                 }
                 else { st = stBody; nBody++; }
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
