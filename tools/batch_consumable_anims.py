@@ -36,9 +36,16 @@ HOOKRE = re.compile(r"/(Left|Right)_Hook/([^/]+)(/.*)?$")
 def tname(p):
     """The track name is the item-relative PATH, not the leaf. Godot builds one Animation per clip and shares it
     across every character, so the path cannot depend on which item is held -- but it does not have to: a clip
-    archetype IS one equipable prefab shape, so every item sharing CU_2 shares CU_2's hierarchy. Emitting
-    "Item_Root/Bone_5/Bone_6" therefore stays correct for all of them, while a leaf "Bone_6" would need a
-    per-item lookup that a shared resource cannot have."""
+    archetype is one prefab SHAPE, so a relative path means the same thing to every item sharing it -- emitting
+    "Item_Root/Bone_5/Bone_6" stays correct for all of them, while a leaf "Bone_6" would need a per-item lookup
+    that a shared resource cannot have.
+
+    ⚠ The precise version, because the loose one ("a clip IS one prefab") is FALSE and I shipped it as the
+    justification: sharers carry different SUBSETS. CU_30 drives a Model_1 that none of its 20 sandwiches has, and
+    canned_pasta lacks the Stat_Tracker that canned_beans has on the same clip -- 23 such dead tracks across 75
+    items, which resolve to nothing and do nothing. What actually holds, and what the scheme needs, is weaker and
+    true: wherever two sharers both HAVE a part, they agree on its parent. Verified across all 14 shared clips --
+    zero conflicts -- and asserted by viewmodel.held_part_hierarchy so it stays that way."""
     m = HOOKRE.search(str(p))
     if not m: return str(p).split("/")[-1]
     return "Item_Root" if not m.group(3) else "Item_Root/" + m.group(3).strip("/")

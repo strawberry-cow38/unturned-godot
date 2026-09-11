@@ -1,18 +1,40 @@
-import glob, os, re
-VEH = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Vehicles"
+#!/usr/bin/env python3
+"""Extract the vehicle spraypaint cans: item id -> paint colour.
+
+Retail's Vehicle_Paint_Tool items each carry a single `PaintColor #rrggbb` in their .dat, which is the colour
+the can sprays onto a vehicle's paintable texels (the same channel vehicle_paint.gdshader already tints from
+VehicleAsset.getDefaultPaintColor). 32 of them, and the port had no concept of the type at all.
+
+    python extract_vehicle_paints.py <BUNDLES_DIR> <OUT_TSV>
+writes  <item id> <TAB> <rrggbb> <TAB> <English name>
+"""
+import os, re, sys, glob
+
+BUND = sys.argv[1]
+OUT  = sys.argv[2]
+
+def kv(txt, k):
+    m = re.search(r"(?im)^\s*" + re.escape(k) + r"\s+(.+?)\s*$", txt)
+    return m.group(1) if m else None
+
 rows = []
-for dat in glob.glob(VEH + r"\*\*.dat"):
-    txt = open(dat, encoding="utf-8-sig", errors="ignore").read()
-    name = os.path.basename(os.path.dirname(dat))
-    idm = re.search(r"^\s*ID\s+(\d+)", txt, re.M)
-    # every "#rrggbb" (with optional // faction label) in the .dat = a paint colour
-    hexes = re.findall(r'"(#[0-9a-fA-F]{6})"', txt)
-    israndom = bool(re.search(r"RandomHueOrGrayscale", txt))
-    gray = re.search(r"GrayscaleChance\s+([\d.]+)", txt)
-    if hexes or israndom:
-        rows.append((int(idm.group(1)) if idm else 0, name, hexes, israndom, gray.group(1) if gray else "-"))
+for datp in glob.glob(os.path.join(BUND, "Items", "**", "*.dat"), recursive=True):
+    if os.path.basename(datp).lower() == "english.dat": continue
+    txt = open(datp, encoding="utf-8-sig", errors="ignore").read()
+    if (kv(txt, "Type") or "").strip().lower() != "vehicle_paint_tool": continue
+    iid = kv(txt, "ID")
+    col = kv(txt, "PaintColor") or ""
+    hexv = col.strip().lstrip("#")
+    if not (iid and iid.isdigit() and re.fullmatch(r"[0-9A-Fa-f]{6}", hexv)):
+        print(f"[paint] {os.path.basename(datp)}: no usable ID/PaintColor (id={iid} colour={col!r})"); continue
+    name = os.path.splitext(os.path.basename(datp))[0]
+    eng = os.path.join(os.path.dirname(datp), "English.dat")
+    if os.path.exists(eng):
+        n = kv(open(eng, encoding="utf-8-sig", errors="ignore").read(), "Name")
+        if n: name = n
+    rows.append((int(iid), hexv, name))
+
 rows.sort()
-for id_, name, hexes, israndom, gray in rows:
-    tag = "RANDOM(gray=%s)" % gray if israndom else "LIST"
-    print(f"{name:18s} id={id_:<4} {tag:18s} {hexes}")
-print(len(rows), "vehicles with paint")
+with open(OUT, "w") as f:
+    for iid, hexv, name in rows: f.write(f"{iid}\t{hexv}\t{name}\n")
+print(f"[paint] {len(rows)} spraypaints -> {OUT}")

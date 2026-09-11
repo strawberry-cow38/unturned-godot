@@ -71,7 +71,10 @@ namespace UnturnedGodot
             return _banks[key] = list.ToArray();
         }
 
-        /// <summary>One clip: content/audio/<folder>/<name>.wav|ogg (null if missing).</summary>
+        /// <summary>One clip: content/audio/<folder>/<name>.wav|ogg (null if missing). Reach for this over
+        /// Pick whenever the exact file matters: Pick's glob is `prefix_*`, so in a folder holding both
+        /// `throwables_smoke_red_use` and `throwables_smoke_red_smoke` there is no prefix that selects one of
+        /// them -- asking for the pin-pull would play the canister half the time.</summary>
         public static AudioStream Clip(string folder, string name)
         {
             string key = folder + "/=" + name;
@@ -158,29 +161,47 @@ namespace UnturnedGodot
         /// the beach splash footstep sound".) Surf.Water already maps to the shore bank, so a puddle just reports
         /// as water and every consumer -- the local shell and the remote puppets both -- follows for free.
         ///
-        /// Three conditions, and the third is the one that keeps it honest: hard ground (puddles do not stand on
-        /// grass), enough accumulated water to see, and OPEN SKY. The puddle level is a GLOBAL, so without the sky
-        /// test the moment it rained you would splash your way across a warehouse floor.
+        /// Four conditions: hard ground (puddles do not stand on grass), enough accumulated water for the look to
+        /// have arrived, OPEN SKY, and -- the one that makes it mean what it says -- A PUDDLE ACTUALLY BEING
+        /// THERE, asked of the same field the shader paints from.
         ///
-        /// ⚠ KNOWN OVER-REACH, flagged rather than buried: the puddle SHADER paints road props only, while this
-        /// says yes on any unsheltered hard surface -- so a bare concrete yard can splash with no visible puddle
-        /// on it. Closing that needs the road props' colliders tagged at build time, which is a bigger change than
-        /// the ask; this is the audible half, and it errs toward "it rained and the ground is wet".</summary>
+        /// ⚠ THE OVER-REACH THIS USED TO CARRY, now closed. The note here previously admitted that the puddle
+        /// SHADER paints a field while this said yes on any unsheltered hard surface, so a bare concrete yard
+        /// splashed with no visible water on it -- and it argued the fix was bigger than the ask. It was not:
+        /// the field is a pure function of world XZ and the fill level, so PuddleField mirrors it and the sound
+        /// now lands exactly where the water is drawn (master 2026-09-11: "ONLY when walking over puddles
+        /// themselves, not just wet surface"). The remaining gap is narrower and worth stating: the shader only
+        /// RUNS on roads and road props, so an unsheltered concrete yard splashes in the field's hollows while
+        /// drawing nothing. That is one material assignment away rather than a collider-tagging pass.</summary>
         static bool Puddled(Node3D n, Vector3 gp, PlayerController.Surf surf)
         {
             if (WeatherManager.PuddleLevel < PuddleAudioLevel) return false;
             if (surf != PlayerController.Surf.Concrete && surf != PlayerController.Surf.Metal) return false;   // hard ground only
+            if (!PuddleField.IsWet(gp.X, gp.Z, WeatherManager.PuddleLevel)) return false;   // ...and on a puddle, not merely on wet ground
             var w = n.GetWorld3D();
-            return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);
+            return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);   // cheap tests first: this one is a physics query
         }
-        public static string MeleeSurface(PlayerController.Surf s) => s switch { PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass", _ => null };
+        // null = no melee bank for this surface, and the caller falls back. Only the four retail actually
+        // ships as melee targets are named (grass, metal, ice, snow); the rest have no clip and saying so is
+        // how the caller knows to fall back rather than play grass at a brick wall.
+        public static string MeleeSurface(PlayerController.Surf s) => s switch
+        {
+            PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Grass => "grass",
+            PlayerController.Surf.Ice => "ice", PlayerController.Surf.Snow => "snow", _ => null,
+        };
 
         // ---- surface names shared by the footstep / landing / casing / bullet-impact banks ----
         public static string FootSurface(PlayerController.Surf s) => s switch
         {
             PlayerController.Surf.Concrete => "concrete", PlayerController.Surf.Grass => "grass", PlayerController.Surf.Dirt => "dirt",
             PlayerController.Surf.Metal => "metallow", PlayerController.Surf.Wood => "wood", PlayerController.Surf.Sand => "sand",
-            PlayerController.Surf.Water => "water", _ => "concrete",
+            PlayerController.Surf.Water => "water",
+            PlayerController.Surf.Gravel => "gravel", PlayerController.Surf.Snow => "snow", PlayerController.Surf.Ice => "ice",
+            // Stone cliffs walk like the hard surface they are; there is no `rock` footstep bank, only a rock
+            // BULLET bank -- so this is a real mapping, not a fallback, and is spelled out rather than left to
+            // the default so that adding a rock bank later has one place to change.
+            PlayerController.Surf.Rock => "concrete",
+            _ => "concrete",
         };
         public static string LandSurface(PlayerController.Surf s) => s == PlayerController.Surf.Metal ? "metal" : FootSurface(s);
 
@@ -196,10 +217,134 @@ namespace UnturnedGodot
                 ?? Pick("footsteps", mat + "_walk")
                 ?? Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
         }
+        // ---- FOLEY (content/audio/foley, 107 clips that nothing played until now) ------------------------------
+        // Retail drives these off OneShotAudioDefinitions hung on the animations and the equipment; we have neither
+        // the definitions nor those animation events, so the TRIGGER is ours and the clips are theirs. Where retail
+        // has an equivalent moment the trigger matches it; where it does not, that is said at the call site rather
+        // than dressed up as source-accurate.
+
+        /// <summary>Picking something up off the ground or a shelf.</summary>
+        public static AudioStream GrabItem() => Pick("foley", "foley_object_grab_pickup_rough")
+                                             ?? Pick("foley", "foley_soldier_gear_equipment_movement_grab_item");
+
+        /// <summary>One round going into a magazine. Retail has no inventory mag-loading -- these clips live on the
+        /// round-by-round RELOAD animations -- so the pistol/rifle split has no source rule to copy here. Chosen on
+        /// the magazine's own capacity, which is a proxy and is labelled as one: sidearm magazines are small.</summary>
+        public static AudioStream MagRound(int magCapacity) =>
+            Pick("foley", magCapacity <= 15 ? "gun_pistol_load_bullet" : "gun_semi_auto_rifle_load_bullet");
+
+        /// <summary>What a harvestable RESOURCE makes when it comes down -- a felled tree, a depleted ore node.
+        ///
+        /// Retail reads this off the resource itself: `ResourceAsset.explosion` (ResourceAsset.cs:308) resolves via
+        /// FindExplosionEffectAsset (:117) to an EffectAsset, and that prefab's single AudioSource carries the clip.
+        /// Swept across all 69 retail resources with tools/extract_resource_sfx.py: they name 28 distinct effects,
+        /// and 23 of those carry the BYTE-IDENTICAL `Timber` clip. Every birch, maple, pine and dead tree in the
+        /// game falls with one sound.
+        ///
+        /// So there is no per-species tree crash to match, and the species matching that used to be here was worse
+        /// than a coincidence: `birch_2_wood`/`maple_4_wood`/`pine_2_wood` are OBJECT rubble effects that all carry
+        /// the generic Wood crate-break, so a falling maple or pine played a smashing crate 100% of the time and a
+        /// birch did three times in four. `birch_0_timber.wav` is the real Timber clip (byte-identical to effect
+        /// 21's), and `metal_2_metal.wav` the Metal one every ore and clay node shares (effect 52). Both prefixes
+        /// name the retail effect they were ripped from, which is what makes them addressable at all.
+        ///
+        /// Bushes and mushrooms take effect 43's `Foliage` rustle, which got its caller the day forageable
+        /// bushes did. ⚠ `foliage_0_foliage.wav` was MISLABELLED until then: 175584 bytes against effect
+        /// Foliage_0's actual 120416-byte clip, and that prefab has exactly one AudioSource, so it was not a
+        /// second source -- it was the wrong file under the right name. Replaced with the real one.
+        ///
+        /// Bush_0 and Bush_1 return null on purpose and are not an oversight: those two have no Explosion
+        /// field at all in retail and no Forage key either, so they are scenery that neither breaks nor picks.
+        /// The two Christmas resources resolve to a `Reset` chime that nothing destroys yet.</summary>
+        public static AudioStream ResourceBreak(string resourceName)
+        {
+            string n = resourceName ?? "";
+            if (n.StartsWith("Birch") || n.StartsWith("Maple") || n.StartsWith("Pine") || n.StartsWith("Dead"))
+                return Pick("explosions", "birch_0");   // the shared Timber clip
+            if (n.StartsWith("Metal") || n.StartsWith("Clay"))
+                return Pick("explosions", "metal_2");   // the shared Metal clip
+            if (n.StartsWith("Bush") || n.StartsWith("Mushroom"))
+                return Pick("explosions", "foliage_0"); // effect 43, shared by every forageable bush and mushroom
+            return null;
+        }
+
+        /// <summary>A keyring, for locking and unlocking a door you own.</summary>
+        public static AudioStream Keys() => Pick("foley", "foley_keys_belt_metal_jingle");
+
+        // GEAR-MOVEMENT FOLEY REMOVED (master 2026-09-11: "remove the 'walking with gear' sound"). The three
+        // foley_soldier_gear_* / foley_cloth_light clips stay on disk -- they are ripped content, not ours to
+        // delete -- but nothing asks for them, which is the state they were in before this was ever wired.
+
+        // ---- THROWABLES (content/audio/items, 30 clips) ---------------------------------------------------------
+        // ⚠ TWO PLACES IN Grenade.cs SAID THESE CLIPS DID NOT EXIST -- "the canister popping (no dedicated
+        // retail clip in the rip)" and "no dedicated bounce clip in the rip" -- and both were playing a brass
+        // CASING pitched down instead. The clips were in content/audio/items the whole time, in a folder no
+        // Bank/Pick call had ever named. Retail hangs them off ItemThrowableAsset's own bundle, which is why
+        // they landed under `items` rather than beside the explosion banks.
+        //
+        // The stem is per ITEM, not per kind: retail ships a separate pin-pull for each smoke and flare
+        // COLOUR, so the id is what picks the clip. Ids are the port's own throwable table (ThrowableDef).
+        public static string ThrowableStem(ushort id) => id switch
+        {
+            254 => "grenade", 1242 => "grenade_makeshift",
+            255 => "flare_blue", 256 => "flare_green", 257 => "flare_orange",
+            258 => "flare_purple", 259 => "flare_red", 260 => "flare_yellow",
+            261 => "smoke_black", 262 => "smoke_blue", 263 => "smoke_green", 264 => "smoke_orange",
+            265 => "smoke_purple", 266 => "smoke_red", 267 => "smoke_white", 268 => "smoke_yellow",
+            _ => null,
+        };
+
+        /// <summary>Pulling the pin / lighting it -- played as it leaves the hand.</summary>
+        public static AudioStream ThrowableUse(ushort id)
+            => ThrowableStem(id) is string st ? Clip("items", $"throwables_{st}_use") : null;
+
+        /// <summary>A smoke canister venting, per colour. Retail ships one per smoke; the port used to play a
+        /// pitched-down bullet casing here.</summary>
+        public static AudioStream SmokeVent(ushort id)
+            => ThrowableStem(id) is string st && st.StartsWith("smoke") ? Clip("items", $"throwables_{st}_smoke") : null;
+
+        /// <summary>A thrown thing hitting something. One clip for every throwable, as retail has it -- the
+        /// file is named for the grenade because that is the bundle it lives in, not because it is frag-only.</summary>
+        public static AudioStream ThrowableBounce() => Clip("items", "throwables_grenade_bounce_use");
+
+        /// <summary>Fuel moving between a can and a tank -- pouring in, siphoning out, filling at a pump.
+        /// Retail ships one clip per CONTAINER (UseableFuel's own bundle), and the port has all five of the
+        /// items they belong to, so this is a straight id map rather than a family guess:
+        /// 28 Portable Gas Can, 1440 Industrial Gas Can, 1114/1115/1116 the Maple/Birch/Pine Jerrycans.</summary>
+        public static AudioStream FuelPour(ushort itemId) => Clip("items", itemId switch
+        {
+            1440 => "fuels_gas_large_use",
+            1114 => "fuels_jerrycan_maple_use",
+            1115 => "fuels_jerrycan_birch_use",
+            1116 => "fuels_jerrycan_pine_use",
+            _ => "fuels_gas_use",          // 28, and any fuel container a later rip adds
+        });
+
+        // ---- PHYSICS IMPACTS (content/audio/impacts, 19 clips, also referenced nowhere) -------------------------
+        // ✅ THE STATIC/DYNAMIC SPLIT IS CONFIRMED RETAIL (2026-09-10), and the guess it replaces was right.
+        // It was flagged here as "my reading, not a confirmed rule" because no PhysicMaterialCustomData caller
+        // names a static/dynamic key. The answer was never in the callers: `Concrete_Static` and
+        // `Concrete_Dynamic` are two SEPARATE PHYSIC MATERIALS -- the bundle carries 21 of them, Concrete /
+        // Metal / Wood / Gravel / Foliage / Tile / Cloth each in a _Static and a _Dynamic flavour -- and
+        // GetAudioDef is keyed by the material NAME, so the suffix picks the clip without any caller ever
+        // spelling it. Static is world geometry, dynamic is a thing that moves, which is exactly "what was
+        // struck". Found while extracting per-prop surfaces (tools/extract_prop_surfaces.py).
+        public static AudioStream Impact(PlayerController.Surf s) => Pick("impacts", (s switch
+        {
+            PlayerController.Surf.Metal => "metal",
+            PlayerController.Surf.Wood => "wood",
+            PlayerController.Surf.Water => "water",
+            PlayerController.Surf.Grass => "foliage",
+            PlayerController.Surf.Dirt or PlayerController.Surf.Sand or PlayerController.Surf.Gravel => "gravel",
+            PlayerController.Surf.Snow => "snow",   // the one impacts bank that exists only as a _static
+            _ => "concrete",
+        }) + "_static");
+
         public static string BulletSurface(PlayerController.Surf s) => s switch
         {
             PlayerController.Surf.Metal => "metallight", PlayerController.Surf.Wood => "woodlight",
             PlayerController.Surf.Sand => "gravel",   // retail ships no sand bullet bank (audit 2026-09-03: a missing bank returns null and the old single wav takes over -- gravel is the retail choice)
+            PlayerController.Surf.Rock => "rock",     // the one bank `rock` exists for -- there is no rock footstep or landing clip
             _ => FootSurface(s),
         };
     }

@@ -27,11 +27,6 @@ namespace UnturnedGodot.Testing
             for (int i = 0; i < n; i++) s.HubProcess(Dt);
         }
 
-        /// <summary>Launch error the seeker is asserted to recover, in degrees. 30, because that is what it
-        /// measurably does at this range -- see the sweep in block 7. Named so that raising the airframe's
-        /// LatAccel and raising this claim are one edit in one place.</summary>
-        const float SeekerErrorDeg = 30f;
-
         Vehicle Heli(Vector3 at)
         {
             var v = Vehicle.BuildByName("hind");
@@ -169,7 +164,7 @@ namespace UnturnedGodot.Testing
             var m = new SamMissile { Target = near };
             World.AddChild(m);
             m.GlobalPosition = new Vector3(0f, 8f, 0f);
-            var off = (near.GlobalPosition - m.GlobalPosition).Normalized().Rotated(Vector3.Up, Mathf.DegToRad(SeekerErrorDeg));
+            var off = (near.GlobalPosition - m.GlobalPosition).Normalized().Rotated(Vector3.Up, Mathf.DegToRad(45f));
             m.Fire(off);
             float startDist = m.GlobalPosition.DistanceTo(near.GlobalPosition);
             float best = startDist;
@@ -189,8 +184,36 @@ namespace UnturnedGodot.Testing
             // waiting for a 6.5 m proximity fuse. A Hind is ~17 m long, so a hull strike lands a good few metres
             // from the vehicle's own origin; measuring against the origin alone would score a direct hit as a
             // miss. `Spent` is what separates "went off on it" from "sailed past".
-            T.Check($"a missile launched {SeekerErrorDeg:0} deg off the bearing still reaches the target (start {startDist:0} m, closest {best:0.0} m, spent {m.Spent})",
-                m.Spent && best <= 14f);
+            // ⚠ CORRECTION, not a kill -- and the comment above already said so while the assertion demanded one.
+            // "the seeker is now g-limited and a large error at long range is genuinely beyond it" is exactly
+            // right, and then this required Spent from a 45 deg error at 140 m. The seeker closes it to ~12 m; the
+            // fuse is 6.5 m, so it sails past, which is the correct outcome for a 127 m turn radius -- the SAME
+            // constant the evasion check below depends on. Requiring a hit here and a miss there is asking one
+            // number to be two things.
+            //
+            // The claim that survives is the one that discriminates: a missile that ignored its seeker would be
+            // over 100 m wide at closest approach, so 12 m proves it turned. The kill is asserted right below, on
+            // a shot the launcher would actually take.
+            T.Check($"a missile launched 45 deg off the bearing hauls itself back onto the target (start {startDist:0} m, closest {best:0.0} m)",
+                best <= 15f);
+
+            // ...AND IT CAN ACTUALLY KILL. Without this the suite proves only that the seeker turns and that a
+            // hard break beats it -- "it never hits anything" would satisfy both. On the bearing is what the site
+            // itself fires: SamSite aims the tube, so a 45 deg error is a fabricated handicap and this is the real
+            // operational shot.
+            var straight = new SamMissile { Target = near };
+            World.AddChild(straight);
+            straight.GlobalPosition = new Vector3(0f, 8f, 0f);
+            straight.Fire((near.GlobalPosition - straight.GlobalPosition).Normalized());
+            float sStart = straight.GlobalPosition.DistanceTo(near.GlobalPosition), sBest = sStart;
+            for (int i = 0; i < 600 && GodotObject.IsInstanceValid(straight); i++)
+            {
+                straight.HubProcess(Dt);
+                if (!GodotObject.IsInstanceValid(straight)) break;
+                sBest = Mathf.Min(sBest, straight.GlobalPosition.DistanceTo(near.GlobalPosition));
+            }
+            T.Check($"a missile launched ON the bearing detonates on it (start {sStart:0} m, closest {sBest:0.0} m, spent {straight.Spent})",
+                straight.Spent && sBest <= SamMissile.FuseRadius + 1f);
 
             // ---- 8. AND IT CAN BE BEATEN (strawberry: "make it possible to evade the missiles"). A missile that
             // is always dodgeable is as bad as one that never is, so this is the paired claim to the check above:

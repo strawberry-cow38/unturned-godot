@@ -462,10 +462,30 @@ namespace UnturnedGodot
             }
         }
 
+        float _prevVelY, _impactCd;   // landing detector: a fall that stops being one, with a bounce cooldown
+
         public override void _PhysicsProcess(double delta)
         {
             if (_settled) return;   // frozen static once it came to rest -> zero per-frame cost + no jitter
             _age += (float)delta;
+            // IT LANDS WITH A SOUND. Detected as the ARREST of a fall rather than a contact callback: turning
+            // ContactMonitor on for every dropped item in a looted town costs a per-body contact buffer forever,
+            // and what we need is one event, not the contact set. A hard downward velocity that stops being one
+            // in a single step is a landing; the cooldown stops a bouncing tin machine-gunning.
+            float vy = LinearVelocity.Y;
+            if (_impactCd > 0f) _impactCd -= (float)delta;
+            else if (_prevVelY < -2.5f && vy - _prevVelY > 1.5f)
+            {
+                _impactCd = 0.15f;
+                float hit = Mathf.Min(-_prevVelY, 12f);
+                // Speed-scaled, the way retail scales its own collision audio (ParticleSystemCollisionAudio maps
+                // min/maxSpeed onto min/maxVolume): a tin tipped off a shelf should not sound like one thrown off
+                // a roof.
+                float db = Mathf.Lerp(-16f, -4f, Mathf.InverseLerp(2.5f, 12f, hit));
+                var surf = PlayerController.TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var s) ? s : PlayerController.Surf.Concrete;
+                GameAudio.PlayAt(this, GameAudio.Impact(surf), GlobalPosition, db, 3f, 22f, (float)GD.RandRange(0.94, 1.06));
+            }
+            _prevVelY = vy;
             _velAvg = _velAvg.Lerp(LinearVelocity, 0.15f);
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.15f);
             if (_velAvg.LengthSquared() < 0.02f && _angAvg.LengthSquared() < 0.05f)

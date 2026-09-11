@@ -1907,15 +1907,79 @@ void fragment() {
         public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
-        public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch
+        // ---- WHAT THE GROUND IS MADE OF ---------------------------------------------------------------
+        // ⚠ THIS USED TO BE A HARDCODED INDEX TABLE AND EVERY ROW BUT ONE WAS WRONG. It read
+        //   1 Sand ("PEI_Sand") / 3 Concrete ("road network") / 4 Concrete ("rock/cliff") / 5 Sand ("seabed")
+        //   / 6 Dirt ("dirt") / else Grass
+        // against a real palette (content/<map>/layers.txt, written by tools/terrain_map.py from the tile
+        // Materials GUIDs) of
+        //   0 Dirt  1 Farm Wheat/Corn  2 Grass  3 Gravel  4 Road  5 Sand|Gravel Shore  6 Snow|Grass 01  7 Stone
+        // -- so a wheat field sounded like SAND, gravel sounded like concrete, bare dirt and stone both
+        // sounded like GRASS, and snow sounded like DIRT. Only layer 4 (Road -> Concrete) was right, and its
+        // comment said it was the cliff. Silent for as long as it has existed, because a footstep on the
+        // wrong material is still a footstep.
+        //
+        // Layers 5 and 6 are DIFFERENT MATERIALS on different maps (PEI has Sand and Snow where Yukon has
+        // Gravel Shore and Snow and Washington has Gravel Shore and a second Grass), so no index table can be
+        // right for all three -- which is why this reads the NAMES. That is also how retail decides: the
+        // audio comes off the surface's physic material, not off a slot number.
+        public PlayerController.Surf SurfAt(float worldX, float worldZ) => SurfForLayer(SampleDominantLayer(worldX, worldZ));
+
+        static string _surfMapDir; static PlayerController.Surf[] _surfByLayer;
+
+        /// <summary>The Surf for one splat layer index, off this map's own material names. Cached per map.</summary>
+        public static PlayerController.Surf SurfForLayer(int layer)
         {
-            1 => PlayerController.Surf.Sand,      // PEI_Sand
-            3 => PlayerController.Surf.Concrete,  // road network
-            4 => PlayerController.Surf.Concrete,  // rock / cliff
-            5 => PlayerController.Surf.Sand,      // underwater seabed (sand)
-            6 => PlayerController.Surf.Dirt,      // dirt
-            _ => PlayerController.Surf.Grass,     // 2 grass, 0/7 forest, 255 none
-        };
+            if (_surfByLayer == null || _surfMapDir != MapDir)
+            {
+                var names = LayerNames();
+                var tbl = new PlayerController.Surf[System.Math.Max(8, names.Length)];
+                for (int i = 0; i < tbl.Length; i++)
+                    tbl[i] = SurfForMaterial(i < names.Length ? names[i] : null);
+                _surfByLayer = tbl; _surfMapDir = MapDir;
+            }
+            return layer >= 0 && layer < _surfByLayer.Length ? _surfByLayer[layer] : PlayerController.Surf.Grass;
+        }
+
+        /// <summary>A terrain material name -> what it sounds like underfoot. Matched on the name's stem so a
+        /// numbered variant ("Dirt 01", "Sand 01", "Stone 01", "Grass 01") lands with its family rather than
+        /// falling through -- that suffix is just which texture of that material the map painted.</summary>
+        public static PlayerController.Surf SurfForMaterial(string name)
+        {
+            string n = (name ?? "").Trim().ToLowerInvariant();
+            if (n.Length == 0) return PlayerController.Surf.Grass;
+            if (n.StartsWith("snow")) return PlayerController.Surf.Snow;
+            if (n.StartsWith("ice")) return PlayerController.Surf.Ice;
+            if (n.StartsWith("gravel")) return PlayerController.Surf.Gravel;   // incl. "Gravel Shore"
+            if (n.StartsWith("road") || n.StartsWith("concrete") || n.StartsWith("asphalt")) return PlayerController.Surf.Concrete;
+            if (n.StartsWith("sand")) return PlayerController.Surf.Sand;
+            if (n.StartsWith("stone") || n.StartsWith("rock") || n.StartsWith("cliff")) return PlayerController.Surf.Rock;
+            // Mud has full retail banks and NO Surf value, because no layer on any of the three maps is mud --
+            // it reads as dirt here rather than adding a value nothing can produce. If a mud layer ever lands,
+            // this is the line that grows a Surf.Mud with it.
+            if (n.StartsWith("dirt") || n.StartsWith("mud")) return PlayerController.Surf.Dirt;
+            // A crop field is soft planting, not bare earth, and there is no crop bank -- grass is the closest
+            // thing retail ships. Named explicitly so it is a decision rather than the default catching it.
+            if (n.StartsWith("farm") || n.StartsWith("wheat") || n.StartsWith("corn")) return PlayerController.Surf.Grass;
+            return PlayerController.Surf.Grass;   // unknown/unpainted: grass is the likeliest outdoor ground
+        }
+
+        /// <summary>This map's splat layer names (content/<MapDir>/layers.txt), PEI's as the fallback. Shared
+        /// with EditorTerrain's paint palette so the editor's label and the sound underfoot cannot disagree
+        /// about which slot is snow.</summary>
+        public static readonly string[] DefaultLayerNames = { "Dirt", "Wheat", "Grass", "Gravel", "Road", "Sand", "Snow", "Stone" };
+
+        public static string[] LayerNames()
+        {
+            string p = ProjectSettings.GlobalizePath($"res://content/{MapDir}/layers.txt");
+            if (File.Exists(p))
+            {
+                var names = new System.Collections.Generic.List<string>();
+                foreach (var ln in File.ReadAllLines(p)) { var t = ln.Trim(); if (t.Length > 0) names.Add(t); }
+                if (names.Count > 0) return names.ToArray();
+            }
+            return DefaultLayerNames;
+        }
 
         // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
         public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)

@@ -444,7 +444,10 @@ namespace UnturnedGodot.Net
         // beats any already-composed snapshot; command-driven mutations just arrive one snapshot later.
         static long Stamp(long tick) => tick + 1;
 
-        public DeployableEntity ServerPlace(NetId id, ushort defId, ushort owner, Vector3 pos, float yawDegrees, long tick)
+        /// <summary>Place one. `health` and `fuel` carry a PICKED-UP device's condition back onto the world: pass
+        /// null for a fresh build, which starts full.</summary>
+        public DeployableEntity ServerPlace(NetId id, ushort defId, ushort owner, Vector3 pos, float yawDegrees, long tick,
+                                            float? health = null, float? fuel = null)
         {
             if (!Schema.TryGet(defId, out var def)) return null;
             if (def.LocalOnly) return null;   // validated and spent, but the client materializes it itself
@@ -460,8 +463,14 @@ namespace UnturnedGodot.Net
                 // round-tripped through WriteClampedFloat(12,2) -- and StateHash folds both in, so the
                 // parity check failed while the power SOLVE still agreed (it does not read exact fuel).
                 // That is the shape of "solve passes, parity fails". Found by cow tools.
-                Health = QuantizeScalar(def.Health),
-                Fuel = QuantizeScalar(def.FuelCapacity),   // a fresh build starts FULL (Deployable.Spawn does the same)
+                // ⚠ A PICKED-UP DEVICE REMEMBERS ITS CONDITION. These were unconditionally def.Health and
+                // def.FuelCapacity -- "a fresh build starts full", which is right for a fresh build and wrong for
+                // one you carried here. The singleplayer path has restored both from the backing item since it was
+                // written (Deployable.Spawn, "so re-placing it restores them instead of resetting to full"), but
+                // every session runs through the loopback, so THIS is the path that actually executes: a generator
+                // picked up on its last drop of fuel came back down full. Free fuel for a pickup and a re-place.
+                Health = QuantizeScalar(Mathf.Clamp(health ?? def.Health, 1f, def.Health)),
+                Fuel = QuantizeScalar(Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity)),
                 LastChangedTick = Stamp(tick),
             };
             _deployables.Add(id, e);

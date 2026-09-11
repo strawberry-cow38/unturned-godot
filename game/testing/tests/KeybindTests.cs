@@ -31,6 +31,12 @@ namespace UnturnedGodot.Testing.Tests
             {
                 GameAction.Grenade,
                 GameAction.Melee,   // G unbound 2026-09-03 (strawberry: "remove whatever was on G, its broken"); melee swings on Fire, the action stays rebindable
+                // The FLAVOUR gestures, 2026-09-11. Surrender is bound (B) because it is the one with mechanical
+                // weight -- you cannot be handcuffed unless you are in it. Waving and saluting are not worth
+                // squatting five more letters for by default; they stay reachable in the rebind menu, which is
+                // exactly the case this exemption list was written for.
+                GameAction.GestureWave, GameAction.GestureSalute, GameAction.GesturePoint,
+                GameAction.GestureFacepalm, GameAction.GestureRest,
             };
 
             var missing = new List<string>();

@@ -46,8 +46,12 @@ namespace SDG.Unturned
         // 7.585 at 60 Hz -- so this one number is right at either tick rate, to under half a centimetre.
         // The MP climb envelope is unaffected: PlayerAuthority.UpRate is 16 m/s, which this is nowhere near.
         public const float JUMP = 7.583f;                // was PlayerMovement.cs:59's 7.0
-        public const float GRAVITY = 9.81f * 3f;         // Physics.gravity.y (-9.81) applied *3, PlayerMovement.cs:1277
-        public const float TERMINAL_VELOCITY = -100.0f;  // minVerticalVelocity, PlayerMovement.cs:1280
+        // The x3 is the port-visible gravity; the RAW 9.81 is kept because the terminal-velocity clamp
+        // scales THAT and not the tripled one (PlayerMovement.cs:1280 multiplies Physics.gravity.y by 2,
+        // with no *3 in sight). Deriving one from the other keeps that relationship from drifting apart.
+        public const float GRAVITY_BASE = 9.81f;         // |Physics.gravity.y|
+        public const float GRAVITY = GRAVITY_BASE * 3f;  // Physics.gravity.y (-9.81) applied *3, PlayerMovement.cs:1277
+        public const float TERMINAL_VELOCITY = -100.0f;  // minVerticalVelocity at normal gravity, PlayerMovement.cs:1280
 
         public static float SpeedForStance(EPlayerStance stance)
         {

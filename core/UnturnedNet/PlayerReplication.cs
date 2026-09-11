@@ -163,6 +163,41 @@ namespace UnturnedGodot.Net
         /// decrement them, and only then pay them out -- rather than taking the client's word as SpentAmount
         /// does.</summary>
         public const byte CommandGunUnload = 48;
+        /// <summary>v40: pick a berry bush or a mushroom (retail ResourceManager.ReceiveForageRequest).
+        /// Its own intent rather than a reuse of anything: a forage is addressed by RESOURCE INDEX, gives
+        /// an item the server chooses, and kills a world resource -- no existing command means any of
+        /// those. The client asserts only WHICH plant.</summary>
+        public const byte CommandForageResource = 49;
+        /// <summary>v41: respray a vehicle with a spraypaint can. The client names the CAR and the CAN; the
+        /// server owns whether that can is in the bag, spends it, and publishes the colour on the vehicle
+        /// entity -- a client that could assert the colour could paint without owning a can.</summary>
+        public const byte CommandPaintVehicle = 50;
+        /// <summary>v42: ask to enter a gesture. The client ASKS rather than asserts, because SURRENDER is the
+        /// precondition for being handcuffed and ARREST is the state a captor puts you in -- a client that could
+        /// assert its own gesture could make itself uncuffable, or claim NONE and walk out of real handcuffs.
+        /// The server runs the same GestureRules admission test the client showed the player, and what lands on
+        /// everyone's screen is the server's answer.</summary>
+        public const byte CommandRequestGesture = 51;
+        /// <summary>v43: cuff a SURRENDERING player with whatever restraint is in your hand. The command names
+        /// the TARGET and nothing else -- the server reads which restraint off the hand it already replicates,
+        /// because a client that could name the restraint could cuff with a 128-strength pair it does not own.
+        /// Same rule as the respray naming the can and never the colour.</summary>
+        public const byte CommandArrestPlayer = 52;
+        /// <summary>v43: unlock someone with a key. Also target-only, same reason.</summary>
+        public const byte CommandUnlockArrest = 53;
+        /// <summary>v43: one wriggle against the cuffs. Carries the SIDE you leaned, because retail counts lean
+        /// CHANGES (PlayerAnimator.cs:1144) -- the server ignores a side equal to the last one it accepted, so
+        /// spamming one direction does nothing and you have to alternate exactly as a real player mashing Q and
+        /// E does. That, plus one per tick, is what keeps a cuffed client from sending 128 in a frame.</summary>
+        public const byte CommandStruggle = 54;
+        /// <summary>v45: fit a spare to a vehicle's flat wheel. Names the CAR and the WHEEL; which tire item is
+        /// being spent is read off the sender's replicated hand, so a client cannot fit a wheel it does not
+        /// hold. Same rule as the respray and the cuffs.</summary>
+        public const byte CommandFitTire = 55;
+        /// <summary>v45: jack an EMPTY vehicle back onto its wheels. The impulse is applied SERVER-SIDE and
+        /// reaches everyone through the vehicle's ordinary transform stream -- the client asking is not the
+        /// client shoving, which is what stops a carjack being a launch-anything primitive.</summary>
+        public const byte CommandCarjack = 56;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
@@ -208,6 +243,12 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerHurt = 38;        // to the VICTIM only: damage taken + an optional source position, for the directional hurt indicator (master 2026-09-03). id 37 is EventPlayerFired.
         public const byte EventPlayerMelee = 39;
         public const byte EventCookerState = 40;
+        /// <summary>v44: somebody waved / saluted / pointed / facepalmed. An EVENT and not entity state, because
+        /// a one-shot has no state: latching it onto the entity would leave the puppet waving until something
+        /// else changed, and clearing it a tick later would race the snapshot that was meant to carry it. The
+        /// LOOPING gestures -- hands up, cuffed, sat down -- stay on the entity, where a late joiner can find
+        /// them. Same split the melee swing and the stance already have.</summary>
+        public const byte EventPlayerGesture = 44;
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
@@ -230,6 +271,12 @@ namespace UnturnedGodot.Net
         public const byte ButtonJump = 1 << 0;
         const int StanceShift = 1;
         const byte StanceMask = 0b11;
+        // TWO bits, not one, so a puppet cannot light the wrong lamp. The worn devices (nightvision, headlamp) and
+        // the handheld torch are separate emitters on separate meshes, and a single "a light is on" flag would
+        // make a player wearing goggles AND holding a lit torch glow at both. Bits 3-7 were headroom by the note
+        // above, and adding one is not a wire break.
+        public const byte ButtonWornLight = 1 << 3;   // nightvision or headlamp, switched on
+        public const byte ButtonHeldLight = 1 << 4;   // the handheld torch, switched on
 
         public ushort Seq;        // client-local, monotonically increasing (wrap-around via NetSeq)
         public float MoveX;       // strafe axis [-1,1] (quantized to 8 bits on the wire)
@@ -242,6 +289,8 @@ namespace UnturnedGodot.Net
         // server adopts it); MoveInput remains the demo-walker/loopback movement intent only.
 
         public bool Jump => (Buttons & ButtonJump) != 0;
+        public bool WornLight => (Buttons & ButtonWornLight) != 0;
+        public bool HeldLight => (Buttons & ButtonHeldLight) != 0;
 
         /// <summary>The on-foot stance carried in buttons bits 1-2 -- what the server avatar must
         /// integrate at so client-predicted and server-integrated per-tick distances match.</summary>

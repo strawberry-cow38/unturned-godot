@@ -1347,6 +1347,21 @@ namespace UnturnedGodot
                 // PlaceObject at all, so this branch currently only fires for a prop placed outside that table
                 // (or a standalone --doortest spawn, which calls ObjectDoor.Spawn directly). Reconciling the two
                 // (a lootable fridge that is ALSO an openable door) is unscoped follow-up, not part of this MVP.
+                // THE CAR LIFT'S PLATFORM. Car_Lift_0's ramp is a SkinnedMeshRenderer (Hinge_0) with no
+                // MeshFilter, so extract_objects_v2 -- which walks the LODGroup for MeshFilter/MeshRenderer
+                // LOD0 -- never saw it and the world got a lift frame with nothing to lift (master: "on the
+                // main menu it has its ramp, but in game it doesnt"; the menu diorama comes through the
+                // Unity Mesh .asset path, which does).
+                //
+                // Not routed through the door catalog beside it even though extract_doors produced the mesh:
+                // this thing does not hinge. Its Hinge bone's rotation curve is two identical keys and only
+                // its POSITION moves, so an ObjectDoor would swing a platform that is meant to rise.
+                if (mode == WorldMode.Playable && name == "Car_Lift_0")
+                {
+                    var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
+                    if (rampMesh != null) CarLift.Spawn(root, gpos, basis, rampMesh, MatFor(matName));
+                }
+
                 ObjectDoor doorForBody = null;   // issue 3/5: carry the first door out of this branch to link the prop BODY collider to it
                 if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
@@ -1446,7 +1461,14 @@ namespace UnturnedGodot
                         // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
                         long _b0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
-                        body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
+                        // WHAT IT IS MADE OF, off the retail physic material on its own collider. The line
+                        // this replaces was `fmesh != null ? Wood : Concrete` -- "trees have foliage so they
+                        // are wood, everything else is concrete" -- against a world where 506 of the 1028
+                        // props that name a material are METAL. A chain-link fence rang like pavement.
+                        // The ternary survives as the fallback because it is right for exactly the props the
+                        // table has no row for: the resources, which live in a different bundle.
+                        body.SetMeta(PlayerController.SurfMeta,
+                                     (int)(PropSurfaces.For(name) ?? (fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete)));
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
                         // this meta, and reads the ladder's facing off the BODY's basis (retail keys off the
                         // collider's transform the same way). 76 of these are already placed across the map.

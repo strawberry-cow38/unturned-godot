@@ -14,6 +14,7 @@ namespace UnturnedGodot
             if (def?.Fluid == null || parent == null) return null;
             FluidContainer c = def.Fluid.Value switch
             {
+                FluidRole.Source      when def.FluidPumpsCrude => PumpJack.Make(),   // the derrick: POWER in, crude out; inert unpowered
                 FluidRole.Source      => FluidContainer.Make(FluidRole.Source, new FluidTank(def.FluidType, def.FluidCapacity, def.FluidCapacity), def.FluidRate),   // starts FULL
                 FluidRole.Storage     => FluidContainer.Make(FluidRole.Storage, new FluidTank(def.FluidType, def.FluidCapacity, 0f), def.FluidRate),                 // starts empty, adopts
                 FluidRole.Consumer    => FluidContainer.Make(FluidRole.Consumer, new FluidTank(def.FluidType, def.FluidCapacity, 0f), def.FluidRate),

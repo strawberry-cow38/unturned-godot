@@ -37,6 +37,12 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // ⚠ THIS TEST IS NOT THE GUARD IT LOOKS LIKE, and it is kept mainly to say so. It asserts one hand-built
+    // ItemAsset per KIND it already knows about, so it catches a regression in an existing branch and is blind
+    // to a NEW feature that nobody comes back to add a line for -- which is exactly what happened four more
+    // times (spraypaints, carjack, umbrellas, throwables) while this stayed green. The real guard is
+    // EquipDispatchTests.cs, which derives its coverage from the catalog instead of from a list retyped here.
+    //
     // Regression (master 2026-07-20): a HOLDABLE item must offer a hand action in its item menu, not just Drop/Close.
     // The Rope (item 64) had the equip code (EquipRopeTool) but the menu special-cased only the Wire (id==65) and never
     // consulted the Rope, so it showed just Drop/Close -- "the option to hold is NOT THERE". InventoryUI.HasHandAction is
@@ -368,8 +374,13 @@ namespace UnturnedGodot.Testing
             ui.Open();
             yield return Ticks(2);   // let the character panel lay out so the paperdoll rect has a real size + position
 
-            // a rightward drag of +100px must spin the rig; the live handler applies _pdYaw += relX * 0.012
-            // (strawberry 2026-09-09: the model follows the cursor, rather than opposing it)
+            // ⚠ THE SIGN IS +, AND THAT IS THE REQUESTED BEHAVIOUR. This asserted `_pdYaw -= relX * 0.012` and a
+            // delta of ~-1.2, which is what the handler did until strawberry asked for it inverted on 2026-09-09
+            // ("invert the rotation when click-dragging" -- dragging right turns his right shoulder toward you, so
+            // the model follows the cursor instead of opposing it). The handler changed, this did not, and the test
+            // went red the moment the requested change landed -- unnoticed only because the nightly had not run
+            // since. A stale assertion is worse than a stale comment: it fails, and it fails pointing at whoever
+            // touched the file last rather than at itself.
             float d = ui.DebugPaperdollDragSpin(100f);
             T.Check($"press on the paperdoll STARTS a spin, not an item-grab (delta={d})", !float.IsNaN(d));
             T.Check($"a +100px drag applied the yaw step ~+1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (100f * 0.012f)) < 0.01f);

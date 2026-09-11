@@ -140,6 +140,14 @@ namespace UnturnedGodot
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            // v41: the spraypaint table is CONTENT, so the game layer hands it down -- core cannot read
+            // content/vehicle_paints.tsv, and a server that does not know what a can is must not paint.
+            Server.Transactions.PaintColorFor = id =>
+            {
+                if (VehiclePaints.For(id) is not Color c) return null;
+                return ((uint)(c.R8) << 16) | ((uint)(c.G8) << 8) | (uint)c.B8;
+            };
+
             Server.Transactions.AllowCheats = AllowCheats;   // SECURITY (review C1): default OFF on the public dedicated server -- no client may run the give/xp/skill console cheats. Tests/admins opt in via the AllowCheats field; a real per-connection admin gate is future work.
             // A3 (SP/MP-unify): server-place the recorded grid-power fixtures into the deployable graph, in
             // deterministic map-file order, mains default OFF (ToggledOn = false). They ride SystemDeployables

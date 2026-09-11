@@ -81,6 +81,14 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            // v41: the spraypaint table is CONTENT, so the game layer hands it down -- core cannot read
+            // content/vehicle_paints.tsv, and a server that does not know what a can is must not paint.
+            Server.Transactions.PaintColorFor = id =>
+            {
+                if (VehiclePaints.For(id) is not Color c) return null;
+                return ((uint)(c.R8) << 16) | ((uint)(c.G8) << 8) | (uint)c.B8;
+            };
+
 
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
@@ -306,6 +314,21 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 //     hidden SuppressLocalVisual SP drop + locally-awarded-then-overwritten XP. The loopback's
                 //     CropNetSync stamps NetId onto the host's real CropManager nodes so the scan finds them.
                 Player.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
+                // FORAGE (v40): berry bushes + mushrooms. Unlike the crop harvest above there is no direct SP
+                // path this supersedes -- forage never existed locally, and it is server-only by design
+                // (master 2026-09-10 "make sure the harvest path goes through the server"), so this is the
+                // only route from pressing F on a bush to actually getting a berry.
+                Player.NetForageResource = index => Client.SendForageResource(index);
+                Player.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41 respray
+                Player.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42 gestures
+                Client.PlayerGestured += e => Remotes?.OnRemoteGesture(e.PlayerId, e.Gesture);   // v44: one-shot gestures on the other puppets
+                Player.NetAimedPlayer = (from, fwd, max) => Remotes != null ? Remotes.AimedPlayer(from, fwd, max) : (ushort)0;   // v43
+                Player.NetGestureOf = pid => Remotes != null ? Remotes.GestureOf(pid) : (byte)0;
+                Player.NetArrestPlayer = t => Client.SendArrestPlayer(t);
+                Player.NetUnlockArrest = t => Client.SendUnlockArrest(t);
+                Player.NetStruggle = side => Client.SendStruggle(side);
+                Player.NetFitTire = (netId, wheel) => Client.SendFitTire(netId, wheel);   // v45
+                Player.NetCarjack = netId => Client.SendCarjack(netId);
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and
@@ -477,7 +500,10 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
             //    stance for the stamina drain -- stamina server-owned while the sprint decision stays client-auth.
             float yaw = Player.RotationDegrees.Y;
             ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
-                                              MoveInput.PackStance(Player.Stance), Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets
+                                              (byte)(MoveInput.PackStance(Player.Stance)
+                                                     | (Player.WornLightOn ? MoveInput.ButtonWornLight : 0)
+                                                     | (Player.TorchLit ? MoveInput.ButtonHeldLight : 0)),
+                                              Player.HeldItemIdForNet);   // v22: what's in the hands -> the server's appearance block -> other players' puppets; + the light bits so their lenses light up
 
             // 1b) A SERVER-SIDE TELEPORT has to be adopted BEFORE step 2 overwrites it.
             //

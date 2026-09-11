@@ -148,6 +148,10 @@ namespace UnturnedGodot.Net
         readonly PlayerVitalsReplication _vitals;   // B5: OnConsume raises server food/water/stamina/infection here
         readonly ServerInteractables _interactables; // SP/MP unify: authoritative door + bed state
         readonly NetIdMinter _ids;
+        // v43: WHO IS CUFFED. An instance, not a static -- MpLoopback stands hosts up and tears them down per
+        // test, and arrest state surviving between them would be a bug nobody would look for.
+        readonly SDG.Unturned.ArrestSim _arrest = new SDG.Unturned.ArrestSim();
+        readonly Dictionary<ushort, (byte side, long tick)> _lastStruggle = new();   // the two bounds on wriggling: alternate sides, one per tick
         readonly Func<long> _tick;
         readonly Action<byte[]> _broadcast;
         readonly Action<ushort, byte[]> _sendTo;
@@ -156,6 +160,44 @@ namespace UnturnedGodot.Net
         /// ServerCombat.ZombieHost uses: an optional collaborator that a bare transactional harness does not
         /// need, on a constructor that already takes twelve things.</summary>
         public ServerCooking Cooking;
+
+        /// <summary>Forageable resources (berry bushes, mushrooms). Settable for the same reason Cooking is.</summary>
+        public ServerForage Forage;
+
+        /// <summary>A spraypaint item id -> its colour as 0xRRGGBB, or null if that id is not a spraypaint.
+        /// Set by the game layer (VehiclePaints), because the table is content and core cannot read content.
+        /// Null here means no spraypaint resolves, which is the right failure: a server that does not know
+        /// what a can is must not paint anything.</summary>
+        public System.Func<ushort, uint?> PaintColorFor;
+
+        /// <summary>Spend one spraypaint out of the sender's bag and report the colour it was. Null if the id
+        /// is not a spraypaint or the sender does not actually have one -- the ownership check is the whole
+        /// point, since the client names the can and a client that could name one it does not own could
+        /// repaint the map for free.</summary>
+        public uint? SpendPaintCan(ushort sender, ushort itemId)
+        {
+            if (PaintColorFor == null) return null;
+            uint? rgb = PaintColorFor(itemId);
+            if (rgb == null) return null;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(itemId) <= 0) return null;
+            SpendAnyOf(inv, itemId, sender);
+            return rgb;
+        }
+
+        /// <summary>v45: take one spare tire out of the sender's bag. Which item that IS comes from the game
+        /// layer via TireItemId rather than a constant here -- core has no item catalogue and should not learn
+        /// one for a single id. False when they have none, which is what makes the handler's ordering matter:
+        /// everything else is checked first, and this is the step that cannot be undone.</summary>
+        public ushort TireItemId;   // set by the host from the game layer's PlayerController.TireItemId
+        public bool SpendTire(ushort sender)
+        {
+            if (TireItemId == 0) return false;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(TireItemId) <= 0) return false;
+            SpendAnyOf(inv, TireItemId, sender);
+            return true;
+        }
 
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
@@ -369,6 +411,69 @@ namespace UnturnedGodot.Net
                     Cooking.SetOn(cmd.NetId, cmd.On);
                 });
 
+            // v43: CUFF a surrendering player. Everything that matters is checked here and nothing is taken
+            // from the client but the target: which restraint is read off the captor's replicated hand, whether
+            // the target is surrendering is read off the target's replicated gesture, and the reach is measured
+            // between the two server-side positions. Retail's own server check is sqrMagnitude > 49 -- a 7 m
+            // slack around a 3 m client ray, generous on purpose because the server is guarding against a forged
+            // TARGET, not re-deciding what the client may aim at.
+            commands.Register<ArrestTargetCommand>(ReplicationIds.CommandArrestPlayer, ArrestTargetCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_combat.TryGet(sender, out var captor) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!SDG.Unturned.ArrestDef.IsRestraint(captor.HeldId)) return;   // not holding cuffs
+                    if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
+                    bool surrendering = victim.Gesture == (byte)SDG.Unturned.EPlayerGesture.SURRENDER_START;
+                    if (!_arrest.TryArrest(sender, cmd.TargetPlayerId, captor.HeldId, surrendering)) return;
+                    victim.Gesture = ServerGestures.Force(victim.Gesture, SDG.Unturned.EPlayerGesture.ARREST_START);
+                    _combat.MarkDirty(victim, _tick());
+                    SpendAnyOf(SenderInventory(sender), captor.HeldId, sender);   // the cuffs leave the captor's bag (retail equipment.use())
+                });
+
+            // v43: UNLOCK. Deliberately does NOT require the freer to be the captor -- retail lets anyone with
+            // the key undo the cuffs, which is what makes a key worth carrying and worth taking off a body.
+            commands.Register<ArrestTargetCommand>(ReplicationIds.CommandUnlockArrest, ArrestTargetCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_combat.TryGet(sender, out var freer) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!SDG.Unturned.ArrestDef.IsKey(freer.HeldId)) return;
+                    if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
+                    ushort recovered = _arrest.TryUnlock(cmd.TargetPlayerId, freer.HeldId);
+                    if (!_arrest.IsArrested(cmd.TargetPlayerId))
+                    {
+                        victim.Gesture = (byte)SDG.Unturned.EPlayerGesture.NONE;
+                        _combat.MarkDirty(victim, _tick());
+                        // The .dat's Recover: the cuffs come back to whoever turned the key. GiveOrDrop, not
+                        // tryAddItem, so a full bag puts them on the floor instead of deleting them.
+                        if (recovered != 0) GiveOrDrop(SenderInventory(sender), recovered,
+                                                      _players.TryGetByOwner(sender, out var fp) ? fp.Pos : Vector3.zero);
+                    }
+                });
+
+            // v43: STRUGGLE. Two bounds, and they are the whole security of the thing: the side must ALTERNATE
+            // (retail's `lastLean != lean`) and at most one lands per server tick. A cuffed client that spams
+            // this gets exactly what a player mashing Q and E gets.
+            commands.Register<StruggleCommand>(ReplicationIds.CommandStruggle, StruggleCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_arrest.IsArrested(sender)) return;
+                    long now = _tick();
+                    if (_lastStruggle.TryGetValue(sender, out var last) && (last.side == cmd.Side || last.tick == now)) return;
+                    _lastStruggle[sender] = (cmd.Side, now);
+                    if (!_arrest.Struggle(sender)) return;
+                    if (!_combat.TryGet(sender, out var me)) return;
+                    me.Gesture = (byte)SDG.Unturned.EPlayerGesture.NONE;   // ARREST_STOP: they are out
+                    _combat.MarkDirty(me, now);
+                    ArrestBroke?.Invoke(sender);   // the metal clatter (retail's Metal_1 effect) -- game-layer, null on a bare host
+                });
+
+            // v42: a gesture REQUEST. Parked rather than decided -- the admission test needs the asker's stance
+            // and whether their hands are full, and those arrive on the input packet the appearance publisher
+            // holds. An out-of-range byte is dropped by the cast landing on a table row that is not
+            // PlayerRequestable, so a forged value is refused by the same rule a legitimate one is.
+            commands.Register<RequestGestureCommand>(ReplicationIds.CommandRequestGesture, RequestGestureCommand.TryRead,
+                (sender, cmd) => ServerGestures.Request(sender, (SDG.Unturned.EPlayerGesture)cmd.Gesture));
+
             commands.Register<SetAutoDrinkCommand>(ReplicationIds.CommandSetAutoDrink, SetAutoDrinkCommand.TryRead,
                 (sender, cmd) =>
                 {
@@ -469,6 +574,15 @@ namespace UnturnedGodot.Net
                                             && _crops.Schema.TryGet(cmd.SeedId, out _)
                                             && SenderInventory(sender)?.getItemCount(cmd.SeedId) > 0);
 
+                // FORAGE (retail ResourceManager.ReceiveForageRequest). Validated exactly as that does, in the
+                // same order and against the same 400 sq.m: a real index, one registered forageable, still
+                // standing, and within reach of the asker. All four live in ServerForage.CanForage so the
+                // gate a test can call and the gate the wire runs are the same code.
+                commands.Register<ForageResourceCommand>(ReplicationIds.CommandForageResource, ForageResourceCommand.TryRead,
+                    OnForageResource,
+                    validate: (sender, cmd) => Forage != null
+                                            && TryGetSenderPos(sender, out var pos)
+                                            && Forage.CanForage(cmd.Index, pos));
                 commands.Register<HarvestCropCommand>(ReplicationIds.CommandHarvestCrop, HarvestCropCommand.TryRead,
                     OnHarvestCrop,
                     validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -517,10 +631,26 @@ namespace UnturnedGodot.Net
         void OnPlaceDeployable(ushort sender, PlaceDeployableCommand cmd)
         {
             var inv = SenderInventory(sender);
+            // READ THE CONDITION BEFORE SPENDING IT. The jar is about to be decremented or removed, and its
+            // quality/fuelLevel are what a picked-up device carried here -- so they have to come off it first.
+            // This is only possible because the command now names the jar: with an id search there was no
+            // "the one you are holding" to read.
+            float? placeHealth = null, placeFuel = null;
+            if (cmd.Page < PlayerInventory.PAGES && inv != null)
+            {
+                var srcPage = inv.items[cmd.Page];
+                byte si = srcPage?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+                var srcJar = si == byte.MaxValue ? null : srcPage.getItem(si);
+                if (srcJar?.item != null && srcJar.item.id == cmd.DefId && _deployables.Schema.TryGet(cmd.DefId, out var sdef))
+                {
+                    if (sdef.Health > 0f) placeHealth = sdef.Health * srcJar.item.quality / 100f;
+                    if (srcJar.item.fuelLevel >= 0f) placeFuel = srcJar.item.fuelLevel;
+                }
+            }
             // Spend the jar the client named. It carries the address as of v-this-commit; page 255 (or an address
             // that no longer holds the id) falls back to the old id search.
             if (!SpendAt(inv, cmd.Page, cmd.X, cmd.Y, cmd.DefId, sender)) SpendAnyOf(inv, cmd.DefId, sender);
-            var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick());
+            var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick(), placeHealth, placeFuel);
             if (e == null) return;
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
             // what the client stamps onto the materialized crate and what its F-open addresses. So the whole
@@ -1361,6 +1491,49 @@ namespace UnturnedGodot.Net
             AwardXp(sender, HarvestRewardExperience);   // source: harvest awards Harvest_Reward_Experience
         }
 
+        /// <summary>Pick a berry bush or a mushroom. The whole transaction is server-side: the client named
+        /// an index and nothing else, and every other fact -- what it gives, whether it is even forageable,
+        /// whether it is still standing, whether the asker is near it -- is read here.
+        ///
+        /// Retail (ReceiveForageRequest) does `askDamage(1)` on a Health-1 resource, which is its way of
+        /// saying "one interaction takes it"; the port has no health pool for resources, so taking it IS the
+        /// damage. The reward goes straight into the BAG (retail forceAddItem(auto:true)) rather than onto
+        /// the ground like a crop's yield -- you are picking a berry, not felling something that scatters --
+        /// and only overflows to the ground when there is no room for it.
+        ///
+        /// The AGRICULTURE second-yield roll is the same one OnHarvestCrop makes, from the same skill, rolled
+        /// on the server for the same reason: a client that rolls its own mastery always wins it.</summary>
+        void OnForageResource(ushort sender, ForageResourceCommand cmd)
+        {
+            if (Forage == null) return;
+            if (!TryGetSenderPos(sender, out var pos)) return;
+            ushort reward = Forage.Take(cmd.Index, pos, _tick());
+            if (reward == 0) return;                       // refused: not forageable, already picked, or out of reach
+            if (!SetResourceAlive(cmd.Index, false)) return;   // one writer owns the alive bit + its broadcast
+
+            // A FULL BAG STILL TAKES THE PLANT, and what will not fit is left lying at the plant. Retail's
+            // forceAddItem drops the overflow the same way, and the alternative is worse: refusing after the
+            // alive bit has flipped needs that flip undone, and refusing before it hands a player with one
+            // free slot a way to probe the reach check for free.
+            var inv = SenderInventory(sender);
+            var at = Forage.Position(cmd.Index) + new Vector3(0f, 0.3f, 0f);
+            GiveOrDrop(inv, reward, at);
+
+            // The AGRICULTURE second-yield roll, same skill and same server-side roll as OnHarvestCrop.
+            float mastery = _skills.TryGet(sender, out var se)
+                ? se.Skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE).Mastery : 0f;
+            if (mastery > 0f && Rand() < mastery) GiveOrDrop(inv, reward, at + new Vector3(0.25f, 0f, 0f));
+
+            AwardXp(sender, ServerForage.RewardExperience);   // source: Forage_Reward_Experience, default 1
+        }
+
+        /// <summary>One picked item into the bag, or onto the ground at `at` when there is no room for it.</summary>
+        void GiveOrDrop(PlayerInventory inv, ushort itemId, Vector3 at)
+        {
+            if (inv != null && inv.tryAddItem(new Item(itemId))) return;
+            SpawnWorldItem(new Item(itemId), at, Vector3.zero);
+        }
+
         /// <summary>Server-side crop removal + its broadcast fact. Idempotent -- false if already gone.</summary>
         public bool RemoveCrop(uint netId)
         {
@@ -1599,6 +1772,27 @@ namespace UnturnedGodot.Net
         }
 
         PlayerInventory SenderInventory(ushort sender) => _inventories.TryGet(sender, out var e) ? e.Inventory : null;
+
+        /// <summary>v43 arrest hooks, so the bag and the effects stay the game layer's business and this file
+        /// keeps owning only who is cuffed. Null in a bare host (the wire tests), which is why every call site
+        /// is null-conditional rather than assuming a listener.</summary>
+        /// <summary>The one arrest hook that genuinely needs the game layer: the metal clatter when the cuffs
+        /// break (retail triggers a Metal_1 effect). Spending the restraint and handing it back are done HERE
+        /// against the server's own inventory -- they are bag writes, and the bag is this file's business.</summary>
+        public System.Action<ushort> ArrestBroke;                    // (escapee) -> the clatter; null on a bare host
+
+        /// <summary>Retail UseableArrestStart's server check is `sqrMagnitude > 49` -- 7 m, around a 3 m client
+        /// ray. Kept generous for the same reason the forage reach is: the server is guarding against a forged
+        /// target id, not re-deciding what the client was allowed to aim at.</summary>
+        const float ArrestReachSq = 49f;
+        bool InArrestReach(ushort a, ushort b)
+        {
+            if (!_players.TryGetByOwner(a, out var pa) || !_players.TryGetByOwner(b, out var pb)) return false;
+            return (pa.Pos - pb.Pos).sqrMagnitude <= ArrestReachSq;
+        }
+
+        /// <summary>Who is cuffed, for the game layer (a cuffed player cannot equip) and for tests.</summary>
+        public bool IsArrested(ushort playerId) => _arrest.IsArrested(playerId);
 
         /// <summary>The AUTHORITATIVE inventory, for tests. Exposed deliberately: the magazine bug was that
         /// every client-side assertion passed while this object never changed, so a test that cannot read

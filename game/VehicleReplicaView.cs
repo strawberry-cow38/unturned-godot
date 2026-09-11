@@ -99,6 +99,8 @@ namespace UnturnedGodot
                 // these bits and no consumer existed, so a remote car drove around with its lights off and
                 // its alarm silent whatever its driver was doing.
                 t.Node.ApplyReplicatedFlags(e.Headlights, e.Taillights, e.Braking, e.Alarmed && e.Alarming);
+                t.Node.ApplyReplicatedPaint(e.PaintRgb);   // v41: somebody sprayed it
+                t.Node.ApplyReplicatedTires(e.PoppedTireMask);   // v45: somebody shot its tires out, or put a spare on
                 t.Node.TickAlarm(dt);
 
                 var vel = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);

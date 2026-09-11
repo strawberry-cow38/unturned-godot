@@ -10,11 +10,13 @@ namespace UnturnedGodot.Testing
     public sealed class TreeHarvestTests : GameTest
     {
         public override string Name => "tree.harvest";
-        public override double TimeoutSimSeconds => 30;   // the debris lives 11 s before it drops anything
+        public override double TimeoutSimSeconds => 20;   // DebrisLife is shortened to 0.2 s for this test
 
         public override IEnumerable<Step> Run()
         {
             SDG.Unturned.ItemCatalog.RegisterAll();   // WorldItem.Spawn resolves the dropped log's asset
+            double debrisWas = TreeTrunk.DebrisLife;
+            TreeTrunk.DebrisLife = 0.2;   // real timer, test pace (restored below)
             var trunk = new TreeTrunk { Field = null, Index = 3, LogItem = 37, Health = 100f, RewardMin = 2, RewardMax = 3 };   // Field null skips SetAlive; small hp/reward for a fast test
             World.AddChild(trunk);
             trunk.GlobalPosition = Vector3.Zero;
@@ -27,18 +29,25 @@ namespace UnturnedGodot.Testing
             T.Check("felled once its health reaches 0", trunk.Felled);
             yield return Ticks(1);
 
-            // THE LOGS DO NOT ARRIVE AT THE CHOP any more (strawberry 2026-09-09: "only produce logs once
-            // theyve despawned"). They come off the debris cleanup timer, scattered along the trunk lying on
-            // the ground. This test asserted the OLD rule and had been failing on correct code ever since --
-            // a test nobody edited going red can mean the REQUIREMENT moved, not that the code regressed.
+            // ⚠ THE WOOD ARRIVES WITH THE CLEANUP, NOT AT THE CHOP. Since 2026-09-09 the rewards drop on the
+            // debris timer (strawberry: "only produce logs once theyve despawned" -- they scatter along the
+            // FALLEN trunk, and there is no fall direction to scatter along until it has landed). This asserted
+            // an immediate drop and had been red ever since, unseen because the nightly had not run -- a test
+            // nobody edited going red can mean the REQUIREMENT moved, not that the code regressed.
             //
-            // Asserting the empty window first is the half with teeth: without it, "wait until logs appear"
-            // would pass just as happily on a tree that dropped them instantly, which is the exact behaviour
-            // strawberry asked to be rid of.
+            // Shortened rather than waited out (0.2 s of a 30 s budget via the real timer, restored below) and
+            // NOT bypassed: the timer wiring is the part that broke, so a seam that called DropRewards directly
+            // would pass with it deleted.
+            //
+            // The empty window is asserted FIRST, which the shortened-timer version alone does not cover: with
+            // DebrisLife trimmed to 0.2 s, an instant-drop regression and a correctly-delayed drop both read as
+            // "items appeared very soon", and a bare `Until(count > 0)` cannot tell them apart. Checking count is
+            // still 0 in the same frame as Felled becoming true is what makes "at the chop" and "at the cleanup"
+            // two different, distinguishable claims.
             T.Check($"nothing drops at the moment of felling (got {CountItems()})", CountItems() == 0);
 
-            yield return Until(() => CountItems() > 0, maxSimSeconds: 15);
-            int items = CountItems();
+            int items = 0;
+            yield return Until(() => { items = CountItems(); return items > 0; }, 6);
             T.Check($"the debris cleanup drops Reward_Min..Max items (2-3, logs+sticks), got {items}",
                     items >= 2 && items <= 3);
 
@@ -46,6 +55,7 @@ namespace UnturnedGodot.Testing
             trunk.Chop(50f, Vector3.Zero, Vector3.Forward);
             T.Check("a swing at a felled tree is a no-op", trunk.Felled && Mathf.IsEqualApprox(trunk.Health, before));
             trunk.QueueFree();
+            TreeTrunk.DebrisLife = debrisWas;   // other tests (and any render after this) get the real dwell back
         }
 
         int CountItems()

@@ -157,7 +157,7 @@ namespace UnturnedGodot
                 case EItemType.HAT:      _body.AttachHat(mesh, albedo, e.Offset);      break;
                 case EItemType.VEST:     _body.AttachVest(mesh, albedo, e.Offset);     break;
                 case EItemType.MASK:     _body.AttachMask(mesh, albedo, e.Offset);     break;
-                case EItemType.GLASSES:  _body.AttachGlasses(mesh, albedo, e.Offset);  break;
+                case EItemType.GLASSES:  _body.AttachGlasses(mesh, albedo, e.Offset, ClothingContent.LensMask(worn.id)); break;
                 case EItemType.BACKPACK: _body.AttachBackpack(mesh, albedo, e.Offset); break;
             }
         }

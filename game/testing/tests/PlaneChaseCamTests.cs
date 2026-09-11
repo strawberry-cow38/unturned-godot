@@ -80,6 +80,15 @@ namespace UnturnedGodot.Testing
             }
 
             foreach (var s in samples) GD.Print($"[planecam] {s.name}: {s.deg:0.0} deg above the airframe axis");
+            // ⚠ The INPUTS, because the measured angle disagrees with the formula and one of us is wrong about
+            // which numbers reach it. atan2(dist*0.22 + size*0.04, dist*0.9) is ~17.5 deg for a jet at
+            // size 21.6 / dist 13.4 / zoom 1 -- if the sweep still reads 48.8 with those inputs the offset maths
+            // is at fault, and if the inputs are different then the harness is, and this line says which.
+            var g = p.DebugPlaneCam;
+            GD.Print($"[planecam] inputs: dist={g.dist:0.00} size={g.size:0.00} zoom={g.zoom:0.00} lookPitch={g.lookPitch:0.0} lookYaw={g.lookYaw:0.0}");
+            T.Check($"the chase distance is a real one, not a collapsed default (dist={g.dist:0.00}, zoom={g.zoom:0.00})", g.dist > 1f);
+            T.Check($"free-look is centred for the measurement (pitch={g.lookPitch:0.0} yaw={g.lookYaw:0.0})",
+                Mathf.Abs(g.lookPitch) < 0.01f && Mathf.Abs(g.lookYaw) < 0.01f);
 
             // THE CLAIM. Not "it equals 17.5" -- that is the formula again -- but that the angle does not TRACK
             // the pitch, which is the bug. Level is the reference; every other attitude must stay near it.

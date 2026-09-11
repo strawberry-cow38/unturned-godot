@@ -844,7 +844,8 @@ void fragment() {
             else if (ToolDef.ById(asset.id) != null) ToolSelected();
             else if (asset.type == EItemType.FISHER) FisherSelected();
             else if (asset.type == EItemType.OPTIC) OpticSelected();
-            else EquipSelected();
+            else if (asset.gunName != null || asset.meleeName != null) EquipSelected();   // a weapon also holsters to its preferred slot
+            else HandDispatchSelected();   // same fall-through as the menu: ask the dispatch, do not restate it
         }
 
         /// <summary>Put the weapon at (sp,sx,sy) into hand slot `slot`. Occupied: first try the plain drag-SWAP (the occupant
@@ -1004,6 +1005,7 @@ void fragment() {
                 Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
                                            0, 0, 0, (ushort)bid, true);
                 op.done++;
+                MagRoundSound(mA);
                 return op.done < op.batch && op.mag.amount > 0;
             }
             // LOAD: pull a round from the stack into the mag
@@ -1021,7 +1023,20 @@ void fragment() {
             jar.item.amount = (byte)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
             op.done++;
+            MagRoundSound(mA);
             return op.done < op.batch;
+        }
+
+        /// <summary>One click per round in or out of a magazine. The wheel steps a round at a time and made no
+        /// sound at all, so a ten-round load was a silent progress ring.
+        ///
+        /// 2D rather than positional: you are stood in a menu looking at the grid, and the round is going into a
+        /// magazine in your hands, not somewhere in the world. Retail has no inventory mag-loading to copy, so the
+        /// trigger is ours -- the CLIPS are theirs, off the round-by-round reload animations.</summary>
+        void MagRoundSound(SDG.Unturned.ItemAsset mA)
+        {
+            var clip = GameAudio.MagRound(mA?.magCapacity ?? 0);
+            if (clip != null) GameAudio.Play2D(this, clip, -9f, (float)GD.RandRange(0.96, 1.04));
         }
         int BulletIdForRound(string round)   // the loose-round item id for a cartridge (reverse of bullet.magRound)
         {
@@ -1641,8 +1656,13 @@ void fragment() {
                     AddActionButton(panel, "Equip", new Vector2(228, by), FisherSelected);   // a fishing rod -> hold it, LMB casts (UseableFisher)
                 else if (asset.type == EItemType.OPTIC)
                     AddActionButton(panel, "Equip", new Vector2(228, by), OpticSelected);    // binoculars -> raise them, LMB cycles the zoom
+                else if (asset.gunName != null || asset.meleeName != null)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);    // a weapon: EquipSelected also HOLSTERS it to its preferred slot
                 else
-                    AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
+                    // Everything else HasHandAction admits -- today the spraypaint, carjack, umbrella and
+                    // throwable, tomorrow whatever is added next. Straight through the dispatch rather than a
+                    // fifth branch here, so a new hand item needs no edit in this file at all.
+                    AddActionButton(panel, "Equip", new Vector2(228, by), HandDispatchSelected);
                 by += 44;
             }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
@@ -1676,11 +1696,28 @@ void fragment() {
         // in its menu?" Centralized + data-driven so an item can't have the equip code but NO menu option to reach it
         // (master 2026-07-20: the Rope did exactly that -- holdable in code, but its item menu showed only Drop/Close).
         // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
-        public static bool HasHandAction(ItemAsset asset) =>
-            asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
-                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer
-                || asset.type == EItemType.FISHER   // a rod is holdable (EquipHeldFisher); without this it has the equip code but NO menu option (the Rope bug)
-                || asset.type == EItemType.OPTIC);   // binoculars: holdable, not a weapon slot
+        // WAS a second, private copy of the equip chain, and it drifted: spraypaints, the carjack, umbrellas and
+        // throwables all equipped from a hotbar key and had NO menu button, because this list had never heard of
+        // them. That is the Rope bug (see the comment it used to carry) three more times. The menu now asks the
+        // dispatch itself what it can hold, and EquipDispatchTests walks the catalog to keep the two honest.
+        public static bool HasHandAction(ItemAsset asset) => PlayerController.CanEquipItemAsset(asset);
+
+        // Equip anything whose hand behaviour lives ONLY in PlayerController.EquipItemAsset -- the spraypaint,
+        // the carjack, the umbrella, the throwable. Deliberately has no type test of its own: HasHandAction already
+        // said the dispatch can hold it, and a test here would be a fourth copy of the list that started all this.
+        void HandDispatchSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || Player == null || !Player.EquipItemAsset(asset, jar.item)) return;
+            Player.NoteHeldFrom(_selPage, _selX, _selY);   // so emptying that cell later pulls it out of the hands
+            CloseSelection();
+            Close();   // leave the bag: every one of these is used by clicking at something
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
 
         void EquipSelected()
         {
@@ -2118,7 +2155,9 @@ void fragment() {
 
         // TEST SEAM: drive a REAL click-drag on the paperdoll through _Input (the exact path the fix repairs -- the press
         // must reach the spin branch instead of being swallowed by the item-drag StartDrag/SetInputAsHandled). Returns the
-        // applied yaw delta in radians; float.NaN if the press failed to start a spin (routing still broken). +relX -> -delta.
+        // applied yaw delta in radians; float.NaN if the press failed to start a spin (routing still broken). +relX -> +delta since the 2026-09-09 inversion (66e7ac31, "drag spins the other way" -- the model follows
+        // the cursor). This line read "-delta" for a day after the handler stopped doing that, and inv.paperdoll_spin
+        // asserted the old sign right alongside it.
         public float DebugPaperdollDragSpin(float relX)
         {
             if (_pdHit == null) return float.NaN;

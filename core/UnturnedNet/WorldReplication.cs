@@ -436,6 +436,43 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Client -> server: "I want to pick that bush". Carries only the resource's load-order INDEX,
+    /// the same implicit id the harvested/respawned events use -- retail sends (region x, region y, index)
+    /// because its resources are bucketed per region, and the port's index space is already global.
+    ///
+    /// Nothing about the reward, the position or the plant's identity is on the wire: the server holds all
+    /// three (ServerForage) and a client that could name its own reward could forage a bush into anything.</summary>
+    /// <summary>Client -> server: "respray that car with this can". Carries the vehicle NetId and the
+    /// spraypaint's ITEM id -- never the colour, because the colour is a property of the can and a client
+    /// that could send one could paint a car any shade it liked without owning a spraypaint at all.</summary>
+    public struct PaintVehicleCommand
+    {
+        public uint NetId;
+        public ushort ItemId;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt16(ItemId); }
+        public static bool TryRead(NetPakReader r, out PaintVehicleCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadUInt16(out ushort item)) return false;
+            cmd = new PaintVehicleCommand { NetId = id, ItemId = item };
+            return true;
+        }
+    }
+
+    public struct ForageResourceCommand
+    {
+        public ushort Index;
+        public void Write(NetPakWriter w) => w.WriteUInt16(Index);
+        public static bool TryRead(NetPakReader r, out ForageResourceCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt16(out ushort index)) return false;
+            cmd = new ForageResourceCommand { Index = index };
+            return true;
+        }
+    }
+
     public struct ResourceRespawnedEvent
     {
         public ushort Index;

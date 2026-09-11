@@ -54,6 +54,8 @@ namespace UnturnedGodot
             public float HullHeight = -1f;               // last height the capsule was built at
             public bool HullSeated;                      // last seated state pushed to Disabled
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
+            public byte Gesture;                         // v42: the looping gesture this puppet is showing (0 = none), so the clip is played on CHANGE and not every tick
+            public bool WornLightOn, HeldLightOn;        // their nightvision/headlamp and torch, off the appearance block
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
             public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
             public bool HeldGun;                         // a gun is in the hand (the overlay layer belongs to it, not to a melee swing)
@@ -221,6 +223,9 @@ namespace UnturnedGodot
                             var clip = GameAudio.PickFootstep(psurf, run);
                             float vol = stance switch { SDG.Unturned.EPlayerStance.PRONE => -14f, SDG.Unturned.EPlayerStance.CROUCH => -8f, SDG.Unturned.EPlayerStance.SPRINT => 0f, _ => -3f };
                             GameAudio.PlayAt(this, clip, av.Body.GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
+                            // The puppets' matching gear foley went with the local one (master: "remove the
+                            // 'walking with gear' sound") -- a sound the owner cannot hear must not still be
+                            // coming off everyone else.
                         }
                     }
                     else if (!grounded) av.StrideAcc = 0f;                              // airborne: land on a fresh stride, not half of one
@@ -250,6 +255,12 @@ namespace UnturnedGodot
                 }
                 else if (sitFurniture) av.Body.PlayLoop(av.Body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Stand");
                 else av.Body.SetLocomotion(av.Speed, stance);
+                // THEIR LAMPS. Pushed every tick rather than on the appearance signature: a light toggle would
+                // otherwise re-dress the whole puppet -- re-attach the gun, re-wear the clothing -- to change one
+                // float. Both calls no-op on gear with no emission bound, so driving both is safe and means the
+                // right one lights whichever they have.
+                av.Body.SetGlassesGlow(av.WornLightOn);
+                av.Body.SetMeleeGlow(av.HeldLightOn);
                 av.Body.Tick(delta);
                 if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
                 {
@@ -294,6 +305,37 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>v43: the remote player a shell at <paramref name="from"/> looking along <paramref name="fwd"/>
+        /// is aiming at, or 0 for nobody. Picked by ANGLE rather than distance -- with two people stood together,
+        /// "the nearest" is not who you are pointing at, and cuffing the wrong one of a pair is exactly the sort
+        /// of thing that gets noticed once and never forgiven.
+        ///
+        /// Proximity + facing rather than a raycast, following NearestPuppet: the target of an arrest is by
+        /// definition standing still with their hands up right in front of you, and the SERVER re-checks reach
+        /// against its own positions anyway. This picks WHO to ask about; it does not decide anything.</summary>
+        public ushort AimedPlayer(Vector3 from, Vector3 fwd, float maxDist)
+        {
+            ushort best = 0; float bestDot = 0.5f;   // ~60 degrees off centre, no further
+            float maxSq = maxDist * maxDist;
+            foreach (var kv in _avatars)
+            {
+                var av = kv.Value;
+                if (av?.Body == null || !IsInstanceValid(av.Body)) continue;
+                Vector3 d = av.Body.GlobalPosition - from;
+                if (d.LengthSquared() > maxSq) continue;
+                d.Y = 0f;
+                if (d.LengthSquared() < 1e-4f) continue;
+                float dot = d.Normalized().Dot(new Vector3(fwd.X, 0f, fwd.Z).Normalized());
+                if (dot > bestDot) { bestDot = dot; best = kv.Key; }
+            }
+            return best;
+        }
+
+        /// <summary>What gesture a puppet is showing -- so the local client can say "they are not surrendering"
+        /// instead of sending a command it knows the server will drop.</summary>
+        public byte GestureOf(ushort playerId)
+            => Client != null && Client.CombatState.TryGet(playerId, out var ce) ? ce.Gesture : (byte)0;
+
         static Av Build()
         {
             var body = RiggedCharacter.Build("res://content/rig.json", Skin, false, null, RiggedCharacter.FacePath(0));   // face 0 until the profile block names one
@@ -310,11 +352,44 @@ namespace UnturnedGodot
             ApplyWorn(av.Inv, ce);
             av.Clothing.Refresh();
             ApplyHeld(av, ce.HeldId, ce.HeldSight, ce.HeldMagazine, ce.HeldBarrel);
+            av.WornLightOn = ce.WornLightOn; av.HeldLightOn = ce.HeldLightOn;
+            ApplyGesture(av, ce.Gesture);
+        }
+
+        /// <summary>v42: the looping gesture on a puppet -- hands up, cuffed, sat down. Played on CHANGE, because
+        /// these clips loop and re-playing one every tick would restart it every tick.
+        ///
+        /// ⚠ The teardown only fires if WE put an overlay up. StopGesture drops the whole upper-body layer, which
+        /// is also where a puppet's gun pose lives -- so calling it on every change to NONE would disarm anyone
+        /// who was simply not gesturing. Checking the PREVIOUS gesture had a clip keeps it to overlays this put
+        /// there. (A puppet cannot be holding a gun AND gesturing anyway: the server refuses a gesture with
+        /// something in hand. This guards the ordinary case, not that one.)</summary>
+        static void ApplyGesture(Av av, byte gesture)
+        {
+            if (av.Gesture == gesture || av.Body == null || !IsInstanceValid(av.Body)) return;
+            var g = (SDG.Unturned.EPlayerGesture)gesture;
+            string clip = SDG.Unturned.GestureRules.ClipOf(g);
+            if (clip != null) av.Body.PlayGesture(clip, SDG.Unturned.GestureRules.Loops(g));
+            else if (SDG.Unturned.GestureRules.ClipOf((SDG.Unturned.EPlayerGesture)av.Gesture) != null) av.Body.StopGesture();
+            av.Gesture = gesture;
         }
 
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
         /// Right_Hook attach + gun overlay layer the local 3P body uses (PlayerController.UpdateBodyGun). Asset gunName -> gun,
         /// meleeName -> melee, anything else / 0 -> empty hands.</summary>
+        /// <summary>EventPlayerGesture (v44): a ONE-SHOT on that player's puppet -- a wave, a salute. Played
+        /// straight through PlayGesture with loop:false, so it ends itself and hands the body back; nothing
+        /// latches, which is the whole reason these are an event and not entity state.
+        ///
+        /// Does NOT touch av.Gesture: that field tracks the LOOPING state the entity carries, and stamping a
+        /// wave into it would make the next snapshot look like a change back and replay the state clip.</summary>
+        public void OnRemoteGesture(ushort playerId, byte gesture)
+        {
+            if (!_avatars.TryGetValue(playerId, out var av) || av?.Body == null || !IsInstanceValid(av.Body)) return;
+            string clip = SDG.Unturned.GestureRules.ClipOf((SDG.Unturned.EPlayerGesture)gesture);
+            if (clip != null) av.Body.PlayGesture(clip, loop: false);
+        }
+
         /// <summary>EventPlayerMelee (v25): play that player's weak/strong swing on their puppet's upper body.</summary>
         public void OnRemoteMelee(ushort playerId, bool strong)
         {
@@ -368,6 +443,10 @@ namespace UnturnedGodot
             M(ce.WornShirt); M(ce.WornPants); M(ce.WornHat); M(ce.WornVest);
             M(ce.WornMask); M(ce.WornGlasses); M(ce.WornBackpack); M(ce.HeldId);   // v22: a weapon swap re-dresses the hand
             M(ce.HeldSight); M(ce.HeldMagazine); M(ce.HeldBarrel);   // fitting a scope re-dresses it too, and does not change HeldId
+            M(ce.Gesture);   // v42: ...and so does putting your hands up. Dress() is the only thing that reaches
+                             // ApplyGesture, so a gesture left OUT of this signature would replicate onto the
+                             // entity and then never reach anyone's screen -- exactly the failure the
+                             // attachment ids had before they were added on the line above.
             return h;
         }
     }

@@ -53,6 +53,9 @@ namespace UnturnedGodot.Net
         // destructible props (rubble): the alive-bitmap + the server-only health/respawn authority
         public readonly DestructibleReplication Destructibles = new DestructibleReplication();
         public readonly ServerDestructibles DestructibleHost;
+        // forageable resources (berry bushes, mushrooms): reward/reach/regrow authority beside the resource
+        // alive-bitmap, exactly as DestructibleHost sits beside the destructible one
+        public readonly ServerForage ForageHost;
         // SP/MP unify: doors + beds. The authoritative state itself -- changes go out as reliable events
         // (they happen rarely and on demand, so there is nothing worth streaming at 25 Hz), and the
         // InteractableState block below carries the same state to whoever joined after the change.
@@ -130,6 +133,8 @@ namespace UnturnedGodot.Net
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals, Interactables);
+            ForageHost = new ServerForage(Resources);
+            Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
             Transactions.Crafting_ = CraftQueue;
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot
@@ -179,6 +184,13 @@ namespace UnturnedGodot.Net
             Inventories.CrateOpenChanged = (netId, open) => Containers.ServerSetDoorsOpen(netId, open, Session.CurrentTick);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
+            // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
+            // the content table. One hook rather than each growing a copy of the other's half.
+            VehicleHost.TrySpendPaint = (sender, itemId) => Transactions.SpendPaintCan(sender, itemId);
+            VehicleHost.TrySpendTire = sender => Transactions.SpendTire(sender);   // v45
+            Transactions.TireItemId = 1451;   // v45: retail's generic Tire. Core has no item catalogue and should not grow one for a single id; the game layer's PlayerController.TireItemId is the same constant and the pair is asserted by TireWireTests.
+            // ApplyCarjackForce stays unset here: shoving a rigid body is the GAME layer's, and a bare host
+            // (the wire tests) has no bodies to shove. VehicleNetSync sets it.
             VehicleHost.Register(Commands);
             // mp-clientauth-foot (v9): the owner's on-foot transform stream -- envelope-validated, then
             // adopted through ServerDrive (the entity goes ExternallyDriven; ServerStep never integrates
@@ -692,6 +704,7 @@ namespace UnturnedGodot.Net
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
         public event System.Action<PlayerFiredEvent> PlayerFired;
+        public event System.Action<PlayerGestureEvent> PlayerGestured;   // v44: a one-shot gesture on somebody's puppet
         public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
@@ -793,6 +806,7 @@ namespace UnturnedGodot.Net
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
             Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
+            Events.Register<PlayerGestureEvent>(ReplicationIds.EventPlayerGesture, PlayerGestureEvent.TryRead, e => PlayerGestured?.Invoke(e));
             Events.Register<VehicleEnteredEvent>(ReplicationIds.EventVehicleEntered, VehicleEnteredEvent.TryRead,
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
@@ -1114,6 +1128,33 @@ namespace UnturnedGodot.Net
                 AttachSeeded = attachSeeded,
             }.Write);
 
+        /// <summary>v45: fit the spare in our hand to one of a car's flat wheels.</summary>
+        public bool SendFitTire(uint vehicleNetId, byte wheelIndex)
+            => SendCommand(ReplicationIds.CommandFitTire, new FitTireCommand { VehicleNetId = vehicleNetId, WheelIndex = wheelIndex }.Write);
+
+        /// <summary>v45: jack an empty vehicle back onto its wheels.</summary>
+        public bool SendCarjack(uint vehicleNetId)
+            => SendCommand(ReplicationIds.CommandCarjack, new CarjackCommand { VehicleNetId = vehicleNetId }.Write);
+
+        /// <summary>v43: cuff the player we are aimed at with whatever restraint is in our hand. Target only --
+        /// the server reads the restraint off the hand it already replicates.</summary>
+        public bool SendArrestPlayer(ushort targetPlayerId)
+            => SendCommand(ReplicationIds.CommandArrestPlayer, new ArrestTargetCommand { TargetPlayerId = targetPlayerId }.Write);
+
+        /// <summary>v43: unlock the player we are aimed at, with the key in our hand.</summary>
+        public bool SendUnlockArrest(ushort targetPlayerId)
+            => SendCommand(ReplicationIds.CommandUnlockArrest, new ArrestTargetCommand { TargetPlayerId = targetPlayerId }.Write);
+
+        /// <summary>v43: one wriggle against the cuffs, naming the side leaned. The server ignores a side equal
+        /// to the last one it took, so this has to alternate to make progress.</summary>
+        public bool SendStruggle(byte side)
+            => SendCommand(ReplicationIds.CommandStruggle, new StruggleCommand { Side = side }.Write);
+
+        /// <summary>Ask the server to put us in a gesture (v42). Fire-and-forget: the answer comes back as the
+        /// Gesture field on our own combat entity, like every other piece of replicated appearance.</summary>
+        public bool SendRequestGesture(byte gesture)
+            => SendCommand(ReplicationIds.CommandRequestGesture, new RequestGestureCommand { Gesture = gesture }.Write);
+
         public bool SendSetAutoDrink(byte page, byte x, byte y, ushort id, bool autoDrink)
             => SendCommand(ReplicationIds.CommandSetAutoDrink, new SetAutoDrinkCommand { Page = page, X = x, Y = y, Id = id, AutoDrink = autoDrink }.Write);
 
@@ -1181,6 +1222,16 @@ namespace UnturnedGodot.Net
 
         public bool SendHarvestCrop(uint netId)
             => SendCommand(ReplicationIds.CommandHarvestCrop, new HarvestCropCommand { NetId = netId }.Write);
+
+        /// <summary>Pick the berry bush / mushroom at this resource INDEX (v40). Addressed by the load-order
+        /// index rather than a NetId because a resource is authored map data -- there is no entity to mint.</summary>
+        public bool SendForageResource(int index)
+            => SendCommand(ReplicationIds.CommandForageResource, new ForageResourceCommand { Index = (ushort)index }.Write);
+
+        /// <summary>Respray the vehicle at this NetId with the spraypaint `itemId` (v41). The colour is not
+        /// sent: the server reads it off the can it spends.</summary>
+        public bool SendPaintVehicle(uint netId, ushort itemId)
+            => SendCommand(ReplicationIds.CommandPaintVehicle, new PaintVehicleCommand { NetId = netId, ItemId = itemId }.Write);
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 

@@ -13,6 +13,15 @@ namespace SDG.Unturned
     public sealed class PlayerMovementSim
     {
         public Vector3 Velocity;
+
+        /// <summary>Source PlayerMovement.totalGravityMultiplier (= itemGravityMultiplier x the plugin one,
+        /// and the port has no plugins, so this single field is the total). 1 = normal. An UMBRELLA sets it
+        /// to its .dat Gravity (0.25, verified against Bundles/Items/Clouds/*.dat) while held.
+        ///
+        /// It affects the DESCENT ONLY -- see the two places it is read below. That is not a simplification:
+        /// retail gates it on `fall &lt;= 0` where `fall` is literally velocity.y, so an umbrella is a
+        /// parachute and never a jump boost.</summary>
+        public float GravityMultiplier = 1f;
         public EPlayerStance Stance = EPlayerStance.STAND;
 
         // inputDir: local-space (x = strafe, y = forward), each component in [-1,1].
@@ -72,9 +81,20 @@ namespace SDG.Unturned
                 Velocity.x = nx;
                 Velocity.z = nz;
 
-                Velocity.y -= PlayerMovementDef.GRAVITY * dt;
-                if (Velocity.y < PlayerMovementDef.TERMINAL_VELOCITY)
-                    Velocity.y = PlayerMovementDef.TERMINAL_VELOCITY;
+                // PlayerMovement.cs:1277 `velocity.y += Physics.gravity.y * (fall <= 0 ? totalGravityMultiplier : 1f) * deltaTime * 3`.
+                // `fall` is velocity.y (PlayerMovement.cs:359), read BEFORE this tick's gravity goes on -- so the
+                // multiplier applies going DOWN and never going up. Hold an umbrella and your jump apex does not move.
+                Velocity.y -= PlayerMovementDef.GRAVITY * (Velocity.y <= 0f ? GravityMultiplier : 1f) * dt;
+
+                // PlayerMovement.cs:1280 `minVerticalVelocity = total < 0.99f ? Physics.gravity.y * 2.0f * total : -100.0f`.
+                // This is the half that makes the item WORK: at 0.25 the descent is capped at 4.9 m/s, so you glide
+                // down at a steady speed rather than merely taking longer to reach the same lethal one. Scaling the
+                // acceleration alone would have looked right for the first second and then killed you anyway.
+                float floor = GravityMultiplier < 0.99f
+                    ? -PlayerMovementDef.GRAVITY_BASE * 2f * GravityMultiplier
+                    : PlayerMovementDef.TERMINAL_VELOCITY;
+                if (Velocity.y < floor)
+                    Velocity.y = floor;
             }
             return Velocity;
         }

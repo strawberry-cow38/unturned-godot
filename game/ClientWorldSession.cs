@@ -201,6 +201,7 @@ namespace UnturnedGodot
                     Shell.RemoteShotFx(new Vector3(e.Origin.x, e.Origin.y, e.Origin.z),
                                        new Vector3(e.Dir.x, e.Dir.y, e.Dir.z), e.Gun);
             };
+            Client.PlayerGestured += e => Remotes?.OnRemoteGesture(e.PlayerId, e.Gesture);   // v44: a wave on somebody else's puppet
             Client.PlayerMeleed += e =>
             {
                 if (e.PlayerId == Client.PlayerId) return;   // our own swing already played on our body
@@ -364,7 +365,14 @@ namespace UnturnedGodot
             // health (0..100) into the shell each tick (the AdoptReplicatedSkills analogue; PlayerCombatReplication
             // has no per-echo event either). Adoption is the LAST HP writer so local regen/starve can't move it;
             // the HUD keeps its exact Player.Health read. Runs before the riding branch so HP tracks while seated too.
-            if (Client.CombatState.TryGet(Client.PlayerId, out var vit)) Shell.AdoptReplicatedVitals(vit.Health);
+            if (Client.CombatState.TryGet(Client.PlayerId, out var vit))
+            {
+                Shell.AdoptReplicatedVitals(vit.Health);
+                // v42: the server's answer to whatever gesture we asked for -- including one we did NOT ask for,
+                // which is how a captor's handcuffs arrive. Adopted rather than re-tested: it already passed the
+                // rules on the authority, and re-running our copy here would let a local disagreement veto them.
+                Shell.ApplyNetGesture((SDG.Unturned.EPlayerGesture)vit.Gesture);
+            }
             // B5 (SP/MP-unify): the owner-only fine vitals (food/water/stamina/infection) are server-authoritative
             // too -- mirror the SystemVitals(13) owner block into the shell each tick (the AdoptReplicatedVitals
             // analogue), so the HUD bars read server truth and the local PlayerVitalsSim.Step fine mutation is skipped.
@@ -399,7 +407,9 @@ namespace UnturnedGodot
             //    snapshot grid + facing + sim velocity + stance/jump dressing + grounded. An adopted
             //    claim replicates back bit-exact, so observers render the owner's own view of itself.
             var p = Shell.TruePhysicsPosition;
-            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
+            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance)
+                                  | (Shell.WornLightOn ? MoveInput.ButtonWornLight : 0)
+                                  | (Shell.TorchLit ? MoveInput.ButtonHeldLight : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
                                    Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
 
@@ -605,6 +615,16 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             // the CropReplicaView renders the result (materialize / grow / despawn) + the yield rides Items.
             shell.NetPlantCrop = (seedId, pos) => Client.SendPlantCrop(seedId, ToU(pos));
             shell.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
+            shell.NetForageResource = index => Client.SendForageResource(index);   // v40: pick a berry bush / mushroom
+            shell.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41: respray a vehicle
+            shell.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42: ASK for a gesture; the answer arrives on our own combat entity
+            shell.NetAimedPlayer = (from, fwd, max) => Remotes != null ? Remotes.AimedPlayer(from, fwd, max) : (ushort)0;   // v43
+            shell.NetGestureOf = pid => Remotes != null ? Remotes.GestureOf(pid) : (byte)0;
+            shell.NetArrestPlayer = t => Client.SendArrestPlayer(t);
+            shell.NetUnlockArrest = t => Client.SendUnlockArrest(t);
+            shell.NetStruggle = side => Client.SendStruggle(side);
+            shell.NetFitTire = (netId, wheel) => Client.SendFitTire(netId, wheel);   // v45
+            shell.NetCarjack = netId => Client.SendCarjack(netId);
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);

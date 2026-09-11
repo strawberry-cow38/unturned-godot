@@ -1042,6 +1042,40 @@ namespace UnturnedGodot
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
                 Echo($"{label} skill -> level {sk.level}/{sk.max}");
             }
+            else if (verb == "gesture")
+            {
+                // gesture [name]  -- wave / salute / point / facepalm / surrender / rest / tpose / inventory,
+                // and `stop` to end whichever state you are in. No arg lists them plus what you are doing now.
+                //
+                // Goes through Player.RequestGesture, which is the SAME whitelist + stance + hands + cuffed test
+                // the server will run, so the console cannot reach a gesture a player could not -- the point of
+                // a console is to save you walking somewhere, not to hand you a different rulebook.
+                string want = (arg ?? "").Trim().ToLowerInvariant();
+                var by = new System.Collections.Generic.Dictionary<string, EPlayerGesture>
+                {
+                    ["wave"] = EPlayerGesture.WAVE, ["salute"] = EPlayerGesture.SALUTE,
+                    ["point"] = EPlayerGesture.POINT, ["facepalm"] = EPlayerGesture.FACEPALM,
+                    ["surrender"] = EPlayerGesture.SURRENDER_START, ["rest"] = EPlayerGesture.REST_START,
+                    ["tpose"] = EPlayerGesture.T_POSE_START, ["inventory"] = EPlayerGesture.INVENTORY_START,
+                };
+                if (want.Length == 0 || want == "?")
+                {
+                    Echo("gesture " + string.Join(" | ", by.Keys) + " | stop");
+                    Echo($"currently: {Player.Gesture}");
+                    return;
+                }
+                if (want == "stop")
+                {
+                    // Whatever state you are in, ask for ITS stop -- not a blanket clear. A blanket clear would
+                    // walk you straight out of handcuffs, which the rules exist to prevent.
+                    var stop = SDG.Unturned.GestureRules.Of(Player.Gesture).Stops;
+                    if (stop == EPlayerGesture.NONE) { Echo($"nothing to stop ({Player.Gesture})"); return; }
+                    Echo(Player.RequestGesture(stop) ? $"stopped {Player.Gesture}" : "refused");
+                    return;
+                }
+                if (!by.TryGetValue(want, out var g)) { Echo($"no gesture '{arg}' -- try `gesture` for the list"); return; }
+                Echo(Player.RequestGesture(g) ? $"{want}" : $"refused: {SDG.Unturned.GestureRules.RefusalFor(g, Player.Gesture, Player.Stance, Player.HasSomethingHeld)}");
+            }
             else if (verb == "hold")
             {
                 // hold <item>  -- put anything equippable in the hands. Goes through EquipItemAsset, the SAME

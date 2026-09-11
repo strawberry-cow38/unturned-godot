@@ -938,6 +938,62 @@ namespace UnturnedGodot
         float _burnTime = -1f;   // seconds since the wreck caught fire (master lifecycle): <40 full, 40-60 dying down, 60 out+light killed, 360 despawn
         CpuParticles3D[] _wheelDust;   // per-WHEEL dust from the ground contact point (src Wheel.cs TireMotionEffectInstance is per-wheel); tinted by the Surf under each wheel
         PlayerController.Surf[] _wheelSurf; float _dustCheckT, _dustLogT;   // cached ground material per wheel (raycast, throttled); _dustLogT throttles UG_DUSTDEBUG
+        // THE PAINTWORK, kept rather than discarded after Build. The body material is ONE Material instance
+        // shared by every painted mesh the model builders were handed, so holding it here means a respray is
+        // a single parameter write and every panel changes together -- no rebuild, no mesh walk.
+        Material _paintMat; Color _paint = Colors.White;
+        public Color PaintColor => _paint;
+
+        // ---- CARJACK (source UseableCarjack + VehicleManager.carjackVehicle) --------------------------------
+        /// <summary>Retail's jack launches an EMPTY vehicle and spins it, which is how you get a car back onto
+        /// its wheels (and how you put one on a roof). Source vectors, exactly:
+        ///   force  = (Random(-32,32), Random(480,544) * (FLIGHT boost ? 4 : 1), Random(-32,32))
+        ///   torque = (Random(-64,64), Random(-64,64), Random(-64,64))
+        /// applied with Rigidbody.AddForce/AddTorque -- DEFAULT ForceMode.Force, so one physics step's worth.
+        ///
+        /// THE CONVERSION IS DERIVED, NOT GUESSED. Retail gives every vehicle rigidbody mass 2.0 (see
+        /// GlobalMass), so its actual velocity change is force/2 * 0.02 = force * 0.01 -- about 5 m/s upward,
+        /// which is the launch you see in game. The port runs REAL kerb masses (900 default, 1700 for a
+        /// sedan), so reproducing that same 5 m/s needs an impulse of force * 0.01 * ourMass. Take retail's
+        /// number as an impulse directly and a 1700 kg car would twitch 0.3 m/s and the feature would read as
+        /// broken.
+        ///
+        /// ⚠ The SPIN is the same conversion against a different quantity: retail's inertia tensor is not
+        /// ours (mass 2.0 on a car-sized box), so the torque is scaled by mass alone and the resulting
+        /// tumble is in the right spirit rather than frame-accurate.</summary>
+        public const float CarjackRetailMass = 2f;      // source Rigidbody.mass for every vehicle
+        public const float CarjackStepSeconds = 0.02f;  // Unity's fixed step -- AddForce is one step of it
+
+        public bool Carjack(bool flightBoost, System.Random rng = null)
+        {
+            if (IsWreck) return false;
+            if (OccupiedSeats.Count > 0) return false;   // source: !vehicle.isEmpty -> refused. You cannot jack an occupied car.
+            rng ??= new System.Random();
+            float R(float a, float b) => a + (float)rng.NextDouble() * (b - a);
+
+            var force = new Vector3(R(-32f, 32f), R(480f, 544f) * (flightBoost ? 4f : 1f), R(-32f, 32f));
+            var torque = new Vector3(R(-64f, 64f), R(-64f, 64f), R(-64f, 64f));
+            float k = CarjackStepSeconds / CarjackRetailMass * Mass;   // retail's dv, re-expressed as OUR impulse
+
+            ApplyCentralImpulse(force * k);   // Vehicle IS a VehicleBody3D, which is a RigidBody3D
+            ApplyTorqueImpulse(torque * k);
+            return true;
+        }
+
+        /// <summary>Respray it. Retail's spraypaint sets the vehicle's paint colour, which the shader reads as
+        /// `paint_color` over the body palette -- so only the texels the artist marked paintable change, and
+        /// the livery, glass and trim stay exactly as they were.</summary>
+        public void SetPaint(Color c)
+        {
+            _paint = c;
+            if (_paintMat is ShaderMaterial sm)
+            {
+                var lin = c.SrgbToLinear();   // same conversion PaintMat does: ALBEDO is linear, the hex is sRGB
+                sm.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
+            }
+            else if (_paintMat is StandardMaterial3D std) std.AlbedoColor = c;   // the no-palette fallback body
+        }
+
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         // FOOT BRAKE. 1.5, not the 6 that shipped, because 6 stands the car on its nose. strawberry, after
@@ -1086,6 +1142,19 @@ namespace UnturnedGodot
                 PlayerController.Surf.Dirt => GripDirt,
                 PlayerController.Surf.Grass => GripGrass,
                 PlayerController.Surf.Sand => GripSand,
+                // Added with the Surf values themselves (2026-09-10). These are NOT new handling: before the
+                // terrain surface map was fixed, gravel already reported as Concrete and snow as Dirt, so
+                // keeping gravel loose-but-firm and snow at the dirt figure is what the map has always driven
+                // -- naming them stops the fix from silently changing how Yukon drives.
+                PlayerController.Surf.Gravel => GripDirt,
+                PlayerController.Surf.Snow => GripDirt,
+                // Stone is hard ground and grips like it. This IS a change: layer 7 used to fall through to
+                // Grass, so cliffs and quarries were as slippery as a field.
+                PlayerController.Surf.Rock => GripConcrete,
+                // ⚠ ICE IS NOT SLIPPERY, deliberately. Skating vehicles is a handling change nobody asked
+                // for, and no terrain layer on the three shipped maps is ice anyway -- it arrives with a map
+                // that paints one, and should be decided then rather than smuggled in with an audio fix.
+                PlayerController.Surf.Ice => GripConcrete,
                 _ => GripConcrete,   // concrete/metal/wood/water: a hard or unlabelled floor is the reference
             };
             return offRoad ? Mathf.Lerp(k, 1f, OffRoadRecovery) : k;
@@ -4843,6 +4912,7 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            p.SetPaintMaterial(bodyMat);   // v41: so a replicated respray can repaint this puppet
             // SPLIT THE LENSES OUT, exactly as Build() does. The puppet used to load the body WHOLE, so its
             // headlights and taillights were baked into the paintwork and could never emit -- which is why a
             // remote car drove around dark no matter what its driver did. Same zones, same X-mirror, so the
@@ -5212,6 +5282,41 @@ namespace UnturnedGodot
             if (GodotObject.IsInstanceValid(_tireNodes[i])) _tireNodes[i].Visible = false;
             ApplyTirePhysics(i);
             return true;
+        }
+
+        /// <summary>Retail getClosestAliveTireIndex: the wheel nearest a world point, filtered by whether it is
+        /// still on. -1 for none. Fitting a tire picks the closest POPPED one, so walking round the car and
+        /// aiming at the flat corner fixes that corner rather than whichever wheel happens to be index 0.</summary>
+        public int ClosestTireIndex(Vector3 point, bool wantPopped)
+        {
+            int best = -1; float bestD = float.MaxValue;
+            for (int i = 0; i < _tireNodes.Count; i++)
+            {
+                if (i >= _tirePopped.Length || _tirePopped[i] != wantPopped) continue;
+                if (!GodotObject.IsInstanceValid(_tireNodes[i])) continue;
+                float d = _tireNodes[i].GlobalPosition.DistanceSquaredTo(point);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Retail isTireReplaceable: `!isDriven && !isExploded && asset.canTiresBeDamaged`. Nobody
+        /// changes a wheel on a moving car, and a wreck has nothing left to change it on. The port has no
+        /// Tires_Invulnerable vehicles, so the third term is constant-true here and is written as a comment
+        /// rather than a field nothing sets.</summary>
+        public bool TiresReplaceable => !Exploded && LinearVelocity.LengthSquared() < 1f;   // IsWreck is the same _exploded flag -- one condition, written once
+
+        /// <summary>v45: the flat wheels as a bitmask, for the wire. Capped at 8 because that is the mask's
+        /// width -- nothing in the fleet has more, and a 9-wheeled vehicle silently losing its ninth tire to a
+        /// truncation is worth the assert-by-comment rather than a surprise.</summary>
+        public byte PoppedTireMask
+        {
+            get
+            {
+                byte m = 0;
+                for (int i = 0; i < _tirePopped.Length && i < 8; i++) if (_tirePopped[i]) m |= (byte)(1 << i);
+                return m;
+            }
         }
 
         public bool RepairTire(int i)
@@ -6588,6 +6693,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            v._paintMat = bodyMat; v._paint = paint;   // kept so a spraypaint can change it later
             ArrayMesh bodyMesh = null, doorMesh = null; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
             // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
             (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
@@ -9588,7 +9694,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
-                if (EngineOn)
+                // ...but NOT while it is still cranking (master 2026-09-11: "dont start engine noise until the
+                // engine has actually finished starting"). TryStartEngine sets EngineOn the instant the key
+                // turns, because the drivetrain gate is the SEPARATE _carIgnitionLeft timer -- so this loop came
+                // in under the starter-motor clip and you heard an idling engine over its own ignition. The same
+                // timer that withholds the throttle now withholds the sound, which is what makes them agree:
+                // the engine is audible exactly when it can move you. Aircraft are not affected -- StepHeli and
+                // StepPlane gate this loop on _rotorRpm, so theirs already fades in with the spin-up.
+                if (EngineOn && !EngineStarting)
                 {
                     float n = EngineRpmNorm;
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);

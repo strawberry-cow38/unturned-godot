@@ -54,6 +54,27 @@ namespace UnturnedGodot
                     changed |= SetU(ref ce.HeldSight, AttId(heldGun, "Sight"));
                     changed |= SetU(ref ce.HeldMagazine, AttId(heldGun, "Magazine"));
                     changed |= SetU(ref ce.HeldBarrel, AttId(heldGun, "Barrel"));
+                    // v42: GESTURES. Resolved HERE because this is where the stance and the held item already
+                    // are -- ServerGestures parks the request and this decides it. Only LOOPING gestures reach
+                    // the entity (a one-shot wave latched into a state block would leave the puppet waving
+                    // forever), and the Broadcast filter keeps INVENTORY_START off the wire so nobody watches
+                    // you rummage.
+                    if (ServerGestures.TryTakePending(pid, out var wantGesture))
+                    {
+                        changed |= SetB(ref ce.Gesture,
+                                        ServerGestures.Resolve(ce.Gesture, wantGesture,
+                                                               (SDG.Unturned.EPlayerStance)mi.Stance,
+                                                               mi.HeldItemId != 0, out var oneShot));
+                        // v44: a wave has no state to sit in, so it goes out as an EVENT the moment it is
+                        // allowed. Broadcast, not unicast -- the person who cannot see a salute is everyone
+                        // except the one who made it.
+                        if (oneShot != SDG.Unturned.EPlayerGesture.NONE)
+                            _server.BroadcastEvent(NetMessagePak.Pack(
+                                ReplicationIds.EventPlayerGesture,
+                                new PlayerGestureEvent { PlayerId = pid, Gesture = (byte)oneShot }.Write));
+                    }
+                    changed |= SetBool(ref ce.WornLightOn, mi.WornLight);   // their lamps, so other clients can light the lens
+                    changed |= SetBool(ref ce.HeldLightOn, mi.HeldLight);
                 }
 
                 if (changed) _server.CombatState.MarkDirty(ce, tick);
@@ -81,12 +102,19 @@ namespace UnturnedGodot
             return null;
         }
 
-        /// <summary>The id fitted in a slot, as the wire carries it: 0 means NOTHING FITTED.
+        /// <summary>An installed attachment id for the wire, where 0 means NOTHING FITTED.
         ///
-        /// The clamp is the whole function. InstalledId reports an empty slot as -1 (gunBarrelId and friends
-        /// default to it), and these fields are ushort -- so a bare cast published 65535 for every slot a gun
-        /// did not have filled, on every player, forever. It also feeds the appearance hash, so the wrong
-        /// value was being mixed into the dirty check as well as sent.</summary>
+        /// ⚠ -1 IS THE SENTINEL, NOT 0. Item.gunSightId/gunBarrelId/gunGripId/gunTacticalId all default to -1
+        /// (ItemAsset.cs:154), and this used to cast that straight to ushort -- so an unfitted slot went over the
+        /// wire as 65535. That is not merely a wrong number: AttachmentFit.MountOn gates on `id > 0`, so 65535
+        /// passes the gate, MeshFor(65535) finds nothing, and a remote player's gun renders with NO iron sight
+        /// instead of falling back to its factory one. The LOCAL path never showed it, because there the int -1
+        /// fails `> 0` correctly and only the cast to ushort turns it into a positive.
+        ///
+        /// Fixed independently on two branches the same night (tinyclaw via mp.attachments_replicate, cow tools
+        /// on Staging-Nyatools) -- same clamp, same line. Kept cow tools' comment: it traces the consequence all
+        /// the way to MountOn/MeshFor, which is the half that explains why it mattered rather than just that it
+        /// did.</summary>
         static ushort AttId(Item gun, string slot)
         {
             if (gun == null) return 0;
@@ -95,5 +123,6 @@ namespace UnturnedGodot
         }
         static bool SetU(ref ushort field, ushort val) { if (field == val) return false; field = val; return true; }
         static bool SetB(ref byte field, byte val) { if (field == val) return false; field = val; return true; }
+        static bool SetBool(ref bool field, bool val) { if (field == val) return false; field = val; return true; }
     }
 }

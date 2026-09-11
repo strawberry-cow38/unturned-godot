@@ -53,7 +53,26 @@ namespace UnturnedGodot.Net
         {
             public uint NetIdValue { get; internal set; }
             public byte TypeId { get; internal set; }        // index into the game's vehicle spec table (Vehicle.SpecNames order)
-            public byte Variant { get; internal set; }       // spawn paint variant -- paint derives deterministically (Vehicle.SpawnPaint)
+            public byte Variant { get; internal set; }       // spawn paint variant -- the paint a car SPAWNS in derives deterministically from it (Vehicle.SpawnPaint)
+            /// <summary>A RESPRAY, as 0xRRGGBB, or null for "never sprayed -- derive from Variant".
+            ///
+            /// Variant alone cannot carry this: it selects from the spec's own default list or seeds the
+            /// random-hue roll, and a spraypaint colour is an arbitrary 24-bit value off the CAN. Nullable
+            /// rather than 0-means-unpainted because #000000 is a legal paint even though no retail can is
+            /// quite it (Midnight Black is #0a0a0a) -- a sentinel that a future can could collide with is a
+            /// bug waiting for a content update.</summary>
+            public uint? PaintRgb { get; internal set; }
+            /// <summary>v45: which wheels are FLAT, one bit each, up to 8 -- retail's tireAliveMask width.
+            ///
+            /// ⚠ POPPED, not alive, and that inversion is the whole reason it is named differently from
+            /// source. An ALIVE mask has to be 0xFF for an undamaged car, so the zero a default-constructed
+            /// entity carries would mean "every wheel is flat" -- every car would arrive at a joining client
+            /// on its rims until something dirtied it. Popped-means-set makes the default correct by
+            /// construction, which is worth more than matching a field name.
+            ///
+            /// Gated by a bit like the paint is: four good tires is the overwhelming majority and should cost
+            /// one bit, not a byte.</summary>
+            public byte PoppedTireMask { get; internal set; }
             public ushort DriverPlayerId { get; internal set; }   // seat 0. 0 = empty.
             /// <summary>Seats 1..N, index-aligned with the game layer's Vehicle.SeatLocals minus the driver.
             /// Null or empty = a vehicle nobody is riding as a passenger. Seat 0 stays DriverPlayerId rather
@@ -250,12 +269,31 @@ namespace UnturnedGodot.Net
             e.LastChangedTick = tick;
         }
 
+        /// <summary>v45: which wheels are flat. One write for the whole mask rather than per-wheel, because a
+        /// wheel is never popped or fitted in isolation from the others as far as the wire cares.</summary>
+        public void ServerSetPoppedTires(NetId id, byte mask, long tick)
+        {
+            if (!_vehicles.TryGet(id, out var e) || e.PoppedTireMask == mask) return;
+            e.PoppedTireMask = mask;
+            e.LastChangedTick = tick;
+        }
+
         /// <summary>Occupancy write (0 = seat freed). Both claim paths land here: remote Enter/Exit commands
         /// via ServerVehicles, and the listen-server local player's direct SP enter/exit via VehicleNetSync.</summary>
         public void ServerSetDriver(NetId id, ushort driverPlayerId, long tick)
         {
             if (!_vehicles.TryGet(id, out var e) || e.DriverPlayerId == driverPlayerId) return;
             e.DriverPlayerId = driverPlayerId;
+            e.LastChangedTick = tick;
+        }
+
+        /// <summary>Respray it (0xRRGGBB), or clear back to its spawn colour with null. Server-only: the
+        /// colour comes off the CAN the server just spent, so a client that could assert it could paint
+        /// without owning a spraypaint.</summary>
+        public void ServerSetPaint(NetId id, uint? rgb, long tick)
+        {
+            if (!_vehicles.TryGet(id, out var e) || e.PaintRgb == rgb) return;
+            e.PaintRgb = rgb;
             e.LastChangedTick = tick;
         }
 
@@ -449,6 +487,10 @@ namespace UnturnedGodot.Net
                 // (stored by ServerPublishTow) is byte-identical to the client's wire-read value.
                 h = NetHash.MixUInt32(h, e.TowedNetId);
                 h = NetHash.MixFloat(h, e.TowRestLen);
+                // v41 respray: mixed as 0 when unpainted, which is NOT the same as a painted #000000 -- the
+                // extra 1 distinguishes them so an unpainted car and a black one cannot hash alike.
+                h = NetHash.MixUInt32(h, e.PaintRgb.HasValue ? e.PaintRgb.Value | 0x1000000u : 0u);
+                h = NetHash.MixByte(h, e.PoppedTireMask);
             }
             return h;
         }
@@ -483,6 +525,19 @@ namespace UnturnedGodot.Net
             byte pc = (byte)(e.Passengers?.Length ?? 0);
             w.WriteUInt8(pc);
             for (int i = 0; i < pc; i++) w.WriteUInt16(e.Passengers[i]);
+            // v41 respray, appended last and GATED BY A BIT: a car nobody has sprayed costs one bit rather
+            // than three bytes, and the overwhelming majority never get sprayed.
+            bool painted = e.PaintRgb.HasValue;
+            w.WriteBit(painted);
+            if (painted)
+            {
+                uint rgb = e.PaintRgb.Value;
+                w.WriteUInt8((byte)(rgb >> 16)); w.WriteUInt8((byte)(rgb >> 8)); w.WriteUInt8((byte)rgb);
+            }
+            // v45 flat tires, same shape and for the same reason: one bit for the common case.
+            bool anyFlat = e.PoppedTireMask != 0;
+            w.WriteBit(anyFlat);
+            if (anyFlat) w.WriteUInt8(e.PoppedTireMask);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -509,13 +564,26 @@ namespace UnturnedGodot.Net
             if (pc > MaxSeats) return false;                                                           // bounds BEFORE the allocation
             ushort[] pax = pc == 0 ? System.Array.Empty<ushort>() : new ushort[pc];
             for (int i = 0; i < pc; i++) { if (!r.ReadUInt16(out ushort occ)) return false; pax[i] = occ; }
+            if (!r.ReadBit(out bool painted)) return false;                                            // v41 respray gate
+            uint? paint = null;
+            if (painted)
+            {
+                if (!r.ReadUInt8(out byte pr)) return false;
+                if (!r.ReadUInt8(out byte pg)) return false;
+                if (!r.ReadUInt8(out byte pb)) return false;
+                paint = ((uint)pr << 16) | ((uint)pg << 8) | pb;
+            }
+            byte flatMask = 0;
+            if (!r.ReadBit(out bool anyFlat)) return false;
+            if (anyFlat && !r.ReadUInt8(out flatMask)) return false;
             e = new VehicleEntity
             {
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
                 Fuel = fuel, Health = health, Battery = battery, Flags = flags,
-                TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax,
+                TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax, PaintRgb = paint,
+                PoppedTireMask = flatMask,
             };
             return true;
         }
@@ -789,6 +857,23 @@ namespace UnturnedGodot.Net
     /// lands the name starts being right on its own, with no second wire change.</summary>
     /// <summary>v25: somebody SWUNG a melee weapon (or their fists) -- broadcast once per accepted MeleeCommand so every other
     /// client can play the swing on that player's puppet. No damage rides this; the server's deferred hit is separate.</summary>
+    /// <summary>v44: a ONE-SHOT gesture somebody played (wave/salute/point/facepalm/pickup). The looping ones
+    /// ride the combat entity instead -- see EventPlayerGesture's note.</summary>
+    public struct PlayerGestureEvent
+    {
+        public ushort PlayerId;
+        public byte Gesture;
+        public void Write(NetPakWriter w) { w.WriteUInt16(PlayerId); w.WriteUInt8(Gesture); }
+        public static bool TryRead(NetPakReader r, out PlayerGestureEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort pid)) return false;
+            if (!r.ReadUInt8(out byte g)) return false;
+            evt = new PlayerGestureEvent { PlayerId = pid, Gesture = g };
+            return true;
+        }
+    }
+
     public struct PlayerMeleeEvent
     {
         public ushort PlayerId;
@@ -963,8 +1048,74 @@ namespace UnturnedGodot.Net
             _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
         }
 
+        /// <summary>(sender, spraypaint item id) -> the colour it was, having SPENT it; null if the sender
+        /// does not own that can or it is not a spraypaint. Set by the host to ServerTransactions.SpendPaintCan
+        /// -- ServerVehicles has the vehicles and the reach, and that has the bag and the content table, and
+        /// neither should grow a copy of the other's half.</summary>
+        public Func<ushort, ushort, uint?> TrySpendPaint;
+
+        /// <summary>v45 hooks into the bag and the physics, for the same reason TrySpendPaint is one: which
+        /// item the sender is holding and whether it is really in their inventory is the transactions layer's
+        /// business, and shoving a rigid body is the game layer's. Null on a bare host.</summary>
+        public Func<ushort, bool> TrySpendTire;        // (sender) -> true if a spare was in the bag and has been taken
+        public Action<uint, ushort> ApplyCarjackForce; // (vehicle NetId, sender) -> the impulse, server-side
+
+        /// <summary>How close you must be to respray a car. Generous like the forage reach and for the same
+        /// reason: the server is refusing a forged NetId, not re-deciding what the client may aim at.</summary>
+        public const float PaintReach = 8f;
+
         public void Register(CommandRegistry commands)
         {
+            // RESPRAY. The client names the CAR and the CAN and nothing else: the colour, whether that can is
+            // really in the bag, and whether the asker is stood next to the car are all answered here.
+            commands.Register<PaintVehicleCommand>(ReplicationIds.CommandPaintVehicle, PaintVehicleCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (TrySpendPaint == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.NetId), out var e) || e.Exploded) return;
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    uint? rgb = TrySpendPaint(sender, cmd.ItemId);   // spends it -- so this must come AFTER every other check
+                    if (rgb == null) return;
+                    _vehicles.ServerSetPaint(new NetId(cmd.NetId), rgb, _tick());
+                });
+
+            // v45 FIT A TIRE. Names the car and the wheel; which spare is being spent comes off the sender's
+            // bag, and whether that wheel is actually flat is answered from the server's own mask -- a client
+            // cannot un-pop a wheel that was never popped, nor fit one to a car it is not standing at.
+            commands.Register<FitTireCommand>(ReplicationIds.CommandFitTire, FitTireCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (TrySpendTire == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.VehicleNetId), out var e) || e.Exploded) return;
+                    // The FIRST flat wheel, not the one the client names. The server holds a mask and knows
+                    // nothing about where the wheels ARE, so an index off the wire would be a field it could
+                    // not check -- and a field a client can set and the server cannot verify is a field that
+                    // will eventually be used for something else. The singleplayer path still picks by aim,
+                    // because there the client HAS the geometry; the difference is stated, not hidden.
+                    if (e.PoppedTireMask == 0) return;                             // nothing flat on it
+                    byte bit = (byte)(e.PoppedTireMask & (byte)(-e.PoppedTireMask));   // lowest set bit
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    if (e.DriverPlayerId != 0) return;                             // retail isTireReplaceable: not while it is being driven
+                    if (!TrySpendTire(sender)) return;                             // spends it -- AFTER every other check, like the paint
+                    _vehicles.ServerSetPoppedTires(new NetId(cmd.VehicleNetId), (byte)(e.PoppedTireMask & ~bit), _tick());
+                });
+
+            // v45 CARJACK. The client asks; the SERVER shoves. The impulse reaching everyone through the
+            // vehicle's ordinary transform stream is the whole point -- a client applying its own force would
+            // be a launch-anything primitive wearing a tool's name.
+            commands.Register<CarjackCommand>(ReplicationIds.CommandCarjack, CarjackCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (ApplyCarjackForce == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.VehicleNetId), out var e) || e.Exploded) return;
+                    if (e.DriverPlayerId != 0) return;   // retail carjacks an EMPTY vehicle; flipping an occupied one is a weapon
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    ApplyCarjackForce(cmd.VehicleNetId, sender);
+                });
+
             commands.Register<EnterVehicleCommand>(ReplicationIds.CommandEnterVehicle, EnterVehicleCommand.TryRead,
                 (sender, cmd) => ServerEnter(sender, cmd.NetId, cmd.Seat),
                 validate: (sender, cmd) => CanEnter(sender, cmd.NetId));

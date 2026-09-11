@@ -50,6 +50,49 @@ namespace UnturnedGodot
 
         /// <summary>Mirror the replicated cosmetic state. Visual and audible only -- a puppet has no physics,
         /// no battery and no alarm timer of its own; it is told what the owning side already decided.</summary>
+        // v41 respray. The puppet holds its body Material for the same reason the real Vehicle does: one
+        // instance is shared by every painted mesh, so a colour change is one parameter write. Applied from
+        // the vehicle ENTITY rather than from an event, so a client that joined after the spray still sees
+        // the sprayed colour instead of the spawn one.
+        Material _paintMat; uint? _paintRgb;
+
+        /// <summary>Handed the body Material at build time by Vehicle.BuildPuppetByName.</summary>
+        public void SetPaintMaterial(Material m) => _paintMat = m;
+
+        byte _poppedTires;
+
+        /// <summary>v45: which of this car's wheels are flat. The puppet has no wheel PHYSICS -- it is dressing
+        /// -- so a flat here is exactly what a flat looks like from outside: the tire is gone. That is the same
+        /// thing Vehicle.PopTire does visually, and the grip and radius it also changes are the driver's
+        /// business, which on a replicated car is somebody else's machine.
+        ///
+        /// Indexed the same way the mask is written, which is the same order Vehicle builds its tire nodes in;
+        /// both sides walk their own wheel list in order, so bit N is wheel N on either.</summary>
+        public void ApplyReplicatedTires(byte mask)
+        {
+            if (_poppedTires == mask) return;   // every snapshot carries it; only a CHANGE is worth the walk
+            _poppedTires = mask;
+            for (int i = 0; i < Wheels.Length && i < 8; i++)
+            {
+                var pivot = Wheels[i]?.Pivot;
+                if (pivot != null && GodotObject.IsInstanceValid(pivot)) pivot.Visible = (mask & (1 << i)) == 0;
+            }
+        }
+
+        public void ApplyReplicatedPaint(uint? rgb)
+        {
+            if (_paintRgb == rgb) return;      // every snapshot carries it; only a CHANGE is worth the write
+            _paintRgb = rgb;
+            if (rgb == null || _paintMat == null) return;   // null = never sprayed; the spawn colour already stands
+            var c = new Color(((rgb.Value >> 16) & 0xFF) / 255f, ((rgb.Value >> 8) & 0xFF) / 255f, (rgb.Value & 0xFF) / 255f);
+            if (_paintMat is ShaderMaterial sm)
+            {
+                var lin = c.SrgbToLinear();   // the same conversion Vehicle.SetPaint and PaintMat both make
+                sm.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
+            }
+            else if (_paintMat is StandardMaterial3D std) std.AlbedoColor = c;
+        }
+
         public void ApplyReplicatedFlags(bool headlights, bool taillights, bool braking, bool alarming)
         {
             // An alarming car owns its own lights, blinking them with the horn, exactly as the real one does.

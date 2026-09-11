@@ -72,6 +72,7 @@ namespace UnturnedGodot
         bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
         string _glEquipClip, _glReloadClip, _glHammerClip;   // resolved overlay clips for the gun-layer test (+ the empty-reload rack)
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
+        System.Func<bool> _vmArmsShirtPending;       // UG_VMSHIRT: runs once the arms rig exists (built lazily in Viewmodel)
         bool _vmInspected;                           // UG_INSPECT_AT fires PlayInspect once
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
@@ -1660,6 +1661,24 @@ namespace UnturnedGodot
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
+            // UG_VMSHIRT=<shirt id> [UG_VMPANTS=<id>]: paint CLOTHING onto the viewmodel arms. The harness could
+            // build arms and could build a dressed BODY (--clothtest) but had no way to put a sleeve on a
+            // first-person arm, which is precisely where master reported the wrap looking wrong -- so the one
+            // view that mattered was the one nothing could render. Same reasoning as the eating driver below:
+            // a gap in my own tool is not a reason to report something unverifiable.
+            if (System.Environment.GetEnvironmentVariable("UG_VMSHIRT") is string _vs && ushort.TryParse(_vs, out ushort _vsid))
+            {
+                var _vmShirt = ClothingContent.LoadTextures(_vsid);
+                _vmArmsShirtPending = () =>
+                {
+                    if (_vm?.ArmsRig is not RiggedCharacter ar) return false;
+                    ar.SetShirt(_vmShirt.Albedo, _vmShirt.Emission, _vmShirt.Metallic);
+                    if (System.Environment.GetEnvironmentVariable("UG_VMPANTS") is string _vp && ushort.TryParse(_vp, out ushort _vpid))
+                    { var t = ClothingContent.LoadTextures(_vpid); ar.SetPants(t.Albedo, t.Emission, t.Metallic); }
+                    Log.Print($"[vm] painted shirt {_vsid} onto the arms (albedo={_vmShirt.Albedo != null})");
+                    return true;
+                };
+            }
             _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel || isConsumable;
             // EATING IS A THING THE HARNESS CAN SHOW NOW (strawberry 2026-09-10: "its YOUR demo harness. if theres
             // something it cant do, write it"). I had reported the consumable part rip as unverifiable because
@@ -1852,6 +1871,15 @@ namespace UnturnedGodot
             if (_veh == null) { Log.Err($"[glassshot] no vehicle '{type}'"); GetTree().Quit(1); return; }
             AddChild(_veh);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the floor so the suspension settles, as --vehicle does
+            // UG_PAINT=<spraypaint item id>: RESPRAY it before the photo, through the same Vehicle.SetPaint a
+            // player's can calls. Deliberately the respray path and not a spawn-colour override -- a shot of
+            // SpawnPaint would prove the shader works, which was never in doubt; this proves the CAN does.
+            if (ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_PAINT"), out ushort paintId)
+                && VehiclePaints.For(paintId) is Color pc)
+            {
+                _veh.SetPaint(pc);
+                Log.Print($"[glassshot] resprayed {VehiclePaints.NameOf(paintId)} (#{pc.ToHtml(false)})");
+            }
 
             // Bright flat body so the glass is the only thing that isn't magenta (master: "color the body a
             // bright color too to help you diff"). Applied to every mesh EXCEPT the glass panes, which the
@@ -3774,7 +3802,14 @@ namespace UnturnedGodot
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
-            var propMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            // UG_NORMPROBE=1: paint dot(NORMAL, worldUp) instead of the texture. Up-facing surfaces come out
+            // WHITE and vertical ones BLACK, which is an ABSOLUTE answer about whether this mesh's normals
+            // point out -- unlike "does it look right", which has been wrong twice in one day here.
+            if (System.Environment.GetEnvironmentVariable("UG_NORMPROBE") == "1")
+                mat = null;
+            var propMi = new MeshInstance3D { Mesh = mesh };
+            if (mat != null) propMi.MaterialOverride = mat;
+            else propMi.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/normal_probe.gdshader") };
             { var _pr = System.Environment.GetEnvironmentVariable("UG_PROPROT"); if (!string.IsNullOrEmpty(_pr)) { var a = _pr.Split(','); propMi.RotationDegrees = new Vector3(float.Parse(a[0]), float.Parse(a[1]), float.Parse(a[2])); } }   // UG_PROPROT: reorient the prop (e.g. the elevator's stand-up) for the showcase
             AddChild(propMi);
             // UG_LIVE=1: also attach whatever DEVICE this prop carries, so the diagnostic can show the animated thing
@@ -3793,6 +3828,21 @@ namespace UnturnedGodot
                 // amount of staring at the lit one.
                 if (System.Environment.GetEnvironmentVariable("UG_MONITOR_OFF") == "1") hm.Toggle();
                 Log.Print($"[PROPTEST] attached HeartMonitor (alive={hm.Alive} lit={hm.DebugLit})");
+            }
+            // UG_LIVE=1 on the car lift: attach the PLATFORM the object rip never had (Car_Lift_0's ramp is a
+            // SkinnedMeshRenderer, which extract_objects_v2 does not walk). UG_LIFT=1 raises it, so the
+            // question "is the ramp there, and does it end up in the right place when it rises" is answerable
+            // from two renders rather than from arithmetic about a bounding box.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && name == "Car_Lift_0")
+            {
+                var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
+                // parented to propMi so UG_PROPROT reorients the platform WITH the frame -- spawned at the
+                // scene root it would stay lying down while the frame stood up, and the render would show a
+                // ramp floating sideways through the posts.
+                var lift = CarLift.Spawn(propMi, Vector3.Zero, Basis.Identity, rampMesh, mat);
+                if (lift != null && System.Environment.GetEnvironmentVariable("UG_LIFT") == "1")
+                { lift.DebugForcePower = true; lift.Toggle(); }
+                Log.Print($"[PROPTEST] attached CarLift (ramp={(rampMesh != null ? "ok" : "MISSING")})");
             }
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
@@ -8948,6 +8998,7 @@ namespace UnturnedGodot
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 // UG_SIGHT=<mesh.txt>: mount a specific sight/scope on the gun once equipped, for a scope-showcase demo.
+                if (_vmArmsShirtPending != null && _vm != null && _vmArmsShirtPending()) _vmArmsShirtPending = null;
                 if (_vmTest && _vm != null && !_vmSightSet && _vm.IsEquipComplete && System.Environment.GetEnvironmentVariable("UG_SIGHT") is string _sg && _sg.Length > 0)
                 { _vm.SetSlotMesh("Sight", _sg); _vmSightSet = true; }
                 // --vm ADS demo: the equip pull-out plays first (source gates aiming until it finishes), then a

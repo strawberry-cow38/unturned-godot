@@ -421,6 +421,17 @@ namespace UnturnedNet.Tests
             // MOVED +1 byte again under v20 (byteLen 0x2A->0x2B): the passenger block's self-describing
             // count, 0 here because nobody is riding. That single byte is the whole cost of multi-seat on
             // an empty car, and it is what makes a client able to read a seat list it was not compiled for.
+            // v45 (popped-tire mask) DID NOT MOVE THIS GOLDEN, and that is derived rather than overlooked --
+            // a wire change whose golden stays put looks exactly like a forgotten re-bless, so here is the
+            // arithmetic. WriteFull writes a 16-bit entity count, then the entity: 32+8+8+16 (id/type/variant/
+            // driver) + 55 (pos 11.8/9.8/11.8) + 33 (yaw/pitch/roll 11 ea) + 72 (lin+ang vel, 6.6 x3 ea) + 9
+            // (steer) + 13 (fuel 12.1) + 17 (health 16.1) + 14 (battery 14.0) + 8 (flags) + 32 (towedNetId) +
+            // 7 (towRest 3.4) + 8 (passenger count) + 1 (paint gate) = 333. With the count that is 349 bits,
+            // and byteLen says 0x2C = 44 bytes = 352 -- so there are 3 bits of padding. The new gate bit is
+            // zero and lands inside that padding: byteLen stays 0x2C and not one byte changes.
+            //
+            // If a future field pushes the content past 351 bits this WILL move, and the number to recompute
+            // is the one above rather than whatever the code happens to emit.
             Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092C00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB91B96A0FFBF00000000800000"));
         }
 

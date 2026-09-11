@@ -75,6 +75,15 @@ namespace UnturnedGodot
             if (r.Canopy.Mm == null || !r.Alive) return;
             if (r.Shake <= 0f) _shaken.Add(index);
             r.Shake = 1f;                    // each hit re-arms it to full rather than accumulating
+            // ⚠ WRITTEN NOW, not next frame. _Process was the only thing that pushed Shake into the buffer, and it
+            // decays BEFORE it writes -- so the channel never saw 1.0 at all, it saw one frame of decay, and on the
+            // frame you actually swung it still held whatever it held before. "have them shake with each hit"
+            // (strawberry 2026-09-09) means on the hit, not a frame after it.
+            //
+            // world.tree_hit_shake read the buffer straight after the hit and got 0, which is what the game was
+            // drawing too. Writing here also takes the assertion off a knife edge: reading one frame late gives
+            // 0.912 at 60 fps against a 0.9 threshold, and 0.833 at 30.
+            r.Canopy.Mm?.SetInstanceCustomData(r.Canopy.Slot, new Color(r.Shake, 0f, 0f, 0f));
             SetProcess(true);
         }
 
@@ -122,7 +131,73 @@ namespace UnturnedGodot
             var hidden = new Transform3D(new Basis(Vector3.Zero, Vector3.Zero, Vector3.Zero), new Vector3(0f, -10000f, 0f));
             foreach (var (mm, slot) in r.Slots) mm.SetInstanceTransform(slot, alive ? r.Xf : hidden);
             if (r.Trunk != null) r.Trunk.CollisionLayer = alive ? r.TrunkLayer : 0;
+            // A PICKED BUSH RUSTLES, on everyone's screen. Retail fires the resource's Explosion effect inside
+            // ReceiveForageRequest and replicates it; here the sound hangs off the alive bit going false, which
+            // is the one thing both the picker and every remote client do -- the harvested event lands in this
+            // same call on their machines, so nobody has to be told separately. Trees are excluded because they
+            // make their noise when the trunk LANDS, not when the bit flips.
+            if (!alive && r.Trunk is ForagePlant fp)
+                GameAudio.PlayAt(this, GameAudio.ResourceBreak(fp.ResourceName), r.Xf.Origin, -6f, 3f, 28f,
+                                 (float)GD.RandRange(0.92, 1.08));
         }
+
+        // ---- FORAGEABLE RESOURCES (retail InteractableForage) ----------------------------------------
+        // A resource is forageable iff its retail .dat carries the bare key `Forage` (ResourceAsset.cs:334),
+        // and every one that does shares the same shape: Health 1 (one interaction takes it), a SINGLE
+        // Reward_ID rather than a Reward_Min..Max roll, Reset 1000, Forage_Reward_Experience 1. Read off
+        // Bundles/Trees/<Name>/<Name>.dat on the box.
+        //
+        // ⚠ `Reward_ID` IS A SPAWN TABLE, NOT AN ITEM ID. First cut of this table used the raw Reward_ID and
+        // those ids are cosmetics in the ITEM space -- picking an amber bush handed you a BattlEye Halo, and
+        // a mushroom a Cowboy Top. Retail resolves it through
+        // `SpawnTableTool.ResolveLegacyId(rewardID, EAssetType.ITEM, ...)`: find the SPAWN asset with that
+        // legacy id, roll it, resolve the entry as an item. Every forage table happens to hold exactly ONE
+        // entry at weight 100 (Bundles/Spawns/<Name>/Asset.dat), so the roll is deterministic and the
+        // resolved ITEM id is baked here rather than shipping a spawn-table roller for ten single-entry
+        // tables. If a table ever gains a second entry this becomes a real roll and belongs server-side.
+        //
+        //   resource            Reward_ID (spawn)  ->  item
+        //   Bush_Amber          963                    270  Raw Jazzberries      <- see below
+        //   ⚠ the bush COLOUR does not name its berry: Bush_Amber gives Jazzberries while Raw Ameberries
+        //     (115) come off Bush_MAUVE. That is what the tables say; do not "fix" it to match the names.
+        //   Bush_Indigo         964                    271  Raw Rainberries
+        //   Bush_Jade           965                    272  Raw Viriberries
+        //   Bush_Mauve          966                    115  Raw Ameberries
+        //   Bush_Russet         967                    273  Raw Gloomberries
+        //   Bush_Teal           968                    274  Raw Mayberries
+        //   Bush_Vermillion     969                    275  Raw Crimberries
+        //   Bush_Hanu           903                    571  Raw Hanuberries
+        //   Mushroom_Brown_0    901                    1932 Brown Cap Mushroom
+        //   Mushroom_Red_0      902                    1934 Red Spotted Mushroom
+        //
+        // Bush_0 and Bush_1 are deliberately absent: the two plain green bushes have no Forage key, no
+        // Reward_ID and no Explosion at all, so in retail they are scenery you cannot pick. Leaving them out
+        // is the port being faithful, not a gap.
+        //
+        // The `_Snow` variants (Yukon) carry the same rewards as their green twins, so the suffix is stripped
+        // rather than doubling every row.
+        public const float ForageResetSeconds = 1000f;
+
+        public static ushort ForageReward(string resourceName)
+        {
+            string n = resourceName ?? "";
+            if (n.EndsWith("_Snow")) n = n.Substring(0, n.Length - 5);
+            return n switch
+            {
+                "Bush_Amber" => 270, "Bush_Indigo" => 271, "Bush_Jade" => 272, "Bush_Mauve" => 115,
+                "Bush_Russet" => 273, "Bush_Teal" => 274, "Bush_Vermillion" => 275, "Bush_Hanu" => 571,
+                "Mushroom_Brown_0" => 1932, "Mushroom_Red_0" => 1934,
+                _ => (ushort)0,
+            };
+        }
+
+        public static bool IsForageable(string resourceName) => ForageReward(resourceName) != 0;
+
+        /// <summary>The forage bodies built for this field, in index order -- the server reads this to seed
+        /// its own reward/reach table, so both sides agree about which index is a bush without either of
+        /// them re-parsing the resource list.</summary>
+        public IReadOnlyList<ForagePlant> ForagePlants => _foragePlants;
+        readonly List<ForagePlant> _foragePlants = new();
 
         public void LoadResources(string activeHoliday)
         {
@@ -142,6 +217,7 @@ namespace UnturnedGodot
                 if (holiday != "NONE" && holiday != activeHoliday) continue;   // out-of-season resource (same gate as the objects)
                 bool isTree = name.StartsWith("Birch") || name.StartsWith("Maple") || name.StartsWith("Pine");   // only trees cast shadows
                 bool isOre = name.StartsWith("Metal");   // metal ore rocks -> pickaxe-harvestable (master)
+                bool isForage = IsForageable(name);      // berry bushes + mushrooms -> look at it and press Interact
                 string binPath = dir + name + ".bin";
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
@@ -206,6 +282,43 @@ namespace UnturnedGodot
                         treeCols++;
                     }
                 }
+                else if (isForage)
+                {
+                    // A BERRY BUSH IS NOT A WALL. The body goes on ForagePlant.HitLayer -- its own bit, tested
+                    // by the look ray and by nothing else -- rather than layer 0, because a bush you cannot
+                    // walk through would change how the whole map moves, and one that stops bullets would turn
+                    // undergrowth into cover. Retail is the same shape: InteractableForage rides a trigger on a
+                    // `Forage` child, not the resource's collision.
+                    //
+                    // Sized off the instance rather than the mesh: a bush reads ~1.4 m across and knee-to-waist
+                    // high, a mushroom is a hand's width. Both are generous vertically so aiming at the ground
+                    // in front of one still finds it -- you are pointing at a plant, not threading a needle.
+                    int baseIdx = _instances.Count - xf.Count;
+                    bool mushroom = name.StartsWith("Mushroom");
+                    float bw = mushroom ? 0.45f : 1.4f, bh = mushroom ? 0.35f : 1.1f;
+                    ushort reward = ForageReward(name);
+                    for (int k = 0; k < xf.Count; k++)
+                    {
+                        var t = xf[k];
+                        Vector3 sc = t.Basis.Scale;
+                        float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
+                        var body = new ForagePlant { Field = this, Index = baseIdx + k, ResourceName = name, Reward = reward,
+                                                     WorldPos = t.Origin, CollisionLayer = ForagePlant.HitLayer,
+                                                     Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        body.SetMeta(ForagePlant.HitMeta, body);
+                        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(bw * sr, bh * sh, bw * sr) },
+                                                            Position = new Vector3(0f, bh * sh * 0.5f, 0f) });
+                        AddChild(body);
+                        body.AddToGroup(ColliderBudget.Group);   // stream it like the trunks + ore, or every bush on the map is a body
+                        {
+                            float fcull = LodTable.ResourceCull(name, LodTable.SourceFov);
+                            body.SetMeta(ColliderBudget.RadiusMeta, fcull > 0f ? fcull : 60f);
+                        }
+                        recs[k].Trunk = body;         // SetAlive drops it to layer 0 when picked, back on when it regrows
+                        recs[k].TrunkLayer = body.CollisionLayer;
+                        _foragePlants.Add(body);
+                    }
+                }
                 else if (isOre)   // metal ore rocks: a solid collider + OreRock harvest body (pickaxe -> Metal Scrap), master
                 {
                     int baseIdx = _instances.Count - xf.Count;
@@ -214,7 +327,7 @@ namespace UnturnedGodot
                         var t = xf[k];
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
-                        var body = new OreRock { Field = this, Index = baseIdx + k, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        var body = new OreRock { Field = this, Index = baseIdx + k, NodeName = name, CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);   // pickaxe/bullet hits read as metal
                         body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2.6f * sr, 2.4f * sh, 2.6f * sr) }, Position = new Vector3(0f, 1.1f * sh, 0f) });
                         AddChild(body);
@@ -743,7 +856,12 @@ namespace UnturnedGodot
         // from three humps to two, so it is two taps in under half a second rather than three over one.
         const float SettleTime = 0.40f, SettleDeg = 3.5f;
         const float SettleTaps = 2f;         // half-cycles of |sin| across the settle = how many times it bumps
-        const double DebrisLife = 11.0;      // the fall got a second and a half longer, so this follows it: 9.0 was
+        // ⚠ NOT a const: tree.harvest shortens it. The rewards moved onto this timer on 2026-09-09 ("leave their
+        // wood where they landed" -- they have to wait for the tree to LAND, or they scatter from the stump along
+        // a fall direction nothing has chosen yet), and the test has asserted an immediate drop ever since. Making
+        // it settable lets the test drive the REAL timer quickly rather than assert past it: a seam that dropped
+        // the rewards directly would pass with this wiring removed entirely.
+        internal static double DebrisLife = 11.0;   // the fall got a second and a half longer, so this follows it: 9.0 was
                                             // set to leave ~3.8 s of the tree lying there after a 4.2 s fall, and
                                             // keeping that dwell is the point, not keeping the number
         bool _settling;
@@ -820,6 +938,13 @@ namespace UnturnedGodot
                     // IT HITS. Kick the trunk's own flex here, off the speed it actually arrived at, so a big
                     // trunk landing fast rings harder than a sapling tipping over.
                     _trunkVel = Vector3.Up * (TrunkKick * Mathf.Tau * TrunkFreq * Mathf.Min(1f, _toppleVel / 1.094f));
+                    // ...AND IT MAKES A NOISE. Felling was completely silent -- ResourceField had no audio at all --
+                    // while the retail destruction clips sat unplayed in content/audio/explosions. Scaled off the
+                    // speed it arrived at, like the trunk kick on the line above and for the same reason, and
+                    // carried a long way: a tree coming down is the loudest thing in a quiet forest.
+                    GameAudio.PlayAt(this, GameAudio.ResourceBreak(TreeName), GlobalTransform.Origin,
+                                     Mathf.Lerp(-6f, 4f, Mathf.Min(1f, _toppleVel / 1.094f)), 8f, 90f,
+                                     (float)GD.RandRange(0.94, 1.06));
                     _toppling = false; _settling = true; _settleT = 0f;
                 }
             }
@@ -1051,10 +1176,37 @@ namespace UnturnedGodot
     // but for the Metal_* resources: a PICKAXE swing (PlayerController gates the tool) drains Health; at 0 the node
     // depletes (SetAlive false), drops Metal Scrap, and regrows after a reset -- retail ResourceManager.damage path.
     // ⚠ Health/reward/reset are tunable defaults; the retail Metal ResourceAsset .dat isn't on the box (same as trees).
+    /// <summary>A berry bush or a mushroom you can pick (retail InteractableForage). Look at it, press
+    /// Interact, and the SERVER decides what you get -- this body carries the reward id only so the world
+    /// builder can hand the server its table at boot; nothing on the client ever spends it.
+    ///
+    /// Deliberately NOT a harvest body like TreeTrunk or OreRock: those take damage from a tool and own a
+    /// health pool, and retail forage has Health 1 and no tool at all. There is nothing to chop.</summary>
+    public partial class ForagePlant : StaticBody3D
+    {
+        /// <summary>Its own collision bit, ray-tested by the look system and by nothing else. Bit 7 (items)
+        /// would have worked mechanically but the look SPHERE also tests that one, and a bush answering the
+        /// item-pickup assist radius is how you end up pressing F on undergrowth instead of the tin at your
+        /// feet.</summary>
+        public const uint HitLayer = 1u << 20;
+        public const string HitMeta = "forage";
+
+        public ResourceField Field;
+        public int Index;
+        public string ResourceName;
+        public ushort Reward;          // retail Reward_ID, for the server's table; the client never grants it
+        public Vector3 WorldPos;       // where it stands, captured at build time -- the server reach-checks against
+                                       // this, and reading it off GlobalTransform would depend on when the sync is
+                                       // constructed relative to the node entering the tree
+
+        public bool Alive => Field == null || Field.IsAlive(Index);
+    }
+
     public partial class OreRock : StaticBody3D
     {
         public ResourceField Field;
         public int Index;
+        public string NodeName;             // the resource it was built from -- picks the break sound, as TreeName does
         public float Health = 500f;         // ~5 pickaxe hits at Resource_Damage 100 (tunable -- no retail Metal .dat on hand)
         public float Reset = 600f;          // respawn seconds
         public int RewardMin = 2, RewardMax = 4;
@@ -1071,6 +1223,11 @@ namespace UnturnedGodot
             Health -= amount;
             if (Health > 0f) return;
             Mined = true;
+            // Depleting a node was as silent as felling used to be. Retail fires the resource's own Explosion
+            // effect here -- for every Metal and Clay node that is the one Metal clip. Quieter and shorter-ranged
+            // than a tree: it is the same event happening to a much smaller thing.
+            GameAudio.PlayAt(this, GameAudio.ResourceBreak(NodeName), GlobalTransform.Origin, -3f, 5f, 45f,
+                             (float)GD.RandRange(0.94, 1.06));
             Field?.SetAlive(Index, false);   // zero-scale the rock out of its MultiMesh + drop the collider to layer 0
             DropScrap();
             GetTree().CreateTimer(Reset).Timeout += Regrow;

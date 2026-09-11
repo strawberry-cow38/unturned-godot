@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 17.
+        // id -> name, as of NetProtocol.Version 45.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -64,6 +64,38 @@ namespace UnturnedNet.Tests
             // v37: a PROP door (shipping container, crossing arm). Its own command rather than
             // CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic.
             [47] = "CommandToggleObjectDoor",
+
+            // v39: unloading a magazine is an INTENT, not a client-side inventory edit. The client used to do
+            // the swap locally and let the owner echo carry it, which meant the server never saw a decision it
+            // could refuse.
+            [48] = "CommandGunUnload",
+
+            // v40: picking a berry bush or a mushroom. Server-authoritative because the regrow timer and the
+            // "already taken" bit are the server's -- two players at one bush otherwise both get the berries.
+            [49] = "CommandForageResource",
+
+            // v41: respraying a vehicle. Carries the car and the CAN, never the colour -- the server reads the
+            // colour off the can it spends, because a client that could send a colour could repaint the map
+            // without owning a spraypaint.
+            [50] = "CommandPaintVehicle",
+
+            // v42: asking to enter a gesture. One byte. Server-validated because SURRENDER gates handcuffs and
+            // ARREST is applied BY a captor -- a client that could assert either would be uncuffable.
+            [51] = "CommandRequestGesture",
+
+            // v43: handcuffs. Each names the TARGET and nothing else -- the restraint and the key are read off
+            // the sender's replicated hand, so a client cannot cuff with a pair it does not own.
+            [52] = "CommandArrestPlayer",
+            [53] = "CommandUnlockArrest",
+            // ...and one wriggle, carrying the side leaned. Only counted when it differs from the last side
+            // taken (retail's lastLean != lean), one per tick -- so spamming it is worth nothing.
+            [54] = "CommandStruggle",
+
+            // v45: the last two singleplayer-only vehicle actions. Each names the CAR and nothing a client
+            // could lie about -- the spare comes off the sender's bag, the flat wheel off the server's mask,
+            // and the carjack's impulse is applied server-side.
+            [55] = "CommandFitTire",
+            [56] = "CommandCarjack",
         };
 
         static Dictionary<byte, string> Actual() =>

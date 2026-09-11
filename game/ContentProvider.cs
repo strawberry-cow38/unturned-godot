@@ -115,6 +115,44 @@ namespace UnturnedGodot
         /// two rounds would tear one in half and the render would look like a mesh bug, not a range bug).
         ///
         /// Shares _meshCache under a distinct key, so the full mesh and each prefix are parsed once each.</summary>
+        /// <summary>Emit one triangle's corners in the order that makes its winding agree with its own
+        /// authored normal. Returns true when they must be reversed.
+        ///
+        /// ⚠ THIS LOADER CARRIES TWO OPPOSITE WINDING CONVENTIONS AND HAS TO SERVE BOTH. Measured over the
+        /// real files: the retail-derived .txt meshes (jeep_body, ambulance_body, jeep_wheel) are 0% opposed --
+        /// their winding already agrees with their normals -- while the GENERATED fluid art
+        /// (content/fluid/*.txt) is 100% opposed, authored clockwise-front on purpose because this loader used
+        /// to emit corners in file order.
+        ///
+        /// So neither "reverse everything" nor "reverse nothing" can be right. Reversing fixed the vehicles
+        /// (strawberry 2026-09-11: vehicles "always in shadow", and the wheels and lenses too, which is what
+        /// proved it was the mesh and not the paint shader) and would have turned every fluid device inside
+        /// out -- tinyclaw caught that before it shipped, having made the mirror of it that morning.
+        ///
+        /// Deriving it PER TRIANGLE from the normal the file already carries removes the convention question
+        /// entirely: both families load correctly, neither generator has to change, and a third convention
+        /// cannot break it either. A face with no authored normal keeps file order, which is what the retail
+        /// meshes -- the ones that never needed touching -- already want.</summary>
+        static bool TriangleNeedsReverse(List<Vector3> verts, List<Vector3> norms,
+                                         List<int> fv, List<int> fn, int baseIdx)
+        {
+            if (fn[baseIdx] < 0 || fn[baseIdx] >= norms.Count) return false;
+            Vector3 a = verts[fv[baseIdx]], b = verts[fv[baseIdx + 1]], c = verts[fv[baseIdx + 2]];
+            Vector3 geo = (b - a).Cross(c - a);
+            if (geo.LengthSquared() <= 1e-20f) return false;
+            Vector3 authored = norms[fn[baseIdx]];
+            for (int k = 1; k < 3; k++)
+                if (fn[baseIdx + k] >= 0 && fn[baseIdx + k] < norms.Count) authored += norms[fn[baseIdx + k]];
+            // ⚠ THE TARGET IS "OPPOSES", NOT "AGREES", and getting this backwards broke dropped items.
+            // Godot treats CLOCKWISE-from-the-camera as the FRONT face, so a triangle is front-facing when its
+            // right-hand-rule normal points AWAY from the viewer -- i.e. when the winding OPPOSES the authored
+            // outward normal. Three independent facts agree: tinyclaw's generated fluid art is 100% opposed and
+            // was correct before anything changed tonight; blanket-reversing the retail vehicle meshes (0%
+            // opposed -> opposed) is what fixed them; and the ripped item meshes are 98% opposed and were fine
+            // until this predicate made them "agree" (strawberry: "nope they are dark").
+            return geo.Dot(authored) > 0f;
+        }
+
         public static ArrayMesh ParseObjPrefix(string path, int triCount)
         {
             if (triCount <= 0) return ParseObj(path);
@@ -217,11 +255,18 @@ namespace UnturnedGodot
 
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
-            for (int i = 0; i < fv.Count; i++)
+            for (int i = 0; i + 2 < fv.Count; i += 3)
             {
-                if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
-                if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
-                st.AddVertex(verts[fv[i]]);
+                // Corner order decided PER TRIANGLE -- see TriangleNeedsReverse. This loader serves both
+                // winding conventions and the file cannot be trusted to say which one it is.
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, i);
+                for (int k = 0; k < 3; k++)
+                {
+                    int j = i + (rev ? 2 - k : k);
+                    if (ft[j] >= 0 && ft[j] < uvs.Count) st.SetUV(uvs[ft[j]]);
+                    if (fn[j] >= 0 && fn[j] < norms.Count) st.SetNormal(norms[fn[j]]);
+                    st.AddVertex(verts[fv[j]]);
+                }
             }
             return st.Commit();
         }
@@ -283,9 +328,10 @@ namespace UnturnedGodot
                 bool inside = TriInside(verts[fv[f]], verts[fv[f + 1]], verts[fv[f + 2]]);
                 var st = inside ? stIn : stOut;
                 if (inside) nIn++; else nOut++;
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
@@ -344,9 +390,10 @@ namespace UnturnedGodot
             {
                 var v0 = verts[fv[f]]; var v1 = verts[fv[f + 1]]; var v2 = verts[fv[f + 2]];
                 SurfaceTool st; if (In(v0, v1, v2, groupA)) { st = stA; nA++; } else if (In(v0, v1, v2, groupB)) { st = stB; nB++; } else { st = stBody; nBody++; }
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
@@ -421,9 +468,10 @@ namespace UnturnedGodot
                     st = e.tool;
                 }
                 else { st = stBody; nBody++; }
+                bool rev = TriangleNeedsReverse(verts, norms, fv, fn, f);   // per-triangle orientation, as ParseObj
                 for (int k = 0; k < 3; k++)
                 {
-                    int i = f + k;
+                    int i = f + (rev ? 2 - k : k);
                     if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
                     if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
                     st.AddVertex(verts[fv[i]]);
