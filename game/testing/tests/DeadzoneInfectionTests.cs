@@ -56,7 +56,17 @@ namespace UnturnedGodot.Testing
             field.Apply(player, 1f);
             yield return Ticks(2);
             T.Check($"walking out clears the exposure ({player.DeadzoneSeconds:0.##} s)", player.DeadzoneSeconds <= 0f);
-            T.Check("...so the overlay ramps back to nothing", Mathf.IsZeroApprox(DeadzoneOverlay.ExposureFor(player)));
+
+            // ⚠ IT FADES, IT DOES NOT VANISH (strawberry 2026-09-11: "filter starts to fade"). The overlay is
+            // driven by the carried dose now, not by the exposure clock, so leaving begins a washout instead
+            // of flipping the effect off -- a grain that cut to nothing the instant you crossed the boundary
+            // would make the edge of a zone a light switch. This assertion used to demand exactly that.
+            float rampOnLeaving = DeadzoneOverlay.ExposureFor(player);
+            T.Check($"the overlay is still up as you leave ({rampOnLeaving:0.###})", rampOnLeaving > 0f);
+            for (int i = 0; i < 40; i++) yield return Ticks(5);   // ~4 s of washout
+            float faded = DeadzoneOverlay.ExposureFor(player);
+            T.Check($"...and fades as the dose washes out ({faded:0.###} from {rampOnLeaving:0.###})",
+                    faded < rampOnLeaving);
             T.Check("...and InDeadzone is false again, dropping the HUD icon", !player.InDeadzone);
 
             // NO MORE DOSE, asserted as "does not RISE" rather than "is unchanged" -- deliberately. Infection

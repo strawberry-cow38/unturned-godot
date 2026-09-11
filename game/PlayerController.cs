@@ -438,6 +438,33 @@ namespace UnturnedGodot
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
+        /// <summary>Absorbed dose, and the infection it scars you with. IMMUNITY applies to the scarring for
+        /// the same reason it applies to a bite -- it is the same virus getting in -- but NOT to the dose
+        /// itself, which is physics rather than biology.</summary>
+        public void Irradiate(float ratePerSecond, float dt) => AbsorbDose(ratePerSecond * dt, dt);
+
+        /// <summary>As above, for a dose already scaled by dt (what DeadzoneSim hands back).</summary>
+        public void AbsorbDose(float dose, float dt)
+        {
+            // NOT while the server owns these. AdoptReplicatedFineVitals is the sole writer of the fine vitals
+            // on an MP client, and the server runs this very same step through ServerDeadzones -- applying it
+            // locally as well would raise a dose that the next snapshot immediately overwrites, so the only
+            // thing the second application can produce is a visible flicker in the grain and the geiger rate.
+            if (NetFineVitalsAdopted) return;
+            float before = _vitals.Infection;
+            _vitals.AbsorbDose(dose, dt);
+            float gained = _vitals.Infection - before;
+            if (gained > 0f)
+                _vitals.Infection = Mathf.Clamp(before + gained * Skills.ImmunityInfectionMultiplier(), 0f, 1f);
+        }
+
+        /// <summary>0..1 absorbed dose. Hidden from the HUD on purpose -- the geiger counter and the grain are
+        /// how you read it (strawberry 2026-09-11).</summary>
+        public float Radiation { get => _vitals.Radiation; set => _vitals.Radiation = value; }
+
+        /// <summary>Dose high enough to cost you sprint and jump, exactly as a broken leg does.</summary>
+        public bool MajorlyIrradiated => _vitals.MajorlyIrradiated;
+
         // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals. `quality`
         // is the eaten instance's CONDITION (0-100, source player.equipment.quality) -- FOOD/WATER items ride it as
         // freshness; source scales food+water restored by quality/100 and, below 50, infects you (moldy food penalty).
@@ -4890,6 +4917,10 @@ namespace UnturnedGodot
         /// ticks of lag, like HP adoption). Bleeding/Broken ride the wire but the server has no source yet, so
         /// they are NOT clobbered here (they'd only ever wipe a locally-meaningful flag to false).</summary>
         public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection, float oxygen)
+            => AdoptReplicatedFineVitals(food, water, stamina, infection, oxygen, 0f);
+
+        public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection, float oxygen,
+                                              float radiation)
         {
             NetFineVitalsAdopted = true;
             Food = Mathf.Clamp(food, 0f, 1f);
@@ -4901,6 +4932,10 @@ namespace UnturnedGodot
             // runs -- so a field the server serialises perfectly and this signature omits sits at its
             // constructor default forever, and the bar reads full while you drown.
             Oxygen = Mathf.Clamp(oxygen, 0f, 1f);
+            // RADIATION, for the same reason and with a sharper edge than breath: the dose gates SPRINT and
+            // JUMP. A client inventing its own would not merely draw the wrong grain, it would disagree with
+            // the server about whether the player's legs work, which is the exact shape of a rubber-band.
+            Radiation = Mathf.Clamp(radiation, 0f, 1f);
         }
 
         // Server-owned death/respawn while adopting: the shell renders the SP death corpse/cam + respawn
@@ -6751,7 +6786,7 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310)
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
             TemperatureTick(sprinting, dt);
             bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
@@ -10566,7 +10601,7 @@ namespace UnturnedGodot
             if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
-            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
+            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken && !MajorlyIrradiated;   // broken legs can't jump (PlayerMovement.cs:1310); a major dose likewise (strawberry 2026-09-11). ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
             LastJumpInput = jump;   // the wire jump bit is the HELD key the sim consumed (post-Broken) -- C3 reverted the F1 takeoff-edge encoding: a mispredicted takeoff is corrected by rewind+replay, not by wire gymnastics

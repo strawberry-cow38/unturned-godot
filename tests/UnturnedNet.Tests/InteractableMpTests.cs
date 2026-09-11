@@ -560,10 +560,27 @@ namespace UnturnedNet.Tests
             // Long enough to clear the entry grace and take a real dose on an unprotected body.
             h.Step(200);   // 4 s at 50 Hz
 
-            Assert.That(v.Sim.Infection, Is.GreaterThan(startInf),
+            // ⚠ THE DOSE, not the infection, is what four seconds buys -- and that is the spec, not a
+            // weakening. Infection is now scarring proportional to the dose you are CARRYING, so it starts at
+            // nothing and has to out-climb the self-clear drain; a four-second brush against a zone leaving a
+            // permanent infection would contradict the half of the design that makes brief trips survivable.
+            // This assertion used to read Infection and went red when radiation became its own stat, which is
+            // the test doing its job: the quantity it was watching stopped being the one the server applies
+            // first.
+            Assert.That(v.Sim.Radiation, Is.GreaterThan(0f),
                         "contaminated ground has to dose the server's player, not only a PlayerController");
             Assert.That(cs.HealthExact, Is.EqualTo(startHp).Within(0.001f),
                         "...and must not take health directly -- the vitals sim owns what infection costs");
+            Assert.That(v.Sim.Infection, Is.EqualTo(startInf).Within(0.001f),
+                        "a four-second brush leaves no lasting scar");
+
+            // ...and standing in it does. Same server, same volume, just long enough for the carried dose to
+            // out-climb the self-clear -- which is the claim the old single assertion was really making.
+            h.Step(2500);   // +50 s
+            Assert.That(v.Sim.Infection, Is.GreaterThan(0.5f),
+                        "standing in contaminated ground has to scar the server's player permanently");
+            Assert.That(v.Sim.MajorlyIrradiated, Is.True,
+                        "and a dose that big costs the server's copy its sprint too");
         }
 
         [Test]

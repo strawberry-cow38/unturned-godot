@@ -4601,7 +4601,8 @@ namespace UnturnedGodot
             // but PEI renders take ~400 s and this one takes ~120 -- and looking at a purely visual change is
             // not optional, so the harness hook exists to put it over a scene that will actually finish.
             ChromaticAberration.DebugAttach(this);
-            DeadzoneOverlay.DebugAttach(this);   // UG_DEADZONE=<seconds> over the same golden scene, same reasoning
+            DeadzoneOverlay.DebugAttach(this);   // UG_DEADZONE=<dose> over the same golden scene, same reasoning
+            GeigerCounter.DebugAttach(this);     // UG_GEIGER=<dose> to hear the click rate without finding a zone
 
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             // UG_SPOTNIGHT=1: the same stage at NIGHT. A light shaft is invisible under a 1.0-energy ambient and a
@@ -5808,11 +5809,12 @@ namespace UnturnedGodot
             {
                 var dzo = new DeadzoneOverlay { Player = res.Player };
                 AddChild(dzo);
+                if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = res.Player });
                 // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
                 // a purely visual effect has to be lookable-at without first finding a deadzone and standing
                 // in it for 40 seconds.
-                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzSecs) && res.Player != null)
-                    res.Player.DeadzoneSeconds = dzSecs;
+                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && res.Player != null)
+                    res.Player.Radiation = dzDose;
             }
             if (res.DayNight != null && WeatherManager.Current == null)
             {

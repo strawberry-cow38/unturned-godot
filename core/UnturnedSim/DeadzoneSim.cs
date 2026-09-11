@@ -29,15 +29,30 @@ namespace SDG.Unturned
         public float UnprotectedRadiationPerSecond;  // infection accrued with no protection
         public float MaskFilterLossPerSecond;        // filter quality burned while the mask is doing its job
 
-        /// <summary>The stand-in used until per-zone values come from map data. Infection runs 0..1 and is
-        /// fatal at 1.0, so these are chosen against that scale rather than against a health pool:
-        /// unprotected is ~40 s from clean to dead, a sealed suit ~5 minutes. The old 1:8 protected-to-
-        /// unprotected ratio is kept -- the suit was worth wearing at that ratio and still is.</summary>
+        /// <summary>The stand-in used until per-zone values come from map data.
+        ///
+        /// ⚠ These are now DOSE rates, not infection rates, and the difference is why they moved. Infection is
+        /// no longer added directly: it is scarring proportional to the dose you are CARRYING
+        /// (PlayerVitalsSim.InfectionPerRadiationSecond), so the same number means something else than it did
+        /// and the old "~40 s from clean to dead" is not a claim these values still make.
+        ///
+        /// Re-derived rather than swept, measured against the old lethality at full intensity, unprotected:
+        /// sprint and jump go at ~30 s (MajorRadiation), death at ~52 s -- close to the 40 s the health-based
+        /// version had, with a warning stage in front of it that it did not have. A sealed suit reaches those
+        /// at ~73 s / ~95 s, and the FILTER is the real clock: at MaskFilterLossPerSecond it runs out at 50 s
+        /// and you finish the zone unprotected. A trip under ~30 s leaves nothing permanent (the dose washes
+        /// out and the infection it caused is below the self-clear line); ~45 s leaves ~0.64 infection that
+        /// never clears, which is the "your infection stays" half of the mechanic.
+        ///
+        /// The 1:6.7 protected-to-unprotected ratio is close to the old 1:8 and means the same thing, because
+        /// the washout no longer runs while you are inside -- under a background decay the honest comparison
+        /// was the NET rate, and a suit slower than the decay would have been total immunity rather than a
+        /// delay.</summary>
         public static DeadzoneDef Default(DeadzoneKind kind = DeadzoneKind.Radiation) => new DeadzoneDef
         {
             Kind = kind,
             ProtectedRadiationPerSecond = 0.003f,
-            UnprotectedRadiationPerSecond = 0.025f,
+            UnprotectedRadiationPerSecond = 0.020f,
             MaskFilterLossPerSecond = 2f,
         };
     }
@@ -114,6 +129,13 @@ namespace SDG.Unturned
         /// <summary>One step of standing in <paramref name="zone"/>. Returns what to apply; the caller
         /// owns health, infection and the mask item, because those live in different systems.</summary>
         public DeadzoneTickResult Step(in DeadzoneDef zone, in RadiationGear gear, float dt)
+            => Step(zone, gear, dt, 1f);
+
+        /// <summary>As above, scaled by where in the volume you are standing: 1 deep inside, less near the
+        /// boundary (DeadzoneVolumeDef.Intensity). The grace and the filter burn are NOT scaled -- a filter
+        /// works just as hard at the edge, and a grace period that stretched near the boundary would make
+        /// the tamest part of the zone also the slowest to start counting.</summary>
+        public DeadzoneTickResult Step(in DeadzoneDef zone, in RadiationGear gear, float dt, float intensity)
         {
             var result = new DeadzoneTickResult();
             if (dt <= 0f) return result;
@@ -127,7 +149,7 @@ namespace SDG.Unturned
             {
                 // A sealed suit slows the dose, it does not stop it -- same claim the old health-based
                 // version made, expressed on the axis that now carries the whole hazard.
-                result.Radiation = zone.ProtectedRadiationPerSecond * dt;
+                result.Radiation = zone.ProtectedRadiationPerSecond * dt;   // scaled by intensity below, with the unprotected case
 
                 // The filter is what is actually being consumed; when it runs out the next step is
                 // unprotected, which is the failure mode worth feeling.
@@ -143,6 +165,7 @@ namespace SDG.Unturned
             {
                 result.Radiation = zone.UnprotectedRadiationPerSecond * dt;
             }
+            result.Radiation *= MathF.Max(0f, intensity);
             return result;
         }
     }
@@ -159,5 +182,37 @@ namespace SDG.Unturned
             MathF.Abs(p.x - Center.x) <= HalfExtent.x &&
             MathF.Abs(p.y - Center.y) <= HalfExtent.y &&
             MathF.Abs(p.z - Center.z) <= HalfExtent.z;
+
+        /// <summary>Fraction of the zone's full rate at this point: ~0 at the boundary, 1 deep inside
+        /// (strawberry 2026-09-11: "rads at the edge of the zone are tamer, they still build but not as fast.
+        /// a warning to turn around").
+        ///
+        /// STILL BUILDS AT THE EDGE, never zero inside the volume -- that is the difference between a warning
+        /// and a safe place to stand. A falloff that reached 0 would make the boundary a free perch to loot
+        /// from, which is the opposite of turning you around.
+        ///
+        /// Measured on the WORST axis rather than by distance to the centre: a box's danger is how deep you
+        /// are past its nearest face, and a Euclidean falloff would call the middle of a long thin zone "deep"
+        /// while you stand a metre from its side.</summary>
+        public float Intensity(Vector3 p)
+        {
+            if (!Contains(p)) return 0f;
+            float dx = Depth(MathF.Abs(p.x - Center.x), HalfExtent.x);
+            float dy = Depth(MathF.Abs(p.y - Center.y), HalfExtent.y);
+            float dz = Depth(MathF.Abs(p.z - Center.z), HalfExtent.z);
+            float depth = MathF.Min(dx, MathF.Min(dy, dz));   // the face you are closest to decides
+            // EdgeFloor keeps the boundary live; the ramp reaches full over the outer EdgeBand of the extent.
+            return EdgeFloor + (1f - EdgeFloor) * MathF.Min(1f, depth / EdgeBand);
+        }
+
+        /// <summary>0 at the face, 1 at the centre line of that axis.</summary>
+        static float Depth(float dist, float half) => half <= 0f ? 1f : 1f - dist / half;
+
+        /// <summary>Rate right at the boundary, as a fraction of full. Low enough to be a warning, high enough
+        /// that lingering there still costs you.</summary>
+        public const float EdgeFloor = 0.15f;
+
+        /// <summary>How far in (as a fraction of the half-extent) the rate takes to reach full.</summary>
+        public const float EdgeBand = 0.35f;
     }
 }

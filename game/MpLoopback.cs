@@ -492,7 +492,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Server.HasWater = Terrain.HasWater; Server.SeaLevelY = Terrain.SeaLevelY;   // the server owns oxygen; core cannot see water
                 Server.Vitals.SurvivalDrain = PlayerController.SurvivalDrain;
                 if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
-                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen);
+                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen, fv.Sim.Radiation);
             }
 
             // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model). B5:
