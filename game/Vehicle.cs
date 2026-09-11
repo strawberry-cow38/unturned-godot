@@ -5284,6 +5284,28 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>Retail getClosestAliveTireIndex: the wheel nearest a world point, filtered by whether it is
+        /// still on. -1 for none. Fitting a tire picks the closest POPPED one, so walking round the car and
+        /// aiming at the flat corner fixes that corner rather than whichever wheel happens to be index 0.</summary>
+        public int ClosestTireIndex(Vector3 point, bool wantPopped)
+        {
+            int best = -1; float bestD = float.MaxValue;
+            for (int i = 0; i < _tireNodes.Count; i++)
+            {
+                if (i >= _tirePopped.Length || _tirePopped[i] != wantPopped) continue;
+                if (!GodotObject.IsInstanceValid(_tireNodes[i])) continue;
+                float d = _tireNodes[i].GlobalPosition.DistanceSquaredTo(point);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Retail isTireReplaceable: `!isDriven && !isExploded && asset.canTiresBeDamaged`. Nobody
+        /// changes a wheel on a moving car, and a wreck has nothing left to change it on. The port has no
+        /// Tires_Invulnerable vehicles, so the third term is constant-true here and is written as a comment
+        /// rather than a field nothing sets.</summary>
+        public bool TiresReplaceable => !Exploded && LinearVelocity.LengthSquared() < 1f;   // IsWreck is the same _exploded flag -- one condition, written once
+
         public bool RepairTire(int i)
         {
             if ((uint)i >= (uint)_tireNodes.Count || !_tirePopped[i]) return false;
