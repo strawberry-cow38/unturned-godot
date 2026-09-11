@@ -98,6 +98,76 @@ namespace UnturnedSim.Tests
             Assert.That(pos.z, Is.EqualTo(PlayerMovementDef.SPEED_STAND * 1.0f).Within(1e-3)); // 4.5 m in 1 s
         }
 
+        // ---- UMBRELLAS (retail's Cloud items, UseableCloud -> PlayerMovement.itemGravityMultiplier) ----
+        //
+        // The control for all of these is the rest of this fixture: GravityMultiplier defaults to 1, so every
+        // test above is the "no umbrella" case and still has to pass.
+
+        const float UmbrellaGravity = 0.25f;   // Bundles/Items/Clouds/Umbrella_*.dat, all eight of them
+
+        [Test]
+        public void Umbrella_ClampsDescent_ToQuarterOfTheRawGravityCap()
+        {
+            // PlayerMovement.cs:1280 -- minVerticalVelocity = Physics.gravity.y * 2 * total, and that is the RAW
+            // 9.81 rather than the x3 the port folds into GRAVITY. Asserting the number pins BOTH mistakes:
+            // dropping the clamp entirely leaves you accelerating to -100, and scaling the tripled gravity by
+            // mistake gives -14.7. Only -4.905 is the source's answer.
+            var m = new PlayerMovementSim { Stance = EPlayerStance.STAND, GravityMultiplier = UmbrellaGravity };
+            float vy = 0f;
+            for (int i = 0; i < 500; i++) vy = m.Step(Vector2.zero, false, false, Dt).y;
+            Assert.That(vy, Is.EqualTo(-9.81f * 2f * UmbrellaGravity).Within(1e-3), "umbrella glide speed");
+        }
+
+        [Test]
+        public void Umbrella_DoesNotChangeJumpApex()
+        {
+            // THE test. Retail gates the multiplier on `fall <= 0` (PlayerMovement.cs:1277), so it touches the
+            // descent and never the climb -- an umbrella is a parachute, not a jump boost. An implementation
+            // that scales gravity unconditionally still "falls slower", still glides, still skips fall damage,
+            // and passes every other umbrella test here; it is only distinguishable at the APEX, where the
+            // wrong version floats about four times too high.
+            var m = new PlayerMovementSim { Stance = EPlayerStance.STAND, GravityMultiplier = UmbrellaGravity };
+            var pos = Vector3.zero;
+            bool grounded = true;
+            float peak = 0f;
+            for (int i = 0; i < 2000; i++)   // longer than the plain-jump loop: the way DOWN is four times slower
+            {
+                var v = m.Step(Vector2.zero, i == 0, grounded, Dt);
+                pos.y += v.y * Dt;
+                if (pos.y < 0f) { pos.y = 0f; grounded = true; } else grounded = false;
+                if (pos.y > peak) peak = pos.y;
+                if (i > 0 && grounded) break;
+            }
+            Assert.That(peak, Is.EqualTo(1.053f).Within(0.01f), "an umbrella must not raise the jump apex");
+        }
+
+        [Test]
+        public void Umbrella_FallsSlowerThanNormalGravity()
+        {
+            // A CONTROL, not a discriminator: this passes under the correct rule and under the unconditional
+            // one. It is here so a failure in the two tests above can be read as "the shape is wrong" rather
+            // than "the multiplier is not plumbed through at all".
+            float Drop(float mult)
+            {
+                var m = new PlayerMovementSim { Stance = EPlayerStance.STAND, GravityMultiplier = mult };
+                float y = 0f;
+                for (int i = 0; i < 100; i++) y += m.Step(Vector2.zero, false, false, Dt).y * Dt;
+                return y;
+            }
+            Assert.That(Drop(UmbrellaGravity), Is.GreaterThan(Drop(1f)), "0.25 gravity should fall less far in 2 s");
+        }
+
+        [Test]
+        public void NoUmbrella_KeepsTheUnscaledTerminalVelocity()
+        {
+            // The 0.99 boundary in source: anything at or above normal gravity keeps the -100 cap, so the
+            // scaled clamp cannot leak into ordinary falling.
+            var m = new PlayerMovementSim { Stance = EPlayerStance.STAND, GravityMultiplier = 1f };
+            float vy = 0f;
+            for (int i = 0; i < 500; i++) vy = m.Step(Vector2.zero, false, false, Dt).y;
+            Assert.That(vy, Is.EqualTo(PlayerMovementDef.TERMINAL_VELOCITY).Within(1e-4));
+        }
+
         [Test]
         public void Determinism_SameInputs_SameTrace()
         {
