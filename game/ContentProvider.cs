@@ -143,7 +143,14 @@ namespace UnturnedGodot
             Vector3 authored = norms[fn[baseIdx]];
             for (int k = 1; k < 3; k++)
                 if (fn[baseIdx + k] >= 0 && fn[baseIdx + k] < norms.Count) authored += norms[fn[baseIdx + k]];
-            return geo.Dot(authored) < 0f;
+            // ⚠ THE TARGET IS "OPPOSES", NOT "AGREES", and getting this backwards broke dropped items.
+            // Godot treats CLOCKWISE-from-the-camera as the FRONT face, so a triangle is front-facing when its
+            // right-hand-rule normal points AWAY from the viewer -- i.e. when the winding OPPOSES the authored
+            // outward normal. Three independent facts agree: tinyclaw's generated fluid art is 100% opposed and
+            // was correct before anything changed tonight; blanket-reversing the retail vehicle meshes (0%
+            // opposed -> opposed) is what fixed them; and the ripped item meshes are 98% opposed and were fine
+            // until this predicate made them "agree" (strawberry: "nope they are dark").
+            return geo.Dot(authored) > 0f;
         }
 
         public static ArrayMesh ParseObjPrefix(string path, int triCount)
