@@ -150,6 +150,103 @@ namespace UnturnedSim.Tests
                              new NpcTradeLine { Item = 71, Cost = 100 } },
         };
 
+        // Chef Leonard's real shelf, as shipped: Maple Syrup at 85, paid for out of tinned food. The numbers
+        // are the actual ones from content/npcs.json so a change to the extractor that mangles the rate shows
+        // up here rather than as a vendor nobody can afford.
+        static NpcVendorDef Chef() => new NpcVendorDef
+        {
+            Name = "<color=legendary>Leonard</color>'s Fresh Food Market",
+            Selling = new[] { new NpcTradeLine { Item = 1159, Cost = 85 } },   // maple syrup
+            Buying = new[]
+            {
+                new NpcTradeLine { Item = 1952, Cost = 10 },   // sardines
+                new NpcTradeLine { Item = 1954, Cost = 30 },   // beans
+                new NpcTradeLine { Item = 1956, Cost = 30 },   // pasta
+                new NpcTradeLine { Item = 1959, Cost = 50 },   // MRE
+            },
+        };
+
+        static System.Func<ushort, int> Bag(params (ushort id, int n)[] held)
+            => id => { foreach (var h in held) if (h.id == id) return h.n; return 0; };
+
+        // ⭐ THE PILE IS JUDGED BY WHAT IT COST YOU, NOT BY WHAT EACH PIECE OF IT COST.
+        //
+        // Cheapest-unit-first fills correctly and then overshoots on the LAST unit, because the last unit is
+        // indivisible: 85 covered as 2x10 + 2x30 + 1x30 = 110 when 3x30 = 90 was sitting in the same bag. Both
+        // piles "can afford" it, so every affordability assertion passes on the wasteful one -- which is why
+        // this asserts the TOTAL and not just that a trade was possible.
+        [Test]
+        public void AutoOffer_DoesNotOverpayWhenASmallerPileWouldDo()
+        {
+            var v = Chef();
+            var bag = Bag((1952, 2), (1954, 2), (1956, 2), (1959, 2));
+            var pile = TradeRules.AutoOffer(v, v.Selling[0], bag);
+            Assert.That(pile, Is.Not.Null);
+            int paid = TradeRules.OfferValue(v, pile);
+            Assert.That(paid, Is.GreaterThanOrEqualTo(85), "it still has to cover the asking price");
+            Assert.That(paid, Is.EqualTo(90), "3x30. The untrimmed cheapest-first pile is 110 and also 'affords' it");
+            Assert.That(pile.ContainsKey(1959), Is.False, "the 50-value MRE stays in your bag; cheap tins cover this");
+            foreach (var kv in pile) Assert.That(kv.Value, Is.LessThanOrEqualTo(bag(kv.Key)), "never offers more than you hold");
+        }
+
+        // A pile that is SHORT is not a smaller success. Returning one would make the caller discover the
+        // failure by re-totalling it, and a UI that skips that check offers a trade that cannot be made.
+        [Test]
+        public void AutoOffer_IsNullWhenTheBagCannotCoverIt()
+        {
+            var v = Chef();
+            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag((1952, 3))), Is.Null, "30 of 85");
+            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag((4, 99))), Is.Null, "they do not buy it at any quantity");
+            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag()), Is.Null, "an empty bag");
+        }
+
+        // The same bag must produce the same pile every time. An auto-fill that reshuffles between presses
+        // reads as broken even when every pile it lands on is valid.
+        [Test]
+        public void AutoOffer_IsDeterministic()
+        {
+            var v = Chef();
+            var bag = Bag((1952, 5), (1954, 5), (1956, 5), (1959, 5));
+            var first = TradeRules.AutoOffer(v, v.Selling[0], bag);
+            for (int i = 0; i < 5; i++)
+                Assert.That(TradeRules.AutoOffer(v, v.Selling[0], bag), Is.EquivalentTo(first), "run " + i);
+        }
+
+        // Exactly-coverable bags must come out EXACT, not over. This is the case the trim is most likely to
+        // get wrong by one unit in either direction.
+        [Test]
+        public void AutoOffer_LandsExactlyWhenItCan()
+        {
+            var v = Chef();
+            var pile = TradeRules.AutoOffer(v, new NpcTradeLine { Item = 1159, Cost = 60 }, Bag((1954, 2), (1959, 2)));
+            Assert.That(TradeRules.OfferValue(v, pile), Is.EqualTo(60), "2x30 exactly -- not 30+50");
+            var free = TradeRules.AutoOffer(v, new NpcTradeLine { Item = 1159, Cost = 0 }, Bag((1954, 2)));
+            Assert.That(free, Is.Not.Null.And.Empty, "a free line is covered by the empty pile, not by a null");
+        }
+
+        // The counts overload and the flat-list overload are two ways of saying the same sum. If they ever
+        // disagree the UI and the tests are measuring different trades.
+        [Test]
+        public void OfferValue_CountsAndListAgree()
+        {
+            var v = Chef();
+            var counts = new Dictionary<ushort, int> { [1954] = 2, [1952] = 3 };
+            Assert.That(TradeRules.OfferValue(v, counts), Is.EqualTo(90));
+            Assert.That(TradeRules.OfferValue(v, new ushort[] { 1954, 1954, 1952, 1952, 1952 }), Is.EqualTo(90));
+            Assert.That(TradeRules.OfferValue(v, (IReadOnlyDictionary<ushort, int>)null), Is.EqualTo(0));
+        }
+
+        // Retail writes rarity into the name as markup. Anything that shows one raw puts <color=legendary> on
+        // screen, and the vendor window is the one place a vendor's name is displayed.
+        [Test]
+        public void PlainText_StripsTheRarityMarkupAndKeepsTheWords()
+        {
+            Assert.That(TradeRules.PlainText(Chef().Name), Is.EqualTo("Leonard's Fresh Food Market"));
+            Assert.That(TradeRules.PlainText("no markup here"), Is.EqualTo("no markup here"));
+            Assert.That(TradeRules.PlainText(""), Is.EqualTo(""));
+            Assert.That(TradeRules.PlainText(null), Is.EqualTo(""));
+        }
+
         [Test]
         public void APriceListIsAnExchangeRate()
         {

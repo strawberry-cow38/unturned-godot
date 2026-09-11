@@ -1118,8 +1118,17 @@ namespace UnturnedGodot
             _bootCmdRun = true;
             var console = FindDevConsole(this);
             if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
-            Log.Print($"[BOOTCMD] {cmd}");
-            console.DebugRun(cmd);
+            // SEVERAL LINES, separated by ';'. Most states worth capturing are a SETUP plus an ACTION -- put
+            // items in the bag, then open the window that shows them -- and with one command per boot the only
+            // way to render that was to teach the action command to do the setup too, which puts harness
+            // scaffolding inside gameplay code. Splitting here keeps it in the harness where it belongs.
+            foreach (var one in cmd.Split(';'))
+            {
+                string line = one.Trim();
+                if (line.Length == 0) continue;
+                Log.Print($"[BOOTCMD] {line}");
+                console.DebugRun(line);
+            }
         }
 
         static DevConsole FindDevConsole(Node n)

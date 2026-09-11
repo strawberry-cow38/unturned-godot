@@ -1096,6 +1096,53 @@ namespace UnturnedGodot
                     : $"could not build {def.Key} -- the rig failed to load");
                 if (autoTalk && npc != null) Player.TalkTo(npc);
             }
+            else if (verb == "trade")
+            {
+                // trade [vendor key]  -- open a vendor window without having to satisfy the dialogue conditions
+                // that normally gate it. Chef Leonard's trade branch needs flag 61, so the ONLY way to look at
+                // this screen otherwise is to play far enough to earn it.
+                NpcCatalog.Load();
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    foreach (var v in NpcCatalog.Vendors)
+                        Echo($"{v.Key}  --  {SDG.Unturned.TradeRules.PlainText(v.Name)}  ({v.Selling.Length} for sale, {v.Buying.Length} wanted)");
+                    return;
+                }
+                var vend = NpcCatalog.VendorByKey(want);
+                if (vend == null) { Echo($"no vendor '{want}' -- try `trade` for the list"); return; }
+                Player.OpenTrade(vend);
+                Echo($"{SDG.Unturned.TradeRules.PlainText(vend.Name)}: {vend.Selling.Length} for sale, {vend.Buying.Length} wanted");
+            }
+            else if (verb == "tradepick")
+            {
+                // tradepick <n>  -- select the nth thing the open vendor is selling and let TradeRules build the
+                // offer. An EMPTY offer column is the least interesting state this window has, and it is the only
+                // one an offline capture can otherwise reach; this is how the exchange itself gets rendered.
+                if (!Player.TradeOpen) { Echo("no trade window open -- `trade <vendor>` first"); return; }
+                if (!int.TryParse((arg ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                  System.Globalization.CultureInfo.InvariantCulture, out int pick)) pick = 0;
+                Player.TradeWindow.DebugSelect(pick);
+                Player.TradeWindow.DebugAutoFill();
+                Echo($"picked {pick}: {Player.TradeWindow.DebugStatus}");
+            }
+            else if (verb == "tradestock")
+            {
+                // tradestock [vendor key]  -- put one of everything this vendor BUYS into your bag. A trade
+                // window with an empty right-hand column shows the layout and none of the exchange, which is
+                // the half that needed looking at; this is how an offline capture gets something to trade.
+                NpcCatalog.Load();
+                var vend = NpcCatalog.VendorByKey((arg ?? "").Trim());
+                if (vend == null) { Echo($"no vendor '{arg}' -- try `trade` for the list"); return; }
+                int n = 0;
+                foreach (var b in vend.Buying)
+                {
+                    if (b.Item == 0 || SDG.Unturned.Assets.find(b.Item) == null) continue;
+                    if (Player.Inventory != null && Player.Inventory.tryAddItem(new SDG.Unturned.Item(b.Item, 2))) n++;
+                }
+                Player.RefreshInventoryUI();
+                Echo($"stocked {n} of {vend.Buying.Length} wanted items (the rest are not in this port, or the bag is full)");
+            }
             else if (verb == "gesture")
             {
                 // gesture [name]  -- wave / salute / point / facepalm / surrender / rest / tpose / inventory,

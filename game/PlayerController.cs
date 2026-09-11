@@ -2764,6 +2764,12 @@ namespace UnturnedGodot
         public SDG.Unturned.NpcDialogue CurrentDialogue { get; private set; }
         public NpcCharacter CurrentSpeaker { get; private set; }
         DialogueUI _dialogueUI;
+        TradeUI _tradeUI;
+
+        /// <summary>Repaint the bag. Public because the trade window changes what is IN it and the panel that
+        /// owns the grid is private -- without this the player walks away from a trade still looking at the
+        /// items they just handed over.</summary>
+        public void RefreshInventoryUI() => _invUI?.Refresh();
 
         /// <summary>Which responses this player can see, as indices into the dialogue's own array. Exposed so
         /// the panel can REDRAW after a page turn without re-deciding anything -- the moment the view starts
@@ -2817,18 +2823,38 @@ namespace UnturnedGodot
             if (!string.IsNullOrEmpty(r.Vendor))
             {
                 var v = NpcCatalog.Vendor(r.Vendor);
-                Log.Print(v != null ? $"[npc] opens trade: {v.Name} ({v.Selling.Length} for sale, {v.Buying.Length} wanted)"
-                                    : $"[npc] vendor {r.Vendor} not in the catalog");
-                return true;   // the trade UI is the next commit; the conversation stays open behind it
+                if (v == null) { Log.Print($"[npc] vendor {r.Vendor} not in the catalog"); return true; }
+                OpenTrade(v);
+                return true;   // the conversation stays open UNDERNEATH -- closing the trade returns you to it
             }
             if (r.EndsConversation) { CloseDialogue(); return true; }
             OpenDialogue(NpcCatalog.Dialogue(r.Dialogue));
             return true;
         }
 
+        /// <summary>Put the vendor window up over the conversation. Built on first use, like the dialogue
+        /// panel: most players never talk to anybody, and a window nobody opens should not cost a node.</summary>
+        public void OpenTrade(SDG.Unturned.NpcVendorDef v)
+        {
+            if (v == null) return;
+            if (_tradeUI == null || !IsInstanceValid(_tradeUI))
+            {
+                _tradeUI = new TradeUI();
+                (GetParent() ?? (Node)this).AddChild(_tradeUI);
+            }
+            Log.Print($"[npc] opens trade: {SDG.Unturned.TradeRules.PlainText(v.Name)} ({v.Selling.Length} for sale, {v.Buying.Length} wanted)");
+            _tradeUI.Open(this, v);
+        }
+
+        public bool TradeOpen => _tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen;
+        internal TradeUI TradeWindow => _tradeUI;
+
         public void CloseDialogue()
         {
             CurrentDialogue = null; CurrentSpeaker = null;
+            // Shut the trade first: it sits ON the conversation, so leaving it up over a closed dialogue is a
+            // window with nothing behind it and no way back.
+            if (_tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen) _tradeUI.Close();
             if (_dialogueUI != null && IsInstanceValid(_dialogueUI)) _dialogueUI.Close();
         }
 
@@ -7560,6 +7586,7 @@ namespace UnturnedGodot
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
+                else if (TradeOpen) _tradeUI.Close();   // trading: F backs out to the conversation, not to the world
                 else if (_dialogueUI != null && IsInstanceValid(_dialogueUI) && _dialogueUI.IsOpen) CloseDialogue();   // already talking: F is the way out, like every other panel
                 else if (_focusNpc != null && IsInstanceValid(_focusNpc)) TalkTo(_focusNpc);   // looking at a person: F starts the conversation
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it

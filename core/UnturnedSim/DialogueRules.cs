@@ -214,6 +214,26 @@ namespace SDG.Unturned
     /// accepts anything at its own asking price is an infinite-money machine the moment two vendors disagree.</summary>
     public static class TradeRules
     {
+        /// <summary>Retail writes rarity into the NAME -- "&lt;color=legendary&gt;Coalition&lt;/color&gt; Aircraft Hangar" --
+        /// so anything that shows one raw puts the markup on screen. Strips the tags and keeps the words.
+        ///
+        /// Stripped at DISPLAY rather than at load, deliberately: the colour says which rarity the vendor is,
+        /// and throwing it away when the file is read means nothing can ever render it. Here it is only this
+        /// label that does not want it.</summary>
+        public static string PlainText(string s)
+        {
+            if (string.IsNullOrEmpty(s) || s.IndexOf('<') < 0) return s ?? "";
+            var sb = new System.Text.StringBuilder(s.Length);
+            int depth = 0;
+            foreach (char c in s)
+            {
+                if (c == '<') depth++;
+                else if (c == '>') { if (depth > 0) depth--; }
+                else if (depth == 0) sb.Append(c);
+            }
+            return sb.ToString().Trim();
+        }
+
         public static int ValueOf(NpcVendorDef v, ushort itemId)
         {
             if (v == null) return 0;
@@ -242,6 +262,73 @@ namespace SDG.Unturned
             int unit = ValueOf(v, pay);
             if (unit <= 0 || want == null || want.Cost <= 0) return 0;
             return (want.Cost + unit - 1) / unit;
+        }
+
+        /// <summary>What a pile is worth when the pile is COUNTS -- three tomatoes rather than three entries.
+        /// The IEnumerable overload above computes the same sum for a flat list; both exist because a bag holds
+        /// stacks and a test holds a list, and making either side convert is how the two drift apart.</summary>
+        public static int OfferValue(NpcVendorDef v, IReadOnlyDictionary<ushort, int> offered)
+        {
+            int t = 0;
+            if (offered != null) foreach (var kv in offered) t += ValueOf(v, kv.Key) * kv.Value;
+            return t;
+        }
+
+        public static bool CanAfford(NpcVendorDef v, NpcTradeLine want, IReadOnlyDictionary<ushort, int> offered)
+            => want != null && OfferValue(v, offered) >= want.Cost;
+
+        /// <summary>Build a pile out of what the player HAS that covers `want`, or null if their bag cannot cover
+        /// it at all. <paramref name="have"/> answers "how many of this id do I hold".
+        ///
+        /// CHEAPEST UNIT FIRST, deliberately -- not fewest items. Handing over your one valuable thing to buy a
+        /// tomato is the trade nobody makes on purpose, and an "offer for me" button that makes it is a trap
+        /// dressed as a convenience. Ties break on the lower id so the same bag always produces the same pile:
+        /// an auto-fill that shuffles between presses looks broken even when every pile it picks is valid.
+        ///
+        /// Returns null rather than a partial pile. A short pile that cannot buy anything is not a smaller
+        /// success, and handing one back leaves the caller to discover the failure by checking the total.</summary>
+        public static Dictionary<ushort, int> AutoOffer(NpcVendorDef v, NpcTradeLine want, System.Func<ushort, int> have)
+        {
+            var pile = new Dictionary<ushort, int>();
+            if (v == null || want == null || have == null) return null;
+            if (want.Cost <= 0) return pile;   // free: the empty pile already covers it
+
+            var rate = new List<NpcTradeLine>(v.Buying);
+            rate.Sort((a, b) => a.Cost != b.Cost ? a.Cost.CompareTo(b.Cost) : a.Item.CompareTo(b.Item));
+
+            int paid = 0;
+            foreach (var line in rate)
+            {
+                if (paid >= want.Cost) break;
+                if (line.Cost <= 0) continue;              // a thing they will take but pay nothing for buys nothing
+                int held = have(line.Item);
+                if (held <= 0) continue;
+                int need = (want.Cost - paid + line.Cost - 1) / line.Cost;   // round UP: part of an item is an item
+                int take = System.Math.Min(held, need);
+                pile[line.Item] = take;
+                paid += take * line.Cost;
+            }
+            if (paid < want.Cost) return null;
+
+            // ---- TRIM ------------------------------------------------------------------------------------
+            // Cheapest-first fills the pile but OVERSHOOTS on the last unit, and the overshoot can be large:
+            // 85 covered by 2x10 + 2x30 + 1x30 = 110, when 3x30 = 90 was available out of the same bag. The
+            // player does not care that each individual item was cheap; they care what the pile cost them.
+            //
+            // So walk back over it and drop any unit the pile can spare. MOST VALUABLE FIRST, so the expensive
+            // things get the first chance to go back in your bag; when the pile cannot spare them it is the small
+            // change that comes out instead, which is the 110 -> 90 case above. One pass is enough in this order:
+            // every removal only LOWERS the total, so a unit that could not be spared when it was offered up
+            // cannot become sparable later.
+            var byValue = new List<NpcTradeLine>(rate);
+            byValue.Reverse();   // `rate` is ascending; this is the same order read backwards
+            foreach (var line in byValue)
+            {
+                if (!pile.TryGetValue(line.Item, out int n) || line.Cost <= 0) continue;
+                while (n > 0 && paid - line.Cost >= want.Cost) { n--; paid -= line.Cost; }
+                if (n > 0) pile[line.Item] = n; else pile.Remove(line.Item);
+            }
+            return pile;
         }
     }
 }

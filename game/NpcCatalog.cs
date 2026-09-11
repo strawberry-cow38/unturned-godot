@@ -27,6 +27,19 @@ namespace UnturnedGodot
         public static NpcCharacterDef CharacterByKey(string key) { Load(); return _charsByKey.TryGetValue(key ?? "", out var c) ? c : null; }
         public static NpcDialogue Dialogue(int id) { Load(); return _dialogues.TryGetValue(id, out var d) ? d : null; }
         public static NpcVendorDef Vendor(string guid) { Load(); return _vendors.TryGetValue((guid ?? "").ToLowerInvariant(), out var v) ? v : null; }
+        public static IEnumerable<NpcVendorDef> Vendors { get { Load(); return _vendors.Values; } }
+        /// <summary>A vendor by its FILE key ("Chef_Fresh_Food_Market") rather than its guid. Dialogue links by
+        /// guid -- that is the real relationship -- but a human naming one out loud uses the key, so the console
+        /// needs this and nothing else does.</summary>
+        public static NpcVendorDef VendorByKey(string key)
+        {
+            Load();
+            string k = (key ?? "").ToLowerInvariant();
+            if (k.Length == 0) return null;
+            foreach (var v in _vendors.Values) if (v.Key.ToLowerInvariant() == k) return v;
+            foreach (var v in _vendors.Values) if (v.Key.ToLowerInvariant().Contains(k)) return v;   // near miss: 8 of them, a prefix is unambiguous enough
+            return null;
+        }
 
         static string Str(JsonElement e, string k) => e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : "";
         static int Int(JsonElement e, string k) => e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
