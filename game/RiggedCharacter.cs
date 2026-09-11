@@ -112,14 +112,17 @@ namespace UnturnedGodot
         //      Skull-attached decal quad built in BuildFrom; SetFace swaps its texture (+ emission when that face has one).
         MeshInstance3D _faceQuad;
         public int Face { get; private set; } = -1;
-        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, 31)}.png";
+        /// <summary>How many retail faces there are. ONE constant: the 0..31 clamp was written out twice here
+        /// and anything else that cycles faces had to know the number by heart.</summary>
+        public const int FaceCount = 32;
+        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, FaceCount - 1)}.png";
 
         /// <summary>Render-harness seam: the face decal itself, so a camera can be framed on where the face
         /// ACTUALLY is instead of on where the head is assumed to be.</summary>
         public MeshInstance3D FaceQuadForTest => _faceQuad;
         public void SetFace(int face)
         {
-            face = Mathf.Clamp(face, 0, 31);
+            face = Mathf.Clamp(face, 0, FaceCount - 1);
             if (_faceQuad == null || !GodotObject.IsInstanceValid(_faceQuad)) return;
             if (_faceQuad.MaterialOverride is not StandardMaterial3D m) return;
             var tex = LoadTexCached(FacePath(face));
@@ -170,6 +173,33 @@ namespace UnturnedGodot
         public void AttachHat(Mesh mesh, Texture2D albedo, Vector3 offset = default)      => AttachGear(ref _hatAtt, "Skull", mesh, albedo, offset, "Hat");
         public void AttachMask(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _maskAtt, "Skull", mesh, albedo, offset, "Mask");
         public void AttachGlasses(Mesh mesh, Texture2D albedo, Vector3 offset = default, Texture2D emission = null) => AttachGear(ref _glassesAtt, "Skull", mesh, albedo, offset, "Glasses", emission);
+
+        /// <summary>Highest point of anything worn ON THE HEAD, in this character's own local space; 0 when
+        /// bare. Used to seat a nameplate above a tall hat instead of through the middle of one.
+        ///
+        /// The gear AABB is trustworthy HERE in a way a SKINNED mesh's is not -- the trap that has bitten this
+        /// repo before. Gear is a RIGID prop parented to the Skull bone, so its bounds travel with the bone;
+        /// it is the skinned body whose AABB is frozen in the bind pose and lies about where the limbs are.
+        ///
+        /// Yaw-only and unscaled (every rig in the game is), so a global Y minus this node's own global Y is
+        /// already the local one -- no basis inverse needed.</summary>
+        public float HeadwearTopLocalY()
+        {
+            float baseY = GlobalPosition.Y, top = 0f;
+            void Scan(BoneAttachment3D att)
+            {
+                if (att == null || !GodotObject.IsInstanceValid(att)) return;
+                foreach (var ch in att.GetChildren())
+                {
+                    if (ch is not MeshInstance3D mi || mi.Mesh == null) continue;
+                    var a = mi.GetAabb();
+                    var t = mi.GlobalTransform;
+                    for (int i = 0; i < 8; i++) top = Mathf.Max(top, (t * a.GetEndpoint(i)).Y - baseY);
+                }
+            }
+            Scan(_hatAtt); Scan(_maskAtt); Scan(_glassesAtt);
+            return top;
+        }
 
         /// <summary>Light the worn glasses' lens, or put it out. A no-op on gear with no emission bound, so it is
         /// safe to call every frame from whatever owns the device's on/off state.</summary>

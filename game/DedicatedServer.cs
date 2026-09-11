@@ -140,6 +140,14 @@ namespace UnturnedGodot
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            // ---- v47: the server's NPC catalog. INJECTED, not loaded there: core cannot see NpcCatalog, and a
+            // server holding its own copy would be a second source of truth for exactly the thing both sides
+            // must agree on byte for byte. One catalog, read from two places.
+            NpcCatalog.Load();
+            Server.Npcs.DialogueOf = id => NpcCatalog.Dialogue(id);
+            Server.Npcs.QuestOfId = id => NpcCatalog.Quest(id);
+            Server.Npcs.VendorOf = guid => NpcCatalog.Vendor(guid);
+            Server.Npcs.ActiveHoliday = () => Main.ActiveHolidayNow();
             // v41: the spraypaint table is CONTENT, so the game layer hands it down -- core cannot read
             // content/vehicle_paints.tsv, and a server that does not know what a can is must not paint.
             Server.Transactions.PaintColorFor = id =>

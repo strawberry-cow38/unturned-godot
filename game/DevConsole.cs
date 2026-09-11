@@ -66,7 +66,10 @@ namespace UnturnedGodot
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
         // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
         // the note above this list warns about. Found by running the verb rather than by reading it.
-        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
+        // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
+        // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
+        // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
+        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -76,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -1041,6 +1044,195 @@ namespace UnturnedGodot
                 int target = pp.Length > 1 && int.TryParse(pp[1], out var lv) ? lv : sk.level + 1;
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
                 Echo($"{label} skill -> level {sk.level}/{sk.max}");
+            }
+            else if (verb == "npc")
+            {
+                // npc [key]  -- spawn one of retail's 40 characters two metres in front of you, facing you.
+                // No arg lists them. They stand there; look at one for their name, F to talk.
+                NpcCatalog.Load();
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    var keys = new System.Collections.Generic.List<string>();
+                    foreach (var c in NpcCatalog.Characters) keys.Add(c.Key);
+                    keys.Sort();
+                    Echo($"{keys.Count} characters: " + string.Join(", ", keys));
+                    return;
+                }
+                // `npc chef 4` stands them further off -- 2 m is the talking distance (retail's ray is 3) and
+                // too close to see a whole person in a screenshot.
+                float dist = 2f;
+                // `npc chef 3 talk` spawns them AND opens the conversation. A test affordance and said to be
+                // one: an offline capture cannot press F, and the panel is the thing worth looking at.
+                bool autoTalk = false;
+                var bits0 = want.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits0.Length > 1 && bits0[bits0.Length - 1].ToLowerInvariant() == "talk")
+                { autoTalk = true; want = string.Join(' ', bits0, 0, bits0.Length - 1); }
+                var bits = want.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits.Length > 1 && float.TryParse(bits[bits.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float dparsed))
+                { dist = Mathf.Clamp(dparsed, 1f, 20f); want = string.Join(' ', bits, 0, bits.Length - 1); }
+                var fwd = -Player.LookBasis.Z;
+                var spot = Player.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * dist;
+                // ⚠ SNAP TO THE GROUND AHEAD, not to the Y you happen to be standing at. A PlayerController's
+                // origin IS its feet, so on FLAT ground copying its Y looks right -- and on the slightest slope
+                // it buries them. The first render of this had Chef Leonard sunk to the chest in a hillside and
+                // nothing in the console said so; only the picture did. Same SampleHeight the elevator spawn
+                // uses (terrain, so a spot on a road or a roof still resolves to the ground under it -- fine for
+                // a dev spawn two metres ahead, and said out loud rather than discovered later).
+                if (WorldTerrain != null) spot.Y = WorldTerrain.SampleHeight(spot.X, spot.Z);
+                var def = NpcCatalog.CharacterByKey(want);
+                if (def == null)
+                {
+                    // A near miss is the common case with 40 names -- say which one you meant rather than "no".
+                    foreach (var c in NpcCatalog.Characters)
+                        if (c.Key.ToLowerInvariant().Contains(want.ToLowerInvariant())) { def = c; break; }
+                }
+                if (def == null) { Echo($"no character '{arg}' -- try `npc` for the list"); return; }
+                // FACING THE PLAYER. A Node3D at yaw t points its -Z at (-sin t, 0, -cos t), and the rig's
+                // forward IS -Z; we want that aimed back down our look direction, i.e. at -fwd. So
+                // sin t = fwd.X and cos t = fwd.Z. Negating BOTH -- which is what this did first -- is the
+                // same angle plus 180, and the render showed exactly that: a chef with his back to me.
+                float yaw = Mathf.RadToDeg(Mathf.Atan2(fwd.X, fwd.Z));
+                var npc = NpcCharacter.Spawn(Player.GetParent() ?? Player, def, spot, yaw);
+                Echo(npc != null
+                    ? $"{def.Name} ({def.Key}) -- dialogue {def.Dialogue}{(NpcCatalog.Dialogue(def.Dialogue) == null ? " (NOT in the catalog)" : "")}"
+                    : $"could not build {def.Key} -- the rig failed to load");
+                if (autoTalk && npc != null) Player.TalkTo(npc);
+            }
+            else if (verb == "menu")
+            {
+                // menu [inventory|craft|skills|information]  -- open a tab of the unified menu. An offline
+                // capture cannot press Tab, and the Information page is where the quest log lives.
+                string want = (arg ?? "").Trim().ToLowerInvariant();
+                var tab = want.StartsWith("inv") ? MenuNavbar.Tab.Inventory
+                        : want.StartsWith("craft") ? MenuNavbar.Tab.Craft
+                        : want.StartsWith("skill") ? MenuNavbar.Tab.Skills
+                        : MenuNavbar.Tab.Information;
+                Player.ShowMenu(tab);
+                Echo($"opened {tab}");
+            }
+            else if (verb == "say")
+            {
+                // say <n>  -- pick the nth SHOWN response in the open conversation, as clicking it would. An
+                // offline capture cannot click, and the choose path is the one that crosses the wire.
+                if (Player.CurrentDialogue == null) { Echo("not talking to anybody"); return; }
+                var shown = Player.AvailableResponseIndices();
+                if (!int.TryParse((arg ?? "").Trim(), out int pick) || pick < 1 || pick > shown.Count)
+                { Echo($"say 1..{shown.Count}"); return; }
+                int idx = shown[pick - 1];
+                Echo($"say {pick} -> response {idx}: {Player.CurrentDialogue.Responses[idx].Text}");
+                Player.ChooseResponse(idx);
+            }
+            else if (verb == "track")
+            {
+                // track [quest id]  -- pin the corner summary to one quest; bare resets it to AUTO.
+                var bits = (arg ?? "").Trim();
+                Player.TrackedQuest = int.TryParse(bits, out int tq) ? tq : 0;
+                var d = Player.TrackedQuestDef;
+                Echo(d == null ? "nothing to track" : $"tracking '{SDG.Unturned.TradeRules.PlainText(d.Name)}'{(Player.TrackedQuest == 0 ? " (auto)" : "")}");
+            }
+            else if (verb == "flag")
+            {
+                // flag            -- every NPC flag this player has set
+                // flag <id> [n]   -- set one. Quest objectives and dialogue branches are mostly flag-gated, so
+                //                    without this there is no way to reach a quest's turn-in except by playing
+                //                    the content that sets it -- content this port does not have yet.
+                var w = Player.NpcState;
+                var bits = (arg ?? "").Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits.Length == 0) { Echo(Player.DebugFlagDump()); return; }
+                if (!ushort.TryParse(bits[0], out ushort fid)) { Echo($"'{bits[0]}' is not a flag id"); return; }
+                short val = 1;
+                if (bits.Length > 1) short.TryParse(bits[1], out val);
+                w.SetFlag(fid, val);
+                Echo($"flag {fid} = {val}");
+            }
+            else if (verb == "quest")
+            {
+                // quest            -- every quest and the status this player has it in
+                // quest <id|name>  -- take it, or hand it in if it is ready; prints each objective
+                NpcCatalog.Load();
+                var w = Player.NpcState;
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    int active = 0, ready = 0, done = 0;
+                    foreach (var q in NpcCatalog.Quests)
+                    {
+                        var st = w.GetQuestStatus((ushort)q.Id);
+                        if (st == SDG.Unturned.ENpcQuestStatus.Active) active++;
+                        else if (st == SDG.Unturned.ENpcQuestStatus.Ready) ready++;
+                        else if (st == SDG.Unturned.ENpcQuestStatus.Completed) done++;
+                        Echo($"{q.Id,4} {st,-9} {SDG.Unturned.TradeRules.PlainText(q.Name)}");
+                    }
+                    Echo($"{NpcCatalog.QuestCount} quests -- {active} active, {ready} ready, {done} completed");
+                    return;
+                }
+                SDG.Unturned.NpcQuestDef pick = null;
+                if (int.TryParse(want, out int qid)) pick = NpcCatalog.Quest(qid);
+                if (pick == null)
+                    foreach (var q in NpcCatalog.Quests)
+                        if (q.Name.ToLowerInvariant().Contains(want.ToLowerInvariant()) || q.Key.ToLowerInvariant().Contains(want.ToLowerInvariant()))
+                        { pick = q; break; }
+                if (pick == null) { Echo($"no quest '{want}' -- try `quest` for the list"); return; }
+
+                var status = w.GetQuestStatus((ushort)pick.Id);
+                if (status == SDG.Unturned.ENpcQuestStatus.None)
+                { SDG.Unturned.QuestRules.Give(pick, w); Echo($"took '{SDG.Unturned.TradeRules.PlainText(pick.Name)}'"); }
+                else if (status == SDG.Unturned.ENpcQuestStatus.Ready && SDG.Unturned.QuestRules.TurnIn(pick, w))
+                    Echo($"handed in '{SDG.Unturned.TradeRules.PlainText(pick.Name)}' -- {pick.Rewards.Length} reward(s) paid");
+                else Echo($"'{SDG.Unturned.TradeRules.PlainText(pick.Name)}' is {status}");
+                // The objectives, as the player would read them. This is the whole reason the English strings
+                // were extracted: a type name and a number is not an objective.
+                foreach (var (text, ok) in SDG.Unturned.QuestRules.Objectives(pick, w))
+                    Echo($"  [{(ok ? "x" : " ")}] {text}");
+                Echo($"  xp {w.Experience}  rep {w.Reputation}");
+            }
+            else if (verb == "trade")
+            {
+                // trade [vendor key]  -- open a vendor window without having to satisfy the dialogue conditions
+                // that normally gate it. Chef Leonard's trade branch needs flag 61, so the ONLY way to look at
+                // this screen otherwise is to play far enough to earn it.
+                NpcCatalog.Load();
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    foreach (var v in NpcCatalog.Vendors)
+                        Echo($"{v.Key}  --  {SDG.Unturned.TradeRules.PlainText(v.Name)}  ({v.Selling.Length} for sale, {v.Buying.Length} wanted)");
+                    return;
+                }
+                var vend = NpcCatalog.VendorByKey(want);
+                if (vend == null) { Echo($"no vendor '{want}' -- try `trade` for the list"); return; }
+                Player.OpenTrade(vend);
+                Echo($"{SDG.Unturned.TradeRules.PlainText(vend.Name)}: {vend.Selling.Length} for sale, {vend.Buying.Length} wanted");
+            }
+            else if (verb == "tradepick")
+            {
+                // tradepick <n>  -- select the nth thing the open vendor is selling and let TradeRules build the
+                // offer. An EMPTY offer column is the least interesting state this window has, and it is the only
+                // one an offline capture can otherwise reach; this is how the exchange itself gets rendered.
+                if (!Player.TradeOpen) { Echo("no trade window open -- `trade <vendor>` first"); return; }
+                if (!int.TryParse((arg ?? "").Trim(), System.Globalization.NumberStyles.Integer,
+                                  System.Globalization.CultureInfo.InvariantCulture, out int pick)) pick = 0;
+                Player.TradeWindow.DebugSelect(pick);
+                Player.TradeWindow.DebugAutoFill();
+                Echo($"picked {pick}: {Player.TradeWindow.DebugStatus}");
+            }
+            else if (verb == "tradestock")
+            {
+                // tradestock [vendor key]  -- put one of everything this vendor BUYS into your bag. A trade
+                // window with an empty right-hand column shows the layout and none of the exchange, which is
+                // the half that needed looking at; this is how an offline capture gets something to trade.
+                NpcCatalog.Load();
+                var vend = NpcCatalog.VendorByKey((arg ?? "").Trim());
+                if (vend == null) { Echo($"no vendor '{arg}' -- try `trade` for the list"); return; }
+                int n = 0;
+                foreach (var b in vend.Buying)
+                {
+                    if (b.Item == 0 || SDG.Unturned.Assets.find(b.Item) == null) continue;
+                    if (Player.Inventory != null && Player.Inventory.tryAddItem(new SDG.Unturned.Item(b.Item, 2))) n++;
+                }
+                Player.RefreshInventoryUI();
+                Echo($"stocked {n} of {vend.Buying.Length} wanted items (the rest are not in this port, or the bag is full)");
             }
             else if (verb == "gesture")
             {

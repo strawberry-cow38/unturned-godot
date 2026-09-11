@@ -29,6 +29,21 @@ namespace UnturnedGodot
         Label3D _label;
         static ImageTexture _missing;
 
+        /// <summary>Lift the plate clear of whatever is on the head. <paramref name="topLocalY"/> is the top of
+        /// the worn gear in the BODY's space -- the same space this node's Position is in.
+        ///
+        /// MEASURED, not tabled. 2.05 clears a BARE head and a chef's toque does not fit under it (the first NPC
+        /// render had his name with a hat through the middle of it). Driving it off the gear's own height means
+        /// a toque and a flat cap both come out right, including hats nobody has put on a character yet.
+        /// Never goes BELOW HeadHeight, so a bare head is exactly where it has always been.</summary>
+        public void SeatAboveGear(float topLocalY)
+        {
+            // The Label3D is vertically centred on this node, so half of it has to clear the hat as well.
+            float want = topLocalY + TextSize * 0.5f + GearGap;
+            Position = new Vector3(Position.X, Mathf.Max(HeadHeight, want), Position.Z);
+        }
+        const float GearGap = 0.07f;   // breathing room between the hat and the text
+
         public static Nameplate Attach(Node3D body)
         {
             if (body == null || !GodotObject.IsInstanceValid(body)) return null;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using SDG.NetPak;
 using SDG.NetTransport;
 using SDG.Unturned;
@@ -82,6 +83,7 @@ namespace UnturnedGodot.Net
         public readonly ServerCooking Cooking;
         public readonly ServerFreezing Freezing;
         public readonly ServerCrafting CraftQueue;
+        public readonly ServerNpcs Npcs = new ServerNpcs();   // v47: conversations, quests and trades, server-side
 
         /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
         /// the game layer's PowerNet.GlobalPower -- on a joined client that global is not authoritative, which
@@ -182,6 +184,58 @@ namespace UnturnedGodot.Net
             // A container's DOOR is its viewer set, published. Core's inventory layer knows who has what open
             // and knows nothing about doors; the container system carries the bit and the client swings the leaf.
             Inventories.CrateOpenChanged = (netId, open) => Containers.ServerSetDoorsOpen(netId, open, Session.CurrentTick);
+            // ---- NPCs (v47) --------------------------------------------------------------------------------
+            Npcs.Inventories = Inventories;
+            Npcs.Skills = Skills;
+            Npcs.AwardXp = (owner, xp) => Skills.ServerAward(owner, (uint)xp, Session.CurrentTick);
+            // DialogueOf / QuestOfId / VendorOf / ActiveHoliday are set by the GAME layer: core cannot see
+            // NpcCatalog, and a server that loaded its own copy would be a second source of truth for exactly
+            // the thing both sides must agree on byte for byte.
+            // The owner's whole NPC state on any change. A full dump rather than a delta: a few dozen entries
+            // that move at conversation speed, where a delta stream would need an ack chain to survive a dropped
+            // packet -- more machinery than the bytes are worth. See NpcStateEvent.
+            Npcs.Changed = owner =>
+            {
+                if (!Npcs.Has(owner)) return;
+                var p = Npcs.For(owner);
+                var flags = new List<(ushort, short)>();
+                foreach (var kv in p.Flags) { if (flags.Count >= NpcStateEvent.MaxFlags) break; flags.Add((kv.Key, kv.Value)); }
+                var quests = new List<(ushort, byte)>();
+                foreach (var kv in p.Quests) { if (quests.Count >= NpcStateEvent.MaxQuests) break; quests.Add((kv.Key, (byte)kv.Value)); }
+                var prog = new List<(ushort, byte, ushort)>();
+                foreach (var kv in p.Progress)
+                {
+                    if (prog.Count >= NpcStateEvent.MaxProgress) break;
+                    prog.Add((kv.Key.Item1, (byte)System.Math.Min(kv.Key.Item2, 255), (ushort)System.Math.Min(kv.Value, 65535)));
+                }
+                var evt = new NpcStateEvent
+                {
+                    Reputation = p.Rep,
+                    OpenDialogue = (ushort)p.OpenDialogue,
+                    Vendor = p.PendingVendor,
+                    Flags = flags.ToArray(), Quests = quests.ToArray(), Progress = prog.ToArray(),
+                };
+                SendEventTo(owner, NetMessagePak.Pack(ReplicationIds.EventNpcState, evt.Write));
+            };
+            Commands.Register<NpcTalkCommand>(ReplicationIds.CommandNpcTalk, NpcTalkCommand.TryRead,
+                (sender, cmd) => Npcs.Batch(() => Npcs.Open(sender, cmd.Dialogue)));
+            Commands.Register<NpcCloseCommand>(ReplicationIds.CommandNpcClose, NpcCloseCommand.TryRead,
+                (sender, _) => Npcs.Batch(() => Npcs.Close(sender)));
+            Commands.Register<NpcChooseCommand>(ReplicationIds.CommandNpcChoose, NpcChooseCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    // Refused silently. A client asking for a response it was never shown is either out of date
+                    // or probing; neither deserves a reply that tells it which.
+                    Npcs.Batch(() => Npcs.Choose(sender, cmd.Dialogue, cmd.Response, out _, out _));
+                });
+            Commands.Register<NpcTradeCommand>(ReplicationIds.CommandNpcTrade, NpcTradeCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    var offer = new List<(ushort, int)>();
+                    foreach (var (id, n) in cmd.Offer ?? System.Array.Empty<(ushort, byte)>()) offer.Add((id, n));
+                    Npcs.Batch(() => Npcs.Trade(sender, cmd.Vendor, cmd.SellIndex, offer));
+                });
+
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
@@ -702,6 +756,7 @@ namespace UnturnedGodot.Net
         public event System.Action<StorageOpenedEvent> StorageOpened;
         public event System.Action<CookerStateEvent> CookerState;   // v29: the open appliance's on-bit + fuel bar
         public event System.Action<CraftQueueEvent> CraftQueue_;    // v31: the owner's pending craft jobs
+        public event System.Action<NpcStateEvent> NpcState;         // v47: the owner's flags, quests and quest progress
         public event System.Action<StorageClosedEvent> StorageClosed;
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
@@ -805,6 +860,7 @@ namespace UnturnedGodot.Net
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
             Events.Register<CookerStateEvent>(ReplicationIds.EventCookerState, CookerStateEvent.TryRead, e => CookerState?.Invoke(e));
             Events.Register<CraftQueueEvent>(ReplicationIds.EventCraftQueue, CraftQueueEvent.TryRead, e => CraftQueue_?.Invoke(e));
+            Events.Register<NpcStateEvent>(ReplicationIds.EventNpcState, NpcStateEvent.TryRead, e => NpcState?.Invoke(e));
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
             Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
@@ -1164,6 +1220,16 @@ namespace UnturnedGodot.Net
         /// ignores a NetId that is not a registered cooker.</summary>
         public void SendSetCookerOn(uint netId, bool on)
             => SendCommand(ReplicationIds.CommandSetCookerOn, new SetCookerOnCommand { NetId = netId, On = on }.Write);
+
+        // v47 -- the conversation. Each names what the player is looking at; the server owns every verdict.
+        public bool SendNpcTalk(int dialogue)
+            => SendCommand(ReplicationIds.CommandNpcTalk, new NpcTalkCommand { Dialogue = dialogue }.Write);
+        public bool SendNpcChoose(int dialogue, byte response)
+            => SendCommand(ReplicationIds.CommandNpcChoose, new NpcChooseCommand { Dialogue = dialogue, Response = response }.Write);
+        public bool SendNpcClose()
+            => SendCommand(ReplicationIds.CommandNpcClose, new NpcCloseCommand().Write);
+        public bool SendNpcTrade(string vendor, byte sellIndex, (ushort Id, byte N)[] offer)
+            => SendCommand(ReplicationIds.CommandNpcTrade, new NpcTradeCommand { Vendor = vendor, SellIndex = sellIndex, Offer = offer }.Write);
 
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);

@@ -17,6 +17,12 @@ namespace UnturnedGodot
         EditorSpawnsPanel _spawnsPanel;     // the Spawns-tab tool buttons (shown only in Spawns mode)
         EditorRoadsPanel _roadsPanel;       // the road/rail AND river tool buttons (shown only in Environment mode)
         EditorBuildingsPanel _buildPanel;   // the Level-tab building tool (shares the tab with the browser)
+        EditorNpcsPanel _npcsPanel;         // the NPC roster (shown only in Npcs mode)
+        NpcEditorUI _npcEditor;             // the per-character window, opened from a roster row
+        /// <summary>The character window, for the headless verify hook. It is built here because this is what
+        /// owns the roster that opens it; a caller that wants to drive it should not have to walk the tree.</summary>
+        public NpcEditorUI NpcEditor => _npcEditor;
+        public EditorNpcsPanel NpcsPanel => _npcsPanel;
         readonly Dictionary<EEditorMode, Button> _tabs = new();
         Label _toast; double _toastT;
         Button _exitBtn; bool _exitArmed; double _exitArmT;   // two-step exit while there is unsaved work                       // transient centered message (source EditorUI.message / EEditorMessage)
@@ -110,6 +116,18 @@ namespace UnturnedGodot
             if (Editor?.Buildings != null) { _buildPanel = new EditorBuildingsPanel(Editor.Buildings); AddChild(_buildPanel); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor?.Spawns != null) { _spawnsPanel = new EditorSpawnsPanel(Editor.Spawns); AddChild(_spawnsPanel); }
+            if (Editor?.Npcs != null)
+            {
+                _npcsPanel = new EditorNpcsPanel(Editor.Npcs);
+                AddChild(_npcsPanel);
+                _npcEditor = new NpcEditorUI();
+                AddChild(_npcEditor);
+                _npcsPanel.EditRequested += key => _npcEditor.Open(key);
+                _npcsPanel.NewRequested += () => _npcEditor.OpenNew();
+                // A new character has to reach the roster, and the roster is what you place FROM -- otherwise
+                // you make somebody and then cannot put them anywhere.
+                _npcEditor.Saved += _ => _npcsPanel.Rebuild();
+            }
             if (Editor?.RoadDrawEd != null || Editor?.RoadsEd != null || Editor?.RiverEd != null) { _roadsPanel = new EditorRoadsPanel(Editor.RoadDrawEd, Editor.RoadsEd, Editor.RiverEd); AddChild(_roadsPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
@@ -125,6 +143,7 @@ namespace UnturnedGodot
             if (_buildPanel != null) _buildPanel.Visible = active == EEditorMode.Buildings;
             if (_terrainPanel != null) _terrainPanel.Visible = active == EEditorMode.Terrain;   // terrain tool buttons under the Terrain tab
             if (_spawnsPanel != null) _spawnsPanel.Visible = active == EEditorMode.Spawns;       // spawns tool buttons under the Spawns tab
+            if (_npcsPanel != null) _npcsPanel.Visible = active == EEditorMode.Npcs;             // the NPC roster under the Npcs tab
             if (_roadsPanel != null) _roadsPanel.Visible = active == EEditorMode.Environment;     // road/rail tool buttons under the Environment tab
         }
 

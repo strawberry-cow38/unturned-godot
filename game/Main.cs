@@ -1107,7 +1107,7 @@ namespace UnturnedGodot
         /// unless the variable is set.</summary>
         void TickBootCommand(double delta)
         {
-            if (_bootCmdRun) return;
+            if (_bootCmdRun) { TickBootQueue(delta); return; }
             string cmd = System.Environment.GetEnvironmentVariable("UG_BOOTCMD");
             if (string.IsNullOrEmpty(cmd)) { _bootCmdRun = true; return; }
             float at = 3f;
@@ -1116,10 +1116,48 @@ namespace UnturnedGodot
             _bootCmdElapsed += (float)delta;
             if (_bootCmdElapsed < at) return;
             _bootCmdRun = true;
+            // SEVERAL LINES, separated by ';'. Most states worth capturing are a SETUP plus an ACTION -- put
+            // items in the bag, then open the window that shows them -- and with one command per boot the only
+            // way to render that was to teach the action command to do the setup too, which puts harness
+            // scaffolding inside gameplay code. Splitting here keeps it in the harness where it belongs.
+            //
+            // ⚠ AND `wait <seconds>` BETWEEN THEM, because a server-authoritative action is ASYNCHRONOUS. In MP
+            // "talk to him" is a request; the conversation opens when the server's reply lands a frame later.
+            // Running the next command in the same frame asked a question of a panel that did not exist yet --
+            // which looked exactly like the feature being broken, and was the fixture being too fast.
+            foreach (var one in cmd.Split(';'))
+            {
+                string line = one.Trim();
+                if (line.Length == 0) continue;
+                _bootQueue.Enqueue(line);
+            }
+        }
+
+        readonly System.Collections.Generic.Queue<string> _bootQueue = new System.Collections.Generic.Queue<string>();
+        float _bootWait;
+
+        /// <summary>Drain the boot-command queue, honouring `wait <seconds>`. Separate from TickBootCommand so
+        /// the AT-delay logic there stays about when to START, and this stays about pacing what follows.</summary>
+        void TickBootQueue(double delta)
+        {
+            if (_bootQueue.Count == 0) return;
+            if (_bootWait > 0f) { _bootWait -= (float)delta; if (_bootWait > 0f) return; _bootWait = 0f; }
             var console = FindDevConsole(this);
-            if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
-            Log.Print($"[BOOTCMD] {cmd}");
-            console.DebugRun(cmd);
+            if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); _bootQueue.Clear(); return; }
+            while (_bootQueue.Count > 0)
+            {
+                string line = _bootQueue.Dequeue();
+                if (line.StartsWith("wait ", System.StringComparison.OrdinalIgnoreCase)
+                    && float.TryParse(line.Substring(5).Trim(), System.Globalization.NumberStyles.Float,
+                                      System.Globalization.CultureInfo.InvariantCulture, out float secs))
+                {
+                    _bootWait = Mathf.Max(0f, secs);
+                    Log.Print($"[BOOTCMD] wait {_bootWait:0.##}s");
+                    return;
+                }
+                Log.Print($"[BOOTCMD] {line}");
+                console.DebugRun(line);
+            }
         }
 
         static DevConsole FindDevConsole(Node n)
@@ -5684,6 +5722,11 @@ namespace UnturnedGodot
 
         // active holiday (src HolidayUtil schedule + -Holiday override -> UG_HOLIDAY). Gates the ~285 in-season
         // Christmas/Halloween props placed on PEI so they don't show year-round.
+        /// <summary>Public because the NPC dialogue evaluator gates responses on Holiday and there must be
+        /// ONE answer to "what season is it" -- a second reader of UG_HOLIDAY is a second source of truth,
+        /// and this project has spent a night paying for those.</summary>
+        public static string ActiveHolidayNow() => ActiveHoliday();
+
         static string ActiveHoliday()
         {
             var o = System.Environment.GetEnvironmentVariable("UG_HOLIDAY");
@@ -6058,6 +6101,7 @@ namespace UnturnedGodot
             // The monuments the generator laid out are only lists until something instantiates them.
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
+            var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
             var rf = new RoadField { Terr = terr };
@@ -6716,6 +6760,7 @@ namespace UnturnedGodot
                     }
                 }
             }
+            var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;   // Npcs tab: place people (added BEFORE the dashboard reads editor.Npcs)
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
@@ -6746,7 +6791,8 @@ namespace UnturnedGodot
             var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
-            editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            var dash = new EditorDashboard { Editor = editor, OnExit = ReturnToMenu };
+            editor.AddChild(dash);
             var playMode = new EditorPlayMode();   // "Test Build" button -> walk the drawn building as a player (master 2026-08-09)
             editor.AddChild(playMode);
             playMode.Setup(editor, buildings, cam);
@@ -6786,6 +6832,75 @@ namespace UnturnedGodot
                         cam.LookAt(zc, Vector3.Up);
                     }
                     Log.Print($"[editorspawns] animal spawns: {spawns.Count}");
+                };
+            // headless render-verify for the Npcs tab. Places a row of people, then SAVES AND RELOADS before the
+            // shot: what you are looking at is what came back off disk, so a format that writes fine and parses
+            // wrong cannot pass by leaving the in-memory list on screen.
+            // UG_NPCEDITOR=<catalog key>: open the character window on that person, prove vanilla is LOCKED,
+            // duplicate it, edit, save, and read the result back OUT OF THE CATALOG. The read-back is the point:
+            // "the window still shows what I typed" is not persistence, and that is the only thing a screenshot
+            // of an editor can ever show on its own.
+            string npcEdit = System.Environment.GetEnvironmentVariable("UG_NPCEDITOR");
+            if (!string.IsNullOrEmpty(npcEdit))
+                GetTree().CreateTimer(1.1).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Npcs;
+                    var win = dash.NpcEditor;
+                    if (win == null) { Log.Err("[npceditor] no character window on the dashboard"); return; }
+                    win.Open(npcEdit);
+                    Log.Print($"[npceditor] opened '{npcEdit}' locked={win.DebugLocked} (vanilla must be true)");
+                    win.DebugDuplicate();
+                    Log.Print($"[npceditor] after duplicate locked={win.DebugLocked} (must be false)");
+                    win.DebugSetName("Harbour Trader");
+                    win.DebugStep(0, +3);    // face
+                    win.DebugStep(3, +5);    // shirt
+                    win.DebugStep(5, -2);    // hat
+                    win.DebugStep(10, +1);   // dialogue
+                    win.DebugStep(11, +1);   // shop
+                    for (int i = 0; i < win.DebugRowCount; i++) Log.Print($"[npceditor]   {win.DebugRow(i)}");
+                    win.DebugSave();
+                    // OUT OF THE CATALOG, not out of the window: this is what a fresh session would see.
+                    var back = NpcCatalog.CharacterByKey("Harbour_Trader");
+                    Log.Print(back == null
+                        ? "[npceditor] PERSIST FAIL -- 'Harbour_Trader' is not in the catalog after save"
+                        : $"[npceditor] persisted: {back.Name} face={back.Face} shirt={back.Shirt} hat={back.Hat} dialogue={back.Dialogue} shop='{back.Shop}' custom={NpcCatalog.IsCustom(back.Key)}");
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORNPCS") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Npcs;
+                    if (npcs.Keys.Count == 0) { Log.Err("[editornpcs] the catalog is empty -- nothing to place"); return; }
+                    // The tab LOADS what a previous run saved, so the round-trip check has to count from there.
+                    // Comparing against `n` alone reported MISMATCH on a perfectly good save the second time the
+                    // fixture ran -- an assertion that fails on a clean rerun is one people learn to ignore.
+                    int before = npcs.Count;
+                    var at = spawns.Positions.Count > 0 ? spawns.Positions[0] : cam.GlobalPosition - new Vector3(0f, 8f, 0f);
+                    string[] want = { "Chef", "Mechanic", "Pilot", "Medic", "Pirate" };
+                    int n = 0;
+                    foreach (var key in want)
+                    {
+                        var def = NpcCatalog.CharacterByKey(key);
+                        if (def == null) { Log.Print($"[editornpcs] no preset '{key}'"); continue; }
+                        // A shallow arc facing the camera, so five people read as five people rather than as a
+                        // queue where the front one hides the rest.
+                        float t = (n - (want.Length - 1) * 0.5f) * 0.42f;
+                        var spot = at + new Vector3(Mathf.Sin(t) * 5.2f, 0f, Mathf.Cos(t) * 5.2f - 5.2f);
+                        // ⚠ SNAP EACH ONE. A real click raycasts the ground, so a demo that copies ONE y across
+                        // an arc is not showing what the tool does -- it is showing what the tool prevents. The
+                        // first render of this had the chef buried to the chest in a hillside and the tool was
+                        // fine; only the fixture was wrong, which is the more embarrassing way to look broken.
+                        if (res.Terr != null) spot.Y = res.Terr.SampleHeight(spot.X, spot.Z);
+                        npcs.DebugAdd(key, spot, Mathf.RadToDeg(t) + 180f);
+                        n++;
+                    }
+                    int saved = npcs.DebugSaveThenReload();
+                    bool ok = saved == npcs.Count && npcs.Count == before + n;
+                    Log.Print($"[editornpcs] had {before}, placed {n}, saved {saved}, reloaded {npcs.Count} -- round-trip {(ok ? "OK" : "MISMATCH")}");
+                    foreach (var pl in npcs.DebugPlaced) Log.Print($"[editornpcs]   {pl.Key} at {pl.Pos} yaw {pl.Yaw:0.#}");
+                    var eye = at + new Vector3(0f, 2.6f, 4.4f);
+                    if (res.Terr != null) eye.Y = res.Terr.SampleHeight(eye.X, eye.Z) + 2.4f;
+                    cam.GlobalPosition = eye;
+                    cam.LookAt(at + new Vector3(0f, 1.1f, -5.2f), Vector3.Up);
                 };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORENV") == "1")
                 GetTree().CreateTimer(0.8).Timeout += () =>

@@ -611,6 +611,7 @@ namespace UnturnedGodot
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
         ElevatorButton _focusElevButton;   // the elevator floor-BUTTON being LOOKED AT -> F calls the car to that floor
+        NpcCharacter _focusNpc;            // the person being LOOKED AT -> their name shows, F talks to them
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldPaintItem; // a vehicle spraypaint in hand -> LMB the car you are aimed at to respray it
         SDG.Unturned.Item _heldCarjackItem;  // the Carjack (277) in hand -> LMB an EMPTY car to launch + spin it back onto its wheels
@@ -693,6 +694,7 @@ namespace UnturnedGodot
             // which door/hood/trunk of the focused vehicle the ray found
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
+            NpcCharacter hitNpc = null;       // the person under the ray -> nameplate + F to talk
             RadioDevice hitRadio = null; PropSeat hitSeat = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
@@ -742,6 +744,7 @@ namespace UnturnedGodot
                 else if (rcol is Node bdn && bdn.HasMeta(Sn.objectdoor) && bdn.GetMeta(Sn.objectdoor).As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is NoteBody rnote && IsInstanceValid(rnote)) hitNote = rnote;   // readable lore note (see-through layer) -> focus + F reads it
+                    else if (rcol is NpcCharacter rnpc && IsInstanceValid(rnpc)) hitNpc = rnpc;   // a person -> their nameplate shows, F starts the conversation
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta(Sn.gaspump) && grn.GetMeta(Sn.gaspump).As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
@@ -974,6 +977,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusElevButton)) _focusElevButton.SetLookFocused(false);
                 _focusElevButton = hitElevButton;
                 _focusElevButton?.SetLookFocused(true);
+            }
+            if (hitNpc != _focusNpc)   // person look-focus: their nameplate appears, which is the affordance
+            {
+                if (IsInstanceValid(_focusNpc)) _focusNpc.SetLookFocused(false);
+                _focusNpc = hitNpc;
+                _focusNpc?.SetLookFocused(true);
             }
             if (hitNote != _focusNote)   // readable note look-focus: white outline, F reads it
             {
@@ -2751,6 +2760,291 @@ namespace UnturnedGodot
             if (NetConsume != null) { if (FindBagCell(spent, out byte cp, out byte cx, out byte cy)) NetConsume(cp, cx, cy); }
             else Inventory?.removeItemAmount(spent, 1);
             _invUI?.Refresh();
+        }
+
+        // ---- TALKING TO PEOPLE (master 2026-09-11: "do human npcs ... RPG style dialogue, multiple options") ----
+        //
+        // The evaluator lives in core (DialogueRules) so the same code decides what you can say here and in a
+        // test. This half is the player's SIDE of it: the flags a conversation writes, and the world facts a
+        // condition asks about.
+
+        readonly System.Collections.Generic.Dictionary<ushort, short> _npcFlags = new();
+        readonly System.Collections.Generic.Dictionary<ushort, SDG.Unturned.ENpcQuestStatus> _npcQuests = new();
+        // Kill-counter objectives, keyed (quest, condition index). Only the COUNTED kinds live here: a flag
+        // objective is read from _npcFlags and an item one from the bag, so nothing is mirrored and nothing
+        // can drift out of step with the thing it is counting.
+        readonly System.Collections.Generic.Dictionary<(ushort, int), int> _npcQuestProgress = new();
+        int _npcReputation;
+
+        /// <summary>The world, as a dialogue condition sees it -- and now as a QUEST sees it. 81 of the 157
+        /// conditions in the shipped data are quest ones, so before this every conversation was silently
+        /// showing a fraction of its branches while looking perfectly complete.</summary>
+        sealed class NpcWorldView : SDG.Unturned.INpcWorld
+        {
+            readonly PlayerController _p;
+            public NpcWorldView(PlayerController p) { _p = p; }
+            public short GetFlag(ushort id) => _p._npcFlags.TryGetValue(id, out var v) ? v : (short)0;
+            public void SetFlag(ushort id, short value) => _p._npcFlags[id] = value;
+            /// <summary>The status a condition should see, which is the DERIVED one -- an Active quest whose
+            /// last objective just completed is Ready, and nothing would ever have noticed to write that down.
+            /// See QuestRules.StatusOf.</summary>
+            public SDG.Unturned.ENpcQuestStatus GetQuestStatus(ushort id)
+            {
+                var raw = _p._npcQuests.TryGetValue(id, out var st) ? st : SDG.Unturned.ENpcQuestStatus.None;
+                if (raw != SDG.Unturned.ENpcQuestStatus.Active) return raw;
+                var def = NpcCatalog.Quest(id);
+                return def != null && SDG.Unturned.QuestRules.CanTurnIn(def, this)
+                     ? SDG.Unturned.ENpcQuestStatus.Ready : SDG.Unturned.ENpcQuestStatus.Active;
+            }
+            public void SetQuestStatus(ushort id, SDG.Unturned.ENpcQuestStatus status) => _p._npcQuests[id] = status;
+            public int QuestProgress(ushort questId, int index) => _p._npcQuestProgress.TryGetValue((questId, index), out var n) ? n : 0;
+            public void AddQuestProgress(ushort questId, int index, int by)
+                => _p._npcQuestProgress[(questId, index)] = QuestProgress(questId, index) + by;
+            public int CountItem(ushort itemId) => _p.Inventory?.getItemCount(itemId) ?? 0;
+            public void TakeItem(ushort itemId, int amount) { _p.Inventory?.removeItemAmount(itemId, amount); _p._invUI?.Refresh(); }
+            // AwardExperience, not a write to `experience` -- that property is read-only precisely so the pool
+            // has one way in. In MP the authoritative value arrives via NetSetExperience instead.
+            public void AddExperience(int amount) { if (_p.Skills != null && amount > 0) _p.Skills.AwardExperience((uint)amount); }
+            public void AddReputation(int amount) => _p._npcReputation += amount;
+            public string ActiveHoliday => Main.ActiveHolidayNow();   // the ONE answer, not a second read of UG_HOLIDAY
+            public int Reputation => _p._npcReputation;
+            public uint Experience => _p.Skills?.experience ?? 0u;   // the PLAYER's pool, not a static one
+            public void GiveItem(ushort itemId, short amount)
+            {
+                for (int i = 0; i < System.Math.Max((short)1, amount); i++) _p.Inventory?.tryAddItem(new SDG.Unturned.Item(itemId));
+                _p._invUI?.Refresh();
+            }
+        }
+
+        NpcWorldView _npcWorld;
+        NpcWorldView NpcWorld => _npcWorld ??= new NpcWorldView(this);
+
+        /// <summary>The player's NPC state -- flags, quest status, progress -- as the conversations, the quest
+        /// log and the console all see it. THE SAME instance for all three on purpose: a UI with its own view
+        /// would answer questions differently from the game, and the disagreement would look like a quest bug.</summary>
+        public SDG.Unturned.INpcWorld NpcState => NpcWorld;
+
+        // ---- v47: IN MP THE SERVER DECIDES ALL OF THIS ----------------------------------------------------
+        // Set by ClientWorldSession / MpLoopback. Null in singleplayer, where applying locally IS the
+        // authority. When they are set, every one of these paths SENDS and changes nothing: the answer comes
+        // back as an NpcStateEvent, which is the only thing that writes the flags, quests and open dialogue.
+        // A client that applied its own guess as well would drift from the server's record and have its next
+        // response refused, with nothing on either side saying why.
+        public System.Action<int> NetNpcTalk;
+        public System.Action<int, byte> NetNpcChoose;
+        public System.Action NetNpcClose;
+        public System.Action<string, byte, (ushort Id, byte N)[]> NetNpcTrade;
+        public bool NpcServerAuthoritative => NetNpcChoose != null;
+
+        /// <summary>Replace the local copy with the server's. WHOLESALE, not merged: the server's state is the
+        /// state, and merging would let a stale local flag survive something that cleared it.</summary>
+        /// <summary>Count of server state pushes applied, for the harness. A zero here after a Talk is the
+        /// whole diagnosis: the command went out and nothing came back.</summary>
+        public int DebugNpcStatePushes { get; private set; }
+
+        public void ApplyNetNpcState(System.Collections.Generic.IEnumerable<(ushort Id, short Value)> flags,
+                                     System.Collections.Generic.IEnumerable<(ushort Id, byte Status)> quests,
+                                     System.Collections.Generic.IEnumerable<(ushort Quest, byte Index, ushort Value)> progress,
+                                     int reputation, int openDialogue, string vendor)
+        {
+            DebugNpcStatePushes++;
+            if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1")
+                Log.Print($"[npcnet] <- state #{DebugNpcStatePushes} dialogue={openDialogue} vendor='{vendor}'");
+            _npcFlags.Clear();
+            if (flags != null) foreach (var (id, v) in flags) _npcFlags[id] = v;
+            _npcQuests.Clear();
+            if (quests != null) foreach (var (id, st) in quests) _npcQuests[id] = (SDG.Unturned.ENpcQuestStatus)st;
+            _npcQuestProgress.Clear();
+            if (progress != null) foreach (var (q, i, v) in progress) _npcQuestProgress[(q, i)] = v;
+            _npcReputation = reputation;
+
+            // The conversation follows the server too. It is the SERVER's OpenDialogue that every later
+            // response is checked against, so the panel has to be showing that one and not a guess.
+            if (openDialogue == 0) { if (CurrentDialogue != null) CloseDialogueLocal(); }
+            else
+            {
+                var d = NpcCatalog.Dialogue(openDialogue);
+                if (d != null && (CurrentDialogue == null || CurrentDialogue.Id != d.Id)) OpenDialogueLocal(d);
+            }
+            if (!string.IsNullOrEmpty(vendor))
+            {
+                var v = NpcCatalog.Vendor(vendor);
+                if (v != null) OpenTrade(v);
+            }
+        }
+
+        /// <summary>Which quest the top-right summary follows. 0 means AUTO -- follow whatever is most worth
+        /// looking at -- so a player who never opens the log still gets a useful corner, and one who picks a
+        /// quest keeps it even when another becomes ready.</summary>
+        public int TrackedQuest;
+
+        /// <summary>The quest the tracker should show, resolving AUTO. Ready beats active, because "you can hand
+        /// this in" is the only quest state that asks you to go somewhere. A tracked quest that has been handed
+        /// in falls back to auto rather than pinning the corner to a finished thing forever.</summary>
+        public SDG.Unturned.NpcQuestDef TrackedQuestDef
+        {
+            // The rule itself lives in QuestRules.AutoTrack -- pure, and therefore testable. What decides the
+            // thing you look at all game should not be a property on a Node.
+            get => SDG.Unturned.QuestRules.AutoTrack(NpcCatalog.Quests, NpcWorld, TrackedQuest);
+        }
+
+        /// <summary>Every NPC flag currently set, for the console. Dialogue and quests are mostly flag-gated, so
+        /// "why is that branch not showing" is nearly always a question about this list.</summary>
+        public string DebugFlagDump()
+        {
+            if (_npcFlags.Count == 0) return "no NPC flags set";
+            var keys = new System.Collections.Generic.List<ushort>(_npcFlags.Keys);
+            keys.Sort();
+            var sb = new System.Text.StringBuilder($"{_npcFlags.Count} flag(s):");
+            foreach (var k in keys) sb.Append($"  {k}={_npcFlags[k]}");
+            return sb.ToString();
+        }
+
+        /// <summary>The conversation we are in, or null. Held on the player rather than in the UI because the
+        /// UI is a VIEW of it -- the state has to survive the panel being closed and reopened, and a dialogue
+        /// that lives in its own window is one that forgets what you said when you look away.</summary>
+        public SDG.Unturned.NpcDialogue CurrentDialogue { get; private set; }
+        public NpcCharacter CurrentSpeaker { get; private set; }
+        DialogueUI _dialogueUI;
+        TradeUI _tradeUI;
+
+        /// <summary>Repaint the bag. Public because the trade window changes what is IN it and the panel that
+        /// owns the grid is private -- without this the player walks away from a trade still looking at the
+        /// items they just handed over.</summary>
+        public void RefreshInventoryUI() => _invUI?.Refresh();
+
+        /// <summary>Which responses this player can see, as indices into the dialogue's own array. Exposed so
+        /// the panel can REDRAW after a page turn without re-deciding anything -- the moment the view starts
+        /// filtering for itself there are two answers to "what can I say" and they will differ.</summary>
+        public System.Collections.Generic.List<int> AvailableResponseIndices()
+            => SDG.Unturned.DialogueRules.AvailableResponses(CurrentDialogue, NpcWorld);
+
+        public void TalkTo(NpcCharacter npc)
+        {
+            if (npc == null || !IsInstanceValid(npc)) return;
+            var d = NpcCatalog.Dialogue(npc.DialogueId);
+            if (d == null)
+            {
+                // Said out loud rather than swallowed: 15 of the shipped targets point at map-bundle content we
+                // do not read, so "this person has nothing to say" is a real and explainable state.
+                HUD.Alert($"{npc.DisplayName} has nothing to say.");
+                Log.Print($"[npc] {npc.DisplayName}: dialogue {npc.DialogueId} not in the catalog");
+                return;
+            }
+            CurrentSpeaker = npc;
+            // WHO you are talking to is local -- it is a thing standing in front of you and the panel needs a
+            // name for its header. WHICH dialogue you are IN is the server's, because that is what every later
+            // response is validated against. So in MP this asks and waits.
+            if (NetNpcTalk != null)
+            {
+                // The MP path asks and waits. Traced, because "the server agreed and told nobody" is silent on
+                // both sides -- the panel simply never opens and nothing anywhere says why.
+                if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1") Log.Print($"[npcnet] -> talk {d.Id}");
+                NetNpcTalk(d.Id);
+                return;
+            }
+            OpenDialogue(d);
+        }
+
+        /// <summary>Enter a dialogue node: pick the message its conditions allow and list the responses this
+        /// player can actually see.</summary>
+        public void OpenDialogue(SDG.Unturned.NpcDialogue d) => OpenDialogueLocal(d);
+
+        /// <summary>Draw a dialogue node. LOCAL: it picks a message and lists responses, both read-only against
+        /// the world, so it is safe to run on the server's say-so. It is the CHOOSING that is authoritative.</summary>
+        void OpenDialogueLocal(SDG.Unturned.NpcDialogue d)
+        {
+            CurrentDialogue = d;
+            if (d == null) { CurrentSpeaker = null; return; }
+            var msg = SDG.Unturned.DialogueRules.MessageFor(d, NpcWorld);
+            var available = SDG.Unturned.DialogueRules.AvailableResponses(d, NpcWorld);
+            Log.Print($"[npc] {CurrentSpeaker?.DisplayName}: \"{(msg != null && msg.Pages.Length > 0 ? msg.Pages[0] : "...")}\" ({available.Count} options)");
+            if (_dialogueUI == null || !IsInstanceValid(_dialogueUI))
+            {
+                _dialogueUI = new DialogueUI();
+                (GetParent() ?? (Node)this).AddChild(_dialogueUI);
+            }
+            _dialogueUI.Open(this, CurrentSpeaker?.DisplayName ?? "", d, msg, available);
+        }
+
+        /// <summary>Pick a response BY ITS INDEX in the dialogue's own array -- never by position in the
+        /// filtered list. Rewards are granted first and then we move, because a reward that opens the branch we
+        /// are about to enter has to have landed before the conditions are re-read.</summary>
+        public bool ChooseResponse(int index)
+        {
+            var d = CurrentDialogue;
+            if (d == null || (uint)index >= (uint)d.Responses.Length) return false;
+            var r = d.Responses[index];
+            if (!SDG.Unturned.DialogueRules.PassesAll(r.Conditions, NpcWorld)) return false;   // not a response this player can see
+            // ⚠ IN MP THIS IS WHERE IT STOPS. The check above is the CLIENT's, and it exists only so the panel
+            // does not offer a line it knows is gated; the server runs the identical predicate and its answer is
+            // the one that counts. Everything below mutates flags, quests and inventory, which is precisely the
+            // set a client must not be the authority on.
+            if (NetNpcChoose != null) { NetNpcChoose(d.Id, (byte)index); return true; }
+            SDG.Unturned.DialogueRules.Grant(r.Rewards, NpcWorld);
+            // A response can hand out a quest directly (Response_N_Quest), which is separate from a Quest
+            // REWARD and is how most of them are actually given. Taking one you already hold is a no-op.
+            if (r.Quest != 0)
+            {
+                var q = NpcCatalog.Quest(r.Quest);
+                if (q != null)
+                {
+                    var was = NpcWorld.GetQuestStatus((ushort)q.Id);
+                    // Offering a quest you are READY to hand in IS the hand-in -- that is how retail's
+                    // "I've got them" line works, and it is the same response you took it from.
+                    if (was == SDG.Unturned.ENpcQuestStatus.Ready && SDG.Unturned.QuestRules.TurnIn(q, NpcWorld))
+                        Log.Print($"[quest] handed in '{SDG.Unturned.TradeRules.PlainText(q.Name)}' ({q.Rewards.Length} rewards)");
+                    else if (was == SDG.Unturned.ENpcQuestStatus.None)
+                    { SDG.Unturned.QuestRules.Give(q, NpcWorld); Log.Print($"[quest] took '{SDG.Unturned.TradeRules.PlainText(q.Name)}' -- {q.Conditions.Length} objective(s)"); }
+                }
+                else Log.Print($"[quest] response points at quest {r.Quest}, which is not in the catalog");
+            }
+            if (!string.IsNullOrEmpty(r.Vendor))
+            {
+                var v = NpcCatalog.Vendor(r.Vendor);
+                if (v == null) { Log.Print($"[npc] vendor {r.Vendor} not in the catalog"); return true; }
+                OpenTrade(v);
+                return true;   // the conversation stays open UNDERNEATH -- closing the trade returns you to it
+            }
+            if (r.EndsConversation) { CloseDialogue(); return true; }
+            OpenDialogue(NpcCatalog.Dialogue(r.Dialogue));
+            return true;
+        }
+
+        /// <summary>Put the vendor window up over the conversation. Built on first use, like the dialogue
+        /// panel: most players never talk to anybody, and a window nobody opens should not cost a node.</summary>
+        public void OpenTrade(SDG.Unturned.NpcVendorDef v)
+        {
+            if (v == null) return;
+            if (_tradeUI == null || !IsInstanceValid(_tradeUI))
+            {
+                _tradeUI = new TradeUI();
+                (GetParent() ?? (Node)this).AddChild(_tradeUI);
+            }
+            Log.Print($"[npc] opens trade: {SDG.Unturned.TradeRules.PlainText(v.Name)} ({v.Selling.Length} for sale, {v.Buying.Length} wanted)");
+            _tradeUI.Open(this, v);
+        }
+
+        public bool TradeOpen => _tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen;
+        internal TradeUI TradeWindow => _tradeUI;
+
+        /// <summary>Shut the panel without telling anybody -- the local half of closing. Used by the server
+        /// state applier, which is already acting ON the server's word and must not answer back.</summary>
+        void CloseDialogueLocal()
+        {
+            CurrentDialogue = null; CurrentSpeaker = null;
+            if (_tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen) _tradeUI.Close();
+            if (_dialogueUI != null && IsInstanceValid(_dialogueUI)) _dialogueUI.Close();
+        }
+
+        public void CloseDialogue()
+        {
+            NetNpcClose?.Invoke();
+            CurrentDialogue = null; CurrentSpeaker = null;
+            // Shut the trade first: it sits ON the conversation, so leaving it up over a closed dialogue is a
+            // window with nothing behind it and no way back.
+            if (_tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen) _tradeUI.Close();
+            if (_dialogueUI != null && IsInstanceValid(_dialogueUI)) _dialogueUI.Close();
         }
 
         void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; _paintPendingT = 0f; _paintBusyT = 0f; }   // switching away mid-sweep drops the pending paint, like ClearHeldThrowable drops a pending release
@@ -7561,6 +7855,9 @@ namespace UnturnedGodot
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
+                else if (TradeOpen) _tradeUI.Close();   // trading: F backs out to the conversation, not to the world
+                else if (_dialogueUI != null && IsInstanceValid(_dialogueUI) && _dialogueUI.IsOpen) CloseDialogue();   // already talking: F is the way out, like every other panel
+                else if (_focusNpc != null && IsInstanceValid(_focusNpc)) TalkTo(_focusNpc);   // looking at a person: F starts the conversation
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 // A BED IS TWO INTERACTIONS ON ONE KEY, resolved by whether it is already yours. First F
                 // claims it as your respawn; after that F lies down on it, and F again gets you up. That

@@ -115,6 +115,14 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            // ---- v47: the server's NPC catalog. INJECTED, not loaded there: core cannot see NpcCatalog, and a
+            // server holding its own copy would be a second source of truth for exactly the thing both sides
+            // must agree on byte for byte. One catalog, read from two places.
+            NpcCatalog.Load();
+            Server.Npcs.DialogueOf = id => NpcCatalog.Dialogue(id);
+            Server.Npcs.QuestOfId = id => NpcCatalog.Quest(id);
+            Server.Npcs.VendorOf = guid => NpcCatalog.Vendor(guid);
+            Server.Npcs.ActiveHoliday = () => Main.ActiveHolidayNow();
             // v41: the spraypaint table is CONTENT, so the game layer hands it down -- core cannot read
             // content/vehicle_paints.tsv, and a server that does not know what a can is must not paint.
             Server.Transactions.PaintColorFor = id =>
@@ -218,6 +226,13 @@ namespace UnturnedGodot
                 };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };
+                // v47: the owner's NPC state, whole. This is the ONLY thing that writes the client's flags,
+                // quests and open dialogue in MP -- the local paths all send and wait for this.
+                Client.NpcState += e =>
+                {
+                    if (Player == null || !IsInstanceValid(Player)) return;
+                    Player.ApplyNetNpcState(e.Flags, e.Quests, e.Progress, e.Reputation, e.OpenDialogue, e.Vendor);
+                };
                 // B7 (SP/MP-unify): route the local player's skill-upgrade through the loopback server -- the
                 //     server's PlayerSkills.TryUpgrade is the cost/cap validator; the owner skills echo re-levels
                 //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.
@@ -270,7 +285,11 @@ namespace UnturnedGodot
 Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, rid, n);
                 Player.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
                 Player.NetUnwearClothing = (slot, pg, px, py) => Client.SendUnwearClothing(slot, pg, px, py);
-                Player.NetCraft = index => Client.SendCraft(index);
+                Player.NetNpcTalk = d => Client.SendNpcTalk(d);
+            Player.NetNpcChoose = (d, i) => Client.SendNpcChoose(d, i);
+            Player.NetNpcClose = () => Client.SendNpcClose();
+            Player.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
+            Player.NetCraft = index => Client.SendCraft(index);
                 Player.NetCraftCancel = slot => Client.SendCraftCancel(slot);
                 Player.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                     Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);

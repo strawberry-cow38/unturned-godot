@@ -85,6 +85,7 @@ namespace UnturnedGodot
         Label _coord; Panel _coordBar;
         Panel _panel;          // the screen frame, matching the inventory/crafting panel
         Panel _playersPanel;
+        QuestLogPanel _questLog;   // master 2026-09-11: "quest log goes into the information panel"
         Panel _rosterHead;
         ScrollContainer _rosterScroll;
         readonly System.Collections.Generic.List<(Label pos, Label dist)> _rosterCells = new();
@@ -181,6 +182,14 @@ namespace UnturnedGodot
             _arrow.AddChild(Halo(_arrow.Polygon, 3f));
 
             BuildPlayersPanel();
+
+            // Built here rather than in BuildPlayersPanel so it is a sibling of the roster on _slide, sharing
+            // the swoop and the same z-order as everything else on this page.
+            if (Player != null)
+            {
+                _questLog = new QuestLogPanel(Player);
+                _slide.AddChild(_questLog);
+            }
 
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Information, t => Player?.ShowMenu(t), () => Close());   // the Information tab of the unified menu hosts the map
             // Header, matched to CraftingMenu's: FontBody in TextDim. The outline it used to carry was for sitting
@@ -323,8 +332,20 @@ namespace UnturnedGodot
             _clip.Position = new Vector2(mapX, top);
             _clip.Size = new Vector2(s, s);
 
-            _playersPanel.Position = new Vector2(M + M, top);
-            _playersPanel.Size = new Vector2(Mathf.Max(160f, mapX - Gutter - (M + M)), Mathf.Max(120f, contentBottom - top));
+            // THE LEFT REGION IS SHARED NOW: quests on top, the roster under them. Stacked rather than a third
+            // column because the roster's three columns already set a 540 px floor and the map owns the right --
+            // there is height to give away here and no width. Quests get the larger share: in singleplayer the
+            // roster is one row of you, and a log of what you are doing is the thing you opened this page for.
+            float leftX = M + M, leftW = Mathf.Max(160f, mapX - Gutter - (M + M));
+            float leftH = Mathf.Max(120f, contentBottom - top);
+            float questH = _questLog != null ? Mathf.Round(leftH * 0.58f) : 0f;
+            if (_questLog != null)
+            {
+                _questLog.Position = new Vector2(leftX, top);
+                _questLog.Size = new Vector2(leftW, Mathf.Max(120f, questH - Gutter * 0.5f));
+            }
+            _playersPanel.Position = new Vector2(leftX, top + questH);
+            _playersPanel.Size = new Vector2(leftW, Mathf.Max(100f, leftH - questH));
             if (_rosterHead != null) _rosterHead.Size = new Vector2(Mathf.Max(120f, _playersPanel.Size.X - 16f), RosterRowH);
             // The PANEL still fills the page -- master asked for that and asked for this screen to be left out of
             // the vitals reflow. The LIST inside it stops at the bars anyway, because now that they draw over this
