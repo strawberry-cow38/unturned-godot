@@ -94,8 +94,14 @@ namespace UnturnedGodot
 
         // ---- files ------------------------------------------------------------------------------------------
         /// <summary>Same shape and the same folder as the spawn translator: an editor overlay keyed by map, never
-        /// the source map. A save here cannot damage anything retail shipped.</summary>
-        string SavePath => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{_editor.MapName}_npcs.txt";
+        /// the source map. A save here cannot damage anything retail shipped.
+        ///
+        /// ⚠ KEYED BY MapUI.MapFolder, NOT Editor.MapName, and the difference matters. The spawn translator can
+        /// use the editor's own label because the editor is the only thing that ever reads it back -- a closed
+        /// loop. THIS file is read by WorldBuilder when the map loads, so it has to be named with the identity
+        /// the GAME resolves maps by. Two labels that agree on PEI and disagree on a custom map would mean the
+        /// editor saves people the game never looks for, and an empty street is not a self-explaining symptom.</summary>
+        string SavePath => NpcCatalog.PlacementPath(MapUI.MapFolder);
 
         public int Save()
         {

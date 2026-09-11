@@ -51,6 +51,14 @@ namespace UnturnedGodot
         /// of tools/extract_npcs.py. Keeping them apart is what makes "re-rip the NPCs" a safe thing to do.</summary>
         public static string CustomPath => ProjectSettings.GlobalizePath("res://content/npcs_custom.json");
 
+        /// <summary>Where a map's placed people live. ⚠ ONE DEFINITION, because two ends read it: the editor
+        /// WRITES it and WorldBuilder READS it when the map loads. They were separate expressions for about ten
+        /// minutes and immediately disagreed -- WorldBuilder built its path off the objects directory and looked
+        /// in content/objects/spawns/, which does not exist, so the game loaded nobody and said nothing about
+        /// it. An empty street is not a self-explaining symptom.</summary>
+        public static string PlacementPath(string mapKey)
+            => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{mapKey}_npcs.txt";
+
         /// <summary>Custom characters, layered OVER the ripped ones. Same key space on purpose -- a placement
         /// stores a key, and the game has to be able to spawn a custom person from one exactly as it spawns
         /// Chef Leonard, with no second path and no "is this one of ours" test at the spawn site.</summary>

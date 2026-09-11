@@ -1669,6 +1669,46 @@ namespace UnturnedGodot
             // transforms can be written -- every Slot handed out above is dangling until this runs. Closing
             // batchOpen sends anything placed later (Client holiday props at the join handshake) down the node
             // path, since their groups would never be flushed.
+            // ---- PEOPLE ------------------------------------------------------------------------------------
+            // NPCs are STATIC WORLD DATA, not replicated entities, and that is the whole design rather than a
+            // shortcut. They stand where the map author put them and they do not move, so every peer can build
+            // the identical set from the identical file -- exactly how the objects above already work. Streaming
+            // a transform for somebody who will be standing in the same spot in an hour is bandwidth spent to
+            // reproduce a file both ends already have.
+            //
+            // What DOES need the wire is the CONVERSATION -- flags, quest state, a trade -- because that is
+            // per-player and must not be client-authoritative. That is a protocol change and is not this.
+            //
+            // Playable and Client both build them. Dedicated does not: it has no renderer, and until the
+            // conversation is server-authoritative there is nothing for it to own.
+            if (mode == WorldMode.Playable || mode == WorldMode.Client)
+            {
+                int people = 0, unknown = 0;
+                string npcFile = NpcCatalog.PlacementPath(MapUI.MapFolder);
+                if (System.IO.File.Exists(npcFile))
+                {
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    foreach (var line in System.IO.File.ReadLines(npcFile))
+                    {
+                        var q = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                        if (q.Length < 5) continue;
+                        var def = NpcCatalog.CharacterByKey(q[0]);
+                        // A key the catalog does not know is COUNTED, not skipped in silence: it means a map
+                        // was authored against a custom character whose npcs_custom.json did not travel with
+                        // it, and an empty street is not a self-explaining symptom.
+                        if (def == null) { unknown++; continue; }
+                        if (!float.TryParse(q[1], System.Globalization.NumberStyles.Float, ci, out float nx)) continue;
+                        if (!float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float ny)) continue;
+                        if (!float.TryParse(q[3], System.Globalization.NumberStyles.Float, ci, out float nz)) continue;
+                        float.TryParse(q[4], System.Globalization.NumberStyles.Float, ci, out float nyaw);
+                        if (NpcCharacter.Spawn(root, def, new Vector3(nx, ny, nz), nyaw) != null) people++;
+                    }
+                }
+                if (people > 0 || unknown > 0)
+                    Log.Print($"[npc] {people} placed from {System.IO.Path.GetFileName(npcFile)}"
+                            + (unknown > 0 ? $"; {unknown} unknown character key(s) -- a custom npcs_custom.json did not travel with this map" : ""));
+            }
+
             propBatch.Flush(root);
             batchOpen = false;
             if (bakeOmitted > 0) Log.Print($"[bakemap] {bakeOmitted} prop placement(s) omitted by {BakeOmitFile(MapUI.MapFolder)}");
