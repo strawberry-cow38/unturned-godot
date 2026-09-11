@@ -4583,14 +4583,30 @@ namespace UnturnedGodot
             p.Finished += p.QueueFree;   // self-cleanup after the one-shot
         }
 
+        /// <summary>Paths this loader has already complained about. A miss is reported ONCE: these are called per
+        /// shot and per footstep, so a warning per call would bury the log in the failure it is describing.</summary>
+        static readonly System.Collections.Generic.HashSet<string> _wavMissWarned = new();
+
+        static AudioStreamWav WavMiss(string resPath, string why)
+        {
+            // ⚠ SAY IT. Every failure path here used to `return null` in silence, and a null AudioStream plays
+            // nothing without complaint -- so a sound that cannot load is indistinguishable from a sound that
+            // correctly is not playing yet. tinyclaw lost a morning to exactly that shape on 2026-09-11: their
+            // geiger ran its whole schedule calling Play() on a null stream, and "correctly silent at zero dose"
+            // looks identical to "physically cannot make noise". They fixed the CALLER; this is the layer under
+            // it, which was just as quiet.
+            if (_wavMissWarned.Add(resPath)) Log.Err($"[wav] {resPath}: {why} -- this sound will be SILENT");
+            return null;
+        }
+
         // Runtime one-shot WAV loader: walk the RIFF chunks for fmt+data (UnityPy exports may carry extra chunks, so the
         // fixed-44-byte-header assumption in Vehicle.LoadWav isn't safe here). 16-bit PCM only; anything else -> no sound.
         public static AudioStreamWav LoadWavOneShot(string resPath, bool loop = false)
         {
             string p = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(p)) return null;
+            if (!System.IO.File.Exists(p)) return WavMiss(resPath, "no such file");
             byte[] b = System.IO.File.ReadAllBytes(p);
-            if (b.Length < 44) return null;
+            if (b.Length < 44) return WavMiss(resPath, $"only {b.Length} bytes -- too short to be a RIFF/WAVE");
             int channels = 1, rate = 48000, bits = 16, dataOff = -1, dataLen = 0, i = 12;   // past "RIFF"<size>"WAVE"
             while (i + 8 <= b.Length)
             {
@@ -4600,7 +4616,8 @@ namespace UnturnedGodot
                 else if (cid == "data") { dataOff = i + 8; dataLen = System.Math.Min(csz, b.Length - dataOff); break; }
                 i += 8 + csz + (csz & 1);
             }
-            if (dataOff < 0 || bits != 16) return null;
+            if (dataOff < 0) return WavMiss(resPath, "no `data` chunk in the RIFF");
+            if (bits != 16) return WavMiss(resPath, $"{bits}-bit, and this loader is 16-bit PCM only");
             byte[] pcm = new byte[dataLen]; System.Array.Copy(b, dataOff, pcm, 0, dataLen);
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = loop ? AudioStreamWav.LoopModeEnum.Forward : AudioStreamWav.LoopModeEnum.Disabled, LoopEnd = loop ? dataLen / (channels * bits / 8) : 0 };
