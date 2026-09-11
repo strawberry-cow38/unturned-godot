@@ -5746,6 +5746,11 @@ namespace UnturnedGodot
 
         // active holiday (src HolidayUtil schedule + -Holiday override -> UG_HOLIDAY). Gates the ~285 in-season
         // Christmas/Halloween props placed on PEI so they don't show year-round.
+        /// <summary>Public because the NPC dialogue evaluator gates responses on Holiday and there must be
+        /// ONE answer to "what season is it" -- a second reader of UG_HOLIDAY is a second source of truth,
+        /// and this project has spent a night paying for those.</summary>
+        public static string ActiveHolidayNow() => ActiveHoliday();
+
         static string ActiveHoliday()
         {
             var o = System.Environment.GetEnvironmentVariable("UG_HOLIDAY");

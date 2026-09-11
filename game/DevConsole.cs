@@ -877,6 +877,37 @@ namespace UnturnedGodot
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
                 Echo($"{label} skill -> level {sk.level}/{sk.max}");
             }
+            else if (verb == "npc")
+            {
+                // npc [key]  -- spawn one of retail's 40 characters two metres in front of you, facing you.
+                // No arg lists them. They stand there; look at one for their name, F to talk.
+                NpcCatalog.Load();
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    var keys = new System.Collections.Generic.List<string>();
+                    foreach (var c in NpcCatalog.Characters) keys.Add(c.Key);
+                    keys.Sort();
+                    Echo($"{keys.Count} characters: " + string.Join(", ", keys));
+                    return;
+                }
+                var def = NpcCatalog.CharacterByKey(want);
+                if (def == null)
+                {
+                    // A near miss is the common case with 40 names -- say which one you meant rather than "no".
+                    foreach (var c in NpcCatalog.Characters)
+                        if (c.Key.ToLowerInvariant().Contains(want.ToLowerInvariant())) { def = c; break; }
+                }
+                if (def == null) { Echo($"no character '{arg}' -- try `npc` for the list"); return; }
+                var fwd = -Player.LookBasis.Z;
+                var spot = Player.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * 2f;
+                // Facing the player: their yaw is ours turned round, so they are looking at you when you arrive.
+                float yaw = Mathf.RadToDeg(Mathf.Atan2(-fwd.X, -fwd.Z));
+                var npc = NpcCharacter.Spawn(Player.GetParent() ?? Player, def, spot, yaw);
+                Echo(npc != null
+                    ? $"{def.Name} ({def.Key}) -- dialogue {def.Dialogue}{(NpcCatalog.Dialogue(def.Dialogue) == null ? " (NOT in the catalog)" : "")}"
+                    : $"could not build {def.Key} -- the rig failed to load");
+            }
             else if (verb == "gesture")
             {
                 // gesture [name]  -- wave / salute / point / facepalm / surrender / rest / tpose / inventory,

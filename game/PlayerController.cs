@@ -522,6 +522,7 @@ namespace UnturnedGodot
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         LampLight _focusLamp;         // the standing/desk lamp being LOOKED AT -> F toggles it on/off
         ElevatorButton _focusElevButton;   // the elevator floor-BUTTON being LOOKED AT -> F calls the car to that floor
+        NpcCharacter _focusNpc;            // the person being LOOKED AT -> their name shows, F talks to them
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         SDG.Unturned.Item _heldPaintItem; // a vehicle spraypaint in hand -> LMB the car you are aimed at to respray it
         SDG.Unturned.Item _heldCarjackItem;  // the Carjack (277) in hand -> LMB an EMPTY car to launch + spin it back onto its wheels
@@ -604,6 +605,7 @@ namespace UnturnedGodot
             // which door/hood/trunk of the focused vehicle the ray found
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
+            NpcCharacter hitNpc = null;       // the person under the ray -> nameplate + F to talk
             RadioDevice hitRadio = null; PropSeat hitSeat = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
@@ -653,6 +655,7 @@ namespace UnturnedGodot
                 else if (rcol is Node bdn && bdn.HasMeta(Sn.objectdoor) && bdn.GetMeta(Sn.objectdoor).As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is NoteBody rnote && IsInstanceValid(rnote)) hitNote = rnote;   // readable lore note (see-through layer) -> focus + F reads it
+                    else if (rcol is NpcCharacter rnpc && IsInstanceValid(rnpc)) hitNpc = rnpc;   // a person -> their nameplate shows, F starts the conversation
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta(Sn.gaspump) && grn.GetMeta(Sn.gaspump).As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
@@ -885,6 +888,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusElevButton)) _focusElevButton.SetLookFocused(false);
                 _focusElevButton = hitElevButton;
                 _focusElevButton?.SetLookFocused(true);
+            }
+            if (hitNpc != _focusNpc)   // person look-focus: their nameplate appears, which is the affordance
+            {
+                if (IsInstanceValid(_focusNpc)) _focusNpc.SetLookFocused(false);
+                _focusNpc = hitNpc;
+                _focusNpc?.SetLookFocused(true);
             }
             if (hitNote != _focusNote)   // readable note look-focus: white outline, F reads it
             {
@@ -2670,6 +2679,100 @@ namespace UnturnedGodot
             else Inventory?.removeItemAmount(spent, 1);
             _invUI?.Refresh();
         }
+
+        // ---- TALKING TO PEOPLE (master 2026-09-11: "do human npcs ... RPG style dialogue, multiple options") ----
+        //
+        // The evaluator lives in core (DialogueRules) so the same code decides what you can say here and in a
+        // test. This half is the player's SIDE of it: the flags a conversation writes, and the world facts a
+        // condition asks about.
+
+        readonly System.Collections.Generic.Dictionary<ushort, short> _npcFlags = new();
+
+        /// <summary>The world, as a dialogue condition sees it. Quests report None for everything because there
+        /// is no quest system -- that is the truthful answer for a player who has started nothing, and 81 of the
+        /// 101 conditions in the shipped data are quest ones, so it is the difference between a conversation
+        /// with its branches and one that has silently lost most of them.</summary>
+        sealed class NpcWorldView : SDG.Unturned.INpcWorld
+        {
+            readonly PlayerController _p;
+            public NpcWorldView(PlayerController p) { _p = p; }
+            public short GetFlag(ushort id) => _p._npcFlags.TryGetValue(id, out var v) ? v : (short)0;
+            public void SetFlag(ushort id, short value) => _p._npcFlags[id] = value;
+            public SDG.Unturned.ENpcQuestStatus GetQuestStatus(ushort id) => SDG.Unturned.ENpcQuestStatus.None;
+            public string ActiveHoliday => Main.ActiveHolidayNow();   // the ONE answer, not a second read of UG_HOLIDAY
+            public int Reputation => 0;                                // no reputation system yet; 2 conditions use it
+            public uint Experience => _p.Skills?.experience ?? 0u;   // the PLAYER's pool, not a static one
+            public void GiveItem(ushort itemId, short amount)
+            {
+                for (int i = 0; i < System.Math.Max((short)1, amount); i++) _p.Inventory?.tryAddItem(new SDG.Unturned.Item(itemId));
+                _p._invUI?.Refresh();
+            }
+        }
+
+        NpcWorldView _npcWorld;
+        NpcWorldView NpcWorld => _npcWorld ??= new NpcWorldView(this);
+
+        /// <summary>The conversation we are in, or null. Held on the player rather than in the UI because the
+        /// UI is a VIEW of it -- the state has to survive the panel being closed and reopened, and a dialogue
+        /// that lives in its own window is one that forgets what you said when you look away.</summary>
+        public SDG.Unturned.NpcDialogue CurrentDialogue { get; private set; }
+        public NpcCharacter CurrentSpeaker { get; private set; }
+
+        public void TalkTo(NpcCharacter npc)
+        {
+            if (npc == null || !IsInstanceValid(npc)) return;
+            var d = NpcCatalog.Dialogue(npc.DialogueId);
+            if (d == null)
+            {
+                // Said out loud rather than swallowed: 15 of the shipped targets point at map-bundle content we
+                // do not read, so "this person has nothing to say" is a real and explainable state.
+                HUD.Alert($"{npc.DisplayName} has nothing to say.");
+                Log.Print($"[npc] {npc.DisplayName}: dialogue {npc.DialogueId} not in the catalog");
+                return;
+            }
+            CurrentSpeaker = npc;
+            OpenDialogue(d);
+        }
+
+        /// <summary>Enter a dialogue node: pick the message its conditions allow and list the responses this
+        /// player can actually see.</summary>
+        public void OpenDialogue(SDG.Unturned.NpcDialogue d)
+        {
+            CurrentDialogue = d;
+            if (d == null) { CurrentSpeaker = null; return; }
+            var msg = SDG.Unturned.DialogueRules.MessageFor(d, NpcWorld);
+            Log.Print($"[npc] {CurrentSpeaker?.DisplayName}: \"{(msg != null && msg.Pages.Length > 0 ? msg.Pages[0] : "...")}\"");
+            foreach (int i in SDG.Unturned.DialogueRules.AvailableResponses(d, NpcWorld))
+            {
+                var r = d.Responses[i];
+                string tag = r.EndsConversation ? "end" : !string.IsNullOrEmpty(r.Vendor) ? "trade" : $"-> {r.Dialogue}";
+                Log.Print($"[npc]   [{i}] {r.Text}  ({tag})");
+            }
+        }
+
+        /// <summary>Pick a response BY ITS INDEX in the dialogue's own array -- never by position in the
+        /// filtered list. Rewards are granted first and then we move, because a reward that opens the branch we
+        /// are about to enter has to have landed before the conditions are re-read.</summary>
+        public bool ChooseResponse(int index)
+        {
+            var d = CurrentDialogue;
+            if (d == null || (uint)index >= (uint)d.Responses.Length) return false;
+            var r = d.Responses[index];
+            if (!SDG.Unturned.DialogueRules.PassesAll(r.Conditions, NpcWorld)) return false;   // not a response this player can see
+            SDG.Unturned.DialogueRules.Grant(r.Rewards, NpcWorld);
+            if (!string.IsNullOrEmpty(r.Vendor))
+            {
+                var v = NpcCatalog.Vendor(r.Vendor);
+                Log.Print(v != null ? $"[npc] opens trade: {v.Name} ({v.Selling.Length} for sale, {v.Buying.Length} wanted)"
+                                    : $"[npc] vendor {r.Vendor} not in the catalog");
+                return true;   // the trade UI is the next commit; the conversation stays open behind it
+            }
+            if (r.EndsConversation) { CloseDialogue(); return true; }
+            OpenDialogue(NpcCatalog.Dialogue(r.Dialogue));
+            return true;
+        }
+
+        public void CloseDialogue() { CurrentDialogue = null; CurrentSpeaker = null; }
 
         void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; _paintPendingT = 0f; _paintBusyT = 0f; }   // switching away mid-sweep drops the pending paint, like ClearHeldThrowable drops a pending release
 
@@ -7388,6 +7491,7 @@ namespace UnturnedGodot
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
+                else if (_focusNpc != null && IsInstanceValid(_focusNpc)) TalkTo(_focusNpc);   // looking at a person: F starts the conversation
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 // A BED IS TWO INTERACTIONS ON ONE KEY, resolved by whether it is already yours. First F
                 // claims it as your respawn; after that F lies down on it, and F again gets you up. That
