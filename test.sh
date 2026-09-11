@@ -182,7 +182,7 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   # outlives the script, and keeps holding the run lock -- so the NEXT run is refused by a daemon belonging to a
   # suite that finished minutes ago. MSBUILDDISABLENODEREUSE/DOTNET_CLI_USE_MSBUILD_SERVER above cover the MSBuild
   # daemons but not this one; observed 2026-08-07, lock held by a VBCSCompiler whose test.sh had long since died.
-  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then
+  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v n -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then   # -v n, NOT -v q: quiet prints neither the csc invocation nor the "Skipping target" line the check below reads
     return 1
   fi
   # After a FORCED cold compile the dll was deleted, so it must have been rebuilt. If it is not newer than the
@@ -190,34 +190,27 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   # rather than letting it wear the same red as a compile error (cow tools' ask: name the assembly and the gap).
   # EVERY assembly, not just the game's. "UnturnedGodot.dll is fresh" is true while it links a five-week-old
   # NetPak; the property actually wanted is "nothing in here is stale".
-  # ⚠ WHAT THIS CHECK CAN AND CANNOT DO -- measured, because I got it wrong twice writing it.
+  # ⚠ ASK THE BUILD LOG WHETHER A COMPILER RAN. Every timestamp-based version of this check failed, and
+  # failed the same way: `git checkout` stamps the restored obj dirs and dotnet's copy carries that mtime
+  # into the output dir, so a dll is "newer than this build started" whether or not anything compiled.
+  # Measured at 0180289f: the output SDG.NetPak.dll and the core/ obj it came from were BOTH 57s old.
   #
-  # It CANNOT catch the stale-assembly case above. `git checkout` restores the tracked obj dirs with the
-  # CHECKOUT's timestamp, and dotnet's copy into the output dir carries that forward -- so the dll sitting
-  # there is always "newer than this build started" whether a compiler ran or not. Measured at 0180289f:
-  # output SDG.NetPak.dll and its core/ obj were both 57s old, i.e. indistinguishable from a real build.
-  # That is the SAME trap this whole guard exists for -- asserting the thing the operation guarantees --
-  # and I walked into it while writing the fix for it. THE WIPE ABOVE IS THE MECHANISM; this is not.
+  # MSBuild says it outright, per project, and it is free because it is already in this log:
+  #   reused   -> `Skipping target "CoreCompile" because all output files are up-to-date`
+  #   compiled -> a csc invocation
+  # Measured both directions: steady state 8 skipped / 0 csc; touch one source -> 7 skipped / 1 csc.
+  # ⚠ `CoreCompile:` alone appears EITHER way -- the target always runs; only these two discriminate.
   #
-  # What it DOES catch is narrower and still worth having: a cold compile that produced no assembly at all
-  # (build reported success, output missing or untouched). Kept for that, and labelled honestly.
-  #
-  # OUR assemblies only, derived from the .csproj list: checking every dll flags GodotSharp.dll and
-  # GodotSharpEditor.dll -- Godot's own SDK, 163 days old, correctly never recompiled -- so the first
-  # version fired on EVERY run, and a guard that cries wolf is one somebody turns off.
+  # After a FORCED cold wipe nothing should be reusable, so a skip means the wipe did not reach that
+  # project -- which is exactly the bug that shipped here once (wiping game/ while all 287 tracked
+  # artifacts live under core/ and tests/). This is the check that would have caught it.
+  # (Signal found by cow tools; both of our earlier timestamp proposals were defeated by the copy.)
   if [ $_forced -eq 1 ]; then
-    local _ours _stale=""
-    _ours=$(find . -name '*.csproj' -not -path './.git/*' 2>/dev/null | xargs -r -n1 basename | sed 's/\.csproj$//')
-    for _n in $_ours; do
-      local _d="game/.godot/mono/temp/bin/Debug/$_n.dll"
-      [ -f "$_d" ] && [ ! "$_d" -nt "$_started" ] && _stale="$_stale$_d"$'\n'
-    done
-    _stale=$(printf '%s' "$_stale")
-    if [ -n "$_stale" ]; then
-      echo "[BUILD] ERROR | cold compile produced no fresh assembly for:"
-      echo "$_stale" | while read -r _f; do
-        echo "         $_f  ($(( $(date +%s) - $(stat -c %Y "$_f") ))s old, predating this build)"
-      done
+    local _reused; _reused=$(grep -oE 'Skipping target "CoreCompile"[^\n]*' "$RESULTS/game_build.log" 2>/dev/null | wc -l)
+    local _compiled; _compiled=$(grep -cE 'csc\.dll' "$RESULTS/game_build.log" 2>/dev/null)
+    if [ "$_compiled" -eq 0 ] || [ "$_reused" -gt 0 ]; then
+      echo "[BUILD] ERROR | cold compile REUSED $_reused project(s) and compiled $_compiled -- the wipe did not reach them"
+      grep -B3 'Skipping target "CoreCompile"' "$RESULTS/game_build.log" 2>/dev/null | grep -oE '[A-Za-z0-9_.]+\.csproj' | sort -u | sed 's/^/         stale: /' | head -10
       return 1
     fi
   fi
