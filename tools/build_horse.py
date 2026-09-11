@@ -231,15 +231,23 @@ def build():
     # Named indices: the mane and anything else reading the chain anchors by NAME so that inserting a ring
     # cannot silently re-aim it at a different part of the neck.
     SEC_CHEST, SEC_NECK_BASE, SEC_THROAT, SEC_POLL, SEC_MUZZLE = range(5)
+    # ⚠ X-SPACING BUG, found after strawberry called the render "the same" twice running. Both prior fixes
+    # deepened NECK_BASE and THROAT correctly, but never checked the DISTANCE between them: printing the
+    # actual (x, top, bottom) of every ring showed NECK_BASE at x=-1.08 and THROAT at x=-1.16, 0.08 m apart
+    # on a neck whose visible length runs about 1.1 m. The thickened base was real but occupied almost no
+    # LENGTH of the neck -- a single point, not a girth -- and the 0.67 m run a viewer's eye actually follows
+    # (throat -> poll -> muzzle) is the part that had barely moved across two commits. Eyeballing the render
+    # again would not have found this; the thickness at each ring was correct, only the gap was wrong.
     sections = [
         (-L*.42,  leg+depth*.50, depth*.42, W*.25),   # buried in the chest -- must stay INSIDE [leg, H] here
                                                      # or its cap pokes through the back (audit: exposed root)
-        (-L*.60,  H-depth*.14,   depth*.46, W*.20),   # base of the neck: crest above the withers, throat low
+        (-L*.48,  H-depth*.14,   depth*.46, W*.20),   # base of the neck: crest above the withers, throat low
+                                                     # (-L*.60 -> -L*.48: opens a real 0.36 m run to THROAT)
         # strawberry 2026-09-11, after the base was fixed: "the upper neck is thin". It was -- the base went
         # to 0.68 m deep and the throatlatch stayed at 0.50, so the taper did all its work in the 0.08 m
         # between those two rings and everything forward of it read as a stalk. The upper neck carries more
         # of the base's depth now and the jaw gains with it, which is also where a horse is actually thick.
-        (hx+hl*.05, poll-hh*.34, hh*.80,    d['head_width']*.68),   # throatlatch
+        (hx-hl*.05, poll-hh*.34, hh*.80,    d['head_width']*.68),   # throatlatch (hx+hl*.05 -> hx-hl*.05)
         (hx-hl*.30, poll-hh*.34, hh*.60,    d['head_width']*.56),   # poll / jaw -- the head begins here
         (hx-hl,     poll-hh*.86, hh*.22,    d['head_width']*.34),   # muzzle
     ]
