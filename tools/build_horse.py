@@ -241,7 +241,18 @@ def build():
     sections = [
         (-L*.42,  leg+depth*.50, depth*.42, W*.25),   # buried in the chest -- must stay INSIDE [leg, H] here
                                                      # or its cap pokes through the back (audit: exposed root)
-        (-L*.48,  H-depth*.14,   depth*.46, W*.20),   # base of the neck: crest above the withers, throat low
+        # strawberry 2026-09-11: "morph the body to accept the head". The body's own top is FLAT and reaches
+        # H right up to its front edge (x=-L/2); NECK_BASE's crest sat at 2.05, a full 0.24 m above H,
+        # concentrated into the ~0.04 m sliver between the body's edge and NECK_BASE's own x -- a spike, not
+        # a rise. Real withers slope up into the neck over real distance.
+        #
+        # First attempt lowered the ring's CENTRE, which dropped the throat point along with the crest and
+        # pushed it through the body on Walk/rest (audit caught it: "exposed attachment root"). The throat
+        # side was never the problem, so it is pinned at its ORIGINAL value (1.366) and only the crest comes
+        # down, to 1.90 -- just above H rather than 0.24 m above it. That is a real reduction in this ring's
+        # own depth (0.68 -> 0.53), the tradeoff for a gentler rise; the ratio stays blade-like (3.6:1) and
+        # the THROATLATCH ring (the one actually asked for by name) keeps its full 0.64 m untouched.
+        (-L*.48,  (1.366+1.90)/2, (1.90-1.366)/2, W*.20),   # base of the neck: crest just above the withers now
                                                      # (-L*.60 -> -L*.48: opens a real 0.36 m run to THROAT)
         # strawberry 2026-09-11, after the base was fixed: "the upper neck is thin". It was -- the base went
         # to 0.68 m deep and the throatlatch stayed at 0.50, so the taper did all its work in the 0.08 m
