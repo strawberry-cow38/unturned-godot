@@ -1059,11 +1059,24 @@ namespace UnturnedGodot
                 // `npc chef 4` stands them further off -- 2 m is the talking distance (retail's ray is 3) and
                 // too close to see a whole person in a screenshot.
                 float dist = 2f;
+                // `npc chef 3 talk` spawns them AND opens the conversation. A test affordance and said to be
+                // one: an offline capture cannot press F, and the panel is the thing worth looking at.
+                bool autoTalk = false;
+                var bits0 = want.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits0.Length > 1 && bits0[bits0.Length - 1].ToLowerInvariant() == "talk")
+                { autoTalk = true; want = string.Join(' ', bits0, 0, bits0.Length - 1); }
                 var bits = want.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (bits.Length > 1 && float.TryParse(bits[bits.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float dparsed))
                 { dist = Mathf.Clamp(dparsed, 1f, 20f); want = string.Join(' ', bits, 0, bits.Length - 1); }
                 var fwd = -Player.LookBasis.Z;
                 var spot = Player.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * dist;
+                // ⚠ SNAP TO THE GROUND AHEAD, not to the Y you happen to be standing at. A PlayerController's
+                // origin IS its feet, so on FLAT ground copying its Y looks right -- and on the slightest slope
+                // it buries them. The first render of this had Chef Leonard sunk to the chest in a hillside and
+                // nothing in the console said so; only the picture did. Same SampleHeight the elevator spawn
+                // uses (terrain, so a spot on a road or a roof still resolves to the ground under it -- fine for
+                // a dev spawn two metres ahead, and said out loud rather than discovered later).
+                if (WorldTerrain != null) spot.Y = WorldTerrain.SampleHeight(spot.X, spot.Z);
                 var def = NpcCatalog.CharacterByKey(want);
                 if (def == null)
                 {
@@ -1081,6 +1094,7 @@ namespace UnturnedGodot
                 Echo(npc != null
                     ? $"{def.Name} ({def.Key}) -- dialogue {def.Dialogue}{(NpcCatalog.Dialogue(def.Dialogue) == null ? " (NOT in the catalog)" : "")}"
                     : $"could not build {def.Key} -- the rig failed to load");
+                if (autoTalk && npc != null) Player.TalkTo(npc);
             }
             else if (verb == "gesture")
             {

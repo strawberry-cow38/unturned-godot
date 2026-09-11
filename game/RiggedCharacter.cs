@@ -171,6 +171,33 @@ namespace UnturnedGodot
         public void AttachMask(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _maskAtt, "Skull", mesh, albedo, offset, "Mask");
         public void AttachGlasses(Mesh mesh, Texture2D albedo, Vector3 offset = default, Texture2D emission = null) => AttachGear(ref _glassesAtt, "Skull", mesh, albedo, offset, "Glasses", emission);
 
+        /// <summary>Highest point of anything worn ON THE HEAD, in this character's own local space; 0 when
+        /// bare. Used to seat a nameplate above a tall hat instead of through the middle of one.
+        ///
+        /// The gear AABB is trustworthy HERE in a way a SKINNED mesh's is not -- the trap that has bitten this
+        /// repo before. Gear is a RIGID prop parented to the Skull bone, so its bounds travel with the bone;
+        /// it is the skinned body whose AABB is frozen in the bind pose and lies about where the limbs are.
+        ///
+        /// Yaw-only and unscaled (every rig in the game is), so a global Y minus this node's own global Y is
+        /// already the local one -- no basis inverse needed.</summary>
+        public float HeadwearTopLocalY()
+        {
+            float baseY = GlobalPosition.Y, top = 0f;
+            void Scan(BoneAttachment3D att)
+            {
+                if (att == null || !GodotObject.IsInstanceValid(att)) return;
+                foreach (var ch in att.GetChildren())
+                {
+                    if (ch is not MeshInstance3D mi || mi.Mesh == null) continue;
+                    var a = mi.GetAabb();
+                    var t = mi.GlobalTransform;
+                    for (int i = 0; i < 8; i++) top = Mathf.Max(top, (t * a.GetEndpoint(i)).Y - baseY);
+                }
+            }
+            Scan(_hatAtt); Scan(_maskAtt); Scan(_glassesAtt);
+            return top;
+        }
+
         /// <summary>Light the worn glasses' lens, or put it out. A no-op on gear with no emission bound, so it is
         /// safe to call every frame from whatever owns the device's on/off state.</summary>
         public void SetGlassesGlow(bool on, float energy = 3.2f)

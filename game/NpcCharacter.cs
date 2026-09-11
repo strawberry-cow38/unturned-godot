@@ -71,12 +71,12 @@ namespace UnturnedGodot
                 npc._plate?.Set(def.Name, null);
                 if (npc._plate != null)
                 {
-                    // Nameplate's 2.05 m clears a BARE head. A chef's toque does not fit under it, and the first
-                    // render had his name with a hat through the middle of it. Raised HERE rather than in
-                    // Nameplate, because that height is tuned for remote players and moving it would shift every
-                    // plate in the game to fix a hat -- the depth test stays on, deliberately (a plate behind a
-                    // wall is meant to stay behind the wall; that is the shared rule working, not the bug).
-                    if (def.Hat != 0) npc._plate.Position += new Vector3(0f, 0.28f, 0f);
+                    // The height is MEASURED off the worn gear, not guessed -- see Nameplate.SeatAboveGear.
+                    // ⚠ NOT HERE THOUGH: a BoneAttachment3D only catches up when the skeleton emits its pose,
+                    // so the hat's transform at build time is still the identity and measuring it now returns
+                    // the head height with a very confident zero attached. Seated on the first _Process frame
+                    // instead, after Tick has actually posed the thing. The depth test stays on, deliberately
+                    // (a plate behind a wall is meant to stay behind the wall; that is the shared rule working).
                     npc._plate.Visible = false;   // shown on look, see SetLookFocused
                 }
             }
@@ -113,7 +113,20 @@ namespace UnturnedGodot
             if (_body == null || !GodotObject.IsInstanceValid(_body)) { SetProcess(false); return; }
             _body.SetLocomotion(0f, EPlayerStance.STAND);
             _body.Tick(delta);
+            if (!_plateSeated && _plate != null && GodotObject.IsInstanceValid(_plate))
+            {
+                // Once, on the first posed frame -- the bone attachment has a real transform by now. Re-running
+                // it every frame would be a GetAabb loop over gear that cannot move on a person who never does.
+                _plateSeated = true;
+                float gearTop = _body.HeadwearTopLocalY();
+                _plate.SeatAboveGear(gearTop);
+                // Say the number. Whether a hat cleared is exactly the thing a downscaled screenshot cannot
+                // settle, and "0.00" here is how a hat that never attached tells you so instead of looking fine.
+                if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1")
+                    Log.Print($"[npcplate] {Def?.Key} hat={Def?.Hat} gearTop={gearTop:0.###} plateY={_plate.Position.Y:0.###}");
+            }
         }
+        bool _plateSeated;
 
         public string DisplayName => Def?.Name ?? "Someone";
         public int DialogueId => Def?.Dialogue ?? 0;

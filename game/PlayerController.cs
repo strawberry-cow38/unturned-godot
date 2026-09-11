@@ -2763,6 +2763,13 @@ namespace UnturnedGodot
         /// that lives in its own window is one that forgets what you said when you look away.</summary>
         public SDG.Unturned.NpcDialogue CurrentDialogue { get; private set; }
         public NpcCharacter CurrentSpeaker { get; private set; }
+        DialogueUI _dialogueUI;
+
+        /// <summary>Which responses this player can see, as indices into the dialogue's own array. Exposed so
+        /// the panel can REDRAW after a page turn without re-deciding anything -- the moment the view starts
+        /// filtering for itself there are two answers to "what can I say" and they will differ.</summary>
+        public System.Collections.Generic.List<int> AvailableResponseIndices()
+            => SDG.Unturned.DialogueRules.AvailableResponses(CurrentDialogue, NpcWorld);
 
         public void TalkTo(NpcCharacter npc)
         {
@@ -2787,13 +2794,14 @@ namespace UnturnedGodot
             CurrentDialogue = d;
             if (d == null) { CurrentSpeaker = null; return; }
             var msg = SDG.Unturned.DialogueRules.MessageFor(d, NpcWorld);
-            Log.Print($"[npc] {CurrentSpeaker?.DisplayName}: \"{(msg != null && msg.Pages.Length > 0 ? msg.Pages[0] : "...")}\"");
-            foreach (int i in SDG.Unturned.DialogueRules.AvailableResponses(d, NpcWorld))
+            var available = SDG.Unturned.DialogueRules.AvailableResponses(d, NpcWorld);
+            Log.Print($"[npc] {CurrentSpeaker?.DisplayName}: \"{(msg != null && msg.Pages.Length > 0 ? msg.Pages[0] : "...")}\" ({available.Count} options)");
+            if (_dialogueUI == null || !IsInstanceValid(_dialogueUI))
             {
-                var r = d.Responses[i];
-                string tag = r.EndsConversation ? "end" : !string.IsNullOrEmpty(r.Vendor) ? "trade" : $"-> {r.Dialogue}";
-                Log.Print($"[npc]   [{i}] {r.Text}  ({tag})");
+                _dialogueUI = new DialogueUI();
+                (GetParent() ?? (Node)this).AddChild(_dialogueUI);
             }
+            _dialogueUI.Open(this, CurrentSpeaker?.DisplayName ?? "", d, msg, available);
         }
 
         /// <summary>Pick a response BY ITS INDEX in the dialogue's own array -- never by position in the
@@ -2818,7 +2826,11 @@ namespace UnturnedGodot
             return true;
         }
 
-        public void CloseDialogue() { CurrentDialogue = null; CurrentSpeaker = null; }
+        public void CloseDialogue()
+        {
+            CurrentDialogue = null; CurrentSpeaker = null;
+            if (_dialogueUI != null && IsInstanceValid(_dialogueUI)) _dialogueUI.Close();
+        }
 
         void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; _paintPendingT = 0f; _paintBusyT = 0f; }   // switching away mid-sweep drops the pending paint, like ClearHeldThrowable drops a pending release
 
@@ -7548,6 +7560,7 @@ namespace UnturnedGodot
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
+                else if (_dialogueUI != null && IsInstanceValid(_dialogueUI) && _dialogueUI.IsOpen) CloseDialogue();   // already talking: F is the way out, like every other panel
                 else if (_focusNpc != null && IsInstanceValid(_focusNpc)) TalkTo(_focusNpc);   // looking at a person: F starts the conversation
                 else if (_focusNote != null && IsInstanceValid(_focusNote)) _noteReader?.Show(_focusNote);   // looking at a readable note: F reads it
                 // A BED IS TWO INTERACTIONS ON ONE KEY, resolved by whether it is already yours. First F
