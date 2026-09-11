@@ -235,8 +235,12 @@ def build():
         (-L*.42,  leg+depth*.50, depth*.42, W*.25),   # buried in the chest -- must stay INSIDE [leg, H] here
                                                      # or its cap pokes through the back (audit: exposed root)
         (-L*.60,  H-depth*.14,   depth*.46, W*.20),   # base of the neck: crest above the withers, throat low
-        (hx+hl*.05, poll-hh*.34, hh*.62,    d['head_width']*.58),   # throatlatch
-        (hx-hl*.30, poll-hh*.34, hh*.48,    d['head_width']*.50),   # poll / jaw -- the head begins here
+        # strawberry 2026-09-11, after the base was fixed: "the upper neck is thin". It was -- the base went
+        # to 0.68 m deep and the throatlatch stayed at 0.50, so the taper did all its work in the 0.08 m
+        # between those two rings and everything forward of it read as a stalk. The upper neck carries more
+        # of the base's depth now and the jaw gains with it, which is also where a horse is actually thick.
+        (hx+hl*.05, poll-hh*.34, hh*.80,    d['head_width']*.68),   # throatlatch
+        (hx-hl*.30, poll-hh*.34, hh*.60,    d['head_width']*.56),   # poll / jaw -- the head begins here
         (hx-hl,     poll-hh*.86, hh*.22,    d['head_width']*.34),   # muzzle
     ]
     rings = []
