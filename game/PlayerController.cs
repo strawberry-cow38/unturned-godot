@@ -363,6 +363,15 @@ namespace UnturnedGodot
         public float MaxHealth { get => _vitals.MaxHealth; set => _vitals.MaxHealth = value; }
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
+
+        /// <summary>Seconds this player has stood in contaminated ground, 0 when clear. Written by
+        /// DeadzoneField each poll and read by the HUD's radiation icon and the DeadzoneOverlay's grain.
+        ///
+        /// On the player rather than in the overlay so both readers share ONE clock: a screen effect that
+        /// kept its own timer would drift from the dose being applied, and the thing the grain is supposed to
+        /// communicate is exactly how long you have been getting dosed.</summary>
+        public float DeadzoneSeconds;
+        public bool InDeadzone => DeadzoneSeconds > 0f;
         public bool Broken;        // PlayerLife.isBroken: broken legs (from a hard fall) -- blocks sprint + jump until mended
 
         /// <summary>What this player feels, as opposed to what the map is doing (WorldTemperature). Public so

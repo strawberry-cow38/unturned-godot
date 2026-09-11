@@ -36,11 +36,9 @@ namespace UnturnedGodot.Net
         /// is protected, which is only right for a harness with no inventories at all.</summary>
         public Func<ushort, RadiationGear> GearOf;
 
-        /// <summary>Health to remove. Wire this to the same sink the other server-derived damage uses, so
-        /// a deadzone can kill and the death runs the normal path.</summary>
-        public Action<ushort, float> DamageSink;
-
-        /// <summary>Virus accrued while unprotected.</summary>
+        /// <summary>Virus accrued. A deadzone's ONLY output (strawberry 2026-09-11: infection, not health) --
+        /// the DamageSink that used to sit beside this is gone deliberately, so the server cannot take health
+        /// by a path the client's own copy of the sim does not have.</summary>
         public Action<ushort, float> InfectionSink;
 
         /// <summary>Whole points of mask filter burned this step.</summary>
@@ -120,7 +118,6 @@ namespace UnturnedGodot.Net
             var gear = GearOf != null ? GearOf(playerId) : default;
             var r = sim.Step(volume.Zone, gear, dt);
 
-            if (r.Damage > 0f) DamageSink?.Invoke(playerId, r.Damage);
             if (r.Radiation > 0f) InfectionSink?.Invoke(playerId, r.Radiation);
             if (r.MaskQualityLost > 0) MaskBurnSink?.Invoke(playerId, r.MaskQualityLost);
         }

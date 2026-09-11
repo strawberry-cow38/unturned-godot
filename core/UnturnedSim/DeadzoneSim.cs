@@ -11,23 +11,33 @@ namespace SDG.Unturned
         FullSuitRadiation = 1,
     }
 
-    /// <summary>A contaminated volume. Rates are per second so a caller can step at any rate.</summary>
+    /// <summary>A contaminated volume. Rates are per second so a caller can step at any rate.
+    ///
+    /// ⚠ CONTAMINATION IS INFECTION, NOT HEALTH (strawberry 2026-09-11: "wire deadzones to deal infection
+    /// damage instead of hp"). This used to take health directly and add a little virus on the side. It now
+    /// takes ONLY infection, and the health cost -- if any -- arrives through PlayerVitalsSim, which already
+    /// kills at Infection 1.0 and already drains infection back down below 0.5 on its own.
+    ///
+    /// That second half is why the rates are what they are rather than a straight port of the old numbers.
+    /// Self-clearing below 0.5 means a short exposure genuinely heals off, so a dose has to be big enough to
+    /// push PAST the halfway mark to be a threat at all -- brief trips are survivable by design, and standing
+    /// in one is what kills you.</summary>
     public struct DeadzoneDef
     {
         public DeadzoneKind Kind;
-        public float ProtectedDamagePerSecond;    // attrition even in a good suit -- a sealed suit buys time, not immunity
-        public float UnprotectedDamagePerSecond;  // health loss with no protection
-        public float RadiationPerSecond;          // virus/infection accrued while unprotected
-        public float MaskFilterLossPerSecond;     // filter quality burned while the mask is doing its job
+        public float ProtectedRadiationPerSecond;    // attrition even in a good suit -- a sealed suit buys time, not immunity
+        public float UnprotectedRadiationPerSecond;  // infection accrued with no protection
+        public float MaskFilterLossPerSecond;        // filter quality burned while the mask is doing its job
 
-        /// <summary>The stand-in used until per-zone values come from map data. Deliberately survivable
-        /// in a suit and quickly lethal without one.</summary>
+        /// <summary>The stand-in used until per-zone values come from map data. Infection runs 0..1 and is
+        /// fatal at 1.0, so these are chosen against that scale rather than against a health pool:
+        /// unprotected is ~40 s from clean to dead, a sealed suit ~5 minutes. The old 1:8 protected-to-
+        /// unprotected ratio is kept -- the suit was worth wearing at that ratio and still is.</summary>
         public static DeadzoneDef Default(DeadzoneKind kind = DeadzoneKind.Radiation) => new DeadzoneDef
         {
             Kind = kind,
-            ProtectedDamagePerSecond = 1f,
-            UnprotectedDamagePerSecond = 8f,
-            RadiationPerSecond = 0.10f,
+            ProtectedRadiationPerSecond = 0.003f,
+            UnprotectedRadiationPerSecond = 0.025f,
             MaskFilterLossPerSecond = 2f,
         };
     }
@@ -41,10 +51,13 @@ namespace SDG.Unturned
         public bool PantsProofs;
     }
 
-    /// <summary>What a single step of standing in a deadzone did.</summary>
+    /// <summary>What a single step of standing in a deadzone did.
+    ///
+    /// No Damage field any more, and its absence is the point: a deadzone has exactly one way to hurt you
+    /// now, so there is no path by which a zone quietly takes health without the infection meter -- the thing
+    /// the player is actually watching -- moving first.</summary>
     public struct DeadzoneTickResult
     {
-        public float Damage;          // health to remove
         public float Radiation;       // infection to add
         public int MaskQualityLost;   // whole points of filter burned this step
         public bool Protected;        // was the suit holding?
@@ -112,7 +125,9 @@ namespace SDG.Unturned
             result.Protected = IsProtected(zone, gear);
             if (result.Protected)
             {
-                result.Damage = zone.ProtectedDamagePerSecond * dt;
+                // A sealed suit slows the dose, it does not stop it -- same claim the old health-based
+                // version made, expressed on the axis that now carries the whole hazard.
+                result.Radiation = zone.ProtectedRadiationPerSecond * dt;
 
                 // The filter is what is actually being consumed; when it runs out the next step is
                 // unprotected, which is the failure mode worth feeling.
@@ -126,8 +141,7 @@ namespace SDG.Unturned
             }
             else
             {
-                result.Damage = zone.UnprotectedDamagePerSecond * dt;
-                result.Radiation = zone.RadiationPerSecond * dt;
+                result.Radiation = zone.UnprotectedRadiationPerSecond * dt;
             }
             return result;
         }

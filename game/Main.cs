@@ -4601,6 +4601,7 @@ namespace UnturnedGodot
             // but PEI renders take ~400 s and this one takes ~120 -- and looking at a purely visual change is
             // not optional, so the harness hook exists to put it over a scene that will actually finish.
             ChromaticAberration.DebugAttach(this);
+            DeadzoneOverlay.DebugAttach(this);   // UG_DEADZONE=<seconds> over the same golden scene, same reasoning
 
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             // UG_SPOTNIGHT=1: the same stage at NIGHT. A light shaft is invisible under a 1.0-energy ambient and a
@@ -5799,6 +5800,19 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
                 { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
                 GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
+            }
+            // CONTAMINATED-GROUND GRAIN (strawberry 2026-09-11). Mounted here for the same reason the lens is:
+            // it is a property of the view, not of the player, and it has to exist before anyone walks into a
+            // zone. Costs nothing while clear -- the rect stays hidden until exposure is non-zero.
+            if (DeadzoneOverlay.Current == null)
+            {
+                var dzo = new DeadzoneOverlay { Player = res.Player };
+                AddChild(dzo);
+                // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
+                // a purely visual effect has to be lookable-at without first finding a deadzone and standing
+                // in it for 40 seconds.
+                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzSecs) && res.Player != null)
+                    res.Player.DeadzoneSeconds = dzSecs;
             }
             if (res.DayNight != null && WeatherManager.Current == null)
             {

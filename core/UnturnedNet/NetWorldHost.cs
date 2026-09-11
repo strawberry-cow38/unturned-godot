@@ -229,7 +229,9 @@ namespace UnturnedGodot.Net
             // queue (death-capable, same as fall/starvation), infection through the owner vitals block, and
             // the filter burn onto the server's own mask so the owner echo carries the spent quality back.
             Deadzones.GearOf = pid => Inventories.TryGet(pid, out var inv) ? inv.Inventory.RadiationProtection() : default;
-            Deadzones.DamageSink = (pid, dmg) => Combat.DamagePlayerExternal(pid, dmg);
+            // No DamageSink: a deadzone deals infection only (strawberry 2026-09-11), and a contaminated
+            // death now arrives through the vitals sim's own infection-fatal path rather than as a second,
+            // separate stream of environmental damage.
             Deadzones.InfectionSink = (pid, amount) => Vitals.ServerRaise(pid, 0f, 0f, 0f, amount, false, false, Session.CurrentTick);
             Deadzones.MaskBurnSink = (pid, points) =>
             {

@@ -201,6 +201,14 @@ namespace UnturnedGodot
             AddStatus(root, 1, "hud_broken.png",   () => Player != null && Player.Broken);
             AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
             // virus is now the situational infection METER in the vitals (above), not a binary status icon (master)
+            // RADIATION: you are standing in contaminated ground (strawberry 2026-09-11: "add a new radiation
+            // effect symbol (the infection one) when in a deadzone"). Reuses hud_virus.png on purpose -- named
+            // in the ask, and it is the honest icon now that a deadzone's only effect IS infection: the symbol
+            // the meter uses is the symbol for what the zone is doing to you.
+            // hud_virus.png, not a new asset: "(the infection one)" names it, it is the honest symbol now that
+            // a deadzone's ONLY effect is infection, and LoadTex returns null for a missing file -- so a
+            // made-up filename here would have drawn an empty box and looked like the icon simply never fires.
+            AddStatus(root, 3, "hud_virus.png", () => Player != null && Player.InDeadzone);
 
             // HOTBAR, bottom-centre (strawberry 2026-08-16: "add a 'hotbar' showing the icons of you primary,
             // secondary slots (providing theres something in those slots) plus whatever item icons for the
