@@ -23,6 +23,16 @@ namespace SDG.Unturned
 
         public const int DaysPerYear = 365;
 
+        /// <summary>The day-of-year the WORLD started on (strawberry 2026-09-10: "you can set a starting
+        /// date/month when starting. then theres a real in game calendar"). DayNightCycle.Day counts forward
+        /// from here, so this plus that counter is the calendar.
+        ///
+        /// Lives here rather than on PlayerController because it is a property of the world, not of a player
+        /// -- two players in one world are in the same month. Saved and restored with the rest of the clock
+        /// (WorldSave), or a reload would silently move the season. 172 = late June.</summary>
+        public static int StartDayOfYear = DefaultStartDayOfYear;
+        public const int DefaultStartDayOfYear = 172;
+
         /// <summary>Coldest day of the year (northern-hemisphere mid-January) and the hour the ground is
         /// coldest. The daily minimum is at dawn rather than midnight because the ground keeps radiating heat
         /// all night -- that is why the curve is anchored here and not at 00:00.</summary>

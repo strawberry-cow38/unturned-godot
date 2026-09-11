@@ -50,6 +50,12 @@ namespace UnturnedGodot.Net
         // ---- world ----
         public int Day { get; set; }
         public float TimeOfDay01 { get; set; }
+
+        /// <summary>Day-of-year the world was STARTED on. Day counts forward from it, so the pair is the
+        /// calendar and the season. Defaults rather than being required: a save written before this field
+        /// existed loads with the standard start instead of failing, and a world that never set one is the
+        /// same as one that set the default.</summary>
+        public int StartDayOfYear { get; set; } = SDG.Unturned.WorldTemperature.DefaultStartDayOfYear;
         public float DayLengthSeconds { get; set; }
         /// <summary>The mains switch: every GridSource fixture's ToggledOn bit. `toggleglobalpower` sets them
         /// all together, so the whole grid state is one boolean -- see ServerTransactions.RunConsole.</summary>
@@ -290,6 +296,7 @@ namespace UnturnedGodot.Net
                 SavedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Day = day,
                 TimeOfDay01 = timeOfDay01,
+                StartDayOfYear = SDG.Unturned.WorldTemperature.StartDayOfYear,
                 DayLengthSeconds = dayLengthSeconds,
                 GlobalPower = AnyGridSourceOn(host),
             };

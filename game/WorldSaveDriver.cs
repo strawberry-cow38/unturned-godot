@@ -81,6 +81,9 @@ namespace UnturnedGodot
             _server.PendingSave = save;                       // players restore out of this as they connect
             save.ApplyWorld(_server, _server.Session.CurrentTick);
 
+            // Restored BEFORE the clock, and unconditionally -- it is not gated on _clock existing, because
+            // the season is read from it even in a mode with no day/night cycle node.
+            SDG.Unturned.WorldTemperature.StartDayOfYear = save.StartDayOfYear;
             if (_clock != null)
             {
                 _clock.Day = save.Day;

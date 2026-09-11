@@ -84,5 +84,26 @@ namespace UnturnedSim.Tests
             Assert.That(WorldTemperature.WeatherOffsetC("Snow", 5f), Is.EqualTo(-10f).Within(1e-4f));
             Assert.That(WorldTemperature.WeatherOffsetC("Snow", -3f), Is.EqualTo(0f).Within(1e-4f));
         }
-    }
+    
+        [Test]
+        public void StartDayOfYear_PlusElapsed_IsTheCalendar()
+        {
+            // strawberry: "you can set a starting date/month when starting. then theres a real in game
+            // calendar". The calendar is this pair -- a start date plus DayNightCycle.Day, which already
+            // existed, is monotonic and already saved.
+            int start = WorldTemperature.DefaultStartDayOfYear;   // 172, late June
+            Assert.That(WorldTemperature.DayOfYear(start, 0), Is.EqualTo(start));
+            Assert.That(WorldTemperature.DayOfYear(start, 100), Is.EqualTo(272));   // late September
+        }
+
+        [Test]
+        public void StartingInWinter_IsColderThanStartingInSummer_OnTheSameElapsedDay()
+        {
+            // The point of a settable start date: day 10 of a world means something different depending on
+            // when it began. Same clock time, same elapsed days, different month.
+            float summerStart = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(172, 10), Noon);
+            float winterStart = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(355, 10), Noon);
+            Assert.That(winterStart, Is.LessThan(summerStart - 15f));
+        }
+}
 }

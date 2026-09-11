@@ -369,10 +369,6 @@ namespace UnturnedGodot
         /// the HUD and the tests can read the band without re-deriving it from six inputs.</summary>
         public readonly PlayerTemperatureSim Temperature = new PlayerTemperatureSim();
 
-        /// <summary>Day-of-year the world STARTED on -- strawberry 2026-09-10: "you can set a starting
-        /// date/month when starting". DayNightCycle.Day counts forward from it. 172 = late June.</summary>
-        public static int StartDayOfYear = 172;
-
         // The environment probes (a group walk, two raycasts) are sampled at 4 Hz, not 50. The body has a 45 s
         // time constant, so a quarter-second sample is indistinguishable from a per-tick one -- and the
         // per-tick version is a raycast per player per frame for a number that cannot visibly move in 20 ms.
@@ -395,7 +391,7 @@ namespace UnturnedGodot
                 // on day zero, so a harness with no clock is not silently in a winter night.
                 float tod = dn?.Time ?? 0.5f;
                 int day = dn?.Day ?? 0;
-                _tempAmbientC = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(StartDayOfYear, day), tod,
+                _tempAmbientC = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, day), tod,
                                                           WorldTemperature.WeatherOffsetC(weather, blend));
                 _tempSourceC = ThermalField.NetC(this, GlobalPosition);
                 _tempRaining = wm?.IsRaining ?? false;
