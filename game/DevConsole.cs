@@ -71,7 +71,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -514,6 +514,119 @@ namespace UnturnedGodot
                 }
                 return;
             }
+            // ---- temperature (strawberry 2026-09-11: "add debug commands for temperature") -----------------
+            // All above the arg guard: every one of them has a useful bare form, and the guard below turns a
+            // no-arg command into a usage line.
+            if (verb is "temp" or "tempset" or "temphold" or "wetness" or "thermal" or "worldtemp" or "startdate")
+            {
+                if (verb == "worldtemp" || verb == "startdate")
+                {
+                    // These two read the CURVE, not a player, so they work with no one spawned.
+                    var dnc0 = DayNight();
+                    if (verb == "startdate")
+                    {
+                        if (arg.Length > 0)
+                        {
+                            if (!ParseDayOfYear(arg, out int sd)) { Echo($"bad date '{arg}' (try: 172, jan, july, dec)"); return; }
+                            WorldTemperature.StartDayOfYear = sd;
+                        }
+                        int cur = WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, dnc0?.Day ?? 0);
+                        Echo($"world started on day {WorldTemperature.StartDayOfYear} ({MonthOf(WorldTemperature.StartDayOfYear)})  ·  today is day {cur} ({MonthOf(cur)}), {dnc0?.Day ?? 0} elapsed");
+                        return;
+                    }
+                    // worldtemp [dayOfYear] [time] -- sample the ambient curve WITHOUT moving the clock, so you
+                    // can ask "is midwinter dawn actually cold" without living through it and coming back.
+                    int qd = WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, dnc0?.Day ?? 0);
+                    float qt = dnc0?.Time ?? 0.5f;
+                    var bits = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                    if (bits.Length > 0 && !ParseDayOfYear(bits[0], out qd)) { Echo($"bad date '{bits[0]}' (try: 15, jan, july)"); return; }
+                    if (bits.Length > 1)
+                    {
+                        if (!ParseClock(bits[1], out float qh, allowNeg: false)) { Echo($"bad time '{bits[1]}' (try: noon, 0500, 18:30)"); return; }
+                        qt = Mathf.PosMod(qh / 24f, 1f);
+                    }
+                    Echo($"day {qd} ({MonthOf(qd)}) at {FormatTime(qt)}: {WorldTemperature.AmbientC(qd, qt):0.0} C"
+                       + $"  ·  season {WorldTemperature.SeasonPhase(qd):+0.00;-0.00} · diurnal {WorldTemperature.DiurnalPhase(qt):+0.00;-0.00}"
+                       + $"  (mean {WorldTemperature.BaseMeanC:0.#} ± {WorldTemperature.SeasonAmplitude:0.#} season ± {WorldTemperature.DiurnalAmplitude:0.#} day)");
+                    return;
+                }
+
+                if (Player == null) { Echo($"{verb}: no player"); return; }
+                var t = Player.Temperature;
+                var pr = Player.DebugTemperatureProbe;
+
+                if (verb == "tempset")
+                {
+                    if (arg.Length == 0) { Echo($"usage: tempset <degrees C>   (comfort is {PlayerTemperatureSim.ComfortLowC:0}..{PlayerTemperatureSim.ComfortHighC:0}, lethal below {PlayerTemperatureSim.FreezingBelowC:0} / above {PlayerTemperatureSim.BoilingAboveC:0})"); return; }
+                    if (!float.TryParse(arg, out float c)) { Echo($"bad temperature '{arg}'"); return; }
+                    t.BodyC = c;
+                    if (Player.TemperatureHoldC.HasValue) Player.TemperatureHoldC = c;   // already holding: move the pin, don't snap back to the old one
+                    Echo($"body -> {c:0.0} C ({t.CurrentBand}, bar {t.Comfort:+0.00;-0.00})"
+                       + (Player.TemperatureHoldC.HasValue ? " -- HELD" : $" -- drifting back toward {PlayerTemperatureSim.TargetC(pr.ambientC, pr.sourceC, pr.exerting, t.Wetness, Player.Inventory?.InsulationColdC ?? 0f, Player.Inventory?.InsulationHeatC ?? 0f):0.0} C; `temphold on` to pin it"));
+                    return;
+                }
+                if (verb == "temphold")
+                {
+                    string h = arg.ToLowerInvariant();
+                    bool on = h is "on" or "1" or "true" ? true
+                            : h is "off" or "0" or "false" ? false
+                            : !Player.TemperatureHoldC.HasValue;
+                    Player.TemperatureHoldC = on ? t.BodyC : null;
+                    Echo(on ? $"body temperature HELD at {t.BodyC:0.0} C (probes and wetness keep running)" : "body temperature released -- drifting back to ambient");
+                    return;
+                }
+                if (verb == "wetness")
+                {
+                    string w = arg.ToLowerInvariant();
+                    if (w.Length == 0) { Echo($"wetness {t.Wetness:0.00}  ({(t.Wetness > 0.05f ? $"reads {t.Wetness * PlayerTemperatureSim.SoakedChillC:0.0} C colder" : "dry")})"); return; }
+                    float v = w == "soak" ? 1f : w == "dry" ? 0f : float.TryParse(w, out float pw) ? pw : float.NaN;
+                    if (float.IsNaN(v)) { Echo("usage: wetness [0..1|soak|dry]"); return; }
+                    t.Wetness = Mathf.Clamp(v, 0f, 1f);
+                    Echo($"wetness {t.Wetness:0.00} -> reads {t.Wetness * PlayerTemperatureSim.SoakedChillC:0.0} C colder");
+                    return;
+                }
+                if (verb == "thermal")
+                {
+                    var rows = ThermalField.DebugProbe(Player, Player.GlobalPosition);
+                    if (rows.Count == 0) { Echo("no thermal sources in this world"); return; }
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append($"thermal sources ({rows.Count}), nearest first -- net {ThermalField.NetC(Player, Player.GlobalPosition):+0.0;-0.0} C");
+                    int shown = 0;
+                    foreach (var r in rows)
+                    {
+                        if (shown++ >= 12) { sb.Append($"\n  ... and {rows.Count - 12} further away"); break; }
+                        // WHY it is or is not contributing, in the order the field itself decides: off, then out
+                        // of range, then blocked. Reading the reason is the entire point of the command.
+                        string why = !r.active ? "OFF"
+                                   : r.dist >= r.radius ? $"out of range ({r.radius:0.#} m)"
+                                   : r.blocked ? "BLOCKED (no line of sight)"
+                                   : $"{r.contribution:+0.0;-0.0} C";
+                        sb.Append($"\n  {r.name}  {r.dist:0.0} m  ({r.deltaC:+0;-0} C @ {r.radius:0.#} m)  {why}");
+                    }
+                    Echo(sb.ToString());
+                    return;
+                }
+
+                // bare `temp`: every input to the body model on one screen. The point is that when the number
+                // looks wrong you can see WHICH term did it, instead of guessing between six of them.
+                float insC = Player.Inventory?.InsulationColdC ?? 0f, insH = Player.Inventory?.InsulationHeatC ?? 0f;
+                float target = PlayerTemperatureSim.TargetC(pr.ambientC, pr.sourceC, pr.exerting, t.Wetness, insC, insH);
+                var wmT = WeatherManager.Current;
+                string wname = wmT?.Sim?.Active?.Name;
+                float wblend = wmT?.RainIntensity ?? 0f;
+                var dnT = DayNight();
+                int doy = WorldTemperature.DayOfYear(WorldTemperature.StartDayOfYear, dnT?.Day ?? 0);
+                Echo($"body {t.BodyC:0.0} C  ·  {t.CurrentBand}  ·  bar {t.Comfort:+0.00;-0.00}{(Player.TemperatureHoldC.HasValue ? "  [HELD]" : "")}"
+                   + $"\n  target {target:0.0} C  (comfort {PlayerTemperatureSim.ComfortLowC:0}..{PlayerTemperatureSim.ComfortHighC:0}, lethal <{PlayerTemperatureSim.FreezingBelowC:0} / >{PlayerTemperatureSim.BoilingAboveC:0})"
+                   + $"\n  ambient {pr.ambientC:0.0} C   day {doy} ({MonthOf(doy)}) {FormatTime(dnT?.Time ?? 0.5f)}"
+                   + $"\n  weather {(string.IsNullOrEmpty(wname) ? "clear" : wname)} blend {wblend:0.00} -> {WorldTemperature.WeatherOffsetC(wname, wblend):+0.0;-0.0} C"
+                   + $"\n  sources {pr.sourceC:+0.0;-0.0} C  (`thermal` for which)"
+                   + $"\n  exertion {(pr.exerting ? $"+{PlayerTemperatureSim.ExertionC:0.#} C (sprinting)" : "none")}"
+                   + $"\n  wetness {t.Wetness:0.00} -> {-t.Wetness * PlayerTemperatureSim.SoakedChillC:+0.0;-0.0} C   ({(pr.raining ? pr.sheltered ? "raining, SHELTERED" : "raining, exposed" : "not raining")}{((Player.Inventory?.ProofsWater ?? false) ? ", waterproof" : "")})"
+                   + $"\n  clothing  cold {insC:0.#} C / heat {insH:0.#} C  (applied last, and only toward comfort)");
+                return;
+            }
+
             // date / dateset <day> / whenBlackout / triggerGlobalBrownout (strawberry) -- the lore blackout. Above the
             // arg guard so bare forms work: date=show the day, whenBlackout=report the doom day, triggerGlobalBrownout=
             // dip the whole grid off->on now, dateset=jump the day (to test the brownouts/blackout).
@@ -1206,6 +1319,41 @@ namespace UnturnedGodot
         // Parse a time/duration into HOURS: a name (noon/midnight/dawn/...), 12-hour (8am, 6:30pm), 24-hour HH:MM (18:30),
         // military HHMM (1800, 0830), or a bare number (18, 1.5). timeSet reads it as an absolute clock; timeAdd as a delta
         // (allowNeg). Returns false on garbage.
+        // Month starts, 1-based day of year, non-leap. Used by startDate/worldTemp so "july" is a date you can
+        // type, and so a bare day number can be echoed back as something a human recognises.
+        static readonly (string Name, int Start)[] Months =
+        {
+            ("january", 1), ("february", 32), ("march", 60), ("april", 91), ("may", 121), ("june", 152),
+            ("july", 182), ("august", 213), ("september", 244), ("october", 274), ("november", 305), ("december", 335),
+        };
+
+        /// <summary>"172", "july", "dec" -> a day of year. A month name gives its FIRST day, which is the
+        /// resolution anyone typing a month actually wants.</summary>
+        public static bool ParseDayOfYear(string s, out int day)
+        {
+            day = WorldTemperature.DefaultStartDayOfYear;
+            string a = (s ?? "").Trim().ToLowerInvariant();
+            if (a.Length == 0) return false;
+            if (int.TryParse(a, out int d))
+            {
+                if (d < 1 || d > WorldTemperature.DaysPerYear) return false;
+                day = d; return true;
+            }
+            foreach (var m in Months)
+                if (m.Name.StartsWith(a) && a.Length >= 3) { day = m.Start; return true; }
+            return false;
+        }
+
+        /// <summary>A day of year as a month and date, so a readout says "22 December" rather than "356".</summary>
+        public static string MonthOf(int dayOfYear)
+        {
+            int d = Mathf.Clamp(dayOfYear, 1, WorldTemperature.DaysPerYear);
+            var m = Months[0];
+            foreach (var c in Months) if (c.Start <= d) m = c;
+            string name = char.ToUpperInvariant(m.Name[0]) + m.Name.Substring(1);
+            return $"{d - m.Start + 1} {name}";
+        }
+
         public static bool ParseClock(string s, out float hours, bool allowNeg)
         {
             hours = 0f;
@@ -1257,7 +1405,12 @@ namespace UnturnedGodot
 
         // Console replies go into the SHARED buffer, so the scrollback holds command output and game prints in
         // the order they actually happened rather than the reply overwriting a one-line label.
-        void Echo(string msg) { UnturnedGodot.Log.Print("[console] " + msg); }
+        /// <summary>The last line this console printed. For tests: several of these commands exist ONLY to
+        /// report, so their whole behaviour is the text, and a test that can only see side effects would be
+        /// checking the half that does not matter.</summary>
+        public string LastEcho { get; private set; } = "";
+
+        void Echo(string msg) { LastEcho = msg; UnturnedGodot.Log.Print("[console] " + msg); }
     }
 
     // PEI's real named LOCATION nodes (towns/POIs), ripped byte-exact from Maps/PEI/Environment/Nodes.dat -> content/nodes.tsv

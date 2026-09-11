@@ -373,10 +373,22 @@ namespace UnturnedGodot
         // time constant, so a quarter-second sample is indistinguishable from a per-tick one -- and the
         // per-tick version is a raycast per player per frame for a number that cannot visibly move in 20 ms.
         const float TemperatureProbeSeconds = 0.25f;
-        float _tempProbeTimer; float _tempAmbientC = 20f; float _tempSourceC; bool _tempRaining, _tempSheltered;
+        float _tempProbeTimer; float _tempAmbientC = 20f; float _tempSourceC; bool _tempRaining, _tempSheltered, _tempExerting;
+
+        /// <summary>The last probe readings, for the `temp` console command. Handed out rather than re-measured,
+        /// because a readout that took its own samples would be reporting a DIFFERENT probe from the one driving
+        /// the body -- and the case you reach for a readout in is exactly the case where the two disagree.</summary>
+        public (float ambientC, float sourceC, bool raining, bool sheltered, bool exerting) DebugTemperatureProbe
+            => (_tempAmbientC, _tempSourceC, _tempRaining, _tempSheltered, _tempExerting);
+
+        /// <summary>Debug: pin the perceived temperature here instead of letting it converge. `tempset` alone
+        /// decays back to ambient in about two minutes, which is long enough to look at the HUD and far too
+        /// short to watch freezing damage actually land.</summary>
+        public float? TemperatureHoldC;
 
         void TemperatureTick(bool exerting, float dt)
         {
+            _tempExerting = exerting;
             _tempProbeTimer -= dt;
             if (_tempProbeTimer <= 0f)
             {
@@ -402,6 +414,9 @@ namespace UnturnedGodot
             Temperature.Step(_tempAmbientC, _tempSourceC, exerting, _tempRaining, _tempSheltered,
                              Inventory?.ProofsWater ?? false,
                              Inventory?.InsulationColdC ?? 0f, Inventory?.InsulationHeatC ?? 0f, dt);
+            // Held AFTER the step, not instead of it: wetness and the probes keep running, so `thermal` and the
+            // wetness readout stay live while the body is pinned.
+            if (TemperatureHoldC.HasValue) Temperature.BodyC = TemperatureHoldC.Value;
         }
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health

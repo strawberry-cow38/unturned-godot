@@ -50,8 +50,11 @@ namespace UnturnedGodot
         public const int VitalRows = 7;                                   // health, food, water, stamina, infection, oxygen, temperature
         public const float VitalsLeft = 24f;                              // lifeBox OffsetLeft
         public const float VitalsRightAnchor = 0.2f;                      // ...and its AnchorRight: the box is 20% of the screen wide
-        public const float VitalsTopGap = TopPad + VitalRows * RowH + 36f;   // lifeBox OffsetTop, off the screen bottom
-        public const float VitalsBottomGap = 42f;                         // ...and its OffsetBottom
+        // The two gaps move TOGETHER: the 18f here is the box's height over its content, and the 24f below is
+        // the space under the box. Trimming only the bottom one would grow the box downward and leave the bars
+        // exactly where they were, which is the obvious wrong version of "reduce the padding".
+        public const float VitalsTopGap = TopPad + VitalRows * RowH + 18f;   // lifeBox OffsetTop, off the screen bottom
+        public const float VitalsBottomGap = 24f;                         // ...and its OffsetBottom (56 -> 42 master 2026-08-26 -> 24 strawberry 2026-09-11 "reduce padding between the vitals panel and the bottom of the screen"); the whole panel slid 18 px down with it, which also hands every menu that dodges VitalsRect 18 px back
         /// <summary>Where the health/food/water/stamina/infection/oxygen bars sit, in screen pixels.
         /// 20% of the width, so on an ultrawide it reaches further right than any fixed number would.</summary>
         public static Rect2 VitalsRect(Vector2 vp)
@@ -174,7 +177,7 @@ namespace UnturnedGodot
             var lifeBox = new Control();
             lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = VitalsRightAnchor; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
             lifeBox.OffsetLeft = VitalsLeft; lifeBox.OffsetRight = VitalsLeft;   // left padding off the screen edge (master 2026-08-26)
-            lifeBox.OffsetTop = -VitalsTopGap; lifeBox.OffsetBottom = -VitalsBottomGap;   // 6 rows since oxygen joined (was 5), lifted off the bottom; bottom padding trimmed 25% (56->42, master 2026-08-26). Named, because VitalsRect() above hands these same numbers to every menu.
+            lifeBox.OffsetTop = -VitalsTopGap; lifeBox.OffsetBottom = -VitalsBottomGap;   // 7 rows since temperature joined (was 6, was 5 before oxygen), sat closer to the bottom edge. Named, because VitalsRect() above hands these same numbers to every menu.
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             vitalsRoot.AddChild(lifeBox);   // layer-12 root -> the vitals render OVER the inventory
             _playerOnly.Add(lifeBox);

@@ -42,6 +42,37 @@ namespace UnturnedGodot
             return ThermalFalloff.Clamp(sum);
         }
 
+        /// <summary>Every source in the world and WHY it does or does not reach `at`, for the `thermal` console
+        /// command.
+        ///
+        /// It walks the same group and calls the same Blocked() as NetC rather than re-deriving either. A
+        /// readout with its own copy of the range and line-of-sight rules would drift from the real one, and
+        /// then it would confidently explain a contribution that is not the one being applied -- which is worse
+        /// than having no readout, because you would believe it.</summary>
+        public static System.Collections.Generic.List<(string name, float dist, float radius, float deltaC, bool active, bool blocked, float contribution)>
+            DebugProbe(Node context, Vector3 at)
+        {
+            var rows = new System.Collections.Generic.List<(string, float, float, float, bool, bool, float)>();
+            var tree = context?.GetTree();
+            if (tree == null) return rows;
+            var space = (context as Node3D)?.GetWorld3D()?.DirectSpaceState;
+
+            foreach (var n in tree.GetNodesInGroup(ThermalSource.Group))
+            {
+                if (n is not ThermalSource s || !IsInstanceValid(s)) continue;
+                float d = at.DistanceTo(s.GlobalPosition);
+                bool inRange = d < s.Radius && s.Radius > 0f && !Mathf.IsZeroApprox(s.DeltaC);
+                bool blocked = inRange && s.Active && space != null && Blocked(space, at, s.GlobalPosition, s.SelfRadius);
+                float c = inRange && s.Active && !blocked ? ThermalFalloff.Contribution(s.DeltaC, d, s.Radius) : 0f;
+                // The owner's node name, not the ThermalSource child's: every one of those is called
+                // "ThermalSource" and a list of twelve identical names tells you nothing.
+                string name = s.GetParent()?.Name ?? s.Name;
+                rows.Add((name, d, s.Radius, s.DeltaC, s.Active, blocked, c));
+            }
+            rows.Sort((a, b) => a.Item2.CompareTo(b.Item2));
+            return rows;
+        }
+
         /// <summary>LOS from the player to the source. Cast FROM the player so a source buried inside its own
         /// collider (a stove inside a cabinet, a fire pit sunk into the ground) is not self-occluded at the
         /// first millimetre -- the query excludes nothing, so a ray starting inside geometry would report an
