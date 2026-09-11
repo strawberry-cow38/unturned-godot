@@ -837,9 +837,19 @@ namespace UnturnedGodot
                 return rm;
             }
             long _objT = 0, _objMeshT = 0, _objShapeT = 0, _objMiT = 0, _objBodyT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0, _objBodies = 0;   // UG_PERF buckets ([objprof])
+            // ⚠ 'other' was 888 of the 1065 ms this loop spends -- 83% unattributed, which is barely better than
+            // not having measured it. These split it: the per-level LOD MeshInstance3Ds (3001 of them on PEI,
+            // each a node plus an AddChild) and the LodTable lookup that picks their distance bands.
+            long _objLodT = 0, _objRangeT = 0; int _objLodMis = 0;
+            // ⚠ 'other' survived the LOD split at 918 of 1136 ms. These ten stamps PARTITION the whole
+            // function -- every microsecond lands in exactly one segment, so there is no bucket left to hide in.
+            // Segment names are in the [objseg] report line.
+            long[] _objSeg = new long[10]; long _segLast = 0;
+            void _SEG(int i) { long t = System.Diagnostics.Stopwatch.GetTimestamp(); _objSeg[i] += t - _segLast; _segLast = t; }
             void PlaceObject(string[] p, string name, int destIndex)
             {
                 long _o0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _segLast = _o0;
                 PlaceObjectInner(p, name, destIndex);
                 _objT += System.Diagnostics.Stopwatch.GetTimestamp() - _o0; _objN++;
             }
@@ -884,6 +894,7 @@ namespace UnturnedGodot
                 // alike: the tighter of its render-layer cull (LARGE 512 / MEDIUM 256 / SMALL 64 at default draw
                 // distance) and its Unity LODGroup threshold. See LodTable. A GUID missing from the table keeps the
                 // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
+                _SEG(0);
                 float cull = LodTable.CullDistance(p[0], LodTable.SourceFov);
                 if (cull <= 0f) { cull = 320f; lodMissing++; }
                 // BIODOME (master: "re extract for the orange"): the dome is TWO src meshes -- Model_0 (the ORANGE
@@ -1038,6 +1049,7 @@ namespace UnturnedGodot
                 // MESH's local AABB has its vertical extent on Z, not Y -- the same frame gotcha the placement
                 // code carries (mesh(x,y,z) = node(x,z,-y)). Written with Size.Y first, which made this whole
                 // test inert: Line_Parking_0 is 12.5 x 5.0 x 0.00, so Y is 5 m and nothing was ever a decal.
+                _SEG(1);
                 var vaabb = visMesh.GetAabb();
                 bool isDecal = vaabb.Size.Z < 0.06f && Mathf.Max(vaabb.Size.X, vaabb.Size.Y) > 0.5f;
                 var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
@@ -1051,8 +1063,11 @@ namespace UnturnedGodot
                 // A level whose .obj is absent must NOT shorten the prop: its band is handed back to the previous
                 // level by extending that level's End, otherwise a prop with an unextracted LOD1 would pop out of
                 // existence at the LOD0->LOD1 distance instead of at its cull distance.
+                _SEG(2);
                 lodMis.Clear();
+                long _r0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var ranges = mesh != null ? LodTable.LevelRanges(p[0], name, LodTable.SourceFov) : null;
+                _objRangeT += System.Diagnostics.Stopwatch.GetTimestamp() - _r0;
                 if (!batched && ranges != null && ranges.Length > 1)   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
                 {
                     // CROSSFADE THE HANDOVER, don't hard-cut it. LodTable builds contiguous bands
@@ -1097,17 +1112,20 @@ namespace UnturnedGodot
                         }
                         if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
                         float fm = LodFadeMargin(e2 - b);
+                        long _l0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                             VisibilityRangeBegin = b, VisibilityRangeEnd = e2,
                             VisibilityRangeBeginMargin = fm, VisibilityRangeEndMargin = fm,
                             VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self };
                         root.AddChild(lmi);
                         lodMis.Add(lmi);
+                        _objLodT += System.Diagnostics.Stopwatch.GetTimestamp() - _l0; _objLodMis++;
                         last = lmi;
                     }
                     lodLevels += lodMis.Count;
                 }
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
+                _SEG(3);
                 if (!folCache.TryGetValue(name, out var fmesh))
                 {
                     string fp = dir + name + "_foliage.obj";
@@ -1121,6 +1139,7 @@ namespace UnturnedGodot
                 // The batched visual: one slot per LOD level (plus foliage, plus the debris that replaces it if
                 // it is destructible). Queued now, wired to a real MultiMesh when the scan finishes and the
                 // group sizes are known -- so nothing may read these slots before PropBatcher.Flush.
+                _SEG(4);
                 PropBatcher.Slot[] batchSlots = null, batchDead = null;
                 if (batched)
                 {
@@ -1157,6 +1176,7 @@ namespace UnturnedGodot
                 // SystemDeployables and the client's DeployableReplicaView materializes it, with a gaspump-meta
                 // interaction collider of its own), while pure-direct SP Attaches a local node + adds that collider
                 // (WorldBuilder.SpawnFixturesDirect). stationId derived identically via StationFuel.StationIdFor.
+                _SEG(5);
                 if (name == "Gas_Pump_0")
                     result.Fixtures.Add(new FixtureRecord { DefId = DeployableDef.GasPump.Id, Pos = gpos, YawDegrees = 180f - ey, Basis = basis, StationId = StationFuel.StationIdFor(gpos) });
                 // grid power (A3): every Circuit_0 breaker box is a 10kW mains SOURCE. RECORD it in EVERY mode
@@ -1208,6 +1228,7 @@ namespace UnturnedGodot
                 // Colour temperature is tweakable (StreetLight.ColorTempK: warm sodium default; a city map sets it cold LED).
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
+                _SEG(6);
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
                 LampLight placedIndoorLamp = null;   // indoor ceiling/standing/desk light -- captured so a break darkens it too (master 2026-08-09)
                 HeartMonitor placedMonitor = null;   // captured so its body collider can carry the hit meta
@@ -1317,6 +1338,7 @@ namespace UnturnedGodot
                 // so crossing roads can both show green and the two heads on one arm drift apart. The offset is
                 // hashed off world position AND head index, so heads differ from each other and from their
                 // neighbours, and every client agrees without replicating a thing.
+                _SEG(7);
                 if (trafficHeads != null)
                 {
                     bool sideRoad = sideRoads.Contains(SideRoadKey(gpos));
@@ -1356,6 +1378,7 @@ namespace UnturnedGodot
                 // Not routed through the door catalog beside it even though extract_doors produced the mesh:
                 // this thing does not hinge. Its Hinge bone's rotation curve is two identical keys and only
                 // its POSITION moves, so an ObjectDoor would swing a platform that is meant to rise.
+                _SEG(8);
                 if (mode == WorldMode.Playable && name == "Car_Lift_0")
                 {
                     var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
@@ -1613,6 +1636,7 @@ namespace UnturnedGodot
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
                 cellSum.TryGetValue(cell, out Vector3 cs); cellSum[cell] = cs + gpos;
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
+                _SEG(9);
             }
             // SP loot distribution: a registered prop spawns as a lootable StoreShelf here (at the placement transform)
             // instead of the decoration mesh. Only in Playable -- the editor shows decoration; the client is server-driven.
@@ -1741,7 +1765,8 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
-                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT) * _f:0} ms"); }
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | LOD inst={_objLodMis} {_objLodT * _f:0} ms | LOD ranges={_objRangeT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT - _objLodT - _objRangeT) * _f:0} ms"); }
+                    if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objseg] ms  head(mesh+math+lamp)={_objSeg[0] * _f:0} | cull+specialprops={_objSeg[1] * _f:0} | aabb+mainMi={_objSeg[2] * _f:0} | lodlevels={_objSeg[3] * _f:0} | foliage={_objSeg[4] * _f:0} | batch={_objSeg[5] * _f:0} | fluids={_objSeg[6] * _f:0} | devices={_objSeg[7] * _f:0} | lightreg={_objSeg[8] * _f:0} | doors+seats+COLLIDE={_objSeg[9] * _f:0}"); }
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(mapRoot + "/Environment");

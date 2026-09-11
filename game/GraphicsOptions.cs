@@ -425,6 +425,20 @@ namespace UnturnedGodot
 
         public static void ApplyResolution()
         {
+            // UG_RES=1920x1080 forces an EXACT window size for benchmarking, over the saved setting and over the
+            // project's maximized default. A benchmark that cannot state the pixel count it measured is not a
+            // benchmark: an SSH session hands Godot a 1024x768 virtual desktop and the run will happily report
+            // "1080p" fps for a 410x299 image. This makes the label and the pixels the same fact.
+            if (System.Environment.GetEnvironmentVariable("UG_RES") is string ugr && ugr.Contains('x'))
+            {
+                var rp = ugr.Split('x');
+                if (rp.Length == 2 && int.TryParse(rp[0], out int rw) && int.TryParse(rp[1], out int rh) && rw > 0 && rh > 0)
+                {
+                    DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);   // maximized ignores a size request
+                    DisplayServer.WindowSetSize(new Vector2I(rw, rh));
+                    return;
+                }
+            }
             if (Resolution == Vector2I.Zero) return;   // Native: leave the window as the user sized it
             if (DisplayServer.WindowGetMode() == DisplayServer.WindowMode.Fullscreen) return;   // resizing a fullscreen window fights the compositor
             DisplayServer.WindowSetSize(Resolution);
