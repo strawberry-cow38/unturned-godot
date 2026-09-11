@@ -54,7 +54,6 @@ namespace UnturnedGodot
             public float HullHeight = -1f;               // last height the capsule was built at
             public bool HullSeated;                      // last seated state pushed to Disabled
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
-            public bool GearStep;                        // gear foley alternates with the footfalls, as it does locally
             public bool WornLightOn, HeldLightOn;        // their nightvision/headlamp and torch, off the appearance block
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
             public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
@@ -223,22 +222,9 @@ namespace UnturnedGodot
                             var clip = GameAudio.PickFootstep(psurf, run);
                             float vol = stance switch { SDG.Unturned.EPlayerStance.PRONE => -14f, SDG.Unturned.EPlayerStance.CROUCH => -8f, SDG.Unturned.EPlayerStance.SPRINT => 0f, _ => -3f };
                             GameAudio.PlayAt(this, clip, av.Body.GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
-                            // ...and their kit, on every other stride, exactly as the local body does it. The worn
-                            // slots are already reconstructed onto av.Inv by ApplyWorn, so this needs nothing from
-                            // the wire -- a puppet in a vest and a rucksack clatters because it IS in a vest and a
-                            // rucksack.
-                            av.GearStep = !av.GearStep;
-                            if (av.GearStep && stance != SDG.Unturned.EPlayerStance.PRONE)
-                            {
-                                int worn = 0;
-                                if (av.Inv?.wornVest != null) worn++;
-                                if (av.Inv?.wornBackpack != null) worn++;
-                                if (av.Inv?.wornHat != null) worn++;
-                                if (av.Inv?.wornMask != null) worn++;
-                                if (av.Inv?.wornGlasses != null) worn++;
-                                float gvol = stance == SDG.Unturned.EPlayerStance.CROUCH ? -16f : run ? -9f : -13f;
-                                GameAudio.PlayAt(this, GameAudio.GearMovement(worn), av.Body.GlobalPosition, gvol, 3f, 16f, _rng.RandfRange(0.95f, 1.05f));
-                            }
+                            // The puppets' matching gear foley went with the local one (master: "remove the
+                            // 'walking with gear' sound") -- a sound the owner cannot hear must not still be
+                            // coming off everyone else.
                         }
                     }
                     else if (!grounded) av.StrideAcc = 0f;                              // airborne: land on a fresh stride, not half of one

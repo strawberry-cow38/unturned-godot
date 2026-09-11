@@ -4479,21 +4479,7 @@ namespace UnturnedGodot
         public bool Moving { get; private set; }
         public EPlayerStance Stance => _move.Stance;
         float _footNoiseT;   // Phase 3 hearing: throttle the continuous footstep-noise emit (~2.5x/s while moving)
-        bool _gearStep;      // gear foley plays on every OTHER stride, so it sits between the footfalls
 
-        /// <summary>How much kit is on the body, for the gear-rattle bank. Shirt and trousers are excluded: retail's
-        /// rattle is equipment, and everybody is wearing clothes.</summary>
-        int WornGearCount()
-        {
-            var inv = Inventory; if (inv == null) return 0;
-            int n = 0;
-            if (inv.wornVest != null) n++;
-            if (inv.wornBackpack != null) n++;
-            if (inv.wornHat != null) n++;
-            if (inv.wornMask != null) n++;
-            if (inv.wornGlasses != null) n++;
-            return n;
-        }
         float _strideAcc;    // metres of ground covered since the last footstep sound
         /// <summary>Material under the feet for footstep/landing audio: water when wading, else the terrain splatmap or a
         /// prop's SurfMeta via a short downward ray. Concrete when nothing says otherwise.</summary>
@@ -10131,17 +10117,9 @@ namespace UnturnedGodot
                         var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
                         float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
                         GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
-                        // KIT ON THE BODY, every other step. Retail scales its gear foley by what is worn, so the
-                        // bank steps with the count -- a bare survivor rustles, a loaded one clatters. Every OTHER
-                        // stride and well under the footstep, because it is what you hear BETWEEN the footfalls;
-                        // matching their rate makes one muddy sound instead of two.
-                        _gearStep = !_gearStep;
-                        if (_gearStep && _move.Stance != EPlayerStance.PRONE)
-                        {
-                            int worn = WornGearCount();
-                            float gvol = (_move.Stance == EPlayerStance.CROUCH ? -16f : run ? -9f : -13f);
-                            GameAudio.PlayAt(this, GameAudio.GearMovement(worn), GlobalPosition, gvol, 3f, 16f, _rng.RandfRange(0.95f, 1.05f));
-                        }
+                        // NO GEAR FOLEY. There was a per-stride kit rustle here, scaled by how much you had
+                        // worn; master 2026-09-11: "remove the 'walking with gear' sound." Taken out rather
+                        // than turned down to zero, so it cannot come back by someone restoring a volume.
                     }
                 }
                 else _strideAcc = Mathf.Min(_strideAcc, 0.6f * 1.5f);   // a stop mid-stride keeps most of the stride so the next step isn't instant

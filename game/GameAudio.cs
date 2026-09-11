@@ -266,13 +266,9 @@ namespace UnturnedGodot
         /// <summary>A keyring, for locking and unlocking a door you own.</summary>
         public static AudioStream Keys() => Pick("foley", "foley_keys_belt_metal_jingle");
 
-        /// <summary>Kit moving on the body while you walk. Retail scales this by what is actually worn, so the bank
-        /// steps with the count of carried gear rather than playing one rattle for a vest and a rucksack alike.</summary>
-        public static AudioStream GearMovement(int wornPieces) => wornPieces >= 4
-            ? Pick("foley", "foley_soldier_gear_equipment_metal_cloth_heavy_movement_med")
-            : wornPieces >= 2
-            ? Pick("foley", "foley_soldier_gear_equipment_rattle_movement_light")
-            : Pick("foley", "foley_cloth_light_fast_movement");
+        // GEAR-MOVEMENT FOLEY REMOVED (master 2026-09-11: "remove the 'walking with gear' sound"). The three
+        // foley_soldier_gear_* / foley_cloth_light clips stay on disk -- they are ripped content, not ours to
+        // delete -- but nothing asks for them, which is the state they were in before this was ever wired.
 
         // ---- THROWABLES (content/audio/items, 30 clips) ---------------------------------------------------------
         // ⚠ TWO PLACES IN Grenade.cs SAID THESE CLIPS DID NOT EXIST -- "the canister popping (no dedicated
