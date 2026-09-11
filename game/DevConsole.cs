@@ -71,7 +71,12 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate" };
+        // Successive animal spawns step by this, so two of them never land on the same spot -- including
+        // across separate console commands, which is the case the obvious per-command split gets wrong.
+        const float GoldenAngle = 2.39996323f;
+        int _animalSpawnSeq;
+
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -514,6 +519,53 @@ namespace UnturnedGodot
                 }
                 return;
             }
+            // spawnanimal [name] [count] -- strawberry 2026-09-11: "how do i get a horse" / "add it". Horses ride
+            // PEI's passive fauna tables (AnimalCatalog.IncludeHorse adds them wherever deer/pig/cow spawn), so
+            // before this the only way to see one was to walk the farmland and wait. Above the arg guard because
+            // the bare form is the useful one -- it lists what this build can spawn.
+            if (verb is "spawnanimal" or "animal")
+            {
+                var af = GetTree()?.GetFirstNodeInGroup(AnimalField.Group) as AnimalField;
+                if (af == null) { Echo("no animal field in this world (load a map first)"); return; }
+                var kinds = new System.Collections.Generic.List<(string name, ushort id)>(AnimalField.SpawnableKinds());
+                var bits = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits.Length == 0)
+                {
+                    Echo($"usage: spawnanimal <{string.Join("|", kinds.ConvertAll(k => k.name))}> [count]");
+                    return;
+                }
+                string want = bits[0].ToLowerInvariant();
+                var kind = kinds.Find(k => k.name == want);
+                if (kind.name == null) kind = kinds.Find(k => k.name.StartsWith(want));
+                if (kind.name == null) { Echo($"no animal '{bits[0]}' (try: {string.Join(", ", kinds.ConvertAll(k => k.name))})"); return; }
+                int count = 1;
+                if (bits.Length > 1 && (!int.TryParse(bits[1], out count) || count < 1 || count > 12)) { Echo("count must be 1-12"); return; }
+                if (Player == null) { Echo("no player to spawn near"); return; }
+
+                // Out at a radius rather than underfoot, same reasoning as `vehicle`: a body that materialises
+                // overlapping the player capsule gets depenetrated on the first tick, and a horse is big enough
+                // to do the shoving.
+                //
+                // The angle walks by the GOLDEN ANGLE from a counter that persists ACROSS calls, rather than an
+                // even split with a jitter. The even-split version stacks: every single-animal spawn takes
+                // i = 0, so typing `spawnanimal horse` three times drops three horses inside half a radian of
+                // each other and they shove their way apart. Caught by the test doing exactly that -- and only
+                // on one run in two, because the jitter was random, so it was a flake as well as a bug.
+                // 137.5 deg never revisits a previous angle, which is why sunflowers use it.
+                int made = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    float ang = _animalSpawnSeq * GoldenAngle;
+                    float rad = 6f + 1.1f * (_animalSpawnSeq % 4);   // break the ring, so a full turn does not land back on an old radius
+                    _animalSpawnSeq++;
+                    var spot = Player.GlobalPosition + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * rad;
+                    if (af.BuildAnimal(kind.id, spot, GD.Randi()) != null) made++;
+                }
+                Echo(made == count ? $"spawned {made} {kind.name}{(made == 1 ? "" : "s")}"
+                                   : $"spawned {made} of {count} {kind.name}s -- the rest could not build a rig");
+                return;
+            }
+
             // ---- temperature (strawberry 2026-09-11: "add debug commands for temperature") -----------------
             // All above the arg guard: every one of them has a useful bare form, and the guard below turns a
             // no-arg command into a usage line.

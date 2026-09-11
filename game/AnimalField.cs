@@ -10,7 +10,8 @@ namespace UnturnedGodot
     // deterministically into an AnimalAgent with the catalog rig and shared idle/walk clip names.
     public partial class AnimalField : Node3D
     {
-        public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
+        public const string Group = "animalfield";
+        public override void _Ready() { AddToGroup(Group); TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
         public PlayerController Player;
         public Terrain Terr;
 
@@ -126,17 +127,8 @@ namespace UnturnedGodot
                 // build the visual rig only where it's actually rendered (SP/loopback host = Player set). A dedicated
                 // server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes its
                 // transform/anim/species, and remote clients render the puppet -- so no 36 wasted headless skeletons.
-                RiggedCharacter rc = null;
-                if (Player != null)
-                {
-                    rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
-                    if (rc == null) continue;
-                }
-                var agent = new AnimalAgent { Terr = Terr, Foot = 0f, BodyH = def.bodyH, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id), Health = def.health };
-                AddChild(agent);
-                agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z), p.Z);   // Foot 0: origin-at-feet rig sits on the terrain directly
-                if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
-                agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
+                var agent = BuildAnimal(id, new Vector3(p.X, 0f, p.Z), h ^ 0xA53Cu);
+                if (agent == null) continue;
                 _live[idx] = agent;
             }
             if (!_animCam && _live.Count > 0 && System.Environment.GetEnvironmentVariable("UG_ANIMALSPAWN") == "1")   // demo: frame the first live animal
@@ -149,5 +141,37 @@ namespace UnturnedGodot
             }
         }
         bool _animCam;   // UG_ANIMALSPAWN demo cam fired once
+
+        /// <summary>Build one live animal and put it in the world. The streaming spawn above and the console's
+        /// `spawnanimal` both come through here, so there is exactly ONE description of what an animal is made
+        /// of. A second copy would drift -- tonight a third copy of "what's holdable" left four features with
+        /// no menu button, and this is the same shape.
+        ///
+        /// Returns null when the id is not a registered species or its rig will not load.</summary>
+        public Node3D BuildAnimal(ushort animalId, Vector3 atGround, uint seed)
+        {
+            if (!Kinds.TryGetValue(animalId, out var def)) return null;
+            // Build the visual rig only where it is actually rendered (SP/loopback host = Player set). A
+            // dedicated server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes
+            // its transform/anim/species, so no wasted headless skeletons.
+            RiggedCharacter rc = null;
+            if (Player != null)
+            {
+                rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
+                if (rc == null) return null;
+            }
+            var agent = new AnimalAgent { Terr = Terr, Foot = 0f, BodyH = def.bodyH, Home = new Vector3(atGround.X, 0f, atGround.Z), Seed = seed, Species = AnimalCatalog.SpeciesForAnimalId(animalId), Health = def.health };
+            AddChild(agent);
+            agent.GlobalPosition = new Vector3(atGround.X, Terr?.SampleHeight(atGround.X, atGround.Z) ?? atGround.Y, atGround.Z);   // Foot 0: origin-at-feet rig sits on the terrain directly
+            if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
+            agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
+            return agent;
+        }
+
+        /// <summary>Animal ids this build can actually spawn, with the names the console accepts.</summary>
+        public static System.Collections.Generic.IEnumerable<(string name, ushort id)> SpawnableKinds()
+        {
+            foreach (var kv in Kinds) yield return (kv.Value.rig, kv.Key);
+        }
     }
 }
