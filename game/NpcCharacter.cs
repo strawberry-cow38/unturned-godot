@@ -57,14 +57,28 @@ namespace UnturnedGodot
             if (npc._body != null)
             {
                 npc.AddChild(npc._body);
-                npc._body.PlayLoop("Idle");   // standing, not frozen in the bind pose
+                // ⚠ PlayLoop ALONE LEAVES THEM T-POSING. A RiggedCharacter is posed by SetLocomotion + Tick,
+                // the pair RemotePlayers drives its puppets with; PlayLoop only names the clip, and a body that
+                // is never ticked sits in the bind pose forever. The first render of this caught it -- a chef in
+                // his whites with his arms straight out -- which a "the PNG exists" check would have passed.
+                npc._body.SetLocomotion(0f, EPlayerStance.STAND);
+                npc._body.Tick(0.0);
                 npc._inv = new PlayerInventory();
                 npc._clothing = new PlayerClothingController(npc._body, npc._inv);
                 Wear(npc._inv, def);
                 npc._clothing.Refresh();
                 npc._plate = Nameplate.Attach(npc._body);
                 npc._plate?.Set(def.Name, null);
-                npc._plate.Visible = false;   // shown on look, see SetLookFocused
+                if (npc._plate != null)
+                {
+                    // Nameplate's 2.05 m clears a BARE head. A chef's toque does not fit under it, and the first
+                    // render had his name with a hat through the middle of it. Raised HERE rather than in
+                    // Nameplate, because that height is tuned for remote players and moving it would shift every
+                    // plate in the game to fix a hat -- the depth test stays on, deliberately (a plate behind a
+                    // wall is meant to stay behind the wall; that is the shared rule working, not the bug).
+                    if (def.Hat != 0) npc._plate.Position += new Vector3(0f, 0.28f, 0f);
+                    npc._plate.Visible = false;   // shown on look, see SetLookFocused
+                }
             }
             return npc;
         }
@@ -89,6 +103,16 @@ namespace UnturnedGodot
             if (_focused == on) return;
             _focused = on;
             if (_plate != null && GodotObject.IsInstanceValid(_plate)) _plate.Visible = on;
+        }
+
+        /// <summary>Standing still, every frame. One AnimationPlayer tick per person -- the same cost a remote
+        /// player's puppet already pays, and the reason they breathe rather than freeze. A crowd of them would
+        /// be worth staggering; a handful is not, and pretending otherwise is the premature half of optimising.</summary>
+        public override void _Process(double delta)
+        {
+            if (_body == null || !GodotObject.IsInstanceValid(_body)) { SetProcess(false); return; }
+            _body.SetLocomotion(0f, EPlayerStance.STAND);
+            _body.Tick(delta);
         }
 
         public string DisplayName => Def?.Name ?? "Someone";

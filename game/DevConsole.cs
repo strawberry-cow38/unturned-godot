@@ -891,6 +891,14 @@ namespace UnturnedGodot
                     Echo($"{keys.Count} characters: " + string.Join(", ", keys));
                     return;
                 }
+                // `npc chef 4` stands them further off -- 2 m is the talking distance (retail's ray is 3) and
+                // too close to see a whole person in a screenshot.
+                float dist = 2f;
+                var bits = want.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits.Length > 1 && float.TryParse(bits[bits.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float dparsed))
+                { dist = Mathf.Clamp(dparsed, 1f, 20f); want = string.Join(' ', bits, 0, bits.Length - 1); }
+                var fwd = -Player.LookBasis.Z;
+                var spot = Player.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * dist;
                 var def = NpcCatalog.CharacterByKey(want);
                 if (def == null)
                 {
@@ -899,10 +907,11 @@ namespace UnturnedGodot
                         if (c.Key.ToLowerInvariant().Contains(want.ToLowerInvariant())) { def = c; break; }
                 }
                 if (def == null) { Echo($"no character '{arg}' -- try `npc` for the list"); return; }
-                var fwd = -Player.LookBasis.Z;
-                var spot = Player.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * 2f;
-                // Facing the player: their yaw is ours turned round, so they are looking at you when you arrive.
-                float yaw = Mathf.RadToDeg(Mathf.Atan2(-fwd.X, -fwd.Z));
+                // FACING THE PLAYER. A Node3D at yaw t points its -Z at (-sin t, 0, -cos t), and the rig's
+                // forward IS -Z; we want that aimed back down our look direction, i.e. at -fwd. So
+                // sin t = fwd.X and cos t = fwd.Z. Negating BOTH -- which is what this did first -- is the
+                // same angle plus 180, and the render showed exactly that: a chef with his back to me.
+                float yaw = Mathf.RadToDeg(Mathf.Atan2(fwd.X, fwd.Z));
                 var npc = NpcCharacter.Spawn(Player.GetParent() ?? Player, def, spot, yaw);
                 Echo(npc != null
                     ? $"{def.Name} ({def.Key}) -- dialogue {def.Dialogue}{(NpcCatalog.Dialogue(def.Dialogue) == null ? " (NOT in the catalog)" : "")}"
