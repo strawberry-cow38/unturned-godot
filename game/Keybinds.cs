@@ -17,6 +17,12 @@ namespace UnturnedGodot
         Inventory, Map, Craft, Skills, Console,
         Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
         VehicleHandbrake, VehicleDoor,
+        // GESTURES. Surrender gets a real key because it is the only one with mechanical weight -- you cannot
+        // be handcuffed unless you are in it, and a sentry will hold fire on you. The rest are flavour and ship
+        // UNBOUND: squatting five more letters for emotes nobody asked to have on a key is worse than leaving
+        // them in the rebind list where they can be found and chosen. Unbound is a first-class state here --
+        // Bind.IsBound is false, so ConflictWith skips them and five Nones do not read as a five-way clash.
+        Surrender, GestureWave, GestureSalute, GesturePoint, GestureFacepalm, GestureRest,
         BugReport,
     }
 
@@ -168,6 +174,12 @@ namespace UnturnedGodot
             [GameAction.Hotbar9] = new Bind(Key.Key9),
             [GameAction.VehicleHandbrake] = new Bind(Key.Space), // defaults to Space like Jump but its OWN action -- rebinding Jump must not strand the handbrake
             [GameAction.VehicleDoor] = new Bind(Key.Ctrl),      // the bus's folding door, from the driver's seat (master 2026-09-05 "ctrl in the drivers seat should open/close it")
+            [GameAction.Surrender] = new Bind(Key.B),          // free letter; retail binds surrender to nothing at all, so this is a choice rather than a port
+            [GameAction.GestureWave] = new Bind(Key.None),     // unbound: bind it in the keybind menu if you want it
+            [GameAction.GestureSalute] = new Bind(Key.None),
+            [GameAction.GesturePoint] = new Bind(Key.None),
+            [GameAction.GestureFacepalm] = new Bind(Key.None),
+            [GameAction.GestureRest] = new Bind(Key.None),
             [GameAction.BugReport] = new Bind(Key.Backslash),
         };
 

@@ -7269,6 +7269,19 @@ namespace UnturnedGodot
                 if (_craftMenu != null && _craftMenu.IsOpen) { _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
                 else ShowMenu(MenuNavbar.Tab.Craft);
             }
+            // GESTURES. Surrender TOGGLES -- it is a state you stay in, and a key that could only put your
+            // hands up would leave you stuck with them there. The others are one-shots and just fire.
+            // Every one goes through RequestGesture, so the key cannot reach a gesture the rules refuse: it is
+            // the same test the console and (later) the server run, not a third copy of it.
+            else if (Keybinds.JustPressed(GameAction.Surrender, @event))
+                RequestGesture(IsSurrendering ? EPlayerGesture.SURRENDER_STOP : EPlayerGesture.SURRENDER_START);
+            else if (Keybinds.JustPressed(GameAction.GestureWave, @event)) RequestGesture(EPlayerGesture.WAVE);
+            else if (Keybinds.JustPressed(GameAction.GestureSalute, @event)) RequestGesture(EPlayerGesture.SALUTE);
+            else if (Keybinds.JustPressed(GameAction.GesturePoint, @event)) RequestGesture(EPlayerGesture.POINT);
+            else if (Keybinds.JustPressed(GameAction.GestureFacepalm, @event)) RequestGesture(EPlayerGesture.FACEPALM);
+            // Rest is a state too, and crouch-only (source pins the stance), so the same toggle shape.
+            else if (Keybinds.JustPressed(GameAction.GestureRest, @event))
+                RequestGesture(Gesture == EPlayerGesture.REST_START ? EPlayerGesture.REST_STOP : EPlayerGesture.REST_START);
             else if (Keybinds.JustPressed(GameAction.Skills, @event))
             {
                 if (_skillsUI != null && _skillsUI.IsOpen) { _skillsUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
