@@ -187,6 +187,10 @@ namespace UnturnedGodot.Net
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
             VehicleHost.TrySpendPaint = (sender, itemId) => Transactions.SpendPaintCan(sender, itemId);
+            VehicleHost.TrySpendTire = sender => Transactions.SpendTire(sender);   // v45
+            Transactions.TireItemId = 1451;   // v45: retail's generic Tire. Core has no item catalogue and should not grow one for a single id; the game layer's PlayerController.TireItemId is the same constant and the pair is asserted by TireWireTests.
+            // ApplyCarjackForce stays unset here: shoving a rigid body is the GAME layer's, and a bare host
+            // (the wire tests) has no bodies to shove. VehicleNetSync sets it.
             VehicleHost.Register(Commands);
             // mp-clientauth-foot (v9): the owner's on-foot transform stream -- envelope-validated, then
             // adopted through ServerDrive (the entity goes ExternallyDriven; ServerStep never integrates
@@ -1123,6 +1127,14 @@ namespace UnturnedGodot.Net
                 MagId = magId, Attach = attach, Sight = sight, Barrel = barrel, Grip = grip, Tactical = tactical,
                 AttachSeeded = attachSeeded,
             }.Write);
+
+        /// <summary>v45: fit the spare in our hand to one of a car's flat wheels.</summary>
+        public bool SendFitTire(uint vehicleNetId, byte wheelIndex)
+            => SendCommand(ReplicationIds.CommandFitTire, new FitTireCommand { VehicleNetId = vehicleNetId, WheelIndex = wheelIndex }.Write);
+
+        /// <summary>v45: jack an empty vehicle back onto its wheels.</summary>
+        public bool SendCarjack(uint vehicleNetId)
+            => SendCommand(ReplicationIds.CommandCarjack, new CarjackCommand { VehicleNetId = vehicleNetId }.Write);
 
         /// <summary>v43: cuff the player we are aimed at with whatever restraint is in our hand. Target only --
         /// the server reads the restraint off the hand it already replicates.</summary>

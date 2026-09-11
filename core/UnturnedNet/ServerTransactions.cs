@@ -185,6 +185,20 @@ namespace UnturnedGodot.Net
             return rgb;
         }
 
+        /// <summary>v45: take one spare tire out of the sender's bag. Which item that IS comes from the game
+        /// layer via TireItemId rather than a constant here -- core has no item catalogue and should not learn
+        /// one for a single id. False when they have none, which is what makes the handler's ordering matter:
+        /// everything else is checked first, and this is the step that cannot be undone.</summary>
+        public ushort TireItemId;   // set by the host from the game layer's PlayerController.TireItemId
+        public bool SpendTire(ushort sender)
+        {
+            if (TireItemId == 0) return false;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(TireItemId) <= 0) return false;
+            SpendAnyOf(inv, TireItemId, sender);
+            return true;
+        }
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,

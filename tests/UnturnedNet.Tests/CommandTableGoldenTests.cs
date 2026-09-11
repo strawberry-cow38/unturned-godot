@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 43.
+        // id -> name, as of NetProtocol.Version 45.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -90,6 +90,12 @@ namespace UnturnedNet.Tests
             // ...and one wriggle, carrying the side leaned. Only counted when it differs from the last side
             // taken (retail's lastLean != lean), one per tick -- so spamming it is worth nothing.
             [54] = "CommandStruggle",
+
+            // v45: the last two singleplayer-only vehicle actions. Each names the CAR and nothing a client
+            // could lie about -- the spare comes off the sender's bag, the flat wheel off the server's mask,
+            // and the carjack's impulse is applied server-side.
+            [55] = "CommandFitTire",
+            [56] = "CommandCarjack",
         };
 
         static Dictionary<byte, string> Actual() =>

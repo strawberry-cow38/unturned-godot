@@ -190,6 +190,14 @@ namespace UnturnedGodot.Net
         /// spamming one direction does nothing and you have to alternate exactly as a real player mashing Q and
         /// E does. That, plus one per tick, is what keeps a cuffed client from sending 128 in a frame.</summary>
         public const byte CommandStruggle = 54;
+        /// <summary>v45: fit a spare to a vehicle's flat wheel. Names the CAR and the WHEEL; which tire item is
+        /// being spent is read off the sender's replicated hand, so a client cannot fit a wheel it does not
+        /// hold. Same rule as the respray and the cuffs.</summary>
+        public const byte CommandFitTire = 55;
+        /// <summary>v45: jack an EMPTY vehicle back onto its wheels. The impulse is applied SERVER-SIDE and
+        /// reaches everyone through the vehicle's ordinary transform stream -- the client asking is not the
+        /// client shoving, which is what stops a carjack being a launch-anything primitive.</summary>
+        public const byte CommandCarjack = 56;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.

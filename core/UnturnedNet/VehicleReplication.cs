@@ -62,6 +62,17 @@ namespace UnturnedGodot.Net
             /// quite it (Midnight Black is #0a0a0a) -- a sentinel that a future can could collide with is a
             /// bug waiting for a content update.</summary>
             public uint? PaintRgb { get; internal set; }
+            /// <summary>v45: which wheels are FLAT, one bit each, up to 8 -- retail's tireAliveMask width.
+            ///
+            /// ⚠ POPPED, not alive, and that inversion is the whole reason it is named differently from
+            /// source. An ALIVE mask has to be 0xFF for an undamaged car, so the zero a default-constructed
+            /// entity carries would mean "every wheel is flat" -- every car would arrive at a joining client
+            /// on its rims until something dirtied it. Popped-means-set makes the default correct by
+            /// construction, which is worth more than matching a field name.
+            ///
+            /// Gated by a bit like the paint is: four good tires is the overwhelming majority and should cost
+            /// one bit, not a byte.</summary>
+            public byte PoppedTireMask { get; internal set; }
             public ushort DriverPlayerId { get; internal set; }   // seat 0. 0 = empty.
             /// <summary>Seats 1..N, index-aligned with the game layer's Vehicle.SeatLocals minus the driver.
             /// Null or empty = a vehicle nobody is riding as a passenger. Seat 0 stays DriverPlayerId rather
@@ -255,6 +266,15 @@ namespace UnturnedGodot.Net
             if (towedNetId == e.TowedNetId && newRest == e.TowRestLen) return;
             e.TowedNetId = towedNetId;
             e.TowRestLen = newRest;
+            e.LastChangedTick = tick;
+        }
+
+        /// <summary>v45: which wheels are flat. One write for the whole mask rather than per-wheel, because a
+        /// wheel is never popped or fitted in isolation from the others as far as the wire cares.</summary>
+        public void ServerSetPoppedTires(NetId id, byte mask, long tick)
+        {
+            if (!_vehicles.TryGet(id, out var e) || e.PoppedTireMask == mask) return;
+            e.PoppedTireMask = mask;
             e.LastChangedTick = tick;
         }
 
@@ -470,6 +490,7 @@ namespace UnturnedGodot.Net
                 // v41 respray: mixed as 0 when unpainted, which is NOT the same as a painted #000000 -- the
                 // extra 1 distinguishes them so an unpainted car and a black one cannot hash alike.
                 h = NetHash.MixUInt32(h, e.PaintRgb.HasValue ? e.PaintRgb.Value | 0x1000000u : 0u);
+                h = NetHash.MixByte(h, e.PoppedTireMask);
             }
             return h;
         }
@@ -513,6 +534,10 @@ namespace UnturnedGodot.Net
                 uint rgb = e.PaintRgb.Value;
                 w.WriteUInt8((byte)(rgb >> 16)); w.WriteUInt8((byte)(rgb >> 8)); w.WriteUInt8((byte)rgb);
             }
+            // v45 flat tires, same shape and for the same reason: one bit for the common case.
+            bool anyFlat = e.PoppedTireMask != 0;
+            w.WriteBit(anyFlat);
+            if (anyFlat) w.WriteUInt8(e.PoppedTireMask);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -548,6 +573,9 @@ namespace UnturnedGodot.Net
                 if (!r.ReadUInt8(out byte pb)) return false;
                 paint = ((uint)pr << 16) | ((uint)pg << 8) | pb;
             }
+            byte flatMask = 0;
+            if (!r.ReadBit(out bool anyFlat)) return false;
+            if (anyFlat && !r.ReadUInt8(out flatMask)) return false;
             e = new VehicleEntity
             {
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
@@ -555,6 +583,7 @@ namespace UnturnedGodot.Net
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
                 Fuel = fuel, Health = health, Battery = battery, Flags = flags,
                 TowedNetId = towedNetId, TowRestLen = towRestLen, Passengers = pax, PaintRgb = paint,
+                PoppedTireMask = flatMask,
             };
             return true;
         }
@@ -1025,6 +1054,12 @@ namespace UnturnedGodot.Net
         /// neither should grow a copy of the other's half.</summary>
         public Func<ushort, ushort, uint?> TrySpendPaint;
 
+        /// <summary>v45 hooks into the bag and the physics, for the same reason TrySpendPaint is one: which
+        /// item the sender is holding and whether it is really in their inventory is the transactions layer's
+        /// business, and shoving a rigid body is the game layer's. Null on a bare host.</summary>
+        public Func<ushort, bool> TrySpendTire;        // (sender) -> true if a spare was in the bag and has been taken
+        public Action<uint, ushort> ApplyCarjackForce; // (vehicle NetId, sender) -> the impulse, server-side
+
         /// <summary>How close you must be to respray a car. Generous like the forage reach and for the same
         /// reason: the server is refusing a forged NetId, not re-deciding what the client may aim at.</summary>
         public const float PaintReach = 8f;
@@ -1043,6 +1078,42 @@ namespace UnturnedGodot.Net
                     uint? rgb = TrySpendPaint(sender, cmd.ItemId);   // spends it -- so this must come AFTER every other check
                     if (rgb == null) return;
                     _vehicles.ServerSetPaint(new NetId(cmd.NetId), rgb, _tick());
+                });
+
+            // v45 FIT A TIRE. Names the car and the wheel; which spare is being spent comes off the sender's
+            // bag, and whether that wheel is actually flat is answered from the server's own mask -- a client
+            // cannot un-pop a wheel that was never popped, nor fit one to a car it is not standing at.
+            commands.Register<FitTireCommand>(ReplicationIds.CommandFitTire, FitTireCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (TrySpendTire == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.VehicleNetId), out var e) || e.Exploded) return;
+                    // The FIRST flat wheel, not the one the client names. The server holds a mask and knows
+                    // nothing about where the wheels ARE, so an index off the wire would be a field it could
+                    // not check -- and a field a client can set and the server cannot verify is a field that
+                    // will eventually be used for something else. The singleplayer path still picks by aim,
+                    // because there the client HAS the geometry; the difference is stated, not hidden.
+                    if (e.PoppedTireMask == 0) return;                             // nothing flat on it
+                    byte bit = (byte)(e.PoppedTireMask & (byte)(-e.PoppedTireMask));   // lowest set bit
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    if (e.DriverPlayerId != 0) return;                             // retail isTireReplaceable: not while it is being driven
+                    if (!TrySpendTire(sender)) return;                             // spends it -- AFTER every other check, like the paint
+                    _vehicles.ServerSetPoppedTires(new NetId(cmd.VehicleNetId), (byte)(e.PoppedTireMask & ~bit), _tick());
+                });
+
+            // v45 CARJACK. The client asks; the SERVER shoves. The impulse reaching everyone through the
+            // vehicle's ordinary transform stream is the whole point -- a client applying its own force would
+            // be a launch-anything primitive wearing a tool's name.
+            commands.Register<CarjackCommand>(ReplicationIds.CommandCarjack, CarjackCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (ApplyCarjackForce == null) return;
+                    if (!_vehicles.TryGet(new NetId(cmd.VehicleNetId), out var e) || e.Exploded) return;
+                    if (e.DriverPlayerId != 0) return;   // retail carjacks an EMPTY vehicle; flipping an occupied one is a weapon
+                    if (!_players.TryGetByOwner(sender, out var p)) return;
+                    if ((e.Pos - p.Pos).sqrMagnitude > PaintReach * PaintReach) return;
+                    ApplyCarjackForce(cmd.VehicleNetId, sender);
                 });
 
             commands.Register<EnterVehicleCommand>(ReplicationIds.CommandEnterVehicle, EnterVehicleCommand.TryRead,

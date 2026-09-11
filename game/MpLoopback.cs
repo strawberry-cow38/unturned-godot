@@ -327,6 +327,8 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Player.NetArrestPlayer = t => Client.SendArrestPlayer(t);
                 Player.NetUnlockArrest = t => Client.SendUnlockArrest(t);
                 Player.NetStruggle = side => Client.SendStruggle(side);
+                Player.NetFitTire = (netId, wheel) => Client.SendFitTire(netId, wheel);   // v45
+                Player.NetCarjack = netId => Client.SendCarjack(netId);
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and

@@ -2617,6 +2617,25 @@ namespace UnturnedGodot
         void TryFitTire()
         {
             if (_heldTireItem == null || _tirePendingT > 0f) return;   // one at a time (source: equipment.isBusy)
+            // MP (v45): ASK, and ask FIRST. A replicated car is a VehiclePuppet, not a Vehicle, so _focusVehicle
+            // is null for one and the puppet case has to be tested before the local one rather than as a
+            // fallback from it -- the same shape the respray takes.
+            //
+            // ⚠ NO WHEEL INDEX ON THE WIRE, and the difference is worth naming rather than hiding: in SP you
+            // pick the wheel by aiming at it, because the client has the geometry. The SERVER does not -- it
+            // holds a mask and nothing about where the wheels ARE -- so it fits the first flat one. Sending an
+            // index instead would be handing the client a field it could lie with, to buy back a nicety.
+            if (NetFitTire != null && NearestPuppet() is VehiclePuppet tp && tp.NetId != 0)
+            {
+                float mpLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+                if (mpLen <= 0.05f) mpLen = TireFallbackUseSeconds;
+                _viewmodel?.PlayConsumeUse();
+                NetFitTire(tp.NetId, 0);
+                _tirePendingT = mpLen;   // the hand stays busy for the swing; the wheel itself lands on the echo
+                _tirePendingVehicle = null; _tirePendingIndex = -1;
+                Log.Print($"[tire] asked the server to fit a spare to #{tp.NetId}");
+                return;
+            }
             if (!IsInstanceValid(_focusVehicle)) { HUD.Alert("Aim at a vehicle."); return; }
             if (!_focusVehicle.TiresReplaceable) { HUD.Alert(_focusVehicle.Exploded ? "That one's a wreck." : "Stop it moving first."); return; }
             int idx = _focusVehicle.ClosestTireIndex(_focusVehicle.GlobalPosition + (LookAxis * 2f), wantPopped: true);
@@ -2683,6 +2702,17 @@ namespace UnturnedGodot
         void TryCarjack()
         {
             if (_heldCarjackItem == null) return;
+            // MP (v45): ASK, and ask FIRST -- the same shape the respray takes, and for a sharper reason. The
+            // impulse has to be the SERVER's: a client that could shove a rigid body on everyone else's screen
+            // has a launch-anything primitive, and the fact that it is wearing a carjack's name does not make
+            // it one. What the puppet is looking at is a VehiclePuppet, so the replicated case is tested before
+            // the local one rather than as a fallback from it.
+            if (NetCarjack != null && NearestPuppet() is VehiclePuppet cp && cp.NetId != 0)
+            {
+                NetCarjack(cp.NetId);
+                Log.Print($"[carjack] asked the server to jack #{cp.NetId}");
+                return;
+            }
             if (!IsInstanceValid(_focusVehicle)) { Log.Print("[carjack] aim at a vehicle"); return; }
             bool flight = false;   // source: the FLIGHT skill boost quadruples the lift. No boost system here yet.
             if (!_focusVehicle.Carjack(flight))
@@ -5125,6 +5155,8 @@ namespace UnturnedGodot
         public System.Action<ushort> NetArrestPlayer;                 // (target) -> Client.SendArrestPlayer
         public System.Action<ushort> NetUnlockArrest;                 // (target) -> Client.SendUnlockArrest
         public System.Action<byte> NetStruggle;                       // (side) -> Client.SendStruggle
+        public System.Action<uint, byte> NetFitTire;                  // (vehicle NetId, unused wheel byte) -> Client.SendFitTire (v45)
+        public System.Action<uint> NetCarjack;                        // (vehicle NetId) -> Client.SendCarjack (v45)
 
         VehiclePuppet NearestPuppet()
         {

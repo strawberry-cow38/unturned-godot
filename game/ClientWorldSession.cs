@@ -623,6 +623,8 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetArrestPlayer = t => Client.SendArrestPlayer(t);
             shell.NetUnlockArrest = t => Client.SendUnlockArrest(t);
             shell.NetStruggle = side => Client.SendStruggle(side);
+            shell.NetFitTire = (netId, wheel) => Client.SendFitTire(netId, wheel);   // v45
+            shell.NetCarjack = netId => Client.SendCarjack(netId);
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);

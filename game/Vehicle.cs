@@ -5306,6 +5306,19 @@ namespace UnturnedGodot
         /// rather than a field nothing sets.</summary>
         public bool TiresReplaceable => !Exploded && LinearVelocity.LengthSquared() < 1f;   // IsWreck is the same _exploded flag -- one condition, written once
 
+        /// <summary>v45: the flat wheels as a bitmask, for the wire. Capped at 8 because that is the mask's
+        /// width -- nothing in the fleet has more, and a 9-wheeled vehicle silently losing its ninth tire to a
+        /// truncation is worth the assert-by-comment rather than a surprise.</summary>
+        public byte PoppedTireMask
+        {
+            get
+            {
+                byte m = 0;
+                for (int i = 0; i < _tirePopped.Length && i < 8; i++) if (_tirePopped[i]) m |= (byte)(1 << i);
+                return m;
+            }
+        }
+
         public bool RepairTire(int i)
         {
             if ((uint)i >= (uint)_tireNodes.Count || !_tirePopped[i]) return false;

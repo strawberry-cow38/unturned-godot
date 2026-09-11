@@ -59,6 +59,26 @@ namespace UnturnedGodot
         /// <summary>Handed the body Material at build time by Vehicle.BuildPuppetByName.</summary>
         public void SetPaintMaterial(Material m) => _paintMat = m;
 
+        byte _poppedTires;
+
+        /// <summary>v45: which of this car's wheels are flat. The puppet has no wheel PHYSICS -- it is dressing
+        /// -- so a flat here is exactly what a flat looks like from outside: the tire is gone. That is the same
+        /// thing Vehicle.PopTire does visually, and the grip and radius it also changes are the driver's
+        /// business, which on a replicated car is somebody else's machine.
+        ///
+        /// Indexed the same way the mask is written, which is the same order Vehicle builds its tire nodes in;
+        /// both sides walk their own wheel list in order, so bit N is wheel N on either.</summary>
+        public void ApplyReplicatedTires(byte mask)
+        {
+            if (_poppedTires == mask) return;   // every snapshot carries it; only a CHANGE is worth the walk
+            _poppedTires = mask;
+            for (int i = 0; i < Wheels.Length && i < 8; i++)
+            {
+                var pivot = Wheels[i]?.Pivot;
+                if (pivot != null && GodotObject.IsInstanceValid(pivot)) pivot.Visible = (mask & (1 << i)) == 0;
+            }
+        }
+
         public void ApplyReplicatedPaint(uint? rgb)
         {
             if (_paintRgb == rgb) return;      // every snapshot carries it; only a CHANGE is worth the write

@@ -57,6 +57,20 @@ namespace UnturnedGodot
         {
             _server = server;
             _host = host;
+            // v45 CARJACK: the impulse is the SERVER's, and the server is this side -- core holds entities, not
+            // rigid bodies. VehicleHost validates (empty car, in reach, not a wreck) and then calls this, which
+            // is the ONLY place the shove happens; the result reaches every client through the car's ordinary
+            // transform stream rather than each of them being told to shove their own copy.
+            if (_server?.VehicleHost != null)
+                _server.VehicleHost.ApplyCarjackForce = (netId, sender) =>
+                {
+                    foreach (var kv in _tracked)
+                        if (kv.Value.NetId == netId && Godot.GodotObject.IsInstanceValid(kv.Key))
+                        {
+                            kv.Key.Carjack(false);   // no FLIGHT skill system here yet, same as the SP path
+                            return;
+                        }
+                };
             // WHO IS NEAR A CAR, answered from the replicated player positions rather than a camera. The
             // alarm's own check falls back to GetViewport().GetCamera3D(), which is null on a dedicated
             // server -- so the machine that owns every car could never set one off, and a listen-server host
@@ -291,10 +305,12 @@ namespace UnturnedGodot
                     // Part A: adoption (core) owns the entity's transform/vel/steer/dressing -- the node
                     // contributes only the SERVER-owned scalars (fuel burn, damage, the Exploded flag)
                     _server.Vehicles.ServerPublishVitals(new NetId(t.NetId), v.Fuel, v.Health, v.Battery, v.Exploded, tick);
+                    _server.Vehicles.ServerSetPoppedTires(new NetId(t.NetId), v.PoppedTireMask, tick);   // v45: flats are server-owned like the vitals
                 }
                 else
                 {
                     // publish the node's physics state -> the wire entity (quantized + dirty-checked in core)
+                    _server.Vehicles.ServerSetPoppedTires(new NetId(t.NetId), v.PoppedTireMask, tick);   // v45
                     var euler = v.GlobalTransform.Basis.GetEuler() * (180f / Mathf.Pi);   // YXZ euler, degrees
                     byte flags = (byte)((v.EngineOn ? VehicleReplication.FlagEngineOn : 0)
                                       | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)

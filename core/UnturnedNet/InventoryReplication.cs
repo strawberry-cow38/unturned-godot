@@ -285,6 +285,36 @@ namespace UnturnedGodot.Net
     /// cooking"). Addressed by the appliance's crate NetId, which is what the player already has open --
     /// and the server checks it IS a registered cooker, so a forged id for an arbitrary crate does nothing
     /// rather than conjuring an oven.</summary>
+    /// <summary>v45: fit a spare to one wheel. The car and the wheel index; the tire item comes off the
+    /// sender's hand server-side.</summary>
+    public struct FitTireCommand
+    {
+        public uint VehicleNetId;
+        public byte WheelIndex;
+        public void Write(NetPakWriter w) { w.WriteUInt32(VehicleNetId); w.WriteUInt8(WheelIndex); }
+        public static bool TryRead(NetPakReader r, out FitTireCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id) || !r.ReadUInt8(out byte wheel)) return false;
+            cmd = new FitTireCommand { VehicleNetId = id, WheelIndex = wheel };
+            return true;
+        }
+    }
+
+    /// <summary>v45: jack a vehicle upright. The car only -- the force is the server's.</summary>
+    public struct CarjackCommand
+    {
+        public uint VehicleNetId;
+        public void Write(NetPakWriter w) { w.WriteUInt32(VehicleNetId); }
+        public static bool TryRead(NetPakReader r, out CarjackCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            cmd = new CarjackCommand { VehicleNetId = id };
+            return true;
+        }
+    }
+
     /// <summary>v43: cuff / unlock. The TARGET only: what you are doing it with is read off the hand the
     /// server already replicates, so the client cannot nominate a restraint it is not holding.</summary>
     public struct ArrestTargetCommand
