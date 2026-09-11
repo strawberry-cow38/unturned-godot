@@ -37,10 +37,17 @@ namespace UnturnedGodot.Net
         /// The Broadcast filter is the load-bearing bit: INVENTORY_START is a looping gesture and would
         /// otherwise latch onto the entity, so every other player would watch you rummage for as long as your
         /// bag was open. Filtering here rather than listing exceptions keeps the wire agreeing with the table.</summary>
-        public static byte Resolve(byte currentGesture, EPlayerGesture want, EPlayerStance stance, bool handsFull)
+        public static byte Resolve(byte currentGesture, EPlayerGesture want, EPlayerStance stance, bool handsFull,
+                                   out EPlayerGesture oneShot)
         {
+            oneShot = EPlayerGesture.NONE;
             var current = (EPlayerGesture)currentGesture;
             if (!GestureRules.CanRequest(want, current, stance, handsFull)) return currentGesture;
+            var def = GestureRules.Of(want);
+            // A ONE-SHOT changes no state -- Apply leaves it alone -- so it would vanish here entirely. Reported
+            // back instead, for the caller to broadcast as an event: a wave has no state to sit in, and the
+            // publisher is the only place that knows the request was allowed.
+            if (!def.Loops && def.Broadcast && def.Clip != null) oneShot = want;
             var next = GestureRules.Apply(current, want);
             return (byte)(GestureRules.Of(next).Broadcast ? next : EPlayerGesture.NONE);
         }

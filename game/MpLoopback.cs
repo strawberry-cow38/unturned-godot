@@ -321,6 +321,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Player.NetForageResource = index => Client.SendForageResource(index);
                 Player.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41 respray
                 Player.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42 gestures
+                Client.PlayerGestured += e => Remotes?.OnRemoteGesture(e.PlayerId, e.Gesture);   // v44: one-shot gestures on the other puppets
                 Player.NetAimedPlayer = (from, fwd, max) => Remotes != null ? Remotes.AimedPlayer(from, fwd, max) : (ushort)0;   // v43
                 Player.NetGestureOf = pid => Remotes != null ? Remotes.GestureOf(pid) : (byte)0;
                 Player.NetArrestPlayer = t => Client.SendArrestPlayer(t);

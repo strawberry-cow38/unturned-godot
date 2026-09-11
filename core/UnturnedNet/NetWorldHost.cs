@@ -700,6 +700,7 @@ namespace UnturnedGodot.Net
 
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
         public event System.Action<PlayerFiredEvent> PlayerFired;
+        public event System.Action<PlayerGestureEvent> PlayerGestured;   // v44: a one-shot gesture on somebody's puppet
         public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
@@ -801,6 +802,7 @@ namespace UnturnedGodot.Net
             Events.Register<PlayerFiredEvent>(ReplicationIds.EventPlayerFired, PlayerFiredEvent.TryRead,
                 e => PlayerFired?.Invoke(e));
             Events.Register<PlayerMeleeEvent>(ReplicationIds.EventPlayerMelee, PlayerMeleeEvent.TryRead, e => PlayerMeleed?.Invoke(e));
+            Events.Register<PlayerGestureEvent>(ReplicationIds.EventPlayerGesture, PlayerGestureEvent.TryRead, e => PlayerGestured?.Invoke(e));
             Events.Register<VehicleEnteredEvent>(ReplicationIds.EventVehicleEntered, VehicleEnteredEvent.TryRead,
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,

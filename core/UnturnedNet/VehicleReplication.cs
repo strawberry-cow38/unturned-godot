@@ -828,6 +828,23 @@ namespace UnturnedGodot.Net
     /// lands the name starts being right on its own, with no second wire change.</summary>
     /// <summary>v25: somebody SWUNG a melee weapon (or their fists) -- broadcast once per accepted MeleeCommand so every other
     /// client can play the swing on that player's puppet. No damage rides this; the server's deferred hit is separate.</summary>
+    /// <summary>v44: a ONE-SHOT gesture somebody played (wave/salute/point/facepalm/pickup). The looping ones
+    /// ride the combat entity instead -- see EventPlayerGesture's note.</summary>
+    public struct PlayerGestureEvent
+    {
+        public ushort PlayerId;
+        public byte Gesture;
+        public void Write(NetPakWriter w) { w.WriteUInt16(PlayerId); w.WriteUInt8(Gesture); }
+        public static bool TryRead(NetPakReader r, out PlayerGestureEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort pid)) return false;
+            if (!r.ReadUInt8(out byte g)) return false;
+            evt = new PlayerGestureEvent { PlayerId = pid, Gesture = g };
+            return true;
+        }
+    }
+
     public struct PlayerMeleeEvent
     {
         public ushort PlayerId;

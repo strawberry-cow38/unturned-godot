@@ -60,10 +60,19 @@ namespace UnturnedGodot
                     // forever), and the Broadcast filter keeps INVENTORY_START off the wire so nobody watches
                     // you rummage.
                     if (ServerGestures.TryTakePending(pid, out var wantGesture))
+                    {
                         changed |= SetB(ref ce.Gesture,
                                         ServerGestures.Resolve(ce.Gesture, wantGesture,
                                                                (SDG.Unturned.EPlayerStance)mi.Stance,
-                                                               mi.HeldItemId != 0));
+                                                               mi.HeldItemId != 0, out var oneShot));
+                        // v44: a wave has no state to sit in, so it goes out as an EVENT the moment it is
+                        // allowed. Broadcast, not unicast -- the person who cannot see a salute is everyone
+                        // except the one who made it.
+                        if (oneShot != SDG.Unturned.EPlayerGesture.NONE)
+                            _server.BroadcastEvent(NetMessagePak.Pack(
+                                ReplicationIds.EventPlayerGesture,
+                                new PlayerGestureEvent { PlayerId = pid, Gesture = (byte)oneShot }.Write));
+                    }
                     changed |= SetBool(ref ce.WornLightOn, mi.WornLight);   // their lamps, so other clients can light the lens
                     changed |= SetBool(ref ce.HeldLightOn, mi.HeldLight);
                 }

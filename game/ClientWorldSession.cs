@@ -201,6 +201,7 @@ namespace UnturnedGodot
                     Shell.RemoteShotFx(new Vector3(e.Origin.x, e.Origin.y, e.Origin.z),
                                        new Vector3(e.Dir.x, e.Dir.y, e.Dir.z), e.Gun);
             };
+            Client.PlayerGestured += e => Remotes?.OnRemoteGesture(e.PlayerId, e.Gesture);   // v44: a wave on somebody else's puppet
             Client.PlayerMeleed += e =>
             {
                 if (e.PlayerId == Client.PlayerId) return;   // our own swing already played on our body

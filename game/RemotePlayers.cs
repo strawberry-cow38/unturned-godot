@@ -377,6 +377,19 @@ namespace UnturnedGodot
         /// <summary>The held weapon on a puppet (master 2026-09-03: "your melee weapons/guns shown to other players"): the same
         /// Right_Hook attach + gun overlay layer the local 3P body uses (PlayerController.UpdateBodyGun). Asset gunName -> gun,
         /// meleeName -> melee, anything else / 0 -> empty hands.</summary>
+        /// <summary>EventPlayerGesture (v44): a ONE-SHOT on that player's puppet -- a wave, a salute. Played
+        /// straight through PlayGesture with loop:false, so it ends itself and hands the body back; nothing
+        /// latches, which is the whole reason these are an event and not entity state.
+        ///
+        /// Does NOT touch av.Gesture: that field tracks the LOOPING state the entity carries, and stamping a
+        /// wave into it would make the next snapshot look like a change back and replay the state clip.</summary>
+        public void OnRemoteGesture(ushort playerId, byte gesture)
+        {
+            if (!_avatars.TryGetValue(playerId, out var av) || av?.Body == null || !IsInstanceValid(av.Body)) return;
+            string clip = SDG.Unturned.GestureRules.ClipOf((SDG.Unturned.EPlayerGesture)gesture);
+            if (clip != null) av.Body.PlayGesture(clip, loop: false);
+        }
+
         /// <summary>EventPlayerMelee (v25): play that player's weak/strong swing on their puppet's upper body.</summary>
         public void OnRemoteMelee(ushort playerId, bool strong)
         {
