@@ -37,12 +37,33 @@ namespace UnturnedNet.Tests
             },
         };
 
+        /// <summary>⚠ THE TRADE ITEMS NEED ASSETS OR NOTHING CAN BE STOCKED. `tryAddItem` places by the item's
+        /// SIZE, which comes off its ItemAsset -- with no asset registered the item has no dimensions and every
+        /// add silently returns false. That is what broke the four trade tests: the bag was empty in all of
+        /// them, so the one valid trade was refused for lack of goods and the three refusals then failed on
+        /// their "and the goods are untouched" counts. Measured before fixing: tryAddItem false 3/3, count 0.
+        ///
+        /// ADDITIVE, not Assets.clear() + add like TransactionalFixtures does -- this runs per-test and must
+        /// not yank the catalog out from under a suite that shares the process.</summary>
+        [SetUp]
+        public void RegisterTradeAssets()
+        {
+            if (Assets.find(Tomato) == null) Assets.add(new ItemAsset { id = Tomato, itemName = "Tomato", size_x = 1, size_y = 1 });
+            if (Assets.find(Steak) == null)  Assets.add(new ItemAsset { id = Steak,  itemName = "Steak",  size_x = 1, size_y = 1 });
+            if (Assets.find(Syrup) == null)  Assets.add(new ItemAsset { id = Syrup,  itemName = "Syrup",  size_x = 1, size_y = 1 });
+        }
+
         static (ServerNpcs npcs, InventoryReplication inv, PlayerInventory bag) Rig(int tomatoes = 0)
         {
             var inv = new InventoryReplication();
             inv.ServerAdd(1, 0L);
             inv.TryGet(1, out var e);
-            for (int i = 0; i < tomatoes; i++) e.Inventory.tryAddItem(new Item(Tomato));
+            // ASSERTED, because an unasserted fixture is how this shipped: the adds were failing and every
+            // downstream assertion just reported the consequence.
+            for (int i = 0; i < tomatoes; i++)
+                Assert.That(e.Inventory.tryAddItem(new Item(Tomato)), Is.True, $"fixture: tomato {i + 1} went into the bag");
+            if (tomatoes > 0)
+                Assert.That(e.Inventory.getItemCount(Tomato), Is.EqualTo(tomatoes), "fixture: the bag really holds them");
             var dialogues = new Dictionary<int, NpcDialogue> { [59] = Talk(), [60] = new NpcDialogue { Id = 60 } };
             var vendor = Shop();
             var npcs = new ServerNpcs

@@ -96,6 +96,13 @@ namespace UnturnedNet.Tests
             // and the carjack's impulse is applied server-side.
             [55] = "CommandFitTire",
             [56] = "CommandCarjack",
+            // v47 server-authoritative conversations. The version WAS bumped (45 -> 47) when these landed;
+            // this list simply was not updated with them, which is the whole failure mode the golden exists
+            // to catch -- an id added to the wire with nothing recording that it is now spoken for.
+            [57] = "CommandNpcTalk",
+            [58] = "CommandNpcChoose",
+            [59] = "CommandNpcClose",
+            [60] = "CommandNpcTrade",
         };
 
         static Dictionary<byte, string> Actual() =>
