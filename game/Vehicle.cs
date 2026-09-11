@@ -9149,12 +9149,23 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 var list = new System.Collections.Generic.List<MeshInstance3D>();
                 CollectMeshes(this, list);
-                var inv = GlobalTransform.AffineInverse();
                 Aabb acc = default; bool any = false;
                 foreach (var mi in list)
                 {
                     if (!IsInstanceValid(mi) || mi.Mesh == null) continue;
-                    var lb = mi.Mesh.GetAabb(); var rel = inv * mi.GlobalTransform;
+                    // Compose the LOCAL transforms up to this vehicle rather than inverting GlobalTransform
+                    // against the child's. The global version is only correct once Godot has propagated the
+                    // transforms down, so calling this in the same frame a vehicle is moved measured the child
+                    // meshes at their OLD position against the vehicle's NEW one -- and since the result is
+                    // cached for the life of the vehicle, one early call poisoned it permanently.
+                    //
+                    // Measured: a jet placed at Y=400 and read the same frame reported a mesh 403 m TALL (the
+                    // box stretched from the world origin up to the aircraft) instead of 16 m, which fed the
+                    // chase cam a size 25x too big and pinned it at its maximum distance. Local composition
+                    // cannot see propagation at all, so it is right whenever it is called.
+                    var lb = mi.Mesh.GetAabb();
+                    var rel = Transform3D.Identity;
+                    for (Node3D n = mi; n != null && n != this; n = n.GetParent() as Node3D) rel = n.Transform * rel;
                     for (int i = 0; i < 8; i++)
                     {
                         var c = rel * (lb.Position + lb.Size * new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1));
