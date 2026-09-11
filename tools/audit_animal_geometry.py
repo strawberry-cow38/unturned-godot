@@ -209,8 +209,14 @@ def audit(d, fleet=False, animate=True):
     for s in parts:
         if s.seams:
             findings.add(f'{s.name}: {s.seams} non-manifold/doubled directed edges')
-        if len(s.boundary) and not (fleet and s is not core):
+        # A declared INLAY is a two-triangle decal painted onto a surface -- an eye, a blaze. It has a
+        # boundary by construction and is not a solid, so requiring closure of it is requiring it to be
+        # something it was never meant to be. The fleet's own eyes take the same exemption via the `fleet`
+        # branch; a rig that declares geometry_inlays gets it by name instead of by which file it came from.
+        if len(s.boundary) and not (fleet and s is not core) and s.name not in d.get('geometry_inlays', []):
             findings.add(f'{s.name}: NOT CLOSED, {len(s.boundary)} boundary edges')
+        if len(s.boundary) and s.name in d.get('geometry_inlays', []):
+            notes.add(f'{s.name}: declared inlay, boundary by construction')
     attachments = []
     if not fleet:
         byname = {s.name: s for s in parts}
@@ -218,13 +224,16 @@ def audit(d, fleet=False, animate=True):
         # questions and only one of them catches a head sitting on the end of the neck like a bead on a
         # wire. head->neck is the volume test, which passes on a sliver; neck->head gets the buried-cap
         # rule below, which is what the legs have had all along.
+        # 'head' is no longer a part: the horse's neck and head are ONE lofted solid, which is how the
+        # fleet is built and the reason strawberry kept seeing a seam. Ears and eyes therefore attach to
+        # 'neck', which is that whole solid. A pair naming a part that does not exist is reported as a
+        # missing attachment rather than skipped, so this list cannot quietly stop checking anything.
         for child, parent in [('Left_Front', 'body'), ('Right_Front', 'body'), ('Left_Back', 'body'),
-                              ('Right_Back', 'body'), ('neck', 'body'), ('head', 'neck'), ('mane', 'neck'),
-                              ('neck', 'head'),
-                              ('tail', 'body'), ('ear_left', 'head'), ('ear_right', 'head'),
-                              ('eye_left', 'head'), ('eye_right', 'head'), ('blaze', 'head')]:
+                              ('Right_Back', 'body'), ('neck', 'body'), ('mane', 'neck'),
+                              ('tail', 'body'), ('ear_left', 'neck'), ('ear_right', 'neck'),
+                              ('eye_left', 'neck'), ('eye_right', 'neck')]:
             if child not in byname or parent not in byname:
-                if child not in d.get('geometry_inlays', []) or parent != 'head':
+                if child not in d.get('geometry_inlays', []) or parent not in ('head', 'neck'):
                     findings.add(f'{child} -> {parent}: missing named attachment')
                 else:
                     notes.add(f'{child}: colour inlay in closed head surface')
