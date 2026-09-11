@@ -114,6 +114,7 @@ namespace UnturnedGodot
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
         float _resFixT;   // UG_RES: re-assert the benchmark window size past the project's maximized default
+        ulong _lastPhysFrames;   // UG_PERF: physics ticks actually executed per second vs the configured rate
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
         WeatherManager _stormWm; double _stormT; float[] _stormStrikes; int _stormStrikeIdx;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s,s,s>: fire lightning strikes at those times for the --write-movie storm demo
@@ -9002,7 +9003,14 @@ namespace UnturnedGodot
                 // therefore the one to distrust.
                 long _act = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.ActiveObjects);
                 long _pairs = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.CollisionPairs);
-                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} bodies={_act} pairs={_pairs} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
+                // PHYSICS TICKS ACTUALLY EXECUTED in the last second, next to the configured rate. Without
+                // this, physicsMs has no unit you can check: 25.8 ms of "physics" does not fit inside a
+                // 10.5 ms frame at 95 fps, so it is either per-TICK (and then it is over a 16.67 ms budget
+                // and Godot is clamping steps, which shows up as time dilation rather than as lost fps) or
+                // it is some other window entirely. Configured-vs-actual settles which, by counting.
+                ulong _pf = Engine.GetPhysicsFrames();
+                long _ptick = (long)(_pf - _lastPhysFrames); _lastPhysFrames = _pf;
+                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} bodies={_act} pairs={_pairs} ptick={_ptick}/{Engine.PhysicsTicksPerSecond} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
