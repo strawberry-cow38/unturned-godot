@@ -94,7 +94,9 @@ namespace UnturnedGodot
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
-        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
+        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone, _partTestDone;
+        static readonly bool _perfProbeMain = System.Environment.GetEnvironmentVariable("UG_PERFPROBE") == "1";
+        double _fpsElapsed; int _fpsFrames;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable; bool _pdTpDone;   // UG_TP=1: drop to the chase camera once the world is up   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
@@ -8819,6 +8821,19 @@ namespace UnturnedGodot
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
+            // UG_PERFPROBE=1: frame cost, once a second. The A/B instrument -- master 2026-09-11 asked for
+            // before/after numbers, and an average over a second is the only honest way to compare two builds
+            // when a single frame varies by more than the thing being measured.
+            if (_perfProbeMain)
+            {
+                _fpsElapsed += delta; _fpsFrames++;
+                if (_fpsElapsed >= 1.0)
+                {
+                    double ms = _fpsElapsed * 1000.0 / _fpsFrames;
+                    Log.Print($"[perf] {_fpsFrames / _fpsElapsed:0.0} fps  {ms:0.000} ms/frame");
+                    _fpsElapsed = 0.0; _fpsFrames = 0;
+                }
+            }
             if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { Log.Print("[bakehulls] done"); GetTree().Quit(); return; }
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
@@ -9011,6 +9026,43 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && (_peiFrame % 12 == 0 || _peiFrame >= 156)) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward; sustained burst 156+ so a muzzle FLASH lands on the frame-160 capture (glow showcase)
                 else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { if (System.Environment.GetEnvironmentVariable("UG_EAT") is string _eatAt && _eatAt.Length > 0 && _peiFrame == (int.TryParse(_eatAt, out var _ef) ? _ef : 100)) _peiPlayer.StartConsume(); if (System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" && _peiFrame == 30) { var _gcit = new SDG.Unturned.Item(28); _peiPlayer.EquipHeldFuelCan(_gcit.GetAsset(), _gcit); } }   // UG_FP: on foot for the FP viewmodel; UG_EAT=<startFrame> click-eat; UG_FUELCAN=1 equips the gas can (verify the real two-handed hold in the game FP camera)
                 else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
+            }
+            // UG_PARTTEST=1: a GPU emitter and a CPU emitter side by side, 3 m in front of the player.
+            // THE QUESTION THIS DECIDES: RainSystem3D.cs:8 says GPU particles do not render in Godot's
+            // movie-maker/offline pipeline, which is why 16 files use CpuParticles3D on the main thread. That
+            // note is from 2026-08-29 and predates the engine bumps. Every L2 golden runs with --write-movie,
+            // so if the limitation is gone the constraint evaporates; if it is not, the CPU cost is the price of
+            // being able to see particles in any capture at all. Render this with and without --write-movie and
+            // look at which halves survive. RED = GPU, BLUE = CPU.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_partTestDone && System.Environment.GetEnvironmentVariable("UG_PARTTEST") == "1")
+            {
+                _partTestDone = true;
+                var fwd = -_pdPlayer.GlobalTransform.Basis.Z;
+                var at = _pdPlayer.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * 3f + Vector3.Up * 1.2f;
+                int partN = int.TryParse(System.Environment.GetEnvironmentVariable("UG_PARTN"), out var _pn) ? _pn : 200;
+                string partMode = (System.Environment.GetEnvironmentVariable("UG_PARTMODE") ?? "both").ToLowerInvariant();
+                var gpu = new GpuParticles3D
+                {
+                    // ⚠ EXPLICIT, not `!= "cpu"`. That reads fine and makes mode=none emit BOTH -- which is
+                    // exactly what it did, so the "no particles" control was the both-emitters case and every
+                    // comparison against it was nonsense. Caught by logging the flags and reading them.
+                    Amount = partN, Lifetime = 6f, Explosiveness = 0f, Emitting = partMode == "gpu" || partMode == "both",
+                    Position = at + new Vector3(-0.7f, 0f, 0f),
+                    ProcessMaterial = new ParticleProcessMaterial { Gravity = Vector3.Zero, InitialVelocityMin = 0.4f, InitialVelocityMax = 0.7f, Color = new Color(1f, 0.1f, 0.1f) },
+                    DrawPass1 = new QuadMesh { Size = new Vector2(0.09f, 0.09f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles },
+                };
+                AddChild(gpu);
+                var cpu = new CpuParticles3D
+                {
+                    Amount = partN, Lifetime = 6f, Explosiveness = 0f, Emitting = partMode == "cpu" || partMode == "both",
+                    Position = at + new Vector3(0.7f, 0f, 0f),
+                    Gravity = Vector3.Zero, InitialVelocityMin = 0.4f, InitialVelocityMax = 0.7f,
+                    Mesh = new QuadMesh { Size = new Vector2(0.09f, 0.09f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.1f, 0.4f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles },
+                };
+                AddChild(cpu);
+                Log.Print($"[parttest] mode={partMode} n={partN}  gpuEmitting={gpu.Emitting} cpuEmitting={cpu.Emitting}");
             }
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_holdItemDone)   // UG_HOLDITEM=<id>: put a catalog item in the player's hands once the world is up (a render of a held binocular/tool)
             {

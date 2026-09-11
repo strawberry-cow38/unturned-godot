@@ -220,12 +220,40 @@ void sky() {
                     _brownouts.Add((d, 0.77f + GD.Randf() * 0.20f));       // a random EVENING-night time (streetlights lit)
         }
 
+        // Read ONCE, not per tick: the probe is a measurement and must not be the thing it measures.
+        static readonly bool _perfProbe = System.Environment.GetEnvironmentVariable("UG_PERFPROBE") == "1";
+        long _applyTicks; int _applyCalls; double _probeElapsed;
+
         public override void _EnterTree() { TickHub.Add(this, HubTick, 60f); }
         public override void _ExitTree() { TickHub.Remove(this); }
         public void HubTick(double delta)   // PERF: hub-ticked at 60 Hz (was a per-frame engine callback; see TickHub)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
-            if (VisualsEnabled) { AdvanceClouds((float)delta); Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
+            if (VisualsEnabled)
+            {
+                AdvanceClouds((float)delta);
+                // UG_PERFPROBE=1: what Apply() ACTUALLY costs, before anyone optimises it. master 2026-09-11
+                // asked for before/after numbers rather than estimates, and Apply is hub-ticked at 60 Hz (not
+                // per-frame, despite how it reads) -- so the ceiling on any guard is 60 calls a second, and
+                // whether that is worth guarding is a measurement, not an opinion.
+                if (_perfProbe)
+                {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    Apply();
+                    _applyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    _applyCalls++;
+                    _probeElapsed += delta;
+                    if (_probeElapsed >= 1.0)
+                    {
+                        double usPerCall = _applyCalls == 0 ? 0 : (_applyTicks * 1e6 / System.Diagnostics.Stopwatch.Frequency) / _applyCalls;
+                        double msPerSec = _applyTicks * 1e3 / System.Diagnostics.Stopwatch.Frequency / _probeElapsed;
+                        Log.Print($"[perf] DayNightCycle.Apply {_applyCalls} calls/s  {usPerCall:0.00} us/call  {msPerSec:0.000} ms per SECOND of wall clock  ({msPerSec / 10.0:0.00}% of a 60fps budget)");
+                        _applyTicks = 0; _applyCalls = 0; _probeElapsed = 0.0;
+                    }
+                }
+                else Apply();
+                DriveStreetlights((float)delta); DriveMoteFade();
+            }
             DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
         }
 
