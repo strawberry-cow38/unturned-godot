@@ -201,61 +201,79 @@ def build():
     hx = -L/2-d['head_length']*.45
     # Five landmarks, with a broad base tapering in Z toward the poll. Both
     # buried base landmarks use Spine; the head end retains the deer Skull.
-    # neck[2] is the neck's FORWARD-LOWER corner and it has to sit WELL INSIDE the head, not on its
-    # rear edge. At .25/.35 it landed at (-1.348, 2.110) -- effectively ON the head's rear diagonal, so
-    # the two solids met along a line instead of interpenetrating, and the head's whole lower-rear face
-    # from y=1.85 to 2.11 was open air. That is the gap strawberry saw ("the head isnt attached
-    # properly, big gaps"), and the audit's plain volume-overlap test passed it because the bounding
-    # boxes DO overlap -- see the buried-cap rule this now gets in audit_animal_geometry.py, the same
-    # one the legs already had for the same reason.
-    # .55/.50 puts it at (-1.54, 2.05): inside the head's top edge (y=2.12 there) and above its lower
-    # edge (y=1.91), with the swept neck width 0.161 against the head's 0.29.
-    neck = [(-L*.45, leg+depth*.25), (-L*.64, H),
-            (hx-d['head_length']*.70, poll-d['head_height']*.55),
-            (hx+d['head_length']*.18, poll),
-            (-L*.27, H-depth*.22)]
-    # CLAMPED at head_width. The sweep tapers the neck from the shoulder forward, and past hx it kept
-    # right on tapering -- 0.126 m at the head end against the head's 0.29 -- so a wide head met a narrow
-    # neck and you saw the step, however deeply the two interpenetrated. Seating it fixed the gap and not
-    # the SILHOUETTE (strawberry: "it still looks like a separate component"). Holding the forward half
-    # at head width makes the neck run into the head as one mass.
-    # ...at .92 of head width, NOT flush at 1.0. Flush makes the neck's side faces coplanar with the
-    # head's, which fails the buried-root rule for a real reason -- coplanar faces z-fight. .92 leaves
-    # ~6 mm of clearance a side on a 290 mm head: invisible, and the cap stays strictly inside.
-    prism('neck', neck, lambda x, y: max(d['head_width']*.92,
-                                         d['head_width']+(x-hx)/(-L*.27-hx)*(W*.75-d['head_width'])), 'Skull')
-    for i in range(*parts['neck']):
-        if any(np.allclose(rig['positions'][i][:2], a, atol=1e-7) for a in (neck[0], neck[4])):
-            rig['skin_index'][i] = [slots['Spine'], slots['Skull']]
+    # ONE CONTINUOUS NECK-AND-HEAD, not two prisms pushed through each other.
+    #
+    # strawberry, three times: "the head isnt attached properly" -> "it still looks like a separate
+    # component" -> "the neck overlaps the head, the head should blend into the neck". He was right every
+    # time and the first two fixes treated the symptom. The structure was the cause: deer and cow are ONE
+    # closed solid (the audit prints `1 closed solids` for them and printed `11` for this horse, right next
+    # to each other, on every run I did). Two overlapping solids have a visible intersection line no amount
+    # of seating depth or palette matching removes -- because it genuinely IS two parts.
+    #
+    # So: a loft. Rings from the chest through the crest to the muzzle, consecutive rings joined, capped at
+    # each end. The head is the FRONT OF THE NECK rather than a box stuck into it, and there is no seam to
+    # see because there is no intersection.
+    #
+    # Cheaper too: 7 rings x 6 = 42 vertices against the 84 the separate neck and head cost.
     hl, hh = d['head_length'], d['head_height']
-    head = [(hx, poll), (hx-hl*.35, poll-hh*.12),
-            (hx-hl, poll-hh*.75), (hx-hl*.90, poll-hh),
-            (hx-hl*.30, poll-hh*.75)]
-    x, y, e = hx-hl*.28, poll-hh*.30, d['eye']/2
-    eyes = {side: dict(inset=[(x-e,y-e,z),(x+e,y-e,z),(x+e,y+e,z),(x-e,y+e,z)])
-            for side, z in [('front', d['head_width']/2), ('back', -d['head_width']/2)]}
-    a, b = np.array(head[1]), np.array(head[2])
-    center, delta = a*.75+b*.25, (b-a)*.14
-    blaze = [(center[0]-delta[0],center[1]-delta[1],0),
-             (center[0],center[1],d['eye']),
-             (center[0]+delta[0],center[1]+delta[1],0),
-             (center[0],center[1],-d['eye'])]
-    # profile is counterclockwise; edge 1 is the sloping forehead.
-    # BASE COLOUR 0 -- the body/neck brown, not palette 1. The head was drawn entirely in the warm
-    # muzzle texel, which is most of why it read as a bolted-on part regardless of geometry
-    # (strawberry: "unify the head-body color"). Palette 1 now covers only edges 2 and 3, the muzzle
-    # front and the lower jaw, which is the marking a bay horse actually has.
-    prism('head', head, d['head_width'], 'Skull', 0, edge_colors={2: 1, 3: 1},
-          inlays={**eyes, 1: dict(inset=blaze, inset_color=3)})
+    poll = d['height']-d['ear']
+    hx = -L/2-hl*.45
+    # (x, centre y, half height, half width). Rear ring sits INSIDE the barrel so the neck grows out of the
+    # body rather than balancing on it; front ring is the muzzle.
+    sections = [
+        (-L*.42,  leg+depth*.62, depth*.30, W*.34),   # buried in the chest
+        (-L*.60,  H-depth*.06,   depth*.26, W*.26),   # withers
+        (hx+hl*.05, poll-hh*.30, hh*.52,    d['head_width']*.60),   # throatlatch
+        (hx-hl*.30, poll-hh*.34, hh*.48,    d['head_width']*.50),   # poll / jaw -- the head begins here
+        (hx-hl,     poll-hh*.86, hh*.22,    d['head_width']*.34),   # muzzle
+    ]
+    rings = []
+    for x, cy, half_h, half_w in sections:
+        rings.append([(x, cy+half_h, 0.), (x, cy+half_h*.5, half_w), (x, cy-half_h*.5, half_w),
+                      (x, cy-half_h, 0.), (x, cy-half_h*.5, -half_w), (x, cy+half_h*.5, -half_w)])
+    start = len(rig['positions'])
+    face(rings[0], 'Skull')
+    face(rings[-1][::-1], 'Skull', 1)   # the muzzle cap keeps the warm texel
+    for r in range(len(rings)-1):
+        a_, b_ = rings[r], rings[r+1]
+        for i in range(6):
+            j = (i+1) % 6
+            # Colour 1 (the warm muzzle brown) only on the front two segments and only on the lower faces,
+            # so a bay's pale muzzle stops where the face does instead of painting the whole head.
+            c = 1 if (r >= len(rings)-2 and i in (2, 3, 4)) else 0
+            face([b_[i], b_[j], a_[j], a_[i]], 'Skull', c)
+    parts['neck'] = [start, len(rig['positions'])]
+    for i in range(*parts['neck']):
+        if rig['positions'][i][0] >= -L*.42 - 1e-9:
+            rig['skin_index'][i] = [slots['Spine'], slots['Skull']]
+
+    # Eyes sit on the face rings rather than on a separate head solid. Named per side and declared as
+    # INLAYS, the same way the fleet carries them -- the audit treats a two-triangle decal as supported
+    # geometry rather than an unclosed solid, which is what it is.
+    ex, ey, e = hx-hl*.30, poll-hh*.30, d['eye']/2
+    for sign, name in ((-1, 'eye_right'), (1, 'eye_left')):
+        start = len(rig['positions'])
+        z = sign*(d['head_width']*.50+d['eye']/40)
+        points = [(ex-e, ey-e, z), (ex+e, ey-e, z), (ex+e, ey+e, z), (ex-e, ey+e, z)]
+        face(points if sign > 0 else points[::-1], 'Skull', 2)
+        parts[name] = [start, len(rig['positions'])]
+
     # Thin mane follows the rear crest; it is a solid prism, not a billboard.
     # The mane straddles the neck crest, and it must sit DEEP enough to stay buried when the head turns:
     # it is skinned to Spine while the neck's forward half is Skull, so under Glance_0/Glance_1 the two
     # move apart and a shallow mane peels off the crest. At -mane_width/3 the audit measured 0.04 mm of
     # remaining overlap mid-glance -- floating, the same defect the first pass had at rest.
-    mane = [(neck[3][0]-d['mane_width']*1.2, poll-d['mane_width']*1.2),
-            (neck[3][0]+d['mane_width'], poll),
-            (neck[4][0]+d['mane_width'], neck[4][1]),
-            (neck[4][0]-d['mane_width']*1.2, neck[4][1]-d['mane_width']*1.2)]
+    # Rebased onto the loft's crest: sections[1] is the withers and sections[3] the poll, so the mane runs
+    # the FULL crest between their tops rather than the short stub near the head it was when anchored to
+    # the throatlatch -- a mane that stops halfway reads as another separate part, which is the exact
+    # complaint this whole rework exists to answer. Reading the ring chain rather than carrying its own copy of the
+    # neck outline means it cannot drift when the sections are retuned.
+    crest_back = (sections[1][0], sections[1][1] + sections[1][2])
+    crest_front = (sections[3][0], sections[3][1] + sections[3][2])
+    mane = [(crest_front[0]-d['mane_width']*1.2, crest_front[1]-d['mane_width']*1.2),
+            (crest_front[0]+d['mane_width'], crest_front[1]),
+            (crest_back[0]+d['mane_width'], crest_back[1]),
+            (crest_back[0]-d['mane_width']*1.2, crest_back[1]-d['mane_width']*1.2)]
     prism('mane', mane, d['mane_width'], 'Skull', 2)
     for i in range(*parts['mane']):
         if rig['positions'][i][1] < H:
@@ -284,7 +302,7 @@ def build():
             (L/2+d['hoof_length']*.7, H-depth*.18-d['tail_length']*.90)]
     prism('tail', tail, d['mane_width']*1.5, 'Spine', 2)
     rig['geometry_parts'] = parts
-    rig['geometry_inlays'] = ['eye_left', 'eye_right', 'blaze']
+    rig['geometry_inlays'] = ['eye_left', 'eye_right']   # the blaze went with the separate head solid
     rig['vcount'] = len(rig['positions'])
     (ROOT/'game/content/horse_rig.json').write_text(json.dumps(rig, separators=(',', ':'), allow_nan=False)+'\n')
     im = Image.new('RGBA', (2, 2))
