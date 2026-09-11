@@ -1,0 +1,6516 @@
+{
+ "characters": [
+  {
+   "key": "Armory_Supply",
+   "id": 816,
+   "guid": "df8728a330714254bf7b30f1705ba9d5",
+   "name": "Armory Supply Kyle",
+   "shirt": 1421,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 5,
+   "skin": "#AA916E",
+   "hair": "#464646",
+   "dialogue": 143
+  },
+  {
+   "key": "Captain",
+   "id": 752,
+   "guid": "000ff5a98946400c8c93c5f936754395",
+   "name": "Captain Sydney",
+   "shirt": 0,
+   "pants": 0,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 24,
+   "skin": "#9D886B",
+   "hair": "",
+   "dialogue": 1
+  },
+  {
+   "key": "Chef",
+   "id": 756,
+   "guid": "209192e21ab44684bd14e097a493c8ff",
+   "name": "Chef Leonard",
+   "shirt": 230,
+   "pants": 231,
+   "hat": 239,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#4B3D31",
+   "hair": "#191919",
+   "dialogue": 59
+  },
+  {
+   "key": "Chef_Sous",
+   "id": 756,
+   "guid": "f478bd82310b4986b3af3f666e2774ea",
+   "name": "Sous-Chef Roman",
+   "shirt": 230,
+   "pants": 231,
+   "hat": 239,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 13,
+   "skin": "#C8AF8C",
+   "hair": "",
+   "dialogue": 92
+  },
+  {
+   "key": "Chess_Player_0",
+   "id": 809,
+   "guid": "55154f16428344498989354a81ecd8fe",
+   "name": "Chess Mark",
+   "shirt": 181,
+   "pants": 212,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 4,
+   "skin": "#BEA582",
+   "hair": "#57452F",
+   "dialogue": 141
+  },
+  {
+   "key": "Chess_Player_1",
+   "id": 809,
+   "guid": "1cf23715a77940f793e6d0e24835c594",
+   "name": "Chess Sam",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 4,
+   "skin": "#332C25",
+   "hair": "#191919",
+   "dialogue": 141
+  },
+  {
+   "key": "Chief",
+   "id": 764,
+   "guid": "b6a72d806231445aa6e4e0eb9569998e",
+   "name": "Chief Brian",
+   "shirt": 223,
+   "pants": 224,
+   "hat": 225,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 3,
+   "skin": "#4B3D31",
+   "hair": "#191919",
+   "dialogue": 65
+  },
+  {
+   "key": "Coalition_Crew_0",
+   "id": 800,
+   "guid": "30aab7ebf68344f7abbfacf463d5d8c9",
+   "name": "Coalition Crew Zoe",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 18,
+   "skin": "#706049",
+   "hair": "#373737",
+   "dialogue": 94
+  },
+  {
+   "key": "Coalition_Crew_1",
+   "id": 801,
+   "guid": "823b14aaec694080b9d37e2834ba440f",
+   "name": "Coalition Crew Gordon",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 5,
+   "skin": "#BEA582",
+   "hair": "#AC6A39",
+   "dialogue": 95
+  },
+  {
+   "key": "Coalition_Crew_2",
+   "id": 802,
+   "guid": "c83215461bb743a9a5229985305f88e8",
+   "name": "Coalition Crew Darren",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 28,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 96
+  },
+  {
+   "key": "Coalition_Guard",
+   "id": 799,
+   "guid": "4bba5603eaf64d32b59ebe4da83e7111",
+   "name": "Coalition Guard Todd",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 1426,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 9,
+   "skin": "#BEA582",
+   "hair": "",
+   "dialogue": 91
+  },
+  {
+   "key": "Coalition_Soldier_0",
+   "id": 798,
+   "guid": "9f91cecc843e4b0baf448e2949c7df3b",
+   "name": "Coalition Soldier Calvin",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 1426,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 8,
+   "skin": "#BEA582",
+   "hair": "",
+   "dialogue": 90
+  },
+  {
+   "key": "Coalition_Soldier_1",
+   "id": 810,
+   "guid": "04fb660ed912438a91b6dab3401b4768",
+   "name": "Coalition Soldier Vicky",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 1425,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#4B3D31",
+   "hair": "#191919",
+   "dialogue": 90
+  },
+  {
+   "key": "Coalition_Soldier_2",
+   "id": 813,
+   "guid": "c523518d8a104a7c98a505a49eca3226",
+   "name": "Coalition Soldier Simon",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 1425,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 1,
+   "skin": "#BEA582",
+   "hair": "#353A5C",
+   "dialogue": 90
+  },
+  {
+   "key": "Coalition_Soldier_3",
+   "id": 815,
+   "guid": "1e100a9cd1684a018781fcccecfd1208",
+   "name": "Coalition Soldier Ivan",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 1,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 90
+  },
+  {
+   "key": "Commander",
+   "id": 753,
+   "guid": "e94f489825dd46e791e95e27035c3521",
+   "name": "Commander Laurence",
+   "shirt": 1423,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 4,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 44
+  },
+  {
+   "key": "Comms",
+   "id": 831,
+   "guid": "d6495dfff5f14b76a411e2a683980dd9",
+   "name": "Comms Darren",
+   "shirt": 303,
+   "pants": 304,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 28,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 198
+  },
+  {
+   "key": "Fire",
+   "id": 812,
+   "guid": "2313b0a4fecd4f818ef859119844dba5",
+   "name": "Fire Norbert",
+   "shirt": 180,
+   "pants": 228,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 13,
+   "skin": "#BEA582",
+   "hair": "#371919",
+   "dialogue": 172
+  },
+  {
+   "key": "Harry",
+   "id": 832,
+   "guid": "8958354426564626bb7d3af2135ba930",
+   "name": "Lieutenant Harry",
+   "shirt": 1421,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 8,
+   "skin": "#BEA582",
+   "hair": "#373737",
+   "dialogue": 199
+  },
+  {
+   "key": "Homeless",
+   "id": 761,
+   "guid": "80dac90952304fb797bdbf707c5d1caf",
+   "name": "Homeless ???",
+   "shirt": 211,
+   "pants": 213,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 16,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 131
+  },
+  {
+   "key": "Hungry_0",
+   "id": 795,
+   "guid": "56f0da8b90fa415d92401fb03c58f151",
+   "name": "Hungry Jolene",
+   "shirt": 669,
+   "pants": 214,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 17,
+   "skin": "#332C25",
+   "hair": "#191919",
+   "dialogue": 89
+  },
+  {
+   "key": "Hungry_1",
+   "id": 814,
+   "guid": "7f74ff183f7b43a7a5d4c256e69521e7",
+   "name": "Hungry Isabelle",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 1426,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 24,
+   "skin": "#D9CAB4",
+   "hair": "",
+   "dialogue": 90
+  },
+  {
+   "key": "Invention_Supply",
+   "id": 793,
+   "guid": "1c760a2210f94fcfb490348571b5d57e",
+   "name": "Invention Supply Benny",
+   "shirt": 311,
+   "pants": 312,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 727,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#D9CAB4",
+   "hair": "#329632",
+   "dialogue": 82
+  },
+  {
+   "key": "Janitor",
+   "id": 757,
+   "guid": "eb6ad3a25fb04a91bf68809c1004568a",
+   "name": "Janitor Rusty",
+   "shirt": 405,
+   "pants": 406,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 29,
+   "skin": "#D9CAB4",
+   "hair": "#7D7D7D",
+   "dialogue": 10
+  },
+  {
+   "key": "Major",
+   "id": 830,
+   "guid": "7eee02c2883141a7b4d6f99a6ed0ab18",
+   "name": "Friendly Major Len",
+   "shirt": 1422,
+   "pants": 1419,
+   "hat": 1428,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 5,
+   "skin": "#9D886B",
+   "hair": "#1A5C26",
+   "dialogue": 90
+  },
+  {
+   "key": "Mechanic",
+   "id": 757,
+   "guid": "55ea2a24517142019b4042bd7834358c",
+   "name": "Mechanic Natalie",
+   "shirt": 405,
+   "pants": 406,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 1,
+   "skin": "#BEA582",
+   "hair": "#269FAC",
+   "dialogue": 48
+  },
+  {
+   "key": "Medic",
+   "id": 758,
+   "guid": "60ac42d556ba4c389ce59252d6b70ac7",
+   "name": "Medic Swanson",
+   "shirt": 311,
+   "pants": 312,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 0,
+   "skin": "#BEA582",
+   "hair": "#8A4A90",
+   "dialogue": 74
+  },
+  {
+   "key": "Missing_Ring",
+   "id": 808,
+   "guid": "517da5b6274c4391878388d9b814b75c",
+   "name": "Missing Ring Gwen",
+   "shirt": 164,
+   "pants": 213,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#BEA582",
+   "hair": "#665037",
+   "dialogue": 137
+  },
+  {
+   "key": "P.Riso",
+   "id": 754,
+   "guid": "661deb313d2b4316928ceb0ff6f778a7",
+   "name": "P.Riso",
+   "shirt": 303,
+   "pants": 304,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 15,
+   "skin": "#D9CAB4",
+   "hair": "#191919",
+   "dialogue": 14
+  },
+  {
+   "key": "Patient",
+   "id": 791,
+   "guid": "39323c87b2af4f88adca6d00355ed0cc",
+   "name": "Patient",
+   "shirt": 0,
+   "pants": 0,
+   "hat": 686,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 5,
+   "skin": "#4B3D31",
+   "hair": "",
+   "dialogue": 73
+  },
+  {
+   "key": "Pilot",
+   "id": 794,
+   "guid": "f46c056af309413dbfef2fbf7d261dc5",
+   "name": "Pilot Andy",
+   "shirt": 419,
+   "pants": 548,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 409,
+   "backpack": 0,
+   "face": 5,
+   "skin": "#706049",
+   "hair": "#191919",
+   "dialogue": 87
+  },
+  {
+   "key": "Pirate",
+   "id": 759,
+   "guid": "789a9de892c649cd98559d023447401b",
+   "name": "Pirate Wallace",
+   "shirt": 546,
+   "pants": 547,
+   "hat": 545,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 25,
+   "skin": "#94764B",
+   "hair": "#473928",
+   "dialogue": 33
+  },
+  {
+   "key": "Scientist",
+   "id": 755,
+   "guid": "cd82820a948149b6acf2b0acb92eb5c3",
+   "name": "Scientist Ernie",
+   "shirt": 311,
+   "pants": 312,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 727,
+   "backpack": 0,
+   "face": 9,
+   "skin": "#BEA582",
+   "hair": "#C1C1C1",
+   "dialogue": 77
+  },
+  {
+   "key": "Scout",
+   "id": 753,
+   "guid": "3afa17f491c441588a03f1f908712f9b",
+   "name": "Scout Oswald",
+   "shirt": 1421,
+   "pants": 1419,
+   "hat": 1426,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#BEA582",
+   "hair": "",
+   "dialogue": 97
+  },
+  {
+   "key": "Security_Lookout_0",
+   "id": 796,
+   "guid": "9665fd59120c4800b5a43507eecd06da",
+   "name": "Security Lookout Keith",
+   "shirt": 223,
+   "pants": 224,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 22,
+   "skin": "#917346",
+   "hair": "#282828",
+   "dialogue": 86
+  },
+  {
+   "key": "Security_Lookout_1",
+   "id": 797,
+   "guid": "6c31b8c6e175442589dd85270b7812c3",
+   "name": "Security Lookout Lydia",
+   "shirt": 223,
+   "pants": 224,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 0,
+   "skin": "#D9CAB4",
+   "hair": "#CDC08C",
+   "dialogue": 86
+  },
+  {
+   "key": "T.Rickster",
+   "id": 760,
+   "guid": "e6bdf199722e48aea02afe3f5a87013b",
+   "name": "T.Rickster",
+   "shirt": 303,
+   "pants": 304,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 7,
+   "skin": "#BEA582",
+   "hair": "#B93100",
+   "dialogue": 21
+  },
+  {
+   "key": "Traitor",
+   "id": 763,
+   "guid": "a946437b6a3845ec836b5b8e68d8f329",
+   "name": "Traitor Major Len",
+   "shirt": 1422,
+   "pants": 1419,
+   "hat": 1428,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 11,
+   "skin": "#9D886B",
+   "hair": "#1A5C26",
+   "dialogue": 6
+  },
+  {
+   "key": "Uniform_Supply",
+   "id": 790,
+   "guid": "867ebd1ee8504b7da446237fa7774c0d",
+   "name": "Uniform Supply Franklin",
+   "shirt": 1420,
+   "pants": 1419,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 6,
+   "skin": "#D9CAB4",
+   "hair": "#473928",
+   "dialogue": 69
+  },
+  {
+   "key": "Wind",
+   "id": 811,
+   "guid": "8490dfd9f3c44172a0273fbf61e1ca39",
+   "name": "Wind Peter",
+   "shirt": 154,
+   "pants": 214,
+   "hat": 0,
+   "vest": 0,
+   "mask": 0,
+   "glasses": 0,
+   "backpack": 0,
+   "face": 20,
+   "skin": "#55473B",
+   "hair": "#191919",
+   "dialogue": 169
+  }
+ ],
+ "dialogues": [
+  {
+   "key": "Armory/Armory_Ace",
+   "id": 0,
+   "guid": "bf7a621cf6ff4a61a51648edc9b984b0",
+   "messages": [
+    {
+     "pages": [
+      "Did he really? I've always wanted a scoped pistol.<pause> Next time you see him, let him know that if it works well we'd like some for our armory."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Armory/Armory_Bluntforce",
+   "id": 0,
+   "guid": "e0214d958038413a9b46eb673210da93",
+   "messages": [
+    {
+     "pages": [
+      "A suppressed shotgun?!<pause> Genius.<pause> Next time you see him, let him know that if it works well we'd like some for our armory."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Armory/Armory_Help",
+   "id": 144,
+   "guid": "99bbbec8d6cb4953a077c1112c5c2484",
+   "messages": [
+    {
+     "pages": [
+      "I'm in charge of our armory, keeping it stocked and ready for combat. We can always use more ammunition, so let me know if you'd like to trade!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Armory/Armory_Vendor_Completed",
+   "id": 145,
+   "guid": "c0619eb025ad4f3eb4add6337c4e2107",
+   "messages": [
+    {
+     "pages": [
+      "Always a pleasure!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Armory/Armory_Welcome",
+   "id": 143,
+   "guid": "0ed245aba5a0459ca70169f719ca7786",
+   "messages": [
+    {
+     "pages": [
+      "Hello!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I'd like to trade",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "146",
+       "Value": "True",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 145,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "146",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 144,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Doc Ernie modded an <color=rare>8x Scope</color> onto an <color=uncommon>Ace</color>!",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "228",
+       "Value": "True"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "346",
+       "Value": "0",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "346",
+       "Value": "1",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Doc Ernie modded a suppressor onto a <color=rare>Bluntforce</color>!",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "226",
+       "Value": "True"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "347",
+       "Value": "0",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "347",
+       "Value": "1",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Captain/Captain_Aircraft_Requisition",
+   "id": 0,
+   "guid": "ab9b1166931741e083347c3aeeeddf24",
+   "messages": [
+    {
+     "pages": [
+      "You've proven yourself many times over.<pause> Resources permitting, you may sign out whichever aircraft you need.<pause> Good luck out there!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Ensign",
+   "id": 30,
+   "guid": "af18c594d461447d999df36302c42088",
+   "messages": [
+    {
+     "pages": [
+      "Glad to hear it! Here are your <color=uncommon>Ensign</color> fatigues."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Find_Relay_Evidence_Completed",
+   "id": 200,
+   "guid": "f230082f8e90404bb73d002cbe09272c",
+   "messages": [
+    {
+     "pages": [
+      "Darren?!<pause> It all makes sense now, being bunkmates Harry must've caught him smuggling and gotten thrown in with the cargo! As comms operator Darren was also in the perfect place to hide transmissions with the gang.",
+      "I'll strip his rank and have him sent down to the brig. On a brighter note <color=epic>Major Len's</color> squad will be back soon, they captured the gang and rescued Harry. If you'd like to meet him he'll probably be recovering in his quarters!",
+      "As usual you've done absolutely fantastic work, thank you!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Introduction",
+   "id": 3,
+   "guid": "4974c6b1a8f443c19ba76d87442763f4",
+   "messages": [
+    {
+     "pages": [
+      "Pleased to meet you <name_char>. You're welcome aboard, just keep in mind you're back in society so don't try and pull anything illegal.",
+      "We're part of an international force formed in the wake of the outbreak called the <color=legendary>Coalition</color>. Our mission here is to rescue as many survivors, like you, as possible and unite to reclaim our home."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Join_Request",
+   "id": 4,
+   "guid": "f73b1bdec33c4c41a856d7f303538c15",
+   "messages": [
+    {
+     "pages": [
+      "I'm sorry, but we don't recruit <color=uncommon>Ensigns</color> sight unseen. If we notice you helping out around here there's a place for you in our ranks, however!",
+      "Come to think of it we're looking for someone to help spread word of our presence here <pause>- if you're interested to give a hand talk with my first mate Laurence."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Lieutenant",
+   "id": 31,
+   "guid": "20685e45d45a4c2e8b9d2ca6ce14f3c3",
+   "messages": [
+    {
+     "pages": [
+      "I'm sure you won't. Here are your <color=rare>Lieutenant</color> fatigues."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Major",
+   "id": 32,
+   "guid": "22b5c8be050a4d59a9d8b6d605a8fe72",
+   "messages": [
+    {
+     "pages": [
+      "And I yours. I'm sure we'll have many more adventures together! Here are your fatigues, congratulations <color=legendary>Major</color> <name_char>!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Ranks_Query",
+   "id": 5,
+   "guid": "db67c5237d924f9687c048681378865b",
+   "messages": [
+    {
+     "pages": [
+      "There are three main ranks to climb:<br><color=epic>Major</color> - Leader of a squad<br><color=rare>Lieutenant</color> - Deputy to a <color=epic>Major</color><br><color=uncommon>Ensign</color> - Soldier in a squad",
+      "Beyond that are the core members of the Coalition:<br><color=legendary>Admiral</color> - Heads of state strategizing our global offensive<br><color=legendary>Captain</color> - Leader of a contingent, like me<br><color=legendary>Commander</color> - Right hand of a <color=legendary>Captain</color>, like Laurence here"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Replacement_Uniform",
+   "id": 72,
+   "guid": "6f66a1cb072f4fd5b5fa96fd467cf192",
+   "messages": [
+    {
+     "pages": [
+      "Uniform supply is one of <color=uncommon>Ensign Franklin</color>'s responsibilities, you can buy a replacement from him."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Traitor",
+   "id": 193,
+   "guid": "f2de58833ad844d2a7ecb90067641e59",
+   "messages": [
+    {
+     "pages": [
+      "Thank you for bringing this to my attention!<br><i>*she pulls you aside*</i>",
+      "It's time you should know:<pause> Len's working for me. After they kidnapped Harry I asked him to go undercover and try to infiltrate their gang <pause>- his recent behaviour is all a ruse to convince the real traitor he's on their side.",
+      "Due to his high rank and therefore access to rare supplies they were willing to work with him, even if they were suspicious of a trap. So far they haven't trusted him enough to reveal his accomplice on the ship, but thanks to your investigation I suspect the mole will let his guard down and contact the smugglers to rescue Len.",
+      "You've done a great job so far. If you're discrete you have my permission to work with Len and form a plan to catch the real traitor!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Valentines_Note_Completed",
+   "id": 236,
+   "guid": "67f2bb96f7bd43c09924d2280a3b7e2d",
+   "messages": [
+    {
+     "pages": [
+      "Thank you! Let's see what it says.",
+      "Awww so sweet...<pause> \"Will you be my valentine? -Secret Admirer\"",
+      "I wonder who it's from?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Captain/Captain_Welcome",
+   "id": 1,
+   "guid": "3e3c0c6acf26448b81d68da505d95765",
+   "messages": [
+    {
+     "pages": [
+      "Ah hello! I heard there was someone new on-board. I'm <name_npc>, in charge of this vessel and aiding any survivors we come across. You're one of the first we've met, what's your name?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "2",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "By all accounts you've shown yourself to be the embodiment of what we look for in an <color=uncommon>Ensign</color>. The rank is yours if you want it!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "3",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "0",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "You've been an exemplary <color=uncommon>Ensign</color>, and it's about time you were promoted! If you're ready I'm prepared to make you a <color=rare>Lieutenant</color>!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "9",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "1",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I'm very proud of you <name_char>... <pause>You've done a stellar job and I think you're ready to lead a squad of your own as a <color=epic>Major</color>. What do you say?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "21",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "2",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Anything to report?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "My name is <name_char>",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "2",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 3,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'm ready to serve",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "1",
+       "Modification": "Increment"
+      },
+      {
+       "Type": "Item",
+       "ID": "1419",
+       "Amount": "1"
+      },
+      {
+       "Type": "Item",
+       "ID": "1420",
+       "Amount": "1"
+      },
+      {
+       "Type": "Item",
+       "ID": "1426",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 30,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Thank you, I won't let you down",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "1",
+       "Modification": "Increment"
+      },
+      {
+       "Type": "Item",
+       "ID": "1421",
+       "Amount": "1"
+      },
+      {
+       "Type": "Item",
+       "ID": "1425",
+       "Amount": "1"
+      },
+      {
+       "Type": "Item",
+       "ID": "1427",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 31,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'm honored, I'll stand by your side <color=legendary>Captain</color>",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "1",
+       "Modification": "Increment"
+      },
+      {
+       "Type": "Item",
+       "ID": "1422",
+       "Amount": "1"
+      },
+      {
+       "Type": "Item",
+       "ID": "1428",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 32,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I need some time to think about it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Can I join the Coalition?",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "0",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 4,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "What ranks are there?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 5,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Can I get a replacement uniform?",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "0",
+       "Logic": "Greater_Than"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 72,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=epic>Major Len</color> is a traitor!",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "192",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "180",
+       "Status": "Completed"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "192",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 193,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=uncommon>Ensign Darren</color> is the real traitor!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "194",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "197",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 200,
+     "vendor": "",
+     "quest": 194
+    },
+    {
+     "text": "I've got this note for you",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "230",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 236,
+     "vendor": "",
+     "quest": 230
+    },
+    {
+     "text": "Will you authorize an aircraft requisition please?",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "1"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "348",
+       "Value": "2",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Nothing to report",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chef/Chef_Cook_Completed",
+   "id": 331,
+   "guid": "1157360504a548cbb900821c905f7f62",
+   "messages": [
+    {
+     "pages": [
+      "<i>Bon App\u00e9tit!</i>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef/Chef_Cook_Good_Luck",
+   "id": 332,
+   "guid": "cd248ba7c72d44debaf3e1de37f15261",
+   "messages": [
+    {
+     "pages": [
+      "Good luck, and try not to make too much of a mess!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thank you, I'll do my best.",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 92,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chef/Chef_Supply",
+   "id": 60,
+   "guid": "0ee876f680c24356854d7aaa8493bfc0",
+   "messages": [
+    {
+     "pages": [
+      "Some comes from farming in the locations we've cleared, others are rations and what our scavengers recover, and occasionally a visitor trades with me. For example Wallace - the pirate on the top deck - has been giving me fish.",
+      "You seem nice, let me know if you'd like to trade a few supplies!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef/Chef_Valentines_Note",
+   "id": 234,
+   "guid": "423053ee3ae64632847a9e307f4f6767",
+   "messages": [
+    {
+     "pages": [
+      "Thanks, let me take a look...<pause> It's another note, addressed to Andy!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef/Chef_Vendor_Completed",
+   "id": 62,
+   "guid": "62c2d710422e44e299a9e51ec082390a",
+   "messages": [
+    {
+     "pages": [
+      "Pleasure doing business!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef/Chef_Welcome",
+   "id": 59,
+   "guid": "faddca2f0d7d42579c88ffee75f9a89c",
+   "messages": [
+    {
+     "pages": [
+      "Hello!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I'd like to trade",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "61",
+       "Value": "True",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 62,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Where do you get your supplies?",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "61",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 60,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I've got this note for you",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Not_Equal",
+       "ID": "230",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "231",
+       "Value": "1"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "231",
+       "Value": "2",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 234,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chef_Sous/Chef_Sous_Len_Evidence",
+   "id": 188,
+   "guid": "67806671035b4dd79b62f57ded82bf69",
+   "messages": [
+    {
+     "pages": [
+      "Hmmm...<pause> Recently he's been rather vocal about his disagreements with the <color=legendary>Captain</color> during meals...<pause> It's pretty awkward, I imagine most everyone down here's overheard at some point or another."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef_Sous/Chef_Sous_Meals",
+   "id": 93,
+   "guid": "d56bd8e491fa4c04900f94e584a64a8c",
+   "messages": [
+    {
+     "pages": [
+      "We serve breakfast 0500-0800, lunch 11-13, and dinner 17-19. If you have a swing shift your eating schedule will be a bit different than usual."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chef_Sous/Chef_Sous_Welcome",
+   "id": 92,
+   "guid": "f19bc396c0c44c799963e862aca41f45",
+   "messages": [
+    {
+     "pages": [
+      "Hello! I help Chef Leonard with all the cooking around here."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "When are the mealtimes?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 93,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Have you noticed anything weird about <color=epic>Major Len</color>?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "184",
+       "Value": "False"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "184",
+       "Value": "True",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 188,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Do you have any festive recipes?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "318",
+       "Status": "None",
+       "Logic": "Equal"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "318"
+      }
+     ],
+     "dialogue": 332,
+     "vendor": "",
+     "quest": 318
+    },
+    {
+     "text": "I gave your new recipe a try!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "318",
+       "Status": "Ready",
+       "Logic": "Equal",
+       "Reset": ""
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 331,
+     "vendor": "",
+     "quest": 318
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chess/Chess_Welcome",
+   "id": 141,
+   "guid": "0cd8d3ab845a4d54bdd27a1d764db699",
+   "messages": [
+    {
+     "pages": [
+      "I have to get inside his head and figure out what he's planning before even he knows."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Good luck!",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chief/Chief_Find_Cargo_Evidence_Accepted",
+   "id": 178,
+   "guid": "cf1dfa703e0e4be9b58d9566a94a0939",
+   "messages": [
+    {
+     "pages": [
+      "Stay safe! If you run into the smugglers please call for backup."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Find_Cargo_Evidence_Completed",
+   "id": 179,
+   "guid": "cb8617772edd463e8ec47e7a08eb25ef",
+   "messages": [
+    {
+     "pages": [
+      "This uniform...<pause> It belonged to <color=rare>Lieutenant Harry</color>!<pause> He was part of the bridge crew but recently disappeared leaving no trace! Is it possible...<pause> that <color=epic>Major Len</color> kidnapped him?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Find_Len_Evidence_Accepted",
+   "id": 185,
+   "guid": "a15ab45e5cd04651ad7502270bd74fbf",
+   "messages": [
+    {
+     "pages": [
+      "Alright, you're on the case. Ask around and see what you can find!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Find_Len_Evidence_Completed",
+   "id": 186,
+   "guid": "fca79c0aaa394e3ca8f3b80f5938a39b",
+   "messages": [
+    {
+     "pages": [
+      "Good work! You've got quite a few clues here, I'd suggest you show them to the <color=legendary>Captain</color> now!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Police_Doughnuts_Accepted",
+   "id": 67,
+   "guid": "b75ffa35cf904175908a06a3039e708f",
+   "messages": [
+    {
+     "pages": [
+      "Let's just keep this between the two of us."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Police_Doughnuts_Completed",
+   "id": 68,
+   "guid": "7cc1bd9f7c05474aa057180a02e8fa82",
+   "messages": [
+    {
+     "pages": [
+      "Mmmm<pause> Mmm<pause> Mmmmmm<pause>mmmmm! Thanks for your discretion, you're in my good books now!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Secret",
+   "id": 66,
+   "guid": "da16d15bf3fb474bb6d2c6d1aef4c4cf",
+   "messages": [
+    {
+     "pages": [
+      "That depends... Can you keep a secret?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "You bet!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "64",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "64"
+      }
+     ],
+     "dialogue": 67,
+     "vendor": "",
+     "quest": 64
+    },
+    {
+     "text": "Err I dunno...",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 65,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Chief/Chief_Untrusted",
+   "id": 175,
+   "guid": "e1c0d5519d99453080b14ef5db63e4e1",
+   "messages": [
+    {
+     "pages": [
+      "Don't believe everything you hear! I'm sure there's a reasonable explanation."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Chief/Chief_Welcome",
+   "id": 65,
+   "guid": "537b11b67c6c457991493e8957885fec",
+   "messages": [
+    {
+     "pages": [
+      "Good morning/afternoon, not sure which I haven't had my coffee yet."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "64",
+       "Status": "None"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 66,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I've got your dough.. evidence reports?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "64",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 68,
+     "vendor": "",
+     "quest": 64
+    },
+    {
+     "text": "<color=epic>Major Len</color> has been smuggling supplies off the ship!",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "134",
+       "Value": "True"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Not_Equal",
+       "ID": "64",
+       "Status": "Completed"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 175,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=epic>Major Len</color> has been smuggling supplies off the ship!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "176",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "134",
+       "Value": "True"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "64",
+       "Status": "Completed"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "176"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "177",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 178,
+     "vendor": "",
+     "quest": 176
+    },
+    {
+     "text": "I found where the supplies were dropped off!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "176",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 179,
+     "vendor": "",
+     "quest": 176
+    },
+    {
+     "text": "I'd like to continue the <color=epic>Major Len</color> investigation",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "180",
+       "Status": "None"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "176",
+       "Status": "Completed"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "180"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "181",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "182",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "183",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "184",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "190",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 185,
+     "vendor": "",
+     "quest": 180
+    },
+    {
+     "text": "I've found quite a bit of evidence!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "180",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 186,
+     "vendor": "",
+     "quest": 180
+    },
+    {
+     "text": "Goodbye chief",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Coalition_Crew_0/Coalition_Crew_0_Welcome",
+   "id": 94,
+   "guid": "81b47a066a1347c09d4817efc316a4a5",
+   "messages": [
+    {
+     "pages": [
+      "I'm watching the ship's vitals and making sure nothing explodes."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Keep up the good work",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Coalition_Crew_1/Coalition_Crew_1_Welcome",
+   "id": 95,
+   "guid": "a1e538cf578c4feaaf015a89687102aa",
+   "messages": [
+    {
+     "pages": [
+      "I'm tracking the long-range radar for planes, helicopters, boats, anyone we don't know about."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Keep up the good work",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Coalition_Crew_2/Coalition_Crew_2_Len_Evidence",
+   "id": 189,
+   "guid": "c468374559774f7c94f74e8da4b86da2",
+   "messages": [
+    {
+     "pages": [
+      "Ah...<pause> It's a real shame that's for sure, a real shame. He was a good bunkmate. I miss him quite a bit! I wish I could help somehow, but <pause>- wait <pause>- last I saw him he did say something about talking with our grumpy friend <color=epic>Major Len</color> here, hope that helps!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Coalition_Crew_2/Coalition_Crew_2_Welcome",
+   "id": 96,
+   "guid": "02f0362eecd3412e9541f873f5859ec7",
+   "messages": [
+    {
+     "pages": [
+      "I'm monitoring and servicing all of the technology and communications."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Is there anything you can tell me about the disappearance of <color=rare>Lieutenant Harry</color>?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "182",
+       "Value": "False"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "182",
+       "Value": "True",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 189,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Keep up the good work",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Coalition_Guard/Coalition_Guard",
+   "id": 91,
+   "guid": "ced19252804e416dba764c4df6d3e7f7",
+   "messages": [
+    {
+     "pages": [
+      "Just guarding <color=legendary>Captain Sydney's</color> quarters. If you're looking for her she's up on the bridge."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Coalition_Soldier/Coalition_Soldier",
+   "id": 90,
+   "guid": "51e562e136ec4973927276962c5491d7",
+   "messages": [
+    {
+     "pages": [
+      "Welcome aboard! You should probably go talk to <color=legendary>Captain Sydney</color> on the bridge for orientation."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "2",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Good to see you <color=uncommon>Ensign <name_char></color>!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "1",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Good to see you <color=rare>Lieutenant <name_char></color>!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "2",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Good to see you <color=epic>Major <name_char></color>!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "3",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Move along, bandit scum."
+     ],
+     "conditions": [
+      {
+       "Type": "Reputation",
+       "Value": "-5",
+       "Logic": "Less_Than"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Stay where I can see you."
+     ],
+     "conditions": [
+      {
+       "Type": "Reputation",
+       "Value": "5",
+       "Logic": "Less_Than_Or_Equal_To"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Good to see you <name_char>!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thanks",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "You too <name_npc>!",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Okay okay",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'm not here to cause trouble",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Commander/Commander_Broadcast_Repair_Accepted",
+   "id": 45,
+   "guid": "70b60827f0ba4dba8ee38fe1049ec42b",
+   "messages": [
+    {
+     "pages": [
+      "Good luck out there! With your having experience in this area already I'm sure there won't be any complications."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Commander/Commander_Broadcast_Repair_Completed",
+   "id": 46,
+   "guid": "ce1e10e5753543669eada1d3023ff5bd",
+   "messages": [
+    {
+     "pages": [
+      "Great work! <color=rare>Lieutenant Oswald</color> will get started broadcasting right away."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Commander/Commander_Coalition_Propaganda_Accepted",
+   "id": 57,
+   "guid": "a2eeff6db8d6478b8f3cfbdf9ed47f92",
+   "messages": [
+    {
+     "pages": [
+      "Best of luck out there! Here's the posters we prepared."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Commander/Commander_Coalition_Propaganda_Completed",
+   "id": 58,
+   "guid": "d86130692e0c4a9988c484e8512dc98e",
+   "messages": [
+    {
+     "pages": [
+      "Thank you! We'll keep an eye out for survivors trying to get aboard."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Commander/Commander_Valentines_Note_Accepted",
+   "id": 232,
+   "guid": "35518ed64ce14e87aef1f1e58f7b42e7",
+   "messages": [
+    {
+     "pages": [
+      "Thanks for your help!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Commander/Commander_Welcome",
+   "id": 44,
+   "guid": "cabc10976a504be68ab08a2f4e03c39f",
+   "messages": [
+    {
+     "pages": [
+      "Good to have you with us! I've got a voluntary mission for you if you'll take it."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "2",
+       "Value": "True"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "47",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Following up on the radio towers I've got a new mission for you if you'll take it."
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "47",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "56",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Could you do me a favor and deliver this important note?"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "56",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "230",
+       "Status": "None"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Valentines"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Anything to report?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "47"
+      }
+     ],
+     "dialogue": 45,
+     "vendor": "",
+     "quest": 47
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "The broadcast network is up and running!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "47",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 46,
+     "vendor": "",
+     "quest": 47
+    },
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "56"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "50",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 57,
+     "vendor": "",
+     "quest": 56
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I plastered up those posters!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "56",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 58,
+     "vendor": "",
+     "quest": 56
+    },
+    {
+     "text": "Right on it",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "230"
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "231",
+       "Value": "0",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 232,
+     "vendor": "",
+     "quest": 230
+    },
+    {
+     "text": "Not yet",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Nothing to report",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Comms/Comms_Welcome",
+   "id": 198,
+   "guid": "79d6e056c7fc4448b686b6864632bdd4",
+   "messages": [
+    {
+     "pages": [
+      "Of course you had to put a stop to a good thing.<br>And now I'm stuck in here with this troll!<br>*<i>he glares at you</i>*"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Serves you right",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Electric/Boss_Electric_Accepted",
+   "id": 167,
+   "guid": "18169d45e2c8421bae65bdc4389a0bfd",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! If you run into it try to stick to cover or you'll get zapped."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Electric/Boss_Electric_Completed",
+   "id": 168,
+   "guid": "0e53d011464441c6ad14df632faba115",
+   "messages": [
+    {
+     "pages": [
+      "Impressive! You'll be quite the source of gossip among the troops."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Electric/Electric_Welcome",
+   "id": 166,
+   "guid": "d905d24673164bdbbb981090fb304eca",
+   "messages": [
+    {
+     "pages": [
+      "About to head off to bed in a moment.<br><i>*he blinks sleepily*</i>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Seen anything weird lately?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "160",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "160"
+      }
+     ],
+     "dialogue": 167,
+     "vendor": "",
+     "quest": 160
+    },
+    {
+     "text": "I killed that boss zombie!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "160",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 168,
+     "vendor": "",
+     "quest": 160
+    },
+    {
+     "text": "Sleep well",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Fire/Boss_Fire_Accepted",
+   "id": 173,
+   "guid": "11c953edcfd6450abe1cab19471c40c0",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! If you run into it stay away or you'll get charred!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Fire/Boss_Fire_Completed",
+   "id": 174,
+   "guid": "3889316602f0424ebc7f3fb50f9361c3",
+   "messages": [
+    {
+     "pages": [
+      "Seriously?! Thanks! We'll be able to scavenge Novosibirsk now."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Fire/Fire_Welcome",
+   "id": 172,
+   "guid": "8ea274eb707d43bb82fff12061cf77b7",
+   "messages": [
+    {
+     "pages": [
+      "I'm very happy to be aboard!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Seen anything weird lately?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "164",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "164"
+      }
+     ],
+     "dialogue": 173,
+     "vendor": "",
+     "quest": 164
+    },
+    {
+     "text": "I killed that boss zombie!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "164",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 174,
+     "vendor": "",
+     "quest": 164
+    },
+    {
+     "text": "Glad to hear it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Harry/Harry_Welcome",
+   "id": 199,
+   "guid": "bbd18c6a7d3c49f8a41fdd03c14f2016",
+   "messages": [
+    {
+     "pages": [
+      "As I understand it you're responsible for my rescue, thank you! We'll have to meet up in the cafeteria for coffee sometime."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Glad to have you back",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Homeless/Homeless_Donate",
+   "id": 132,
+   "guid": "835e3e9279cf4663b696d09a80d16e82",
+   "messages": [
+    {
+     "pages": [
+      "The other night I saw <color=epic>Major Len</color> loading supplies into a dinghy. Looked like he was up to no good."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "1",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "When you see green lights in the sky go for cover, they can't get you if you're inside."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "2",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I'm keeping an eye out for them, making sure nobody here gets abducted!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "3",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I've been awake for 47 days now."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "4",
+       "Logic": "Equal"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Pro tip:<pause> Their scanners don't work through tinfoil. I lined the inside of my clothes with it!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "5",
+       "Logic": "Equal"
+      }
+     ]
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Homeless/Homeless_Welcome",
+   "id": 131,
+   "guid": "7d6f1e4dbd9b4a7796e6c1b9b6ea14e6",
+   "messages": [
+    {
+     "pages": [
+      "Hi."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Give 1 XP",
+     "conditions": [
+      {
+       "Type": "Experience",
+       "Value": "1",
+       "Logic": "Greater_Than_Or_Equal_To",
+       "Reset": ""
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "5",
+       "Allow_Unset": "",
+       "Logic": "Less_Than"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "133",
+       "Value": "1",
+       "Modification": "Increment"
+      }
+     ],
+     "dialogue": 132,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Hungry/Hungry_Present_Completed",
+   "id": 339,
+   "guid": "c67a1e6752cc4c3e8da901da497e2e5a",
+   "messages": [
+    {
+     "pages": [
+      "Yay! Good job!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Hungry/Hungry_Present_Good_Luck",
+   "id": 340,
+   "guid": "d6fe8259d0ec443d83220ba3f449ff53",
+   "messages": [
+    {
+     "pages": [
+      "Good luck out there!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thanks!",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 89,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Hungry/Hungry_Welcome",
+   "id": 89,
+   "guid": "dc071c14f92b4f29abd54475bf71254f",
+   "messages": [
+    {
+     "pages": [
+      "Isn't the food here <b>amazing</b>? I'm so excited for the next meal!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "You seem jolly today, what's that about?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "320",
+       "Status": "None",
+       "Logic": "Equal"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "320"
+      }
+     ],
+     "dialogue": 340,
+     "vendor": "",
+     "quest": 320
+    },
+    {
+     "text": "I found the presents.",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "320",
+       "Status": "Ready",
+       "Logic": "Equal",
+       "Reset": ""
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 339,
+     "vendor": "",
+     "quest": 320
+    },
+    {
+     "text": "Good to hear it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Invention_Supply/Invention_Store_Completed",
+   "id": 83,
+   "guid": "083e4ae9febb401fbec5a255020f76d9",
+   "messages": [
+    {
+     "pages": [
+      "Don't lose it this time dude!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Invention_Supply/Invention_Supply_Help",
+   "id": 85,
+   "guid": "de543d301681451b809ea61d284909c3",
+   "messages": [
+    {
+     "pages": [
+      "All's well my dude! I'm training to become a scientist like Doc Ernie, even got the smart glasses see?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Invention_Supply/Invention_Supply_Welcome",
+   "id": 82,
+   "guid": "1e71ff4242ee4f6e8bc1f34b08ae6feb",
+   "messages": [
+    {
+     "pages": [
+      "Hey dude!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Can I buy a replacement blueprint?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "226",
+       "Value": "True",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 83,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 85,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Peace out",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Janitor/Janitor_Barnacle_Cleanup_Accepted",
+   "id": 158,
+   "guid": "9a12365853854e67bd42f7d12c1f8f59",
+   "messages": [
+    {
+     "pages": [
+      "Hope you're a good swimmer! The ship will be spick and span in no time."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Janitor/Janitor_Barnacle_Cleanup_Completed",
+   "id": 159,
+   "guid": "d29cfc3102384f338b698ef4897cc11d",
+   "messages": [
+    {
+     "pages": [
+      "Thank you! I'll take your word for it. Now go dry off!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Janitor/Janitor_Paint_Accepted",
+   "id": 11,
+   "guid": "71787703958f498e8d75fc312abadaa7",
+   "messages": [
+    {
+     "pages": [
+      "Awesome! Fresh paint always boosts morale."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Janitor/Janitor_Paint_Completed",
+   "id": 12,
+   "guid": "cd594b78f8824e0cb447baa89ffb3343",
+   "messages": [
+    {
+     "pages": [
+      "Thanks for your help. I caught a peek while cleaning and I must say it looks much nicer now!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Janitor/Janitor_Valentines_Note",
+   "id": 233,
+   "guid": "f9664c3f142f4a539b06cc78ebcdd006",
+   "messages": [
+    {
+     "pages": [
+      "Let's see here...<pause> Oh, there's another note inside - it's addressed to Chef Leonard!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Janitor/Janitor_Welcome",
+   "id": 10,
+   "guid": "d331f93d574548faaa657c7a9510681f",
+   "messages": [
+    {
+     "pages": [
+      "Hiya!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "9",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "9"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "8",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 11,
+     "vendor": "",
+     "quest": 9
+    },
+    {
+     "text": "I finished painting",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "9",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 12,
+     "vendor": "",
+     "quest": 9
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "9",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "157",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "157"
+      }
+     ],
+     "dialogue": 158,
+     "vendor": "",
+     "quest": 157
+    },
+    {
+     "text": "I scraped off those barnacles",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "157",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 159,
+     "vendor": "",
+     "quest": 157
+    },
+    {
+     "text": "I've got this note for you",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Not_Equal",
+       "ID": "230",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "231",
+       "Value": "0"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "231",
+       "Value": "1",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 233,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "See ya around",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Mechanic/Mechanic_Broadcast_Repair",
+   "id": 49,
+   "guid": "ecd7dad8e7fb43d6ac9fe9aaeab88bb2",
+   "messages": [
+    {
+     "pages": [
+      "Broadcast repair kit? That's not very specific <pause>- do you mean like to get one of those radio towers online again? <pause>Hmmm <pause>Okay, here's a bag of some tools I expect you'll need!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Mechanic/Mechanic_Engine_Repair_Accepted",
+   "id": 129,
+   "guid": "d2a679dcbb4b40e5888e47b306bc0258",
+   "messages": [
+    {
+     "pages": [
+      "Great! I'm sure everyone working down here will appreciate some peace and quiet."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Mechanic/Mechanic_Engine_Repair_Completed",
+   "id": 130,
+   "guid": "379070c2c656484ca688f17fcd936fd5",
+   "messages": [
+    {
+     "pages": [
+      "Thanks <pause>- I'll get to work on that engine as soon as I get the chance!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Mechanic/Mechanic_Len_Evidence",
+   "id": 187,
+   "guid": "5979eb22431d4fd4b0edf15784b1d907",
+   "messages": [
+    {
+     "pages": [
+      "Now that you mention it he was sneaking around down here the other day, I think he was grabbing some supplies <pause>- which is unusual for the higher ranking officers."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Mechanic/Mechanic_Welcome",
+   "id": 48,
+   "guid": "11c876f85d394f0ab33db4fee4c0ca0a",
+   "messages": [
+    {
+     "pages": [
+      "Hello!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Can I have a broadcast repair kit please?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "47",
+       "Status": "Active"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "40",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "40",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 49,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "128",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "128"
+      }
+     ],
+     "dialogue": 129,
+     "vendor": "",
+     "quest": 128
+    },
+    {
+     "text": "I've got everything you need to repair the engine!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "128",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 130,
+     "vendor": "",
+     "quest": 128
+    },
+    {
+     "text": "Have you noticed anything weird about <color=epic>Major Len</color>?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "183",
+       "Value": "False"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "183",
+       "Value": "True",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 187,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Medic/Medic_Keycard",
+   "id": 203,
+   "guid": "961fa8b95e95423497cb12d3a38916b5",
+   "messages": [
+    {
+     "pages": [
+      "I've barely scratched the surface so far, but there is this Scorpion-7 keycard. Here, you can keep it as a souvenir!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Medic/Medic_Patient",
+   "id": 75,
+   "guid": "9f2b417b9ed843edb86a97c90231c505",
+   "messages": [
+    {
+     "pages": [
+      "He had a bit of a tumble off one of these Russian cliffs and bonked his head, but I expect he'll make a full recovery. Been mumbling about settlements and \"minutemen\"."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Medic/Medic_Research_Accepted",
+   "id": 125,
+   "guid": "7c5947da19a443ae9321781abf692b6d",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! Anything you find will be helpful."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Medic/Medic_Research_Completed",
+   "id": 126,
+   "guid": "0f5489da2a534839b589baf8b003a414",
+   "messages": [
+    {
+     "pages": [
+      "Fascinating!<pause> The amount of information here is overwhelming, I'll certainly be busy for the forseeable future!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Medic/Medic_Welcome",
+   "id": 74,
+   "guid": "0f0b07cbe0694a999b8d4d5bd1582667",
+   "messages": [
+    {
+     "pages": [
+      "Hello!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "124",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "124"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "119",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "120",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "121",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "122",
+       "Value": "False"
+      },
+      {
+       "Type": "Flag_Short",
+       "ID": "123",
+       "Value": "0",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 125,
+     "vendor": "",
+     "quest": 124
+    },
+    {
+     "text": "I found those research capsules!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "124",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 126,
+     "vendor": "",
+     "quest": 124
+    },
+    {
+     "text": "Have you found anything in those capsules yet?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "124",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "201",
+       "Value": "False",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "201",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 203,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Is he going to be alright?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 75,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Missing_Ring/Find_Wedding_Ring_Accepted",
+   "id": 138,
+   "guid": "056e5b3a55484a47b354bc45fec5774f",
+   "messages": [
+    {
+     "pages": [
+      "I really hope you find it!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Missing_Ring/Find_Wedding_Ring_Completed",
+   "id": 139,
+   "guid": "520cebbc98244eb2b756d5e7894ad7f4",
+   "messages": [
+    {
+     "pages": [
+      "Thank you so much! I thought I'd never see it again!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Missing_Ring/Missing_Ring_Welcome",
+   "id": 137,
+   "guid": "76aba40d7af24c3680716166f4e4db05",
+   "messages": [
+    {
+     "pages": [
+      "I'm very happy to be aboard!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "136",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "136"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "135",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 138,
+     "vendor": "",
+     "quest": 136
+    },
+    {
+     "text": "I found your ring!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "136",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 139,
+     "vendor": "",
+     "quest": 136
+    },
+    {
+     "text": "Glad to hear it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "P.Riso/P.Riso_Fishing_Rod",
+   "id": 0,
+   "guid": "5415296940d1481c8c211fb420592210",
+   "messages": [
+    {
+     "pages": [
+      "<color=epic>Upgraded Fishing Rod</color> huh?<pause> It's your lucky day! I photocopied Wallace's blueprint while he was napping!",
+      "You can have a copy<pause>...<pause> for a price!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "P.Riso/P.Riso_Hiding",
+   "id": 19,
+   "guid": "566a48ae224546159d63358861332916",
+   "messages": [
+    {
+     "pages": [
+      "Oh you know how it is, minor very minor misunderstanding with the police around here, avoiding trouble!",
+      "On that note:<pause> If you happen to wander by the brig one of my other good friends T.Rickster is in a bit of a pickle as well. I'd appreciate it if you can give him a hand <pause>- tell him P.Riso sent you!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "P.Riso/P.Riso_Outfit",
+   "id": 16,
+   "guid": "ed19142d3bd04c638dceae4a3ad30b73",
+   "messages": [
+    {
+     "pages": [
+      "<i>Haha!</i> You're such a joker<pause>- just like the back of the shirt says it's \"P. Riso\" short for Pedro Riso! Go on, take a peek!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Oops sorry, let's see",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "P.Riso/P.Riso_Vendor_Completed",
+   "id": 18,
+   "guid": "8e593abe67824fcdb8b880b8d886ea37",
+   "messages": [
+    {
+     "pages": [
+      "Come again buddy!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "P.Riso/P.Riso_Welcome",
+   "id": 14,
+   "guid": "50336dd8f31f47168423d7b7d9482c33",
+   "messages": [
+    {
+     "pages": [
+      "Hey dude! It's me your old pal <name_npc>!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "15",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Hey my man! Say the word if you want me to hook you up.<br>I've got all the best deals!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Is that a prison outfit?",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "15",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 16,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Show me what you've got",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 18,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Why are you hiding down here?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 19,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Got any <color=epic>Upgraded Fishing Rods</color>?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Not_Equal",
+       "ID": "37",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "345",
+       "Value": "False",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Catch you later!",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Patient/Patient_Welcome",
+   "id": 73,
+   "guid": "58ac6da76a7545858945283a166b06aa",
+   "messages": [
+    {
+     "pages": [
+      "Another settlement needs our help<br>Another settlement needs our help<br><pause>.<pause>.<pause>.<pause><br>Another settlement needs our help"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Get well soon",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Pilot/Pilot_Fly",
+   "id": 88,
+   "guid": "cdd5bf025c8d4eedb5fb04005c741b94",
+   "messages": [
+    {
+     "pages": [
+      "As a matter of fact we do need a pilot! We're looking for someone experienced, so if you stick through to <color=epic>Major</color> rank we'll get you set up."
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Less_Than",
+       "ID": "29",
+       "Value": "3",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Yes, you'd be a perfect match! We just need a few things to get started, are you interested?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I'll take a look!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "240",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "240"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "237",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 238,
+     "vendor": "",
+     "quest": 240
+    },
+    {
+     "text": "Not quite yet",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Pilot/Pilot_Jet_Accepted",
+   "id": 238,
+   "guid": "2eb4a4800f09473390dfa8180bfb3cc7",
+   "messages": [
+    {
+     "pages": [
+      "Great! Let me know once you're ready."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pilot/Pilot_Jet_Completed",
+   "id": 239,
+   "guid": "085e62a24ccd4519b38b0fd97d674ae8",
+   "messages": [
+    {
+     "pages": [
+      "Give me a moment to raise 'er up from belowdecks...<pause> Here's the keys, take a test flight! We'll let you know once we've got a mission for you."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pilot/Pilot_More_Jets_Authorization",
+   "id": 0,
+   "guid": "6f0db8760dd7497f90782c13a89c9dda",
+   "messages": [
+    {
+     "pages": [
+      "You've got the go ahead?<pause> Alright.<pause> Just let me know and I'll hook you up!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pilot/Pilot_More_Jets_Request",
+   "id": 0,
+   "guid": "cdc36e0305184e35b99dff3425d4f40a",
+   "messages": [
+    {
+     "pages": [
+      "What?!<pause> Already?!<pause> If you want to submit an aircraft requisition I'll need authorization from <color=legendary>Captain Sydney</color>."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pilot/Pilot_Valentines_Note",
+   "id": 235,
+   "guid": "fe7b10698df84a608abc174591d7c7c2",
+   "messages": [
+    {
+     "pages": [
+      "Oh interesting let's see...<pause> There's another note in here addressed to <color=legendary>Captain Sydney</color>!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pilot/Pilot_Welcome",
+   "id": 87,
+   "guid": "875fb786a74e45209ec5883ad8856a1c",
+   "messages": [
+    {
+     "pages": [
+      "Hey hey!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Do you need any pilots?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "240",
+       "Status": "None"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 88,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I've got this note for you",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Not_Equal",
+       "ID": "230",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "231",
+       "Value": "2"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "231",
+       "Value": "3",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 235,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'm ready to fly the jet!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "240",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 239,
+     "vendor": "",
+     "quest": 240
+    },
+    {
+     "text": "Are there more jets?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "240",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "0",
+       "Allow_Unset": ""
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "1",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=legendary>Captain Sydney</color> gave authorization",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "2"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "3",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'd like to request an aircraft",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "Logic": "Equal",
+       "ID": "348",
+       "Value": "3"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "d98e2980ad3d47518c08b9e1df98f7ef",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Pirate/Pirate_Any_Luck",
+   "id": 34,
+   "guid": "e6fef7df129a4f99918e4e1fe5f94b6a",
+   "messages": [
+    {
+     "pages": [
+      "The usual small ones...<pause> I'm keeping an eye out for a new nemesis!"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "38",
+       "Status": "Completed"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "The usual small ones...<pause> I'll get that dang squid one day!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pirate/Pirate_Catch_Completed",
+   "id": 39,
+   "guid": "7705831e339442c79c04dae75cfd036c",
+   "messages": [
+    {
+     "pages": [
+      "Blimey that's a big one! Good work matey, you take this plaque and display it proudly!",
+      "Me? There's plenty of fish in the sea. To be honest I find this relaxing, and a fresh catch gives Leonard some variety to work with. I'll find a new nemisis! <i>*eyes smile*</i>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pirate/Pirate_Rod_Accepted",
+   "id": 35,
+   "guid": "d8bb7ea391cd435aadfffc03588de59b",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! That rod'll do just the trick."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pirate/Pirate_Rod_Completed",
+   "id": 36,
+   "guid": "46596f361a95470abb79c6d32dc332bb",
+   "messages": [
+    {
+     "pages": [
+      "Hehehe that squid doesn't stand a chance now!<pause> You made the rod, I think you deserve to catch it. Let me know if you do! I've got just the thing to display it."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Pirate/Pirate_Welcome",
+   "id": 33,
+   "guid": "3986573941ad45d8952179c8eadd3bae",
+   "messages": [
+    {
+     "pages": [
+      "Yarrrr!!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Any luck?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 34,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "37",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "37"
+      },
+      {
+       "Type": "Item",
+       "ID": "1433",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 35,
+     "vendor": "",
+     "quest": 37
+    },
+    {
+     "text": "I crafted the ultimate fishing rod!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "37",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 36,
+     "vendor": "",
+     "quest": 37
+    },
+    {
+     "text": "I caught it!!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "38",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 39,
+     "vendor": "",
+     "quest": 38
+    },
+    {
+     "text": "I want to try again and help catch your nemesis",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "37",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "38",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "38"
+      }
+     ],
+     "dialogue": 36,
+     "vendor": "",
+     "quest": 38
+    }
+   ]
+  },
+  {
+   "key": "Scientist/Scientist_Ace",
+   "id": 224,
+   "guid": "82a41f72ad994655a2ecc660e63458ee",
+   "messages": [
+    {
+     "pages": [
+      "I modified the scope to work without an upper rail, voila!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Ace_Armory_Request",
+   "id": 0,
+   "guid": "d44e4c2ba4dc4f419c6762f4435a77ba",
+   "messages": [
+    {
+     "pages": [
+      "It's working well?<pause> Recoil hasn't hit you in the eye?<pause> Splendid!",
+      "I'll get my assistant here working on some for the armory right away."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Bayonet",
+   "id": 78,
+   "guid": "49b4f2a346084ee99a79cebe68ae9e98",
+   "messages": [
+    {
+     "pages": [
+      "Brilliant! Here, take this blueprint, it explains everything but be careful with it because it's very complex and replacements are expensive. Go jab some zombies!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Bluntforce",
+   "id": 225,
+   "guid": "6469cdb94c014c19af7ae025a14c884c",
+   "messages": [
+    {
+     "pages": [
+      "Me too, so I modified one to work with this gun!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Bluntforce_Armory_Request",
+   "id": 0,
+   "guid": "4494c5e6b54b45e5a3748834d0a0847d",
+   "messages": [
+    {
+     "pages": [
+      "The barrel hasn't exploded, eh?<pause> No don't worry, the chances of that happening were infinitesimal!",
+      "I'll get my assistant here working on some for the armory right away."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Craft_Completed",
+   "id": 338,
+   "guid": "3bc337bee52445368716e112ba077e7a",
+   "messages": [
+    {
+     "pages": [
+      "Good job."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Craft_Good_Luck",
+   "id": 337,
+   "guid": "771d6cde82f44fe0968a031274b28487",
+   "messages": [
+    {
+     "pages": [
+      "Good luck."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thank you.",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 77,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Scientist/Scientist_Quadbarrel",
+   "id": 79,
+   "guid": "7492ba57eaba400bbdab769c19884324",
+   "messages": [
+    {
+     "pages": [
+      "I think you'll really like this one, here's the blueprint. Go blast some zombies!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Replacement_Invention",
+   "id": 81,
+   "guid": "a9e20ea76a0344688c4bc876929b70ec",
+   "messages": [
+    {
+     "pages": [
+      "My assistant here can get you a replacement, but you'll have to cover the costs."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Snow_Completed",
+   "id": 333,
+   "guid": "fd75ed04b3ac4d3e9246cfe8760a6214",
+   "messages": [
+    {
+     "pages": [
+      "Thank you, I shall conduct the analysis as soon as possible."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Snow_Good_Luck",
+   "id": 334,
+   "guid": "a0a8e2cd500b48aaa36ae51238feda14",
+   "messages": [
+    {
+     "pages": [
+      "Good luck."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thank you.",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 77,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Scientist/Scientist_Vendor_Completed",
+   "id": 335,
+   "guid": "e7cb487d526c4410aeae25dbf935a204",
+   "messages": [
+    {
+     "pages": [
+      "Thanks for your purchase."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scientist/Scientist_Welcome",
+   "id": 77,
+   "guid": "7fe493727bdc4b11bdfbf8da0b88e64f",
+   "messages": [
+    {
+     "pages": [
+      "Have you ever wondered why you can't put a silencer on a shotgun?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "4",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "226",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I don't suppose you'd be available to help test a new attachment prototype I've been working on?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "7",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "227",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Wouldn't it be neat to have a scoped pistol?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "11",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "228",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Just the person I wanted to talk to! I've got a new weapon prototype planned out and ready to test. Interested?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "13",
+       "Value": "16",
+       "Logic": "Greater_Than_Or_Equal_To"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "229",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "<i>*he mumbles something and goes back to thinking*</i>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I have",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "226",
+       "Value": "True"
+      },
+      {
+       "Type": "Item",
+       "ID": "112",
+       "Amount": "1",
+       "Barrel": "1444"
+      }
+     ],
+     "dialogue": 225,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I'm available",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "227",
+       "Value": "True"
+      },
+      {
+       "Type": "Item",
+       "ID": "1439",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 78,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Very neat",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "228",
+       "Value": "True"
+      },
+      {
+       "Type": "Item",
+       "ID": "107",
+       "Amount": "1",
+       "Sight": "21"
+      }
+     ],
+     "dialogue": 224,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "You bet!",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "229",
+       "Value": "True"
+      },
+      {
+       "Type": "Item",
+       "ID": "1437",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 79,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Maybe later",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Can I get a replacement blueprint?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "226",
+       "Value": "True",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 81,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Anything exciting in the works?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 80,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "What's up with the explosive snowballs?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "316",
+       "Status": "None",
+       "Logic": "Equal"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "316"
+      }
+     ],
+     "dialogue": 334,
+     "vendor": "",
+     "quest": 316
+    },
+    {
+     "text": "I've retrieved a sample.",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "316",
+       "Status": "Ready",
+       "Logic": "Equal",
+       "Reset": ""
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 333,
+     "vendor": "",
+     "quest": 316
+    },
+    {
+     "text": "What can I use the saw for?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "327",
+       "Status": "None",
+       "Logic": "Equal"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      },
+      {
+       "Type": "Quest",
+       "ID": "316",
+       "Status": "Completed",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "327"
+      }
+     ],
+     "dialogue": 337,
+     "vendor": "",
+     "quest": 327
+    },
+    {
+     "text": "Done and dusted.",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "ID": "327",
+       "Status": "Ready",
+       "Logic": "Equal",
+       "Reset": ""
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 338,
+     "vendor": "",
+     "quest": 327
+    },
+    {
+     "text": "Can I get a new saw?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "317",
+       "Value": "True",
+       "Logic": "Equal"
+      },
+      {
+       "Type": "Holiday",
+       "Value": "Christmas"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 335,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=rare>Lieutenant Kyle</color> wants your scoped pistol!",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "346",
+       "Value": "1",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "346",
+       "Value": "2",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "<color=rare>Lieutenant Kyle</color> wants your suppressed shotgun!",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "347",
+       "Value": "1",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Short",
+       "ID": "347",
+       "Value": "2",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Scientist/Scientist_Work",
+   "id": 80,
+   "guid": "cd8d0f85a3ec415fbe68d0cd3384248a",
+   "messages": [
+    {
+     "pages": [
+      "Hrmm? Err oh <pause>- yes, if this works out I think it'll be very useful. If you pop back here once it's ready you can be the first to test it!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Airport_Accepted",
+   "id": 108,
+   "guid": "acac37be404b44ac98af0145bcd6b303",
+   "messages": [
+    {
+     "pages": [
+      "Make sure to keep track of everything you find! Especially jet fuel if you come across any <pause>- we are on emergency reserves right now."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Airport_Completed",
+   "id": 109,
+   "guid": "c12d3bee70944d4cbf0c22b0b5594397",
+   "messages": [
+    {
+     "pages": [
+      "No sign of jet fuel? This report is pretty detailed, nice work!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Factory_Accepted",
+   "id": 110,
+   "guid": "68faa029afed473b8cf4df95e6cbf12d",
+   "messages": [
+    {
+     "pages": [
+      "Stay safe! Watch out for any salvageable tank machinery."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Factory_Completed",
+   "id": 111,
+   "guid": "8344f455e6bb44e29d6c6ea66166f64b",
+   "messages": [
+    {
+     "pages": [
+      "Interesting interesting, sounds like it might be worth sending a team over in the future."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Military_Accepted",
+   "id": 112,
+   "guid": "2b3a880da10243df9a304a7a2b074d7b",
+   "messages": [
+    {
+     "pages": [
+      "I'm hopeful there'll still be a few functional military vehicles and supplies leftover."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Military_Completed",
+   "id": 113,
+   "guid": "157476135c124929ac4c8f422c16ec9f",
+   "messages": [
+    {
+     "pages": [
+      "Already partially looted? Figures, the bandits tend to scour these places for as many weapons as they can get their hands on."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Rig_Accepted",
+   "id": 116,
+   "guid": "a32770718bf641feb92440dba8d80bda",
+   "messages": [
+    {
+     "pages": [
+      "Find as much evidence about the accident as possible and any information they recorded, we know it's flooded with radiation but not much more."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Rig_Completed",
+   "id": 117,
+   "guid": "32f049bdcd884a4c9245817f77005009",
+   "messages": [
+    {
+     "pages": [
+      "Reactor meltdown? Those poor guys, probably in the safest place imaginable and everything can still go completely wrong out of the blue."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Silo_Accepted",
+   "id": 114,
+   "guid": "9009e26c6c9044ed825860c972c17ca0",
+   "messages": [
+    {
+     "pages": [
+      "We have to find out if that warhead is still active, otherwise if it falls into the wrong hands we have a big problem."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Silo_Completed",
+   "id": 115,
+   "guid": "e51bb4012da44f3eb2b9bb5a456f7fc6",
+   "messages": [
+    {
+     "pages": [
+      "Sabotaged? Well, at least that's one thing we don't have to worry about."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Scout/Scout_Welcome",
+   "id": 97,
+   "guid": "1834ee3e3afc44578582da2f8c6c7c5e",
+   "messages": [
+    {
+     "pages": [
+      "I've picked up a fairly straightforward location to scout out, would you be interested in taking care of it?"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "2",
+       "Value": "True"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "98",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I've got another location for you to check out, but it'll be a bit trickier. Interested?"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "98",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "100",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "If you're still interested I've got another location for you to check out!"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "100",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "102",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "This location looks very promising, but according to an old report it's irradiated. Interested?"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "102",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "104",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I think it's time we check out the original Russian FoB. Be warned:<pause> it's very radioactive and dangerous. Interested?"
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "104",
+       "Status": "Completed"
+      },
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "106",
+       "Status": "None"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "Anything to report?"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "98"
+      }
+     ],
+     "dialogue": 108,
+     "vendor": "",
+     "quest": 98
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I scouted out the airport!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "98",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 109,
+     "vendor": "",
+     "quest": 98
+    },
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "100"
+      }
+     ],
+     "dialogue": 110,
+     "vendor": "",
+     "quest": 100
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I scouted out the tank factory!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "100",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 111,
+     "vendor": "",
+     "quest": 100
+    },
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "102"
+      }
+     ],
+     "dialogue": 112,
+     "vendor": "",
+     "quest": 102
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I scouted out the military base!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "102",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 113,
+     "vendor": "",
+     "quest": 102
+    },
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "104"
+      }
+     ],
+     "dialogue": 114,
+     "vendor": "",
+     "quest": 104
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I scouted out the missile silo!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "104",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 115,
+     "vendor": "",
+     "quest": 104
+    },
+    {
+     "text": "I'll take a look",
+     "conditions": [],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "106"
+      }
+     ],
+     "dialogue": 116,
+     "vendor": "",
+     "quest": 106
+    },
+    {
+     "text": "Not right now",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "I scouted out the oil rig!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "106",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 117,
+     "vendor": "",
+     "quest": 106
+    },
+    {
+     "text": "What are you working on?",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 118,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Nothing to report",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Scout/Scout_Work",
+   "id": 118,
+   "guid": "eb51e663b9874d3985f6433efab3dd45",
+   "messages": [
+    {
+     "pages": [
+      "I'm keeping busy broadcasting our message to any survivors, and poring over charts of the area for targets to scout out."
+     ],
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "47",
+       "Status": "Completed"
+      }
+     ]
+    },
+    {
+     "pages": [
+      "I'm keeping busy poring over charts of the area for targets to scout out, and waiting on the radio tower repair so I can start broadcasting."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Security_Lookout/Security_Lookout_Welcome",
+   "id": 86,
+   "guid": "66ccbbbda0164183b2dc1f482ede3251",
+   "messages": [
+    {
+     "pages": [
+      "I'm keeping an eye out for trouble and any survivors on their way here!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Thanks",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Survivor/Survivor_Welcome",
+   "id": 140,
+   "guid": "d2d19528d7124bb0bb38ffeb67cf2bbf",
+   "messages": [
+    {
+     "pages": [
+      "I'm very happy to be aboard!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Glad to hear it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "T.Rickster/T.Rickster_Cake_Accepted",
+   "id": 25,
+   "guid": "7b33d91cb1ed4334a265107ac2ae8c67",
+   "messages": [
+    {
+     "pages": [
+      "Hehehe looking forward to it!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "T.Rickster/T.Rickster_Cake_Completed",
+   "id": 26,
+   "guid": "904fee921cd942e9a722adc12ed9e497",
+   "messages": [
+    {
+     "pages": [
+      "Mmmmm this looks tasty! Thank you! <i>*pssst*</i> with this tool I can get into the airducts and get my connections up again, although I'll run them from here to avoid problems with the police.",
+      "Let me know if you need anything from the black market! The secret phrase is:<pause> <color=#fa3200>Password</color>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "T.Rickster/T.Rickster_Referred",
+   "id": 22,
+   "guid": "a5ff0c59cab94095be9fa48297deff36",
+   "messages": [
+    {
+     "pages": [
+      "Ooohohoho he's out and about! Wait I mean like yeah he should be, I don't suppose he mentioned I'm not supposed to be in here? Either way good to meet you <name_char>, I'm T.Rickster short for Terry Rickster."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "T.Rickster/T.Rickster_Vendor_Completed",
+   "id": 28,
+   "guid": "f3f7f0e53c2843219dbd0a0f35d51002",
+   "messages": [
+    {
+     "pages": [
+      "<i>*whispher* Pleasure doing business</i> <br><pause>Thanks for visiting!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "T.Rickster/T.Rickster_Welcome",
+   "id": 21,
+   "guid": "7e25e21322d246ef822ac9781073621e",
+   "messages": [
+    {
+     "pages": [
+      "Nothing to see here!<br>Following the rules!"
+     ],
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "23",
+       "Value": "False",
+       "Logic": "Equal",
+       "Allow_Unset": ""
+      }
+     ]
+    },
+    {
+     "pages": [
+      "A sight for sore eyes!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "P.Riso sent me",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "15",
+       "Value": "True",
+       "Logic": "Equal"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "23",
+       "Value": "True"
+      }
+     ],
+     "dialogue": 22,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Good to hear",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Need any help?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "24",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "24"
+      },
+      {
+       "Type": "Item",
+       "ID": "1430",
+       "Amount": "1"
+      }
+     ],
+     "dialogue": 25,
+     "vendor": "",
+     "quest": 24
+    },
+    {
+     "text": "I brought you a cake",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "24",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 26,
+     "vendor": "",
+     "quest": 24
+    },
+    {
+     "text": "<color=#fa3200>Password</color>",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "24",
+       "Status": "Completed"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 28,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Hang tight",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Traitor/Traitor_Find_Relay_Evidence_Accepted",
+   "id": 196,
+   "guid": "71f09ee744d644cb9e6974d4ffe1a8de",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! In the meantime I'll monitor the radio for their next message so we can catch them and hopefully rescue Harry when they come to \"rescue\" me."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Traitor/Traitor_Len_Evidence",
+   "id": 191,
+   "guid": "1c3a7a578f0644ba95ad4fb7f33f3a02",
+   "messages": [
+    {
+     "pages": [
+      "<i>*he surprisedly glances back and forth*</i><br>No, sorry, I didn't know him very well."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Traitor/Traitor_Welcome",
+   "id": 6,
+   "guid": "f810038d5c1342e0aba502ff97b367c5",
+   "messages": [
+    {
+     "pages": [
+      "<pause>...<pause><br><i>*he angrily grumbles at you*</i>"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Did you talk with <color=rare>Lieutenant Harry</color> before he went missing?",
+     "conditions": [
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "190",
+       "Value": "False"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Flag_Bool",
+       "ID": "190",
+       "Value": "True",
+       "Modification": "Assign"
+      }
+     ],
+     "dialogue": 191,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Let's catch that traitor!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "194",
+       "Status": "None"
+      },
+      {
+       "Type": "Flag_Bool",
+       "Logic": "Equal",
+       "ID": "192",
+       "Value": "True"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "194"
+      },
+      {
+       "Type": "Flag_Bool",
+       "ID": "195",
+       "Value": "False"
+      }
+     ],
+     "dialogue": 196,
+     "vendor": "",
+     "quest": 194
+    },
+    {
+     "text": "Sorry to bother you",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Uniform_Supply/Uniform_Store_Completed",
+   "id": 70,
+   "guid": "c52fa7172fcf48f490582f6eff8b918e",
+   "messages": [
+    {
+     "pages": [
+      "Don't lose it this time!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Uniform_Supply/Uniform_Supply_Welcome",
+   "id": 69,
+   "guid": "9397449608a046f28fd48bd5d62adebb",
+   "messages": [
+    {
+     "pages": [
+      "Hello!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Can I buy a replacement uniform?",
+     "conditions": [
+      {
+       "Type": "Flag_Short",
+       "ID": "29",
+       "Value": "0",
+       "Logic": "Greater_Than"
+      }
+     ],
+     "rewards": [],
+     "dialogue": 70,
+     "vendor": "",
+     "quest": 0
+    },
+    {
+     "text": "Goodbye",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  },
+  {
+   "key": "Wind/Boss_Wind_Accepted",
+   "id": 170,
+   "guid": "c784ffd20b124b77ac19c0aaa9318f9f",
+   "messages": [
+    {
+     "pages": [
+      "Good luck! If you run into it keep your distance or you'll get crushed!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Wind/Boss_Wind_Completed",
+   "id": 171,
+   "guid": "3a51f992b2bb480987efdd808c0b5d84",
+   "messages": [
+    {
+     "pages": [
+      "Wow that's amazing! I feel much safer already."
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": []
+  },
+  {
+   "key": "Wind/Wind_Welcome",
+   "id": 169,
+   "guid": "2c22da130712455fbd2d0ace49f76eb4",
+   "messages": [
+    {
+     "pages": [
+      "I'm very happy to be aboard!"
+     ],
+     "conditions": []
+    }
+   ],
+   "responses": [
+    {
+     "text": "Seen anything weird lately?",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "162",
+       "Status": "None"
+      }
+     ],
+     "rewards": [
+      {
+       "Type": "Quest",
+       "ID": "162"
+      }
+     ],
+     "dialogue": 170,
+     "vendor": "",
+     "quest": 162
+    },
+    {
+     "text": "I killed that boss zombie!",
+     "conditions": [
+      {
+       "Type": "Quest",
+       "Logic": "Equal",
+       "ID": "162",
+       "Status": "Ready",
+       "Reset": ""
+      }
+     ],
+     "rewards": [],
+     "dialogue": 171,
+     "vendor": "",
+     "quest": 162
+    },
+    {
+     "text": "Glad to hear it",
+     "conditions": [],
+     "rewards": [],
+     "dialogue": 0,
+     "vendor": "",
+     "quest": 0
+    }
+   ]
+  }
+ ],
+ "vendors": [
+  {
+   "key": "Aircraft_Hangar",
+   "id": 0,
+   "guid": "d98e2980ad3d47518c08b9e1df98f7ef",
+   "name": "<color=legendary>Coalition</color> Aircraft Hangar",
+   "description": "Air vehicles available for delivery.",
+   "selling": [
+    {
+     "type": "Vehicle",
+     "guid": "500a4bf5048648a6b1bad8c78874fe13",
+     "item": 0,
+     "cost": 16000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": ""
+    },
+    {
+     "type": "Vehicle",
+     "guid": "d8811bc349b14d808b713b6e87dcdd70",
+     "item": 0,
+     "cost": 10000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    },
+    {
+     "type": "Vehicle",
+     "guid": "5f150e4d56194f5cb478317651b476b5",
+     "item": 0,
+     "cost": 10000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    },
+    {
+     "type": "Vehicle",
+     "guid": "0999953ab4b846f0990b7a4ae3a51d9e",
+     "item": 0,
+     "cost": 16000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    },
+    {
+     "type": "Vehicle",
+     "guid": "e2850722c85c4871afbb94c670f56c20",
+     "item": 0,
+     "cost": 10000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    },
+    {
+     "type": "Vehicle",
+     "guid": "d5efeb331b40409c9ef6df1f24174dc9",
+     "item": 0,
+     "cost": 10000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    },
+    {
+     "type": "Vehicle",
+     "guid": "2b5916486864477598987efbced60ed1",
+     "item": 0,
+     "cost": 10000,
+     "spawnpoint": "Liberator_Jet",
+     "paint": "#475e83"
+    }
+   ],
+   "buying": []
+  },
+  {
+   "key": "Armory_Store",
+   "id": 142,
+   "guid": "0def46bca95a4609a57186ccc1cb83b6",
+   "name": "<color=legendary>Coalition</color> Armory",
+   "description": "Looking for military/ranger ammunition and trading surplus gear.",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "121",
+     "item": 121,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "333",
+     "item": 333,
+     "cost": 40,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1008",
+     "item": 1008,
+     "cost": 600,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "107",
+     "item": 107,
+     "cost": 1500,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "112",
+     "item": 112,
+     "cost": 1500,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "eae61af155e1460481ed4dd575dfcd9d",
+     "item": 1873,
+     "cost": 200,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": [
+    {
+     "type": "Item",
+     "guid": "1192",
+     "item": 1192,
+     "cost": 40,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "43",
+     "item": 43,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1193",
+     "item": 1193,
+     "cost": 40,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "119",
+     "item": 119,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "6",
+     "item": 6,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "17",
+     "item": 17,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "123",
+     "item": 123,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "125",
+     "item": 125,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ]
+  },
+  {
+   "key": "Chef_Fresh_Food_Market",
+   "id": 63,
+   "guid": "438b0afe75ff4a94822a9ff02e7cdc6f",
+   "name": "Leonard's Fresh Food Market",
+   "description": "Part fresh, part stale army rations.",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "1159",
+     "item": 1159,
+     "cost": 85,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1162",
+     "item": 1162,
+     "cost": 65,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "91",
+     "item": 91,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "92",
+     "item": 92,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "82",
+     "item": 82,
+     "cost": 65,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "83",
+     "item": 83,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "84",
+     "item": 84,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "85",
+     "item": 85,
+     "cost": 65,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "86",
+     "item": 86,
+     "cost": 65,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": [
+    {
+     "type": "Item",
+     "guid": "81",
+     "item": 81,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1351",
+     "item": 1351,
+     "cost": 40,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1120",
+     "item": 1120,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "88",
+     "item": 88,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "13",
+     "item": 13,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "89",
+     "item": 89,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "469",
+     "item": 469,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "87",
+     "item": 87,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "90",
+     "item": 90,
+     "cost": 10,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "78",
+     "item": 78,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "77",
+     "item": 77,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "79",
+     "item": 79,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1117",
+     "item": 1117,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "505",
+     "item": 505,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "514",
+     "item": 514,
+     "cost": 40,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1952",
+     "item": 1952,
+     "cost": 5,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1954",
+     "item": 1954,
+     "cost": 10,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1959",
+     "item": 1959,
+     "cost": 45,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1956",
+     "item": 1956,
+     "cost": 45,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1965",
+     "item": 1965,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1961",
+     "item": 1961,
+     "cost": 60,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1434",
+     "item": 1434,
+     "cost": 60,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ]
+  },
+  {
+   "key": "Invention_Store",
+   "id": 84,
+   "guid": "43ed9a9cc6824383bd1fdfad4034bb45",
+   "name": "Doc Ernie's Inventions",
+   "description": "Complex blueprints for complex creations.",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "1439",
+     "item": 1439,
+     "cost": 170,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1437",
+     "item": 1437,
+     "cost": 190,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": []
+  },
+  {
+   "key": "P.Riso_Hot_Stuff",
+   "id": 17,
+   "guid": "7535986abb304f29b6bb55d40d9967de",
+   "name": "P.Riso's <color=#fa3200>Hot</color> Stuff",
+   "description": "Not like stolen stuff, good stuff everyone wants! 97.5% satisfaction guarantee!",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "1046",
+     "item": 1046,
+     "cost": 60,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1048",
+     "item": 1048,
+     "cost": 50,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1130",
+     "item": 1130,
+     "cost": 30,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "105",
+     "item": 105,
+     "cost": 90,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1132",
+     "item": 1132,
+     "cost": 160,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1c47939b50344c79852e1b4376debbfc",
+     "item": 1433,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": [
+    {
+     "type": "Item",
+     "guid": "1353",
+     "item": 1353,
+     "cost": 25,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ]
+  },
+  {
+   "key": "Saw",
+   "id": 336,
+   "guid": "ba42567166bc4a87817efbd42f9b69b7",
+   "name": "Saw",
+   "description": "Tool used to cut down oversized candy canes.",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "1704",
+     "item": 1704,
+     "cost": 60,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": []
+  },
+  {
+   "key": "T.Rickster_Blackmarket",
+   "id": 27,
+   "guid": "fb7bcb201ef74a5ba5262e57f9b69b81",
+   "name": "T.Rickster's <color=#323232>Blackmarket Smuggling</color>",
+   "description": "Everything you should be able to buy but aren't allowed to!<br><i>There's probably a good reason you're not allowed to, so don't think about that!</i>",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "115",
+     "item": 115,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "270",
+     "item": 270,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "271",
+     "item": 271,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "272",
+     "item": 272,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "273",
+     "item": 273,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "274",
+     "item": 274,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "275",
+     "item": 275,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "571",
+     "item": 571,
+     "cost": 100,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": []
+  },
+  {
+   "key": "Uniform_Store",
+   "id": 71,
+   "guid": "ccbd6723706d4a8ea0f271e007b4c33c",
+   "name": "<color=legendary>Coalition</color> Uniforms",
+   "description": "Crisp and clean.",
+   "selling": [
+    {
+     "type": "Item",
+     "guid": "1419",
+     "item": 1419,
+     "cost": 15,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1420",
+     "item": 1420,
+     "cost": 15,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1421",
+     "item": 1421,
+     "cost": 25,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1422",
+     "item": 1422,
+     "cost": 35,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1425",
+     "item": 1425,
+     "cost": 90,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1426",
+     "item": 1426,
+     "cost": 15,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1427",
+     "item": 1427,
+     "cost": 90,
+     "spawnpoint": "",
+     "paint": ""
+    },
+    {
+     "type": "Item",
+     "guid": "1428",
+     "item": 1428,
+     "cost": 110,
+     "spawnpoint": "",
+     "paint": ""
+    }
+   ],
+   "buying": []
+  }
+ ]
+}
