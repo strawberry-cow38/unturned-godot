@@ -84,7 +84,7 @@ namespace UnturnedGodot
             // Restored BEFORE the clock, and unconditionally -- it is not gated on _clock existing, because
             // the season is read from it even in a mode with no day/night cycle node.
             SDG.Unturned.WorldTemperature.StartDayOfYear = save.StartDayOfYear;
-            SDG.Unturned.LootSeed.World = save.LootSeedValue;
+            SDG.Unturned.LootSeed.Set(save.LootSeedValue);   // adopt the world's established seed, 0 included
             if (_clock != null)
             {
                 _clock.Day = save.Day;
@@ -113,6 +113,18 @@ namespace UnturnedGodot
         {
             try
             {
+                // FIRST SAVE ESTABLISHES THE WORLD'S LOOT SEED (strawberry: "unset seed should be a random
+                // seed each time. set once at the first save creation"). Idempotent -- every later save finds
+                // it already set and leaves it alone, so a world's loot never moves under it.
+                //
+                // Rolled from the system RNG here rather than inside LootSeed, which is engine-free and has
+                // no business owning a randomness source a test cannot replace.
+                SDG.Unturned.LootSeed.EnsureEstablished(() =>
+                {
+                    var r = new RandomNumberGenerator();
+                    r.Randomize();
+                    return ((ulong)(uint)r.Randi() << 32) | (uint)r.Randi();
+                });
                 var save = WorldSave.Capture(_server, _mapId,
                                              _clock?.Day ?? 0,
                                              _clock?.Time ?? 0f,
