@@ -547,7 +547,15 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, midY, dist);
             cam.LookAt(new Vector3(0f, midY, 0f), Vector3.Up);   // ⚠ after it is in the tree; LookAt outside one is a silent no-op
             if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1")
+            {
+                // WHERE THE FEET ACTUALLY LAND, in viewport pixels. The computed frame says the whole body fits
+                // and the render disagrees, so one of the two is lying: project the feet and the head and read
+                // off which. Inside 0..Size.Y means the camera is right and something downstream is cropping.
+                var feet = cam.UnprojectPosition(Vector3.Zero);
+                var head = cam.UnprojectPosition(new Vector3(0f, topY, 0f));
                 Log.Print($"[npceditor] fit: top {topY:0.##} -> cam y {midY:0.##} z {dist:0.##} (vp {_vp.Size})");
+                Log.Print($"[npceditor] project: feet y={feet.Y:0.#}px head y={head.Y:0.#}px of {_vp.Size.Y}px");
+            }
         }
 
         void Refresh()
