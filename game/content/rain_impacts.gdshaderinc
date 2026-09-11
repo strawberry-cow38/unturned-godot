@@ -19,6 +19,12 @@
 
 float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
 
+// HOW FAR THE RAIN LEANS, as ground-plane metres travelled per metre of fall (so length() is tan of the tilt
+// from vertical, and the direction is the way the wind is driving it). RainSystem3D.PushWindDrift sets this
+// from the SAME numbers it puts in the particle gravity, so the splash and the streak that made it cannot
+// lean different ways. Zero = straight down, which is what every shader saw before this existed.
+global uniform vec2 rain_slant;
+
 // Crown shape lives HERE, as constants, for the same reason the loop does: tuning it per-surface is how the kerb
 // stops matching. Life is a fraction of the cell's cycle -- a real splash is over long before its ring is.
 const float RAIN_CROWN_LIFE   = 0.34;    // crown is gone by a third of the way through the ripple
@@ -37,6 +43,17 @@ void rain_impacts(vec2 wxz, float t, float amt, float scale, vec2 away, out floa
     crown = 0.0;
     float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.20;       // more rain -> lower threshold -> more impacts fire (kept SPARSE: heavy ~18%, drizzle ~7% of cells)
     bool want_crown = dot(away, away) > 0.5;
+    // THE CROWN LEANS WITH THE RAIN (master 2026-09-11: "the rain splashback should also match the angle of the
+    // rain instead of being vertical"). `away` stands in for the VERTICAL -- a column of water above the impact
+    // point projects away from the viewer -- while the rain's horizontal travel lies in the ground plane already
+    // and so projects into it 1:1, in its own direction. Adding them is the projection of a LEANING column, and
+    // the sum's LENGTH is how long that lean reads from here: a splash thrown across the view stretches, one
+    // thrown at the camera foreshortens. Floored so rain blowing straight at you cannot cancel the crown to
+    // nothing. Computed once -- it is the same for every cell in the fragment.
+    vec2 caxis = away + rain_slant;
+    float caxlen = length(caxis);
+    vec2 cdir = caxlen > 1e-4 ? caxis / caxlen : away;
+    float clen = max(caxlen, 0.35);
     for (int k = 0; k < 2; k++){
         float sc = (1.6 + float(k) * 2.8) * scale;         // larger cells -> fewer impacts per area
         vec2 g = wxz * sc + float(k) * 21.0;
@@ -63,9 +80,9 @@ void rain_impacts(vec2 wxz, float t, float amt, float scale, vec2 away, out floa
                 if (up <= 0.0) continue;                                // most of a cycle has no crown at all -- skip the rest
                 // Height in CELL units, so the crown scales with the cell field exactly as the ring does and a
                 // splash_scale change cannot make one grow while the other stays put.
-                float len = RAIN_CROWN_HEIGHT * sc * up;
-                float along = clamp(dot(d, away), 0.0, len);
-                float lateral = length(d - away * along);
+                float len = RAIN_CROWN_HEIGHT * sc * up * clen;
+                float along = clamp(dot(d, cdir), 0.0, len);
+                float lateral = length(d - cdir * along);
                 float taper = 1.0 - along / max(len, 1e-4);             // 1 at the foot -> 0 at the tip
                 float w = mix(RAIN_CROWN_TIP, RAIN_CROWN_BASE, taper);
                 crown += smoothstep(w, 0.0, lateral) * taper * up * fire;

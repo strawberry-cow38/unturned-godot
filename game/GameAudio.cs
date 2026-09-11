@@ -161,20 +161,25 @@ namespace UnturnedGodot
         /// the beach splash footstep sound".) Surf.Water already maps to the shore bank, so a puddle just reports
         /// as water and every consumer -- the local shell and the remote puppets both -- follows for free.
         ///
-        /// Three conditions, and the third is the one that keeps it honest: hard ground (puddles do not stand on
-        /// grass), enough accumulated water to see, and OPEN SKY. The puddle level is a GLOBAL, so without the sky
-        /// test the moment it rained you would splash your way across a warehouse floor.
+        /// Four conditions: hard ground (puddles do not stand on grass), enough accumulated water for the look to
+        /// have arrived, OPEN SKY, and -- the one that makes it mean what it says -- A PUDDLE ACTUALLY BEING
+        /// THERE, asked of the same field the shader paints from.
         ///
-        /// ⚠ KNOWN OVER-REACH, flagged rather than buried: the puddle SHADER paints road props only, while this
-        /// says yes on any unsheltered hard surface -- so a bare concrete yard can splash with no visible puddle
-        /// on it. Closing that needs the road props' colliders tagged at build time, which is a bigger change than
-        /// the ask; this is the audible half, and it errs toward "it rained and the ground is wet".</summary>
+        /// ⚠ THE OVER-REACH THIS USED TO CARRY, now closed. The note here previously admitted that the puddle
+        /// SHADER paints a field while this said yes on any unsheltered hard surface, so a bare concrete yard
+        /// splashed with no visible water on it -- and it argued the fix was bigger than the ask. It was not:
+        /// the field is a pure function of world XZ and the fill level, so PuddleField mirrors it and the sound
+        /// now lands exactly where the water is drawn (master 2026-09-11: "ONLY when walking over puddles
+        /// themselves, not just wet surface"). The remaining gap is narrower and worth stating: the shader only
+        /// RUNS on roads and road props, so an unsheltered concrete yard splashes in the field's hollows while
+        /// drawing nothing. That is one material assignment away rather than a collider-tagging pass.</summary>
         static bool Puddled(Node3D n, Vector3 gp, PlayerController.Surf surf)
         {
             if (WeatherManager.PuddleLevel < PuddleAudioLevel) return false;
             if (surf != PlayerController.Surf.Concrete && surf != PlayerController.Surf.Metal) return false;   // hard ground only
+            if (!PuddleField.IsWet(gp.X, gp.Z, WeatherManager.PuddleLevel)) return false;   // ...and on a puddle, not merely on wet ground
             var w = n.GetWorld3D();
-            return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);
+            return w != null && !ShelterProbe.IsSheltered(w, gp + Vector3.Up * 0.2f);   // cheap tests first: this one is a physics query
         }
         // null = no melee bank for this surface, and the caller falls back. Only the four retail actually
         // ships as melee targets are named (grass, metal, ice, snow); the rest have no clip and saying so is

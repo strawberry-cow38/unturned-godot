@@ -9648,7 +9648,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
-                if (EngineOn)
+                // ...but NOT while it is still cranking (master 2026-09-11: "dont start engine noise until the
+                // engine has actually finished starting"). TryStartEngine sets EngineOn the instant the key
+                // turns, because the drivetrain gate is the SEPARATE _carIgnitionLeft timer -- so this loop came
+                // in under the starter-motor clip and you heard an idling engine over its own ignition. The same
+                // timer that withholds the throttle now withholds the sound, which is what makes them agree:
+                // the engine is audible exactly when it can move you. Aircraft are not affected -- StepHeli and
+                // StepPlane gate this loop on _rotorRpm, so theirs already fades in with the spin-up.
+                if (EngineOn && !EngineStarting)
                 {
                     float n = EngineRpmNorm;
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);

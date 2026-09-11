@@ -2390,13 +2390,28 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldPaintItem = backing;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };   // no spraypaint carry model in the rip -> bare arms in the ready hold
+            // THE CAN, AND ITS OWN ANIMATIONS (master 2026-09-11: "get the 1p animation for holding and also
+            // spraying extracted and playing with the spraypaints"). All 32 share one Equip (0.47 s) and one Use
+            // (2.80 s), ripped from items/tools/vehicle_spraypaint_*/animations.prefab -- verified shared rather
+            // than assumed: the extractor counts distinct clip path_ids and says so. Routed through the
+            // consumable clip path, the same road the throwables took.
+            //
+            // No albedo: every can's texture in the bundle is an 82-byte placeholder and identical across colours,
+            // so the can is tinted flat by the paint it sprays -- which is also the most useful thing it could be,
+            // since the colour in your hand is now the colour you are about to make the car.
+            _viewmodel = new Viewmodel
+            {
+                ConsumableMesh = "spraypaint.txt",
+                ConsumableColor = VehiclePaints.For(asset.id) ?? Colors.White,
+                ConsumableEquipClip = "Paint_Equip",
+                ConsumableUseClip = "Paint_Use",
+            };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[paint] holding {asset.itemName} -- aim at a vehicle and LMB to respray it");
         }
 
-        void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; }
+        void ClearHeldSpraypaint() { _heldPaintItem = null; _heldCarjackItem = null; _paintPendingT = 0f; _paintBusyT = 0f; }   // switching away mid-sweep drops the pending paint, like ClearHeldThrowable drops a pending release
 
         /// <summary>Retail item 277. Held like the spraypaint and the gas can -- no carry model in the rip, so
         /// the hands are empty and the mechanic is the point.</summary>
@@ -2443,7 +2458,30 @@ namespace UnturnedGodot
         /// The colour comes off the CAN (its .dat PaintColor), not from anything the player picks, which is
         /// why 32 separate items exist. Only the paintable texels of the body palette change -- the shader
         /// has always worked this way for spawn colours, so a resprayed police car keeps its livery.</summary>
+        /// <summary>Source UseableVehiclePaint: the paint lands at 85% of the "Use" clip (isReplaceable), not on
+        /// the click, and the hand is busy until the clip ends (isUseable). Same shape as the throwable's 60%
+        /// release -- and now that there IS a spray animation, the difference is visible: the car changes colour as
+        /// the can finishes its sweep instead of before the arm has moved.</summary>
+        public const float PaintApplyFraction = 0.85f;
+        const float PaintFallbackUseSeconds = 2.8f;   // Paint_Use's real length; used only if the clip failed to load
+        float _paintPendingT, _paintBusyT;
+
         void TrySprayVehicle()
+        {
+            if (_heldPaintItem == null || _paintPendingT > 0f || _paintBusyT > 0f || _dead) return;   // still mid-spray (source: isBusy / !isUseable)
+            if (VehiclePaints.For(_heldPaintItem.id) == null) return;
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen <= 0.05f) useLen = PaintFallbackUseSeconds;
+            _viewmodel?.PlayConsumeUse();   // Paint_Use, via the consumable clip path
+            GameAudio.Play2D(this, GameAudio.Clip("misc", "vehicle_spraypaint"), -4f);   // the can's own UseAudioClip, at the START of the sweep like source plays it in replace()
+            _paintPendingT = useLen * PaintApplyFraction;
+            _paintBusyT = useLen;
+            Log.Print($"[paint] spraying -- paint lands in {_paintPendingT:0.00}s, hand busy {useLen:0.00}s");
+        }
+
+        /// <summary>85% into the sweep: the colour actually changes. Re-validates the target, because source does
+        /// too (simulate re-tests vehicle/IsPaintable/checkEnter) and 2.4 s is long enough to walk away.</summary>
+        void ApplySpray()
         {
             if (_heldPaintItem == null) return;
             var col = VehiclePaints.For(_heldPaintItem.id);
@@ -2468,7 +2506,6 @@ namespace UnturnedGodot
             if (!IsInstanceValid(_focusVehicle)) { Log.Print("[paint] aim at a vehicle"); return; }
             if (_focusVehicle.IsWreck) { Log.Print("[paint] that one is a burnt-out wreck"); return; }
             _focusVehicle.SetPaint(col.Value);
-            GameAudio.Play2D(this, GameAudio.Clip("misc", "vehicle_spraypaint"), -4f);
             Log.Print($"[paint] resprayed {_focusVehicle.DisplayName} {VehiclePaints.NameOf(_heldPaintItem.id)}");
 
             // Spend it, the same routing a finished consumable takes: in MP the DELETION is the server's and
@@ -10151,6 +10188,8 @@ namespace UnturnedGodot
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
+            if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
+            if (_paintBusyT > 0f) _paintBusyT = Mathf.Max(0f, _paintBusyT - (float)delta);                                                   // ...and the hand is busy until the clip ends
             if (_throwRearmAtEnd && _throwCd <= 0f) { _throwRearmAtEnd = false; BuildThrowableViewmodel(); if (_heldThrowable != null) Log.Print($"[throw] next {_heldThrowable.itemName} up"); }   // follow-through done -> the next one comes up (TE_0)
             if (_throwRevertAtEnd && _throwCd <= 0f) { _throwRevertAtEnd = false; (_revertEquip ?? EquipUnarmed)(); }   // the last one is gone and the follow-through is done
             TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place

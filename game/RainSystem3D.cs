@@ -31,6 +31,11 @@ namespace UnturnedGodot
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
             // in, im talking minutes"). WeatherManager integrates it.
             RenderingServer.GlobalShaderParameterAdd("rain_puddle", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // RAIN SLANT: ground-plane metres of drift per metre of fall, pointing downwind (so its LENGTH is
+            // tan of the tilt from vertical). rain_impacts.gdshaderinc leans the splashback crown along it, and
+            // PushWindDrift below sets it from the same drift/fall numbers it puts in the particle gravity --
+            // one source, so the splash cannot lean a different way from the streak that made it.
+            RenderingServer.GlobalShaderParameterAdd("rain_slant", RenderingServer.GlobalShaderParameterType.Vec2, Vector2.Zero);
             RenderingServer.GlobalShaderParameterAdd("rain_canopy", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(0f, 0f, 1f, 0f));   // xy=canopy XZ, z=radius, w=strength (0=none): the local rain shadow under trees
             // DAYLIGHT, 0..1 (master 2026-09-08: "the raindrops look oddly 'lit' at night"). The streaks render
             // `unshaded` -- deliberately, they are thin alpha threads and real shading on them is neither cheap nor
@@ -125,6 +130,7 @@ namespace UnturnedGodot
         // so a gale drives the rain across and a still downpour falls near-vertically. ParticleFlagAlignY already
         // turns each streak to its velocity, so tilting gravity tilts the streaks for free.
         const float BaseDrift = 5f, GaleDrift = 26f;   // horizontal gravity at zero weather-wind, and at full
+        Vector2 _slantPushed = new Vector2(float.NaN, float.NaN);   // NaN so the first push always fires
         void PushWindDrift()
         {
             float w = Mathf.Clamp(WindField.WeatherWind, 0f, 1f);
@@ -132,6 +138,10 @@ namespace UnturnedGodot
             Vector2 dir = _p.GlobalPosition == Vector3.Zero ? new Vector2(1f, 0f) : WindField.WindXZ(_p.GlobalPosition);
             var g = new Vector3(dir.X * mag, -22f, dir.Y * mag);
             if (!_p.Gravity.IsEqualApprox(g)) _p.Gravity = g;   // skip the setter churn when nothing moved
+            // ...and the SAME lean, as a ratio, for the splashback crown on the ground. Derived from g rather
+            // than recomputed so a future change to the drift can only move both together.
+            var slant = new Vector2(g.X, g.Z) / Mathf.Max(1f, Mathf.Abs(g.Y));
+            if (!_slantPushed.IsEqualApprox(slant)) { _slantPushed = slant; RenderingServer.GlobalShaderParameterSet("rain_slant", slant); }
         }
 
         public void HubProcess(double delta)
