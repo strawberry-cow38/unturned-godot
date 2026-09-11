@@ -110,6 +110,31 @@ namespace SDG.Unturned
             return true;
         }
 
+        /// <summary>Which quest a tracker should follow when the player has not pinned one, or has pinned one
+        /// that is now finished. READY BEATS ACTIVE, because "you can hand this in" is the only quest state that
+        /// asks you to go somewhere; among equals the first in catalog order wins so the corner does not
+        /// reshuffle itself as unrelated flags move.
+        ///
+        /// Pure, and here rather than on the player, so the rule that decides what you stare at all game is
+        /// something a test can hold still.</summary>
+        public static NpcQuestDef AutoTrack(IEnumerable<NpcQuestDef> all, INpcWorld w, int pinned = 0)
+        {
+            if (all == null || w == null) return null;
+            NpcQuestDef active = null;
+            foreach (var q in all)
+            {
+                if (q == null) continue;
+                var st = StatusOf(q, w);
+                // A pin holds until the quest is DONE -- otherwise finishing one objective would yank the
+                // corner onto somebody else's quest mid-sentence.
+                if (pinned != 0 && q.Id == pinned && st != ENpcQuestStatus.Completed && st != ENpcQuestStatus.None) return q;
+                if (st == ENpcQuestStatus.Active && active == null) active = q;
+            }
+            foreach (var q in all)
+                if (q != null && StatusOf(q, w) == ENpcQuestStatus.Ready) return q;
+            return active;
+        }
+
         /// <summary>The objective lines a quest log shows, already filled in. Retail ships the sentence per
         /// condition ("Cleanup {0}/{1} Barnacles"), so this fills the placeholders rather than inventing text
         /// from a type name -- and a condition with no line still says something rather than nothing.</summary>

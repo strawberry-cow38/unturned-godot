@@ -56,9 +56,13 @@ namespace SDG.Unturned
         /// <summary>The objective as the player reads it, {0} from progress and {1} from <see cref="Wants"/>.
         /// Retail ships this string per condition, so a quest log does not have to invent a sentence from a
         /// type name -- and the text and the test stay lined up because they share an index.</summary>
+        /// ⚠ STRIPPED. Quest objectives carry the same rarity markup vendor names do -- "Defeat {0}/{1}
+        /// &lt;color=mythical&gt;Lightningstrike Boss&lt;/color&gt;" -- and this IS the display path, so a caller
+        /// that forgets puts the tags on screen. The log and the corner both go through here.
         public string Describe(int have) =>
-            string.IsNullOrEmpty(Text) ? $"{Type} {have}/{Wants}"
-                                       : Text.Replace("{0}", have.ToString()).Replace("{1}", Wants.ToString());
+            TradeRules.PlainText(string.IsNullOrEmpty(Text)
+                ? $"{Type} {have}/{Wants}"
+                : Text.Replace("{0}", have.ToString()).Replace("{1}", Wants.ToString()));
     }
 
     public sealed class NpcReward

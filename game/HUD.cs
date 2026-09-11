@@ -12,6 +12,9 @@ namespace UnturnedGodot
     public partial class HUD : CanvasLayer
     {
         public PlayerController Player;
+        QuestTracker _questTracker;
+        /// <summary>The corner quest summary, for the render harness to read back.</summary>
+        public QuestTracker QuestTrackerForTest => _questTracker;
         HBoxContainer _hotbar;
         // Cheap signature so the row is rebuilt only when its CONTENTS change. A NUMBER, and the entry list is a
         // reused member, because this runs every frame: the first cut built a List, a second list via ConvertAll,
@@ -123,6 +126,17 @@ namespace UnturnedGodot
         {
             Layer = 10;   // draw over the viewmodel composite (CanvasLayer 5)
             Current = this;
+
+            // The tracked-quest summary, top-right (master 2026-09-11). Built HERE rather than at each of the
+            // five places that construct a HUD: this is the one spot that already knows there is a player, so a
+            // sixth construction site cannot forget it. Skipped for the vehicle-only HUD, which has no Player --
+            // the same test that hides the on-foot vitals.
+            if (Player != null)
+            {
+                _questTracker = new QuestTracker();
+                AddChild(_questTracker);
+                _questTracker.Bind(Player);
+            }
 
             var root = new Control();
             root.SetAnchorsPreset(Control.LayoutPreset.FullRect);

@@ -166,6 +166,42 @@ namespace UnturnedSim.Tests
             Assert.That(QuestRules.Objectives(b, w)[0].Text, Is.EqualTo("Kill 0/6"));
         }
 
+        // ⭐ READY BEATS ACTIVE, and a PIN beats both until it is finished. Getting the first wrong means the
+        // corner never tells you a quest is done; getting the second wrong means it yanks off the thing you
+        // deliberately chose the moment an unrelated flag moves.
+        [Test]
+        public void AutoTrack_ReadyBeatsActive_AndAPinHoldsUntilItIsDone()
+        {
+            var w = new World();
+            NpcQuestDef Item(int id, ushort item, int n) => new NpcQuestDef
+            {
+                Id = id,
+                Conditions = new[] { new NpcCondition { Type = ENpcConditionType.Item, Id = item, Amount = n } },
+            };
+            var a = Item(1, 70, 1);
+            var b = Item(2, 71, 1);
+            var all = new[] { a, b };
+
+            Assert.That(QuestRules.AutoTrack(all, w), Is.Null, "nothing taken");
+
+            QuestRules.Give(a, w);
+            QuestRules.Give(b, w);
+            Assert.That(QuestRules.AutoTrack(all, w), Is.SameAs(a), "two active -> catalog order");
+
+            w.Items[71] = 1;   // b becomes READY while a is merely active
+            Assert.That(QuestRules.AutoTrack(all, w), Is.SameAs(b), "ready outranks active regardless of order");
+
+            // ...but a deliberate pin on the ACTIVE one holds anyway.
+            Assert.That(QuestRules.AutoTrack(all, w, pinned: 1), Is.SameAs(a), "the pin wins");
+            QuestRules.TurnIn(b, w);
+            Assert.That(QuestRules.AutoTrack(all, w, pinned: 1), Is.SameAs(a));
+
+            // A pin on a COMPLETED quest falls back rather than pinning the corner to a finished thing forever.
+            w.Items[70] = 1;
+            QuestRules.TurnIn(a, w);
+            Assert.That(QuestRules.AutoTrack(all, w, pinned: 1), Is.Null, "both done, nothing left to follow");
+        }
+
         // A quest handed out as a REWARD is how a chain links. One of the 88 shipped rewards does it, so if this
         // path is dead exactly one quest in the game silently never appears.
         [Test]

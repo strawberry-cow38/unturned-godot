@@ -2792,10 +2792,25 @@ namespace UnturnedGodot
         NpcWorldView _npcWorld;
         NpcWorldView NpcWorld => _npcWorld ??= new NpcWorldView(this);
 
-        /// <summary>The same world view the conversations use, for the console's quest command. The SAME one on
-        /// purpose: a debug path with its own view would answer questions differently from the game and the
-        /// disagreement would look like a quest bug.</summary>
-        public SDG.Unturned.INpcWorld NpcWorldForDebug => NpcWorld;
+        /// <summary>The player's NPC state -- flags, quest status, progress -- as the conversations, the quest
+        /// log and the console all see it. THE SAME instance for all three on purpose: a UI with its own view
+        /// would answer questions differently from the game, and the disagreement would look like a quest bug.</summary>
+        public SDG.Unturned.INpcWorld NpcState => NpcWorld;
+
+        /// <summary>Which quest the top-right summary follows. 0 means AUTO -- follow whatever is most worth
+        /// looking at -- so a player who never opens the log still gets a useful corner, and one who picks a
+        /// quest keeps it even when another becomes ready.</summary>
+        public int TrackedQuest;
+
+        /// <summary>The quest the tracker should show, resolving AUTO. Ready beats active, because "you can hand
+        /// this in" is the only quest state that asks you to go somewhere. A tracked quest that has been handed
+        /// in falls back to auto rather than pinning the corner to a finished thing forever.</summary>
+        public SDG.Unturned.NpcQuestDef TrackedQuestDef
+        {
+            // The rule itself lives in QuestRules.AutoTrack -- pure, and therefore testable. What decides the
+            // thing you look at all game should not be a property on a Node.
+            get => SDG.Unturned.QuestRules.AutoTrack(NpcCatalog.Quests, NpcWorld, TrackedQuest);
+        }
 
         /// <summary>Every NPC flag currently set, for the console. Dialogue and quests are mostly flag-gated, so
         /// "why is that branch not showing" is nearly always a question about this list.</summary>
@@ -2882,9 +2897,9 @@ namespace UnturnedGodot
                     // Offering a quest you are READY to hand in IS the hand-in -- that is how retail's
                     // "I've got them" line works, and it is the same response you took it from.
                     if (was == SDG.Unturned.ENpcQuestStatus.Ready && SDG.Unturned.QuestRules.TurnIn(q, NpcWorld))
-                        Log.Print($"[quest] handed in '{q.Name}' ({q.Rewards.Length} rewards)");
+                        Log.Print($"[quest] handed in '{SDG.Unturned.TradeRules.PlainText(q.Name)}' ({q.Rewards.Length} rewards)");
                     else if (was == SDG.Unturned.ENpcQuestStatus.None)
-                    { SDG.Unturned.QuestRules.Give(q, NpcWorld); Log.Print($"[quest] took '{q.Name}' -- {q.Conditions.Length} objective(s)"); }
+                    { SDG.Unturned.QuestRules.Give(q, NpcWorld); Log.Print($"[quest] took '{SDG.Unturned.TradeRules.PlainText(q.Name)}' -- {q.Conditions.Length} objective(s)"); }
                 }
                 else Log.Print($"[quest] response points at quest {r.Quest}, which is not in the catalog");
             }
