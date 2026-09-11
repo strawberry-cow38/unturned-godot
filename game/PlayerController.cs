@@ -364,6 +364,49 @@ namespace UnturnedGodot
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
         public bool Broken;        // PlayerLife.isBroken: broken legs (from a hard fall) -- blocks sprint + jump until mended
+
+        /// <summary>What this player feels, as opposed to what the map is doing (WorldTemperature). Public so
+        /// the HUD and the tests can read the band without re-deriving it from six inputs.</summary>
+        public readonly PlayerTemperatureSim Temperature = new PlayerTemperatureSim();
+
+        /// <summary>Day-of-year the world STARTED on -- strawberry 2026-09-10: "you can set a starting
+        /// date/month when starting". DayNightCycle.Day counts forward from it. 172 = late June.</summary>
+        public static int StartDayOfYear = 172;
+
+        // The environment probes (a group walk, two raycasts) are sampled at 4 Hz, not 50. The body has a 45 s
+        // time constant, so a quarter-second sample is indistinguishable from a per-tick one -- and the
+        // per-tick version is a raycast per player per frame for a number that cannot visibly move in 20 ms.
+        const float TemperatureProbeSeconds = 0.25f;
+        float _tempProbeTimer; float _tempAmbientC = 20f; float _tempSourceC; bool _tempRaining, _tempSheltered;
+
+        void TemperatureTick(bool exerting, float dt)
+        {
+            _tempProbeTimer -= dt;
+            if (_tempProbeTimer <= 0f)
+            {
+                _tempProbeTimer = TemperatureProbeSeconds;
+                var dn = GetTree()?.GetFirstNodeInGroup("daynight") as DayNightCycle;
+                var wm = WeatherManager.Current;
+                string weather = wm?.Sim?.Active?.Name;
+                // RainIntensity IS the sim's blend alpha, so the temperature offset eases in and out with the
+                // storm exactly as the wind and the fog already do -- one fade, not a second one that drifts.
+                float blend = wm?.RainIntensity ?? 0f;
+                // No cycle in this scene (a test rig, the menu) -> noon on the start date rather than midnight
+                // on day zero, so a harness with no clock is not silently in a winter night.
+                float tod = dn?.Time ?? 0.5f;
+                int day = dn?.Day ?? 0;
+                _tempAmbientC = WorldTemperature.AmbientC(WorldTemperature.DayOfYear(StartDayOfYear, day), tod,
+                                                          WorldTemperature.WeatherOffsetC(weather, blend));
+                _tempSourceC = ThermalField.NetC(this, GlobalPosition);
+                _tempRaining = wm?.IsRaining ?? false;
+                _tempSheltered = _tempRaining && ShelterProbe.IsSheltered(GetWorld3D(), GlobalPosition);
+            }
+            // The BODY still steps every tick off the cached probes: the approach is exponential in dt, so
+            // stepping it at the probe rate instead would make the result depend on the probe rate.
+            Temperature.Step(_tempAmbientC, _tempSourceC, exerting, _tempRaining, _tempSheltered,
+                             Inventory?.ProofsWater ?? false,
+                             Inventory?.InsulationColdC ?? 0f, Inventory?.InsulationHeatC ?? 0f, dt);
+        }
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
@@ -6092,7 +6135,8 @@ namespace UnturnedGodot
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310)
-            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, dt, new PlayerVitalsSim.Multipliers
+            TemperatureTick(sprinting, dt);
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen

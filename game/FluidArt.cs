@@ -44,9 +44,12 @@ namespace UnturnedGodot
             return new Vector3(Mathf.IsZeroApprox(x) ? x : Mathf.Sign(x) * px,
                                spec.PortY > 0f ? spec.PortY : y, z);
         }
+        /// <summary>Authored bounds, or the def's own box when it has no art row. Same reasoning as
+        /// Configure: an unauthored device renders at its declared size instead of throwing.</summary>
         public static Aabb Bounds(DeployableDef def)
         {
-            var spec = Catalog.Value[def.Id];
+            if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec))
+                return new Aabb(Vector3.Zero, def?.Size ?? Vector3.One);
             return new Aabb(Vec(spec.BoundsMin), Vec(spec.BoundsSize));
         }
 
@@ -54,9 +57,18 @@ namespace UnturnedGodot
             HasArt(def) && Catalog.Value.TryGetValue(def.Id, out var spec) && spec.BranchZ != null
                 ? spec.BranchZ[i] : fallback;
 
+        /// <summary>Apply the authored art's bounds to a fluid def. A def with NO art row keeps whatever it
+        /// declared for itself.
+        ///
+        /// TryGetValue, not the indexer. This runs from DeployableDef's STATIC CONSTRUCTOR, so a missing row
+        /// does not fail one device -- it fails the type initializer, and every caller of DeployableDef for
+        /// the rest of the process gets a TypeInitializationException. A new fluid deployable landing without
+        /// authored art took the entire world build down (strawberry, 2026-09-11: the pump jack, id 1219).
+        /// The blast radius of a missing content row should be that device looking wrong, not the game
+        /// refusing to load a map.</summary>
         public static void Configure(DeployableDef def)
         {
-            var spec = Catalog.Value[def.Id];
+            if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec)) return;
             def.Size = Vec(spec.BoundsSize);
             def.Offset = spec.Offset;
             def.Radius = spec.Radius;
@@ -66,7 +78,9 @@ namespace UnturnedGodot
             ContentProvider.ParseObj($"res://content/fluid/{id}_{part}.txt");
 
         public static Mesh Preview(DeployableDef def) =>
-            Load(def.Id, Catalog.Value[def.Id].Part == null ? "body" : "preview");
+            def != null && Catalog.Value.TryGetValue(def.Id, out var spec)
+                ? Load(def.Id, spec.Part == null ? "body" : "preview")
+                : null;   // no authored art -> no preview mesh, and the caller falls back rather than throwing
 
         public static StandardMaterial3D Material(DeployableDef def)
         {
