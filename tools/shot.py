@@ -53,9 +53,15 @@ OUT_DIR = os.path.join(ROOT, ".shots")
 # cadence and looks like a hang. Copying a manifest entry's args and dropping its env is how you
 # get a correct-looking invocation that behaves like a broken one.
 SCENES = {
+    "animals": (["--animaltest=" + os.environ.get("ANIMALS", "cow,horse,deer"), "--shot={OUT}"],
+                {"UG_ANIMALFOOT": "0", "UG_ANIMALCAM": os.environ.get("ANGLE", "side")}, False, 180,
+                "animal scale comparison (ANIMALS=cow,horse,deer; ANGLE=side/front/rear/other/top/quarter; UG_ANIMALCLIP=rest/Idle/Walk; UG_ANIMALTIME=seconds)"),
     # No aliases that quietly substitute a different scene. A "door" entry pointing at the
     # generator rig would hand back a confident, wrong picture -- the failure mode this whole
     # tool exists to stop. A scene is here only when it renders the thing it is named after.
+    "animal": (["--animaltest=" + os.environ.get("ANIMAL", "deer"), "--shot={OUT}"],
+               {"UG_ANIMALFOOT": "0"}, False, 180,
+               "calibrated wildlife stage (ANIMAL=horse,cow,deer UG_ANIMALCAM=side|rear|top|threequarter UG_ANIMALCLIP=Idle UG_ANIMALTIME=0)"),
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
     "fluid":    (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "gallery"}, False, 180, "11 placed fluid devices at LOD0 + retail barrel/generator/propane references"),
     "fluiddevice": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"),

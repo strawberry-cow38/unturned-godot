@@ -359,6 +359,8 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "unify.animal_materialize";
         public override double TimeoutSimSeconds => 40;
+        protected virtual ushort AnimalIdUnderTest => 6;
+        protected virtual byte SpeciesUnderTest => 2;
 
         public override IEnumerable<Step> Run()
         {
@@ -378,8 +380,8 @@ namespace UnturnedGodot.Testing
             World.AddChild(loop);
             yield return Until(() => loop.Client.State == NetSessionState.Connected, 15);
 
-            // spawn a real AnimalAgent in the "animals" group (as AnimalField does on the host) -- a cow (species 2)
-            var agent = new AnimalAgent { Species = 2, Home = new Vector3(3f, 0f, 0f) };
+            // Resolve the Fauna id through the same catalog the real field uses.
+            var agent = new AnimalAgent { Species = AnimalCatalog.SpeciesForAnimalId(AnimalIdUnderTest), Home = new Vector3(3f, 0f, 0f) };
             World.AddChild(agent);
             agent.GlobalPosition = new Vector3(3f, 0f, 0f);
             agent.Begin();   // joins the "animals" group + starts the wander state machine
@@ -394,13 +396,21 @@ namespace UnturnedGodot.Testing
 
             uint aid = 0; byte species = 255;
             foreach (var e in loop.Client.Animals.All) { aid = e.NetIdValue; species = e.Species; }
-            T.Check($"the species byte replicated (cow=2, got {species})", species == 2);
+            T.Check($"the species byte replicated (expected {SpeciesUnderTest}, got {species})", species == SpeciesUnderTest);
 
             // materialize a puppet from the replica (the joined-client AnimalPuppets path) -> proves the client half
             var pups = new AnimalPuppets { Client = loop.Client };
             World.AddChild(pups);
             yield return Until(() => pups.PuppetCount == 1 && pups.TryGetPuppet(aid, out _), 15);
             T.Check("AnimalPuppets materialized the replicated animal", pups.PuppetCount == 1);
+            if (pups.TryGetPuppet(aid, out var holder))
+            {
+                var rig = holder.GetChild<RiggedCharacter>(0);
+                T.Check("puppet local -X nose faces the agent's -Z travel direction",
+                    (rig.Transform.Basis * Vector3.Left).Dot(Vector3.Forward) > 0.999f);
+                T.Check("puppet rig has no obsolete foot lift", rig.Position.IsEqualApprox(Vector3.Zero));
+                T.Check("puppet loaded real skinned geometry", rig.Body.Mesh.GetSurfaceCount() == 1 && rig.Skeleton.GetBoneCount() == 7);
+            }
 
             // retire the brain (streamed out) -> the entity + the puppet both retire
             agent.QueueFree();

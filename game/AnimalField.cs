@@ -6,8 +6,8 @@ namespace UnturnedGodot
     // PEI wildlife: Spawns/Fauna.dat animal spawn points, distance-streamed like LootField/ZombieField. Fauna.dat = u8 ver,
     // u8 tableCount, per table [color3 + name str + u16 tableID(if ver>2) + u8 tierCount, per tier: name str + f32 chance +
     // u8 spawnCount + spawnCount x u16 animalID], u16 pointCount, per point [u8 type + Vector3]. PEI = 60 points, 1 "Wild"
-    // table -> animal ids 1=Deer/4=Pig/6=Cow. Each point rolls its table deterministically into a rigged RiggedCharacter
-    // (deer/pig/cow_rig.json). Static rest pose for now (reads as grazing wildlife); idle/walk clips + wander are next.
+    // table -> animal ids 1=Deer/4=Pig/6=Cow, expanded in memory with 7=Horse. Each point rolls its table
+    // deterministically into an AnimalAgent with the catalog rig and shared idle/walk clip names.
     public partial class AnimalField : Node3D
     {
         public override void _Ready() { TickHub.AddProcess(this, HubProcess); SetProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
@@ -23,7 +23,7 @@ namespace UnturnedGodot
         const float SpawnR = 130f, DespawnR = 165f;
         const int MaxLive = 36;
 
-        // animal id -> (rig json name, real _MainTex from the bundle, foot offset so the feet sit on the terrain).
+        // animal id -> (rig json name, palette texture, feet-to-back hit capsule height, health).
         // Cow = a 32x32 B&W Holstein texture; deer/pig = small palettes -> the accurate animal colours (white tint = show as-is).
         // rigs are origin-AT-FEET (measured ortho, --animaltest UG_ANIMALFOOT=0) -> feet sit at the agent origin, so
         // NO foot lift (the old 0.70/0.22/0.52 were the exact float amount, read off a lying skinned-mesh AABB).
@@ -33,6 +33,9 @@ namespace UnturnedGodot
             { 1, ("deer", "Animal_Deer_tex.png", 1.30f, 100f) },
             { 4, ("pig",  "Animal_Pig_tex.png",  0.75f,  80f) },
             { 6, ("cow",  "Animal_Cow_tex.png",  1.45f, 150f) },
+            // Measured cow back 1.573552 * 1.15 -> 1.81 m. Health scales cow's 150
+            // by the same back-height ratio, rounded to 10: 170. See notes/HORSE_REPORT.md.
+            { AnimalCatalog.HorseId, ("horse", "Animal_Horse_tex.png", 1.81f, 170f) },
         };
 
         public void LoadFromPei(string peiRoot)
@@ -54,6 +57,7 @@ namespace UnturnedGodot
                 byte tiers = U8();
                 var ids = new List<ushort>();
                 for (int ti = 0; ti < tiers; ti++) { RStr(); o += 4; byte sc = U8(); for (int s = 0; s < sc; s++) ids.Add(U16()); }
+                AnimalCatalog.IncludeHorse(ids);
                 _tableIds[t] = ids.ToArray();
             }
             ushort pcount = U16();
@@ -117,7 +121,7 @@ namespace UnturnedGodot
                 var ids = _tableIds[p.Type];
                 if (ids == null || ids.Length == 0) continue;
                 uint h = Hash((uint)idx + 0x51ed2701u);
-                ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic deer/pig/cow pick
+                ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic registered species pick
                 if (!Kinds.TryGetValue(id, out var def)) continue;
                 // build the visual rig only where it's actually rendered (SP/loopback host = Player set). A dedicated
                 // server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes its
