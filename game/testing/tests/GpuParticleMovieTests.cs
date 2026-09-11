@@ -3,22 +3,23 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    /// <summary>GPU particles must still render offline, because the whole particle stack now depends on it.
+    /// <summary>GPU particles must still render offline, because every way we LOOK at this game is offline.
     ///
-    /// RainSystem3D.cs carried this note for months: "CpuParticles3D, not GpuParticles3D -- GPU particles do
-    /// NOT render in Godot's movie-maker / offline render pipeline". It WAS true. It is not any more (Godot
-    /// fixed it somewhere before 4.6.2), and 16 files paid main-thread cost for a limitation that had gone.
+    /// RainSystem3D.cs carried this for months: "CpuParticles3D, not GpuParticles3D -- GPU particles do NOT
+    /// render in Godot's movie-maker / offline render pipeline". It WAS true. It is not any more (fixed
+    /// somewhere before 4.6.2), and 16 files paid main-thread cost for a limitation that had gone.
     ///
-    /// So this exists to stop that happening in the other direction: an engine bump that reintroduces the
-    /// limitation would silently blank every particle in every visual golden and in recorded footage, and a
-    /// golden whose particles vanished would just look like a golden that needs re-baking.
+    /// The visual-golden tier was scrapped on 2026-09-11, so this no longer guards a gate -- it guards the
+    /// thing that replaced it. This box has no display: `--shot` and `--write-movie` under xvfb are how a
+    /// change is verified by eye, how footage is captured, and how bug reports are filmed. If an engine bump
+    /// reintroduced the limitation, particles would vanish from all of it silently, and a render with no
+    /// smoke in it looks exactly like a scene that has no smoke.
     ///
-    /// ⚠ RUN IT ON THE WEAK RENDERER. cow tools verified GPU particles offline on a 4080S; the nightly L2
-    /// gate runs here, on xvfb + lavapipe SOFTWARE rendering, and "works on the good GPU" is not the question
-    /// that decides whether the gate can see them. Measured both: viewport 3587 px GPU / 3093 px CPU, and in
-    /// the actual movie frame 22032 px / 18996 px.
+    /// ⚠ RUN IT ON THE WEAK RENDERER. cow tools verified GPU particles offline on a 4080S; this box is
+    /// xvfb + lavapipe SOFTWARE rendering, and "works on the good GPU" is not the question. Measured here:
+    /// viewport 3587 px GPU / 3093 px CPU, and in the extracted AVI frame 22032 px / 18996 px.
     ///
-    /// The CPU emitter is the CONTROL: if blue is missing too, the probe is broken rather than the engine.</summary>
+    /// The CPU emitter is the CONTROL: if blue is missing too, the probe broke rather than the engine.</summary>
     public class GpuParticleMovieTests : GameTest
     {
         public override string Name => "particles.gpu_renders_offline";

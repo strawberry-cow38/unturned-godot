@@ -6,35 +6,38 @@
 # Exit: 0 = clean, 1 = test failure, 2 = infrastructure failure (build/dotnet error).
 #
 # Layers (fable's proposal): L0 = engine-free `dotnet test` (~4s). L1 = batched in-engine TestHost
-# (one headless godot boot; the FULL set is ~8min). L2 = visual golden PNGs (xvfb+lavapipe renders
-# diffed vs tests/visual/golden, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
+# (one headless godot boot; the FULL set is ~8min).
+#
+# ⚠ THERE IS NO L2. The visual-golden tier was REMOVED 2026-09-11 (strawberry: "scrap the whole goldens
+# concept"). In its whole life it produced twelve false alarms and not one caught visual regression -- every
+# red was a golden destroyed by a merge or a cleanup, never a rendering bug. Visual VERIFICATION did not go
+# with it: render it and look at it, which is what actually catches things (see CLAUDE.md).
 #
 # TEST POLICY (bitvox 2026-07-20): the DEFAULT is the FAST tier ONLY -- `./test.sh` runs L0 and stops,
-# so per-iteration + staging-branch builds stay snappy. The SLOW tiers (full L1, visual) are opt-in and
+# so per-iteration + staging-branch builds stay snappy. The SLOW tier (full L1) is opt-in and
 # should be run when ASKED and BEFORE MERGING TO MAIN:
 #   ./test.sh                       # FAST: L0 engine-free logic only (~4s) -- the default, for quick iteration
 #   ./test.sh --l1 --only 'deploy.*'# a TARGETED in-engine slice (one boot, just the affected tests) while iterating
-#   ./test.sh --all                 # the FULL sweep: L0 + all of L1 + visual goldens -- run this before a main merge / deploy
-#   ./test.sh --l1                  # the full in-engine suite alone (slow); --visual for goldens alone; --l0 explicit
+#   ./test.sh --all                 # the FULL sweep: L0 + all of L1 -- run this before a main merge / deploy
+#   ./test.sh --l1                  # the full in-engine suite alone (slow); --l0 explicit
 #
 # --report renders the run to a static HTML dashboard (tools/gen_report.py) after it finishes --
 # served via Caddy at claw.bitvox.me/ugtests/ for at-a-glance review (UG_REPORT_DIR overrides the dir).
 #
-# Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [--report] [-h]
+# Usage: ./test.sh [--l0] [--l1] [--all] [--only <glob>] [--failfast] [--report] [-h]
 #        default (no flags) = L0 only (fast). Use --all before merging to main.
 set -uo pipefail
 cd "$(dirname "$0")"
 
 RESULTS="${UG_TEST_RESULTS:-.testresults}"
 GODOT="${GODOT:-$HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}"
-ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; RUN_VISUAL=0; REPORT=0
+ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; REPORT=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --l0) RUN_L0=1 ;;
     --l1) RUN_L1=1 ;;
-    --visual) RUN_VISUAL=1 ;;
-    --all) RUN_L0=1; RUN_L1=1; RUN_VISUAL=1 ;;
+    --all) RUN_L0=1; RUN_L1=1 ;;
     --only) ONLY="$2"; shift ;;
     --failfast) FAILFAST=1 ;;
     --report) REPORT=1 ;;
@@ -44,12 +47,12 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# default = the FAST tier ONLY: engine-free logic (L0, ~4s). The slow tiers (full L1 in-engine, L2 visual)
-# are opt-in (--l1 / --visual / --all) -- run them when asked + before merging to main (bitvox 2026-07-20).
+# default = the FAST tier ONLY: engine-free logic (L0, ~4s). The slow tier (full L1 in-engine)
+# is opt-in (--l1 / --all) -- run it when asked + before merging to main (bitvox 2026-07-20).
 DEFAULTED=0
-if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; DEFAULTED=1; fi
+if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ]; then RUN_L0=1; DEFAULTED=1; fi
 if [ $DEFAULTED -eq 1 ]; then
-  echo "[test.sh] FAST tier only (L0). The slow in-engine (L1) + visual (L2) tiers were SKIPPED."
+  echo "[test.sh] FAST tier only (L0). The slow in-engine (L1) tier was SKIPPED."
   echo "[test.sh] Before merging to main / deploying, run the full sweep:  ./test.sh --all"
 fi
 
@@ -136,10 +139,10 @@ run_suite() {  # $1 = suite dir under tests/
 GAME_BUILT=0
 build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tiers need it: L1 boots the engine and
   # L2 renders through it, and godot mono does NOT rebuild on boot -- so whatever assembly is on disk is what runs.
-  # This used to live inside run_l1 alone, which made `--visual` (and any bare `tools/visual_tests.py`, which never
-  # builds at all) render the PREVIOUS commit's code and say nothing: on 2026-09-07 two goldens were baked off a dll
-  # built an hour earlier at another sha and shipped as renders of a commit that had never been compiled. It fails in
-  # the PASSING direction, so nothing in the report looks wrong.
+  # It used to live inside run_l1 alone, so the (now removed) visual tier rendered the PREVIOUS commit's code and
+  # said nothing: on 2026-09-07 two goldens were baked off a dll built an hour earlier at another sha. That bug
+  # outlived the tier -- it is the same stale-assembly trap the provenance guard below exists for, and it fails in
+  # the PASSING direction, so nothing in the report ever looks wrong.
   [ $GAME_BUILT -eq 1 ] && return 0
   # ⚠ PROVENANCE, NOT FRESHNESS. This repo used to TRACK bin/obj (287 files, 188 dlls; untracked 2026-09-11),
   # so `git checkout` restored COMMITTED assemblies with the checkout's timestamp -- dotnet then saw them as
@@ -274,35 +277,6 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
 }
 
-run_visual() {  # L2 golden-image tests: render each manifest scene via xvfb+lavapipe, diff vs the committed golden
-  echo "== L2: visual golden tests (xvfb + lavapipe, ~30s/scene) =="
-  if ! build_game; then   # a render is only as valid as the assembly on disk -- see build_game
-    echo "[SUITE] L2 visual | ERROR | game build failed (see $RESULTS/game_build.log)"
-    grep -E 'error|Build FAILED' "$RESULTS/game_build.log" | head -3 | sed 's/^/         /'
-    INFRA_FAIL=1; return
-  fi
-  local only=(); [ "$ONLY" != "*" ] && only=(--only "$ONLY")
-  local log="$RESULTS/visual.log"
-  GODOT="$GODOT" python3 tools/visual_tests.py "${only[@]}" | tee "$log"
-  local summary; summary="$(grep -E '^\[VISUAL\] passed=' "$log" | tail -1)"
-  if [ -z "$summary" ]; then
-    echo "[SUITE] L2 visual | ERROR | runner never reported (see $log)"; INFRA_FAIL=1; return
-  fi
-  local p f i
-  p="$(sed -E 's/.*passed=([0-9]+).*/\1/' <<<"$summary")"
-  f="$(sed -E 's/.*failed=([0-9]+).*/\1/' <<<"$summary")"
-  i="$(sed -E 's/.*infra=([0-9]+).*/\1/' <<<"$summary")"
-  TOTAL_PASS=$((TOTAL_PASS + p)); TOTAL_FAIL=$((TOTAL_FAIL + f))
-  if [ "$i" -gt 0 ]; then
-    echo "[SUITE] L2 visual | ERROR | $i scene(s) failed to render"; INFRA_FAIL=1
-  elif [ "$f" -eq 0 ]; then
-    echo "[SUITE] L2 visual | PASS | $p passed"
-  else
-    echo "[SUITE] L2 visual | FAIL | $f failed, $p passed"
-    [ -z "$FIRST_FAILURE" ] && FIRST_FAILURE="$(grep -E '^\[TEST\].*\| FAIL ' "$log" | head -1 | sed -E 's/^\[TEST\][[:space:]]+([^[:space:]]+).*/\1/')"
-    [ $FAILFAST -eq 1 ] && finish
-  fi
-}
 
 finish() {
   local status name
@@ -321,7 +295,6 @@ finish() {
     for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
   fi
   if [ $RUN_L1 -eq 1 ]; then run_l1; fi
-  if [ $RUN_VISUAL -eq 1 ]; then run_visual; fi
   finish
 } 2>&1 | tee "$RESULTS/run.log"
 CODE=${PIPESTATUS[0]}
