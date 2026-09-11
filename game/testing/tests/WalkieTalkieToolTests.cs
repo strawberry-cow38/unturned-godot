@@ -97,6 +97,15 @@ namespace UnturnedGodot.Testing
             var held = attach == null ? null : Find<MeshInstance3D>(attach);
             T.Check("the first-person hand mounts the ripped mesh", held != null && held.Mesh == mesh);
 
+            // ⚠ THE ASSERTION THE FIRST VERSION OF THIS TEST WAS MISSING, and it was missing a live bug.
+            // Checking ToolDef.IsRope/IsHose/IsDetonator are false only says what the DEFINITION claims. The
+            // Viewmodel used to decide "wire" by ABSENCE of the other three, so the walkie shipped reporting
+            // HoldingWireTool -- clicking it at a generator would have started running cable. The definition
+            // was innocent the whole time; the derived state was wrong.
+            T.Check("the viewmodel knows it is the walkie", p.HoldingWalkie);
+            T.Check("...and NOT the wiring tool by default-through-absence", !p.HoldingWireTool);
+            T.Check("...nor rope, hose or detonator", !p.HoldingRopeTool && !p.HoldingHoseTool && !p.HoldingDetonatorTool);
+
             // THE POINT OF cow tools' ToolDef.HeldAlbedo: without it this material carries no texture at all
             // and the whole radio is one flat tint.
             var mat = held?.MaterialOverride as StandardMaterial3D;

@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "An0q0+q7vXo=",
+  "dgSpecHash": "ICgb+u1DcGA=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/ug-walkie-wt/core/SDG.NetPak/SDG.NetPak.csproj",
+  "projectFilePath": "/home/ec2-user/ug-fluidmp-wt/core/SDG.NetPak/SDG.NetPak.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

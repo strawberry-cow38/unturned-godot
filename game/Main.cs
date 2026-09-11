@@ -1649,7 +1649,7 @@ namespace UnturnedGodot
             _vm = isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
                 : isWire
-                ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) }   // wire tool in-hand
+                ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f), HeldToolKind = ToolKind.Wire }   // wire tool in-hand (the kind is EXPLICIT now -- it used to be inferred from the absence of the others)
                 : isDeploy
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel

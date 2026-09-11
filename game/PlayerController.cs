@@ -3589,6 +3589,7 @@ namespace UnturnedGodot
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
         public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
+        public bool HoldingWalkie => _viewmodel != null && _viewmodel.IsWalkieViewmodel;   // Walkie-talkie (1445) in hand -> LMB toggles it on/off, R opens the frequency panel
         public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
@@ -3810,7 +3811,7 @@ namespace UnturnedGodot
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldUmbrellaItem = null; _heldRestraintItem = null; _heldTireItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, HeldToolKind = def.Kind };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[tool] holding the {def.Name}");
