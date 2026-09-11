@@ -22,6 +22,9 @@ void fragment() {
     // Diagnosed by rendering dot(NORMAL, worldUp) as brightness: the whole body came back BLACK including the
     // flat bonnet and the roll-bar top. With the flip below those go white and the vertical panels stay dark,
     // which is the correct answer for that probe.
+    // Since the winding fix in ContentProvider.ParseObj this is a NO-OP on the front faces that now make up
+    // every body panel; it stays for the genuinely two-sided case (looking at the inside of a hull through a
+    // window or a missing door), which cull_disabled draws and which would otherwise light from the wrong side.
     NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
     vec4 t = texture(palette, UV);
     ALBEDO = (t.a < 0.5) ? paint_color : t.rgb; // paintable panels take the paint colour; fixed parts keep theirs

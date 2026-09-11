@@ -204,7 +204,16 @@ namespace UnturnedGodot
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;   // Unity vt is V-up (origin bottom-left); Godot samples V-down (top-left) -> flip V or the texture wraps upside-down
                     case "f":
                         if (maxTris > 0 && fv.Count >= maxTris * 3) break;   // ParseObjPrefix: stop at N triangles
-                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
+                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
+                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
+                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
+                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
+                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
+                        // wheels and the light lenses too, which is what proved it was the MESH and not the
+                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
+                        // exactly why props light correctly and anything through here did not.
+                        for (int i = 3; i >= 1 && t.Length > 3; i--)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -263,7 +272,16 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
+                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
+                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
+                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
+                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
+                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
+                        // wheels and the light lenses too, which is what proved it was the MESH and not the
+                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
+                        // exactly why props light correctly and anything through here did not.
+                        for (int i = 3; i >= 1 && t.Length > 3; i--)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -324,7 +342,16 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
+                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
+                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
+                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
+                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
+                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
+                        // wheels and the light lenses too, which is what proved it was the MESH and not the
+                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
+                        // exactly why props light correctly and anything through here did not.
+                        for (int i = 3; i >= 1 && t.Length > 3; i--)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
@@ -382,7 +409,16 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
                     case "f":
-                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        // ⚠ REVERSED: corners are read 3,2,1 so the triangle is wound the way Godot expects.
+                        // The .obj carries Unity's winding AND Unity's authored normals, and the positions are
+                        // loaded raw (no axis negation) -- so in Godot's right-handed space every face came out
+                        // BACK-facing while its normal still pointed the authored way. cull_disabled kept them
+                        // visible, so the only symptom was lighting: the sun was permanently on the wrong side
+                        // of every panel and vehicles looked "always in shadow" (strawberry 2026-09-11), on the
+                        // wheels and the light lenses too, which is what proved it was the MESH and not the
+                        // paint shader. ObjMesh has always done this -- it emits {0, i+1, i} -- which is
+                        // exactly why props light correctly and anything through here did not.
+                        for (int i = 3; i >= 1 && t.Length > 3; i--)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);
