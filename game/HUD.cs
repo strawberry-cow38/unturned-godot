@@ -29,6 +29,13 @@ namespace UnturnedGodot
         static readonly Color CG = new Color(0.24f, 0.71f, 0.29f);   // Palette COLOR_G (virus / infection)
         static readonly Color CC = new Color(0.95f, 0.97f, 1.00f);   // oxygen: WHITE (master 2026-09-07). The palette note above reserves "cyan" for it and cyan is what I shipped, but next to water's blue that read as a second water bar; a hair of blue keeps it from glaring against the dark HUD without reading as a hue.
 
+        // Temperature is the one BIPOLAR bar, so its two ends are two colours (strawberry 2026-09-11).
+        // Cold/hot rather than any free hue: it is the one mapping nobody has to be taught. Both are pushed
+        // brighter and more saturated than their neighbours -- water's CB is a mid blue and health's CR a dark
+        // red -- so a glance separates them; the centre-out fill does the rest of the work.
+        static readonly Color CCold = new Color(0.42f, 0.80f, 0.98f);
+        static readonly Color CHot  = new Color(0.98f, 0.38f, 0.10f);
+
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 
         // ---- the vitals box, as a rectangle other screens can read -------------------------------------
@@ -40,7 +47,7 @@ namespace UnturnedGodot
         // rectangle, guessed twice.
         //
         // Derived from the same constants the box itself is built from, so the two cannot drift apart.
-        public const int VitalRows = 6;                                   // health, food, water, stamina, infection, oxygen
+        public const int VitalRows = 7;                                   // health, food, water, stamina, infection, oxygen, temperature
         public const float VitalsLeft = 24f;                              // lifeBox OffsetLeft
         public const float VitalsRightAnchor = 0.2f;                      // ...and its AnchorRight: the box is 20% of the screen wide
         public const float VitalsTopGap = TopPad + VitalRows * RowH + 36f;   // lifeBox OffsetTop, off the screen bottom
@@ -61,6 +68,7 @@ namespace UnturnedGodot
         }
 
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
+        readonly System.Collections.Generic.List<(ColorRect fill, Color cold, Color hot, System.Func<float> val)> _bipolar = new();   // temperature: grows from the CENTRE, so it cannot share the one-anchor update the others use
         readonly System.Collections.Generic.List<(Control ic, Control bg, System.Func<bool> show)> _vitalRows = new();   // situational vitals (virus): whole row hidden unless its condition holds
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
@@ -179,7 +187,10 @@ namespace UnturnedGodot
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
             AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? 1f - Player.Infection : 1f, null);   // INFECTION meter: ALWAYS shown, starts FULL (healthy), depletes as infection rises (master)
-            AddVital(lifeBox, 5, "hud_oxygen.png",  CC, () => Player != null ? Player.Oxygen  : 1f);   // BOTTOM of the list, BELOW infection (master 2026-09-06)
+            AddVital(lifeBox, 5, "hud_oxygen.png",  CC, () => Player != null ? Player.Oxygen  : 1f);   // BELOW infection (master 2026-09-06)
+            // strawberry 2026-09-11: "add a new bar below the oxygen bar. temperature. middle is comfortable,
+            // the bar goes left/down for cold, and right/up for hot". The only bar that reads a SIGNED value.
+            AddBipolarVital(lifeBox, 6, "hud_temperature.png", CCold, CHot, () => Player != null ? Player.Temperature.Comfort : 0f);
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
@@ -358,6 +369,46 @@ namespace UnturnedGodot
             if (show != null) _vitalRows.Add((ic, bg, show));   // situational: whole row hidden unless `show` is true
         }
 
+        /// <summary>A bar that grows from the MIDDLE instead of the left: -1 fills to the left, +1 to the right,
+        /// 0 shows nothing but the centre mark.
+        ///
+        /// Deliberately not a 0..1 bar with the comfortable point at 0.5, which is the cheap way to do this: on
+        /// one of those a comfortable player sees a half-full bar, which reads as "half of something", and the
+        /// one state worth no attention is the one drawn loudest. Empty-at-comfortable means the bar is only
+        /// ever saying something when there is something to say.</summary>
+        void AddBipolarVital(Control box, int i, string icon, Color cold, Color hot, System.Func<float> val)
+        {
+            float y = TopPad + i * RowH;
+            var ic = new TextureRect { Texture = LoadTex($"res://content/{icon}"), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+            ic.AnchorLeft = 0; ic.AnchorTop = 0; ic.AnchorRight = 0; ic.AnchorBottom = 0;
+            ic.OffsetLeft = IconX; ic.OffsetRight = IconX + IconSz; ic.OffsetTop = y; ic.OffsetBottom = y + IconSz;
+            ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(ic);
+
+            // The trough is NEUTRAL here, unlike the others: it is shared by both ends, so tinting it either
+            // colour would claim a side even when the player is on the other one.
+            var bg = new ColorRect { Color = new Color(0.75f, 0.78f, 0.82f, 0.35f) };
+            bg.AnchorLeft = 0; bg.AnchorRight = 1; bg.AnchorTop = 0; bg.AnchorBottom = 0;
+            bg.OffsetLeft = BarX; bg.OffsetRight = -10; bg.OffsetTop = y + 5; bg.OffsetBottom = y + 5 + BarH;
+            bg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(bg);
+
+            // The centre mark. Without it a comfortable player sees an empty trough and has no way to know the
+            // bar reads from the middle until the first time it moves -- and by then they are already cold.
+            var mid = new ColorRect { Color = new Color(0.95f, 0.97f, 1f, 0.55f) };
+            mid.AnchorLeft = 0.5f; mid.AnchorRight = 0.5f; mid.AnchorTop = 0; mid.AnchorBottom = 1;
+            mid.OffsetLeft = -1f; mid.OffsetRight = 1f;
+            mid.MouseFilter = Control.MouseFilterEnum.Ignore;
+            bg.AddChild(mid);
+
+            var fill = new ColorRect { Color = cold };
+            fill.AnchorLeft = 0.5f; fill.AnchorRight = 0.5f; fill.AnchorTop = 0; fill.AnchorBottom = 1;
+            fill.OffsetLeft = 0; fill.OffsetRight = 0; fill.OffsetTop = 0; fill.OffsetBottom = 0;
+            fill.MouseFilter = Control.MouseFilterEnum.Ignore;
+            bg.AddChild(fill);
+            _bipolar.Add((fill, cold, hot, val));
+        }
+
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
         void AddStatus(Control root, int i, string icon, System.Func<bool> on)
         {
@@ -493,6 +544,14 @@ namespace UnturnedGodot
 
             foreach (var (fill, val) in _vitals)
                 fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state
+            foreach (var (fill, cold, hot, val) in _bipolar)
+            {
+                float v = Mathf.Clamp(val(), -1f, 1f);
+                // Half-width per side: the fill spans from the centre out, so a full -1 or +1 reaches one edge.
+                fill.AnchorLeft  = 0.5f + Mathf.Min(v, 0f) * 0.5f;
+                fill.AnchorRight = 0.5f + Mathf.Max(v, 0f) * 0.5f;
+                fill.Color = v < 0f ? cold : hot;
+            }
             foreach (var (ic, bg, show) in _vitalRows) { bool s = show(); ic.Visible = s; bg.Visible = s; }   // situational vitals (virus) shown only on condition
             foreach (var (box, on) in _status)
                 box.Visible = on();

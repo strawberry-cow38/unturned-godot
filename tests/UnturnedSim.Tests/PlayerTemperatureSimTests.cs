@@ -132,5 +132,55 @@ namespace UnturnedSim.Tests
             Assert.That(new PlayerTemperatureSim().CurrentBand, Is.EqualTo(PlayerTemperatureSim.Band.Comfortable));
             Assert.That(new PlayerTemperatureSim().BodyC, Is.EqualTo(Comfort).Within(1e-4f));
         }
-    }
+    
+        // ---- the HUD reading (strawberry 2026-09-11: "middle is comfortable, the bar goes left/down for
+        // cold, and right/up for hot") ----
+
+        [Test]
+        public void Comfort_IsZeroAcrossTheWholeComfortableBand()
+        {
+            // Not zero at one exact degree: a player who is fine must see a bar sitting still, not one
+            // twitching either side of centre all day.
+            Assert.That(PlayerTemperatureSim.ComfortFor(PlayerTemperatureSim.ComfortLowC), Is.EqualTo(0f));
+            Assert.That(PlayerTemperatureSim.ComfortFor(20f), Is.EqualTo(0f));
+            Assert.That(PlayerTemperatureSim.ComfortFor(PlayerTemperatureSim.ComfortHighC), Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void Comfort_GoesNegativeForCold_AndPositiveForHot()
+        {
+            Assert.That(PlayerTemperatureSim.ComfortFor(0f), Is.LessThan(0f));
+            Assert.That(PlayerTemperatureSim.ComfortFor(35f), Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void Comfort_IsFullExactlyWhereTheBandTurnsLethal()
+        {
+            // "The bar is maxed" and "this is hurting me" have to be the same fact, or the player has two
+            // things to learn instead of one.
+            Assert.That(PlayerTemperatureSim.ComfortFor(PlayerTemperatureSim.FreezingBelowC), Is.EqualTo(-1f).Within(1e-4f));
+            Assert.That(PlayerTemperatureSim.ComfortFor(PlayerTemperatureSim.BoilingAboveC), Is.EqualTo(1f).Within(1e-4f));
+        }
+
+        [Test]
+        public void Comfort_ClampsBeyondTheLethalEdges()
+        {
+            Assert.That(PlayerTemperatureSim.ComfortFor(-40f), Is.EqualTo(-1f));
+            Assert.That(PlayerTemperatureSim.ComfortFor(80f), Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void Comfort_IsMonotonic_AcrossTheWholeRange()
+        {
+            // Guards a sign or span error that would make the bar jump the wrong way somewhere in the middle
+            // -- which no single-point assertion above would catch.
+            float prev = -2f;
+            for (float c = -40f; c <= 80f; c += 0.5f)
+            {
+                float v = PlayerTemperatureSim.ComfortFor(c);
+                Assert.That(v, Is.GreaterThanOrEqualTo(prev), $"comfort fell at {c} C");
+                prev = v;
+            }
+        }
+}
 }

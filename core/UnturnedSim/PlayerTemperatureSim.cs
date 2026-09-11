@@ -49,6 +49,29 @@ namespace SDG.Unturned
 
         public Band CurrentBand => BandFor(BodyC);
 
+        /// <summary>A SIGNED reading for the HUD: 0 while comfortable, -1 at the point cold starts hurting,
+        /// +1 at the point heat does (strawberry 2026-09-11: "middle is comfortable, the bar goes left/down
+        /// for cold, and right/up for hot").
+        ///
+        /// Zero across the WHOLE comfort band rather than at one exact degree, so a player who is fine sees a
+        /// bar sitting still at the middle instead of one twitching either side of centre all day. It starts
+        /// moving at the moment something starts costing them -- which is the moment the bar is worth looking
+        /// at -- and is full exactly where the band turns lethal, so "the bar is maxed" and "this is hurting
+        /// me" are the same fact rather than two things to learn.</summary>
+        public float Comfort => ComfortFor(BodyC);
+
+        public static float ComfortFor(float c)
+        {
+            if (c >= ComfortLowC && c <= ComfortHighC) return 0f;
+            if (c < ComfortLowC)
+            {
+                float span = ComfortLowC - FreezingBelowC;          // 15 C of "cold but survivable"
+                return -MathF.Min(1f, (ComfortLowC - c) / span);
+            }
+            float hot = BoilingAboveC - ComfortHighC;               // 12 C of "hot but survivable"
+            return MathF.Min(1f, (c - ComfortHighC) / hot);
+        }
+
         public static Band BandFor(float c)
             => c < FreezingBelowC ? Band.Freezing
              : c < ComfortLowC ? Band.Cold
