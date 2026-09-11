@@ -349,6 +349,13 @@ namespace UnturnedGodot.Testing
     // swallowed the paperdoll SubViewportContainer's GuiInput so the old PaperdollDrag never fired (spin looked dead). The fix
     // routes a paperdoll press to a spin INSIDE _Input, before StartDrag. Driving the real _Input here means reverting the fix
     // makes the press fail to start a spin (DebugPaperdollDragSpin -> NaN) and the first Check fails.
+    //
+    // ⚠ THE SIGN BELOW WAS STALE, and it had been for two days. 66e7ac31 (strawberry 2026-09-09, "drag spins the
+    // other way") inverted `_pdYaw` to `+= relX * 0.012` so a rightward drag turns the model's RIGHT shoulder
+    // toward you -- the model follows the cursor instead of opposing it -- and never touched this test, which
+    // kept asserting the pre-inversion `-=`. Confirmed genuinely stale rather than a routing regression: a print
+    // of `_pdHit` at drag time shows a real, laid-out rect (616x2053) and the drag DOES start a spin (delta 1.2,
+    // not NaN) -- it is the wrong SIGN, not a dead input path. Fixed by asserting the sign the code now uses.
     public class InventoryPaperdollSpin : GameTest
     {
         public override string Name => "inv.paperdoll_spin";
@@ -361,15 +368,16 @@ namespace UnturnedGodot.Testing
             ui.Open();
             yield return Ticks(2);   // let the character panel lay out so the paperdoll rect has a real size + position
 
-            // a rightward drag of +100px must spin the rig; the live handler applies _pdYaw -= relX * 0.012
+            // a rightward drag of +100px must spin the rig; the live handler applies _pdYaw += relX * 0.012
+            // (strawberry 2026-09-09: the model follows the cursor, rather than opposing it)
             float d = ui.DebugPaperdollDragSpin(100f);
             T.Check($"press on the paperdoll STARTS a spin, not an item-grab (delta={d})", !float.IsNaN(d));
-            T.Check($"a +100px drag applied the yaw step ~-1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (-100f * 0.012f)) < 0.01f);
+            T.Check($"a +100px drag applied the yaw step ~+1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (100f * 0.012f)) < 0.01f);
             T.Check("the drag released cleanly, not stuck spinning", !ui.DebugPaperdollSpinning);
 
             // dragging the other way must spin back (delta flips sign)
             float back = ui.DebugPaperdollDragSpin(-100f);
-            T.Check($"dragging left spins the opposite way (got {back})", !float.IsNaN(back) && back > 0f);
+            T.Check($"dragging left spins the opposite way (got {back})", !float.IsNaN(back) && back < 0f);
         }
     }
 
