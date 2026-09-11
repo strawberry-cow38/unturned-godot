@@ -80,6 +80,24 @@ namespace SDG.Unturned
         // Source: legs never break on a fall if ANY worn piece has Prevents_Falling_Broken_Bones (PlayerLife:2436).
         public bool PreventsFallingBoneBreak => AnyWorn(a => a.preventsFallingBoneBreak);
 
+        // THERMAL INSULATION SUMS, not products. Fall damage multiplies because each layer scales what gets
+        // through; insulation ADDS because a coat over a jumper is warmer than either -- a product would make
+        // every extra layer matter less than the last, which is backwards.
+        public float InsulationColdC => WornSum(a => ClothingInsulation.For(a.itemName, a.type).cold);
+        public float InsulationHeatC => WornSum(a => ClothingInsulation.For(a.itemName, a.type).heat);
+
+        // Any worn piece with Proof_Water keeps the rain off. The key already existed on ClothingDef and did
+        // nothing at all until the temperature work needed it.
+        public bool ProofsWater => AnyWorn(a => a.proofWater);
+
+        float WornSum(Func<ItemAsset, float> pick)
+        {
+            float total = 0f;
+            foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
+                if (it != null) { var a = Assets.find(it.id); if (a != null) total += pick(a); }
+            return total;
+        }
+
         /// <summary>The worn pieces a deadzone cares about. Unlike the fall/explosion aggregates this is
         /// PER SLOT, not "any worn piece": a radiation-proof pair of trousers on your head is not a
         /// respirator, and the harsher zones check the mask, shirt and trousers separately.</summary>
