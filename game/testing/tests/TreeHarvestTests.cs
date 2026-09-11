@@ -10,7 +10,7 @@ namespace UnturnedGodot.Testing
     public sealed class TreeHarvestTests : GameTest
     {
         public override string Name => "tree.harvest";
-        public override double TimeoutSimSeconds => 20;
+        public override double TimeoutSimSeconds => 30;   // the debris lives 11 s before it drops anything
 
         public override IEnumerable<Step> Run()
         {
@@ -25,16 +25,34 @@ namespace UnturnedGodot.Testing
             T.Check("a partial chop does not fell it (100 hp)", !trunk.Felled);
             trunk.Chop(200f, Vector3.Zero, Vector3.Forward);
             T.Check("felled once its health reaches 0", trunk.Felled);
-            yield return Ticks(1);   // let the dropped WorldItems attach
+            yield return Ticks(1);
 
-            int items = 0;
-            foreach (var c in World.GetChildren()) if (c is WorldItem) items++;
-            T.Check($"felling dropped Reward_Min..Max items (2-3, logs+sticks), got {items}", items >= 2 && items <= 3);
+            // THE LOGS DO NOT ARRIVE AT THE CHOP any more (strawberry 2026-09-09: "only produce logs once
+            // theyve despawned"). They come off the debris cleanup timer, scattered along the trunk lying on
+            // the ground. This test asserted the OLD rule and had been failing on correct code ever since --
+            // a test nobody edited going red can mean the REQUIREMENT moved, not that the code regressed.
+            //
+            // Asserting the empty window first is the half with teeth: without it, "wait until logs appear"
+            // would pass just as happily on a tree that dropped them instantly, which is the exact behaviour
+            // strawberry asked to be rid of.
+            T.Check($"nothing drops at the moment of felling (got {CountItems()})", CountItems() == 0);
+
+            yield return Until(() => CountItems() > 0, maxSimSeconds: 15);
+            int items = CountItems();
+            T.Check($"the debris cleanup drops Reward_Min..Max items (2-3, logs+sticks), got {items}",
+                    items >= 2 && items <= 3);
 
             float before = trunk.Health;
             trunk.Chop(50f, Vector3.Zero, Vector3.Forward);
             T.Check("a swing at a felled tree is a no-op", trunk.Felled && Mathf.IsEqualApprox(trunk.Health, before));
             trunk.QueueFree();
+        }
+
+        int CountItems()
+        {
+            int n = 0;
+            foreach (var c in World.GetChildren()) if (c is WorldItem) n++;
+            return n;
         }
     }
 }
