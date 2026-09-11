@@ -60,7 +60,7 @@ namespace UnturnedGodot.Net
             public void AddQuestProgress(ushort questId, int index, int by)
             { Progress[(questId, index)] = QuestProgress(questId, index) + by; _s.Touch(_owner); }
 
-            public string ActiveHoliday => _s.ActiveHoliday?.Invoke() ?? "";
+            public string ActiveHoliday => (_s.ActiveHoliday ?? DefaultActiveHoliday)?.Invoke() ?? "";
             public int Reputation => Rep;
             public void AddReputation(int amount) { Rep += amount; _s.Touch(_owner); }
 
@@ -111,13 +111,38 @@ namespace UnturnedGodot.Net
         public InventoryReplication Inventories;
         public SkillsReplication Skills;
 
-        /// <summary>Catalog lookups, injected rather than referenced: core cannot see the game layer's
-        /// NpcCatalog, and a server that loaded its own copy would be a second source of truth for the thing
-        /// both sides have to agree on exactly.</summary>
+        /// <summary>Catalog lookups. Core cannot see the game layer's NpcCatalog, and a server that loaded its
+        /// own copy would be a second source of truth for the thing both sides must agree on exactly -- so they
+        /// are injected. But NOT per call site.
+        ///
+        /// ⚠ THE STATIC DEFAULTS ARE THE POINT (tinyclaw, 2026-09-11): their radiation did nothing on the mode
+        /// the game actually boots because ONE of the two server call sites was never handed the contaminated
+        /// volumes. "A call site forgot an assignment" must not be able to switch a whole feature off silently.
+        /// The layer that OWNS the catalog registers it once; a new server needs to do nothing and still works.
+        /// The instance fields remain so a test can substitute a fixture.</summary>
+        public static System.Func<int, NpcDialogue> DefaultDialogueOf;
+        public static System.Func<int, NpcQuestDef> DefaultQuestOf;
+        public static System.Func<string, NpcVendorDef> DefaultVendorOf;
+        public static System.Func<string> DefaultActiveHoliday;
+
         public System.Func<int, NpcDialogue> DialogueOf;
         public System.Func<int, NpcQuestDef> QuestOfId;
         public System.Func<string, NpcVendorDef> VendorOf;
         public System.Func<string> ActiveHoliday;
+
+        System.Func<int, NpcDialogue> Dialogues => DialogueOf ?? DefaultDialogueOf;
+        System.Func<int, NpcQuestDef> Quests => QuestOfId ?? DefaultQuestOf;
+        System.Func<string, NpcVendorDef> Vendors => VendorOf ?? DefaultVendorOf;
+
+        /// <summary>True once SOMETHING can answer catalog questions. False means every conversation in the
+        /// game will refuse, which is indistinguishable from "that dialogue does not exist" at the call site --
+        /// so it is counted separately below rather than left to look like a bad request.</summary>
+        public bool IsConfigured => Dialogues != null && Quests != null && Vendors != null;
+
+        /// <summary>Refusals caused by having NO CATALOG AT ALL, as opposed to a request that was genuinely
+        /// wrong. Zero is the expected value; anything else means a server came up unwired and every player on
+        /// it is being told, silently, that nobody has anything to say.</summary>
+        public int UnconfiguredRefusals;
 
         /// <summary>(owner) when their flags, quests or progress changed -- the host turns it into a unicast.</summary>
         public System.Action<ushort> Changed;
@@ -126,7 +151,7 @@ namespace UnturnedGodot.Net
         /// needs the current tick, which is the session's business and not this system's.</summary>
         public System.Action<ushort, int> AwardXp;
 
-        internal NpcQuestDef QuestOf(int id) => QuestOfId?.Invoke(id);
+        internal NpcQuestDef QuestOf(int id) => Quests?.Invoke(id);
 
         // ⚠ COALESCED. Touch is called by every individual mutation -- each flag a reward sets, each quest
         // status, the dialogue move -- so one "choose" pushed the player's whole state three times, and a quest
@@ -173,7 +198,8 @@ namespace UnturnedGodot.Net
         /// later response is checked against.</summary>
         public bool Open(ushort owner, int dialogueId)
         {
-            var d = DialogueOf?.Invoke(dialogueId);
+            if (Dialogues == null) { UnconfiguredRefusals++; return false; }
+            var d = Dialogues(dialogueId);
             if (d == null) return false;
             For(owner).OpenDialogue = dialogueId;
             // ⚠ TOUCH. Accepting the request and telling nobody is the whole failure: the client sends Talk and
@@ -202,7 +228,8 @@ namespace UnturnedGodot.Net
             // answer any conversation in the game from anywhere, which is how a quest gets handed in by a
             // player who never met the person holding it.
             if (p.OpenDialogue == 0 || p.OpenDialogue != dialogueId) return false;
-            var d = DialogueOf?.Invoke(dialogueId);
+            if (Dialogues == null) { UnconfiguredRefusals++; return false; }
+            var d = Dialogues(dialogueId);
             if (d == null || (uint)responseIndex >= (uint)d.Responses.Length) return false;
             var r = d.Responses[responseIndex];
             if (!DialogueRules.PassesAll(r.Conditions, p)) return false;
@@ -244,7 +271,8 @@ namespace UnturnedGodot.Net
         /// and still be paid -- the same "paid out of nothing" hole the affordability check is there to close.</summary>
         public bool Trade(ushort owner, string vendorGuid, int sellIndex, IReadOnlyList<(ushort id, int n)> offer)
         {
-            var v = VendorOf?.Invoke(vendorGuid);
+            if (Vendors == null) { UnconfiguredRefusals++; return false; }
+            var v = Vendors(vendorGuid);
             if (v == null || (uint)sellIndex >= (uint)v.Selling.Length) return false;
             var want = v.Selling[sellIndex];
             if (want.Item == 0) return false;                 // a vehicle line: nothing to hand over yet

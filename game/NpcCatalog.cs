@@ -213,6 +213,14 @@ namespace UnturnedGodot
         {
             if (_loaded) return;
             _loaded = true;
+            // ⚠ REGISTER ONCE, HERE, so a server does not have to be HANDED the catalog by whichever call site
+            // happened to build it. tinyclaw's radiation did nothing on the mode the game actually boots because
+            // one of two server sites never got its assignment -- and nothing failed, because each half was
+            // internally consistent. A new server now needs to do nothing at all and still resolves.
+            UnturnedGodot.Net.ServerNpcs.DefaultDialogueOf = id => Dialogue(id);
+            UnturnedGodot.Net.ServerNpcs.DefaultQuestOf = id => Quest(id);
+            UnturnedGodot.Net.ServerNpcs.DefaultVendorOf = guid => Vendor(guid);
+            UnturnedGodot.Net.ServerNpcs.DefaultActiveHoliday = () => Main.ActiveHolidayNow();
             string path = ProjectSettings.GlobalizePath("res://content/npcs.json");
             if (!System.IO.File.Exists(path)) { Log.Print("[npc] no content/npcs.json -- no NPCs will exist"); return; }
             JsonElement root;

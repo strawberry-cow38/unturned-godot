@@ -77,6 +77,56 @@ namespace UnturnedNet.Tests
             Assert.That(pushes, Is.EqualTo(2), "a REFUSED open publishes nothing");
         }
 
+        // ⭐⭐ THE TEST THAT REJECTS "A CALL SITE FORGOT THE ASSIGNMENT".
+        //
+        // Rig() hands ServerNpcs its catalog -- which is precisely the input a forgotten call site does NOT
+        // provide, so every test above would pass just as happily against a server that was never wired. That
+        // is the shape tinyclaw's radiation test had (2026-09-11): it constructed the loopback with the volumes
+        // already assigned, passed against the broken code, and the feature did nothing on the mode the game
+        // actually boots. So this one builds a ServerNpcs with NOTHING assigned.
+        //
+        // Revert the `?? DefaultDialogueOf` fallback and the second half of this fails.
+        [Test]
+        public void AServerNobodyWiredStillResolves_AndSaysSoIfItCannot()
+        {
+            var saveD = ServerNpcs.DefaultDialogueOf;
+            var saveQ = ServerNpcs.DefaultQuestOf;
+            var saveV = ServerNpcs.DefaultVendorOf;
+            try
+            {
+                ServerNpcs.DefaultDialogueOf = null;
+                ServerNpcs.DefaultQuestOf = null;
+                ServerNpcs.DefaultVendorOf = null;
+
+                // Nothing anywhere: refuses, and the refusal is COUNTED as unconfigured rather than looking
+                // like "that dialogue does not exist" -- which is the whole difference between a broken server
+                // and a bad request, and they were indistinguishable before.
+                var bare = new ServerNpcs();
+                Assert.That(bare.IsConfigured, Is.False);
+                Assert.That(bare.Open(1, 59), Is.False);
+                Assert.That(bare.Trade(1, "abc", 0, new[] { ((ushort)70, 2) }), Is.False);
+                Assert.That(bare.UnconfiguredRefusals, Is.EqualTo(2), "counted, not silent");
+
+                // Only the STATIC registered -- no per-instance assignment at all, which is what a server built
+                // by a call site that knows nothing about NPCs looks like. It must work anyway.
+                var dialogues = new Dictionary<int, NpcDialogue> { [59] = Talk() };
+                ServerNpcs.DefaultDialogueOf = id => dialogues.TryGetValue(id, out var d) ? d : null;
+                ServerNpcs.DefaultQuestOf = _ => null;
+                ServerNpcs.DefaultVendorOf = _ => null;
+
+                var unwired = new ServerNpcs();
+                Assert.That(unwired.IsConfigured, Is.True);
+                Assert.That(unwired.Open(1, 59), Is.True, "a server nobody wired still finds the catalog");
+                Assert.That(unwired.UnconfiguredRefusals, Is.EqualTo(0));
+            }
+            finally
+            {
+                ServerNpcs.DefaultDialogueOf = saveD;
+                ServerNpcs.DefaultQuestOf = saveQ;
+                ServerNpcs.DefaultVendorOf = saveV;
+            }
+        }
+
         // ONE COMMAND, ONE PUSH. Touch fires on every individual mutation, so a response that grants three
         // flags and moves the conversation pushed the player's whole state four times -- and a quest granting
         // ten would push ten. Nothing breaks; it is just the same payload sent again and again.
