@@ -53,6 +53,11 @@ void vertex() {
 }
 
 void fragment() {
+	// Godot does NOT flip NORMAL for a back face in a CUSTOM spatial shader the way it does for a built-in
+	// material, and this one draws cull_disabled -- so without this every back-facing fragment is lit with a
+	// normal pointing the wrong way. Found on the vehicles (7b1ceae5), where it made every car look
+	// permanently in shadow; master: "fix em".
+	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
     vec4 c = texture(albedo_tex, UV);
     ALBEDO = c.rgb;
     if (use_alpha) { ALPHA = c.a; ALPHA_SCISSOR_THRESHOLD = alpha_scissor; }
