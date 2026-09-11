@@ -141,6 +141,30 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   # built an hour earlier at another sha and shipped as renders of a commit that had never been compiled. It fails in
   # the PASSING direction, so nothing in the report looks wrong.
   [ $GAME_BUILT -eq 1 ] && return 0
+  # ⚠ PROVENANCE, NOT FRESHNESS. This repo used to TRACK bin/obj (287 files, 188 dlls; untracked 2026-09-11),
+  # so `git checkout` restored COMMITTED assemblies with the checkout's timestamp -- dotnet then saw them as
+  # newer than the sources, SKIPPED the compile, and every render came from whatever dll was committed rather
+  # than from this commit's code. Measured: power.gen_loadbar at c179869e reported FAIL mae=0.0463 on an
+  # incremental build and PASS mae=0.0000 after `rm -rf game/bin game/obj`. Same commit, same test, opposite
+  # verdicts. It voided a nine-step bisect and nearly named an innocent commit.
+  #
+  # The old "assembly is newer than every .cs" check CANNOT catch this: a checkout is precisely what makes
+  # that true. So key on WHICH SHA the assembly was built from, not on when. Untracking bin/obj fixed the
+  # tree going forward but NOT history -- every commit already in the log still carries the dlls, so any
+  # checkout of an older tree (a bisect, a re-bake, a baseline run) still restores them. This guard is what
+  # covers that case, permanently.
+  #
+  # Only forces when HEAD actually MOVED, so ordinary edit-and-rerun keeps its fast incremental build.
+  local _asm="game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll"
+  local _stamp="game/.godot/mono/.built_from_sha"
+  local _head; _head=$(git rev-parse HEAD 2>/dev/null || echo nogit)
+  local _forced=0
+  if [ -f "$_asm" ] && [ "$(cat "$_stamp" 2>/dev/null)" != "$_head" ]; then
+    echo "[BUILD] HEAD is ${_head:0:8}, assembly was built from $(cat "$_stamp" 2>/dev/null || echo 'unknown') -- forcing a cold compile"
+    rm -rf game/bin game/obj game/.godot/mono/temp/bin game/.godot/mono/temp/obj 2>/dev/null
+    _forced=1
+  fi
+  local _started="$RESULTS/.build_started"; mkdir -p "$RESULTS"; : > "$_started"
   # 9>&- closes the LOCK fd for this child. Without it the Roslyn compiler server (VBCSCompiler) inherits fd 9,
   # outlives the script, and keeps holding the run lock -- so the NEXT run is refused by a daemon belonging to a
   # suite that finished minutes ago. MSBUILDDISABLENODEREUSE/DOTNET_CLI_USE_MSBUILD_SERVER above cover the MSBuild
@@ -148,6 +172,16 @@ build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tier
   if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then
     return 1
   fi
+  # After a FORCED cold compile the dll was deleted, so it must have been rebuilt. If it is not newer than the
+  # moment the build started, no compiler ran and something copied it back -- report that as its own failure
+  # rather than letting it wear the same red as a compile error (cow tools' ask: name the assembly and the gap).
+  if [ $_forced -eq 1 ] && [ -f "$_asm" ] && [ ! "$_asm" -nt "$_started" ]; then
+    echo "[BUILD] ERROR | cold compile produced no new assembly"
+    echo "         $_asm"
+    echo "         built $(( $(date +%s) - $(stat -c %Y "$_asm") ))s ago, which is BEFORE this build started -- it was copied, not compiled."
+    return 1
+  fi
+  echo "$_head" > "$_stamp" 2>/dev/null
   GAME_BUILT=1; return 0
 }
 
