@@ -2742,20 +2742,45 @@ namespace UnturnedGodot
         // condition asks about.
 
         readonly System.Collections.Generic.Dictionary<ushort, short> _npcFlags = new();
+        readonly System.Collections.Generic.Dictionary<ushort, SDG.Unturned.ENpcQuestStatus> _npcQuests = new();
+        // Kill-counter objectives, keyed (quest, condition index). Only the COUNTED kinds live here: a flag
+        // objective is read from _npcFlags and an item one from the bag, so nothing is mirrored and nothing
+        // can drift out of step with the thing it is counting.
+        readonly System.Collections.Generic.Dictionary<(ushort, int), int> _npcQuestProgress = new();
+        int _npcReputation;
 
-        /// <summary>The world, as a dialogue condition sees it. Quests report None for everything because there
-        /// is no quest system -- that is the truthful answer for a player who has started nothing, and 81 of the
-        /// 101 conditions in the shipped data are quest ones, so it is the difference between a conversation
-        /// with its branches and one that has silently lost most of them.</summary>
+        /// <summary>The world, as a dialogue condition sees it -- and now as a QUEST sees it. 81 of the 157
+        /// conditions in the shipped data are quest ones, so before this every conversation was silently
+        /// showing a fraction of its branches while looking perfectly complete.</summary>
         sealed class NpcWorldView : SDG.Unturned.INpcWorld
         {
             readonly PlayerController _p;
             public NpcWorldView(PlayerController p) { _p = p; }
             public short GetFlag(ushort id) => _p._npcFlags.TryGetValue(id, out var v) ? v : (short)0;
             public void SetFlag(ushort id, short value) => _p._npcFlags[id] = value;
-            public SDG.Unturned.ENpcQuestStatus GetQuestStatus(ushort id) => SDG.Unturned.ENpcQuestStatus.None;
+            /// <summary>The status a condition should see, which is the DERIVED one -- an Active quest whose
+            /// last objective just completed is Ready, and nothing would ever have noticed to write that down.
+            /// See QuestRules.StatusOf.</summary>
+            public SDG.Unturned.ENpcQuestStatus GetQuestStatus(ushort id)
+            {
+                var raw = _p._npcQuests.TryGetValue(id, out var st) ? st : SDG.Unturned.ENpcQuestStatus.None;
+                if (raw != SDG.Unturned.ENpcQuestStatus.Active) return raw;
+                var def = NpcCatalog.Quest(id);
+                return def != null && SDG.Unturned.QuestRules.CanTurnIn(def, this)
+                     ? SDG.Unturned.ENpcQuestStatus.Ready : SDG.Unturned.ENpcQuestStatus.Active;
+            }
+            public void SetQuestStatus(ushort id, SDG.Unturned.ENpcQuestStatus status) => _p._npcQuests[id] = status;
+            public int QuestProgress(ushort questId, int index) => _p._npcQuestProgress.TryGetValue((questId, index), out var n) ? n : 0;
+            public void AddQuestProgress(ushort questId, int index, int by)
+                => _p._npcQuestProgress[(questId, index)] = QuestProgress(questId, index) + by;
+            public int CountItem(ushort itemId) => _p.Inventory?.getItemCount(itemId) ?? 0;
+            public void TakeItem(ushort itemId, int amount) { _p.Inventory?.removeItemAmount(itemId, amount); _p._invUI?.Refresh(); }
+            // AwardExperience, not a write to `experience` -- that property is read-only precisely so the pool
+            // has one way in. In MP the authoritative value arrives via NetSetExperience instead.
+            public void AddExperience(int amount) { if (_p.Skills != null && amount > 0) _p.Skills.AwardExperience((uint)amount); }
+            public void AddReputation(int amount) => _p._npcReputation += amount;
             public string ActiveHoliday => Main.ActiveHolidayNow();   // the ONE answer, not a second read of UG_HOLIDAY
-            public int Reputation => 0;                                // no reputation system yet; 2 conditions use it
+            public int Reputation => _p._npcReputation;
             public uint Experience => _p.Skills?.experience ?? 0u;   // the PLAYER's pool, not a static one
             public void GiveItem(ushort itemId, short amount)
             {
@@ -2766,6 +2791,23 @@ namespace UnturnedGodot
 
         NpcWorldView _npcWorld;
         NpcWorldView NpcWorld => _npcWorld ??= new NpcWorldView(this);
+
+        /// <summary>The same world view the conversations use, for the console's quest command. The SAME one on
+        /// purpose: a debug path with its own view would answer questions differently from the game and the
+        /// disagreement would look like a quest bug.</summary>
+        public SDG.Unturned.INpcWorld NpcWorldForDebug => NpcWorld;
+
+        /// <summary>Every NPC flag currently set, for the console. Dialogue and quests are mostly flag-gated, so
+        /// "why is that branch not showing" is nearly always a question about this list.</summary>
+        public string DebugFlagDump()
+        {
+            if (_npcFlags.Count == 0) return "no NPC flags set";
+            var keys = new System.Collections.Generic.List<ushort>(_npcFlags.Keys);
+            keys.Sort();
+            var sb = new System.Text.StringBuilder($"{_npcFlags.Count} flag(s):");
+            foreach (var k in keys) sb.Append($"  {k}={_npcFlags[k]}");
+            return sb.ToString();
+        }
 
         /// <summary>The conversation we are in, or null. Held on the player rather than in the UI because the
         /// UI is a VIEW of it -- the state has to survive the panel being closed and reopened, and a dialogue
@@ -2829,6 +2871,23 @@ namespace UnturnedGodot
             var r = d.Responses[index];
             if (!SDG.Unturned.DialogueRules.PassesAll(r.Conditions, NpcWorld)) return false;   // not a response this player can see
             SDG.Unturned.DialogueRules.Grant(r.Rewards, NpcWorld);
+            // A response can hand out a quest directly (Response_N_Quest), which is separate from a Quest
+            // REWARD and is how most of them are actually given. Taking one you already hold is a no-op.
+            if (r.Quest != 0)
+            {
+                var q = NpcCatalog.Quest(r.Quest);
+                if (q != null)
+                {
+                    var was = NpcWorld.GetQuestStatus((ushort)q.Id);
+                    // Offering a quest you are READY to hand in IS the hand-in -- that is how retail's
+                    // "I've got them" line works, and it is the same response you took it from.
+                    if (was == SDG.Unturned.ENpcQuestStatus.Ready && SDG.Unturned.QuestRules.TurnIn(q, NpcWorld))
+                        Log.Print($"[quest] handed in '{q.Name}' ({q.Rewards.Length} rewards)");
+                    else if (was == SDG.Unturned.ENpcQuestStatus.None)
+                    { SDG.Unturned.QuestRules.Give(q, NpcWorld); Log.Print($"[quest] took '{q.Name}' -- {q.Conditions.Length} objective(s)"); }
+                }
+                else Log.Print($"[quest] response points at quest {r.Quest}, which is not in the catalog");
+            }
             if (!string.IsNullOrEmpty(r.Vendor))
             {
                 var v = NpcCatalog.Vendor(r.Vendor);

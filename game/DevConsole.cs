@@ -66,7 +66,10 @@ namespace UnturnedGodot
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
         // console does not know that command" -- which is exactly what `wipe` did from the day it shipped, and
         // the note above this list warns about. Found by running the verb rather than by reading it.
-        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest" };
+        // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
+        // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
+        // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
+        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -76,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -1095,6 +1098,62 @@ namespace UnturnedGodot
                     ? $"{def.Name} ({def.Key}) -- dialogue {def.Dialogue}{(NpcCatalog.Dialogue(def.Dialogue) == null ? " (NOT in the catalog)" : "")}"
                     : $"could not build {def.Key} -- the rig failed to load");
                 if (autoTalk && npc != null) Player.TalkTo(npc);
+            }
+            else if (verb == "flag")
+            {
+                // flag            -- every NPC flag this player has set
+                // flag <id> [n]   -- set one. Quest objectives and dialogue branches are mostly flag-gated, so
+                //                    without this there is no way to reach a quest's turn-in except by playing
+                //                    the content that sets it -- content this port does not have yet.
+                var w = Player.NpcWorldForDebug;
+                var bits = (arg ?? "").Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (bits.Length == 0) { Echo(Player.DebugFlagDump()); return; }
+                if (!ushort.TryParse(bits[0], out ushort fid)) { Echo($"'{bits[0]}' is not a flag id"); return; }
+                short val = 1;
+                if (bits.Length > 1) short.TryParse(bits[1], out val);
+                w.SetFlag(fid, val);
+                Echo($"flag {fid} = {val}");
+            }
+            else if (verb == "quest")
+            {
+                // quest            -- every quest and the status this player has it in
+                // quest <id|name>  -- take it, or hand it in if it is ready; prints each objective
+                NpcCatalog.Load();
+                var w = Player.NpcWorldForDebug;
+                string want = (arg ?? "").Trim();
+                if (want.Length == 0)
+                {
+                    int active = 0, ready = 0, done = 0;
+                    foreach (var q in NpcCatalog.Quests)
+                    {
+                        var st = w.GetQuestStatus((ushort)q.Id);
+                        if (st == SDG.Unturned.ENpcQuestStatus.Active) active++;
+                        else if (st == SDG.Unturned.ENpcQuestStatus.Ready) ready++;
+                        else if (st == SDG.Unturned.ENpcQuestStatus.Completed) done++;
+                        Echo($"{q.Id,4} {st,-9} {q.Name}");
+                    }
+                    Echo($"{NpcCatalog.QuestCount} quests -- {active} active, {ready} ready, {done} completed");
+                    return;
+                }
+                SDG.Unturned.NpcQuestDef pick = null;
+                if (int.TryParse(want, out int qid)) pick = NpcCatalog.Quest(qid);
+                if (pick == null)
+                    foreach (var q in NpcCatalog.Quests)
+                        if (q.Name.ToLowerInvariant().Contains(want.ToLowerInvariant()) || q.Key.ToLowerInvariant().Contains(want.ToLowerInvariant()))
+                        { pick = q; break; }
+                if (pick == null) { Echo($"no quest '{want}' -- try `quest` for the list"); return; }
+
+                var status = w.GetQuestStatus((ushort)pick.Id);
+                if (status == SDG.Unturned.ENpcQuestStatus.None)
+                { SDG.Unturned.QuestRules.Give(pick, w); Echo($"took '{pick.Name}'"); }
+                else if (status == SDG.Unturned.ENpcQuestStatus.Ready && SDG.Unturned.QuestRules.TurnIn(pick, w))
+                    Echo($"handed in '{pick.Name}' -- {pick.Rewards.Length} reward(s) paid");
+                else Echo($"'{pick.Name}' is {status}");
+                // The objectives, as the player would read them. This is the whole reason the English strings
+                // were extracted: a type name and a number is not an objective.
+                foreach (var (text, ok) in SDG.Unturned.QuestRules.Objectives(pick, w))
+                    Echo($"  [{(ok ? "x" : " ")}] {text}");
+                Echo($"  xp {w.Experience}  rep {w.Reputation}");
             }
             else if (verb == "trade")
             {

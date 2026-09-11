@@ -162,6 +162,59 @@ for root, _dirs, files in os.walk(vdir) if os.path.isdir(vdir) else []:
                     "name": e.get("Name", os.path.basename(root)), "description": e.get("Description", ""),
                     "selling": side("Selling"), "buying": side("Buying")})
 
+# ---- quests ----
+# A quest is the pair the dialogue conditions have been asking about all along: what has to be TRUE to hand it
+# in, and what you get for it. 81 of the 157 dialogue conditions are `Quest` and 28 of the rewards hand one
+# out, so without these the branching is decided by a status nothing can ever set.
+#
+# English.dat carries Name, Description and a per-condition line like "Cleanup {0}/{1} Barnacles" -- the
+# objective as the player reads it, with the progress placeholders already in it. That string is the reason to
+# key conditions by index rather than flatten them: the text and the test have to stay lined up.
+quests = []
+qdir = os.path.join(BASE, "Quests")
+for name in sorted(os.listdir(qdir)) if os.path.isdir(qdir) else []:
+    a = parse_kv(os.path.join(qdir, name, "Asset.dat"))
+    if a.get("Type") != "Quest": continue
+    e = parse_kv(os.path.join(qdir, name, "English.dat"))
+    conds = []
+    for n in range(i(a, "Conditions")):
+        p = f"Condition_{n}_"
+        k = {kk[len(p):]: vv for kk, vv in a.items() if kk.startswith(p)}
+        # ⚠ THE SAME KEY CASING AS A DIALOGUE CONDITION ('Type'/'ID'/'Value'), not a lowercase variant. These
+        # are the same struct on the other side, and two casings would mean two parsers and two chances for one
+        # of them to silently read None. The quest-only fields are simply absent on a dialogue condition, which
+        # is what "0" and "false" already mean there.
+        conds.append({
+            "Type": k.get("Type", ""),
+            "ID": k.get("ID", ""),            # RAW: an Item condition's ID is a guid OR a number, like everywhere else
+            "Item": resolve(k.get("ID", "")) if k.get("Type") == "Item" else 0,
+            "Value": k.get("Value", ""),
+            "Logic": k.get("Logic", "Equal"),
+            "Amount": int(k.get("Amount", 0) or 0),
+            "Reset": k.get("Reset", "").lower() == "true",   # consumed on turn-in
+            "Zombie": k.get("Zombie", ""), "Spawn": k.get("Spawn", ""), "Nav": k.get("Nav", ""),
+            "Tree": k.get("Tree", ""), "Object": k.get("Object", ""),
+            "Text": e.get(f"Condition_{n}", ""),             # "Cleanup {0}/{1} Barnacles"
+        })
+    rews = []
+    for n in range(i(a, "Rewards")):
+        p = f"Reward_{n}_"
+        k = {kk[len(p):]: vv for kk, vv in a.items() if kk.startswith(p)}
+        rews.append({
+            "Type": k.get("Type", ""),
+            "ID": k.get("ID", ""),
+            "Item": resolve(k.get("ID", "")) if k.get("Type") == "Item" else 0,
+            "Value": k.get("Value", ""),
+            "Amount": int(k.get("Amount", 0) or 0),
+            "Modification": k.get("Modification", "Assign"),
+            "Spawnpoint": k.get("Spawnpoint", ""),
+        })
+    quests.append({"key": name, "id": i(a, "ID"), "guid": a.get("GUID", ""),
+                   "name": e.get("Name", name), "description": e.get("Description", ""),
+                   "conditions": conds, "rewards": rews})
+
+quest_by_guid = {q["guid"].lower(): q["id"] for q in quests if q["guid"] and q["id"]}
+
 # ---- resolve the raw targets now that every id and guid is known ----
 dlg_by_guid = {d["guid"].lower(): d["id"] for d in dialogues if d["guid"] and d["id"]}
 # ⚠ VENDORS HAVE NO NUMERIC ID AT ALL -- their Asset.dat carries only a GUID, so a guid->id map pointed every
@@ -187,16 +240,30 @@ for d in dialogues:
         # A vendor target stays a GUID (see above). A numeric one is a map-bundle vendor we have not read.
         r["vendor"] = vr.lower() if vr and not vr.isdigit() and vr.lower() in ven_by_guid else ""
         if vr and not r["vendor"]: print(f"!! {d['key']}: vendor target {vr!r} is not in core's Vendors/")
+        # Now that quests ARE extracted, a guid target resolves like any other. This used to drop every
+        # non-numeric one to 0, which reads as "this response hands out no quest" -- a silent miss in a
+        # populated id space, the exact failure the vendor ids taught.
         q = r.pop("quest_raw").strip()
-        r["quest"] = int(q) if q.isdigit() else 0   # quests are not extracted yet; the id is kept, unresolved guids are 0
+        r["quest"] = as_id(q, quest_by_guid, "quest", d["key"])
         if r["dialogue"] == 0 and not r["vendor"] and r["quest"] == 0 and r["text"] and r["text"].lower() not in ("goodbye", "bye"):
             unresolved_targets += 1
 
-data = {"characters": characters, "dialogues": dialogues, "vendors": vendors}
+data = {"characters": characters, "dialogues": dialogues, "vendors": vendors, "quests": quests}
 json.dump(data, open(OUT, "w", encoding="utf-8"), indent=1)
 
 unresolved = sum(1 for v in vendors for s in (v["selling"] + v["buying"]) if s["type"] == "Item" and s["item"] == 0)
-print(f"characters={len(characters)} dialogues={len(dialogues)} vendors={len(vendors)} -> {OUT} ({os.path.getsize(OUT)} bytes)")
+print(f"characters={len(characters)} dialogues={len(dialogues)} vendors={len(vendors)} quests={len(quests)} -> {OUT} ({os.path.getsize(OUT)} bytes)")
+# LOUD about what could not be resolved, per kind. A quest condition that wanted an item and got 0 is a
+# quest you can never hand in, and it looks exactly like one you simply have not finished.
+qbad = [(q["key"], c["Type"], c["ID"]) for q in quests for c in q["conditions"] if c["Type"] == "Item" and c["Item"] == 0]
+rbad = [(q["key"], r["Type"], r["ID"]) for q in quests for r in q["rewards"] if r["Type"] == "Item" and r["Item"] == 0]
+print(f"quest conditions: {sum(len(q['conditions']) for q in quests)}, item ones unresolved: {len(qbad)}")
+for k, t, ref in qbad[:6]: print(f"  !! {k}: {t} condition -> {ref!r}")
+print(f"quest rewards: {sum(len(q['rewards']) for q in quests)}, item ones unresolved: {len(rbad)}")
+for k, t, ref in rbad[:6]: print(f"  !! {k}: {t} reward -> {ref!r}")
+import collections as _c
+print("quest condition types:", dict(_c.Counter(c["Type"] for q in quests for c in q["conditions"])))
+print("quest reward types:", dict(_c.Counter(r["Type"] for q in quests for r in q["rewards"])))
 print(f"responses with text but NO target (should be the Goodbyes only): {unresolved_targets}")
 print(f"vendor lines: {sum(len(v['selling']) + len(v['buying']) for v in vendors)}, of which UNRESOLVED item guids: {unresolved}")
 for c in characters[:3]:

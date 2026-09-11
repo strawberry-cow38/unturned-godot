@@ -6512,5 +6512,1909 @@
    ],
    "buying": []
   }
+ ],
+ "quests": [
+  {
+   "key": "Barnacle_Cleanup",
+   "id": 157,
+   "guid": "d2ede323197242dcbf0497fec22f2e77",
+   "name": "Nautical Nuisance",
+   "description": "Barnacles are starting to form on the Liberator's hull, but Rusty's joints are acting up too much to dive down and scrape them off. He'd appreciate if you can help out because given time they can cause quite a bit of trouble.",
+   "conditions": [
+    {
+     "Type": "Flag_Short",
+     "ID": "156",
+     "Item": 0,
+     "Value": "9",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Cleanup {0}/{1} Barnacles"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Electric",
+   "id": 160,
+   "guid": "fac072b0b8044e4fbd854f63cd75e835",
+   "name": "<color=mythical>Sparks</color>",
+   "description": "While flying South over Jhavesk <color=uncommon>Ensign Cliff's</color> squad's helicopter took several electric shocks from a giant sparking zombie. If you're brave enough he's sure it'd be appreciated to kill it before it can cause more trouble.",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "161",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_Electric",
+     "Spawn": "",
+     "Nav": "14",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Lightningstrike Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Fire",
+   "id": 164,
+   "guid": "32c36cd312ac40b9bb24ba22520503df",
+   "name": "<color=mythical>Scorched Earth</color>",
+   "description": "Recently Norbert was helping out on a scavenging mission to Novosibirsk when they ran into a gigantic \"firebreathing\" zombie. Unfortunately this means they can't clear it out for supplies until the zombie is slain.",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "165",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_Fire",
+     "Spawn": "",
+     "Nav": "7",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Flamethrower Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Kaiser",
+   "id": 248,
+   "guid": "671f18476a674007a0f066c463be3b74",
+   "name": "<color=mythical>Secrets of Neuschwanstein</color>",
+   "description": "???",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "249",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_All",
+     "Spawn": "",
+     "Nav": "25",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Kaiser Zombie Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Magma",
+   "id": 241,
+   "guid": "f9a226f7c4634b0bb1734a084c3ff48a",
+   "name": "<color=mythical>Eruption</color>",
+   "description": "???",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "242",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_Magma",
+     "Spawn": "",
+     "Nav": "50",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Magma Zombie Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Pirate",
+   "id": 213,
+   "guid": "6400e6b9b1e64ac8ad3cfd600003492c",
+   "name": "<color=mythical>Skull & Crossbones</color>",
+   "description": "???",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "214",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_All",
+     "Spawn": "",
+     "Nav": "35",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Cursed Pirate Zombie Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Boss_Wind",
+   "id": 162,
+   "guid": "094412a8aa31482f93af507e9213462a",
+   "name": "<color=mythical>Aftershock</color>",
+   "description": "During Peter's escape from Yekaterinburg he barely avoided a giant zombie that pounced from the air, slamming into the ground causing \"miniature earthquakes\". He hasn't been able to get it out of his mind and would really appreciate knowing it had been dealt with.",
+   "conditions": [
+    {
+     "Type": "Kills_Zombie",
+     "ID": "163",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "Boss_Wind",
+     "Spawn": "",
+     "Nav": "2",
+     "Tree": "",
+     "Object": "",
+     "Text": "Defeat {0}/{1} <color=mythical>Groundpounder Boss</color>"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "200",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "20",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Broadcast_Repair",
+   "id": 47,
+   "guid": "0878ccd3d09a4b89b54b50a255e38ce9",
+   "name": "On Air",
+   "description": "<color=legendary>Commander Laurence</color> wants to get the Russian radio towers working again to broadcast to any survivors still out there. You'll need a toolkit which he says Natalie down in engineering can provide.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "40",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Get broadcast repair kit {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "41",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Fix Southern broadcast tower {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "42",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Fix North-Western broadcast tower {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "43",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Fix North-Eastern broadcast tower {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Catch_Squid",
+   "id": 38,
+   "guid": "415cf701407043da92cf382477438ddb",
+   "name": "The One That Got Away",
+   "description": "If you happen to catch Wallace's nemesis \u2013 the <color=legendary>Giant Squid</color> \u2013 he'd love to see it! Keep in mind the chances are quite slim, it's very rare.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1434",
+     "Item": 1434,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Catch {0}/{1} {2}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Item",
+     "ID": "1410",
+     "Item": 1410,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Coalition_Propaganda",
+   "id": 56,
+   "guid": "07b2c09895a64dc0bb8bea1b4aaee44d",
+   "name": "Getting the Word Out",
+   "description": "For survivors without radios <color=legendary>Commander Laurence</color> plans to put up posters with directions to the Liberator. He suggests placing them in each town/city's police station.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "51",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Jhavesk PD {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "52",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Yekaterinburg PD {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "53",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "St. Petersburg PD {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "54",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Moscow West PD {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "55",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Moscow South PD {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Engine_Repair",
+   "id": 128,
+   "guid": "16bffce2245846459a590590f532cbfb",
+   "name": "The Squeaky Motor Gets the Grease",
+   "description": "The ship's engine has been rattling quite a bit recently, but Natalie doesn't have the resources spare to fix it up. If you can find them for her while looting she'll take care of it!",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "285",
+     "Item": 285,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 3,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "68",
+     "Item": 68,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 2,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "65",
+     "Item": 65,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "127",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Find_Cargo_Evidence",
+   "id": 176,
+   "guid": "8b8c4ea0b9934d4e8eee43af5adb2835",
+   "name": "Smuggler's Cove",
+   "description": "If you think it's worth checking out <color=epic>Chief Brian</color> has given you permission to investigate the smuggling. He thinks if there is any base to it there'd be traces of a shipment somewhere along the coastline.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "177",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Find Evidence {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Find_Len_Evidence",
+   "id": 180,
+   "guid": "af84cde97a8f4b6ebd278b2bba14636c",
+   "name": "Coldcase",
+   "description": "<color=epic>Chief Brian</color> suggests starting with Darren, Harry's bunkmate, on the bridge. It might also be worth searching through Harry's stuff, and Natalie might have seen something, and Roman might have overheard something... Suffice it to say he has a lot of suggestions.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "181",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Search <color=rare>Lieutenant Harry's</color> Quarters {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "182",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Question <color=uncommon>Ensign Darren</color> {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "183",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Talk to Natalie {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "184",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Talk to Sous-Chef Roman {0}/1"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "190",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Talk to <color=epic>Major Len</color> {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Find_Relay_Evidence",
+   "id": 194,
+   "guid": "9836b64a8cd546f8ac05f832abcc0122",
+   "name": "The Conspiracy's Conclusion",
+   "description": "<color=epic>Major Len</color> just received a transmission from the smugglers that seems to have originated from Silo 22 in the far North, but he suspects they actually used it as a relay station. If that's correct there should be a log in the command center which might reveal who sent it, and from where.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "195",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Find Relay Log {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Find_Wedding_Ring",
+   "id": 136,
+   "guid": "9913b87551f54360936aca8d0b066c8f",
+   "name": "Memoir",
+   "description": "Gwen accidentally lost her wedding ring overboard. She'd really appreciate if you can bring it back to remember her husband by.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "135",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Find Wedding Ring {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "25",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Liberator_Fighter_Jet",
+   "id": 240,
+   "guid": "a3075e3dc0c64fb2896fd5a3a2afc43d",
+   "name": "Top Gun",
+   "description": "Before taking to the skies you'll need a <color=rare>Fighter Pilot Outfit</color> and a replacement Jet Compressor. Andy thinks you can salvage a Compressor from the wreckage of the nuclear submarine West of the Liberator and retrofit it for the Jet.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1472",
+     "Item": 1472,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "1473",
+     "Item": 1473,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "1474",
+     "Item": 1474,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "237",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Find Jet Compressor {0}/1"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "127",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Vehicle",
+     "ID": "140",
+     "Item": 0,
+     "Value": "",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": "Liberator_Jet"
+    }
+   ]
+  },
+  {
+   "key": "Police_Doughnuts",
+   "id": 64,
+   "guid": "665fbcf9a56e48cb8c9b4f9406d53565",
+   "name": "The Secret Snack",
+   "description": "<color=epic>Chief Brian</color> is craving for a few doughnuts, but doesn't want to be seen to fit the police stereotype. He wants this kept on the down-low, you know hush hush.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1163",
+     "Item": 1163,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Bake {0}/{1} {2}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scorpion_Research",
+   "id": 124,
+   "guid": "2df4fd7156af4b26824e29ca4ad8ec92",
+   "name": "Research Recovery",
+   "description": "As a side project Dr. Swanson is researching the virus and potential for a cure. The remains of a <color=legendary>Scorpion-7</color> cargo plane were spotted in the very far North, and she suspects that research capsules containing samples, notes, DNA, etc were strewn from the plane into the deadzone during the crash.",
+   "conditions": [
+    {
+     "Type": "Flag_Short",
+     "ID": "123",
+     "Item": 0,
+     "Value": "4",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Find {0}/{1} Research Capsules"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scout_Airport",
+   "id": 98,
+   "guid": "e7e57a1e66534d548d09dc3059c93e74",
+   "name": "The Hunt for Jet Fuel",
+   "description": "<color=rare>Lieutenant Oswald</color> is willing to give you a try scouting out a location, in this case an airport North-East of Moscow. This usually involves clearing out quite a few zombies, and then analyzing the environment to prepare a report determining which areas are worth securing.",
+   "conditions": [
+    {
+     "Type": "Kills_Horde",
+     "ID": "99",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "0",
+     "Tree": "",
+     "Object": "",
+     "Text": "Clear Airport <color=legendary>Horde Beacon</color> {0}/{1}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scout_Factory",
+   "id": 100,
+   "guid": "d9fd3419827b49cb86323231350ccd5a",
+   "name": "Mass Production",
+   "description": "Russia has many warehouses filled with old WWII and Cold War machinery, but this one in the North-West is of particular note. Satellite images from 6 years ago differ from newer data suggesting it was brought back into use as a factory, and <color=rare>Lieutenant Oswald</color> thinks it might have been producing new armored vehicles.",
+   "conditions": [
+    {
+     "Type": "Kills_Horde",
+     "ID": "101",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "10",
+     "Tree": "",
+     "Object": "",
+     "Text": "Clear Tank Factory <color=legendary>Horde Beacon</color> {0}/{1}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "75",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scout_Military",
+   "id": 102,
+   "guid": "89622eb1d52844f1beb0fd690eb5318f",
+   "name": "The Wolf's Den",
+   "description": "Volk, the Russian word for wolf. <color=rare>Lieutenant Oswald</color> wants you to infiltrate what is essentially Russia's largest military base in the far North-West, easy right?",
+   "conditions": [
+    {
+     "Type": "Kills_Horde",
+     "ID": "103",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "11",
+     "Tree": "",
+     "Object": "",
+     "Text": "Clear Military Base <color=legendary>Horde Beacon</color> {0}/{1}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "100",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scout_Rig",
+   "id": 106,
+   "guid": "8709bcb668634d95bd2b1f8c6dbd4de5",
+   "name": "First Contact",
+   "description": "This isn't the first time the <color=legendary>Coalition</color>'s been to Russia. Back in the organization's infancy a primarily Russian task force seized an offshore oil rig in the South-West as a proxy pending backup to reclaim the mainland, but something went wrong. <color=rare>Lieutenant Oswald</color> needs you to find out what.",
+   "conditions": [
+    {
+     "Type": "Kills_Horde",
+     "ID": "107",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "28",
+     "Tree": "",
+     "Object": "",
+     "Text": "Clear Oil Rig <color=legendary>Horde Beacon</color> {0}/{1}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "125",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Scout_Silo",
+   "id": 104,
+   "guid": "29deae9db4e64e0e90ed734595363daf",
+   "name": "W.M.D.",
+   "description": "In the far North is a secret underground nuclear missile silo which has supposedly detonated, but aside from the radiation there's no evidence of explosive damage. <color=rare>Lieutenant Oswald</color> needs you to verify that the warhead is completely spent and can't be used again.",
+   "conditions": [
+    {
+     "Type": "Kills_Horde",
+     "ID": "105",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "12",
+     "Tree": "",
+     "Object": "",
+     "Text": "Clear Missile Silo <color=legendary>Horde Beacon</color> {0}/{1}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "100",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Upgrade_Cake",
+   "id": 24,
+   "guid": "89e78645c13c4d7795148c485f70d909",
+   "name": "The Great Escape",
+   "description": "T.Rickster is supposedly wrongly imprisoned, but insists you don't ask the security team about him. He's given you a blueprint for his favourite kind of cake and would really appreciate if you can bake it for him. He can't give you much now, but says he'll pay you back later.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1431",
+     "Item": 1431,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Bake {0}/{1} {2}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "10",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Upgrade_Rod",
+   "id": 37,
+   "guid": "4b7cd806395c4366ab28c69e964c933a",
+   "name": "The Ultimate Fishing Rod",
+   "description": "Wallace needs a reinforced fishing rod to catch the illusive giant squid. He's given you a blueprint to craft it from a normal fishing rod.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1432",
+     "Item": 1432,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Craft {0}/{1} {2}"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Quest",
+     "ID": "38",
+     "Item": 0,
+     "Value": "",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "Valentines_Note",
+   "id": 230,
+   "guid": "4f820fffa2844009ad3e874b8e6728af",
+   "name": "Mysterious Papertrail",
+   "description": "<color=legendary>Commander Laurence</color> needs an important note delivered to Rusty. He'd appreciate if you didn't say who it's from.",
+   "conditions": [
+    {
+     "Type": "Flag_Short",
+     "ID": "231",
+     "Item": 0,
+     "Value": "3",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Deliver Note"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Experience",
+     "ID": "",
+     "Item": 0,
+     "Value": "50",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Reputation",
+     "ID": "",
+     "Item": 0,
+     "Value": "5",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "13",
+     "Item": 0,
+     "Value": "1",
+     "Amount": 0,
+     "Modification": "Increment",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "XMAS_Cook",
+   "id": 318,
+   "guid": "f0edc2d4bd054b3ea74924096590d992",
+   "name": "Gingerbread Army",
+   "description": "Try out Sous-Chef Roman's new festive recipe. Combine flour, eggs and chocolate and bake in an oven for a flavourful surprise.",
+   "conditions": [
+    {
+     "Type": "Flag_Bool",
+     "ID": "342",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Cook Gingerbread Cookies"
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "341",
+     "Item": 0,
+     "Value": "True",
+     "Logic": "Equal",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "Taste the Gingerbread Cookies"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Item",
+     "ID": "1511",
+     "Item": 1511,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "319",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "XMAS_Decor",
+   "id": 327,
+   "guid": "a7531d33e70442c2be4a3573ae60248e",
+   "name": "Festive Cheer",
+   "description": "Use the Saw to harvest Candy Cane Fragments and create some decorations.",
+   "conditions": [
+    {
+     "Type": "Kills_Tree",
+     "ID": "330",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "57c15ead4dce46b1ae5503fed72fbc8d",
+     "Object": "",
+     "Text": "{0}/{1} Candy Canes Harvested"
+    },
+    {
+     "Type": "Flag_Short",
+     "ID": "329",
+     "Item": 0,
+     "Value": "5",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": "{0}/{1} Decorations Crafted"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Item",
+     "ID": "1519",
+     "Item": 1519,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "1518",
+     "Item": 1518,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "328",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "XMAS_Presents",
+   "id": 320,
+   "guid": "90a8ff3b4014430ba7baa9c3624cda63",
+   "name": "Christmas Eve",
+   "description": "Apparently there have been presents scattered somewhere in Moscow, go and check it out!",
+   "conditions": [
+    {
+     "Type": "Kills_Object",
+     "ID": "322",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "1c45b10c4b414989ae1bd815ac7e7e35",
+     "Text": "Open {0}/{1} Blue Present"
+    },
+    {
+     "Type": "Kills_Object",
+     "ID": "323",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "b5e4a1bbcf854ad59dc1dde9b86a6f07",
+     "Text": "Open {0}/{1} Orange Present"
+    },
+    {
+     "Type": "Kills_Object",
+     "ID": "324",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "81698500116d48798141d66e6571a83e",
+     "Text": "Open {0}/{1} Green Present"
+    },
+    {
+     "Type": "Kills_Object",
+     "ID": "325",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "92e2c47121f8428fa5c1f71bc931d36b",
+     "Text": "Open {0}/{1} Purple Present"
+    },
+    {
+     "Type": "Kills_Object",
+     "ID": "326",
+     "Item": 0,
+     "Value": "1",
+     "Logic": "Greater_Than_Or_Equal_To",
+     "Amount": 0,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "3df136f3d13c430981ca630f11e043f4",
+     "Text": "Open {0}/{1} Red Present"
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Item",
+     "ID": "1516",
+     "Item": 1516,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Item",
+     "ID": "1517",
+     "Item": 1517,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "321",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  },
+  {
+   "key": "XMAS_Snow",
+   "id": 316,
+   "guid": "094b14fe2ed143aba6819236d681ffa8",
+   "name": "Suspicious Snowballs",
+   "description": "Some mysterious frozen water with explosive properites has started accumulating on the Liberator's deck. Harvest some samples for Doc Ernie to investigate.",
+   "conditions": [
+    {
+     "Type": "Item",
+     "ID": "1132",
+     "Item": 1132,
+     "Value": "",
+     "Logic": "Equal",
+     "Amount": 1,
+     "Reset": false,
+     "Zombie": "",
+     "Spawn": "",
+     "Nav": "",
+     "Tree": "",
+     "Object": "",
+     "Text": ""
+    }
+   ],
+   "rewards": [
+    {
+     "Type": "Item",
+     "ID": "1704",
+     "Item": 1704,
+     "Value": "",
+     "Amount": 1,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    },
+    {
+     "Type": "Flag_Bool",
+     "ID": "317",
+     "Item": 0,
+     "Value": "True",
+     "Amount": 0,
+     "Modification": "Assign",
+     "Spawnpoint": ""
+    }
+   ]
+  }
  ]
 }

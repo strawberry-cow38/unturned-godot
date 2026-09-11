@@ -5,13 +5,22 @@ namespace SDG.Unturned
     /// <summary>What a dialogue response can be gated on. The full set retail actually uses, counted across all
     /// 142 dialogues rather than guessed from the three I happened to read first: Quest 81, Flag_Bool 29,
     /// Flag_Short 34, Holiday 10, Reputation 2, Experience 1.</summary>
-    public enum ENpcConditionType { None, Flag_Bool, Flag_Short, Quest, Holiday, Reputation, Experience }
+    /// <summary>The first seven gate DIALOGUE -- they ask a question about the world and the answer decides
+    /// whether a line shows. The last four gate a QUEST, and they are different in kind: they are OBJECTIVES,
+    /// counted as you play (kill six zombies, hold eleven barnacles). Retail parses both with one enum and so
+    /// does this, but only the tracked ones ever appear on a quest, which is why Passes answers them from a
+    /// counter rather than from a flag.</summary>
+    public enum ENpcConditionType
+    {
+        None, Flag_Bool, Flag_Short, Quest, Holiday, Reputation, Experience,
+        Item, Kills_Zombie, Kills_Horde, Kills_Tree, Kills_Object,
+    }
 
     /// <summary>Retail's comparison words. Equal is 91 of the 101 that name one, and the 9 that name none mean
     /// Equal too -- an absent Logic is the default, not an error.</summary>
     public enum ENpcLogic { Equal, Not_Equal, Greater_Than, Greater_Than_Or_Equal_To, Less_Than, Less_Than_Or_Equal_To }
 
-    public enum ENpcRewardType { None, Flag_Bool, Flag_Short, Item, Quest }
+    public enum ENpcRewardType { None, Flag_Bool, Flag_Short, Item, Quest, Experience, Reputation, Vehicle }
 
     /// <summary>Assign writes the value; Increment adds it. 70 of the 90 rewards name neither, and those are
     /// Assign -- the same "absent means the common case" habit the Logic field has.</summary>
@@ -26,11 +35,39 @@ namespace SDG.Unturned
         public short Value;
         public ENpcLogic Logic = ENpcLogic.Equal;
         public ENpcQuestStatus Status;   // Quest conditions compare a STATUS, not a number
-        public string Text = "";         // Holiday compares a name
+        public string Text = "";         // Holiday compares a name; on a QUEST condition, the objective line
+
+        /// <summary>How many the objective wants ("Cleanup {0}/{1} Barnacles" -> 11). Only the tracked kinds
+        /// use it; a flag condition compares Value instead.</summary>
+        public int Amount;
+
+        /// <summary>Consumed on turn-in. An Item objective with Reset takes the items off you when you hand
+        /// the quest in; without it you keep them and only had to HAVE them, which is a different quest.</summary>
+        public bool Reset;
+
+        /// <summary>How many this objective wants. Amount for the COUNTED kinds, the compared Value for a flag
+        /// -- two fields because retail uses two, and collapsing them would make "flag >= 9" read as "9 of them".
+        ///
+        /// ⚠ ONE definition, used by both the test and the sentence. Describe filled {1} from Amount alone at
+        /// first, so "Cleanup {0}/{1} Barnacles" rendered as "Cleanup 0/0 Barnacles" on a flag objective -- an
+        /// objective that reads as already satisfied and is not.</summary>
+        public int Wants => Amount > 0 ? Amount : Value;
+
+        /// <summary>The objective as the player reads it, {0} from progress and {1} from <see cref="Wants"/>.
+        /// Retail ships this string per condition, so a quest log does not have to invent a sentence from a
+        /// type name -- and the text and the test stay lined up because they share an index.</summary>
+        public string Describe(int have) =>
+            string.IsNullOrEmpty(Text) ? $"{Type} {have}/{Wants}"
+                                       : Text.Replace("{0}", have.ToString()).Replace("{1}", Wants.ToString());
     }
 
     public sealed class NpcReward
     {
+        /// <summary>Quest rewards count with Amount; dialogue rewards use Value for the same idea. Both are
+        /// carried so neither has to be translated into the other at extract time.</summary>
+        public int Amount;
+        public string Spawnpoint = "";
+
         public ENpcRewardType Type;
         public ushort Id;
         public short Value;
@@ -116,6 +153,20 @@ namespace SDG.Unturned
         int Reputation { get; }
         uint Experience { get; }
         void GiveItem(ushort itemId, short amount);
+
+        // ---- quests ------------------------------------------------------------------------------------
+        void SetQuestStatus(ushort id, ENpcQuestStatus status);
+
+        /// <summary>How far along objective `index` of quest `questId` is, for the COUNTED kinds only (kills).
+        /// Everything else is read from where it already lives -- a flag from the flags, an item from the bag --
+        /// so this exists for exactly the objectives that have nowhere else to be stored.</summary>
+        int QuestProgress(ushort questId, int index);
+        void AddQuestProgress(ushort questId, int index, int by);
+
+        int CountItem(ushort itemId);
+        void TakeItem(ushort itemId, int amount);
+        void AddExperience(int amount);
+        void AddReputation(int amount);
     }
 
     public static class DialogueRules
@@ -189,6 +240,10 @@ namespace SDG.Unturned
         /// <summary>Grant a response's rewards. Flags and items only -- a Quest reward is recorded as a flag
         /// write it cannot make, and is skipped rather than faked, because a quest silently "granted" into a
         /// system that does not exist is worse than one that visibly did not happen.</summary>
+        /// <summary>Quest rewards of type Vehicle that were asked for and not handed over. See the Vehicle
+        /// case in Grant: a known gap, kept visible.</summary>
+        public static int UndeliveredVehicleRewards;
+
         public static void Grant(NpcReward[] rs, INpcWorld w)
         {
             if (rs == null || w == null) return;
@@ -203,7 +258,29 @@ namespace SDG.Unturned
                         w.SetFlag(r.Id, next);
                         break;
                     case ENpcRewardType.Item:
-                        w.GiveItem(r.Id, r.Value == 0 ? (short)1 : r.Value);
+                        // Amount if it has one, else Value, else one. Retail uses Reward_N_Amount on quests and
+                        // Reward_N_Value on dialogue for the same idea; taking whichever is set beats picking
+                        // one and silently handing out a single item where seven were meant.
+                        short n = r.Amount > 0 ? (short)r.Amount : (r.Value == 0 ? (short)1 : r.Value);
+                        w.GiveItem(r.Id, n);
+                        break;
+                    case ENpcRewardType.Experience:
+                        w.AddExperience(r.Amount > 0 ? r.Amount : r.Value);
+                        break;
+                    case ENpcRewardType.Reputation:
+                        w.AddReputation(r.Amount > 0 ? r.Amount : r.Value);
+                        break;
+                    case ENpcRewardType.Quest:
+                        // Handing out a quest as a reward is how a chain links: 1 of the 88 does it, and it is
+                        // the only way Ready ever follows Completed without the player going back to a board.
+                        if (w.GetQuestStatus(r.Id) == ENpcQuestStatus.None)
+                            w.SetQuestStatus(r.Id, ENpcQuestStatus.Active);
+                        break;
+                    case ENpcRewardType.Vehicle:
+                        // 1 of the 88, and delivering it needs a spawnpoint this layer knows nothing about --
+                        // core has no world and no logger. COUNTED rather than silently skipped, so the gap is
+                        // a number somebody can print instead of a mystery nobody knows to look for.
+                        UndeliveredVehicleRewards++;
                         break;
                 }
             }

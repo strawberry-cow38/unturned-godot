@@ -16,6 +16,7 @@ namespace UnturnedGodot
         static readonly Dictionary<string, NpcCharacterDef> _charsByKey = new();
         static readonly Dictionary<int, NpcDialogue> _dialogues = new();
         static readonly Dictionary<string, NpcVendorDef> _vendors = new();   // keyed by GUID: vendors have no numeric id
+        static readonly Dictionary<int, NpcQuestDef> _quests = new();
         static bool _loaded;
 
         public static int CharacterCount { get { Load(); return _chars.Count; } }
@@ -23,6 +24,9 @@ namespace UnturnedGodot
         public static int VendorCount { get { Load(); return _vendors.Count; } }
         public static IEnumerable<NpcCharacterDef> Characters { get { Load(); return _charsByKey.Values; } }
         public static IEnumerable<NpcDialogue> Dialogues { get { Load(); return _dialogues.Values; } }
+        public static IEnumerable<NpcQuestDef> Quests { get { Load(); return _quests.Values; } }
+        public static NpcQuestDef Quest(int id) { Load(); return _quests.TryGetValue(id, out var q) ? q : null; }
+        public static int QuestCount { get { Load(); return _quests.Count; } }
 
         public static NpcCharacterDef Character(int id) { Load(); return _chars.TryGetValue(id, out var c) ? c : null; }
         public static NpcCharacterDef CharacterByKey(string key) { Load(); return _charsByKey.TryGetValue(key ?? "", out var c) ? c : null; }
@@ -154,15 +158,26 @@ namespace UnturnedGodot
             if (!parent.TryGetProperty(prop, out var arr) || arr.ValueKind != JsonValueKind.Array) return System.Array.Empty<NpcCondition>();
             var list = new List<NpcCondition>();
             foreach (var c in arr.EnumerateArray())
+            {
+                var type = Enum(Str(c, "Type"), ENpcConditionType.None);
                 list.Add(new NpcCondition
                 {
-                    Type = Enum(Str(c, "Type"), ENpcConditionType.None),
-                    Id = (ushort)AsShort(Str(c, "ID")),
+                    Type = type,
+                    // ⚠ AN ITEM CONDITION'S Id IS THE RESOLVED ITEM, not the raw reference. The extractor keeps
+                    // both because retail mixes guids and numeric ids in that one field; reading the raw side
+                    // here would compare an inventory count against the first 16 bits of a guid, and get a
+                    // number -- a wrong id in a populated id space is invisible.
+                    Id = type == ENpcConditionType.Item ? (ushort)Int(c, "Item") : (ushort)AsShort(Str(c, "ID")),
                     Value = AsShort(Str(c, "Value")),
                     Logic = Enum(Str(c, "Logic"), ENpcLogic.Equal),      // absent Logic means Equal -- retail's own default
                     Status = Enum(Str(c, "Status"), ENpcQuestStatus.None),
-                    Text = Str(c, "Holiday"),
+                    // Holiday on a dialogue gate, the objective sentence on a quest. One field because only one
+                    // of the two can ever be set: a Holiday condition has no objective and vice versa.
+                    Text = Str(c, "Holiday") is { Length: > 0 } h ? h : Str(c, "Text"),
+                    Amount = Int(c, "Amount"),
+                    Reset = c.TryGetProperty("Reset", out var rs) && rs.ValueKind == JsonValueKind.True,
                 });
+            }
             return list.ToArray();
         }
 
@@ -171,13 +186,18 @@ namespace UnturnedGodot
             if (!parent.TryGetProperty(prop, out var arr) || arr.ValueKind != JsonValueKind.Array) return System.Array.Empty<NpcReward>();
             var list = new List<NpcReward>();
             foreach (var r in arr.EnumerateArray())
+            {
+                var type = Enum(Str(r, "Type"), ENpcRewardType.None);
                 list.Add(new NpcReward
                 {
-                    Type = Enum(Str(r, "Type"), ENpcRewardType.None),
-                    Id = (ushort)AsShort(Str(r, "ID")),
+                    Type = type,
+                    Id = type == ENpcRewardType.Item ? (ushort)Int(r, "Item") : (ushort)AsShort(Str(r, "ID")),
                     Value = AsShort(Str(r, "Value")),
                     Modification = Enum(Str(r, "Modification"), ENpcModification.Assign),   // absent means Assign, 70 of 90
+                    Amount = Int(r, "Amount"),
+                    Spawnpoint = Str(r, "Spawnpoint"),
                 });
+            }
             return list.ToArray();
         }
 
@@ -205,6 +225,19 @@ namespace UnturnedGodot
                     };
                     if (def.Id != 0) _chars[def.Id] = def;
                     if (def.Key.Length > 0) _charsByKey[def.Key] = def;
+                }
+
+            if (root.TryGetProperty("quests", out var qs))
+                foreach (var q in qs.EnumerateArray())
+                {
+                    var def = new NpcQuestDef
+                    {
+                        Id = Int(q, "id"), Key = Str(q, "key"), Guid = Str(q, "guid"),
+                        Name = Str(q, "name"), Description = Str(q, "description"),
+                        Conditions = Conditions(q, "conditions"),
+                        Rewards = Rewards(q, "rewards"),
+                    };
+                    if (def.Id != 0) _quests[def.Id] = def;
                 }
 
             LoadCustom();

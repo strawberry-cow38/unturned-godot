@@ -22,6 +22,25 @@ namespace UnturnedSim.Tests
             public void SetFlag(ushort id, short v) => Flags[id] = v;
             public ENpcQuestStatus GetQuestStatus(ushort id) => Quests.TryGetValue(id, out var s) ? s : ENpcQuestStatus.None;
             public void GiveItem(ushort id, short n) => Given.Add((id, n));
+
+            // ---- quests. A FIXTURE, so every one of these is a real little store rather than a stub that
+            // returns 0 -- a world that cannot remember a quest status makes every quest test vacuous.
+            public readonly Dictionary<ushort, int> Items = new();
+            public readonly Dictionary<(ushort, int), int> Counters = new();
+            public readonly List<(ushort id, int amount)> Taken = new();
+            public int Xp, Rep;
+            public void SetQuestStatus(ushort id, ENpcQuestStatus s) => Quests[id] = s;
+            public int QuestProgress(ushort q, int i) => Counters.TryGetValue((q, i), out var n) ? n : 0;
+            public void AddQuestProgress(ushort q, int i, int by) => Counters[(q, i)] = QuestProgress(q, i) + by;
+            public int CountItem(ushort id) => Items.TryGetValue(id, out var n) ? n : 0;
+            public void TakeItem(ushort id, int amount)
+            {
+                Taken.Add((id, amount));
+                int left = CountItem(id) - amount;
+                if (left > 0) Items[id] = left; else Items.Remove(id);
+            }
+            public void AddExperience(int n) { Xp += n; Experience = (uint)System.Math.Max(0, (int)Experience + n); }
+            public void AddReputation(int n) { Rep += n; Reputation += n; }
         }
 
         static NpcCondition Flag(ushort id, short v, ENpcLogic l = ENpcLogic.Equal)
