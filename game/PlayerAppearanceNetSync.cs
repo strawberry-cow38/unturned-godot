@@ -81,8 +81,18 @@ namespace UnturnedGodot
             return null;
         }
 
+        /// <summary>The id fitted in a slot, as the wire carries it: 0 means NOTHING FITTED.
+        ///
+        /// The clamp is the whole function. InstalledId reports an empty slot as -1 (gunBarrelId and friends
+        /// default to it), and these fields are ushort -- so a bare cast published 65535 for every slot a gun
+        /// did not have filled, on every player, forever. It also feeds the appearance hash, so the wrong
+        /// value was being mixed into the dirty check as well as sent.</summary>
         static ushort AttId(Item gun, string slot)
-            => gun == null ? (ushort)0 : (ushort)AttachmentFit.InstalledId(gun, slot);
+        {
+            if (gun == null) return 0;
+            int id = AttachmentFit.InstalledId(gun, slot);
+            return id > 0 ? (ushort)id : (ushort)0;
+        }
         static bool SetU(ref ushort field, ushort val) { if (field == val) return false; field = val; return true; }
         static bool SetB(ref byte field, byte val) { if (field == val) return false; field = val; return true; }
     }
