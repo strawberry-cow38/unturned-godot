@@ -220,10 +220,22 @@ def build():
     hx = -L/2-hl*.45
     # (x, centre y, half height, half width). Rear ring sits INSIDE the barrel so the neck grows out of the
     # body rather than balancing on it; front ring is the muzzle.
+    # strawberry 2026-09-11: "the horse's neck is very thin". Measured, it was: 0.385 m deep by 0.380 m
+    # wide at the withers -- a round TUBE. A horse's neck is a blade, deep from crest to throat and narrow
+    # across, and a tube of that diameter reads as a stick from the side, which is the view it gets judged
+    # from. Deer and cow got away with tubes because their necks are short and mostly inside the body.
+    #
+    # So the two rear rings gain depth and LOSE a little width: 0.65 m deep by 0.35 wide at the chest,
+    # tapering to the throatlatch. Deepening alone would have made it a slab; the point is the ratio, which
+    # goes from 1.01 (round) to about 1.9 (blade).
+    # Named indices: the mane and anything else reading the chain anchors by NAME so that inserting a ring
+    # cannot silently re-aim it at a different part of the neck.
+    SEC_CHEST, SEC_NECK_BASE, SEC_THROAT, SEC_POLL, SEC_MUZZLE = range(5)
     sections = [
-        (-L*.42,  leg+depth*.62, depth*.30, W*.34),   # buried in the chest
-        (-L*.60,  H-depth*.06,   depth*.26, W*.26),   # withers
-        (hx+hl*.05, poll-hh*.30, hh*.52,    d['head_width']*.60),   # throatlatch
+        (-L*.42,  leg+depth*.50, depth*.42, W*.25),   # buried in the chest -- must stay INSIDE [leg, H] here
+                                                     # or its cap pokes through the back (audit: exposed root)
+        (-L*.60,  H-depth*.14,   depth*.46, W*.20),   # base of the neck: crest above the withers, throat low
+        (hx+hl*.05, poll-hh*.34, hh*.62,    d['head_width']*.58),   # throatlatch
         (hx-hl*.30, poll-hh*.34, hh*.48,    d['head_width']*.50),   # poll / jaw -- the head begins here
         (hx-hl,     poll-hh*.86, hh*.22,    d['head_width']*.34),   # muzzle
     ]
@@ -268,8 +280,9 @@ def build():
     # the throatlatch -- a mane that stops halfway reads as another separate part, which is the exact
     # complaint this whole rework exists to answer. Reading the ring chain rather than carrying its own copy of the
     # neck outline means it cannot drift when the sections are retuned.
-    crest_back = (sections[1][0], sections[1][1] + sections[1][2])
-    crest_front = (sections[3][0], sections[3][1] + sections[3][2])
+    s_base, s_poll = sections[SEC_NECK_BASE], sections[SEC_POLL]
+    crest_back = (s_base[0], s_base[1] + s_base[2])
+    crest_front = (s_poll[0], s_poll[1] + s_poll[2])
     mane = [(crest_front[0]-d['mane_width']*1.2, crest_front[1]-d['mane_width']*1.2),
             (crest_front[0]+d['mane_width'], crest_front[1]),
             (crest_back[0]+d['mane_width'], crest_back[1]),
