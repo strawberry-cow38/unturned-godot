@@ -60,6 +60,13 @@ namespace UnturnedGodot
             /// verbatim: GPU emitters have exactly the same auto-AABB behaviour.</summary>
             public Aabb? VisibilityAabb;
             public GeometryInstance3D.ShadowCastingSetting CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+
+            /// <summary>⚠ 0 = simulate at the FRAME RATE, which is what CpuParticles3D does and what every
+            /// migrated call site was tuned against. GpuParticles3D defaults this to 30, so at 500 fps a burst
+            /// gets a sixteenth of the simulation steps and its particles have travelled far less by any given
+            /// instant -- which is exactly the "GPU bursts are tighter" difference the ImpactFx before/after
+            /// showed. Left settable because a slow ambient emitter genuinely does not need frame-rate steps.</summary>
+            public int FixedFps;
         }
 
         /// <summary>Build a GPU emitter from a Spec. Nothing is emitted until Emitting is set -- several call
@@ -99,6 +106,7 @@ namespace UnturnedGodot
                 DrawPass1 = s.Mesh,
                 MaterialOverride = s.MaterialOverride,
                 CastShadow = s.CastShadow,
+                FixedFps = s.FixedFps,
                 Emitting = s.Emitting,
             };
             if (s.VisibilityAabb.HasValue) p.VisibilityAabb = s.VisibilityAabb.Value;
