@@ -148,6 +148,10 @@ namespace UnturnedGodot.Net
         readonly PlayerVitalsReplication _vitals;   // B5: OnConsume raises server food/water/stamina/infection here
         readonly ServerInteractables _interactables; // SP/MP unify: authoritative door + bed state
         readonly NetIdMinter _ids;
+        // v43: WHO IS CUFFED. An instance, not a static -- MpLoopback stands hosts up and tears them down per
+        // test, and arrest state surviving between them would be a bug nobody would look for.
+        readonly SDG.Unturned.ArrestSim _arrest = new SDG.Unturned.ArrestSim();
+        readonly Dictionary<ushort, (byte side, long tick)> _lastStruggle = new();   // the two bounds on wriggling: alternate sides, one per tick
         readonly Func<long> _tick;
         readonly Action<byte[]> _broadcast;
         readonly Action<ushort, byte[]> _sendTo;
@@ -391,6 +395,62 @@ namespace UnturnedGodot.Net
                     if (!_inventories.TryGetCrate(cmd.NetId, out var crate)) return;
                     if ((crate.Pos - pos).magnitude > InventoryReplication.StorageReach) return;
                     Cooking.SetOn(cmd.NetId, cmd.On);
+                });
+
+            // v43: CUFF a surrendering player. Everything that matters is checked here and nothing is taken
+            // from the client but the target: which restraint is read off the captor's replicated hand, whether
+            // the target is surrendering is read off the target's replicated gesture, and the reach is measured
+            // between the two server-side positions. Retail's own server check is sqrMagnitude > 49 -- a 7 m
+            // slack around a 3 m client ray, generous on purpose because the server is guarding against a forged
+            // TARGET, not re-deciding what the client may aim at.
+            commands.Register<ArrestTargetCommand>(ReplicationIds.CommandArrestPlayer, ArrestTargetCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_combat.TryGet(sender, out var captor) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!SDG.Unturned.ArrestDef.IsRestraint(captor.HeldId)) return;   // not holding cuffs
+                    if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
+                    bool surrendering = victim.Gesture == (byte)SDG.Unturned.EPlayerGesture.SURRENDER_START;
+                    if (!_arrest.TryArrest(sender, cmd.TargetPlayerId, captor.HeldId, surrendering)) return;
+                    victim.Gesture = ServerGestures.Force(victim.Gesture, SDG.Unturned.EPlayerGesture.ARREST_START);
+                    _combat.MarkDirty(victim, _tick());
+                    SpendAnyOf(SenderInventory(sender), captor.HeldId, sender);   // the cuffs leave the captor's bag (retail equipment.use())
+                });
+
+            // v43: UNLOCK. Deliberately does NOT require the freer to be the captor -- retail lets anyone with
+            // the key undo the cuffs, which is what makes a key worth carrying and worth taking off a body.
+            commands.Register<ArrestTargetCommand>(ReplicationIds.CommandUnlockArrest, ArrestTargetCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_combat.TryGet(sender, out var freer) || !_combat.TryGet(cmd.TargetPlayerId, out var victim)) return;
+                    if (!SDG.Unturned.ArrestDef.IsKey(freer.HeldId)) return;
+                    if (!InArrestReach(sender, cmd.TargetPlayerId)) return;
+                    ushort recovered = _arrest.TryUnlock(cmd.TargetPlayerId, freer.HeldId);
+                    if (!_arrest.IsArrested(cmd.TargetPlayerId))
+                    {
+                        victim.Gesture = (byte)SDG.Unturned.EPlayerGesture.NONE;
+                        _combat.MarkDirty(victim, _tick());
+                        // The .dat's Recover: the cuffs come back to whoever turned the key. GiveOrDrop, not
+                        // tryAddItem, so a full bag puts them on the floor instead of deleting them.
+                        if (recovered != 0) GiveOrDrop(SenderInventory(sender), recovered,
+                                                      _players.TryGetByOwner(sender, out var fp) ? fp.Pos : Vector3.zero);
+                    }
+                });
+
+            // v43: STRUGGLE. Two bounds, and they are the whole security of the thing: the side must ALTERNATE
+            // (retail's `lastLean != lean`) and at most one lands per server tick. A cuffed client that spams
+            // this gets exactly what a player mashing Q and E gets.
+            commands.Register<StruggleCommand>(ReplicationIds.CommandStruggle, StruggleCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!_arrest.IsArrested(sender)) return;
+                    long now = _tick();
+                    if (_lastStruggle.TryGetValue(sender, out var last) && (last.side == cmd.Side || last.tick == now)) return;
+                    _lastStruggle[sender] = (cmd.Side, now);
+                    if (!_arrest.Struggle(sender)) return;
+                    if (!_combat.TryGet(sender, out var me)) return;
+                    me.Gesture = (byte)SDG.Unturned.EPlayerGesture.NONE;   // ARREST_STOP: they are out
+                    _combat.MarkDirty(me, now);
+                    ArrestBroke?.Invoke(sender);   // the metal clatter (retail's Metal_1 effect) -- game-layer, null on a bare host
                 });
 
             // v42: a gesture REQUEST. Parked rather than decided -- the admission test needs the asker's stance
@@ -1698,6 +1758,27 @@ namespace UnturnedGodot.Net
         }
 
         PlayerInventory SenderInventory(ushort sender) => _inventories.TryGet(sender, out var e) ? e.Inventory : null;
+
+        /// <summary>v43 arrest hooks, so the bag and the effects stay the game layer's business and this file
+        /// keeps owning only who is cuffed. Null in a bare host (the wire tests), which is why every call site
+        /// is null-conditional rather than assuming a listener.</summary>
+        /// <summary>The one arrest hook that genuinely needs the game layer: the metal clatter when the cuffs
+        /// break (retail triggers a Metal_1 effect). Spending the restraint and handing it back are done HERE
+        /// against the server's own inventory -- they are bag writes, and the bag is this file's business.</summary>
+        public System.Action<ushort> ArrestBroke;                    // (escapee) -> the clatter; null on a bare host
+
+        /// <summary>Retail UseableArrestStart's server check is `sqrMagnitude > 49` -- 7 m, around a 3 m client
+        /// ray. Kept generous for the same reason the forage reach is: the server is guarding against a forged
+        /// target id, not re-deciding what the client was allowed to aim at.</summary>
+        const float ArrestReachSq = 49f;
+        bool InArrestReach(ushort a, ushort b)
+        {
+            if (!_players.TryGetByOwner(a, out var pa) || !_players.TryGetByOwner(b, out var pb)) return false;
+            return (pa.Pos - pb.Pos).sqrMagnitude <= ArrestReachSq;
+        }
+
+        /// <summary>Who is cuffed, for the game layer (a cuffed player cannot equip) and for tests.</summary>
+        public bool IsArrested(ushort playerId) => _arrest.IsArrested(playerId);
 
         /// <summary>The AUTHORITATIVE inventory, for tests. Exposed deliberately: the magazine bug was that
         /// every client-side assertion passed while this object never changed, so a test that cannot read

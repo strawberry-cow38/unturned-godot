@@ -1122,6 +1122,20 @@ namespace UnturnedGodot.Net
                 AttachSeeded = attachSeeded,
             }.Write);
 
+        /// <summary>v43: cuff the player we are aimed at with whatever restraint is in our hand. Target only --
+        /// the server reads the restraint off the hand it already replicates.</summary>
+        public bool SendArrestPlayer(ushort targetPlayerId)
+            => SendCommand(ReplicationIds.CommandArrestPlayer, new ArrestTargetCommand { TargetPlayerId = targetPlayerId }.Write);
+
+        /// <summary>v43: unlock the player we are aimed at, with the key in our hand.</summary>
+        public bool SendUnlockArrest(ushort targetPlayerId)
+            => SendCommand(ReplicationIds.CommandUnlockArrest, new ArrestTargetCommand { TargetPlayerId = targetPlayerId }.Write);
+
+        /// <summary>v43: one wriggle against the cuffs, naming the side leaned. The server ignores a side equal
+        /// to the last one it took, so this has to alternate to make progress.</summary>
+        public bool SendStruggle(byte side)
+            => SendCommand(ReplicationIds.CommandStruggle, new StruggleCommand { Side = side }.Write);
+
         /// <summary>Ask the server to put us in a gesture (v42). Fire-and-forget: the answer comes back as the
         /// Gesture field on our own combat entity, like every other piece of replicated appearance.</summary>
         public bool SendRequestGesture(byte gesture)

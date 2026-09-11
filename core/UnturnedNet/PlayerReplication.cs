@@ -178,6 +178,18 @@ namespace UnturnedGodot.Net
         /// The server runs the same GestureRules admission test the client showed the player, and what lands on
         /// everyone's screen is the server's answer.</summary>
         public const byte CommandRequestGesture = 51;
+        /// <summary>v43: cuff a SURRENDERING player with whatever restraint is in your hand. The command names
+        /// the TARGET and nothing else -- the server reads which restraint off the hand it already replicates,
+        /// because a client that could name the restraint could cuff with a 128-strength pair it does not own.
+        /// Same rule as the respray naming the can and never the colour.</summary>
+        public const byte CommandArrestPlayer = 52;
+        /// <summary>v43: unlock someone with a key. Also target-only, same reason.</summary>
+        public const byte CommandUnlockArrest = 53;
+        /// <summary>v43: one wriggle against the cuffs. Carries the SIDE you leaned, because retail counts lean
+        /// CHANGES (PlayerAnimator.cs:1144) -- the server ignores a side equal to the last one it accepted, so
+        /// spamming one direction does nothing and you have to alternate exactly as a real player mashing Q and
+        /// E does. That, plus one per tick, is what keeps a cuffed client from sending 128 in a frame.</summary>
+        public const byte CommandStruggle = 54;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.

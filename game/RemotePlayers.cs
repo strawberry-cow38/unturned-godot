@@ -305,6 +305,37 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>v43: the remote player a shell at <paramref name="from"/> looking along <paramref name="fwd"/>
+        /// is aiming at, or 0 for nobody. Picked by ANGLE rather than distance -- with two people stood together,
+        /// "the nearest" is not who you are pointing at, and cuffing the wrong one of a pair is exactly the sort
+        /// of thing that gets noticed once and never forgiven.
+        ///
+        /// Proximity + facing rather than a raycast, following NearestPuppet: the target of an arrest is by
+        /// definition standing still with their hands up right in front of you, and the SERVER re-checks reach
+        /// against its own positions anyway. This picks WHO to ask about; it does not decide anything.</summary>
+        public ushort AimedPlayer(Vector3 from, Vector3 fwd, float maxDist)
+        {
+            ushort best = 0; float bestDot = 0.5f;   // ~60 degrees off centre, no further
+            float maxSq = maxDist * maxDist;
+            foreach (var kv in _avatars)
+            {
+                var av = kv.Value;
+                if (av?.Body == null || !IsInstanceValid(av.Body)) continue;
+                Vector3 d = av.Body.GlobalPosition - from;
+                if (d.LengthSquared() > maxSq) continue;
+                d.Y = 0f;
+                if (d.LengthSquared() < 1e-4f) continue;
+                float dot = d.Normalized().Dot(new Vector3(fwd.X, 0f, fwd.Z).Normalized());
+                if (dot > bestDot) { bestDot = dot; best = kv.Key; }
+            }
+            return best;
+        }
+
+        /// <summary>What gesture a puppet is showing -- so the local client can say "they are not surrendering"
+        /// instead of sending a command it knows the server will drop.</summary>
+        public byte GestureOf(ushort playerId)
+            => Client != null && Client.CombatState.TryGet(playerId, out var ce) ? ce.Gesture : (byte)0;
+
         static Av Build()
         {
             var body = RiggedCharacter.Build("res://content/rig.json", Skin, false, null, RiggedCharacter.FacePath(0));   // face 0 until the profile block names one

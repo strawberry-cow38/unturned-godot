@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 42.
+        // id -> name, as of NetProtocol.Version 43.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -82,6 +82,14 @@ namespace UnturnedNet.Tests
             // v42: asking to enter a gesture. One byte. Server-validated because SURRENDER gates handcuffs and
             // ARREST is applied BY a captor -- a client that could assert either would be uncuffable.
             [51] = "CommandRequestGesture",
+
+            // v43: handcuffs. Each names the TARGET and nothing else -- the restraint and the key are read off
+            // the sender's replicated hand, so a client cannot cuff with a pair it does not own.
+            [52] = "CommandArrestPlayer",
+            [53] = "CommandUnlockArrest",
+            // ...and one wriggle, carrying the side leaned. Only counted when it differs from the last side
+            // taken (retail's lastLean != lean), one per tick -- so spamming it is worth nothing.
+            [54] = "CommandStruggle",
         };
 
         static Dictionary<byte, string> Actual() =>

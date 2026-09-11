@@ -285,6 +285,36 @@ namespace UnturnedGodot.Net
     /// cooking"). Addressed by the appliance's crate NetId, which is what the player already has open --
     /// and the server checks it IS a registered cooker, so a forged id for an arbitrary crate does nothing
     /// rather than conjuring an oven.</summary>
+    /// <summary>v43: cuff / unlock. The TARGET only: what you are doing it with is read off the hand the
+    /// server already replicates, so the client cannot nominate a restraint it is not holding.</summary>
+    public struct ArrestTargetCommand
+    {
+        public ushort TargetPlayerId;
+        public void Write(NetPakWriter w) { w.WriteUInt16(TargetPlayerId); }
+        public static bool TryRead(NetPakReader r, out ArrestTargetCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt16(out ushort t)) return false;
+            cmd = new ArrestTargetCommand { TargetPlayerId = t };
+            return true;
+        }
+    }
+
+    /// <summary>v43: one wriggle. `Side` is 0 or 1 -- which way you leaned -- and the server only counts it when
+    /// it DIFFERS from the last side it took from you, which is retail's `lastLean != lean` written down.</summary>
+    public struct StruggleCommand
+    {
+        public byte Side;
+        public void Write(NetPakWriter w) { w.WriteBit(Side != 0); }
+        public static bool TryRead(NetPakReader r, out StruggleCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadBit(out bool side)) return false;
+            cmd = new StruggleCommand { Side = (byte)(side ? 1 : 0) };
+            return true;
+        }
+    }
+
     /// <summary>v42: "I would like to be doing this gesture." One byte -- an EPlayerGesture -- and nothing
     /// else: the server already knows who asked, where they are standing and what is in their hands, and
     /// anything the client could add here is something it could lie about.</summary>

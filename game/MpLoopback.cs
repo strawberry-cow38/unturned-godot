@@ -321,6 +321,11 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Player.NetForageResource = index => Client.SendForageResource(index);
                 Player.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41 respray
                 Player.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42 gestures
+                Player.NetAimedPlayer = (from, fwd, max) => Remotes != null ? Remotes.AimedPlayer(from, fwd, max) : (ushort)0;   // v43
+                Player.NetGestureOf = pid => Remotes != null ? Remotes.GestureOf(pid) : (byte)0;
+                Player.NetArrestPlayer = t => Client.SendArrestPlayer(t);
+                Player.NetUnlockArrest = t => Client.SendUnlockArrest(t);
+                Player.NetStruggle = side => Client.SendStruggle(side);
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and

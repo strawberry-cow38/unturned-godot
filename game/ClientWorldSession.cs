@@ -617,6 +617,11 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetForageResource = index => Client.SendForageResource(index);   // v40: pick a berry bush / mushroom
             shell.NetPaintVehicle = (netId, item) => Client.SendPaintVehicle(netId, item);   // v41: respray a vehicle
             shell.NetRequestGesture = g => Client.SendRequestGesture(g);   // v42: ASK for a gesture; the answer arrives on our own combat entity
+            shell.NetAimedPlayer = (from, fwd, max) => Remotes != null ? Remotes.AimedPlayer(from, fwd, max) : (ushort)0;   // v43
+            shell.NetGestureOf = pid => Remotes != null ? Remotes.GestureOf(pid) : (byte)0;
+            shell.NetArrestPlayer = t => Client.SendArrestPlayer(t);
+            shell.NetUnlockArrest = t => Client.SendUnlockArrest(t);
+            shell.NetStruggle = side => Client.SendStruggle(side);
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);
