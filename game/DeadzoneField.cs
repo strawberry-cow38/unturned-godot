@@ -12,9 +12,14 @@ namespace UnturnedGodot
     // produced radiation, so the flag protected against a hazard that did not exist. A protective stat
     // with nothing to protect from is a stat nobody can tell is broken.
     //
-    // The arithmetic (grace on entry, suit resolution, filter burn-down, damage per second) is engine-free
+    // The arithmetic (grace on entry, suit resolution, filter burn-down, dose per second) is engine-free
     // in SDG.Unturned.DeadzoneSim and L0-tested there. This node owns only the world: which volumes exist,
-    // who is standing in one, and applying the result through the player's normal damage/infection paths.
+    // who is standing in one, and applying the result through the player's normal infection path.
+    //
+    // ⚠ INFECTION IS THE ONLY OUTPUT (strawberry 2026-09-11: "wire deadzones to deal infection damage
+    // instead of hp"). It also publishes PlayerController.DeadzoneSeconds, which the HUD's radiation icon
+    // and DeadzoneOverlay's grain both read -- from the sim's own clock, so what you see on screen cannot
+    // drift from the dose you are taking.
     public partial class DeadzoneField : Node3D
     {
         readonly List<DeadzoneVolumeDef> _volumes = new();
@@ -87,6 +92,7 @@ namespace UnturnedGodot
             if (!TryGetVolume(player.GlobalPosition, out var volume))
             {
                 if (_inside.TryGetValue(player, out var left)) { left.Exit(); _inside.Remove(player); }
+                player.DeadzoneSeconds = 0f;   // the overlay and the HUD icon both read this; leaving must clear it
                 return;
             }
 
@@ -99,7 +105,13 @@ namespace UnturnedGodot
             var gear = player.Inventory?.RadiationProtection() ?? default;
             var r = sim.Step(volume.Zone, gear, dt);
 
-            if (r.Damage > 0f) player.TakeDamage(r.Damage);
+            // Exposure time, published for the screen effect and the HUD icon. Set from the sim rather than
+            // accumulated here, so there is one clock and the visuals cannot drift from the dose.
+            player.DeadzoneSeconds = sim.SecondsInside;
+
+            // INFECTION ONLY (strawberry 2026-09-11). Health is no longer touched here: PlayerVitalsSim owns
+            // what a high infection costs, so a deadzone death now goes through the same path a zombie bite
+            // does instead of being a second, parallel way to lose health.
             if (r.Radiation > 0f) player.Infect(r.Radiation);
             if (r.MaskQualityLost > 0 && player.Inventory?.wornMask != null)
             {

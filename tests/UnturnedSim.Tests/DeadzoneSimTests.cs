@@ -29,20 +29,18 @@ namespace UnturnedSim.Tests
         {
             var sim = new DeadzoneSim();
             var r = sim.Step(DeadzoneDef.Default(), Nothing(), 0.2f);
-            Assert.That(r.Damage, Is.EqualTo(0f), "a corner-clip should not be instantly punishing");
-            Assert.That(r.Radiation, Is.EqualTo(0f));
+            Assert.That(r.Radiation, Is.EqualTo(0f), "a corner-clip should not be instantly punishing");
         }
 
         [Test]
-        public void Standing_In_It_Unprotected_Hurts_And_Irradiates()
+        public void Standing_In_It_Unprotected_Irradiates()
         {
             var zone = DeadzoneDef.Default();
             var sim = Settled(zone, Nothing());
             var r = sim.Step(zone, Nothing(), 1f);
 
             Assert.That(r.Protected, Is.False);
-            Assert.That(r.Damage, Is.EqualTo(zone.UnprotectedDamagePerSecond).Within(0.001f));
-            Assert.That(r.Radiation, Is.EqualTo(zone.RadiationPerSecond).Within(0.001f));
+            Assert.That(r.Radiation, Is.EqualTo(zone.UnprotectedRadiationPerSecond).Within(0.001f));
         }
 
         [Test]
@@ -53,9 +51,12 @@ namespace UnturnedSim.Tests
             var r = sim.Step(zone, MaskOnly(), 1f);
 
             Assert.That(r.Protected, Is.True);
-            Assert.That(r.Damage, Is.EqualTo(zone.ProtectedDamagePerSecond).Within(0.001f));
-            Assert.That(r.Radiation, Is.EqualTo(0f), "a holding suit should keep the virus out");
-            Assert.That(r.Damage, Is.LessThan(zone.UnprotectedDamagePerSecond), "the suit has to be worth wearing");
+            // A SUIT SLOWS THE DOSE, IT DOES NOT STOP IT (strawberry 2026-09-11: deadzones deal infection, not
+            // health). The old version asserted a holding suit kept the virus out entirely and took health
+            // instead; with health off the table that would make a sealed suit total immunity, and the zone
+            // stops being a hazard the moment you own one.
+            Assert.That(r.Radiation, Is.EqualTo(zone.ProtectedRadiationPerSecond).Within(0.001f));
+            Assert.That(r.Radiation, Is.LessThan(zone.UnprotectedRadiationPerSecond), "the suit has to be worth wearing");
         }
 
         [Test]
@@ -66,7 +67,7 @@ namespace UnturnedSim.Tests
             var r = sim.Step(zone, MaskOnly(quality: 0), 1f);
 
             Assert.That(r.Protected, Is.False, "a mask with no filter left is a hat");
-            Assert.That(r.Damage, Is.EqualTo(zone.UnprotectedDamagePerSecond).Within(0.001f));
+            Assert.That(r.Radiation, Is.EqualTo(zone.UnprotectedRadiationPerSecond).Within(0.001f));
         }
 
         [Test]
@@ -131,16 +132,16 @@ namespace UnturnedSim.Tests
         {
             var zone = DeadzoneDef.Default();
             var sim = Settled(zone, Nothing());
-            Assert.That(sim.Step(zone, Nothing(), 0.5f).Damage, Is.GreaterThan(0f), "test setup: settled");
+            Assert.That(sim.Step(zone, Nothing(), 0.5f).Radiation, Is.GreaterThan(0f), "test setup: settled");
 
             sim.Exit();
             Assert.That(sim.IsInside, Is.False);
-            Assert.That(sim.Step(zone, Nothing(), 0.2f).Damage, Is.EqualTo(0f),
+            Assert.That(sim.Step(zone, Nothing(), 0.2f).Radiation, Is.EqualTo(0f),
                 "re-entering should start a fresh grace, not resume mid-tick");
         }
 
         [Test]
-        public void Damage_Scales_With_Time_Not_With_Call_Count()
+        public void Dose_Scales_With_Time_Not_With_Call_Count()
         {
             // A caller stepping at 50 Hz and one stepping at 10 Hz must reach the same total.
             var zone = DeadzoneDef.Default();
@@ -148,8 +149,8 @@ namespace UnturnedSim.Tests
             var slow = Settled(zone, Nothing());
 
             float fastTotal = 0f, slowTotal = 0f;
-            for (int i = 0; i < 50; i++) fastTotal += fast.Step(zone, Nothing(), 0.02f).Damage;
-            for (int i = 0; i < 10; i++) slowTotal += slow.Step(zone, Nothing(), 0.10f).Damage;
+            for (int i = 0; i < 50; i++) fastTotal += fast.Step(zone, Nothing(), 0.02f).Radiation;
+            for (int i = 0; i < 10; i++) slowTotal += slow.Step(zone, Nothing(), 0.10f).Radiation;
 
             Assert.That(fastTotal, Is.EqualTo(slowTotal).Within(0.01f));
         }
@@ -168,5 +169,60 @@ namespace UnturnedSim.Tests
             Assert.That(v.Contains(new Vector3(121f, 0f, -50f)), Is.False);
             Assert.That(v.Contains(new Vector3(100f, 11f, -50f)), Is.False, "the height bound has to count too");
         }
-    }
+    
+        // ---- INFECTION IS THE ONLY AXIS (strawberry 2026-09-11: "wire deadzones to deal infection damage
+        // instead of hp") ----
+
+        [Test]
+        public void A_Deadzone_Has_Exactly_One_Way_To_Hurt_You()
+        {
+            // The claim the whole change rests on, asserted structurally rather than by reading the struct:
+            // whatever a step returns, nothing in it can reduce health directly. If a Damage field is ever
+            // reintroduced this stops compiling, which is the loudest failure available and the right one --
+            // a second damage path is exactly what this change existed to remove.
+            var fields = typeof(DeadzoneTickResult).GetFields();
+            Assert.That(System.Array.Exists(fields, f => f.Name == "Radiation"), Is.True);
+            Assert.That(System.Array.Exists(fields, f => f.Name == "Damage"), Is.False,
+                "a deadzone must not have a health path any more -- PlayerVitalsSim owns what infection costs");
+        }
+
+        [Test]
+        public void Unprotected_Exposure_Reaches_Fatal_Infection_In_A_Sane_Time()
+        {
+            // Pins the RATE against the scale it actually lives on. Infection is 0..1 and fatal at 1.0, so a
+            // rate ported straight from the old health numbers (8/second) would kill in an eighth of a second.
+            // Asserted as a window rather than an exact figure so retuning does not come back here, while a
+            // rate off by an order of magnitude in either direction still trips it.
+            var zone = DeadzoneDef.Default();
+            float secondsToFatal = 1f / zone.UnprotectedRadiationPerSecond;
+            Assert.That(secondsToFatal, Is.GreaterThan(15f), "instantly lethal contamination is a wall, not a hazard");
+            Assert.That(secondsToFatal, Is.LessThan(120f), "...and two minutes of standing in poison should not be survivable");
+        }
+
+        [Test]
+        public void A_Suit_Buys_Time_Rather_Than_Immunity()
+        {
+            // The pair to the check above, and the reason a sealed suit is not just a toggle: it has to be
+            // meaningfully slower AND still finite, or the zone stops being a place you have to leave.
+            var zone = DeadzoneDef.Default();
+            float suited = 1f / zone.ProtectedRadiationPerSecond;
+            float bare = 1f / zone.UnprotectedRadiationPerSecond;
+            Assert.That(zone.ProtectedRadiationPerSecond, Is.GreaterThan(0f), "immunity would make the zone scenery");
+            Assert.That(suited, Is.GreaterThan(bare * 4f), "the suit has to be clearly worth wearing");
+        }
+
+        [Test]
+        public void A_Short_Visit_Stays_Under_The_Self_Clearing_Mark()
+        {
+            // The interaction that makes brief trips survivable BY DESIGN: PlayerVitalsSim drains infection
+            // back down below 0.5, so a dose that stops short of halfway heals off. Ten seconds unprotected
+            // -- long enough to grab something and run -- has to land under that mark, or "duck in and out"
+            // is not a playable option and the zone is a wall after all.
+            var zone = DeadzoneDef.Default();
+            var sim = Settled(zone, Nothing());
+            float dose = 0f;
+            for (int i = 0; i < 10; i++) dose += sim.Step(zone, Nothing(), 1f).Radiation;
+            Assert.That(dose, Is.LessThan(0.5f), $"10 s unprotected doses {dose:0.###}, which must stay under the 0.5 self-clear mark");
+        }
+}
 }

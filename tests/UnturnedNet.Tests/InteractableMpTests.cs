@@ -542,8 +542,11 @@ namespace UnturnedNet.Tests
         // ---- deadzones ----
 
         [Test]
-        public void Standing_In_A_Deadzone_Hurts_A_Networked_Player()
+        public void Standing_In_A_Deadzone_Infects_A_Networked_Player()
         {
+            // ⚠ INFECTION, NOT HEALTH (strawberry 2026-09-11). This asserted falling HP and correctly went red
+            // when the hazard moved onto the infection axis: the server's health is now untouched by a
+            // deadzone, exactly as the client's is, and the dose is what has to reach the authoritative copy.
             var h = new TransactionalHarness(seed: 15).Connected("alice");
             var alice = h.Clients[0];
             var zoneAt = new Vector3(0f, 0f, 0f);
@@ -551,13 +554,16 @@ namespace UnturnedNet.Tests
             PutPlayerAt(h, alice, zoneAt);
 
             Assert.That(h.Server.CombatState.TryGet(alice.PlayerId, out var cs), Is.True);
-            float startHp = cs.HealthExact;
+            Assert.That(h.Server.Vitals.TryGet(alice.PlayerId, out var v), Is.True);
+            float startHp = cs.HealthExact, startInf = v.Sim.Infection;
 
-            // Long enough to clear the entry grace and take real damage from an unprotected body.
+            // Long enough to clear the entry grace and take a real dose on an unprotected body.
             h.Step(200);   // 4 s at 50 Hz
 
-            Assert.That(cs.HealthExact, Is.LessThan(startHp),
-                        "contaminated ground has to hurt the server's player, not only a PlayerController");
+            Assert.That(v.Sim.Infection, Is.GreaterThan(startInf),
+                        "contaminated ground has to dose the server's player, not only a PlayerController");
+            Assert.That(cs.HealthExact, Is.EqualTo(startHp).Within(0.001f),
+                        "...and must not take health directly -- the vitals sim owns what infection costs");
         }
 
         [Test]
@@ -592,7 +598,11 @@ namespace UnturnedNet.Tests
             bool died = false;
             alice.PlayerDied += e => { if (e.Victim == alice.PlayerId) died = true; };
 
-            Assert.That(h.StepUntil(() => died, maxTicks: 2000), Is.True,
+            // 2000 ticks (40 s) was sized against the old 8 HP/second. Infection is slower BY DESIGN -- ~40 s
+            // of dose to reach fatal, and PlayerVitalsSim drains it back below 0.5 the whole way up, so the
+            // real time-to-die is meaningfully longer than the raw rate suggests. Raised rather than loosened
+            // to "eventually": the claim is still that it kills, only that it takes a survivable-looking while.
+            Assert.That(h.StepUntil(() => died, maxTicks: 12000), Is.True,
                         "an unprotected player standing in contaminated ground eventually dies of it");
         }
 
@@ -604,8 +614,20 @@ namespace UnturnedNet.Tests
             // feature was written to get OUT of.
             var bare = TimeToDie(protectedSuit: false);
             var suited = TimeToDie(protectedSuit: true);
-            Assert.That(suited, Is.GreaterThan(bare * 2),
-                        $"a suit lasted {suited} ticks vs {bare} bare -- protection must actually be read server-side");
+
+            // DERIVED, not a round multiple. The old claim was `suited > bare * 2` and it now lands at 1.94x --
+            // not because protection stopped being read, but because what a suit buys is EXACTLY its filter:
+            // 100 quality at MaskFilterLossPerSecond=2 is 50 s, and once the filter is spent you are bare.
+            // Measured, suited-bare came to 2509 ticks against a 2500-tick filter, so the ratio is simply
+            // whatever 50 s happens to be next to the bare time-to-die -- a number the balance can move for
+            // reasons that have nothing to do with this test's subject.
+            //
+            // So assert the thing that is actually true and would break if the gear read were dropped: the
+            // extra survival equals the filter's own lifetime.
+            float filterTicks = 100f / DeadzoneDef.Default().MaskFilterLossPerSecond * 50f;   // quality / burn-per-sec, at 50 Hz
+            Assert.That(suited - bare, Is.EqualTo(filterTicks).Within(filterTicks * 0.25f),
+                        $"a suit lasted {suited} ticks vs {bare} bare (+{suited - bare}); the filter is worth ~{filterTicks:0} ticks, " +
+                        "so protection has to be read server-side AND burn down");
         }
 
         static int TimeToDie(bool protectedSuit)
@@ -616,7 +638,7 @@ namespace UnturnedNet.Tests
             h.Server.Players.ServerTeleport(alice.PlayerId, Vector3.zero, h.Server.Session.CurrentTick);
             if (protectedSuit) DressForRadiation(h, alice.PlayerId);
 
-            for (int t = 0; t < 4000; t++)
+            for (int t = 0; t < 24000; t++)   // infection is a slower axis than the old HP drain -- see the kill test
             {
                 h.Step();
                 if (!h.Server.CombatState.IsAlive(alice.PlayerId)) return t;

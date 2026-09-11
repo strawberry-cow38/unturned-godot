@@ -118,7 +118,7 @@ namespace UnturnedGodot.Net
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
                 bool submerged = SubmergedOf != null && SubmergedOf(pid);
-                e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
+                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
                 float delta = e.Sim.Health - hpBefore;
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation
@@ -128,6 +128,18 @@ namespace UnturnedGodot.Net
                     if (delta < 0f) DamageSink?.Invoke(pid, -delta);        // starvation/dehydration/infection loss (queued env damage)
                     else if (delta > 0f) RegenSink?.Invoke(pid, delta);     // regen while fed + hydrated (direct HealthExact raise)
                 }
+                // ⚠ A FATAL INFECTION KILLS WHETHER OR NOT SURVIVAL DRAIN IS ON, for the same reason the sim
+                // itself exempts exposure: hunger is a MODE, a hazard is a hazard. Reaching 100% virus is not
+                // the survival mechanic slowly wearing you down, it is a terminal state the sim has already
+                // decided on -- Step returned true and zeroed its own health.
+                //
+                // Found by deadzones losing their kill entirely (strawberry 2026-09-11 moved them onto
+                // infection). Contaminated ground used to kill through its own DamageSink; with that removed
+                // the death depended on this gate, which is OFF by default, so on the default server a player
+                // sat at 100% infection indefinitely -- the probe showed infection pinned at 1.0 for 5000
+                // ticks with alive=True. Nothing else in the suite covered it because nothing else could
+                // reach 100% virus on its own.
+                else if (diedThisStep && delta < 0f) DamageSink?.Invoke(pid, -delta);
                 e.StampIfChanged(tick);
             }
         }
