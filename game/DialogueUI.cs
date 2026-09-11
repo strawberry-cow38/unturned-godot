@@ -162,6 +162,19 @@ namespace UnturnedGodot
                 _shown.Add(idx);
                 n++;
             }
+            // A SHOP THE CHARACTER JUST HAS. Retail reaches a vendor through a response carrying one, and those
+            // come through the loop above like any other line. A custom character may instead own a shop outright
+            // (NpcCharacterDef.Shop) -- there is no response to represent that, so it is a button rather than a
+            // numbered option, which also keeps it out of the 1-9 mapping and away from the dialogue indices.
+            string shop = _player?.CurrentSpeaker?.Def?.Shop ?? "";
+            if (!string.IsNullOrEmpty(shop))
+            {
+                var v = NpcCatalog.VendorByKey(shop);
+                var t = new Button { Text = v != null ? $"Trade  ·  {TradeRules.PlainText(v.Name)}" : "Trade", Alignment = HorizontalAlignment.Left, Flat = true };
+                UITheme.Label(t, UITheme.FontHeading, UITheme.Accent);
+                t.Pressed += () => { if (v != null) _player?.OpenTrade(v); };
+                _options.AddChild(t);
+            }
             _hint.Text = _shown.Count > 0 ? "1-9 or click   ·   Esc to leave" : "Esc to leave";
             CallDeferred(nameof(Layout));
         }

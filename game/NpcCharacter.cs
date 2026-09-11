@@ -128,6 +128,10 @@ namespace UnturnedGodot
         }
         bool _plateSeated;
 
+        /// <summary>The rig, for callers that need to MEASURE it (the character editor frames a portrait off
+        /// the worn gear's height). Read-only access on purpose: posing it belongs to _Process.</summary>
+        public RiggedCharacter BodyForFraming => _body;
+
         public string DisplayName => Def?.Name ?? "Someone";
         public int DialogueId => Def?.Dialogue ?? 0;
         /// <summary>Test seam: is the plate up? The focus state is the whole interaction affordance, so a test

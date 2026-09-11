@@ -22,6 +22,7 @@ namespace UnturnedGodot
         public static int DialogueCount { get { Load(); return _dialogues.Count; } }
         public static int VendorCount { get { Load(); return _vendors.Count; } }
         public static IEnumerable<NpcCharacterDef> Characters { get { Load(); return _charsByKey.Values; } }
+        public static IEnumerable<NpcDialogue> Dialogues { get { Load(); return _dialogues.Values; } }
 
         public static NpcCharacterDef Character(int id) { Load(); return _chars.TryGetValue(id, out var c) ? c : null; }
         public static NpcCharacterDef CharacterByKey(string key) { Load(); return _charsByKey.TryGetValue(key ?? "", out var c) ? c : null; }
@@ -39,6 +40,95 @@ namespace UnturnedGodot
             foreach (var v in _vendors.Values) if (v.Key.ToLowerInvariant() == k) return v;
             foreach (var v in _vendors.Values) if (v.Key.ToLowerInvariant().Contains(k)) return v;   // near miss: 8 of them, a prefix is unambiguous enough
             return null;
+        }
+
+        /// <summary>Where the editor's own characters live. SEPARATE FROM npcs.json, which is a rip: the
+        /// extractor overwrites that file wholesale, so anything authored into it is destroyed by the next run
+        /// of tools/extract_npcs.py. Keeping them apart is what makes "re-rip the NPCs" a safe thing to do.</summary>
+        public static string CustomPath => ProjectSettings.GlobalizePath("res://content/npcs_custom.json");
+
+        /// <summary>Custom characters, layered OVER the ripped ones. Same key space on purpose -- a placement
+        /// stores a key, and the game has to be able to spawn a custom person from one exactly as it spawns
+        /// Chef Leonard, with no second path and no "is this one of ours" test at the spawn site.</summary>
+        static void LoadCustom()
+        {
+            if (!System.IO.File.Exists(CustomPath)) return;
+            JsonElement root;
+            try { root = JsonDocument.Parse(System.IO.File.ReadAllText(CustomPath)).RootElement; }
+            catch (System.Exception e) { Log.Print($"[npc] npcs_custom.json failed to parse: {e.Message}"); return; }
+            if (!root.TryGetProperty("characters", out var cs)) return;
+            int n = 0;
+            foreach (var c in cs.EnumerateArray())
+            {
+                var def = new NpcCharacterDef
+                {
+                    Id = Int(c, "id"), Key = Str(c, "key"), Name = Str(c, "name"),
+                    Shirt = (ushort)Int(c, "shirt"), Pants = (ushort)Int(c, "pants"), Hat = (ushort)Int(c, "hat"),
+                    Vest = (ushort)Int(c, "vest"), Mask = (ushort)Int(c, "mask"), Glasses = (ushort)Int(c, "glasses"),
+                    Backpack = (ushort)Int(c, "backpack"),
+                    Face = Int(c, "face"), Skin = Str(c, "skin"), Hair = Str(c, "hair"),
+                    Dialogue = Int(c, "dialogue"), Shop = Str(c, "shop"),
+                };
+                if (def.Key.Length == 0) continue;
+                if (def.Id != 0) _chars[def.Id] = def;
+                _charsByKey[def.Key] = def;
+                _custom.Add(def.Key);
+                n++;
+            }
+            if (n > 0) Log.Print($"[npc] {n} custom character(s) from npcs_custom.json");
+        }
+
+        static readonly HashSet<string> _custom = new();
+        public static bool IsCustom(string key) { Load(); return _custom.Contains(key ?? ""); }
+
+        /// <summary>Write one character into the custom file, replacing any with the same key, and make it live
+        /// in this session. Rewrites the WHOLE file rather than appending: a half-written array is a file that
+        /// parses as nothing, and losing every custom character to save one is not a trade worth taking.</summary>
+        public static void SaveCustom(NpcCharacterDef def)
+        {
+            Load();
+            if (def == null || string.IsNullOrEmpty(def.Key)) return;
+            _charsByKey[def.Key] = def;
+            if (def.Id != 0) _chars[def.Id] = def;
+            _custom.Add(def.Key);
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append("{\n  \"characters\": [\n");
+            bool first = true;
+            foreach (var key in _custom)
+            {
+                if (!_charsByKey.TryGetValue(key, out var d)) continue;
+                if (!first) sb.Append(",\n");
+                first = false;
+                sb.Append("    {")
+                  .Append($"\"key\": {Q(d.Key)}, \"id\": {d.Id}, \"name\": {Q(d.Name)}, ")
+                  .Append($"\"shirt\": {d.Shirt}, \"pants\": {d.Pants}, \"hat\": {d.Hat}, \"vest\": {d.Vest}, ")
+                  .Append($"\"mask\": {d.Mask}, \"glasses\": {d.Glasses}, \"backpack\": {d.Backpack}, ")
+                  .Append($"\"face\": {d.Face}, \"skin\": {Q(d.Skin)}, \"hair\": {Q(d.Hair)}, ")
+                  .Append($"\"dialogue\": {d.Dialogue}, \"shop\": {Q(d.Shop)}")
+                  .Append('}');
+            }
+            sb.Append("\n  ]\n}\n");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CustomPath));
+            System.IO.File.WriteAllText(CustomPath, sb.ToString());
+            Log.Print($"[npc] saved custom character '{def.Key}' ({_custom.Count} total) -> {CustomPath}");
+        }
+
+        /// <summary>JSON string literal. Hand-rolled because the writer above is hand-rolled, and a name with a
+        /// quote or a backslash in it must not be able to produce a file that will not parse next launch.</summary>
+        static string Q(string s)
+        {
+            var sb = new System.Text.StringBuilder("\"");
+            foreach (char c in s ?? "")
+            {
+                if (c == '"' || c == '\\') sb.Append('\\').Append(c);
+                else if (c == '\n') sb.Append("\\n");
+                else if (c == '\r') sb.Append("\\r");
+                else if (c == '\t') sb.Append("\\t");
+                else if (c < ' ') sb.Append("\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.Append('"').ToString();
         }
 
         static string Str(JsonElement e, string k) => e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : "";
@@ -116,6 +206,8 @@ namespace UnturnedGodot
                     if (def.Id != 0) _chars[def.Id] = def;
                     if (def.Key.Length > 0) _charsByKey[def.Key] = def;
                 }
+
+            LoadCustom();
 
             if (root.TryGetProperty("dialogues", out var ds))
                 foreach (var d in ds.EnumerateArray())

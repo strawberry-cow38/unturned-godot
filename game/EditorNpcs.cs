@@ -292,6 +292,18 @@ namespace UnturnedGodot
             _editor.MarkDirty();
         }
 
+        /// <summary>Re-read the catalog's key list. The character editor can create a person while this tab is
+        /// open, and a roster built once at _Ready cannot show somebody who did not exist then.</summary>
+        public void ReloadKeys()
+        {
+            string was = PickKey;
+            _keys.Clear();
+            foreach (var c in NpcCatalog.Characters) _keys.Add(c.Key);
+            _keys.Sort(System.StringComparer.OrdinalIgnoreCase);
+            int i = _keys.IndexOf(was);   // keep pointing at whoever was picked; the list just grew under it
+            _pick = i >= 0 ? i : 0;
+        }
+
         public void SetPick(int i)
         {
             if (_keys.Count == 0) return;

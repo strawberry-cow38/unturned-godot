@@ -74,6 +74,14 @@ namespace SDG.Unturned
         public int Face;
         public string Skin = "", Hair = "";
         public int Dialogue;
+
+        /// <summary>A vendor guid/key this character will trade with directly, or empty.
+        ///
+        /// NOT how retail does it, and said so out loud: retail reaches a shop through a dialogue RESPONSE that
+        /// carries a vendor, which means opening a shop costs you a whole authored conversation. That is the
+        /// right model for ported content and a wall for someone dressing a map, so a character may also just
+        /// HAVE a shop. Ripped characters leave this empty and keep going through their real dialogue.</summary>
+        public string Shop = "";
     }
 
     /// <summary>One line of a vendor's list. Retail prices everything in a single currency (experience), which

@@ -112,14 +112,17 @@ namespace UnturnedGodot
         //      Skull-attached decal quad built in BuildFrom; SetFace swaps its texture (+ emission when that face has one).
         MeshInstance3D _faceQuad;
         public int Face { get; private set; } = -1;
-        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, 31)}.png";
+        /// <summary>How many retail faces there are. ONE constant: the 0..31 clamp was written out twice here
+        /// and anything else that cycles faces had to know the number by heart.</summary>
+        public const int FaceCount = 32;
+        public static string FacePath(int face) => $"res://content/faces/face_{Mathf.Clamp(face, 0, FaceCount - 1)}.png";
 
         /// <summary>Render-harness seam: the face decal itself, so a camera can be framed on where the face
         /// ACTUALLY is instead of on where the head is assumed to be.</summary>
         public MeshInstance3D FaceQuadForTest => _faceQuad;
         public void SetFace(int face)
         {
-            face = Mathf.Clamp(face, 0, 31);
+            face = Mathf.Clamp(face, 0, FaceCount - 1);
             if (_faceQuad == null || !GodotObject.IsInstanceValid(_faceQuad)) return;
             if (_faceQuad.MaterialOverride is not StandardMaterial3D m) return;
             var tex = LoadTexCached(FacePath(face));

@@ -6760,7 +6760,8 @@ namespace UnturnedGodot
             var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
             editor.AddChild(roadsEd);
             editor.RoadsEd = roadsEd;
-            editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            var dash = new EditorDashboard { Editor = editor, OnExit = ReturnToMenu };
+            editor.AddChild(dash);
             var playMode = new EditorPlayMode();   // "Test Build" button -> walk the drawn building as a player (master 2026-08-09)
             editor.AddChild(playMode);
             playMode.Setup(editor, buildings, cam);
@@ -6804,11 +6805,44 @@ namespace UnturnedGodot
             // headless render-verify for the Npcs tab. Places a row of people, then SAVES AND RELOADS before the
             // shot: what you are looking at is what came back off disk, so a format that writes fine and parses
             // wrong cannot pass by leaving the in-memory list on screen.
+            // UG_NPCEDITOR=<catalog key>: open the character window on that person, prove vanilla is LOCKED,
+            // duplicate it, edit, save, and read the result back OUT OF THE CATALOG. The read-back is the point:
+            // "the window still shows what I typed" is not persistence, and that is the only thing a screenshot
+            // of an editor can ever show on its own.
+            string npcEdit = System.Environment.GetEnvironmentVariable("UG_NPCEDITOR");
+            if (!string.IsNullOrEmpty(npcEdit))
+                GetTree().CreateTimer(1.1).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Npcs;
+                    var win = dash.NpcEditor;
+                    if (win == null) { Log.Err("[npceditor] no character window on the dashboard"); return; }
+                    win.Open(npcEdit);
+                    Log.Print($"[npceditor] opened '{npcEdit}' locked={win.DebugLocked} (vanilla must be true)");
+                    win.DebugDuplicate();
+                    Log.Print($"[npceditor] after duplicate locked={win.DebugLocked} (must be false)");
+                    win.DebugSetName("Harbour Trader");
+                    win.DebugStep(0, +3);    // face
+                    win.DebugStep(3, +5);    // shirt
+                    win.DebugStep(5, -2);    // hat
+                    win.DebugStep(10, +1);   // dialogue
+                    win.DebugStep(11, +1);   // shop
+                    for (int i = 0; i < win.DebugRowCount; i++) Log.Print($"[npceditor]   {win.DebugRow(i)}");
+                    win.DebugSave();
+                    // OUT OF THE CATALOG, not out of the window: this is what a fresh session would see.
+                    var back = NpcCatalog.CharacterByKey("Harbour_Trader");
+                    Log.Print(back == null
+                        ? "[npceditor] PERSIST FAIL -- 'Harbour_Trader' is not in the catalog after save"
+                        : $"[npceditor] persisted: {back.Name} face={back.Face} shirt={back.Shirt} hat={back.Hat} dialogue={back.Dialogue} shop='{back.Shop}' custom={NpcCatalog.IsCustom(back.Key)}");
+                };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORNPCS") == "1")
                 GetTree().CreateTimer(0.8).Timeout += () =>
                 {
                     editor.Mode = EEditorMode.Npcs;
                     if (npcs.Keys.Count == 0) { Log.Err("[editornpcs] the catalog is empty -- nothing to place"); return; }
+                    // The tab LOADS what a previous run saved, so the round-trip check has to count from there.
+                    // Comparing against `n` alone reported MISMATCH on a perfectly good save the second time the
+                    // fixture ran -- an assertion that fails on a clean rerun is one people learn to ignore.
+                    int before = npcs.Count;
                     var at = spawns.Positions.Count > 0 ? spawns.Positions[0] : cam.GlobalPosition - new Vector3(0f, 8f, 0f);
                     string[] want = { "Chef", "Mechanic", "Pilot", "Medic", "Pirate" };
                     int n = 0;
@@ -6829,7 +6863,8 @@ namespace UnturnedGodot
                         n++;
                     }
                     int saved = npcs.DebugSaveThenReload();
-                    Log.Print($"[editornpcs] placed {n}, saved {saved}, reloaded {npcs.Count} -- round-trip {(saved == npcs.Count && npcs.Count == n ? "OK" : "MISMATCH")}");
+                    bool ok = saved == npcs.Count && npcs.Count == before + n;
+                    Log.Print($"[editornpcs] had {before}, placed {n}, saved {saved}, reloaded {npcs.Count} -- round-trip {(ok ? "OK" : "MISMATCH")}");
                     foreach (var pl in npcs.DebugPlaced) Log.Print($"[editornpcs]   {pl.Key} at {pl.Pos} yaw {pl.Yaw:0.#}");
                     var eye = at + new Vector3(0f, 2.6f, 4.4f);
                     if (res.Terr != null) eye.Y = res.Terr.SampleHeight(eye.X, eye.Z) + 2.4f;

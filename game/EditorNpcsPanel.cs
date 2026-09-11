@@ -20,9 +20,12 @@ namespace UnturnedGodot
 
         public EditorNpcsPanel(EditorNpcs npcs) { _npcs = npcs; }
 
-        /// <summary>Raised when the pencil on a row is pressed. Wired by the dashboard to the character editor,
-        /// so this panel does not have to know that window exists.</summary>
+        /// <summary>Raised when a row's edit/view button is pressed. Wired by the dashboard to the character
+        /// editor, so this panel does not have to know that window exists.</summary>
         [Signal] public delegate void EditRequestedEventHandler(string key);
+
+        /// <summary>Raised by the New button (master: "is there a 'create new npc' button?").</summary>
+        [Signal] public delegate void NewRequestedEventHandler();
 
         public override void _Ready()
         {
@@ -36,6 +39,10 @@ namespace UnturnedGodot
             var head = new Label { Text = "NPCS" };
             head.AddThemeFontSizeOverride("font_size", 18);
             box.AddChild(head);
+
+            var mk = new Button { Text = "+  New character", CustomMinimumSize = new Vector2(0, 28) };
+            mk.Pressed += () => EmitSignal(SignalName.NewRequested);
+            box.AddChild(mk);
 
             _picked = Dim("");
             box.AddChild(_picked);
@@ -54,45 +61,63 @@ namespace UnturnedGodot
             _rows.AddThemeConstantOverride("separation", 1);
             scroll.AddChild(_rows);
 
-            for (int i = 0; i < _npcs.Keys.Count; i++)
-            {
-                string key = _npcs.Keys[i];
-                int idx = i;   // captured: IReadOnlyList has no IndexOf, and re-deriving it per click is a scan
-                var def = NpcCatalog.CharacterByKey(key);
-                var row = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-                row.AddThemeConstantOverride("separation", 2);
-                _rows.AddChild(row);
-
-                string k = key;
-                var b = new Button
-                {
-                    Text = TradeRules.PlainText(def?.Name) is { Length: > 0 } n ? n : key,
-                    Alignment = HorizontalAlignment.Left,
-                    SizeFlagsHorizontal = SizeFlags.ExpandFill,
-                    CustomMinimumSize = new Vector2(0, 26),
-                    ClipText = true,
-                };
-                b.Pressed += () => { _npcs.SetPick(idx); Refresh(); };
-                row.AddChild(b);
-
-                var count = new Label { Text = "", CustomMinimumSize = new Vector2(24, 0), HorizontalAlignment = HorizontalAlignment.Right };
-                count.AddThemeFontSizeOverride("font_size", 11);
-                row.AddChild(count);
-
-                // The way into the character editor. On the ROW rather than one button for "the selected one":
-                // you edit a person by pointing at them, and a mode you have to select into first is a mode you
-                // forget you are in.
-                var edit = new Button { Text = "✎", CustomMinimumSize = new Vector2(26, 26), TooltipText = "Edit appearance, clothes, dialogue and trades" };
-                edit.Pressed += () => EmitSignal(SignalName.EditRequested, k);
-                row.AddChild(edit);
-
-                _entries.Add((k, b, count));
-            }
+            BuildRows();
 
             box.AddChild(new HSeparator());
             _summary = Dim("");
             box.AddChild(_summary);
             Refresh();
+        }
+
+
+        /// <summary>One row per catalog character. Split out of _Ready so Rebuild can re-run it.</summary>
+        void BuildRows()
+        {
+                for (int i = 0; i < _npcs.Keys.Count; i++)
+                {
+                    string key = _npcs.Keys[i];
+                    int idx = i;   // captured: IReadOnlyList has no IndexOf, and re-deriving it per click is a scan
+                    var def = NpcCatalog.CharacterByKey(key);
+                    var row = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+                    row.AddThemeConstantOverride("separation", 2);
+                    _rows.AddChild(row);
+
+                    string k = key;
+                    var b = new Button
+                    {
+                        Text = TradeRules.PlainText(def?.Name) is { Length: > 0 } n ? n : key,
+                        Alignment = HorizontalAlignment.Left,
+                        SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                        CustomMinimumSize = new Vector2(0, 26),
+                        ClipText = true,
+                    };
+                    b.Pressed += () => { _npcs.SetPick(idx); Refresh(); };
+                    row.AddChild(b);
+
+                    var count = new Label { Text = "", CustomMinimumSize = new Vector2(24, 0), HorizontalAlignment = HorizontalAlignment.Right };
+                    count.AddThemeFontSizeOverride("font_size", 11);
+                    row.AddChild(count);
+
+                    // The way into the character editor. On the ROW rather than one button for "the selected one":
+                    // you edit a person by pointing at them, and a mode you have to select into first is a mode you
+                    // forget you are in.
+                    //
+                    // ⚠ THE ICON TELLS YOU WHETHER IT WILL LET YOU. Vanilla characters are locked (master: "lock all
+                    // the vanilla game npcs from edits"), so they get a padlock -- the window still opens, to look at
+                    // them and to duplicate, but a pencil on a row you cannot edit is a promise the window breaks.
+                    bool custom = NpcCatalog.IsCustom(key);
+                    var edit = new Button
+                    {
+                        Text = custom ? "✎" : "🔒",
+                        CustomMinimumSize = new Vector2(26, 26),
+                        TooltipText = custom ? "Edit appearance, clothes, dialogue and trades"
+                                             : "Vanilla character — view, or duplicate into an editable copy",
+                    };
+                    edit.Pressed += () => EmitSignal(SignalName.EditRequested, k);
+                    row.AddChild(edit);
+
+                    _entries.Add((k, b, count));
+                }
         }
 
         static Label Dim(string t)
@@ -120,6 +145,18 @@ namespace UnturnedGodot
             }
             _picked.Text = "placing:  " + _npcs.PickName;
             _summary.Text = $"{total} placed  ·  saves to editor_<map>_npcs.txt";
+        }
+
+        /// <summary>Rebuild the roster from the catalog. Called when the character editor saves a NEW key --
+        /// a list built once at _Ready cannot show a person who did not exist then, and "my new character is
+        /// missing" would be a reopen-the-editor bug rather than the one-line refresh it is.</summary>
+        public void Rebuild()
+        {
+            foreach (var c in _rows.GetChildren()) ((Node)c).QueueFree();
+            _entries.Clear();
+            _npcs.ReloadKeys();
+            BuildRows();
+            Refresh();
         }
 
         double _t;

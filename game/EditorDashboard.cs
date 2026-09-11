@@ -18,6 +18,11 @@ namespace UnturnedGodot
         EditorRoadsPanel _roadsPanel;       // the road/rail AND river tool buttons (shown only in Environment mode)
         EditorBuildingsPanel _buildPanel;   // the Level-tab building tool (shares the tab with the browser)
         EditorNpcsPanel _npcsPanel;         // the NPC roster (shown only in Npcs mode)
+        NpcEditorUI _npcEditor;             // the per-character window, opened from a roster row
+        /// <summary>The character window, for the headless verify hook. It is built here because this is what
+        /// owns the roster that opens it; a caller that wants to drive it should not have to walk the tree.</summary>
+        public NpcEditorUI NpcEditor => _npcEditor;
+        public EditorNpcsPanel NpcsPanel => _npcsPanel;
         readonly Dictionary<EEditorMode, Button> _tabs = new();
         Label _toast; double _toastT;
         Button _exitBtn; bool _exitArmed; double _exitArmT;   // two-step exit while there is unsaved work                       // transient centered message (source EditorUI.message / EEditorMessage)
@@ -115,7 +120,13 @@ namespace UnturnedGodot
             {
                 _npcsPanel = new EditorNpcsPanel(Editor.Npcs);
                 AddChild(_npcsPanel);
-                _npcsPanel.EditRequested += key => ShowMessage($"character editor for {key} -- next commit", 2.5);
+                _npcEditor = new NpcEditorUI();
+                AddChild(_npcEditor);
+                _npcsPanel.EditRequested += key => _npcEditor.Open(key);
+                _npcsPanel.NewRequested += () => _npcEditor.OpenNew();
+                // A new character has to reach the roster, and the roster is what you place FROM -- otherwise
+                // you make somebody and then cannot put them anywhere.
+                _npcEditor.Saved += _ => _npcsPanel.Rebuild();
             }
             if (Editor?.RoadDrawEd != null || Editor?.RoadsEd != null || Editor?.RiverEd != null) { _roadsPanel = new EditorRoadsPanel(Editor.RoadDrawEd, Editor.RoadsEd, Editor.RiverEd); AddChild(_roadsPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
