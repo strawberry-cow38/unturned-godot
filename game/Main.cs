@@ -113,6 +113,7 @@ namespace UnturnedGodot
         };
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
+        float _resFixT;   // UG_RES: re-assert the benchmark window size past the project's maximized default
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
         WeatherManager _stormWm; double _stormT; float[] _stormStrikes; int _stormStrikeIdx;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s,s,s>: fire lightning strikes at those times for the --write-movie storm demo
@@ -8955,6 +8956,35 @@ namespace UnturnedGodot
                 }
                 else if (ph == 3) { Log.Print("[terrperf] done"); _tpFrame++; }
             }
+            // UG_RES has to be RE-ASSERTED. The project opens Maximized (display/window/size/mode=2) and the
+            // platform applies that AFTER _Ready, so the size ApplyResolution set during boot is silently undone --
+            // the window comes up at panel size and the run reports a resolution nobody asked for. Re-apply for the
+            // first few seconds, only while it actually disagrees, and only when the override is in play.
+            // UG_RES=WxH: render EXACTLY that many pixels, so a benchmark's label and its workload are one fact.
+            //
+            // Setting the window alone does not do it. The render target comes out at window^2 / ContentScaleSize,
+            // and ContentScaleSize is 2560x1440 from project.godot -- measured at two very different window sizes:
+            // 2880 wide rendered 3240 (2880^2/2560 = 3240) and 1024 wide rendered 410 (1024^2/2560 = 409.6). So the
+            // stretch base has to move with the window, which is the same trick UG_VM_NATIVE_SIZE uses at line ~833.
+            //
+            // Re-asserted for a few seconds because the project opens Maximized (display/window/size/mode=2) and the
+            // platform applies that AFTER _Ready, silently undoing a size set during boot.
+            if (_resFixT < 8f && System.Environment.GetEnvironmentVariable("UG_RES") is string _ugr && _ugr.Contains('x'))
+            {
+                _resFixT += (float)delta;
+                var _want = _ugr.Split('x');
+                if (_want.Length == 2 && int.TryParse(_want[0], out int _ww) && int.TryParse(_want[1], out int _wh) && _ww > 0 && _wh > 0)
+                {
+                    var _tgt = new Vector2I(_ww, _wh);
+                    if (DisplayServer.WindowGetSize() != _tgt || DisplayServer.WindowGetMode() != DisplayServer.WindowMode.Windowed)
+                    {
+                        DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
+                        DisplayServer.WindowSetSize(_tgt);
+                    }
+                    var _w = GetWindow();
+                    if (_w != null && _w.ContentScaleSize != _tgt) _w.ContentScaleSize = _tgt;
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
@@ -8965,7 +8995,14 @@ namespace UnturnedGodot
                 // and an fps quoted without the pixel count it was measured at is a number about the wrong object.
                 var _rt = GetViewport().GetTexture();
                 double _vram = Performance.GetMonitor(Performance.Monitor.RenderVideoMemUsed) / (1024.0 * 1024.0);
-                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}");
+                // ACTIVE BODIES, beside the draw count. A camera proved identical is not a scene proved
+                // identical: colliders stream on the render cull distance, so a run with more draws has more
+                // physics resident, and a physics-ms gap between two GPUs can be nothing but that. Without
+                // this the difference reads as a hardware story, which is the more interesting answer and
+                // therefore the one to distrust.
+                long _act = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.ActiveObjects);
+                long _pairs = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.CollisionPairs);
+                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} bodies={_act} pairs={_pairs} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
