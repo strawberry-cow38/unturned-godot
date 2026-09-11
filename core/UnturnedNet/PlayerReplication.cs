@@ -199,6 +199,14 @@ namespace UnturnedGodot.Net
         /// client shoving, which is what stops a carjack being a launch-anything primitive.</summary>
         public const byte CommandCarjack = 56;
 
+        // v47 -- the conversation, server-side. Each names a thing the player is LOOKING AT and nothing that
+        // could be lied about: which dialogue, which of its responses, which vendor line. Whether that response
+        // was ever visible, whether the quest is finished and whether the bag can pay are all the server's.
+        public const byte CommandNpcTalk = 57;
+        public const byte CommandNpcChoose = 58;
+        public const byte CommandNpcClose = 59;
+        public const byte CommandNpcTrade = 60;
+
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
 
@@ -249,6 +257,7 @@ namespace UnturnedGodot.Net
         /// LOOPING gestures -- hands up, cuffed, sat down -- stay on the entity, where a late joiner can find
         /// them. Same split the melee swing and the stance already have.</summary>
         public const byte EventPlayerGesture = 44;
+        public const byte EventNpcState = 45;          // v47: to the OWNER only -- their flags, quest statuses and kill counters, whole. The client draws its log from this and never reads it back; the server is the only place it lives.
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)

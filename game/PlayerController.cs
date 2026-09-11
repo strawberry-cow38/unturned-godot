@@ -2797,6 +2797,55 @@ namespace UnturnedGodot
         /// would answer questions differently from the game, and the disagreement would look like a quest bug.</summary>
         public SDG.Unturned.INpcWorld NpcState => NpcWorld;
 
+        // ---- v47: IN MP THE SERVER DECIDES ALL OF THIS ----------------------------------------------------
+        // Set by ClientWorldSession / MpLoopback. Null in singleplayer, where applying locally IS the
+        // authority. When they are set, every one of these paths SENDS and changes nothing: the answer comes
+        // back as an NpcStateEvent, which is the only thing that writes the flags, quests and open dialogue.
+        // A client that applied its own guess as well would drift from the server's record and have its next
+        // response refused, with nothing on either side saying why.
+        public System.Action<int> NetNpcTalk;
+        public System.Action<int, byte> NetNpcChoose;
+        public System.Action NetNpcClose;
+        public System.Action<string, byte, (ushort Id, byte N)[]> NetNpcTrade;
+        public bool NpcServerAuthoritative => NetNpcChoose != null;
+
+        /// <summary>Replace the local copy with the server's. WHOLESALE, not merged: the server's state is the
+        /// state, and merging would let a stale local flag survive something that cleared it.</summary>
+        /// <summary>Count of server state pushes applied, for the harness. A zero here after a Talk is the
+        /// whole diagnosis: the command went out and nothing came back.</summary>
+        public int DebugNpcStatePushes { get; private set; }
+
+        public void ApplyNetNpcState(System.Collections.Generic.IEnumerable<(ushort Id, short Value)> flags,
+                                     System.Collections.Generic.IEnumerable<(ushort Id, byte Status)> quests,
+                                     System.Collections.Generic.IEnumerable<(ushort Quest, byte Index, ushort Value)> progress,
+                                     int reputation, int openDialogue, string vendor)
+        {
+            DebugNpcStatePushes++;
+            if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1")
+                Log.Print($"[npcnet] <- state #{DebugNpcStatePushes} dialogue={openDialogue} vendor='{vendor}'");
+            _npcFlags.Clear();
+            if (flags != null) foreach (var (id, v) in flags) _npcFlags[id] = v;
+            _npcQuests.Clear();
+            if (quests != null) foreach (var (id, st) in quests) _npcQuests[id] = (SDG.Unturned.ENpcQuestStatus)st;
+            _npcQuestProgress.Clear();
+            if (progress != null) foreach (var (q, i, v) in progress) _npcQuestProgress[(q, i)] = v;
+            _npcReputation = reputation;
+
+            // The conversation follows the server too. It is the SERVER's OpenDialogue that every later
+            // response is checked against, so the panel has to be showing that one and not a guess.
+            if (openDialogue == 0) { if (CurrentDialogue != null) CloseDialogueLocal(); }
+            else
+            {
+                var d = NpcCatalog.Dialogue(openDialogue);
+                if (d != null && (CurrentDialogue == null || CurrentDialogue.Id != d.Id)) OpenDialogueLocal(d);
+            }
+            if (!string.IsNullOrEmpty(vendor))
+            {
+                var v = NpcCatalog.Vendor(vendor);
+                if (v != null) OpenTrade(v);
+            }
+        }
+
         /// <summary>Which quest the top-right summary follows. 0 means AUTO -- follow whatever is most worth
         /// looking at -- so a player who never opens the log still gets a useful corner, and one who picks a
         /// quest keeps it even when another becomes ready.</summary>
@@ -2856,12 +2905,27 @@ namespace UnturnedGodot
                 return;
             }
             CurrentSpeaker = npc;
+            // WHO you are talking to is local -- it is a thing standing in front of you and the panel needs a
+            // name for its header. WHICH dialogue you are IN is the server's, because that is what every later
+            // response is validated against. So in MP this asks and waits.
+            if (NetNpcTalk != null)
+            {
+                // The MP path asks and waits. Traced, because "the server agreed and told nobody" is silent on
+                // both sides -- the panel simply never opens and nothing anywhere says why.
+                if (System.Environment.GetEnvironmentVariable("UG_UIGEOM") == "1") Log.Print($"[npcnet] -> talk {d.Id}");
+                NetNpcTalk(d.Id);
+                return;
+            }
             OpenDialogue(d);
         }
 
         /// <summary>Enter a dialogue node: pick the message its conditions allow and list the responses this
         /// player can actually see.</summary>
-        public void OpenDialogue(SDG.Unturned.NpcDialogue d)
+        public void OpenDialogue(SDG.Unturned.NpcDialogue d) => OpenDialogueLocal(d);
+
+        /// <summary>Draw a dialogue node. LOCAL: it picks a message and lists responses, both read-only against
+        /// the world, so it is safe to run on the server's say-so. It is the CHOOSING that is authoritative.</summary>
+        void OpenDialogueLocal(SDG.Unturned.NpcDialogue d)
         {
             CurrentDialogue = d;
             if (d == null) { CurrentSpeaker = null; return; }
@@ -2885,6 +2949,11 @@ namespace UnturnedGodot
             if (d == null || (uint)index >= (uint)d.Responses.Length) return false;
             var r = d.Responses[index];
             if (!SDG.Unturned.DialogueRules.PassesAll(r.Conditions, NpcWorld)) return false;   // not a response this player can see
+            // ⚠ IN MP THIS IS WHERE IT STOPS. The check above is the CLIENT's, and it exists only so the panel
+            // does not offer a line it knows is gated; the server runs the identical predicate and its answer is
+            // the one that counts. Everything below mutates flags, quests and inventory, which is precisely the
+            // set a client must not be the authority on.
+            if (NetNpcChoose != null) { NetNpcChoose(d.Id, (byte)index); return true; }
             SDG.Unturned.DialogueRules.Grant(r.Rewards, NpcWorld);
             // A response can hand out a quest directly (Response_N_Quest), which is separate from a Quest
             // REWARD and is how most of them are actually given. Taking one you already hold is a no-op.
@@ -2932,8 +3001,18 @@ namespace UnturnedGodot
         public bool TradeOpen => _tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen;
         internal TradeUI TradeWindow => _tradeUI;
 
+        /// <summary>Shut the panel without telling anybody -- the local half of closing. Used by the server
+        /// state applier, which is already acting ON the server's word and must not answer back.</summary>
+        void CloseDialogueLocal()
+        {
+            CurrentDialogue = null; CurrentSpeaker = null;
+            if (_tradeUI != null && IsInstanceValid(_tradeUI) && _tradeUI.IsOpen) _tradeUI.Close();
+            if (_dialogueUI != null && IsInstanceValid(_dialogueUI)) _dialogueUI.Close();
+        }
+
         public void CloseDialogue()
         {
+            NetNpcClose?.Invoke();
             CurrentDialogue = null; CurrentSpeaker = null;
             // Shut the trade first: it sits ON the conversation, so leaving it up over a closed dialogue is a
             // window with nothing behind it and no way back.

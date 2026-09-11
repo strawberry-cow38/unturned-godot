@@ -269,6 +269,13 @@ namespace UnturnedGodot
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteServerCraftQueue(e.Jobs); };
+                // v47: the owner's NPC state, whole. This is the ONLY thing that writes the client's flags,
+                // quests and open dialogue in MP -- the local paths all send and wait for this.
+                Client.NpcState += e =>
+                {
+                    if (Shell == null || !IsInstanceValid(Shell)) return;
+                    Shell.ApplyNetNpcState(e.Flags, e.Quests, e.Progress, e.Reputation, e.OpenDialogue, e.Vendor);
+                };
             Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
             // SP/MP unify: the server's door/bed decisions land on the nodes. These are the ONLY thing that
             // moves a replicated door or repaints a bed -- the client never applied anything on send, so
@@ -591,6 +598,10 @@ namespace UnturnedGodot
 shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, rid, n);
             shell.NetWearClothing = (page, x, y, slot) => Client.SendWearClothing(page, x, y, slot);
             shell.NetUnwearClothing = (slot, pg, px, py) => Client.SendUnwearClothing(slot, pg, px, py);
+            shell.NetNpcTalk = d => Client.SendNpcTalk(d);
+            shell.NetNpcChoose = (d, i) => Client.SendNpcChoose(d, i);
+            shell.NetNpcClose = () => Client.SendNpcClose();
+            shell.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
             shell.NetCraft = index => Client.SendCraft(index);
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>

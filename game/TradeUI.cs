@@ -300,6 +300,22 @@ namespace UnturnedGodot
         void Settle()
         {
             if (_want == null || !TradeRules.CanAfford(_vendor, _want, _offer)) return;
+            // ⚠ IN MP THE SERVER MOVES THE GOODS. The affordability check above is the CLIENT's, and it is
+            // there so the button greys out sensibly -- it is not what makes the trade legal. Sending the pile
+            // and letting the server re-check it against the bag that actually exists is the whole point:
+            // "these eleven things cover the price" is a claim about an inventory the client does not own.
+            int sellIndex = System.Array.IndexOf(_vendor.Selling, _want);
+            if (_player?.NetNpcTrade != null && sellIndex >= 0)
+            {
+                var wire = new (ushort, byte)[_offer.Count];
+                int wi = 0;
+                foreach (var kv in _offer) wire[wi++] = (kv.Key, (byte)Mathf.Min(kv.Value, 255));
+                _player.NetNpcTrade(_vendor.Guid, (byte)sellIndex, wire);
+                _offer.Clear();
+                _want = null;
+                Redraw();
+                return;
+            }
             var inv = Inv;
             if (inv == null) return;
             // Take the goods BEFORE handing anything over. The bag is grid-backed and tryAddItem can fail on a

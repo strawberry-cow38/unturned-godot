@@ -1107,7 +1107,7 @@ namespace UnturnedGodot
         /// unless the variable is set.</summary>
         void TickBootCommand(double delta)
         {
-            if (_bootCmdRun) return;
+            if (_bootCmdRun) { TickBootQueue(delta); return; }
             string cmd = System.Environment.GetEnvironmentVariable("UG_BOOTCMD");
             if (string.IsNullOrEmpty(cmd)) { _bootCmdRun = true; return; }
             float at = 3f;
@@ -1116,16 +1116,45 @@ namespace UnturnedGodot
             _bootCmdElapsed += (float)delta;
             if (_bootCmdElapsed < at) return;
             _bootCmdRun = true;
-            var console = FindDevConsole(this);
-            if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); return; }
             // SEVERAL LINES, separated by ';'. Most states worth capturing are a SETUP plus an ACTION -- put
             // items in the bag, then open the window that shows them -- and with one command per boot the only
             // way to render that was to teach the action command to do the setup too, which puts harness
             // scaffolding inside gameplay code. Splitting here keeps it in the harness where it belongs.
+            //
+            // ⚠ AND `wait <seconds>` BETWEEN THEM, because a server-authoritative action is ASYNCHRONOUS. In MP
+            // "talk to him" is a request; the conversation opens when the server's reply lands a frame later.
+            // Running the next command in the same frame asked a question of a panel that did not exist yet --
+            // which looked exactly like the feature being broken, and was the fixture being too fast.
             foreach (var one in cmd.Split(';'))
             {
                 string line = one.Trim();
                 if (line.Length == 0) continue;
+                _bootQueue.Enqueue(line);
+            }
+        }
+
+        readonly System.Collections.Generic.Queue<string> _bootQueue = new System.Collections.Generic.Queue<string>();
+        float _bootWait;
+
+        /// <summary>Drain the boot-command queue, honouring `wait <seconds>`. Separate from TickBootCommand so
+        /// the AT-delay logic there stays about when to START, and this stays about pacing what follows.</summary>
+        void TickBootQueue(double delta)
+        {
+            if (_bootQueue.Count == 0) return;
+            if (_bootWait > 0f) { _bootWait -= (float)delta; if (_bootWait > 0f) return; _bootWait = 0f; }
+            var console = FindDevConsole(this);
+            if (console == null) { Log.Err("[BOOTCMD] no DevConsole in the tree -- nothing run"); _bootQueue.Clear(); return; }
+            while (_bootQueue.Count > 0)
+            {
+                string line = _bootQueue.Dequeue();
+                if (line.StartsWith("wait ", System.StringComparison.OrdinalIgnoreCase)
+                    && float.TryParse(line.Substring(5).Trim(), System.Globalization.NumberStyles.Float,
+                                      System.Globalization.CultureInfo.InvariantCulture, out float secs))
+                {
+                    _bootWait = Mathf.Max(0f, secs);
+                    Log.Print($"[BOOTCMD] wait {_bootWait:0.##}s");
+                    return;
+                }
                 Log.Print($"[BOOTCMD] {line}");
                 console.DebugRun(line);
             }
