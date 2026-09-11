@@ -56,6 +56,11 @@ namespace UnturnedGodot.Net
         /// existed loads with the standard start instead of failing, and a world that never set one is the
         /// same as one that set the default.</summary>
         public int StartDayOfYear { get; set; } = SDG.Unturned.WorldTemperature.DefaultStartDayOfYear;
+
+        /// <summary>The world's LOOT SEED, chosen or rolled before play. Saved so a reload does not re-roll
+        /// every container -- which is the whole feature: without persisting it, "deterministic" would mean
+        /// "consistent until you quit". 0 is a legal seed, not a sentinel for unset.</summary>
+        public ulong LootSeedValue { get; set; }
         public float DayLengthSeconds { get; set; }
         /// <summary>The mains switch: every GridSource fixture's ToggledOn bit. `toggleglobalpower` sets them
         /// all together, so the whole grid state is one boolean -- see ServerTransactions.RunConsole.</summary>
@@ -297,6 +302,7 @@ namespace UnturnedGodot.Net
                 Day = day,
                 TimeOfDay01 = timeOfDay01,
                 StartDayOfYear = SDG.Unturned.WorldTemperature.StartDayOfYear,
+                LootSeedValue = SDG.Unturned.LootSeed.World,
                 DayLengthSeconds = dayLengthSeconds,
                 GlobalPower = AnyGridSourceOn(host),
             };
