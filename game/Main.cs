@@ -72,6 +72,7 @@ namespace UnturnedGodot
         bool _gunLayerTest;                          // UG_GUNLAYER=1 (+--gun): legs walk while the arms hold/aim/reload the gun via the overlay
         string _glEquipClip, _glReloadClip, _glHammerClip;   // resolved overlay clips for the gun-layer test (+ the empty-reload rack)
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
+        System.Func<bool> _vmArmsShirtPending;       // UG_VMSHIRT: runs once the arms rig exists (built lazily in Viewmodel)
         bool _vmInspected;                           // UG_INSPECT_AT fires PlayInspect once
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
@@ -1724,6 +1725,24 @@ namespace UnturnedGodot
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
+            // UG_VMSHIRT=<shirt id> [UG_VMPANTS=<id>]: paint CLOTHING onto the viewmodel arms. The harness could
+            // build arms and could build a dressed BODY (--clothtest) but had no way to put a sleeve on a
+            // first-person arm, which is precisely where master reported the wrap looking wrong -- so the one
+            // view that mattered was the one nothing could render. Same reasoning as the eating driver below:
+            // a gap in my own tool is not a reason to report something unverifiable.
+            if (System.Environment.GetEnvironmentVariable("UG_VMSHIRT") is string _vs && ushort.TryParse(_vs, out ushort _vsid))
+            {
+                var _vmShirt = ClothingContent.LoadTextures(_vsid);
+                _vmArmsShirtPending = () =>
+                {
+                    if (_vm?.ArmsRig is not RiggedCharacter ar) return false;
+                    ar.SetShirt(_vmShirt.Albedo, _vmShirt.Emission, _vmShirt.Metallic);
+                    if (System.Environment.GetEnvironmentVariable("UG_VMPANTS") is string _vp && ushort.TryParse(_vp, out ushort _vpid))
+                    { var t = ClothingContent.LoadTextures(_vpid); ar.SetPants(t.Albedo, t.Emission, t.Metallic); }
+                    Log.Print($"[vm] painted shirt {_vsid} onto the arms (albedo={_vmShirt.Albedo != null})");
+                    return true;
+                };
+            }
             _vmMelee = isMelee || isFists || isDeploy || isWire || isFuel || isConsumable;
             // EATING IS A THING THE HARNESS CAN SHOW NOW (strawberry 2026-09-10: "its YOUR demo harness. if theres
             // something it cant do, write it"). I had reported the consumable part rip as unverifiable because
@@ -9036,6 +9055,7 @@ namespace UnturnedGodot
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 // UG_SIGHT=<mesh.txt>: mount a specific sight/scope on the gun once equipped, for a scope-showcase demo.
+                if (_vmArmsShirtPending != null && _vm != null && _vmArmsShirtPending()) _vmArmsShirtPending = null;
                 if (_vmTest && _vm != null && !_vmSightSet && _vm.IsEquipComplete && System.Environment.GetEnvironmentVariable("UG_SIGHT") is string _sg && _sg.Length > 0)
                 { _vm.SetSlotMesh("Sight", _sg); _vmSightSet = true; }
                 // --vm ADS demo: the equip pull-out plays first (source gates aiming until it finishes), then a

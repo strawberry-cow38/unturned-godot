@@ -23,10 +23,31 @@ namespace UnturnedGodot
             public float[] BranchZ { get; set; }
         }
 
+        /// <summary>The ripped fluid-device art, by item id. NEVER THROWS: a missing or malformed catalog
+        /// yields an EMPTY table and every caller falls back to the def's own dimensions.
+        ///
+        /// ⚠ This is loaded from DeployableDef's field initialisers -- a STATIC CONSTRUCTOR -- so anything
+        /// thrown in here comes out as TypeInitializationException on DeployableDef and EVERY deployable in
+        /// the game ceases to exist; the world build dies on the first prop that wants a fixture. A content
+        /// file being absent is an ordinary condition (a clone that was only sent .cs files has no
+        /// content/fluid at all) and must degrade, not detonate. Both halves of that were live on 2026-09-11:
+        /// master hit the missing-KEY half, and the box hit the missing-FILE half an hour later.</summary>
         static readonly Lazy<Dictionary<ushort, Spec>> Catalog = new(() =>
-            JsonSerializer.Deserialize<Dictionary<ushort, Spec>>(
-                Godot.FileAccess.GetFileAsString("res://content/fluid/catalog.json"),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }));
+        {
+            try
+            {
+                var json = Godot.FileAccess.GetFileAsString("res://content/fluid/catalog.json");
+                if (string.IsNullOrWhiteSpace(json)) { Log.Err("[fluidart] catalog.json missing/empty -- fluid devices keep their own dimensions"); return new Dictionary<ushort, Spec>(); }
+                return JsonSerializer.Deserialize<Dictionary<ushort, Spec>>(
+                           json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                       ?? new Dictionary<ushort, Spec>();
+            }
+            catch (System.Exception e)
+            {
+                Log.Err($"[fluidart] catalog.json unreadable ({e.Message}) -- fluid devices keep their own dimensions");
+                return new Dictionary<ushort, Spec>();
+            }
+        });
         static readonly Dictionary<ushort, StandardMaterial3D> Materials = new();
         static Vector3 Vec(float[] v) => new(v[0], v[1], v[2]);
         public static bool HasArt(DeployableDef def) => def?.Fluid != null && !def.ProcBox;
@@ -46,7 +67,8 @@ namespace UnturnedGodot
         }
         public static Aabb Bounds(DeployableDef def)
         {
-            var spec = Catalog.Value[def.Id];
+            if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec))
+                return new Aabb(-(def?.Size ?? Vector3.One) * 0.5f, def?.Size ?? Vector3.One);   // no art row -> the def's own box
             return new Aabb(Vec(spec.BoundsMin), Vec(spec.BoundsSize));
         }
 
@@ -54,9 +76,19 @@ namespace UnturnedGodot
             HasArt(def) && Catalog.Value.TryGetValue(def.Id, out var spec) && spec.BranchZ != null
                 ? spec.BranchZ[i] : fallback;
 
+        /// <summary>Stamp the ripped art's real bounds onto a fluid def. A device with NO row in the catalog
+        /// keeps the dimensions its own definition set.
+        ///
+        /// ⚠ THIS USED TO THROW ON A MISSING ROW, AND IT TOOK THE WHOLE GAME DOWN WITH IT. Configure is called
+        /// from DeployableDef's field initialisers, i.e. from a STATIC CONSTRUCTOR, so a KeyNotFoundException
+        /// here surfaces as TypeInitializationException on DeployableDef and every deployable in the game
+        /// stops existing -- the world build dies on the first prop that asks for a fixture. That is a
+        /// catastrophic failure mode for "this id has no art row yet", which is a perfectly ordinary state for
+        /// a device whose model has not been ripped (the pump jack, 1219). Shipped exactly that and broke
+        /// master's game with it (2026-09-11); the lookup is guarded now, as Anchor's already was.</summary>
         public static void Configure(DeployableDef def)
         {
-            var spec = Catalog.Value[def.Id];
+            if (def == null || !Catalog.Value.TryGetValue(def.Id, out var spec)) return;
             def.Size = Vec(spec.BoundsSize);
             def.Offset = spec.Offset;
             def.Radius = spec.Radius;
@@ -66,7 +98,9 @@ namespace UnturnedGodot
             ContentProvider.ParseObj($"res://content/fluid/{id}_{part}.txt");
 
         public static Mesh Preview(DeployableDef def) =>
-            Load(def.Id, Catalog.Value[def.Id].Part == null ? "body" : "preview");
+            def != null && Catalog.Value.TryGetValue(def.Id, out var spec)
+                ? Load(def.Id, spec.Part == null ? "body" : "preview")
+                : null;   // no art row -> no ripped model; the caller's own fallback draws it
 
         public static StandardMaterial3D Material(DeployableDef def)
         {
@@ -115,8 +149,7 @@ namespace UnturnedGodot
                 Name = "FluidCollider", Shape = new BoxShape3D { Size = bounds.Size },
                 Position = bounds.GetCenter(),
             });
-            var spec = Catalog.Value[def.Id];
-            if (spec.Part == null) return null;
+            if (!Catalog.Value.TryGetValue(def.Id, out var spec) || spec.Part == null) return null;   // no art row -> body only
             // Valve colour state shifts only the handle's UVs between two measured
             // palette texels; materials on all other placed valves remain shared.
             if (def.Fluid == FluidRole.Valve) material = (StandardMaterial3D)material.Duplicate();

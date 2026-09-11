@@ -374,7 +374,10 @@ namespace UnturnedGodot
         /// <summary>The retail Pump Jack item id (1219, type Oil_Pump). Named rather than spelled twice: the
         /// power port's panel anchor is keyed by it, and an id that appears in two places drifts.</summary>
         public const ushort PumpJackId = 1219;
-        public static readonly DeployableDef PumpJack      = MakeFluid(PumpJackId, "Pump Jack", FluidRole.Source, d => { d.FluidType = FluidType.Oil; d.FluidCapacity = PumpJackCapacity; d.FluidPumpsCrude = true; d.Health = 600f; });   // POWER in -> crude oil out; produces and supplies nothing unpowered
+        public static readonly DeployableDef PumpJack      = MakeFluid(PumpJackId, "Pump Jack", FluidRole.Source, d => { d.FluidType = FluidType.Oil; d.FluidCapacity = PumpJackCapacity; d.FluidPumpsCrude = true; d.Health = 600f;
+                                                                                                              // ⚠ NO FluidArt ROW (no ripped derrick model yet), so FluidArt.Configure leaves these alone and they
+                                                                                                              // have to be real numbers rather than MakeFluid's 1x1.4x1 placeholder: a pump jack is a big machine.
+                                                                                                              d.Size = new Vector3(3.2f, 3.4f, 1.8f); d.Offset = 1.7f; d.Radius = 1.6f; });   // POWER in -> crude oil out; produces and supplies nothing unpowered
         public const float PumpJackCapacity = 20000f;   // wellhead buffer (20 L) -- mirrors PumpJack.WellheadCapacityMl
         public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
