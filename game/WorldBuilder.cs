@@ -1085,7 +1085,13 @@ namespace UnturnedGodot
                 long _r0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var ranges = mesh != null ? LodTable.LevelRanges(p[0], name, LodTable.SourceFov) : null;
                 _objRangeT += System.Diagnostics.Stopwatch.GetTimestamp() - _r0;
-                if (!batched && ranges != null && ranges.Length > 1)   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
+                // UG_NOLODINST=1 keeps the retail CULL DISTANCES but skips creating the extra per-level mesh
+                // instances -- the clean A/B for what the 3,001 sibling nodes actually cost. UG_NOLOD is not
+                // that measurement: it also reverts every prop to a flat 320 m, which put TWICE as many
+                // objects in frame (5,954 -> 12,000+) and came out SLOWER, so the cull change swamped the
+                // node change. This flag moves one variable.
+                if (!batched && ranges != null && ranges.Length > 1
+                    && System.Environment.GetEnvironmentVariable("UG_NOLODINST") != "1")   // batched props get the same bands per (type, level, cell) group -- see LodPlanFor
                 {
                     // CROSSFADE THE HANDOVER, don't hard-cut it. LodTable builds contiguous bands
                     // (`r[i] = (prev, d); prev = d;`) so every level ends exactly where the next begins, and with
