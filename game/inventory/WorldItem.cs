@@ -570,7 +570,13 @@ namespace UnturnedGodot
                             {
                                 _losQuery.To = gt * _hitPts[order != null ? order[i] : i];
                                 _rays++;
-                                if (space.IntersectRay(_losQuery).Count == 0) return true;
+                                // DISPOSED, not dropped. IntersectRay returns a Godot.Collections.Dictionary --
+                                // a native handle -- and every one that is merely abandoned is registered in
+                                // Godot's disposables tracker and left for the finalizer. Those tracker nodes
+                                // were 11.5% of the game's allocations and kept the finalizer thread at ~1.2 s
+                                // per 40 s capture. We only ever read Count, so the handle can die here.
+                                using var hit = space.IntersectRay(_losQuery);
+                                if (hit.Count == 0) return true;
                             }
                             return false;
                         }
