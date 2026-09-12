@@ -838,11 +838,46 @@ namespace UnturnedGodot.Net
 
         // ---------------------------------------------------------------- file format
 
+        // A 41.5 MB save on a real PEI world, of which 38.6 MB was Containers, is what forced this. The autosave
+        // (WorldSaveDriver.AutosaveSeconds = 60) serialises the whole file on the MAIN THREAD; once that write
+        // takes longer than 60 s the next autosave is already due and the game never catches up -- measured at a
+        // permanent ~1 fps with the GPU idle at 0% and one core pegged on JSON. Two causes, both fixed here.
+        //
+        // 1. Every JarSave wrote its ten gun fields even on a tomato: -1/-1/-1/-1/-1/-1/-1/-1/false/false, ten
+        //    lines out of eighteen per item, on every item in all 696 containers. ShouldSerialize drops them when
+        //    they hold the "not a gun" sentinel. Reading is UNAFFECTED and old saves still load: the properties
+        //    carry `= -1` initialisers, so a field that is absent from the JSON lands on exactly the value that
+        //    was omitted. WhenWritingDefault could not do this -- default(short) is 0, and the sentinel is -1.
+        // 2. WriteIndented. The original note -- "a save you can open and read is a save you can debug" -- is
+        //    right, so it is kept as an opt-in rather than deleted: UG_SAVE_PRETTY=1 restores it for debugging.
         static readonly JsonSerializerOptions Json = new JsonSerializerOptions
         {
-            WriteIndented = true,   // a save you can open and read is a save you can debug
+            WriteIndented = System.Environment.GetEnvironmentVariable("UG_SAVE_PRETTY") == "1",
             DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver
+            {
+                Modifiers = { OmitUnsetGunFields },
+            },
         };
+
+        /// <summary>Drop a JarSave's gun fields when they hold the "not a gun" sentinel. Scoped to JarSave by
+        /// type so nothing else in the save is affected by a property happening to start with "Gun".</summary>
+        static void OmitUnsetGunFields(System.Text.Json.Serialization.Metadata.JsonTypeInfo ti)
+        {
+            if (ti.Type != typeof(JarSave)) return;
+            foreach (var prop in ti.Properties)
+            {
+                if (!prop.Name.StartsWith("Gun")) continue;
+                prop.ShouldSerialize = static (_, v) => v switch
+                {
+                    short sh => sh != -1,
+                    sbyte sb => sb != -1,
+                    int i => i != -1,
+                    bool b => b,
+                    _ => true,
+                };
+            }
+        }
 
         public string ToJson() => JsonSerializer.Serialize(this, Json);
 
