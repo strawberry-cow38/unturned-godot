@@ -129,18 +129,21 @@ namespace UnturnedGodot
         {
             var root = ctx?.GetTree()?.Root;
             if (root == null || System.Environment.GetEnvironmentVariable("UG_NO3DSCALE") == "1") return;
-            // UG_3DSCALE forces the 3D render scale outright, for measuring what render scaling is WORTH.
-            // Resolution is the only knob measured to move this frame at all (1080p -> 720p = +34%, while draw
-            // calls, shadow distance, volumetric fog, the water mirror and bloom all measured as null), and
-            // scaling the 3D buffer is how you buy that without shrinking the window or softening the UI.
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_3DSCALE"),
-                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                               out float forced) && forced > 0f)
-            { root.Scaling3DScale = Mathf.Clamp(forced, 0.25f, 2f); return; }
             var win = DisplayServer.WindowGetSize();
             var basis = root.ContentScaleSize;
             if (win.X <= 0 || basis.X <= 0) return;
-            root.Scaling3DScale = Mathf.Clamp((float)basis.X / win.X, 0.25f, 2f);
+            // UG_3DSCALE SUBSTITUTES THE SETTING, it does not bypass the maths. An instrument that takes a
+            // different code path than the shipped one measures the instrument: the earlier version returned
+            // early with its own Clamp, so every number I quoted for render scaling came from an expression the
+            // player never runs. Same arithmetic now, only the value differs.
+            float scale = RenderScale;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_3DSCALE"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float forced) && forced > 0f) scale = forced;
+            // The basis/window term corrects the 3D buffer for a window that differs from ContentScaleSize (the
+            // resolution bug, 6775081e). The scale multiplies it, so the player's setting composes with that
+            // correction instead of overwriting it -- at Native this is byte-identical to before.
+            root.Scaling3DScale = Mathf.Clamp((float)basis.X / win.X * scale, 0.25f, 2f);
         }
         /// <summary>The world's environment (WorldEnvironment nodes in group "world_env"): AO, bloom, SSR, sun shafts.</summary>
         public static void ApplyEnvironment(Node ctx)
@@ -182,6 +185,19 @@ namespace UnturnedGodot
         }
         public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
         public static string ShadowDistLabel(float d) => $"{d:0} m";
+
+        /// <summary>RENDER SCALE: the 3D buffer renders at this fraction of the window, the UI stays native.
+        ///
+        /// Measured on the RTX 3050 laptop at 1080p, interleaved against a repeating control (2dacc358):
+        /// 0.85 = +9.4%, 0.70 = +17.2%, against a control that agreed with itself to 1.5%. It is the ONLY knob
+        /// that moved this frame -- draw calls, shadow distance, volumetric fog, the planar water reflection and
+        /// bloom were each measured and each was null, because the frame is GPU-bound on per-pixel work.
+        ///
+        /// It is the cheapest quality trade in the game precisely because it does NOT touch the UI: text, the
+        /// HUD and the inventory grid stay pixel-native while only the world softens.</summary>
+        public static float RenderScale = 1f;
+        public static readonly float[] RenderScaleOrder = { 1f, 0.9f, 0.85f, 0.75f, 0.7f, 0.5f };
+        public static string RenderScaleLabel(float v) => v >= 0.999f ? "Native" : $"{v * 100f:0}%";
         public static void ApplyShadowDistance(Node ctx)
         {
             var tree = ctx?.GetTree(); if (tree == null) return;
@@ -378,7 +394,7 @@ namespace UnturnedGodot
                 cfg.SetValue("graphics", "shadows", (int)Shadows);
                 cfg.SetValue("graphics", "aniso", Aniso);
                 cfg.SetValue("graphics", "draw_distance", DrawDistance);
-                cfg.SetValue("graphics", "shadow_distance", ShadowDistance);
+                cfg.SetValue("graphics", "shadow_distance", ShadowDistance); cfg.SetValue("graphics", "render_scale", RenderScale);
                 cfg.SetValue("graphics", "resolution_x", Resolution.X);
                 cfg.SetValue("graphics", "resolution_y", Resolution.Y);
                 cfg.SetValue("graphics", "fullscreen", (int)Fullscreen); cfg.SetValue("graphics", "ui_scale", UiScale); cfg.SetValue("graphics", "target_fps", TargetFps); cfg.SetValue("graphics", "vsync", VSync);
@@ -407,6 +423,7 @@ namespace UnturnedGodot
                 Aniso = (int)cfg.GetValue("graphics", "aniso", Aniso);
                 DrawDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "draw_distance", DrawDistance), 0.25f, 1f);
                 ShadowDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "shadow_distance", ShadowDistance), 40f, 300f);
+                RenderScale = Mathf.Clamp((float)cfg.GetValue("graphics", "render_scale", RenderScale), 0.25f, 1f);
                 Resolution = new Vector2I((int)cfg.GetValue("graphics", "resolution_x", Resolution.X), (int)cfg.GetValue("graphics", "resolution_y", Resolution.Y));
                 Fullscreen = (FullscreenMode)Mathf.Clamp((int)cfg.GetValue("graphics", "fullscreen", (int)Fullscreen), 0, 2);
                 UiScale = Mathf.Clamp((float)cfg.GetValue("graphics", "ui_scale", UiScale), 0.5f, 2f);

@@ -46,6 +46,12 @@ namespace UnturnedGodot
             Row(vbox, "Shadow distance",
                 () => GraphicsOptions.ShadowDistLabel(GraphicsOptions.ShadowDistance),
                 () => { GraphicsOptions.ShadowDistance = GraphicsOptions.Next(GraphicsOptions.ShadowDistOrder, GraphicsOptions.ShadowDistance); GraphicsOptions.ApplyShadowDistance(ctx); });
+            // RENDER SCALE. Measured (2dacc358) as the only setting that moves this frame at all on the 3050
+            // laptop: 0.85 = +9.4%, 0.70 = +17.2%, where draw calls, shadow distance, fog, the water mirror and
+            // bloom each measured null. Applies immediately -- no restart, unlike the thread-model row.
+            Row(vbox, "Render scale",
+                () => GraphicsOptions.RenderScaleLabel(GraphicsOptions.RenderScale),
+                () => { GraphicsOptions.RenderScale = GraphicsOptions.Next(GraphicsOptions.RenderScaleOrder, GraphicsOptions.RenderScale); GraphicsOptions.Apply3DScale(ctx); });
 
             Row(vbox, "Render distance",
                 () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
@@ -135,6 +141,8 @@ namespace UnturnedGodot
                 () => { GraphicsOptions.Shadows = GraphicsOptions.Next(GraphicsOptions.ShadowOrder, GraphicsOptions.Shadows); GraphicsOptions.ApplyShadows(); });
             Row(vbox, "Shadow distance", () => GraphicsOptions.ShadowDistLabel(GraphicsOptions.ShadowDistance),
                 () => { GraphicsOptions.ShadowDistance = GraphicsOptions.Next(GraphicsOptions.ShadowDistOrder, GraphicsOptions.ShadowDistance); GraphicsOptions.ApplyShadowDistance(ctx); });
+            Row(vbox, "Render scale", () => GraphicsOptions.RenderScaleLabel(GraphicsOptions.RenderScale),
+                () => { GraphicsOptions.RenderScale = GraphicsOptions.Next(GraphicsOptions.RenderScaleOrder, GraphicsOptions.RenderScale); GraphicsOptions.Apply3DScale(ctx); });
             Row(vbox, "Render distance", () => GraphicsOptions.DrawLabel(GraphicsOptions.DrawDistance),
                 () => { GraphicsOptions.DrawDistance = GraphicsOptions.Next(GraphicsOptions.DrawOrder, GraphicsOptions.DrawDistance);
                         GraphicsOptions.ApplyRenderDistance(ctx?.GetTree()?.Root); });
