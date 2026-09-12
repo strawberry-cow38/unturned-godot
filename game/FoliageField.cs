@@ -144,7 +144,27 @@ namespace UnturnedGodot
             // retail's max; this just makes it the source's number rather than a coincidence.
             // (Foliage sits on the SKY render layer in retail so the per-layer cull does NOT bound it --
             // the tile draw distance is the whole rule.)
-            const float Cell = 96f, CullRange = 5 * 32f;
+            const float Cell = 96f;
+            // UG_FOLIAGECULL (metres) prices GRASS OVERDRAW, which is the last untested pixel cost.
+            // The frame is GPU-bound on per-pixel work -- draw calls, shadow distance, volumetric fog, the
+            // planar water mirror and bloom were each measured and each was null, while resolution was worth
+            // +34%. Foliage is 667,254 alpha-tested instances inside this range in only 1,731 batches, so it is
+            // nearly free in DRAW CALLS and potentially expensive in PIXELS: alpha-scissor defeats early-Z, so
+            // every blade shades whatever is behind it. Exactly the shape of cost that hides from a draw counter.
+            // Diagnostic only; unset changes nothing.
+            // ⚠ 0 MEANS "SKIP IT ENTIRELY", NOT "range zero". Godot reads VisibilityRangeEnd = 0 as NO LIMIT,
+            // so the obvious spelling of this ablation rendered grass to infinity -- the exact opposite of the
+            // thing being measured, and it read as a null result rather than as an error. The tell was the DRAW
+            // COUNT going UP (2,949 -> 3,082) when it should have fallen; the fps column alone would have shipped
+            // a wrong conclusion. Any knob whose "off" value collides with an engine sentinel needs this check.
+            float CullRange = 5 * 32f;
+            bool skipFoliage = false;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_FOLIAGECULL"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float fcOv) && fcOv >= 0f)
+            {
+                if (fcOv <= 0f) skipFoliage = true; else CullRange = fcOv;
+            }
             var byCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<Transform3D>>();
             var manualByCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<bool>>();
             for (int i = 0; i < count; i++)
@@ -178,6 +198,7 @@ namespace UnturnedGodot
                 // Pebbles are in this group too -- their Nearest is equally deliberate, and the sweep setting it
                 // "correctly" by accident is not the same as it being chosen here.
                 fmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                if (skipFoliage) { fmi.QueueFree(); continue; }   // diagnostic ablation -- never reached with the var unset
                 AddChild(fmi);
                 RegisterAuthoringCell(nm, kv.Key, fmi, mesh, (Material)(isGrass ? grassMat : foliageUpMat) ?? mat, lst, manualByCell[kv.Key]);
             }
