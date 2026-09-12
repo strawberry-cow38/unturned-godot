@@ -1901,10 +1901,22 @@ namespace UnturnedGodot
             ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
             // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor.
             // UG_PLANESLOPE tilts it into a SLOPE -> reproduce the real terrain (where the plane slides/freaks), not flat.
-            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f),
-                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f) : Vector3.Zero };
+            // UG_SEASLOPE=1: RAMP the seabed instead of holding it flat at -14 m (strawberry 2026-09-12, "put pei
+            // sand beneath ur boattest"). A flat bed sits past the water's deep-colour threshold everywhere, so it
+            // shows the SAME opacity at every point in frame -- which is why the surface shader's transparency
+            // change was invisible in the last render. Tilting it sweeps the depth from ~2 m to ~22 m across the
+            // view, turning "less transparent" into a gradient you can read off one frame. Same lesson as
+            // UG_DEPTHROW: build the scene so the quantity under test VARIES.
+            bool seaSlope = System.Environment.GetEnvironmentVariable("UG_SEASLOPE") == "1" && !planeGround;
+            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : (seaSlope ? -12f : -14f), 0f),
+                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f)
+                                : seaSlope ? new Vector3(6f, 0f, 0f) : Vector3.Zero };
+            // PEI SAND, the real value: Terrain.LayerColor's own comment records PEI_Sand_01's extracted albedo
+            // average as (0.69,0.55,0.36). The palette PAINTS layer 5 ocean-blue instead, because layer 5 is
+            // mostly submerged seabed and the water plane used to be a TODO -- that plane ships now, so the
+            // stand-in is stale and a seabed should be sand. Using the measured value rather than inventing one.
             seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
-                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
+                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.69f, 0.55f, 0.36f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
             if (System.Environment.GetEnvironmentVariable("UG_ROUGH") == "1")
