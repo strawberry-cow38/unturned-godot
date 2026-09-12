@@ -82,7 +82,7 @@ float wr_rings(vec2 wxz, float t, float amt){
 void vertex() {
     vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
     float tphase = swell_phase(TIME);
-    VERTEX.y += swell_at(wp, tphase) * SWELL_AMP;
+    VERTEX.y += swell_at(wp, tphase) * swell_amp();   // weather-scaled, see swell.gdshaderinc
     v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // normal is computed PER-PIXEL in the fragment (below)
 }
 
@@ -94,7 +94,8 @@ void fragment() {
     float sh  = swell_at(v_wpos.xz, tp);
     float shx = swell_at(v_wpos.xz + vec2(se, 0.0), tp);
     float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
-    vec3 swell_n = vec3((sh - shx) * SWELL_AMP / se, 1.0, (sh - shz) * SWELL_AMP / se);
+    float _sa = swell_amp();
+    vec3 swell_n = vec3((sh - shx) * _sa / se, 1.0, (sh - shz) * _sa / se);
     // DISTANCE LOD: fade the high-freq ripple detail out with distance. At a LOW/grazing angle (standing on the
     // shore) far water crushes many wavelengths into each pixel -> the normals alias into a BUSY shimmer, and the
     // Fresnel (below) turns that into a wall of glitter. Fading detail with distance keeps far/grazing water calm;

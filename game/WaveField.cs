@@ -13,7 +13,14 @@ namespace UnturnedGodot
     public static class WaveField
     {
         // --- must mirror the matching uniforms in content/water.gdshader ---
-        public const float SwellAmp    = 0.5f;    // metres of vertical swell
+        public const float SwellAmp    = 0.5f;    // metres of vertical swell (CALM baseline; scaled by AmpScale)
+
+        /// <summary>Weather scale on the swell height, mirroring the GPU's `swell_scale` global.
+        ///
+        /// Boats float on THIS, the water is drawn from the shader -- so if the two ever disagree the sea visibly
+        /// roughens while the runabout keeps bobbing to the calm-water height. They are therefore written by ONE
+        /// setter (RainSystem3D.SetWeatherSwell) and never assigned anywhere else.</summary>
+        public static float AmpScale = 1f;
         public const float SwellDirDeg = 30.0f;
         public const float SwellFu     = 0.081f;  // freq along travel (matches the shader; waves ~10% bigger)
         public const float SwellFw     = 0.027f;  // freq along crest (fu/fw = 3:1)
@@ -67,7 +74,7 @@ namespace UnturnedGodot
 
         /// <summary>Vertical wave offset (m) at a world point, at an explicit time (deterministic).</summary>
         public static float Height(float wx, float wz, float timeSec)
-            => SwellAt(wx, wz, timeSec * SwellSpeed * SwellFu) * SwellAmp;
+            => SwellAt(wx, wz, timeSec * SwellSpeed * SwellFu) * SwellAmp * AmpScale;
 
         /// <summary>Wave-surface normal at a world point (finite-difference, matches the shader) -- for buoyancy tilt.</summary>
         public static Vector3 Normal(float wx, float wz, float timeSec)
@@ -76,7 +83,7 @@ namespace UnturnedGodot
             float h  = SwellAt(wx, wz, tp);
             float hx = SwellAt(wx + 1f, wz, tp);
             float hz = SwellAt(wx, wz + 1f, tp);
-            return new Vector3((h - hx) * SwellAmp, 1f, (h - hz) * SwellAmp).Normalized();
+            return new Vector3((h - hx) * SwellAmp * AmpScale, 1f, (h - hz) * SwellAmp * AmpScale).Normalized();
         }
     }
 }

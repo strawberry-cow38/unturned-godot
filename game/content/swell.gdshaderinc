@@ -12,7 +12,21 @@
 //
 // CONSTANTS, not uniforms: nothing has ever set them from C# and two shaders reading one set of numbers is the whole
 // point. If they ever need to be tunable at runtime they become globals, not per-material uniforms.
-const float SWELL_AMP = 0.5;        // metres of vertical swell
+const float SWELL_AMP = 0.5;        // metres of vertical swell (CALM baseline; scaled by swell_scale below)
+
+// WEATHER SCALES THE WAVE HEIGHT (strawberry 2026-09-12: "does it actually affect the wave amplitude?" -- it did
+// not; chop, foam, mirror and colour all made the sea LOOK rougher without it BEING rougher).
+//
+// A global, exactly as the note above prescribes, because this number is load-bearing in three places that must
+// never disagree: the vertex displacement here, the RAIN shader (which needs the surface height to know where a
+// drop stops), and WaveField.cs on the CPU -- which is what boats actually float on. Raise it on the GPU alone and
+// the sea gets rougher while the runabout keeps bobbing to the calm-water height. One value, one setter
+// (RainSystem3D, beside rain_intensity), so buoyancy and visuals cannot drift apart.
+//
+// Declared with a default of 1.0 so a shader that loads before the global is registered still renders calm water
+// rather than a flat sea -- and EnsureGlobals runs before any water material is built, same rule as wind_vec.
+global uniform float swell_scale;
+float swell_amp() { return SWELL_AMP * max(swell_scale, 0.0001); }
 const float SWELL_DIR_DEG = 30.0;   // swell travel direction
 const float SWELL_FU = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
 const float SWELL_FW = 0.027;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
@@ -45,4 +59,4 @@ float swell_at(vec2 wp, float tphase) {
 }
 float swell_phase(float t) { return t * SWELL_SPEED * SWELL_FU; }   // scroll the field along the travel axis
 /// ...and in METRES above the mean water plane, which is what anything outside the water shader wants.
-float swell_offset(vec2 wp, float t) { return swell_at(wp, swell_phase(t)) * SWELL_AMP; }
+float swell_offset(vec2 wp, float t) { return swell_at(wp, swell_phase(t)) * swell_amp(); }

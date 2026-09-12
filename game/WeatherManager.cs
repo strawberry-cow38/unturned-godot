@@ -254,6 +254,7 @@ namespace UnturnedGodot
             {
                 _lastRint = rint;
                 RenderingServer.GlobalShaderParameterSet("rain_intensity", rint);
+                RainSystem3D.SetWeatherSwell(rint);   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
                 RenderingServer.GlobalShaderParameterSet("rain_wetness", rint);   // TODO: per-surface shelter so roofed floors stay dry
             }
             if (Overlay != null) Overlay.Raining = false;   // the 3D rain replaces the 2D streak overlay

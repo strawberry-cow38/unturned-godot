@@ -471,6 +471,7 @@ namespace UnturnedGodot
                 var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
                 RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
                 RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
+                RainSystem3D.SetWeatherSwell(string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
                 BuildTerrainTest();
                 return;
             }
@@ -1384,6 +1385,7 @@ namespace UnturnedGodot
             float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
             RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
+            RainSystem3D.SetWeatherSwell(inten);   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
             Log.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
