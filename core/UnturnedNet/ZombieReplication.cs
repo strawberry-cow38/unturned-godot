@@ -240,13 +240,9 @@ namespace UnturnedGodot.Net
             if (stale != null) foreach (uint id in stale) _removedAtTick.Remove(id);
         }
 
-        List<uint> SortedIds()
-        {
-            var ids = new List<uint>();
-            foreach (var id in _zombies.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        /// <summary>Ascending ids -- THE WIRE ORDER. Cached in the registry, which invalidates on
+        /// every Add/Remove/Clear, so this cannot go stale. The list is SHARED: do not mutate it.</summary>
+        List<uint> SortedIds() => _zombies.SortedIdValues();
     }
 
     /// <summary>
@@ -410,12 +406,8 @@ namespace UnturnedGodot.Net
             if (stale != null) foreach (uint id in stale) _removedAtTick.Remove(id);
         }
 
-        List<uint> SortedIds()
-        {
-            var ids = new List<uint>();
-            foreach (var id in _entities.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        /// <summary>Ascending ids -- THE WIRE ORDER. Cached in the registry, which invalidates on
+        /// every Add/Remove/Clear, so this cannot go stale. The list is SHARED: do not mutate it.</summary>
+        List<uint> SortedIds() => _entities.SortedIdValues();
     }
 }
