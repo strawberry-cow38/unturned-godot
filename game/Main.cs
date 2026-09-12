@@ -1887,6 +1887,17 @@ namespace UnturnedGodot
         void BuildBoatTest(string type)
         {
             bool night = System.Environment.GetEnvironmentVariable("UG_NIGHT") == "1";   // UG_NIGHT=1: dim sun+sky to verify the caustics FADE at night (don't glow nuclear)
+            // UG_SWELL=<0..1>: drive the weather swell scale directly. This harness never builds a WeatherManager,
+            // so UG_WEATHER does nothing here -- which left the BUOYANCY half of the weather-swell work unverified:
+            // the visuals were rendered, but nothing had shown a boat riding a storm sea, and the CPU twin
+            // (WaveField) is what it actually floats on. Calls the SAME single setter the weather does, so if the
+            // boat sits correctly on the bigger waves, the GPU displacement and the CPU sampler agree by
+            // demonstration rather than by my say-so.
+            {
+                var _sw = System.Environment.GetEnvironmentVariable("UG_SWELL");
+                if (float.TryParse(_sw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float _swv))
+                { RainSystem3D.EnsureGlobals(); RainSystem3D.SetWeatherSwell(Mathf.Clamp(_swv, 0f, 1f)); Log.Print($"[boattest] swell scale forced from UG_SWELL={_swv} -> WaveField.AmpScale={WaveField.AmpScale:0.00}"); }
+            }
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = night ? new Color(0.02f, 0.03f, 0.06f) : new Color(0.42f, 0.58f, 0.75f),
