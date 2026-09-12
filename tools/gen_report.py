@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Render the latest ./test.sh run to a static HTML dashboard for quick human review.
 
-Reads the run's output grammar from .testresults/run.log (test.sh --report tees it there) and the
-L2 visual artifacts under .testresults/visual/, then writes a self-contained page + a copy of every
+Reads the run's output grammar from .testresults/run.log (test.sh --report tees it there), then
+writes a self-contained page + a copy of every
 scene image into the served dir (default /var/www/ugtests, behind Caddy at claw.bitvox.me/ugtests/).
 
   [SUITE]  -> the L0 unit suites + the L1/L2 rollups (pass/fail table)
@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-import visual_tests as vt  # expand_angles + GOLDEN_DIR/WORK_DIR, so the scene list stays in one place
 
 DEFAULT_OUT = os.environ.get("UG_REPORT_DIR", "/var/www/ugtests")
 DEFAULT_LOG = os.path.join(ROOT, ".testresults/run.log")
@@ -55,42 +54,10 @@ def parse_log(path):
     return summary, suites, scenes
 
 
-def scene_images(outdir):
-    """For every manifest scene (angles expanded), copy the best thumbnail into outdir/img and return
-    an ordered list of {name, tolerance, thumb, golden, diff} (paths relative to outdir, or None)."""
-    entries = vt.expand_angles(json.load(open(vt.MANIFEST)))
-    imgdir = os.path.join(outdir, "img")
-    os.makedirs(imgdir, exist_ok=True)
-    rows = []
-
-    def stash(src, rel):
-        if src and os.path.isfile(src):
-            shutil.copyfile(src, os.path.join(outdir, rel))
-            return rel
-        return None
-
-    for e in entries:
-        name = e["name"]
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-        work = os.path.join(vt.WORK_DIR, name)
-        cap = os.path.join(work, e.get("capture", "shot.png"))     # latest render
-        golden = os.path.join(vt.GOLDEN_DIR, f"{name}.png")
-        diff = os.path.join(work, f"{name}.diff.png")
-        thumb = stash(cap, f"img/{safe}.png") or stash(golden, f"img/{safe}.png")
-        rows.append({
-            "name": name,
-            "tolerance": e.get("tolerance", 0.02),
-            "thumb": thumb,
-            "golden": stash(golden, f"img/{safe}.golden.png"),
-            "diff": stash(diff, f"img/{safe}.diff.png"),
-        })
-    return rows
-
-
 PILL = {"PASS": "ok", "FAIL": "bad", "ERROR": "bad", None: "muted"}
 
 
-def render_html(summary, suites, scenes, rows, when):
+def render_html(summary, suites, scenes, when):
     # totals + status token straight off the [SUMMARY] grammar:
     #   TOTAL: P passed, F failed [| first failure: X] | <ok|FAILURES|INFRA-ERROR> | trx: DIR
     tp = (re.search(r"([0-9]+) passed", summary) or [None, "?"])[1]
@@ -104,25 +71,6 @@ def render_html(summary, suites, scenes, rows, when):
     else:
         state, state_word = "ok", "all green"
 
-    def card(r):
-        st = scenes.get(r["name"])
-        status = st["status"] if st else None
-        pill = PILL[status]
-        badge = status or "not run"
-        mae = f'mae {st["mae"]:.4f} · tol {r["tolerance"]}' if st and st.get("mae") is not None else \
-              ("not rendered this run" if not st else html.escape(st["detail"])[:60])
-        thumb = f'<a href="{r["thumb"]}" target="_blank"><img src="{r["thumb"]}" loading="lazy" alt=""></a>' \
-                if r["thumb"] else '<div class="noimg">no image</div>'
-        extra = ""
-        if status in ("FAIL", "ERROR") and r["golden"] and r["diff"]:
-            extra = (f'<div class="triptych"><figure><a href="{r["golden"]}" target="_blank">'
-                     f'<img src="{r["golden"]}" loading="lazy" alt=""></a><figcaption>golden</figcaption></figure>'
-                     f'<figure><a href="{r["diff"]}" target="_blank"><img src="{r["diff"]}" loading="lazy" alt="">'
-                     f'</a><figcaption>diff ×8</figcaption></figure></div>')
-        return (f'<article class="card {pill}"><div class="thumb">{thumb}</div>'
-                f'<div class="meta"><span class="name">{html.escape(r["name"])}</span>'
-                f'<span class="pill {pill}">{badge}</span></div>'
-                f'<div class="sub">{mae}</div>{extra}</article>')
 
     def suite_row(s):
         pill = PILL[s["status"]]
@@ -130,11 +78,8 @@ def render_html(summary, suites, scenes, rows, when):
                 f'<td><span class="pill {pill}">{s["status"]}</span></td>'
                 f'<td class="detail">{html.escape(s["detail"])}</td></tr>')
 
-    cards = "\n".join(card(r) for r in rows)
     suite_rows = "\n".join(suite_row(s) for s in suites) or \
-        '<tr><td colspan="3" class="detail">no unit/in-engine suites in this run (visual-only)</td></tr>'
-    n_pass = sum(1 for r in rows if scenes.get(r["name"], {}).get("status") == "PASS")
-    n_vis = len(rows)
+        '<tr><td colspan="3" class="detail">no unit/in-engine suites in this run</td></tr>'
 
     return f"""<!doctype html>
 <html lang="en">
@@ -223,18 +168,12 @@ a {{ color:inherit; }}
   <div class="inner">
     <h1>unturned<span class="dot">·</span>godot &nbsp;test results</h1>
     <span class="state {state}">{state_word}</span>
-    <span class="counts"><b>{tp}</b> passed &middot; <b>{tf}</b> failed &middot; visual <b>{n_pass}</b>/<b>{n_vis}</b></span>
+    <span class="counts"><b>{tp}</b> passed &middot; <b>{tf}</b> failed</span>
     <span class="when">{html.escape(when)}</span>
   </div>
   <div class="summaryline">{html.escape(summary) or "no [SUMMARY] captured &mdash; run ./test.sh --all --report"}</div>
 </header>
 <div class="wrap">
-  <section>
-    <h2>Visual scenes <span class="n">({n_vis})</span></h2>
-    <div class="grid">
-{cards}
-    </div>
-  </section>
   <section>
     <h2>Unit &amp; in-engine suites <span class="n">({len(suites)})</span></h2>
     <table>
@@ -265,13 +204,11 @@ def main():
 
     os.makedirs(out, exist_ok=True)
     summary, suites, scenes = parse_log(log)
-    rows = scene_images(out)
     when = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    page = render_html(summary, suites, scenes, rows, when)
+    page = render_html(summary, suites, scenes, when)
     with open(os.path.join(out, "index.html"), "w", encoding="utf-8") as f:
         f.write(page)
-    n_pass = sum(1 for r in rows if scenes.get(r["name"], {}).get("status") == "PASS")
-    print(f"[REPORT] wrote {os.path.join(out, 'index.html')} | {len(rows)} scenes ({n_pass} passed), "
+    print(f"[REPORT] wrote {os.path.join(out, 'index.html')} | "
           f"{len(suites)} suites | summary: {summary or '(none)'}")
     return 0
 

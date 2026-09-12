@@ -222,6 +222,12 @@ void fragment() {
 
         /// <summary>Is the quad whose low corner is grid (gx,gy) dug out? Out-of-range is solid, so callers can
         /// probe edges without bounds-checking first.</summary>
+        /// <summary>Grid origin and quad size, so a caller can address the same quads the engine does instead
+        /// of re-deriving the mapping (and getting the world-Z negation wrong on its own).</summary>
+        public float BaseX => _bx;
+        public float BaseZ => _bz;
+        public static float QuadSize => UNIT;
+
         public bool IsHole(int gx, int gy) =>
             _anyHoles && _holes != null && gx >= 0 && gy >= 0 && gx < _gw - 1 && gy < _gh - 1 && _holes[gx, gy];
 
@@ -744,6 +750,57 @@ void fragment() {
             return outp;
         }
         Node3D _riverBeds;
+
+        /// <summary>Cut an AUTHORED hole volume out of the terrain surface. Returns the number of quads cut.
+        ///
+        /// Retail cuts landscape holes with placed volumes rather than a brush (see EditorTerrain's note that
+        /// Dig/Fill are ours, not Devkit's). The mask and the brush both already existed; what did not was
+        /// anything reading the map's own volumes, so PEI's authored cut was solid ground at runtime.
+        ///
+        /// OVERLAP, not centre-inside. PEI's cut is 3.9 x 4.2 m against a 4 m grid, so it is about one quad
+        /// wide and whether any quad CENTRE falls inside it is a coin-flip on grid alignment -- the river
+        /// carve settled on overlap for the same reason.
+        ///
+        /// The Y span is honoured so a volume floating above or buried below the surface does not punch a hole
+        /// through unrelated ground, and a volume whose footprint matched but whose height did not is LOGGED
+        /// rather than silently dropped: a cut that quietly does nothing looks exactly like one that worked.</summary>
+        public int CutHoleBox(Vector3 centre, Vector3 half)
+        {
+            if (_grid == null) return 0;
+            // Grid space. World Z is NEGATED here, matching EditHoles and SampleHeight; negating flips the
+            // interval, so the max corner supplies the low grid bound.
+            float bgx0 = (centre.X - half.X - _bx) / UNIT, bgx1 = (centre.X + half.X - _bx) / UNIT;
+            float bgy0 = (-(centre.Z + half.Z) - _bz) / UNIT, bgy1 = (-(centre.Z - half.Z) - _bz) / UNIT;
+            int gx0 = Mathf.Max(0, Mathf.FloorToInt(bgx0)), gx1 = Mathf.Min(_gw - 2, Mathf.CeilToInt(bgx1) - 1);
+            int gy0 = Mathf.Max(0, Mathf.FloorToInt(bgy0)), gy1 = Mathf.Min(_gh - 2, Mathf.CeilToInt(bgy1) - 1);
+            float loY = centre.Y - half.Y, hiY = centre.Y + half.Y;
+            static float W(float norm) => norm * TILE_HEIGHT - TILE_HEIGHT / 2f;   // normalised grid -> world metres
+            int cut = 0, missedOnHeight = 0;
+            float seenLo = float.MaxValue, seenHi = float.MinValue;   // what the ground ACTUALLY does under the footprint
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    // The quad's own height range, from its four corners -- a sloped quad half inside the
+                    // volume still counts, which a single centre sample would miss on a hillside.
+                    // ⚠ _grid is NORMALISED 0..1, not metres. World height is the same expression the mesh
+                    // verts use (line ~1631): h * TILE_HEIGHT - TILE_HEIGHT/2. Comparing the raw grid value
+                    // against a volume's world Y span silently matches nothing -- 0.53 vs "52..58" -- and the
+                    // number looks like a plausible height, which is what made it hard to see.
+                    float h0 = W(_grid[gx, gy]), h1 = W(_grid[gx + 1, gy]), h2 = W(_grid[gx, gy + 1]), h3 = W(_grid[gx + 1, gy + 1]);
+                    float qLo = Mathf.Min(Mathf.Min(h0, h1), Mathf.Min(h2, h3));
+                    float qHi = Mathf.Max(Mathf.Max(h0, h1), Mathf.Max(h2, h3));
+                    seenLo = Mathf.Min(seenLo, qLo); seenHi = Mathf.Max(seenHi, qHi);
+                    if (qHi < loY || qLo > hiY) { missedOnHeight++; continue; }
+                    if (SetHole(gx, gy, true)) cut++;
+                }
+            if (cut == 0 && missedOnHeight > 0)
+                Log.Err($"[terraincut] volume at ({centre.X:0.#}, {centre.Y:0.#}, {centre.Z:0.#}) matched {missedOnHeight} quad(s) "
+                        + $"by footprint but NONE by height: volume spans y {loY:0.#}..{hiY:0.#}, the ground under it "
+                        + $"spans y {seenLo:0.#}..{seenHi:0.#} -- nothing was cut "
+                        + $"[grid x {gx0}..{gx1}, y {gy0}..{gy1} of {_gw}x{_gh}, base ({_bx:0},{_bz:0}), "
+                        + $"probe _grid[{gx0},{gy0}]={_grid[gx0, gy0]:0.##}]");
+            return cut;
+        }
 
         /// <summary>Carve a river along a path: CUT the terrain surface out and build a riverbed under it.
         ///
@@ -2169,6 +2226,10 @@ void fragment() {
             terr._chunkMi = new MeshInstance3D[terr._chunksX, terr._chunksY];
             terr._chunkBody = new StaticBody3D[terr._chunksX, terr._chunksY];
             _phase("setup");
+            // The map's authored holes go in BEFORE the rebuild -- the rebuild is what turns the mask into
+            // missing faces and the matching collider, so cutting afterwards would cost a second full rebuild
+            // and, until it ran, leave collision standing in a hole you can already see through.
+            TerrainCuts.Apply(terr);
             terr.RebuildAll();   // builds every chunk's mesh + collider from _grid
             _phase($"RebuildAll ({terr._chunksX}x{terr._chunksY} chunks, collider={withCollider})");
 

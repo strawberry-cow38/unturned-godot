@@ -65,13 +65,29 @@ namespace UnturnedGodot.Testing
             T.Check("Metal_2 matches Metal_0", ReferenceEquals(GameAudio.ResourceBreak("Metal_2"), ore));
             T.Check("clay nodes share it", ReferenceEquals(GameAudio.ResourceBreak("Clay_3"), ore));
 
-            // ---- WHAT HAS NO BREAK PATH STAYS SILENT. Bushes and mushrooms do resolve to a Foliage clip in
-            // retail, but nothing in the port destroys them -- they carry no harvest body at all. Returning a
-            // clip here would be a wire to a caller that cannot fire, and returning a TREE clip (which the old
-            // fallback chain did, ending at Pick("explosions","birch")) would be audibly wrong the day one is
-            // hooked up. Retail agrees on Bush_0/Bush_1 specifically: their .dat has no Explosion field.
-            foreach (var quiet in new[] { "Bush_0", "Bush_Amber", "Mushroom_Red_0", "Snow_Pile_00", "Cane_00" })
-                T.Check($"{quiet} is silent, not borrowing a tree's crash", GameAudio.ResourceBreak(quiet) == null);
+            // ---- FORAGEABLE PLANTS DO SOUND, and this half of the test went stale the day after it was
+            // written. It used to assert Bush_Amber and Mushroom_Red_0 were silent, on the reasoning that
+            // "nothing in the port destroys them -- they carry no harvest body at all". e8481f55 gave them
+            // one an hour later, so the clip now has a caller and silence would be the bug.
+            var foliage = GameAudio.ResourceBreak("Bush_Amber");
+            T.Check("a forageable bush has a break clip", foliage != null);
+            T.Check("it is not the tree's clip", !ReferenceEquals(foliage, birch));
+            T.Check("it is not the ore clip", !ReferenceEquals(foliage, ore));
+            foreach (var picked in new[] { "Bush_Indigo", "Bush_Jade", "Bush_Mauve", "Bush_Russet",
+                                           "Bush_Teal", "Bush_Vermillion", "Bush_Hanu",
+                                           "Mushroom_Brown_0", "Mushroom_Red_0" })
+                T.Check($"{picked} shares the one Foliage clip",
+                        ReferenceEquals(GameAudio.ResourceBreak(picked), foliage));
+
+            // ---- WHAT HAS NO BREAK PATH STILL STAYS SILENT, and Bush_0/Bush_1 are the point of this block.
+            // Retail gives them no Explosion field and no Forage key, so they are scenery that neither breaks
+            // nor picks -- ResourceField's forage roster omits them deliberately and GameAudio's own doc says
+            // they return null. The CODE said otherwise between e8481f55 and this fix: it branched on
+            // `StartsWith("Bush")`, which catches both, so the two plain green bushes rustled. Asserted by
+            // name rather than by prefix, because a prefix is exactly what got this wrong.
+            foreach (var quiet in new[] { "Bush_0", "Bush_1", "Snow_Pile_00", "Cane_00" })
+                T.Check($"{quiet} is silent, not borrowing a clip it has no caller for",
+                        GameAudio.ResourceBreak(quiet) == null);
             T.Check("a null name does not throw", GameAudio.ResourceBreak(null) == null);
         }
     }

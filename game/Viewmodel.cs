@@ -1357,13 +1357,26 @@ namespace UnturnedGodot
         }
 
         public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
-        public bool IsRopeTool;   // this tool viewmodel is the tow ROPE (item 64) -- all tools set ToolMesh; the kind bits disambiguate
-        public bool IsHoseTool;   // this tool viewmodel is the fluid HOSE (item 66)
-        public bool IsDetonatorTool;   // this tool viewmodel is the remote-charge DETONATOR (item 1240)
-        public bool IsWireViewmodel => ToolMesh != null && !IsRopeTool && !IsHoseTool && !IsDetonatorTool;
-        public bool IsRopeViewmodel => ToolMesh != null && IsRopeTool;
-        public bool IsHoseViewmodel => ToolMesh != null && IsHoseTool;
-        public bool IsDetonatorViewmodel => ToolMesh != null && IsDetonatorTool;
+        /// <summary>Which tool this viewmodel is, carried as the ENUM rather than flattened into a set of
+        /// mutually-exclusive bools.
+        ///
+        /// ⚠ IT USED TO BE THREE BOOLS AND WIRE WAS THE DEFAULT BY ABSENCE:
+        /// `IsWireViewmodel => ToolMesh != null &amp;&amp; !IsRopeTool &amp;&amp; !IsHoseTool &amp;&amp; !IsDetonatorTool`.
+        /// That makes every tool nobody has explicitly excluded into the WIRING tool, silently -- which is
+        /// exactly what happened the moment a fifth tool arrived: the walkie-talkie shipped reporting
+        /// HoldingWireTool, so pointing it at a generator and clicking would have started running cable. The
+        /// bug is invisible because nothing asserts the set is exhaustive, and it gets one worse per tool.
+        ///
+        /// ToolDef.Kind was a real enum the whole time and was being flattened on the way in here for no
+        /// reason. Carrying it means wire is a value, not a leftover. Null = not a tool viewmodel at all.
+        /// (Spotted by cow tools reviewing the fifth tool going in.)</summary>
+        public ToolKind? HeldToolKind;
+        public bool IsWireViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Wire;
+        public bool IsRopeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Rope;
+        public bool IsHoseViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Hose;
+        public bool IsDetonatorViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Detonator;
+        /// <summary>The walkie-talkie (1445): a carry-only holdable with its own LMB toggle.</summary>
+        public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to

@@ -46,12 +46,22 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"the DEDICATED world build placed a door ({doorsInWorld} found)", doorsInWorld >= 1);
             T.Check($"...and a bed ({bedsInWorld} found)", bedsInWorld >= 1);
-            // The FIELD must exist (peers copy it, and a null here used to crash the net path); it is
-            // deliberately EMPTY. The demo volume that used to be placed at spawn+120,+120 on every map was
-            // deleted 2026-08-19 -- see SpawnInteractables. Asserting ==0 rather than dropping the check,
-            // so that re-adding a world-build hazard has to be a decision someone makes on purpose.
-            T.Check($"...and a deadzone FIELD, carrying no demo volume ({world.Deadzones?.VolumeCount})",
-                    world.Deadzones != null && world.Deadzones.VolumeCount == 0);
+            // The FIELD must exist (peers copy it, and a null here used to crash the net path). It used to
+            // be asserted EMPTY: the demo volume placed at spawn+120,+120 on every map was deleted
+            // 2026-08-19, and ==0 was left as a tripwire "so that re-adding a world-build hazard has to be
+            // a decision someone makes on purpose".
+            //
+            // That decision was made on 2026-09-12 (strawberry: "wire it"). The zone here is not a demo any
+            // more, it is PEI's own authored one -- a sphere at (506, 32, 721), read out of Level.hierarchy.
+            // So the tripwire is kept and re-aimed rather than deleted: what it was really guarding is a
+            // hazard conjured at a spawn-relative offset, and asserting the volume is the MAP's still
+            // catches that, because a demo box at spawn+120 is neither a sphere nor at these coordinates.
+            T.Check($"...and a deadzone FIELD carrying the MAP's zones ({world.Deadzones?.VolumeCount})",
+                    world.Deadzones != null && world.Deadzones.VolumeCount == 1);
+            var dz = world.Deadzones.Volumes[0];
+            T.Check($"the zone is PEI's authored sphere, not a spawn-relative demo (shape={dz.Shape}, centre={dz.Center.x:0},{dz.Center.z:0})",
+                    dz.Shape == SDG.Unturned.DeadzoneShape.Sphere
+                    && Mathf.Abs(dz.Center.x - 506.368f) < 0.5f && Mathf.Abs(dz.Center.z - 720.7485f) < 0.5f);
 
             var net = new MemNetwork(7073);
             var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.clientpump");
@@ -449,24 +459,36 @@ namespace UnturnedGodot.Testing
             T.Check("the built volume was copied server-side", ded.Server.Deadzones.VolumeCount == 1);
 
             ded.Server.CombatState.TryGet(a.PlayerId, out var cs);
+            ded.Server.Vitals.TryGet(a.PlayerId, out var sv);
             float startHp = cs.HealthExact;
 
             // Well outside the zone first: the hazard must not be a thing that hurts everyone everywhere.
             ded.Server.Players.ServerTeleport(a.PlayerId, new UVector3(-300f, 0f, -300f), ded.Server.Session.CurrentTick);
             yield return Ticks(75);    // 1.5 s
-            T.Check($"standing outside costs nothing (hp {cs.HealthExact:0.0})", cs.HealthExact == startHp);
+            T.Check($"standing outside costs nothing (dose {sv.Sim.Radiation:0.###})",
+                    cs.HealthExact == startHp && sv.Sim.Radiation <= 0f);
 
             ded.Server.Players.ServerTeleport(a.PlayerId, new UVector3(zoneAt.X, zoneAt.Y, zoneAt.Z), ded.Server.Session.CurrentTick);
-            yield return Until(() => cs.HealthExact < startHp, 8);
-            T.Check($"contaminated ground hurts a networked player (hp {cs.HealthExact:0.0} from {startHp:0.0})",
-                    cs.HealthExact < startHp);
+            // ⚠ THE DOSE is what crosses the wire and what a zone applies first (see DoorBedDeadzoneTests
+            // for why the health version of this assertion stopped being reachable). Health is downstream of
+            // a high infection, which is downstream of a big carried dose -- far more than 8 s away.
+            // ⚠ WAIT FOR A DOSE BIG ENOUGH TO WATCH DECAY, not merely a non-zero one. The first poll past the
+            // entry grace lands ~0.005, which the washout erases in well under a second -- so a test that
+            // proceeded on "> 0" would teleport out, sample, and find the dose already gone, then compare
+            // 0 against 0 and call that "it did not fall". (It did exactly that on the first run.)
+            yield return Until(() => sv.Sim.Radiation > 0.15f, 15);
+            T.Check($"contaminated ground doses a networked player ({sv.Sim.Radiation:0.###})",
+                    sv.Sim.Radiation > 0.15f);
+            T.Check($"...without taking health directly (hp {cs.HealthExact:0.0})", cs.HealthExact == startHp);
 
             ded.Server.Players.ServerTeleport(a.PlayerId, new UVector3(-300f, 0f, -300f), ded.Server.Session.CurrentTick);
-            yield return Ticks(30);    // 0.6 s -- long enough for the 0.25 s poll to notice they left
-            float afterLeaving = cs.HealthExact;
-            yield return Ticks(100);   // 2 s
-            T.Check($"walking out stops it (hp {cs.HealthExact:0.0}, was {afterLeaving:0.0})",
-                    Mathf.Abs(cs.HealthExact - afterLeaving) < 0.001f);
+            yield return Ticks(40);    // 0.8 s -- past the 0.25 s poll AND the 0.6 s dose-hold window
+            float afterLeaving = sv.Sim.Radiation;
+            yield return Ticks(150);   // 3 s of washout: ~0.045 of dose, well clear of float noise
+            // FALLING, not merely "not rising": leaving has to start the washout on the SERVER's copy, which
+            // is the one the client adopts. A frozen dose would keep sprint locked off forever.
+            T.Check($"walking out starts the washout (dose {sv.Sim.Radiation:0.####}, was {afterLeaving:0.####})",
+                    sv.Sim.Radiation < afterLeaving);
 
             world.Sim.Sim.Remove(pump);
             a.Disconnect();

@@ -36,10 +36,18 @@ namespace UnturnedGodot.Net
         /// is protected, which is only right for a harness with no inventories at all.</summary>
         public Func<ushort, RadiationGear> GearOf;
 
-        /// <summary>Virus accrued. A deadzone's ONLY output (strawberry 2026-09-11: infection, not health) --
-        /// the DamageSink that used to sit beside this is gone deliberately, so the server cannot take health
-        /// by a path the client's own copy of the sim does not have.</summary>
-        public Action<ushort, float> InfectionSink;
+        /// <summary>Dose absorbed this step, and the dt it was absorbed over. A deadzone's ONLY output
+        /// (strawberry 2026-09-11: infection, not health) -- the DamageSink that used to sit beside this is
+        /// gone deliberately, so the server cannot take health by a path the client's own copy of the sim
+        /// does not have.
+        ///
+        /// ⚠ A DOSE, NOT A LUMP OF INFECTION. This used to hand the step's radiation straight to the vitals
+        /// sim as raw infection, which was the correct wiring right up until radiation stopped being a
+        /// synonym for infection and became a carried quantity that SCALES the scarring. Left alone, the
+        /// server would have gone on adding the zone's rate directly to the virus while the client added
+        /// dose x InfectionPerRadiationSecond x dt -- two different formulas for one hazard, agreeing only at
+        /// the moment you walked in.</summary>
+        public Action<ushort, float, float> RadiationSink;
 
         /// <summary>Whole points of mask filter burned this step.</summary>
         public Action<ushort, int> MaskBurnSink;
@@ -50,7 +58,13 @@ namespace UnturnedGodot.Net
             => AddVolume(center, halfExtent, DeadzoneDef.Default(kind));
 
         public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneDef zone)
-            => _volumes.Add(new DeadzoneVolumeDef { Center = center, HalfExtent = halfExtent, Zone = zone });
+            => AddVolume(center, halfExtent, DeadzoneShape.Box, zone);
+
+        /// <summary>Shape-aware add, so a sphere seeded from the map stays a sphere on the authoritative
+        /// side. Without it the server's copy of PEI's r=16 zone would be its bounding box and the server
+        /// would rule ground hot that the client draws as clean.</summary>
+        public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneShape shape, DeadzoneDef zone)
+            => _volumes.Add(new DeadzoneVolumeDef { Center = center, HalfExtent = halfExtent, Zone = zone, Shape = shape });
 
         public void Clear() { _volumes.Clear(); _inside.Clear(); }
 
@@ -116,9 +130,14 @@ namespace UnturnedGodot.Net
             }
 
             var gear = GearOf != null ? GearOf(playerId) : default;
-            var r = sim.Step(volume.Zone, gear, dt);
+            // THE EDGE IS TAMER HERE TOO, and it has to be read off the server's own copy of the position:
+            // DeadzoneField scales the dose by Intensity, so a server stepping at full rate would disagree
+            // with its own client about the dose everywhere except the middle of the volume -- worst exactly
+            // at the boundary, which is the part strawberry asked to be survivable.
+            float intensity = volume.Intensity(pos);
+            var r = sim.Step(volume.Zone, gear, dt, intensity);
 
-            if (r.Radiation > 0f) InfectionSink?.Invoke(playerId, r.Radiation);
+            if (r.Radiation > 0f) RadiationSink?.Invoke(playerId, r.Radiation, dt);
             if (r.MaskQualityLost > 0) MaskBurnSink?.Invoke(playerId, r.MaskQualityLost);
         }
 

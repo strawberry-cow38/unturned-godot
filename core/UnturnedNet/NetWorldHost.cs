@@ -286,7 +286,7 @@ namespace UnturnedGodot.Net
             // No DamageSink: a deadzone deals infection only (strawberry 2026-09-11), and a contaminated
             // death now arrives through the vitals sim's own infection-fatal path rather than as a second,
             // separate stream of environmental damage.
-            Deadzones.InfectionSink = (pid, amount) => Vitals.ServerRaise(pid, 0f, 0f, 0f, amount, false, false, Session.CurrentTick);
+            Deadzones.RadiationSink = (pid, dose, dt) => Vitals.ServerAbsorbDose(pid, dose, dt, Session.CurrentTick);
             Deadzones.MaskBurnSink = (pid, points) =>
             {
                 if (!Inventories.TryGet(pid, out var inv) || inv.Inventory.wornMask == null) return;

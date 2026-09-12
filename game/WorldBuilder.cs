@@ -2279,6 +2279,12 @@ namespace UnturnedGodot
             // their own volumes. What is gone is the furniture, not the feature.
             var deadzones = new DeadzoneField();
             root.AddChild(deadzones);
+            // THE MAP'S OWN VOLUMES. Everything downstream of this -- the sim, the net seed, the HUD icon,
+            // the overlay -- was finished and correct, and this field went out empty on every load, so a
+            // player could not meet a deadzone anywhere. PEI authors exactly one (a r=16 sphere by the
+            // military base at 506, 32, 721); the parser is tools/parse_hierarchy_deadzones.py.
+            int mapZones = DeadzoneMap.Populate(deadzones);
+            if (mapZones > 0) Log.Print($"[deadzone] {mapZones} volume(s) from {DeadzoneMap.MapFile}");
             if (result != null) result.Deadzones = deadzones;
             Log.Print($"[interactables] {(demoFurniture ? "door + bed" : "no furniture")} at ({ax:0},{az:0}), {deadzones.VolumeCount} deadzone volumes (demo hazard removed 2026-08-19)");
         }

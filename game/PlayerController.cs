@@ -438,6 +438,33 @@ namespace UnturnedGodot
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
+        /// <summary>Absorbed dose, and the infection it scars you with. IMMUNITY applies to the scarring for
+        /// the same reason it applies to a bite -- it is the same virus getting in -- but NOT to the dose
+        /// itself, which is physics rather than biology.</summary>
+        public void Irradiate(float ratePerSecond, float dt) => AbsorbDose(ratePerSecond * dt, dt);
+
+        /// <summary>As above, for a dose already scaled by dt (what DeadzoneSim hands back).</summary>
+        public void AbsorbDose(float dose, float dt)
+        {
+            // NOT while the server owns these. AdoptReplicatedFineVitals is the sole writer of the fine vitals
+            // on an MP client, and the server runs this very same step through ServerDeadzones -- applying it
+            // locally as well would raise a dose that the next snapshot immediately overwrites, so the only
+            // thing the second application can produce is a visible flicker in the grain and the geiger rate.
+            if (NetFineVitalsAdopted) return;
+            float before = _vitals.Infection;
+            _vitals.AbsorbDose(dose, dt);
+            float gained = _vitals.Infection - before;
+            if (gained > 0f)
+                _vitals.Infection = Mathf.Clamp(before + gained * Skills.ImmunityInfectionMultiplier(), 0f, 1f);
+        }
+
+        /// <summary>0..1 absorbed dose. Hidden from the HUD on purpose -- the geiger counter and the grain are
+        /// how you read it (strawberry 2026-09-11).</summary>
+        public float Radiation { get => _vitals.Radiation; set => _vitals.Radiation = value; }
+
+        /// <summary>Dose high enough to cost you sprint and jump, exactly as a broken leg does.</summary>
+        public bool MajorlyIrradiated => _vitals.MajorlyIrradiated;
+
         // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals. `quality`
         // is the eaten instance's CONDITION (0-100, source player.equipment.quality) -- FOOD/WATER items ride it as
         // freshness; source scales food+water restored by quality/100 and, below 50, infects you (moldy food penalty).
@@ -3856,6 +3883,72 @@ namespace UnturnedGodot
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
         public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
+        public bool HoldingWalkie => _viewmodel != null && _viewmodel.IsWalkieViewmodel;   // Walkie-talkie (1445) in hand -> LMB toggles it on/off, R opens the frequency panel
+
+        // --- WALKIE-TALKIE (strawberry 2026-09-11: "lmb toggles it on/off. plays static. pressing r opens a
+        // menu to set a frequency") ---
+        //
+        // The set STAYS ON when you put it away. A radio you have to switch on every time you draw it is a
+        // radio nobody leaves on, and being able to forget it is running is the point of a squelch you can
+        // hear. Only the SOUND follows what is in your hands.
+        bool _walkieOn;
+        int _walkieKHz = WalkiePanel.DefaultKHz;
+        AudioStreamPlayer _walkieStatic;
+        WalkiePanel _walkiePanel;
+
+        public bool WalkieOn => _walkieOn;
+        public int WalkieFrequencyKHz => _walkieKHz;
+        public bool WalkiePanelOpen => _walkiePanel != null && _walkiePanel.Visible;
+
+        /// <summary>The static player carries a name so a test can find THIS node rather than whichever
+        /// AudioStreamPlayer happens to be first under the player. Mine grabbed a different one and reported
+        /// "the static is playing" off a sound that had nothing to do with the radio -- a green check on the
+        /// wrong instrument.</summary>
+        public const string WalkieStaticNodeName = "WalkieStatic";
+        public bool WalkieStaticPlaying => _walkieStatic != null && _walkieStatic.Playing;
+
+        /// <summary>LMB: power toggle. Public so a test can drive it without synthesising a click.</summary>
+        public void ToggleWalkie()
+        {
+            _walkieOn = !_walkieOn;
+            UpdateWalkieAudio();
+            Log.Print($"[walkie] {(_walkieOn ? "on" : "off")} @ {WalkiePanel.Format(_walkieKHz)}");
+        }
+
+        /// <summary>The static plays only while the set is ON **and** actually in your hands.</summary>
+        void UpdateWalkieAudio()
+        {
+            bool want = _walkieOn && HoldingWalkie && !_dead;
+            if (want)
+            {
+                if (_walkieStatic == null)
+                {
+                    // ⚠ NOT GD.Load. Godot's resource loader returns NULL for a .wav with no .import
+                    // sidecar, and nothing in content/audio has one -- these files are read off disk at
+                    // runtime. GD.Load handed back null, the player got a null Stream, and Play() did
+                    // nothing at all: no error, no warning, just silence. LoadWavOneShot is the loader the
+                    // rest of the codebase already uses for exactly this, and it takes the loop flag.
+                    var wav = LoadWavOneShot("res://content/audio/radio/static_loop.wav", loop: true);
+                    _walkieStatic = new AudioStreamPlayer { Name = WalkieStaticNodeName, Bus = "Master", VolumeDb = -14f, Stream = wav };
+                    AddChild(_walkieStatic);
+                }
+                if (!_walkieStatic.Playing) _walkieStatic.Play();
+            }
+            else if (_walkieStatic != null && _walkieStatic.Playing) _walkieStatic.Stop();
+        }
+
+        /// <summary>R: the frequency panel. One value, two views -- see WalkiePanel.</summary>
+        public void ToggleWalkiePanel()
+        {
+            if (_walkiePanel == null)
+            {
+                _walkiePanel = new WalkiePanel { Visible = false };
+                AddChild(_walkiePanel);
+                _walkiePanel.Frequency = _walkieKHz;
+                _walkiePanel.Changed += f => { _walkieKHz = f; Log.Print($"[walkie] tuned to {WalkiePanel.Format(f)}"); };
+            }
+            _walkiePanel.Toggle();
+        }
         public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
@@ -4077,7 +4170,8 @@ namespace UnturnedGodot
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldUmbrellaItem = null; _heldRestraintItem = null; _heldTireItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolAlbedo = def.HeldAlbedo, ToolColor = def.HeldColor, HeldToolKind = def.Kind };
+            UpdateWalkieAudio();   // drawing the set resumes its static if it was left on; drawing anything ELSE goes through ClearDeployable below
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[tool] holding the {def.Name}");
@@ -4109,6 +4203,9 @@ namespace UnturnedGodot
         void ClearDeployable()
         {
             ClearFisher();   // every equip-into-hand path funnels through here -> a switch away from the rod also reels in the line
+            // ...and a switch away from the radio silences it. The SET stays on -- only the sound follows your
+            // hands -- so drawing it again picks the static straight back up.
+            CallDeferred(nameof(UpdateWalkieAudio));
             if (_deployable == null && _placer == null) return;
             _deployable = null; _deployItem = null; _placeTimer = 0f;
             _placer?.QueueFree(); _placer = null;
@@ -5201,6 +5298,10 @@ namespace UnturnedGodot
         /// ticks of lag, like HP adoption). Bleeding/Broken ride the wire but the server has no source yet, so
         /// they are NOT clobbered here (they'd only ever wipe a locally-meaningful flag to false).</summary>
         public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection, float oxygen)
+            => AdoptReplicatedFineVitals(food, water, stamina, infection, oxygen, 0f);
+
+        public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection, float oxygen,
+                                              float radiation)
         {
             NetFineVitalsAdopted = true;
             Food = Mathf.Clamp(food, 0f, 1f);
@@ -5212,6 +5313,10 @@ namespace UnturnedGodot
             // runs -- so a field the server serialises perfectly and this signature omits sits at its
             // constructor default forever, and the bar reads full while you drown.
             Oxygen = Mathf.Clamp(oxygen, 0f, 1f);
+            // RADIATION, for the same reason and with a sharper edge than breath: the dose gates SPRINT and
+            // JUMP. A client inventing its own would not merely draw the wrong grain, it would disagree with
+            // the server about whether the player's legs work, which is the exact shape of a rubber-band.
+            Radiation = Mathf.Clamp(radiation, 0f, 1f);
         }
 
         // Server-owned death/respawn while adopting: the shell renders the SP death corpse/cam + respawn
@@ -7062,7 +7167,7 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310)
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
             TemperatureTick(sprinting, dt);
             bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
@@ -7594,6 +7699,7 @@ namespace UnturnedGodot
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
                 else if (HoldingDetonatorTool) TryDetonateCharges();    // detonator: LMB plunge -> fire all placed remote charges
+                else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingThrowable) ThrowHeld();                 // holding a grenade/smoke/flare: LMB lobs it (strawberry 2026-09-05)
@@ -7640,7 +7746,8 @@ namespace UnturnedGodot
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
             {
-                if (HoldingDeployable && _placer != null) { if (Keybinds.IsDown(@event)) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
+                if (HoldingWalkie) { if (Keybinds.IsDown(@event)) ToggleWalkiePanel(); }   // walkie: R opens/closes the frequency panel (strawberry 2026-09-11)
+                else if (HoldingDeployable && _placer != null) { if (Keybinds.IsDown(@event)) _placer.YawOffset += 90f; }   // R rotates the deployable ghost 90 deg (strawberry)
                 else if (HasGunOut && CanOpenAmmoPie)   // shotgun / mag gun: quick TAP = reload, HOLD = ammo radial (master)
                 {
                     if (Keybinds.IsDown(@event)) { if (!_rHolding) { _rHolding = true; _rHeldSince = Time.GetTicksMsec(); } }
@@ -10880,7 +10987,7 @@ namespace UnturnedGodot
             if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
-            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
+            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken && !MajorlyIrradiated;   // broken legs can't jump (PlayerMovement.cs:1310); a major dose likewise (strawberry 2026-09-11). ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
             LastJumpInput = jump;   // the wire jump bit is the HELD key the sim consumed (post-Broken) -- C3 reverted the F1 takeoff-edge encoding: a mispredicted takeoff is corrected by rewind+replay, not by wire gymnastics

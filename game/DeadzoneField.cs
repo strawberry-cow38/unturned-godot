@@ -41,12 +41,18 @@ namespace UnturnedGodot
             => AddVolume(center, halfExtent, DeadzoneDef.Default(kind));
 
         public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneDef zone)
+            => AddVolume(center, halfExtent, DeadzoneShape.Box, zone);
+
+        /// <summary>Shape-aware add. The map's volumes come through here; the box-only overloads above are
+        /// kept verbatim so every existing caller and test means exactly what it did before.</summary>
+        public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneShape shape, DeadzoneDef zone)
         {
             _volumes.Add(new DeadzoneVolumeDef
             {
                 Center = new UVector3(center.X, center.Y, center.Z),
                 HalfExtent = new UVector3(halfExtent.X, halfExtent.Y, halfExtent.Z),
                 Zone = zone,
+                Shape = shape,
             });
         }
 
@@ -103,16 +109,21 @@ namespace UnturnedGodot
             }
 
             var gear = player.Inventory?.RadiationProtection() ?? default;
-            var r = sim.Step(volume.Zone, gear, dt);
+            // EDGE IS TAMER (strawberry 2026-09-11: "a warning to turn around"). Intensity comes off where in
+            // the volume you are standing, so the boundary still builds -- just slowly enough to be a warning.
+            var here = player.GlobalPosition;
+            float intensity = volume.Intensity(new UVector3(here.X, here.Y, here.Z));
+            var r = sim.Step(volume.Zone, gear, dt, intensity);
 
             // Exposure time, published for the screen effect and the HUD icon. Set from the sim rather than
             // accumulated here, so there is one clock and the visuals cannot drift from the dose.
             player.DeadzoneSeconds = sim.SecondsInside;
 
-            // INFECTION ONLY (strawberry 2026-09-11). Health is no longer touched here: PlayerVitalsSim owns
-            // what a high infection costs, so a deadzone death now goes through the same path a zombie bite
-            // does instead of being a second, parallel way to lose health.
-            if (r.Radiation > 0f) player.Infect(r.Radiation);
+            // RADIATION, and infection as its scar (strawberry 2026-09-11: "radiation is a separate hidden
+            // thing different from infection"). One call so the two cannot drift: Irradiate raises the dose and
+            // scars you in the same step. Health is never touched here -- PlayerVitalsSim owns what a high
+            // infection costs, so a deadzone death runs the same path a zombie bite does.
+            if (r.Radiation > 0f) player.AbsorbDose(r.Radiation, dt);
             if (r.MaskQualityLost > 0 && player.Inventory?.wornMask != null)
             {
                 var mask = player.Inventory.wornMask;

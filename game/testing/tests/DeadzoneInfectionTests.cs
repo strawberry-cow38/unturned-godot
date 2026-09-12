@@ -43,6 +43,15 @@ namespace UnturnedGodot.Testing
             T.Check($"exposure is published to the player ({player.DeadzoneSeconds:0.##} s)", player.DeadzoneSeconds > 0f);
             T.Check("...and InDeadzone reads true, which is what the HUD icon gates on", player.InDeadzone);
 
+            // ⚠ THE GEIGER'S CLIPS, asserted because silence is its correct behaviour at zero dose and
+            // therefore proves nothing. These shipped loaded with GD.Load, which returns null for a .wav with
+            // no .import sidecar -- the counter ran its whole schedule calling Play() on a null stream and
+            // made no sound, indistinguishably from working.
+            var geiger = new GeigerCounter();
+            World.AddChild(geiger);
+            yield return Ticks(2);
+            T.Check("the geiger's click clips actually loaded", geiger.ClipsLoaded);
+
             float ramp = DeadzoneOverlay.ExposureFor(player);
             T.Check($"the overlay ramp is live but not yet full ({ramp:0.###})", ramp > 0f && ramp < 1f);
 
@@ -56,7 +65,17 @@ namespace UnturnedGodot.Testing
             field.Apply(player, 1f);
             yield return Ticks(2);
             T.Check($"walking out clears the exposure ({player.DeadzoneSeconds:0.##} s)", player.DeadzoneSeconds <= 0f);
-            T.Check("...so the overlay ramps back to nothing", Mathf.IsZeroApprox(DeadzoneOverlay.ExposureFor(player)));
+
+            // ⚠ IT FADES, IT DOES NOT VANISH (strawberry 2026-09-11: "filter starts to fade"). The overlay is
+            // driven by the carried dose now, not by the exposure clock, so leaving begins a washout instead
+            // of flipping the effect off -- a grain that cut to nothing the instant you crossed the boundary
+            // would make the edge of a zone a light switch. This assertion used to demand exactly that.
+            float rampOnLeaving = DeadzoneOverlay.ExposureFor(player);
+            T.Check($"the overlay is still up as you leave ({rampOnLeaving:0.###})", rampOnLeaving > 0f);
+            for (int i = 0; i < 40; i++) yield return Ticks(5);   // ~4 s of washout
+            float faded = DeadzoneOverlay.ExposureFor(player);
+            T.Check($"...and fades as the dose washes out ({faded:0.###} from {rampOnLeaving:0.###})",
+                    faded < rampOnLeaving);
             T.Check("...and InDeadzone is false again, dropping the HUD icon", !player.InDeadzone);
 
             // NO MORE DOSE, asserted as "does not RISE" rather than "is unchanged" -- deliberately. Infection

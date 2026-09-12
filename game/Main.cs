@@ -37,6 +37,8 @@ namespace UnturnedGodot
             MapNodes.MapNodeFile = folder == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";
             MapUI.MapFolder = folder;   // in-game M-map: image + level-size + label follow the map
             FoliageField.MapDir = folder == "PEI" ? "foliage" : "foliage_" + key.ToLower();   // grass/pebbles baked per map
+            DeadzoneMap.MapFile = folder == "PEI" ? "deadzones.tsv" : "deadzones_" + key.ToLower() + ".tsv";   // map deadzones follow the same per-map key
+            TerrainCuts.MapFile = folder == "PEI" ? "terraincuts.tsv" : "terraincuts_" + key.ToLower() + ".tsv";   // authored landscape holes, same per-map key
             ResourceField.MapDir = folder == "PEI" ? "resources" : "resources_" + key.ToLower();   // trees/rocks baked per map
             Terrain.MapDir = folder == "PEI" ? "terrain" : "terrain_" + key.ToLower();   // splat layer albedos baked per map
             AmbienceAudio.MapKey = key.ToLower();   // day/night ambient beds are per map (retail: Maps/<Map>/Environment/Ambience.unity3d)
@@ -374,6 +376,8 @@ namespace UnturnedGodot
                     MapNodes.MapNodeFile = mn == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";   // named-location file follows the map (Level.hierarchy locations for modern maps)
                     MapUI.MapFolder = mn;
                     FoliageField.MapDir = mn == "PEI" ? "foliage" : "foliage_" + key.ToLower();
+                    DeadzoneMap.MapFile = mn == "PEI" ? "deadzones.tsv" : "deadzones_" + key.ToLower() + ".tsv";   // map deadzones follow the same per-map key
+                    TerrainCuts.MapFile = mn == "PEI" ? "terraincuts.tsv" : "terraincuts_" + key.ToLower() + ".tsv";   // authored landscape holes, same per-map key
                     ResourceField.MapDir = mn == "PEI" ? "resources" : "resources_" + key.ToLower();
                     Terrain.MapDir = mn == "PEI" ? "terrain" : "terrain_" + key.ToLower();
                 }
@@ -417,6 +421,8 @@ namespace UnturnedGodot
                 MapNodes.MapNodeFile = ugMap == "PEI" ? "nodes.tsv" : "nodes_" + ugKey + ".tsv";
                 MapUI.MapFolder = ugMap;
                 FoliageField.MapDir = ugMap == "PEI" ? "foliage" : "foliage_" + ugKey.ToLower();
+                DeadzoneMap.MapFile = ugMap == "PEI" ? "deadzones.tsv" : "deadzones_" + ugKey.ToLower() + ".tsv";   // map deadzones follow the same per-map key
+                TerrainCuts.MapFile = ugMap == "PEI" ? "terraincuts.tsv" : "terraincuts_" + ugKey.ToLower() + ".tsv";   // authored landscape holes, same per-map key
                 ResourceField.MapDir = ugMap == "PEI" ? "resources" : "resources_" + ugKey.ToLower();
                 Terrain.MapDir = ugMap == "PEI" ? "terrain" : "terrain_" + ugKey.ToLower();
             }
@@ -1803,7 +1809,7 @@ namespace UnturnedGodot
             _vm = isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
                 : isWire
-                ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) }   // wire tool in-hand
+                ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f), HeldToolKind = ToolKind.Wire }   // wire tool in-hand (the kind is EXPLICIT now -- it used to be inferred from the absence of the others)
                 : isDeploy
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel
@@ -4785,7 +4791,8 @@ namespace UnturnedGodot
             // but PEI renders take ~400 s and this one takes ~120 -- and looking at a purely visual change is
             // not optional, so the harness hook exists to put it over a scene that will actually finish.
             ChromaticAberration.DebugAttach(this);
-            DeadzoneOverlay.DebugAttach(this);   // UG_DEADZONE=<seconds> over the same golden scene, same reasoning
+            DeadzoneOverlay.DebugAttach(this);   // UG_DEADZONE=<dose> over the same golden scene, same reasoning
+            GeigerCounter.DebugAttach(this);     // UG_GEIGER=<dose> to hear the click rate without finding a zone
 
             if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             // UG_SPOTNIGHT=1: the same stage at NIGHT. A light shaft is invisible under a 1.0-energy ambient and a
@@ -5997,11 +6004,12 @@ namespace UnturnedGodot
             {
                 var dzo = new DeadzoneOverlay { Player = res.Player };
                 AddChild(dzo);
+                if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = res.Player });
                 // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
                 // a purely visual effect has to be lookable-at without first finding a deadzone and standing
                 // in it for 40 seconds.
-                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzSecs) && res.Player != null)
-                    res.Player.DeadzoneSeconds = dzSecs;
+                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && res.Player != null)
+                    res.Player.Radiation = dzDose;
             }
             if (res.DayNight != null && WeatherManager.Current == null)
             {
@@ -7188,6 +7196,7 @@ namespace UnturnedGodot
                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // Phase 8 world-state syncs (§3.7) + rubble
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
+                                      Deadzones = res.Deadzones,                            // the listen-server owns the dose (see MpLoopback.Deadzones) -- without this radiation is inert on --peidrive
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 

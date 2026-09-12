@@ -129,12 +129,18 @@ namespace UnturnedGodot.Testing
 
             T.Check("the field knows the player is inside", field.IsInside(p.GlobalPosition));
 
-            float start = p.Health;
+            // ⚠ DOSE, NOT HEALTH -- and this test was RED before the radiation work, not broken by it. The
+            // health assertion it used to make stopped being possible on 2026-09-11 when deadzones moved onto
+            // infection and DeadzoneField lost its DamageSink; nothing in the file changed, so nothing pointed
+            // at it. What a zone applies now is an absorbed dose, and health is downstream of what a high
+            // infection costs.
+            float start = p.Health, startDose = p.Radiation;
             field.Apply(p, 0.2f);   // inside the entry grace
-            T.Check($"the grace window costs nothing (health {p.Health:0.##})", Mathf.IsEqualApprox(p.Health, start));
+            T.Check($"the grace window costs nothing (dose {p.Radiation:0.####})", Mathf.IsEqualApprox(p.Radiation, startDose));
 
             field.Apply(p, 1.0f);   // past the grace: this one bites
-            T.Check($"standing in it hurts ({start:0.#} -> {p.Health:0.#})", p.Health < start);
+            T.Check($"standing in it doses you ({startDose:0.###} -> {p.Radiation:0.###})", p.Radiation > startDose);
+            T.Check($"...and does NOT touch health directly ({p.Health:0.#})", Mathf.IsEqualApprox(p.Health, start));
 
             // Walking out has to stop it. Assert the move actually landed first -- otherwise a failure
             // here is ambiguous between "the field kept tracking" and "the player never left".
@@ -147,9 +153,13 @@ namespace UnturnedGodot.Testing
             field.Apply(p, 1.0f);
             T.Check("outside the volume it is not tracked", !field.DebugTracking(p));
 
-            float outside = p.Health;
+            // NO FURTHER DOSE outside. Asserted as "does not RISE" rather than "unchanged": once the hold
+            // window lapses the dose WASHES OUT, so demanding equality here would be a test asserting that
+            // the dissipation strawberry asked for is broken.
+            float outsideDose = p.Radiation;
             field.Apply(p, 1.0f);
-            T.Check($"and takes no further damage (health {p.Health:0.##})", Mathf.IsEqualApprox(p.Health, outside));
+            T.Check($"and takes no further dose ({p.Radiation:0.###} vs {outsideDose:0.###})",
+                    p.Radiation <= outsideDose + 1e-4f);
         }
     }
 

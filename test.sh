@@ -6,35 +6,38 @@
 # Exit: 0 = clean, 1 = test failure, 2 = infrastructure failure (build/dotnet error).
 #
 # Layers (fable's proposal): L0 = engine-free `dotnet test` (~4s). L1 = batched in-engine TestHost
-# (one headless godot boot; the FULL set is ~8min). L2 = visual golden PNGs (xvfb+lavapipe renders
-# diffed vs tests/visual/golden, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
+# (one headless godot boot; the FULL set is ~8min).
+#
+# ⚠ THERE IS NO L2. The visual-golden tier was REMOVED 2026-09-11 (strawberry: "scrap the whole goldens
+# concept"). In its whole life it produced twelve false alarms and not one caught visual regression -- every
+# red was a golden destroyed by a merge or a cleanup, never a rendering bug. Visual VERIFICATION did not go
+# with it: render it and look at it, which is what actually catches things (see CLAUDE.md).
 #
 # TEST POLICY (bitvox 2026-07-20): the DEFAULT is the FAST tier ONLY -- `./test.sh` runs L0 and stops,
-# so per-iteration + staging-branch builds stay snappy. The SLOW tiers (full L1, visual) are opt-in and
+# so per-iteration + staging-branch builds stay snappy. The SLOW tier (full L1) is opt-in and
 # should be run when ASKED and BEFORE MERGING TO MAIN:
 #   ./test.sh                       # FAST: L0 engine-free logic only (~4s) -- the default, for quick iteration
 #   ./test.sh --l1 --only 'deploy.*'# a TARGETED in-engine slice (one boot, just the affected tests) while iterating
-#   ./test.sh --all                 # the FULL sweep: L0 + all of L1 + visual goldens -- run this before a main merge / deploy
-#   ./test.sh --l1                  # the full in-engine suite alone (slow); --visual for goldens alone; --l0 explicit
+#   ./test.sh --all                 # the FULL sweep: L0 + all of L1 -- run this before a main merge / deploy
+#   ./test.sh --l1                  # the full in-engine suite alone (slow); --l0 explicit
 #
 # --report renders the run to a static HTML dashboard (tools/gen_report.py) after it finishes --
 # served via Caddy at claw.bitvox.me/ugtests/ for at-a-glance review (UG_REPORT_DIR overrides the dir).
 #
-# Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [--report] [-h]
+# Usage: ./test.sh [--l0] [--l1] [--all] [--only <glob>] [--failfast] [--report] [-h]
 #        default (no flags) = L0 only (fast). Use --all before merging to main.
 set -uo pipefail
 cd "$(dirname "$0")"
 
 RESULTS="${UG_TEST_RESULTS:-.testresults}"
 GODOT="${GODOT:-$HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}"
-ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; RUN_VISUAL=0; REPORT=0
+ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; REPORT=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --l0) RUN_L0=1 ;;
     --l1) RUN_L1=1 ;;
-    --visual) RUN_VISUAL=1 ;;
-    --all) RUN_L0=1; RUN_L1=1; RUN_VISUAL=1 ;;
+    --all) RUN_L0=1; RUN_L1=1 ;;
     --only) ONLY="$2"; shift ;;
     --failfast) FAILFAST=1 ;;
     --report) REPORT=1 ;;
@@ -44,12 +47,12 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# default = the FAST tier ONLY: engine-free logic (L0, ~4s). The slow tiers (full L1 in-engine, L2 visual)
-# are opt-in (--l1 / --visual / --all) -- run them when asked + before merging to main (bitvox 2026-07-20).
+# default = the FAST tier ONLY: engine-free logic (L0, ~4s). The slow tier (full L1 in-engine)
+# is opt-in (--l1 / --all) -- run it when asked + before merging to main (bitvox 2026-07-20).
 DEFAULTED=0
-if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; DEFAULTED=1; fi
+if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ]; then RUN_L0=1; DEFAULTED=1; fi
 if [ $DEFAULTED -eq 1 ]; then
-  echo "[test.sh] FAST tier only (L0). The slow in-engine (L1) + visual (L2) tiers were SKIPPED."
+  echo "[test.sh] FAST tier only (L0). The slow in-engine (L1) tier was SKIPPED."
   echo "[test.sh] Before merging to main / deploying, run the full sweep:  ./test.sh --all"
 fi
 
@@ -136,18 +139,85 @@ run_suite() {  # $1 = suite dir under tests/
 GAME_BUILT=0
 build_game() {  # compile game/UnturnedGodot.csproj ONCE per run. BOTH slow tiers need it: L1 boots the engine and
   # L2 renders through it, and godot mono does NOT rebuild on boot -- so whatever assembly is on disk is what runs.
-  # This used to live inside run_l1 alone, which made `--visual` (and any bare `tools/visual_tests.py`, which never
-  # builds at all) render the PREVIOUS commit's code and say nothing: on 2026-09-07 two goldens were baked off a dll
-  # built an hour earlier at another sha and shipped as renders of a commit that had never been compiled. It fails in
-  # the PASSING direction, so nothing in the report looks wrong.
+  # It used to live inside run_l1 alone, so the (now removed) visual tier rendered the PREVIOUS commit's code and
+  # said nothing: on 2026-09-07 two goldens were baked off a dll built an hour earlier at another sha. That bug
+  # outlived the tier -- it is the same stale-assembly trap the provenance guard below exists for, and it fails in
+  # the PASSING direction, so nothing in the report ever looks wrong.
   [ $GAME_BUILT -eq 1 ] && return 0
+  # ⚠ PROVENANCE, NOT FRESHNESS. This repo used to TRACK bin/obj (287 files, 188 dlls; untracked 2026-09-11),
+  # so `git checkout` restored COMMITTED assemblies with the checkout's timestamp -- dotnet then saw them as
+  # newer than the sources, SKIPPED the compile, and every render came from whatever dll was committed rather
+  # than from this commit's code. Measured: power.gen_loadbar at c179869e reported FAIL mae=0.0463 on an
+  # incremental build and PASS mae=0.0000 after `rm -rf game/bin game/obj`. Same commit, same test, opposite
+  # verdicts. It voided a nine-step bisect and nearly named an innocent commit.
+  #
+  # The old "assembly is newer than every .cs" check CANNOT catch this: a checkout is precisely what makes
+  # that true. So key on WHICH SHA the assembly was built from, not on when. Untracking bin/obj fixed the
+  # tree going forward but NOT history -- every commit already in the log still carries the dlls, so any
+  # checkout of an older tree (a bisect, a re-bake, a baseline run) still restores them. This guard is what
+  # covers that case, permanently.
+  #
+  # Only forces when HEAD actually MOVED, so ordinary edit-and-rerun keeps its fast incremental build.
+  local _asm="game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll"
+  local _stamp="game/.godot/mono/.built_from_sha"
+  local _head; _head=$(git rev-parse HEAD 2>/dev/null || echo nogit)
+  local _forced=0
+  # ⚠ THE WIPE MUST COVER core/ AND tests/, NOT game/. The first version of this guard wiped only game/*,
+  # which is the directory I was thinking about and NOT the one the artifacts are in: `git ls-tree` says
+  # ZERO tracked files under game/bin|obj -- all 287 live under core/SDG.Compat, core/SDG.NetPak,
+  # core/UnturnedDat and the two test projects. So a checkout of an older tree restored those, they survived
+  # a game/-only wipe, dotnet marked those three projects up-to-date and copied their committed dlls forward,
+  # and UnturnedGodot.dll rebuilt cleanly AGAINST A STALE NetPak AND UnturnedDat -- the wire codec and the
+  # .dat parser, quietly weeks old, with the post-build check passing because the GAME dll really was new.
+  # (Caught by cow tools reviewing this guard. Same mistake as the bug the guard exists for: cleaning what
+  # you pictured rather than what is there.)
+  #
+  # No stamp at all also forces: a fresh clone has no .godot/ (gitignored), so keying purely on a sha
+  # mismatch would skip the check on the first build of every bisect step -- exactly when it is needed.
+  if [ ! -f "$_stamp" ] || [ "$(cat "$_stamp" 2>/dev/null)" != "$_head" ]; then
+    echo "[BUILD] HEAD is ${_head:0:8}, assembly was built from $(cat "$_stamp" 2>/dev/null || echo 'unknown') -- forcing a cold compile"
+    rm -rf game/bin game/obj game/.godot/mono/temp/bin game/.godot/mono/temp/obj \
+           core/*/bin core/*/obj tests/*/bin tests/*/obj 2>/dev/null
+    _forced=1
+  fi
+  local _started="$RESULTS/.build_started"; mkdir -p "$RESULTS"; : > "$_started"
   # 9>&- closes the LOCK fd for this child. Without it the Roslyn compiler server (VBCSCompiler) inherits fd 9,
   # outlives the script, and keeps holding the run lock -- so the NEXT run is refused by a daemon belonging to a
   # suite that finished minutes ago. MSBUILDDISABLENODEREUSE/DOTNET_CLI_USE_MSBUILD_SERVER above cover the MSBuild
   # daemons but not this one; observed 2026-08-07, lock held by a VBCSCompiler whose test.sh had long since died.
-  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then
+  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v n -nologo >"$RESULTS/game_build.log" 2>&1 9>&-; then   # -v n, NOT -v q: quiet prints neither the csc invocation nor the "Skipping target" line the check below reads
     return 1
   fi
+  # After a FORCED cold compile the dll was deleted, so it must have been rebuilt. If it is not newer than the
+  # moment the build started, no compiler ran and something copied it back -- report that as its own failure
+  # rather than letting it wear the same red as a compile error (cow tools' ask: name the assembly and the gap).
+  # EVERY assembly, not just the game's. "UnturnedGodot.dll is fresh" is true while it links a five-week-old
+  # NetPak; the property actually wanted is "nothing in here is stale".
+  # ⚠ ASK THE BUILD LOG WHETHER A COMPILER RAN. Every timestamp-based version of this check failed, and
+  # failed the same way: `git checkout` stamps the restored obj dirs and dotnet's copy carries that mtime
+  # into the output dir, so a dll is "newer than this build started" whether or not anything compiled.
+  # Measured at 0180289f: the output SDG.NetPak.dll and the core/ obj it came from were BOTH 57s old.
+  #
+  # MSBuild says it outright, per project, and it is free because it is already in this log:
+  #   reused   -> `Skipping target "CoreCompile" because all output files are up-to-date`
+  #   compiled -> a csc invocation
+  # Measured both directions: steady state 8 skipped / 0 csc; touch one source -> 7 skipped / 1 csc.
+  # ⚠ `CoreCompile:` alone appears EITHER way -- the target always runs; only these two discriminate.
+  #
+  # After a FORCED cold wipe nothing should be reusable, so a skip means the wipe did not reach that
+  # project -- which is exactly the bug that shipped here once (wiping game/ while all 287 tracked
+  # artifacts live under core/ and tests/). This is the check that would have caught it.
+  # (Signal found by cow tools; both of our earlier timestamp proposals were defeated by the copy.)
+  if [ $_forced -eq 1 ]; then
+    local _reused; _reused=$(grep -oE 'Skipping target "CoreCompile"[^\n]*' "$RESULTS/game_build.log" 2>/dev/null | wc -l)
+    local _compiled; _compiled=$(grep -cE 'csc\.dll' "$RESULTS/game_build.log" 2>/dev/null)
+    if [ "$_compiled" -eq 0 ] || [ "$_reused" -gt 0 ]; then
+      echo "[BUILD] ERROR | cold compile REUSED $_reused project(s) and compiled $_compiled -- the wipe did not reach them"
+      grep -B3 'Skipping target "CoreCompile"' "$RESULTS/game_build.log" 2>/dev/null | grep -oE '[A-Za-z0-9_.]+\.csproj' | sort -u | sed 's/^/         stale: /' | head -10
+      return 1
+    fi
+  fi
+  echo "$_head" > "$_stamp" 2>/dev/null
   GAME_BUILT=1; return 0
 }
 
@@ -207,35 +277,6 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
 }
 
-run_visual() {  # L2 golden-image tests: render each manifest scene via xvfb+lavapipe, diff vs the committed golden
-  echo "== L2: visual golden tests (xvfb + lavapipe, ~30s/scene) =="
-  if ! build_game; then   # a render is only as valid as the assembly on disk -- see build_game
-    echo "[SUITE] L2 visual | ERROR | game build failed (see $RESULTS/game_build.log)"
-    grep -E 'error|Build FAILED' "$RESULTS/game_build.log" | head -3 | sed 's/^/         /'
-    INFRA_FAIL=1; return
-  fi
-  local only=(); [ "$ONLY" != "*" ] && only=(--only "$ONLY")
-  local log="$RESULTS/visual.log"
-  GODOT="$GODOT" python3 tools/visual_tests.py "${only[@]}" | tee "$log"
-  local summary; summary="$(grep -E '^\[VISUAL\] passed=' "$log" | tail -1)"
-  if [ -z "$summary" ]; then
-    echo "[SUITE] L2 visual | ERROR | runner never reported (see $log)"; INFRA_FAIL=1; return
-  fi
-  local p f i
-  p="$(sed -E 's/.*passed=([0-9]+).*/\1/' <<<"$summary")"
-  f="$(sed -E 's/.*failed=([0-9]+).*/\1/' <<<"$summary")"
-  i="$(sed -E 's/.*infra=([0-9]+).*/\1/' <<<"$summary")"
-  TOTAL_PASS=$((TOTAL_PASS + p)); TOTAL_FAIL=$((TOTAL_FAIL + f))
-  if [ "$i" -gt 0 ]; then
-    echo "[SUITE] L2 visual | ERROR | $i scene(s) failed to render"; INFRA_FAIL=1
-  elif [ "$f" -eq 0 ]; then
-    echo "[SUITE] L2 visual | PASS | $p passed"
-  else
-    echo "[SUITE] L2 visual | FAIL | $f failed, $p passed"
-    [ -z "$FIRST_FAILURE" ] && FIRST_FAILURE="$(grep -E '^\[TEST\].*\| FAIL ' "$log" | head -1 | sed -E 's/^\[TEST\][[:space:]]+([^[:space:]]+).*/\1/')"
-    [ $FAILFAST -eq 1 ] && finish
-  fi
-}
 
 finish() {
   local status name
@@ -254,7 +295,6 @@ finish() {
     for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
   fi
   if [ $RUN_L1 -eq 1 ]; then run_l1; fi
-  if [ $RUN_VISUAL -eq 1 ]; then run_visual; fi
   finish
 } 2>&1 | tee "$RESULTS/run.log"
 CODE=${PIPESTATUS[0]}

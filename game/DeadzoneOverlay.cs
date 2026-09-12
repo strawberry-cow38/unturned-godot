@@ -27,11 +27,15 @@ namespace UnturnedGodot
         /// <summary>The player whose exposure drives the effect. Set by whoever builds the world.</summary>
         public PlayerController Player;
 
-        /// <summary>Seconds of continuous exposure at which the effect reaches full strength. Deliberately
-        /// close to the unprotected time-to-death (~40 s at the default zone's 0.025 infection/second): the
-        /// screen is at its worst about when you are, so "it looks bad" and "you are nearly dead" are the
-        /// same signal rather than two things to learn separately.</summary>
-        public static float FullExposureSeconds = 40f;
+        /// <summary>Dose at which the effect reaches full strength. 1.0 = the whole bar, so the screen is at
+        /// its worst exactly when the dose is.
+        ///
+        /// ⚠ DRIVEN BY RADIATION, NOT BY TIME INSIDE (strawberry 2026-09-11: "radiation gradually dissipates
+        /// when leaving a deadzone ... filter starts to fade"). An exposure clock could only ever count up
+        /// while you stood there and snap to zero when you stepped out; reading the dose itself means the
+        /// grain fades out the way the dose does, on its own decay curve, with no second timer to keep in
+        /// sync.</summary>
+        public static float FullExposureDose = 1.0f;
 
         public static bool Enabled = true;
 
@@ -54,8 +58,8 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             _t += delta;
-            float exposure = DebugForcedSeconds.HasValue
-                ? Mathf.Clamp(DebugForcedSeconds.Value / Mathf.Max(0.01f, FullExposureSeconds), 0f, 1f)
+            float exposure = DebugForcedDose.HasValue
+                ? Mathf.Clamp(DebugForcedDose.Value / Mathf.Max(0.01f, FullExposureDose), 0f, 1f)
                 : ExposureFor(Player);
 
             // HIDDEN, not zero-intensity, when clear -- the same reasoning ChromaticAberration spells out: a
@@ -70,19 +74,19 @@ namespace UnturnedGodot
             _mat.SetShaderParameter("time_seconds", (float)_t);
         }
 
-        /// <summary>0..1 exposure for a player. Static and null-safe so the L1 tests can assert the ramp
-        /// without standing up a CanvasLayer and a shader.</summary>
+        /// <summary>0..1 exposure for a player, read off the absorbed dose. Static and null-safe so the L1
+        /// tests can assert the ramp without standing up a CanvasLayer and a shader.</summary>
         public static float ExposureFor(PlayerController p)
         {
             if (p == null || !GodotObject.IsInstanceValid(p)) return 0f;
-            float secs = p.DeadzoneSeconds;
-            if (secs <= 0f) return 0f;
-            return Mathf.Clamp(secs / Mathf.Max(0.01f, FullExposureSeconds), 0f, 1f);
+            float dose = p.Radiation;
+            if (dose <= 0f) return 0f;
+            return Mathf.Clamp(dose / Mathf.Max(0.01f, FullExposureDose), 0f, 1f);
         }
 
         /// <summary>What the shader is currently being driven with, for tests.</summary>
-        public float DebugExposure => DebugForcedSeconds.HasValue
-            ? Mathf.Clamp(DebugForcedSeconds.Value / Mathf.Max(0.01f, FullExposureSeconds), 0f, 1f)
+        public float DebugExposure => DebugForcedDose.HasValue
+            ? Mathf.Clamp(DebugForcedDose.Value / Mathf.Max(0.01f, FullExposureDose), 0f, 1f)
             : ExposureFor(Player);
         public bool DebugVisible => _rect != null && _rect.Visible;
 
@@ -98,16 +102,16 @@ namespace UnturnedGodot
         /// often no player: the point is to see the effect, not to simulate earning it.</summary>
         public static DeadzoneOverlay DebugAttach(Node root)
         {
-            string s = System.Environment.GetEnvironmentVariable("UG_DEADZONE");
+            string s = System.Environment.GetEnvironmentVariable("UG_DEADZONE");   // now a DOSE (0..1), not seconds
             if (string.IsNullOrEmpty(s) || root == null || !float.TryParse(s, out float secs)) return null;
             Enabled = true;
-            var dz = new DeadzoneOverlay { DebugForcedSeconds = secs };
+            var dz = new DeadzoneOverlay { DebugForcedDose = secs };
             root.AddChild(dz);
-            Log.Print($"[deadzone] harness on at {secs:0.#}s exposure (ramp full at {FullExposureSeconds:0.#}s)");
+            Log.Print($"[deadzone] harness on at dose {secs:0.##} (full at {FullExposureDose:0.##})");
             return dz;
         }
 
-        /// <summary>Harness override: when set, drives the ramp instead of the player's own exposure.</summary>
-        public float? DebugForcedSeconds;
+        /// <summary>Harness override: when set, drives the ramp instead of the player's own dose.</summary>
+        public float? DebugForcedDose;
     }
 }

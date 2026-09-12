@@ -43,7 +43,7 @@ namespace UnturnedGodot.Net
 
             // dirty-detection cache: the last QUANTIZED wire values, so an idle/unchanged block costs no
             // owner-block delta (a full-stamina, non-sprinting, uninfected player stamps nothing).
-            float _qF = -1f, _qW = -1f, _qS = -1f, _qI = -1f, _qO = -1f;
+            float _qF = -1f, _qW = -1f, _qS = -1f, _qI = -1f, _qO = -1f, _qR = -1f;
             bool _qBl, _qBr, _hasQ;
 
             /// <summary>Bump LastChangedTick only when the QUANTIZED value actually changes. Mirrors the
@@ -56,8 +56,9 @@ namespace UnturnedGodot.Net
                 // comparison would mean the delta never goes dirty and the bar never moves on an MP client. The
                 // wire would have been perfect and the value would still never have arrived.
                 float f = Q(Sim.Food), w = Q(Sim.Water), s = Q(Sim.Stamina), inf = Q(Sim.Infection), ox = Q(Sim.Oxygen);
-                if (_hasQ && f == _qF && w == _qW && s == _qS && inf == _qI && ox == _qO && Bleeding == _qBl && Broken == _qBr) return;
-                _qF = f; _qW = w; _qS = s; _qI = inf; _qO = ox; _qBl = Bleeding; _qBr = Broken; _hasQ = true;
+                float rad = Q(Sim.Radiation);
+                if (_hasQ && f == _qF && w == _qW && s == _qS && inf == _qI && ox == _qO && rad == _qR && Bleeding == _qBl && Broken == _qBr) return;
+                _qF = f; _qW = w; _qS = s; _qI = inf; _qO = ox; _qR = rad; _qBl = Bleeding; _qBr = Broken; _hasQ = true;
                 LastChangedTick = tick + 1;
             }
         }
@@ -160,6 +161,21 @@ namespace UnturnedGodot.Net
             e.LastChangedTick = tick + 1;   // stamp now; ServerStep's StampIfChanged re-affirms on the living player
         }
 
+        /// <summary>Absorb a deadzone's dose on the server (ServerDeadzones.RadiationSink). Goes through the
+        /// sim's own AbsorbDose -- the same call the SP shell makes -- so the dose and the infection it scars
+        /// with are raised together by one formula on both sides of the wire.
+        ///
+        /// IMMUNITY IS NOT APPLIED HERE, and that is a pre-existing gap rather than something this introduced:
+        /// the InfectionSink path it replaces did not apply it either, PlayerVitalsSim.Multipliers carries no
+        /// immunity term, and adding one is a wider change than the dose fix. Effect: the skill discounts
+        /// deadzone scarring in SP and not in MP.</summary>
+        public void ServerAbsorbDose(ushort ownerPlayerId, float dose, float dt, long tick)
+        {
+            if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return;
+            e.Sim.AbsorbDose(dose, dt);
+            e.LastChangedTick = tick + 1;
+        }
+
         // ---- IReplicatedSystem (owner-only: both paths write the SAME single-entry shape) ----
 
         public void WriteFull(NetPakWriter w, in ReplicationContext ctx) => WriteOwnerBlock(w, ctx.ClientPlayerId, always: true);
@@ -180,6 +196,7 @@ namespace UnturnedGodot.Net
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Stamina), VitalsBits);
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Infection), VitalsBits);
             w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Oxygen), VitalsBits);   // v33: server-owned, like every other vital -- a client that could assert its own breath could not drown
+            w.WriteUnsignedNormalizedFloat(Clamp01(e.Sim.Radiation), VitalsBits); // v46: hidden from the HUD, but it gates sprint + jump, so both ends must agree on it
             w.WriteBit(e.Bleeding);
             w.WriteBit(e.Broken);
         }
@@ -194,6 +211,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float stamina)) return;
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float infection)) return;
             if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float oxygen)) return;   // v33
+            if (!r.ReadUnsignedNormalizedFloat(VitalsBits, out float radiation)) return; // v46
             if (!r.ReadBit(out bool bleeding)) return;
             if (!r.ReadBit(out bool broken)) return;
             if (!_byOwner.TryGetValue(owner, out var e))
@@ -202,6 +220,7 @@ namespace UnturnedGodot.Net
                 _byOwner[owner] = e;
             }
             e.Sim.Food = food; e.Sim.Water = water; e.Sim.Stamina = stamina; e.Sim.Infection = infection; e.Sim.Oxygen = oxygen;
+            e.Sim.Radiation = radiation;
             e.Bleeding = bleeding; e.Broken = broken;
         }
 
@@ -231,6 +250,7 @@ namespace UnturnedGodot.Net
             h = NetHash.MixFloat(h, Q(e.Sim.Stamina));    // so StateHashFor == the owner replica's StateHash exactly.
             h = NetHash.MixFloat(h, Q(e.Sim.Infection));
             h = NetHash.MixFloat(h, Q(e.Sim.Oxygen));     // v33: rides the hash, or breath could diverge invisibly
+            h = NetHash.MixFloat(h, Q(e.Sim.Radiation));  // v46: likewise -- a silent dose divergence is a silent sprint divergence
             h = NetHash.MixByte(h, e.Bleeding ? (byte)1 : (byte)0);
             h = NetHash.MixByte(h, e.Broken ? (byte)1 : (byte)0);
             return h;

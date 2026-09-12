@@ -40,6 +40,29 @@ namespace UnturnedGodot
         // The one flag drives ALL of these consume subsystems (deployables + inventory + world-items); the
         // name is kept for continuity. Opt-in and behavior-neutral when false: SP/loopback keep the direct path.
         public bool ConsumeDeployables;   // "--spconsume": the local player consumes the replica subsystems instead of owning direct nodes
+
+        /// <summary>The built contaminated volumes, copied into this listen-server's own hazard step.
+        ///
+        /// ⚠ WITHOUT THIS, RADIATION DOES NOTHING ON THE PATH THE GAME ACTUALLY BOOTS. --peidrive and the
+        /// menu's "Drive PEI" attach this loopback with ConsumeDeployables on, which means the local player's
+        /// fine vitals are SERVER-owned and adopted every tick. The shell therefore stops applying its own
+        /// dose (PlayerController.AbsorbDose returns early under NetFineVitalsAdopted, or the next snapshot
+        /// would overwrite it anyway) -- so if this server has no volumes, nobody doses anybody and the whole
+        /// feature is inert in the one mode a player ever sees. DedicatedServer has always passed these
+        /// through InteractableNetSync; the loopback simply never did, and nothing noticed because every
+        /// deadzone test drives either a bare DeadzoneField or a DedicatedServer.</summary>
+        public DeadzoneField Deadzones;
+
+        /// <summary>The DeadzoneField anywhere under <paramref name="root"/>. Null root or none found is fine:
+        /// a world with no contaminated ground is the normal case.</summary>
+        static DeadzoneField FindDeadzoneField(Node root)
+        {
+            if (root == null) return null;
+            if (root is DeadzoneField f) return f;
+            foreach (Node c in root.GetChildren())
+                if (FindDeadzoneField(c) is DeadzoneField hit) return hit;
+            return null;
+        }
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -- ServerPlaced under consume, direct-Attached otherwise
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         bool _localInventoryAdopted;
@@ -78,6 +101,17 @@ namespace UnturnedGodot
             Server.Combat.WorldRay = GodotWorldRay;   // Phase 5: remote joiners' server bullets stop at real world geometry
             // Phase 6 def tables (see DedicatedServer): remote joiners' place/wire/craft commands validate
             // against these; the LOCAL player keeps the direct SP paths (the listen-server IS the authority).
+            // FOUND, not merely accepted. Main passes Deadzones explicitly, but a listen-server that is
+            // inert whenever one call site forgets an assignment is a bug waiting to happen a second time --
+            // it already happened once, and the symptom (radiation quietly doing nothing on --peidrive) is
+            // indistinguishable from the feature being off. Falling back to the field in the scene tree means
+            // there is no wiring left to forget.
+            var dz = Deadzones ?? FindDeadzoneField(GetParent());
+            if (dz != null)
+            {
+                foreach (var v in dz.Volumes) Server.Deadzones.AddVolume(v.Center, v.HalfExtent, v.Zone);
+                Log.Print($"[loopback] seeded {Server.Deadzones.VolumeCount} deadzone volume(s) server-side");
+            }
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
@@ -511,7 +545,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Server.HasWater = Terrain.HasWater; Server.SeaLevelY = Terrain.SeaLevelY;   // the server owns oxygen; core cannot see water
                 Server.Vitals.SurvivalDrain = PlayerController.SurvivalDrain;
                 if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
-                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen);
+                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection, fv.Sim.Oxygen, fv.Sim.Radiation);
             }
 
             // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model). B5:
