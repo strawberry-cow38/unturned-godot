@@ -369,52 +369,53 @@ namespace UnturnedGodot
                         if (!byCell.TryGetValue(key, out var cl)) { cl = new List<int>(); byCell[key] = cl; }
                         cl.Add(k);
                     }
-                    // DON'T SPLIT WHAT ISN'T WORTH SPLITTING (2026-09-12).
+                    // ⚠⚠ MERGING THESE BATCHES BREAKS THE IMPOSTOR HANDOFF. REVERTED, DEFAULT OFF (2026-09-12).
                     //
-                    // A [drawsrc] dump of the pinned PEI spot: ResourceField held **3,126 MultiMesh objects carrying
-                    // 3,921 instances -- 1.25 instances per batch**. Beside it, FoliageField ran 1,731 batches over
-                    // 667,254 instances (385:1). We were calling MultiMesh and then subdividing the batch until it
-                    // held one tree, paying a full draw call to draw a single pine -- and, because 78% of the scene
-                    // casts shadows, paying it again in the shadow pass.
+                    // The merge below collapsed a sparse species into ONE map-wide MultiMesh. It did exactly what
+                    // it promised -- 3,126 batches became 37, draw calls fell, fps rose ~6% -- and it broke every
+                    // tree on the map. A MultiMesh culls as a SINGLE UNIT on the distance to its bounding box, and
+                    // a map-wide box is centred on the middle of PEI. So from anywhere a player actually stands the
+                    // REAL tree meshes were past VisibilityRangeEnd and culled, while the IMPOSTORS (which share
+                    // this same cell grouping, and whose VisibilityRangeBegin is the same cull distance) switched
+                    // on. Result: every tree in the world drawn as its billboard. strawberry found it in five
+                    // minutes of play; fps and draws both IMPROVED, so no benchmark I ran could ever have seen it.
                     //
-                    // The cells are not the mistake; subdividing a SPARSE species is. A species is spread thin over
-                    // the whole map, so at 64 m almost every cell holds one or two of it. So:
-                    //   * few enough instances overall -> ONE batch, no cells. It never frustum-culls, but drawing a
-                    //     few dozen scattered bushes unconditionally is far cheaper than the draw calls to cull them.
-                    //   * otherwise keep per-cell culling for the dense parts, and fold the thin cells into a COARSE
-                    //     grid rather than a single map-wide bucket, so the merged batch still has a bounded AABB.
+                    // ⭐ "3,126 -> 37 batches" was the tell and I reported it as a win. 37 batches for ~40 species
+                    // x 2-3 parts means essentially everything collapsed map-wide -- the number said what had
+                    // happened and I did not ask what it meant. A cull-bounded batch is the POINT of the cells
+                    // here, not an inefficiency in them.
                     //
-                    // ⚠ Widening Cell itself was tried FIRST and backfired: draws went 3,967 -> 4,756, because a
-                    // bigger batch has a bigger bounding box and survives the distance cull longer. Merging only the
-                    // batches that are too small to justify themselves gets the batching without that side effect.
-                    int singleMax = 512, minPerBatch = 64, coarseMul = 4;
-                    int.TryParse(System.Environment.GetEnvironmentVariable("UG_SINGLEMAX"), out singleMax);
-                    int.TryParse(System.Environment.GetEnvironmentVariable("UG_MINBATCH"), out minPerBatch);
-                    if (singleMax <= 0) singleMax = 512;
-                    if (minPerBatch <= 0) minPerBatch = 64;
-                    if (byCell.Count > 1 && xf.Count <= singleMax)
+                    // Off unless UG_PMERGE=1 asks for it, so the shipped path is byte-identical to before. Any
+                    // future attempt must keep every batch's AABB local (and prove it with a RENDER, not an fps).
+                    if (System.Environment.GetEnvironmentVariable("UG_PMERGE") == "1")
                     {
-                        var all = new List<int>(xf.Count);
-                        for (int k = 0; k < xf.Count; k++) all.Add(k);
-                        byCell.Clear();
-                        byCell[(0, 0)] = all;
-                    }
-                    else if (byCell.Count > 1)
-                    {
-                        var merged = new Dictionary<(int, int), List<int>>();
-                        var coarse = new Dictionary<(int, int), List<int>>();
-                        foreach (var kv in byCell)
+                        int singleMax = 512, minPerBatch = 64, coarseMul = 4;
+                        int.TryParse(System.Environment.GetEnvironmentVariable("UG_SINGLEMAX"), out singleMax);
+                        int.TryParse(System.Environment.GetEnvironmentVariable("UG_MINBATCH"), out minPerBatch);
+                        if (singleMax <= 0) singleMax = 512;
+                        if (minPerBatch <= 0) minPerBatch = 64;
+                        if (byCell.Count > 1 && xf.Count <= singleMax)
                         {
-                            if (kv.Value.Count >= minPerBatch) { merged[kv.Key] = kv.Value; continue; }
-                            // Offset the coarse keys out of the fine key space so a coarse bucket can never collide
-                            // with a dense fine cell that happens to share its integer coordinates.
-                            var ck = (1 << 20) + (int)Mathf.Floor(kv.Key.Item1 / (float)coarseMul);
-                            var ck2 = (int)Mathf.Floor(kv.Key.Item2 / (float)coarseMul);
-                            if (!coarse.TryGetValue((ck, ck2), out var cl)) { cl = new List<int>(); coarse[(ck, ck2)] = cl; }
-                            cl.AddRange(kv.Value);
+                            var all = new List<int>(xf.Count);
+                            for (int k = 0; k < xf.Count; k++) all.Add(k);
+                            byCell.Clear();
+                            byCell[(0, 0)] = all;
                         }
-                        foreach (var kv in coarse) merged[kv.Key] = kv.Value;
-                        byCell = merged;
+                        else if (byCell.Count > 1)
+                        {
+                            var merged = new Dictionary<(int, int), List<int>>();
+                            var coarse = new Dictionary<(int, int), List<int>>();
+                            foreach (var kv in byCell)
+                            {
+                                if (kv.Value.Count >= minPerBatch) { merged[kv.Key] = kv.Value; continue; }
+                                var ck = (1 << 20) + (int)Mathf.Floor(kv.Key.Item1 / (float)coarseMul);
+                                var ck2 = (int)Mathf.Floor(kv.Key.Item2 / (float)coarseMul);
+                                if (!coarse.TryGetValue((ck, ck2), out var cl)) { cl = new List<int>(); coarse[(ck, ck2)] = cl; }
+                                cl.AddRange(kv.Value);
+                            }
+                            foreach (var kv in coarse) merged[kv.Key] = kv.Value;
+                            byCell = merged;
+                        }
                     }
                     for (int i = 0; i < parts; i++)
                     {

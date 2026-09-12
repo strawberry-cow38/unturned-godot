@@ -135,6 +135,19 @@ namespace UnturnedGodot
         /// or a visibility band it had before.</summary>
         void Coalesce()
         {
+            // ⚠⚠ SAME TRAP AS ResourceField, AND FOR THE SAME REASON -- OFF BY DEFAULT (2026-09-12).
+            //
+            // Collapsing a type into one map-wide batch broke every tree in the game when I did it in
+            // ResourceField: a MultiMesh culls as a SINGLE UNIT on the distance to its bounding box, so a
+            // map-wide box is always "far" and the visibility range stops meaning anything. Props here carry
+            // VisibilityRangeBegin/End as their LOD BANDS, so the identical merge would put every prop in the
+            // wrong LOD rather than the wrong existence -- quieter, same cause. Batching is opt-in (UG_BATCH)
+            // so this was never live, but a trap that only fires for the next person is still a trap.
+            //
+            // Opt in with UG_PMERGE=1 alongside UG_BATCH=1. Anything that merges these MUST keep each batch's
+            // AABB local, and must be proved with a RENDER -- fps and draw counts both IMPROVED while the world
+            // was visibly wrong, so neither can see this class of bug.
+            if (System.Environment.GetEnvironmentVariable("UG_PMERGE") != "1") return;
             int singleMax = 512, minPerBatch = 64, coarseMul = 4;
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_PSINGLEMAX"), out singleMax);
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_PMINBATCH"), out minPerBatch);
