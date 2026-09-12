@@ -378,10 +378,26 @@ namespace UnturnedGodot
 
         // Force a clip's loop mode (the extractor marks non-Attack/Startle/Jump clips as looping; the Equip
         // pull-out must play ONCE and hold its end pose = the two-handed ready hold).
+        // WHICH CLIP'S LoopMode WE LAST WROTE. LoopMode lives on the Animation RESOURCE and persists, so it
+        // only needs setting when the clip changes -- but PlayLoop and SetGunOverlay both wrote it on EVERY
+        // call, above their own "no-op if already current" checks. Both are called every frame per character,
+        // and each write is three engine round-trips (HasAnimation, GetAnimation, set_loop_mode). ETW put
+        // Animation.SetLoopMode at 2,044 ms of a 38 s trace -- 99.7% of the busiest C#/engine call stub in the
+        // whole game, for a flag that had not changed.
+        //
+        // These remember what was written rather than skipping on "is the clip already playing", because the
+        // explicit setters below can change the mode of a clip that IS current; keying on the write means they
+        // still win. Any setter that writes a mode updates or clears these.
+        string _loopSetLoco;
+        string _loopSetGun; bool _loopSetGunValue;
+
         public void SetClipLoop(string name, bool loop)
         {
             if (_ap != null && _ap.HasAnimation(name))
+            {
                 _ap.GetAnimation(name).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+                _loopSetLoco = loop ? name : null;   // an explicit non-loop must not be undone by a cached "already Linear"
+            }
         }
 
         // Locomotion clip names (players use the human set; zombies swap in their Move_N/Idle_N shamble).
@@ -419,7 +435,7 @@ namespace UnturnedGodot
         public void PlayLoop(string name)
         {
             if (_ap == null || _oneShot > 0 || !_ap.HasAnimation(name)) return;
-            _ap.GetAnimation(name).LoopMode = Animation.LoopModeEnum.Linear;
+            if (_loopSetLoco != name) { _ap.GetAnimation(name).LoopMode = Animation.LoopModeEnum.Linear; _loopSetLoco = name; }
             if (name != _loco || _ap.CurrentAnimation != name) { _loco = name; _ap.Play(name); }
         }
 
@@ -936,7 +952,11 @@ namespace UnturnedGodot
         public void SetGunOverlay(string clip, float speed = 1f, bool loop = true)
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
-            _gunAp.GetAnimation(clip).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+            if (_loopSetGun != clip || _loopSetGunValue != loop)
+            {
+                _gunAp.GetAnimation(clip).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+                _loopSetGun = clip; _loopSetGunValue = loop;
+            }
             if (_gunAp.CurrentAnimation != clip) _gunAp.Play(clip, -1, speed);
         }
 
@@ -946,6 +966,7 @@ namespace UnturnedGodot
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
+            _loopSetGun = clip; _loopSetGunValue = false;   // keep the cache honest about what was just written
             string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
             if (h != null) { _gunAp.Play(h); return; }
             _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
