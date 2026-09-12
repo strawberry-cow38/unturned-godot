@@ -117,9 +117,67 @@ namespace UnturnedGodot
             return s;
         }
 
+        /// <summary>Fold groups too small to justify a draw call of their own into coarser cells.
+        ///
+        /// The batcher's own numbers said it was not working: 6,498 prop visuals became 2,605 MultiMesh nodes --
+        /// 2.5 instances per batch. That is why the A/B measured a LOSS and why batching was defaulted off. A
+        /// batch of 2.5 props costs a full draw call and, being a MultiMesh, culls as one unit with a bigger AABB
+        /// than the props it replaced -- so it submits MORE geometry than the individual meshes did. Measured:
+        /// draws went UP, 5,377 -> 5,675, with batching ON.
+        ///
+        /// ResourceField had the identical disease (3,126 batches for 3,921 trees) and the identical cause: a
+        /// type spread thinly over the map gets one or two instances per 64 m cell. Collapsing the thin groups
+        /// there took it to 37 batches for the same 3,921 trees and measured +6% fps. This is that fix, for props.
+        ///
+        /// Merging only ever happens WITHIN a (guid, material, lod, dead) family, so every member already shares
+        /// the mesh, the material and the LOD band -- the merge cannot change what is drawn, only how many draw
+        /// calls draw it. End takes the widest and Shadow takes the most conservative, so nothing loses a shadow
+        /// or a visibility band it had before.</summary>
+        void Coalesce()
+        {
+            int singleMax = 512, minPerBatch = 64, coarseMul = 4;
+            int.TryParse(System.Environment.GetEnvironmentVariable("UG_PSINGLEMAX"), out singleMax);
+            int.TryParse(System.Environment.GetEnvironmentVariable("UG_PMINBATCH"), out minPerBatch);
+            if (singleMax <= 0) singleMax = 512;
+            if (minPerBatch <= 0) minPerBatch = 64;
+
+            var family = new Dictionary<(string, string, int, bool), int>();
+            foreach (var kv in _groups)
+            {
+                var f = (kv.Key.Guid, kv.Key.Mat, kv.Key.Lod, kv.Key.Dead);
+                family.TryGetValue(f, out int n); family[f] = n + kv.Value.Slots.Count;
+            }
+
+            var rebuilt = new Dictionary<(string Guid, string Mat, int Lod, bool Dead, int Cx, int Cz), Group>();
+            foreach (var kv in _groups)
+            {
+                var k = kv.Key;
+                var f = (k.Guid, k.Mat, k.Lod, k.Dead);
+                int total = family[f];
+                int cx, cz;
+                if (total <= singleMax) { cx = 0; cz = 0; }                                  // whole map, one batch
+                else if (kv.Value.Slots.Count >= minPerBatch) { cx = k.Cx; cz = k.Cz; }      // dense: keep its own cell
+                else                                                                          // thin: coarser grid, bounded AABB
+                {
+                    cx = (1 << 20) + (int)Mathf.Floor(k.Cx / (float)coarseMul);
+                    cz = (int)Mathf.Floor(k.Cz / (float)coarseMul);
+                }
+                var nk = (k.Guid, k.Mat, k.Lod, k.Dead, cx, cz);
+                if (!rebuilt.TryGetValue(nk, out var g)) { rebuilt[nk] = kv.Value; continue; }
+                if (ReferenceEquals(g, kv.Value)) continue;
+                g.Slots.AddRange(kv.Value.Slots);
+                if (kv.Value.End > g.End) g.End = kv.Value.End;
+                if (kv.Value.Begin < g.Begin) g.Begin = kv.Value.Begin;
+                if (kv.Value.Shadow == GeometryInstance3D.ShadowCastingSetting.On) g.Shadow = GeometryInstance3D.ShadowCastingSetting.On;
+            }
+            _groups.Clear();
+            foreach (var kv in rebuilt) _groups[kv.Key] = kv.Value;
+        }
+
         /// <summary>Build the MultiMeshes and hang them under `root`. Call once, after every placement is queued.</summary>
         public void Flush(Node root)
         {
+            Coalesce();
             foreach (var kv in _groups)
             {
                 var g = kv.Value;

@@ -131,6 +131,7 @@ namespace UnturnedGodot
         static void DumpDrawSources(Node root)
         {
             var byOwner = new System.Collections.Generic.Dictionary<string, (int Draws, int Nodes, long Inst)>();
+            var detail = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, int>>();
             int total = 0, shadowCasters = 0;
             var stack = new System.Collections.Generic.Stack<Node>();
             stack.Push(root);
@@ -166,6 +167,19 @@ namespace UnturnedGodot
 
                 byOwner.TryGetValue(owner, out var e);
                 byOwner[owner] = (e.Draws + draws, e.Nodes + 1, e.Inst + inst);
+
+                // SECOND LEVEL, for the winner only. "Main is 35.6%" names no code to edit -- Main is where
+                // everything unowned lands. Grouping the top bucket by node name says WHAT those nodes are,
+                // which is the difference between a finding and another model I would have to test later.
+                if (!detail.TryGetValue(owner, out var dd)) { dd = new System.Collections.Generic.Dictionary<string, int>(); detail[owner] = dd; }
+                string nm = n.Name.ToString();
+                int at = nm.IndexOf('@');
+                if (at > 0) nm = nm.Substring(0, at);          // Godot's auto-suffix on duplicate names
+                nm = nm.TrimEnd('0','1','2','3','4','5','6','7','8','9','_');
+                string par = n.GetParent()?.Name.ToString() ?? "-";
+                int pat = par.IndexOf('@'); if (pat > 0) par = par.Substring(0, pat);
+                string key = par + " / " + nm;
+                dd.TryGetValue(key, out int dv); dd[key] = dv + draws;
             }
 
             Log.Print($"[drawsrc] total={total} shadowCasting={shadowCasters} owners={byOwner.Count}");
@@ -175,6 +189,15 @@ namespace UnturnedGodot
             {
                 var r = ranked[i];
                 Log.Print($"[drawsrc]   {r.Value.Draws,6}  {100.0 * r.Value.Draws / System.Math.Max(1, total),5:0.0}%  nodes={r.Value.Nodes,5}  inst={r.Value.Inst,7}  {r.Key}");
+            }
+            for (int i = 0; i < ranked.Count && i < 2; i++)
+            {
+                if (!detail.TryGetValue(ranked[i].Key, out var dd)) continue;
+                var sub = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>(dd);
+                sub.Sort((x, y) => y.Value.CompareTo(x.Value));
+                Log.Print($"[drawsrc] -- inside '{ranked[i].Key}' ({sub.Count} distinct parent/name) --");
+                for (int j = 0; j < sub.Count && j < 14; j++)
+                    Log.Print($"[drawsrc]     {sub[j].Value,6}  {sub[j].Key}");
             }
         }
         // FRAME-TIME PERCENTILES. Average fps is structurally incapable of showing a GC pause: a 12 ms stall on a
