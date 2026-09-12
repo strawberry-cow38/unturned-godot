@@ -129,6 +129,14 @@ namespace UnturnedGodot
         {
             var root = ctx?.GetTree()?.Root;
             if (root == null || System.Environment.GetEnvironmentVariable("UG_NO3DSCALE") == "1") return;
+            // UG_3DSCALE forces the 3D render scale outright, for measuring what render scaling is WORTH.
+            // Resolution is the only knob measured to move this frame at all (1080p -> 720p = +34%, while draw
+            // calls, shadow distance, volumetric fog, the water mirror and bloom all measured as null), and
+            // scaling the 3D buffer is how you buy that without shrinking the window or softening the UI.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_3DSCALE"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float forced) && forced > 0f)
+            { root.Scaling3DScale = Mathf.Clamp(forced, 0.25f, 2f); return; }
             var win = DisplayServer.WindowGetSize();
             var basis = root.ContentScaleSize;
             if (win.X <= 0 || basis.X <= 0) return;
