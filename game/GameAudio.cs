@@ -255,6 +255,9 @@ namespace UnturnedGodot
         ///
         /// Bush_0 and Bush_1 return null on purpose and are not an oversight: those two have no Explosion
         /// field at all in retail and no Forage key either, so they are scenery that neither breaks nor picks.
+        /// That was TRUE OF THE DOC AND FALSE OF THE CODE from e8481f55 until now -- the branch tested
+        /// `StartsWith("Bush")`, which catches both of them, so they rustled. Caught by audio.resource_break
+        /// going red on every branch the night after it was written.
         /// The two Christmas resources resolve to a `Reset` chime that nothing destroys yet.</summary>
         public static AudioStream ResourceBreak(string resourceName)
         {
@@ -263,7 +266,12 @@ namespace UnturnedGodot
                 return Pick("explosions", "birch_0");   // the shared Timber clip
             if (n.StartsWith("Metal") || n.StartsWith("Clay"))
                 return Pick("explosions", "metal_2");   // the shared Metal clip
-            if (n.StartsWith("Bush") || n.StartsWith("Mushroom"))
+            // ASK THE ROSTER, do not guess by prefix. `StartsWith("Bush")` also catches Bush_0 and Bush_1 --
+            // the two plain green bushes that this very method's doc says "return null on purpose", and that
+            // ResourceField's forage table deliberately omits for the same reason (no Forage key, no
+            // Reward_ID, no Explosion field in retail). One authority for which plants are forageable, so the
+            // clip cannot drift from the roster the harvest path actually uses.
+            if (ResourceField.IsForageable(n))
                 return Pick("explosions", "foliage_0"); // effect 43, shared by every forageable bush and mushroom
             return null;
         }
