@@ -115,6 +115,68 @@ namespace UnturnedGodot
         float _perfT;   // UG_PERF: throttle the perf log
         float _resFixT;   // UG_RES: re-assert the benchmark window size past the project's maximized default
         ulong _lastPhysFrames;   // UG_PERF: physics ticks actually executed per second vs the configured rate
+        bool _drawSrcDone;   // UG_DRAWSRC: the scene-composition dump below is a ONE-SHOT, not a per-second log
+
+        // WHERE THE DRAW CALLS ACTUALLY COME FROM (UG_DRAWSRC=1, printed once).
+        //
+        // Written 2026-09-12 after I predicted that widening ResourceField's 64 m MultiMesh cells would cut the
+        // draw count, swept it, and watched draws go UP (3,967 -> 4,756). The prediction was wrong because I had a
+        // MODEL of what was drawing and had never counted it. `draws=` says how many; nothing said WHAT. So this
+        // attributes every visible instance to the class that built it and prints the ranking.
+        //
+        // A MultiMeshInstance3D is counted as its SURFACE count, not its instance count -- that is the whole point
+        // of instancing, and conflating the two is exactly the mistake that produced the bad prediction. Instances
+        // are reported alongside, so "1 draw carrying 4,000 trees" and "400 draws carrying 400 props" cannot be
+        // mistaken for each other.
+        static void DumpDrawSources(Node root)
+        {
+            var byOwner = new System.Collections.Generic.Dictionary<string, (int Draws, int Nodes, long Inst)>();
+            int total = 0, shadowCasters = 0;
+            var stack = new System.Collections.Generic.Stack<Node>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var n = stack.Pop();
+                foreach (var c in n.GetChildren()) stack.Push(c);
+                if (n is not VisualInstance3D vi || !vi.IsVisibleInTree()) continue;
+
+                int draws; long inst = 0;
+                switch (vi)
+                {
+                    case MultiMeshInstance3D mmi:
+                        draws = mmi.Multimesh?.Mesh?.GetSurfaceCount() ?? 0;
+                        inst = mmi.Multimesh?.VisibleInstanceCount >= 0 ? mmi.Multimesh.VisibleInstanceCount : (mmi.Multimesh?.InstanceCount ?? 0);
+                        break;
+                    case MeshInstance3D mi:
+                        draws = mi.Mesh?.GetSurfaceCount() ?? 0; inst = draws > 0 ? 1 : 0;
+                        break;
+                    default:
+                        draws = 1; inst = 1; break;
+                }
+                if (draws <= 0) continue;
+                if (vi is GeometryInstance3D gi && gi.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) shadowCasters += draws;
+                total += draws;
+
+                // Attribute to the nearest ancestor OUR code declared -- that is the thing a fix would edit. A node
+                // with no such ancestor falls back to its own engine class, so nothing is silently dropped.
+                string owner = null;
+                for (Node a = n; a != null && owner == null; a = a.GetParent())
+                    if (a.GetType().Namespace?.StartsWith("UnturnedGodot") == true) owner = a.GetType().Name;
+                owner ??= "(engine) " + n.GetType().Name;
+
+                byOwner.TryGetValue(owner, out var e);
+                byOwner[owner] = (e.Draws + draws, e.Nodes + 1, e.Inst + inst);
+            }
+
+            Log.Print($"[drawsrc] total={total} shadowCasting={shadowCasters} owners={byOwner.Count}");
+            var ranked = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, (int Draws, int Nodes, long Inst)>>(byOwner);
+            ranked.Sort((x, y) => y.Value.Draws.CompareTo(x.Value.Draws));
+            for (int i = 0; i < ranked.Count && i < 24; i++)
+            {
+                var r = ranked[i];
+                Log.Print($"[drawsrc]   {r.Value.Draws,6}  {100.0 * r.Value.Draws / System.Math.Max(1, total),5:0.0}%  nodes={r.Value.Nodes,5}  inst={r.Value.Inst,7}  {r.Key}");
+            }
+        }
         // FRAME-TIME PERCENTILES. Average fps is structurally incapable of showing a GC pause: a 12 ms stall on a
         // 12.5 ms frame is one doubled frame, and at 80 fps average the mean cannot move enough to see it. The
         // thing a player feels is the tail, so the tail is what gets reported.
@@ -9009,6 +9071,13 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
+                // One shot, and only once the world is actually built -- a dump taken during load would rank the
+                // loading screen. Gated on its own env var so a normal perf run is byte-identical to before.
+                if (!_drawSrcDone && System.Environment.GetEnvironmentVariable("UG_DRAWSRC") == "1" && Time.GetTicksMsec() > 45000)
+                {
+                    _drawSrcDone = true;
+                    DumpDrawSources(GetTree().Root);
+                }
                 double physMs = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
                 double procMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
                 // The RESOLUTION and VRAM ride along with every fps number on purpose. A laptop panel at 2880x1800
