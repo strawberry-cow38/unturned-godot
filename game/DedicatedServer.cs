@@ -290,6 +290,12 @@ namespace UnturnedGodot
             Log.Print("[SAVE] " + Save.LoadIntoWorld());
             Server.Transactions.WipeSaveHandler = () => Save.Wipe();
             Server.Transactions.SaveNowHandler = () => Save.SaveNowReport();
+
+            // BANS. Loaded at boot and rewritten on every change -- a ban lost to a crash is the one case
+            // where the admin believes the problem is handled and it is not. Separate from the world save
+            // on purpose: `wipe` resets the world, and unbanning everyone is not part of that.
+            BanStore.Load(Server.Transactions.Moderation);
+            Server.Transactions.BansChanged = () => BanStore.Save(Server.Transactions.Moderation);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }

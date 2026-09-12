@@ -14,7 +14,7 @@ namespace UnturnedGodot
         MoveForward, MoveBack, MoveLeft, MoveRight,
         Jump, Sprint, Crouch, CrouchToggle, Prone, LeanLeft, LeanRight,
         Fire, Aim, Reload, Firemode, Melee, Grenade, Interact, AttachMenu, ToggleFirstPerson, Flashlight,
-        Inventory, Map, Craft, Skills, Console,
+        Inventory, Map, Craft, Skills, Console, Chat,
         Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
         VehicleHandbrake, VehicleDoor,
         // GESTURES. Surrender gets a real key because it is the only one with mechanical weight -- you cannot
@@ -163,6 +163,7 @@ namespace UnturnedGodot
             [GameAction.Craft] = new Bind(Key.Y),
             [GameAction.Skills] = new Bind(Key.J),              // code opens the skills menu on J, not U
             [GameAction.Console] = new Bind(Key.Quoteleft),
+            [GameAction.Chat] = new Bind(Key.Enter),   // strawberry 2026-09-12: "global chat system for servers (enter to open)"
             [GameAction.Hotbar1] = new Bind(Key.Key1),
             [GameAction.Hotbar2] = new Bind(Key.Key2),
             [GameAction.Hotbar3] = new Bind(Key.Key3),

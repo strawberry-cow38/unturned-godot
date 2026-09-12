@@ -45,6 +45,8 @@ namespace UnturnedGodot
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
+        /// <summary>Global chat (v49). Public so a test can drive it without walking the tree.</summary>
+        public ChatUI Chat { get; private set; }
         // (ZombiePuppets Puppets removed with the zombie system -- it rendered server zombies as interpolated
         // puppets on a joined client; see the ZombieHit/ZombieDied event note below.)
         public AnimalPuppets AnimalPups { get; private set; }     // A5: server wildlife as interpolated puppets (the SOLE animal materializer on a joined client -- no AnimalField)
@@ -185,6 +187,12 @@ namespace UnturnedGodot
                 HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
                 Log.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
             };
+            // GLOBAL CHAT (v49). The UI is a CanvasLayer of its own rather than part of the HUD: it has to
+            // survive the HUD being hidden and it owns keyboard focus while typing, which the HUD does not.
+            Chat = new ChatUI { Send = text => Client.SendChat(text) };
+            AddChild(Chat);
+            Client.ChatMessage += e => { if (IsInstanceValid(Chat)) Chat.Receive(e); };
+
             // WE got hit. Only sent to the victim, so no PlayerId filter needed -- unlike PlayerFired above,
             // there is no "was this my own action" case to skip.
             Client.PlayerHurt += e =>
