@@ -85,6 +85,16 @@ namespace UnturnedGodot
         /// the default only once an A/B render shows no pixels move on items.</summary>
         static readonly int LosScanPoints =
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_LOSPTS"), out int v) && v == 3 ? 3 : 9;
+        // TWO radii, because one number was doing two jobs. The old single 200 m test decided BOTH "is this item
+        // drawn" AND "is it worth a ray", so the occlusion rays ran the full 200 m -- up to nine of them, 4x a
+        // second, per item, at something under a pixel across. ETW put the scan at 3,118 ms and 27% of every
+        // allocation in the game. Drawing still reaches 200 m so nothing pops out of the world; only the OCCLUSION
+        // test is close-range, where a wall between you and an item is something you can actually see. Beyond it an
+        // in-cone item is simply shown -- a distant item can now draw through a wall, at a range where it is a
+        // speck. That is the trade, stated rather than hidden.
+        const float DrawDist2 = 40000f;   // 200 m, unchanged: what you can SEE
+        static readonly float RayDist2 =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_ITEMRAY"), out float _ir) && _ir > 0f ? _ir * _ir : 60f * 60f;
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
@@ -441,6 +451,39 @@ namespace UnturnedGodot
             // copy enlists -- a --spconsume-suppressed node hands that off to its WorldItemReplicaView puppet, so the
             // same item isn't counted twice at one spot.
             if (!_suppressed) GrassDisplacers.Register(this, GrassDisplacers.ItemRadius);
+            // Off the engine's per-node callback and onto the hub (see the _live block below). Last, so nothing
+            // above can be skipped by an early return, and _tickReady is only set once _Ready has fully built the
+            // state the body reads.
+            SetProcess(false);
+            _tickReady = true;
+        }
+
+        // PERF (ETW 2026-09-12): a `_Process` OVERRIDE costs a native->managed transition plus a StringName walk of the
+        // whole class chain -- WorldItem -> RigidBody3D -> PhysicsBody3D -> CollisionObject3D -> Node3D -> Node, comparing
+        // method names one at a time -- before the body runs at all. Measured on the pinned PEI spot: the dispatch was
+        // 2,385 ms against 3,587 ms of actual work, and on ~all but 4 frames a second the body it finally reached was a
+        // timer decrement. The same trace priced the mechanism directly: TickHub, which is ONE node doing a comparable
+        // amount of work, paid 52 ms of dispatch for 6,418 ms of work. The tax is per-NODE, not per-unit-of-work.
+        //
+        // Items register here and are ticked from that one hub callback instead -- the StorageCrate pattern (containers
+        // were ~19% of the main thread) and Vehicle's. The override stays as the body, so a direct caller still works;
+        // SetProcess(false) only stops the ENGINE reaching it by name.
+        static readonly System.Collections.Generic.List<WorldItem> _live = new();
+        bool _tickReady;   // _EnterTree registers, but the body reads state _Ready builds -- never tick before then
+        public static int LiveCount => _live.Count;   // wiring probe for tests
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+        public static void TickAll(double delta)
+        {
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var it = _live[i];
+                if (!GodotObject.IsInstanceValid(it)) { _live.RemoveAt(i); continue; }
+                // Pause / ProcessMode honoured exactly as the per-node callback did: CanProcess() is independent of
+                // SetProcess(false), which is why turning the engine's callback off does not change pause behaviour.
+                if (!it._tickReady || !it.IsInsideTree() || !it.CanProcess()) continue;
+                it._Process(delta);
+            }
         }
 
         // look-at focus (PlayerController drives this): rarity glow outline + name billboard on the item you're aiming at
@@ -542,8 +585,9 @@ namespace UnturnedGodot
                     // ~60deg half-cone (a touch wider than the FOV so items don't pop right at the screen edge).
                     Vector3 toItem = GlobalPosition - cam.GlobalPosition;
                     float d2 = toItem.LengthSquared();
-                    show = d2 < 40000f && d2 > 1e-4f && toItem.Normalized().Dot(-cam.GlobalTransform.Basis.Z) > 0.5f;
-                    if (show && _hitPts != null)   // in the cone -> only NOW cast a ray (or a few for occluded) to check for a hard wall between
+                    show = d2 < DrawDist2 && d2 > 1e-4f && toItem.Normalized().Dot(-cam.GlobalTransform.Basis.Z) > 0.5f;
+                    // ...and only now, and only CLOSE, cast a ray (or a few for occluded) for a hard wall between.
+                    if (show && d2 < RayDist2 && _hitPts != null)
                     {
                         // full-hitbox LOS (master): if ANY hitbox sample point (centre + corners) has clear LOS, keep it visible.
                         // Breaks on the first clear point, so a visible item usually costs ONE ray; only occluded items check all.

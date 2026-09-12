@@ -84,6 +84,10 @@ namespace UnturnedGodot
         {
             StorageCrate.TickAll(delta);
             RunFrames(_procs, delta);
+            // AFTER the registered frame ticks, not before: an item's visibility check reads the camera, and the
+            // player registers through AddProcess. At the hub's -10 priority, running it first would test against
+            // last frame's camera -- which the old per-node callbacks (default priority, spawned after Main) never did.
+            WorldItem.TickAll(delta);
             for (int i = _ticks.Count - 1; i >= 0; i--)
             {
                 var e = _ticks[i];
