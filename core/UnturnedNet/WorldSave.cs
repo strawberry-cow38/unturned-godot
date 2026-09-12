@@ -458,7 +458,23 @@ namespace UnturnedGodot.Net
             // catalogue was missing its Width/Height (which was true of 193 of the 195 garments with pockets)
             // carries 0x0, and forcing that back over a correctly-sized page would re-break every existing save
             // the moment the catalogue is fixed. A zero here means "the save does not know", not "it is empty".
+            // CLEAR FIRST. The save is authoritative for a container it has an entry for, and the page it is
+            // restoring into is NOT empty: the world has already spawned this crate's loot by the time a save
+            // is applied. Without this, every load ADDED the saved contents on top of freshly-rolled loot, so
+            // containers filled up a little more each session -- measured at 15.8 items per container on a
+            // fresh world and 44.0 after eight loads, against a 48-slot grid. That is what grew one save to
+            // 41.5 MB and, because WorldSaveDriver serialises on the main thread every 60 s, what eventually
+            // pinned the game at ~1 fps. Duplicated loot was the gameplay half of the same bug.
+            //
+            // loadSize does not clear: it rebuilds its list from the items already present and re-marks their
+            // slots. And when the save does not know its own size (0x0 -- true of 193 of 195 garments before
+            // the catalogue was fixed, hence the guard below) it is skipped entirely, which after a clear()
+            // would leave the SLOT GRID still marked occupied while items was empty, and every addItem below
+            // would then silently find its slot taken. So the else-branch re-runs loadSize at the page's
+            // existing size purely to reset that grid.
+            page.clear();
             if (ps.Width > 0 && ps.Height > 0) page.loadSize(ps.Width, ps.Height);
+            else page.loadSize(page.width, page.height);
             foreach (var j in ps.Items)
                 if (j != null && j.Id != 0) page.addItem(j.X, j.Y, j.Rot, ToItem(j));
         }
