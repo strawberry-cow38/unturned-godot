@@ -172,16 +172,34 @@ namespace SDG.Unturned
 
     /// <summary>An axis-aligned contaminated box. Kept as plain data so the level layer can hand the sim
     /// a list without either side knowing about the other's types.</summary>
+    /// <summary>A volume's shape. Retail authors both, and PEI's only deadzone is a SPHERE -- approximating
+    /// it with its bounding box would make the corners hot, which at r=16 is ground you can stand on 27 m
+    /// from the centre and still take a dose.</summary>
+    public enum DeadzoneShape { Box = 0, Sphere = 1 }
+
     public struct DeadzoneVolumeDef
     {
         public Vector3 Center;
+        /// <summary>Box: the half-size on each axis. Sphere: the radius is <c>HalfExtent.x</c> and all three
+        /// are set to it, so the field stays a valid bounding half-extent either way.</summary>
         public Vector3 HalfExtent;
         public DeadzoneDef Zone;
+        /// <summary>Defaults to Box, so every existing caller and test keeps its old meaning.</summary>
+        public DeadzoneShape Shape;
 
-        public bool Contains(Vector3 p) =>
-            MathF.Abs(p.x - Center.x) <= HalfExtent.x &&
-            MathF.Abs(p.y - Center.y) <= HalfExtent.y &&
-            MathF.Abs(p.z - Center.z) <= HalfExtent.z;
+        /// <summary>Distance from the centre, squared. Local rather than leaning on the Vector3 compat
+        /// shim's operators, which differ between the two Vector3 types in play here.</summary>
+        float DistSq(Vector3 p)
+        {
+            float dx = p.x - Center.x, dy = p.y - Center.y, dz = p.z - Center.z;
+            return dx * dx + dy * dy + dz * dz;
+        }
+
+        public bool Contains(Vector3 p) => Shape == DeadzoneShape.Sphere
+            ? DistSq(p) <= HalfExtent.x * HalfExtent.x
+            : MathF.Abs(p.x - Center.x) <= HalfExtent.x &&
+              MathF.Abs(p.y - Center.y) <= HalfExtent.y &&
+              MathF.Abs(p.z - Center.z) <= HalfExtent.z;
 
         /// <summary>Fraction of the zone's full rate at this point: ~0 at the boundary, 1 deep inside
         /// (strawberry 2026-09-11: "rads at the edge of the zone are tamer, they still build but not as fast.
@@ -197,6 +215,13 @@ namespace SDG.Unturned
         public float Intensity(Vector3 p)
         {
             if (!Contains(p)) return 0f;
+            if (Shape == DeadzoneShape.Sphere)
+            {
+                // For a sphere the nearest surface IS radially outward, so distance-to-centre is the correct
+                // measure here -- the worst-axis rule below exists because a BOX's nearest face is not.
+                float depthR = Depth(MathF.Sqrt(DistSq(p)), HalfExtent.x);
+                return EdgeFloor + (1f - EdgeFloor) * MathF.Min(1f, depthR / EdgeBand);
+            }
             float dx = Depth(MathF.Abs(p.x - Center.x), HalfExtent.x);
             float dy = Depth(MathF.Abs(p.y - Center.y), HalfExtent.y);
             float dz = Depth(MathF.Abs(p.z - Center.z), HalfExtent.z);

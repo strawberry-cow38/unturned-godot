@@ -58,7 +58,13 @@ namespace UnturnedGodot.Net
             => AddVolume(center, halfExtent, DeadzoneDef.Default(kind));
 
         public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneDef zone)
-            => _volumes.Add(new DeadzoneVolumeDef { Center = center, HalfExtent = halfExtent, Zone = zone });
+            => AddVolume(center, halfExtent, DeadzoneShape.Box, zone);
+
+        /// <summary>Shape-aware add, so a sphere seeded from the map stays a sphere on the authoritative
+        /// side. Without it the server's copy of PEI's r=16 zone would be its bounding box and the server
+        /// would rule ground hot that the client draws as clean.</summary>
+        public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneShape shape, DeadzoneDef zone)
+            => _volumes.Add(new DeadzoneVolumeDef { Center = center, HalfExtent = halfExtent, Zone = zone, Shape = shape });
 
         public void Clear() { _volumes.Clear(); _inside.Clear(); }
 

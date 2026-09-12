@@ -131,7 +131,10 @@ namespace UnturnedGodot
             // across rather than replicated -- the only thing that needs to reach a client is the damage,
             // which the vitals and combat blocks already carry.
             foreach (var v in field.Volumes)
-                _server.Deadzones.AddVolume(v.Center, v.HalfExtent, v.Zone);
+                // Carry the SHAPE across too. Without it every sphere arrives server-side as its
+                // bounding box and the authoritative hitbox disagrees with the client's by the corner
+                // volume -- at PEI's r=16 that is ground 27 m out that the server thinks is hot.
+                _server.Deadzones.AddVolume(v.Center, v.HalfExtent, v.Shape, v.Zone);
             Log.Print($"[interactables] seeded {_server.Deadzones.VolumeCount} deadzone volume(s) server-side");
         }
 

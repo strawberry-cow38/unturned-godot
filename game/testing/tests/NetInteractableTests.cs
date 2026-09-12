@@ -46,12 +46,22 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"the DEDICATED world build placed a door ({doorsInWorld} found)", doorsInWorld >= 1);
             T.Check($"...and a bed ({bedsInWorld} found)", bedsInWorld >= 1);
-            // The FIELD must exist (peers copy it, and a null here used to crash the net path); it is
-            // deliberately EMPTY. The demo volume that used to be placed at spawn+120,+120 on every map was
-            // deleted 2026-08-19 -- see SpawnInteractables. Asserting ==0 rather than dropping the check,
-            // so that re-adding a world-build hazard has to be a decision someone makes on purpose.
-            T.Check($"...and a deadzone FIELD, carrying no demo volume ({world.Deadzones?.VolumeCount})",
-                    world.Deadzones != null && world.Deadzones.VolumeCount == 0);
+            // The FIELD must exist (peers copy it, and a null here used to crash the net path). It used to
+            // be asserted EMPTY: the demo volume placed at spawn+120,+120 on every map was deleted
+            // 2026-08-19, and ==0 was left as a tripwire "so that re-adding a world-build hazard has to be
+            // a decision someone makes on purpose".
+            //
+            // That decision was made on 2026-09-12 (strawberry: "wire it"). The zone here is not a demo any
+            // more, it is PEI's own authored one -- a sphere at (506, 32, 721), read out of Level.hierarchy.
+            // So the tripwire is kept and re-aimed rather than deleted: what it was really guarding is a
+            // hazard conjured at a spawn-relative offset, and asserting the volume is the MAP's still
+            // catches that, because a demo box at spawn+120 is neither a sphere nor at these coordinates.
+            T.Check($"...and a deadzone FIELD carrying the MAP's zones ({world.Deadzones?.VolumeCount})",
+                    world.Deadzones != null && world.Deadzones.VolumeCount == 1);
+            var dz = world.Deadzones.Volumes[0];
+            T.Check($"the zone is PEI's authored sphere, not a spawn-relative demo (shape={dz.Shape}, centre={dz.Center.x:0},{dz.Center.z:0})",
+                    dz.Shape == SDG.Unturned.DeadzoneShape.Sphere
+                    && Mathf.Abs(dz.Center.x - 506.368f) < 0.5f && Mathf.Abs(dz.Center.z - 720.7485f) < 0.5f);
 
             var net = new MemNetwork(7073);
             var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.clientpump");

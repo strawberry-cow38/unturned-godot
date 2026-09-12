@@ -37,6 +37,7 @@ namespace UnturnedGodot
             MapNodes.MapNodeFile = folder == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";
             MapUI.MapFolder = folder;   // in-game M-map: image + level-size + label follow the map
             FoliageField.MapDir = folder == "PEI" ? "foliage" : "foliage_" + key.ToLower();   // grass/pebbles baked per map
+            DeadzoneMap.MapFile = folder == "PEI" ? "deadzones.tsv" : "deadzones_" + key.ToLower() + ".tsv";   // map deadzones follow the same per-map key
             ResourceField.MapDir = folder == "PEI" ? "resources" : "resources_" + key.ToLower();   // trees/rocks baked per map
             Terrain.MapDir = folder == "PEI" ? "terrain" : "terrain_" + key.ToLower();   // splat layer albedos baked per map
             AmbienceAudio.MapKey = key.ToLower();   // day/night ambient beds are per map (retail: Maps/<Map>/Environment/Ambience.unity3d)
@@ -266,6 +267,7 @@ namespace UnturnedGodot
                     MapNodes.MapNodeFile = mn == "PEI" ? "nodes.tsv" : "nodes_" + key + ".tsv";   // named-location file follows the map (Level.hierarchy locations for modern maps)
                     MapUI.MapFolder = mn;
                     FoliageField.MapDir = mn == "PEI" ? "foliage" : "foliage_" + key.ToLower();
+                    DeadzoneMap.MapFile = mn == "PEI" ? "deadzones.tsv" : "deadzones_" + key.ToLower() + ".tsv";   // map deadzones follow the same per-map key
                     ResourceField.MapDir = mn == "PEI" ? "resources" : "resources_" + key.ToLower();
                     Terrain.MapDir = mn == "PEI" ? "terrain" : "terrain_" + key.ToLower();
                 }
@@ -309,6 +311,7 @@ namespace UnturnedGodot
                 MapNodes.MapNodeFile = ugMap == "PEI" ? "nodes.tsv" : "nodes_" + ugKey + ".tsv";
                 MapUI.MapFolder = ugMap;
                 FoliageField.MapDir = ugMap == "PEI" ? "foliage" : "foliage_" + ugKey.ToLower();
+                DeadzoneMap.MapFile = ugMap == "PEI" ? "deadzones.tsv" : "deadzones_" + ugKey.ToLower() + ".tsv";   // map deadzones follow the same per-map key
                 ResourceField.MapDir = ugMap == "PEI" ? "resources" : "resources_" + ugKey.ToLower();
                 Terrain.MapDir = ugMap == "PEI" ? "terrain" : "terrain_" + ugKey.ToLower();
             }
