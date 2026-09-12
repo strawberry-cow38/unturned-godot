@@ -103,6 +103,7 @@ namespace UnturnedNet.Tests
             [58] = "CommandNpcChoose",
             [59] = "CommandNpcClose",
             [60] = "CommandNpcTrade",
+            [61] = "CommandChatSend",   // v49 global chat
         };
 
         static Dictionary<byte, string> Actual() =>

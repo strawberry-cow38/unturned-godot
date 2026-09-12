@@ -135,6 +135,46 @@ namespace UnturnedGodot.Net
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals, Interactables);
+            // ---- v49 chat + moderation wiring ---------------------------------------------------
+            // ServerTransactions owns the RULES and reaches for none of this itself: the peer table, the
+            // socket and the clock all live out here, and injecting them keeps the rule layer testable
+            // without any of them.
+            Transactions.NameOf = pid => Session.FindPeer(pid)?.Name;
+            Transactions.ConnectedPlayers = () =>
+            {
+                // NAMED peers only. A half-open session has a minted id and a null Name, and including it
+                // would let `kick 7` target a connection that has not finished joining.
+                var live = new System.Collections.Generic.List<ushort>();
+                foreach (var pr in Session.Peers) if (pr.Name != null) live.Add(pr.PlayerId);
+                return live;
+            };
+            Transactions.NowSeconds = () => Session.CurrentTick / (double)NetProtocol.TicksPerSecond;
+            Transactions.IdentityOf = pid =>
+            {
+                var p = Session.FindPeer(pid);
+                if (p == null) return null;
+                p.Connection.TryGetIPv4Address(out uint ip);
+                return (ip, p.Name ?? "");
+            };
+            Transactions.KickHandler = (pid, reason) =>
+            {
+                var p = Session.FindPeer(pid);
+                if (p == null) return false;
+                Session.DisconnectPeer(p);
+                return true;
+            };
+            // A ban is checked at the HANDSHAKE, where both handles are first known. Expired entries drop
+            // themselves inside IsBanned, so the list cannot grow stale across a long uptime.
+            Session.BanCheck = (ip, name) =>
+            {
+                long nowUnix = System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                return Transactions.Moderation.IsBanned(ip, name, nowUnix, out var hit)
+                    ? (string.IsNullOrEmpty(hit.Reason) ? "banned" : hit.Reason)
+                    : null;
+            };
+            // A disconnecting player must not leave their rate limit behind for whoever inherits the id.
+            Session.PeerDisconnected += (p, _) => Transactions.ChatLimiter.Forget(p.PlayerId);
+
             ForageHost = new ServerForage(Resources);
             Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
@@ -730,6 +770,10 @@ namespace UnturnedGodot.Net
 
         // Phase 5 combat facts (server -> this client). The shell subscribes to drive local fx/HUD:
         // damage numbers wait for HitConfirmed (§3.4); ImpactFx spawns decals/blood for OTHER players' shots.
+        /// <summary>v49: one line of global chat arrived. Fires for a player line AND for a server line --
+        /// the Channel field says which, and the UI must render the difference rather than trusting the
+        /// name, or a player called "SERVER" is indistinguishable from the server.</summary>
+        public event System.Action<ChatMessageEvent> ChatMessage;
         public event System.Action<HitConfirmEvent> HitConfirmed;
         public event System.Action<PlayerHurtEvent> PlayerHurt;   // to THIS client, when it was the one hit -- drives the directional hurt indicator
         public event System.Action<ImpactFxEvent> ImpactFx;
@@ -856,6 +900,7 @@ namespace UnturnedGodot.Net
                 e => { WorldItems.ApplyRemoved(e, Applier.LastAppliedServerTick); WorldItemRemoved?.Invoke(e); });
             Events.Register<ItemPickupDeniedEvent>(ReplicationIds.EventItemPickupDenied, ItemPickupDeniedEvent.TryRead, e => ItemPickupDenied?.Invoke(e));
             Events.Register<ConsoleResultEvent>(ReplicationIds.EventConsoleResult, ConsoleResultEvent.TryRead, e => ConsoleResult?.Invoke(e));
+            Events.Register<ChatMessageEvent>(ReplicationIds.EventChatMessage, ChatMessageEvent.TryRead, e => ChatMessage?.Invoke(e));
             Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
             Events.Register<CookerStateEvent>(ReplicationIds.EventCookerState, CookerStateEvent.TryRead, e => CookerState?.Invoke(e));
@@ -1105,6 +1150,12 @@ namespace UnturnedGodot.Net
         /// to fit regardless; sizing it up front just skips the 256 -> 1K -> 4K -> ... retries.</summary>
         static int ProfileBufferSize(byte[] avatarPng) => (avatarPng?.Length ?? 0) + 4 * ProfileRules.MaxNameChars + 64;
 
+        /// <summary>Send a command WITHOUT the client-side helper's validation. Internal and test-only: it
+        /// exists to simulate a MODIFIED CLIENT, which is the whole reason the server re-validates. A test
+        /// that can only send well-formed input cannot show that the server would have caught bad input.</summary>
+        internal bool SendCommandRaw(byte commandId, System.Action<SDG.NetPak.NetPakWriter> write)
+            => SendCommand(commandId, write);
+
         bool SendCommand(byte commandId, System.Action<SDG.NetPak.NetPakWriter> write, int bufferSize = 256)
         {
             if (Session.State != NetSessionState.Connected) return false;
@@ -1257,6 +1308,15 @@ namespace UnturnedGodot.Net
 
         public bool SendConsole(string text)
             => SendCommand(ReplicationIds.CommandConsole, new ConsoleCommand { Text = text }.Write);
+
+        /// <summary>v49: say something in global chat. Sanitised HERE so the player sees what they will
+        /// actually send -- and again on the server, which never trusts this pass.</summary>
+        public bool SendChat(string text)
+        {
+            string clean = ChatRules.Sanitize(text);
+            if (clean.Length == 0) return false;
+            return SendCommand(ReplicationIds.CommandChatSend, new ChatSendCommand { Text = clean }.Write);
+        }
 
         // ---- SP/MP unify: door + bed intent. Reliable, transactional, and never applied locally first --
         // the caller asks, the server answers with DoorState/BedClaimed (or with silence, if refused). ----

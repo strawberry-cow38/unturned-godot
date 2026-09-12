@@ -71,6 +71,12 @@ namespace UnturnedGodot.Net
         public event Action<NetPeer> PeerConnected;
         public event Action<NetPeer, NetDisconnectReason> PeerDisconnected;
 
+        /// <summary>v49: is this (address, name) banned? Returns the reason to log, or null to admit.
+        /// Consulted at the HANDSHAKE, the first moment both handles are known -- the address comes from the
+        /// connection and the name arrives in the Connect payload. Admitting a banned peer and disconnecting
+        /// them a moment later would still mint a player id, occupy a slot and spawn a body.</summary>
+        public Func<uint, string, string> BanCheck;
+
         public NetServerSession(IServerTransport transport,
                                 ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                                 byte protocolVersion = NetProtocol.Version,
@@ -203,6 +209,23 @@ namespace UnturnedGodot.Net
                                 peer.Session.SendControl(NetControlType.Reject, w => w.WriteUInt8((byte)NetRejectReason.ContentMismatch));
                             RemovePeer(peer, NetDisconnectReason.Rejected);
                             return;
+                        }
+                        // BAN GATE. Runs BEFORE peer.Name is committed and before PeerConnected, so a
+                        // refused peer never reaches the roster. Note peer.Name stays null on this path,
+                        // which is what stops RemovePeer firing a PeerDisconnected for a join that never
+                        // happened (see the `peer.Name != null` guard there).
+                        if (BanCheck != null)
+                        {
+                            peer.Connection.TryGetIPv4Address(out uint banIp);
+                            string banReason = BanCheck(banIp, name ?? "");
+                            if (banReason != null)
+                            {
+                                if (NetLog.Enabled) NetLog.Info($"reject {peer.Connection.GetAddressString(true)} '{name}': banned ({banReason})");
+                                for (int i = 0; i < 3; i++)   // best-effort blast, like the other Reject paths
+                                    peer.Session.SendControl(NetControlType.Reject, w => w.WriteUInt8((byte)NetRejectReason.Banned));
+                                RemovePeer(peer, NetDisconnectReason.Rejected);
+                                return;
+                            }
                         }
                         peer.Name = name ?? "";
                         if (NetLog.Enabled) NetLog.Info($"accept {peer.Connection.GetAddressString(true)} as player {peer.PlayerId} '{peer.Name}'");

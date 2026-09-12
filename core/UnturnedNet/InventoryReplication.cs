@@ -603,6 +603,54 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>Client -> server: "say this in global chat" (v49). Text ONLY. The speaker is the peer the
+    /// packet arrived on, never a field in it -- a sender id on the wire is a licence to speak as anyone,
+    /// including as the server.</summary>
+    public struct ChatSendCommand
+    {
+        public string Text;
+        public void Write(NetPakWriter w) => w.WriteString(Text ?? "");
+        public static bool TryRead(NetPakReader r, out ChatSendCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadString(out string text)) return false;
+            cmd = new ChatSendCommand { Text = text };
+            return true;
+        }
+    }
+
+    /// <summary>Server -> every peer: one line of chat (v49).
+    ///
+    /// The NAME travels with the line rather than being looked up client-side by id. A player who leaves
+    /// still has to be attributable in the scrollback, and an id whose profile has already been dropped
+    /// would render as blank or, worse, as whoever next occupies that id.</summary>
+    public struct ChatMessageEvent
+    {
+        public byte Channel;        // SDG.Unturned.ChatChannel
+        public ushort SpeakerId;    // 0 for a server line
+        public string Name;         // already sanitised by the server
+        public string Text;         // already sanitised by the server
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Channel);
+            w.WriteUInt16(SpeakerId);
+            w.WriteString(Name ?? "");
+            w.WriteString(Text ?? "");
+        }
+
+        public static bool TryRead(NetPakReader r, out ChatMessageEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt8(out byte channel)) return false;
+            if (!r.ReadUInt16(out ushort speaker)) return false;
+            if (!r.ReadString(out string name)) return false;
+            if (!r.ReadString(out string text)) return false;
+            evt = new ChatMessageEvent { Channel = channel, SpeakerId = speaker, Name = name, Text = text };
+            return true;
+        }
+    }
+
     public struct ConsoleResultEvent
     {
         public string Text;

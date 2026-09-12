@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753008000000000000002800"));   // byte[1]=0x30 = Version 48 (v48 MERGE: the merged wire carries BOTH the radiation dose and the NPC conversation commands, so it is neither side's number -- see NetProtocol.Version). Before that 0x2F = Version 47 (npc conversations: CommandNpcTalk(57)/NpcChoose(58)/NpcClose(59)/NpcTrade(60) + EventNpcState(45)). Before that 0x2E = Version 46 (radiation dose in the owner vitals block; NO new command, so only the version byte moved). Before that 0x2D = Version 45 (tires+carjack). ⚠ BOTH 0x2F AND 0x2E ARE KEPT DELIBERATELY: this chain is the only written record of which byte was which version, and resolving by taking either side alone deletes the other's.
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753108000000000000002800"));   // byte[1]=0x31 = Version 49 (v49: global chat + moderation -- CommandChatSend/EventChatMessage and NetRejectReason.Banned)
         }
 
         [Test]

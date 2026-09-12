@@ -36,6 +36,8 @@ namespace UnturnedGodot.Net
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
+        public long ChatSent;               // v49: chat lines broadcast (player + server)
+        public long ChatRejected;           // empty after sanitising, or rate limited
         public long DeathDrops;             // deaths that emptied a bag onto the ground (0 items carried still counts)
         public long DeathDropItems;         // world items those deaths created (grid items + worn clothing)
     }
@@ -136,6 +138,38 @@ namespace UnturnedGodot.Net
         /// restart -- the autosave is on a timer, so without this the only way to be sure a save is current is to
         /// wait for it. It is also what makes the save path testable in a real world at all.</summary>
         public Func<string> SaveNowHandler;
+
+        // ---- v49 chat + moderation --------------------------------------------------------------------
+        /// <summary>The ban list. Engine-free rules (expiry, matching, duration parsing) live in
+        /// ServerModeration; persisting it and refusing a banned peer at the handshake are the game side's.</summary>
+        public readonly ServerModeration Moderation = new ServerModeration();
+
+        /// <summary>Per-player chat rate limiting. Never consulted for server lines.</summary>
+        public readonly ChatRateLimiter ChatLimiter = new ChatRateLimiter();
+
+        /// <summary>Display name for a player id. INJECTED rather than read from ServerProfiles, so this
+        /// class does not grow a dependency on the profile system to print a name.</summary>
+        public Func<ushort, string> NameOf;
+
+        /// <summary>Who is connected right now. Injected for the same reason NameOf is -- the peer list
+        /// lives on NetWorldHost's session, which this class deliberately does not reach into.</summary>
+        public Func<System.Collections.Generic.IEnumerable<ushort>> ConnectedPlayers;
+
+        /// <summary>Disconnect a live peer, with a reason they see. The core cannot do this itself -- it
+        /// owns no sockets -- so kick/ban delegate here the way save/wipe delegate to their handlers.
+        /// Returns true if a peer was actually removed.</summary>
+        public Func<ushort, string, bool> KickHandler;
+
+        /// <summary>Address + name for a player id, for a ban that has to outlive the connection.
+        /// Returns false if the id is not connected.</summary>
+        public Func<ushort, (uint ipv4, string name)?> IdentityOf;
+
+        /// <summary>Wall-clock seconds, injected for the same reason _tick is: the rules are testable
+        /// without a clock and the server supplies the real one.</summary>
+        public Func<double> NowSeconds;
+
+        /// <summary>Called when the ban list changes, so the game side can persist it.</summary>
+        public Action BansChanged;
 
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
@@ -561,6 +595,12 @@ namespace UnturnedGodot.Net
 
             commands.Register<ConsoleCommand>(ReplicationIds.CommandConsole, ConsoleCommand.TryRead, OnConsole,
                 validate: (sender, cmd) => cmd.Text != null && cmd.Text.Length <= 128);
+
+            // v49 global chat. The validate gate is a cheap RAW length bound only -- it stops a peer
+            // spending memory before anything looks at the text. The real limit is applied to the
+            // SANITISED string in OnChatSend, because 400 zero-width characters are not a long message.
+            commands.Register<ChatSendCommand>(ReplicationIds.CommandChatSend, ChatSendCommand.TryRead, OnChatSend,
+                validate: (sender, cmd) => cmd.Text != null && cmd.Text.Length <= ChatRules.MaxMessageChars * 8);
 
             // Phase 8 crops (§3.7): the server owns the growth clock and the yield roll. Planting spends
             // the seed item (server grid = the validator, like deployable placement); harvesting requires
@@ -1561,6 +1601,90 @@ namespace UnturnedGodot.Net
             return true;
         }
 
+        /// <summary>A player said something in global chat.
+        ///
+        /// The SENDER is the peer this arrived on. The command carries no speaker field on purpose: an id
+        /// on the wire is a licence to speak as anyone, including as the server.</summary>
+        void OnChatSend(ushort sender, ChatSendCommand cmd)
+        {
+            // Sanitise FIRST, then judge the result. Rejecting on the raw text lets invisible padding
+            // count against a message that renders as nothing.
+            string text = ChatRules.Sanitize(cmd.Text);
+            if (text.Length == 0) { Diag.ChatRejected++; return; }   // nothing to say; silently dropped
+
+            double now = NowSeconds != null ? NowSeconds() : 0.0;
+            var verdict = ChatLimiter.Check(sender, now);
+            if (verdict != ChatVerdict.Ok)
+            {
+                Diag.ChatRejected++;
+                // Tell only the sender, and as a SERVER line so it cannot be mistaken for someone talking.
+                SendServerLineTo(sender, ChatRateLimiter.Explain(verdict));
+                return;
+            }
+            ChatLimiter.Record(sender, now);
+            Diag.ChatSent++;
+
+            string name = NameOf?.Invoke(sender);
+            if (string.IsNullOrEmpty(name)) name = ProfileRules.FallbackName;
+            var evt = new ChatMessageEvent
+            {
+                Channel = (byte)ChatChannel.Global,
+                SpeakerId = sender,
+                Name = ChatRules.Sanitize(name),
+                Text = text,
+            };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventChatMessage, evt.Write));
+        }
+
+        /// <summary>Post a line as the SERVER, to everyone. Never rate limited -- a kick notice has to go
+        /// out even when the console is busy.</summary>
+        public void SayAsServer(string text)
+        {
+            string clean = ChatRules.Sanitize(text);
+            if (clean.Length == 0) return;
+            var evt = new ChatMessageEvent { Channel = (byte)ChatChannel.Server, SpeakerId = 0, Name = "", Text = clean };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventChatMessage, evt.Write));
+            Diag.ChatSent++;
+        }
+
+        /// <summary>A server line to ONE peer -- rate-limit notices, command feedback.</summary>
+        public void SendServerLineTo(ushort playerId, string text)
+        {
+            string clean = ChatRules.Sanitize(text);
+            if (clean.Length == 0) return;
+            var evt = new ChatMessageEvent { Channel = (byte)ChatChannel.Server, SpeakerId = 0, Name = "", Text = clean };
+            _sendTo(playerId, NetMessagePak.Pack(ReplicationIds.EventChatMessage, evt.Write));
+        }
+
+        /// <summary>Resolve a console argument to a connected player: an exact player id, or a name matched
+        /// case-insensitively. Refuses an AMBIGUOUS name rather than picking one -- kicking the wrong person
+        /// because two names share a prefix is worse than making the admin retype it.</summary>
+        bool TryFindPlayer(string who, out ushort id, out string name)
+        {
+            id = 0; name = "";
+            if (string.IsNullOrWhiteSpace(who) || NameOf == null) return false;
+
+            if (ushort.TryParse(who, out ushort direct))
+            {
+                string n = NameOf(direct);
+                if (!string.IsNullOrEmpty(n)) { id = direct; name = n; return true; }
+            }
+
+            int hits = 0;
+            var roster = ConnectedPlayers?.Invoke();
+            if (roster == null) return false;
+            foreach (var pid in roster)
+            {
+                string n = NameOf(pid);
+                if (string.IsNullOrEmpty(n)) continue;
+                if (!ServerModeration.NameMatches(n, who)) continue;
+                hits++; id = pid; name = n;
+            }
+            if (hits == 1) return true;
+            id = 0; name = "";
+            return false;   // 0 = nobody, 2+ = ambiguous; both are "no match" to the caller
+        }
+
         void OnConsole(ushort sender, ConsoleCommand cmd)
         {
             string reply = RunConsole(sender, cmd.Text ?? "");
@@ -1636,6 +1760,92 @@ namespace UnturnedGodot.Net
                 string result = WipeSaveHandler();
                 Diag.ConsoleApplied++;
                 return result;
+            }
+
+            // ---- v49 moderation ---------------------------------------------------------------------
+            // ⚠ GATED ON AllowCheats, AND THAT IS THE WRONG GATE LONG TERM. There is no admin concept in
+            // this port -- no roles, no owner id, nothing that distinguishes one connected peer from
+            // another. So "who may kick" has no correct answer yet, and the only safe available one is the
+            // gate every other server-wide mutation already uses. The consequence is real and should not be
+            // discovered later: a cheats-locked server cannot kick anybody. When an admin tier exists,
+            // these three move behind it and come OUT from behind AllowCheats.
+            if (verb == "say")
+            {
+                if (arg.Length == 0) { Diag.ConsoleRejected++; return "usage: say <message>"; }
+                SayAsServer(arg);
+                Diag.ConsoleApplied++;
+                return "said";
+            }
+
+            if (verb == "kick" || verb == "ban")
+            {
+                if (KickHandler == null) { Diag.ConsoleRejected++; return "no transport is configured on this server"; }
+                var a = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (a.Length == 0)
+                    return verb == "kick" ? "usage: kick <player> [duration] [reason]   (10m, 2h, 3d; bare number = minutes)"
+                                          : "usage: ban <player> [duration|perm] [reason]   (default permanent)";
+
+                if (!TryFindPlayer(a[0], out ushort target, out string targetName))
+                { Diag.ConsoleRejected++; return $"no connected player matches '{a[0]}'"; }
+
+                // Duration is OPTIONAL and the defaults differ on purpose: a kick with no duration is a
+                // boot with no ban, a ban with no duration is permanent. Parsing decides which -- an
+                // unparseable second word is treated as the start of the REASON rather than rejected,
+                // because "kick griefer stop building there" should not be a usage error.
+                int i = 1;
+                long seconds = 0; bool permanent = verb == "ban"; bool timed = false;
+                if (a.Length > 1 && ServerModeration.TryParseDuration(a[1], out long secs, out bool perm))
+                { seconds = secs; permanent = perm; timed = !perm; i = 2; }
+                string reason = string.Join(' ', a, i, a.Length - i).Trim();
+
+                long nowUnix = NowSeconds != null ? (long)NowSeconds() : 0L;
+                string window = ServerModeration.DescribeDuration(seconds, permanent);
+
+                // Record BEFORE disconnecting. The other order loses the identity: once the peer is gone
+                // IdentityOf cannot answer, and the ban would be stored with no address to match on.
+                if (verb == "ban" || timed)
+                {
+                    var id = IdentityOf?.Invoke(target);
+                    uint ip = id?.ipv4 ?? 0u;
+                    string nm = id?.name ?? targetName;
+                    long expires = permanent ? 0L : nowUnix + seconds;
+                    Moderation.Add(ip, nm, expires, reason, verb == "ban" ? ModerationKind.Ban : ModerationKind.Kick);
+                    BansChanged?.Invoke();
+                }
+
+                string notice = reason.Length > 0
+                    ? $"{targetName} was {(verb == "ban" ? "banned" : "kicked")} {window}: {reason}"
+                    : $"{targetName} was {(verb == "ban" ? "banned" : "kicked")} {window}";
+                KickHandler(target, notice);
+                SayAsServer(notice);   // everyone sees it, so a disappearance is never a mystery
+                Diag.ConsoleApplied++;
+                return notice;
+            }
+
+            if (verb == "unban")
+            {
+                if (arg.Length == 0) { Diag.ConsoleRejected++; return "usage: unban <name>"; }
+                int n = Moderation.Remove(0u, arg);
+                if (n > 0) BansChanged?.Invoke();
+                Diag.ConsoleApplied++;
+                return n > 0 ? $"lifted {n} ban entr{(n == 1 ? "y" : "ies")} matching '{arg}'"
+                             : $"no ban matches '{arg}'";
+            }
+
+            if (verb == "bans")
+            {
+                long nowUnix = NowSeconds != null ? (long)NowSeconds() : 0L;
+                Moderation.Prune(nowUnix);
+                if (Moderation.Count == 0) return "no active bans";
+                var sb = new System.Text.StringBuilder();
+                foreach (var e in Moderation.Entries)
+                {
+                    if (sb.Length > 0) sb.Append('\n');
+                    string left = e.IsPermanent ? "permanent" : ServerModeration.DescribeDuration(e.ExpiresUnix - nowUnix, false).Replace("for ", "") + " left";
+                    sb.Append(string.IsNullOrEmpty(e.Name) ? "(unnamed)" : e.Name).Append(" -- ").Append(left);
+                    if (!string.IsNullOrEmpty(e.Reason)) sb.Append(" (").Append(e.Reason).Append(')');
+                }
+                return sb.ToString();
             }
 
             if (verb == "give" && arg.Length > 0)
