@@ -344,7 +344,13 @@ namespace UnturnedGodot
                 {
                     // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
                     // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
-                    const float Cell = 64f;
+                    // SWEEP KNOB (UG_CELL, metres). The draw count scales with the number of CELLS IN VIEW, not
+                    // with the number of trees: this makes one MultiMeshInstance3D per cell PER SPECIES PER PART,
+                    // so a ~320 m cull range at 64 m cells puts ~100 cells x species x parts on the submit list.
+                    // Bigger cells = fewer draw calls but coarser culling, so more off-screen geometry is submitted.
+                    // Which way that trades is empirical, so it is a knob rather than a new hardcoded guess.
+                    float Cell = 64f;
+                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_CELL"), out float _cellOv) && _cellOv > 0f) Cell = _cellOv;
                     // Retail draw distance for this asset: LayerMasks.RESOURCE gets the full defaultCullDistance
                     // (512m at the default draw-distance setting), tightened by the asset's own LODGroup. Trees
                     // compute to ~3000m so the layer stops them; small bushes/rocks bite well inside it. The old
@@ -362,6 +368,53 @@ namespace UnturnedGodot
                         var key = ((int)Mathf.Floor(xf[k].Origin.X / Cell), (int)Mathf.Floor(xf[k].Origin.Z / Cell));
                         if (!byCell.TryGetValue(key, out var cl)) { cl = new List<int>(); byCell[key] = cl; }
                         cl.Add(k);
+                    }
+                    // DON'T SPLIT WHAT ISN'T WORTH SPLITTING (2026-09-12).
+                    //
+                    // A [drawsrc] dump of the pinned PEI spot: ResourceField held **3,126 MultiMesh objects carrying
+                    // 3,921 instances -- 1.25 instances per batch**. Beside it, FoliageField ran 1,731 batches over
+                    // 667,254 instances (385:1). We were calling MultiMesh and then subdividing the batch until it
+                    // held one tree, paying a full draw call to draw a single pine -- and, because 78% of the scene
+                    // casts shadows, paying it again in the shadow pass.
+                    //
+                    // The cells are not the mistake; subdividing a SPARSE species is. A species is spread thin over
+                    // the whole map, so at 64 m almost every cell holds one or two of it. So:
+                    //   * few enough instances overall -> ONE batch, no cells. It never frustum-culls, but drawing a
+                    //     few dozen scattered bushes unconditionally is far cheaper than the draw calls to cull them.
+                    //   * otherwise keep per-cell culling for the dense parts, and fold the thin cells into a COARSE
+                    //     grid rather than a single map-wide bucket, so the merged batch still has a bounded AABB.
+                    //
+                    // ⚠ Widening Cell itself was tried FIRST and backfired: draws went 3,967 -> 4,756, because a
+                    // bigger batch has a bigger bounding box and survives the distance cull longer. Merging only the
+                    // batches that are too small to justify themselves gets the batching without that side effect.
+                    int singleMax = 512, minPerBatch = 64, coarseMul = 4;
+                    int.TryParse(System.Environment.GetEnvironmentVariable("UG_SINGLEMAX"), out singleMax);
+                    int.TryParse(System.Environment.GetEnvironmentVariable("UG_MINBATCH"), out minPerBatch);
+                    if (singleMax <= 0) singleMax = 512;
+                    if (minPerBatch <= 0) minPerBatch = 64;
+                    if (byCell.Count > 1 && xf.Count <= singleMax)
+                    {
+                        var all = new List<int>(xf.Count);
+                        for (int k = 0; k < xf.Count; k++) all.Add(k);
+                        byCell.Clear();
+                        byCell[(0, 0)] = all;
+                    }
+                    else if (byCell.Count > 1)
+                    {
+                        var merged = new Dictionary<(int, int), List<int>>();
+                        var coarse = new Dictionary<(int, int), List<int>>();
+                        foreach (var kv in byCell)
+                        {
+                            if (kv.Value.Count >= minPerBatch) { merged[kv.Key] = kv.Value; continue; }
+                            // Offset the coarse keys out of the fine key space so a coarse bucket can never collide
+                            // with a dense fine cell that happens to share its integer coordinates.
+                            var ck = (1 << 20) + (int)Mathf.Floor(kv.Key.Item1 / (float)coarseMul);
+                            var ck2 = (int)Mathf.Floor(kv.Key.Item2 / (float)coarseMul);
+                            if (!coarse.TryGetValue((ck, ck2), out var cl)) { cl = new List<int>(); coarse[(ck, ck2)] = cl; }
+                            cl.AddRange(kv.Value);
+                        }
+                        foreach (var kv in coarse) merged[kv.Key] = kv.Value;
+                        byCell = merged;
                     }
                     for (int i = 0; i < parts; i++)
                     {
