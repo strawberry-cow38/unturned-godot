@@ -143,10 +143,17 @@ namespace UnturnedGodot
         public static void ApplyEnvironment(Godot.Environment env)
         {
             if (env == null) return;
+            // BENCHMARK-ONLY ABLATIONS. The saved settings live in `user://`, which Godot keys by project NAME --
+            // the same file master's own clone reads -- so pricing an effect by writing the setting would change
+            // their game. These env flags ablate without persisting anything, and unset changes nothing.
+            // Needed because the frame is GPU-bound at 99% while draw calls and shadow distance both measured as
+            // no-ops, so the cost is in per-pixel work, and the only way to find out which is to remove one.
+            bool noBloom = System.Environment.GetEnvironmentVariable("UG_NOBLOOM") == "1";
+            bool noFog = System.Environment.GetEnvironmentVariable("UG_NOFOG") == "1";
             env.SsaoEnabled = AmbientOcclusion;
-            env.GlowEnabled = Bloom;
+            env.GlowEnabled = Bloom && !noBloom;
             env.SsrEnabled = ScreenSpaceReflections;
-            env.VolumetricFogEnabled = SunShafts;
+            env.VolumetricFogEnabled = SunShafts && !noFog;
             // density: Godot's default 0.05 is the night key; DayNightCycle drives it by sun elevation (night 0.05, horizon 0.010, noon 0.003)
         }
         public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
@@ -157,13 +164,28 @@ namespace UnturnedGodot
             UnturnedGodot.ChromaticAberration.Intensity = ChromaticAmount;
             UnturnedGodot.ChromaticAberration.Current?.Apply();   // null before a world exists; the statics above still stick
         }
-        public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }
+        public static void ApplyWater()
+        {
+            // UG_NOREFLECT ablates the planar water mirror, which renders the scene a SECOND time into a
+            // SubViewport (master's config has it at Medium = every 2nd frame). Benchmark only; see above.
+            WaterReflection.Enabled = PlanarReflection != GfxQuality.Off
+                                      && System.Environment.GetEnvironmentVariable("UG_NOREFLECT") != "1";
+            WaterReflection.EveryFrames = PlanarEvery;
+        }
         public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
         public static string ShadowDistLabel(float d) => $"{d:0} m";
         public static void ApplyShadowDistance(Node ctx)
         {
             var tree = ctx?.GetTree(); if (tree == null) return;
-            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = ShadowDistance;
+            // BENCHMARK OVERRIDE (UG_SHADOWDIST, metres). The saved settings live in `user://`, which Godot keys
+            // by project NAME -- so the config this reads is the SAME FILE master's own clone reads, and sweeping
+            // the setting by writing it would silently change their game. An env override measures the curve
+            // without touching their file. Diagnostic only: it never persists, and unset changes nothing.
+            float dist = ShadowDistance;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHADOWDIST"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float ov) && ov > 0f) dist = ov;
+            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = dist;
         }
         public static Vector2I Resolution = Vector2I.Zero;   // (0,0) = leave the window alone / native
 
