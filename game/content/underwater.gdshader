@@ -21,22 +21,22 @@ uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linea
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_nearest;
 
 uniform vec3 water_tint : source_color = vec3(0.17, 0.42, 0.51);   // the colour distance fades TOWARD
-uniform float murk = 0.045;           // per-metre absorption; the murkier the water the less you see
+uniform float murk = 0.032;           // per-metre absorption; the murkier the water the less you see
 // YOU ARE INSIDE THE MEDIUM, and that is the difference between "underwater" and "blue fog". Distance
 // absorption alone leaves anything a couple of metres away almost untouched -- the first render came out as a
 // crisp road under a blue sky, because a 2 m path through water absorbs almost nothing. Real submerged vision
 // also carries light SCATTERED into the eye from every direction, which tints the whole field of view at once
 // regardless of how near the subject is. This is that term: a floor under the distance fade, not a replacement
 // for it, so near things are clearly in water and far things still disappear into it.
-uniform float base_tint = 0.05;
+uniform float base_tint = 0.02;
 uniform float submersion = 1.0;      // 0 at the waterline .. 1 fully under -- fades the whole effect in
 uniform float depth_below = 0.0;     // metres the eye is under the surface -> deeper is darker and bluer
 uniform float wobble = 0.006;        // screen-space refraction amplitude
 uniform float wobble_speed = 1.4;
 uniform float vignette = 0.30;
-uniform float blur = 2.6;            // SCATTERING: mip level at full absorption -- what makes it read as WATER
+uniform float blur = 4.2;            // SCATTERING: mip level at full absorption -- what makes it read as WATER
 uniform float blur_near = 0.35;      // metres before any blur, so a surface at your mask stays sharp
-uniform float red_loss = 0.36;       // how much of the red channel the water has eaten by full murk
+uniform float red_loss = 0.28;       // how much of the red channel the water has eaten by full murk
 
 void vertex() {
     POSITION = vec4(VERTEX, 1.0);   // 2x2 quad -> clip space directly: exact fullscreen at any FOV/aspect

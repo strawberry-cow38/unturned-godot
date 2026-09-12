@@ -2977,12 +2977,30 @@ namespace UnturnedGodot
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.4f, 0.26f), Roughness = 1f } });
             SDG.Unturned.ItemCatalog.RegisterAll();
             var stations = new[] { DeployableDef.Workbench, DeployableDef.Campfire, DeployableDef.ChemistryLab, DeployableDef.Kiln, DeployableDef.Loom, DeployableDef.OvenBrick, DeployableDef.OvenElectric, DeployableDef.SewingTable, DeployableDef.SpinningWheel };
-            for (int i = 0; i < stations.Length; i++)
-                Deployable.Spawn(this, stations[i], new Vector3((i - 4) * 3f, 0f, 0f), 0f);
+            // UG_DEPTHROW=1: stand the row along the VIEW AXIS instead of across it.
+            //
+            // The default layout spreads all nine at the SAME distance, left to right. That is right for eyeballing
+            // extracted models and USELESS for anything distance-dependent: a depth-scaled effect has nothing to
+            // vary over, so "the blur works" and "the blur does nothing" render identically (tinyclaw caught me
+            // claiming the first off a picture that could only ever have shown the second). Receding at 3..76 m
+            // turns a fog/absorption/LOD curve into a GRADIENT you can read straight off one frame.
             var cam = new Camera3D { Fov = 46f, Far = 400f };
             AddChild(cam);
-            cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
-            Log.Print("[stationtest] 9 crafting stations placed");
+            if (System.Environment.GetEnvironmentVariable("UG_DEPTHROW") == "1")
+            {
+                float[] zs = { 3f, 6f, 10f, 16f, 24f, 34f, 46f, 60f, 76f };
+                for (int i = 0; i < stations.Length; i++)
+                    Deployable.Spawn(this, stations[i], new Vector3((i % 2 == 0 ? -1.6f : 1.6f), 0f, -zs[i]), 0f);   // slight stagger so near ones do not fully mask far ones
+                cam.LookAtFromPosition(new Vector3(0f, 2.6f, 3.5f), new Vector3(0f, 1.2f, -40f), Vector3.Up);
+                Log.Print("[stationtest] 9 stations along the VIEW AXIS at 3..76 m (UG_DEPTHROW)");
+            }
+            else
+            {
+                for (int i = 0; i < stations.Length; i++)
+                    Deployable.Spawn(this, stations[i], new Vector3((i - 4) * 3f, 0f, 0f), 0f);
+                cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
+                Log.Print("[stationtest] 9 crafting stations placed");
+            }
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces

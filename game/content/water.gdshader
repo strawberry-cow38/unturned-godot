@@ -15,8 +15,8 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
 // the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
 // body of water look blue instead of merely darker.
-uniform vec4 water_deep : source_color = vec4(0.025, 0.10, 0.28, 0.82);    // navy, bluer + more opaque (master 2026-09-08)
-uniform vec4 water_shallow : source_color = vec4(0.06, 0.26, 0.48, 0.36);  // shallows keep their transparency, shifted blue
+uniform vec4 water_deep : source_color = vec4(0.012, 0.072, 0.30, 0.94);   // master 2026-09-12 "more blue, less transparent, more foggy": deeper navy, near-opaque
+uniform vec4 water_shallow : source_color = vec4(0.045, 0.22, 0.52, 0.58); // shallows still read as shallow, but bluer and much less see-through
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -126,7 +126,10 @@ void fragment() {
     float foam = clamp(max(crest, shore) * 0.8 * foam_amount, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
 
     // SEE-THROUGH depth-tinted water
-    float dt = smoothstep(0.0, shore_depth * 4.0, depth_v);
+    // FOGGIER: reach the deep colour in roughly half the water depth it used to take, so the seabed is swallowed
+    // sooner instead of staying legible well out from shore (master 2026-09-12 "more foggy"). shore_depth still
+    // owns the FOAM band -- this is only the colour/opacity ramp, which is why it gets its own multiplier.
+    float dt = smoothstep(0.0, shore_depth * 2.0, depth_v);
     vec3 base = mix(water_shallow.rgb, water_deep.rgb, dt);
     float a = mix(water_shallow.a, water_deep.a, dt);
 
