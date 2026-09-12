@@ -92,7 +92,12 @@ void fragment() {
     float vdist = length(VERTEX);   // fragment distance from camera (view space)
     float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);   // 1 near (<25m) -> 0 far (>165m)
     // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space), LOD-faded with distance
-    vec2 np = v_wpos.xz * 0.10 + vec2(TIME * 0.03, TIME * -0.02);   // fine reflection ripples SCALED UP bigger (master)
+    // 0.10 -> 0.055: the ripple CREASES roughly double in size (strawberry 2026-09-12 "up the size of the ripple
+    // creases"; second time this has been scaled up, hence the note). The finite-difference epsilon below stays at
+    // 0.06 ON PURPOSE -- it is in NOISE space, not world space, so it tracks the pattern automatically and the
+    // creases keep their sharpness instead of flattening as they grow. Scaling it with the frequency would widen
+    // the gradient stencil and soften exactly what was asked to be made bigger.
+    vec2 np = v_wpos.xz * 0.055 + vec2(TIME * 0.03, TIME * -0.02);
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
