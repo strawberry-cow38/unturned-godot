@@ -29,7 +29,7 @@ namespace UnturnedGodot
             c.Infinite = def.FluidInfinite;   // a submersible inlet: never depletes
             c.NoHead = def.FluidNoHead;       // ...and has no head -> its output needs a pump
             c.DirtiesWater = def.FluidDirties;   // a sluice: dirties whatever water flows through it
-            if (c.Tank != null) c.Tank.Quality = def.FluidQuality;   // natural/reservoir water spawns TAINTED; a fresh empty tank stays clean until filled
+            if (c.Tank != null) c.Tank.Quality = def.FluidFromWorldWater ? FluidDef.NaturalWater : def.FluidQuality;   // an inlet takes the MAP's water (PEI sea = salt); everything else spawns what its def says
             c.Def = def;                      // remember the item def so hold-F pickup returns the right item
             c.Position = pos;
             c.RotationDegrees = new Vector3(0f, yawDeg, 0f);

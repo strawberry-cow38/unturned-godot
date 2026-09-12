@@ -85,6 +85,10 @@ namespace UnturnedGodot
         public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
         public bool FluidInfinite, FluidNoHead;      // submersible INLET: an infinite source with no head pressure (pump-only draw)
         public WaterQuality FluidQuality = WaterQuality.Clean;   // water this source spawns with (natural = tainted; a filled reservoir = tainted; bottled = clean)
+        /// <summary>This source draws from the WORLD'S water body, so its quality is decided by the map
+        /// (FluidDef.NaturalWater) rather than baked into the def -- a static readonly def is built once at class
+        /// init, long before a map is loaded, so it cannot know whether it is standing in the sea or a river.</summary>
+        public bool FluidFromWorldWater;
         public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
         public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
         public bool FluidPumpsCrude;                 // a POWERED SOURCE that lifts crude oil out of the ground (the pump jack) -> FluidDeploy spawns a PumpJack; dead without power
@@ -382,7 +386,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
         // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
-        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
+        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.FluidFromWorldWater = true; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // drawn from the map's own water body: PEI = SALT, Washington = tainted (FluidDef.NaturalWater)
         public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
 
         // A powered storage container (strawberry): places like any power deployable (an IPowerDevice, NOT a Fluid

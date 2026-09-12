@@ -10,7 +10,12 @@ namespace UnturnedGodot
     // Water QUALITY (strawberry): clean < tainted < dirty. Bottled water = clean; natural water (river/rain/ocean/inlet) =
     // tainted; the sluice makes dirty. A container takes the WORST quality that enters it (one drop of dirty -> all dirty).
     // Ordered so Mathf.Max on the (int) value = the worse of two. Only meaningful when the fluid is Water/Soda/Cola.
-    public enum WaterQuality { Clean, Tainted, Dirty }
+    // ⚠ APPEND ONLY, NEVER RENUMBER. These are persisted on Item as `fluidQuality` (an int), so reordering would
+    // silently re-label every bottle in every existing save. Salty is therefore 3 even though "worse than dirty" is
+    // arguable -- and the order IS load-bearing beyond storage: FluidItem's pour uses Mathf.Max on the enum as a
+    // WORST-WINS rule, so a value's position defines how it mixes. Salty last means salt contaminates anything it is
+    // poured into, which is the behaviour you want from sea water.
+    public enum WaterQuality { Clean, Tainted, Dirty, Salty }
 
     // fluidID -> display name + bar colour (master's "fluidID:name:amount per container with bars"). The fill bars and
     // the "cannot mix fluids" tooltip read these. Extend as new fluids land.
@@ -42,7 +47,7 @@ namespace UnturnedGodot
 
         // WATER is the only type that carries a quality flag; its display name folds the quality in (dirty water reads murky).
         public static string WaterName(FluidType id, WaterQuality q) => id == FluidType.Water
-            ? q switch { WaterQuality.Dirty => "Dirty Water", WaterQuality.Tainted => "Tainted Water", _ => "Clean Water" }
+            ? q switch { WaterQuality.Dirty => "Dirty Water", WaterQuality.Tainted => "Tainted Water", WaterQuality.Salty => "Salt Water", _ => "Clean Water" }
             : Name(id);
         public static Color WaterColor(FluidType id, WaterQuality q) => id == FluidType.Water
             ? q switch { WaterQuality.Dirty => new Color(0.45f, 0.40f, 0.25f), WaterQuality.Tainted => new Color(0.45f, 0.60f, 0.65f), _ => Color(FluidType.Water) }
@@ -55,6 +60,21 @@ namespace UnturnedGodot
         // can't ACCIDENTALLY chug it. Every other fluid is a player's CHOICE to drink (beverages, syrup, glue, chemicals,
         // even fuel/oil/gas -- drink the gas if you want, that's on you). Per-fluid drink CONSEQUENCES (fuel hurts you,
         // energy drink -> stamina, etc.) are a follow-up; right now a sip just hydrates regardless.
+        /// <summary>Quality of water drawn STRAIGHT OUT OF THE WORLD -- the sea/river inlet -- for the loaded map.
+        ///
+        /// strawberry 2026-09-12: "make the water on PEI salt water. washington stays tainted only." PEI is an
+        /// island, so its water body is the sea; Washington's is fresh but untreated. Keyed off Terrain.MapDir (the
+        /// per-map content folder) and written as an explicit list so adding a map is an obvious one-line decision
+        /// rather than something that silently inherits whichever default happened to be first.
+        ///
+        /// Drinkability needs no special case: Drinkable() below already passes ONLY Clean, so salt water is
+        /// undrinkable the moment it exists, and Safe() likewise keeps autodrink off it.</summary>
+        public static WaterQuality NaturalWater => Terrain.MapDir switch
+        {
+            "terrain" => WaterQuality.Salty,    // PEI -- an island, the water body is the ocean
+            _ => WaterQuality.Tainted,          // Washington / Yukon / anything new: fresh but untreated
+        };
+
         public static bool Drinkable(FluidType id, WaterQuality q) => !(id == FluidType.Water && q != WaterQuality.Clean);
 
         // SAFE to AUTODRINK (strawberry): the narrower set autodrink defaults ON for + passively sips — CLEAN water or a
