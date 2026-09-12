@@ -2181,8 +2181,39 @@ namespace UnturnedGodot
                 var ctr = placed > 0 ? sumAll / placed : Vector3.Zero;
                 var cam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
                 root.AddChild(cam);
-                cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
-                cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
+                // UG_CAMPOS=x,y,z [+ UG_CAMLOOK=x,y,z]: put the aerial camera somewhere specific instead of
+                // 2.2 km straight down over the densest cluster. The default is a MAP view -- fine for "did the
+                // objects place", useless for anything you have to look AT, like a shoreline or a water edge.
+                // Same spelling as the prop renderer's override so there is one convention, not two.
+                var _cp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+                if (!string.IsNullOrEmpty(_cp))
+                {
+                    var a = _cp.Split(',');
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    if (a.Length >= 3 && float.TryParse(a[0], System.Globalization.NumberStyles.Float, ci, out float cx)
+                                      && float.TryParse(a[1], System.Globalization.NumberStyles.Float, ci, out float cy)
+                                      && float.TryParse(a[2], System.Globalization.NumberStyles.Float, ci, out float cz))
+                    {
+                        cam.Position = new Vector3(cx, cy, cz);
+                        var look = new Vector3(cx, cy - 10f, cz - 50f);   // default: ahead and slightly down
+                        var _cl = System.Environment.GetEnvironmentVariable("UG_CAMLOOK");
+                        if (!string.IsNullOrEmpty(_cl))
+                        {
+                            var b = _cl.Split(',');
+                            if (b.Length >= 3 && float.TryParse(b[0], System.Globalization.NumberStyles.Float, ci, out float lx)
+                                              && float.TryParse(b[1], System.Globalization.NumberStyles.Float, ci, out float ly)
+                                              && float.TryParse(b[2], System.Globalization.NumberStyles.Float, ci, out float lz))
+                                look = new Vector3(lx, ly, lz);
+                        }
+                        cam.LookAt(look, Vector3.Up);
+                        Log.Print($"[cam] UG_CAMPOS {cam.Position} -> {look}");
+                    }
+                }
+                else
+                {
+                    cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
+                    cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
+                }
             }
             NearestFilter.Apply(root);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }   // record the final phase
