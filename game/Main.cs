@@ -115,6 +115,22 @@ namespace UnturnedGodot
         float _perfT;   // UG_PERF: throttle the perf log
         float _resFixT;   // UG_RES: re-assert the benchmark window size past the project's maximized default
         ulong _lastPhysFrames;   // UG_PERF: physics ticks actually executed per second vs the configured rate
+        // FRAME-TIME PERCENTILES. Average fps is structurally incapable of showing a GC pause: a 12 ms stall on a
+        // 12.5 ms frame is one doubled frame, and at 80 fps average the mean cannot move enough to see it. The
+        // thing a player feels is the tail, so the tail is what gets reported.
+        readonly System.Collections.Generic.List<double> _frameMs = new(512);
+
+        /// <summary>Worst / p99 / hitch-count over the last reporting window, then reset. A hitch is a frame over
+        /// twice the window median -- the doubled frame a GC pause actually produces, which the mean cannot see.</summary>
+        string FrameTail()
+        {
+            if (_frameMs.Count < 8) { _frameMs.Clear(); return ""; }
+            var a = _frameMs.ToArray(); System.Array.Sort(a);
+            double med = a[a.Length / 2], p99 = a[(int)(a.Length * 0.99)], worst = a[a.Length - 1];
+            int hitch = 0; foreach (var v in a) if (v > med * 2.0) hitch++;
+            _frameMs.Clear();
+            return $" worstMs={worst:0.0} p99Ms={p99:0.0} medMs={med:0.0} hitches={hitch}";
+        }
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
         WeatherManager _stormWm; double _stormT; float[] _stormStrikes; int _stormStrikeIdx;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s,s,s>: fire lightning strikes at those times for the --write-movie storm demo
@@ -8986,6 +9002,7 @@ namespace UnturnedGodot
                     if (_w != null && _w.ContentScaleSize != _tgt) _w.ContentScaleSize = _tgt;
                 }
             }
+            if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && _frameMs.Count < 512) _frameMs.Add(delta * 1000.0);
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
@@ -9010,7 +9027,7 @@ namespace UnturnedGodot
                 // it is some other window entirely. Configured-vs-actual settles which, by counting.
                 ulong _pf = Engine.GetPhysicsFrames();
                 long _ptick = (long)(_pf - _lastPhysFrames); _lastPhysFrames = _pf;
-                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} objs={Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame)} bodies={_act} pairs={_pairs} ptick={_ptick}/{Engine.PhysicsTicksPerSecond} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
+                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} objs={Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame)} bodies={_act} pairs={_pairs} ptick={_ptick}/{Engine.PhysicsTicksPerSecond}{FrameTail()} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
