@@ -65,6 +65,47 @@ namespace UnturnedNet.Tests
             Assert.That(hit.Reason, Is.EqualTo("second"));
         }
 
+        // ---- from the fable review -------------------------------------------------------------------
+
+        [Test]
+        public void Re_Banning_EXTENDS_And_Never_Shortens()
+        {
+            // The doc said "extends"; the code was Remove-then-Add, which shortened. Three ways it lost
+            // time somebody had already been given.
+            var m = new ServerModeration();
+            m.Add(Ip(10,0,0,20), "bob", 0, "cheating", ModerationKind.Ban);        // permanent
+            m.Add(Ip(10,0,0,20), "bob", T0 + 600, "spam", ModerationKind.Kick);    // a 10m kick after it
+            Assert.That(m.IsBanned(Ip(10,0,0,20), "bob", T0 + 100000, out var hit), Is.True,
+                        "a permanent ban must not be shortened by a later timed one");
+            Assert.That(hit.IsPermanent, Is.True);
+
+            // A household member's timed kick must not erase bob's permanent row either.
+            var m2 = new ServerModeration();
+            m2.Add(Ip(10,0,0,21), "bob", 0, "", ModerationKind.Ban);
+            m2.Add(Ip(10,0,0,21), "alice", T0 + 600, "", ModerationKind.Kick);
+            Assert.That(m2.IsBanned(Ip(10,0,0,21), "bob", T0 + 100000, out _), Is.True);
+
+            // And the longer of two timed sentences wins.
+            var m3 = new ServerModeration();
+            m3.Add(Ip(10,0,0,22), "carl", T0 + 7200, "", ModerationKind.Ban);
+            m3.Add(Ip(10,0,0,22), "carl", T0 + 60, "", ModerationKind.Kick);
+            Assert.That(m3.IsBanned(Ip(10,0,0,22), "carl", T0 + 3600, out _), Is.True, "the 2h sentence stands");
+        }
+
+        [Test]
+        public void A_Duration_That_Would_Overflow_Is_Refused()
+        {
+            // long.TryParse accepts 9223372036854775807; multiplying wrapped it to a NEGATIVE duration, and
+            // "153722867280912931h" produced a 52-minute ban out of nonsense -- announcing one sentence and
+            // applying another.
+            foreach (var junk in new[] { "9223372036854775807w", "9223372036854775807s",
+                                         "144115188075855872w", "153722867280912931h", "99999999999999d" })
+                Assert.That(ServerModeration.TryParseDuration(junk, out _, out _), Is.False, $"'{junk}' must not parse");
+            // A century still works, so nothing realistic was caught by the bound.
+            Assert.That(ServerModeration.TryParseDuration("5200w", out long s, out _), Is.True);
+            Assert.That(s, Is.EqualTo(5200L * 604800L));
+        }
+
         [Test]
         public void Unban_Lifts_By_Either_Handle_And_Prune_Drops_Only_The_Dead()
         {

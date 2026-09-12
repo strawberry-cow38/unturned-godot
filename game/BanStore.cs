@@ -21,7 +21,20 @@ namespace UnturnedGodot
     /// then only corrupt the reason, not shift a date into a name.</summary>
     public static class BanStore
     {
-        public static string Path = "user://bans.tsv";
+        /// <summary>Where the ban list lives. Defaults beside the world save rather than in Godot's
+        /// app_userdata, because a dedicated box points UG_SAVE_DIR at the directory it actually backs up --
+        /// and a ban file left behind in app_userdata is one nobody knows to copy. Overridden wholesale by
+        /// UG_BANS_FILE for anyone who wants it elsewhere.</summary>
+        public static string Path = ResolvePath();
+
+        static string ResolvePath()
+        {
+            string explicitPath = System.Environment.GetEnvironmentVariable("UG_BANS_FILE");
+            if (!string.IsNullOrEmpty(explicitPath)) return explicitPath;
+            string dir = System.Environment.GetEnvironmentVariable("UG_SAVE_DIR");
+            if (string.IsNullOrEmpty(dir)) return "user://bans.tsv";
+            return dir.TrimEnd('/', '\\') + "/bans.tsv";
+        }
 
         /// <summary>Load into a moderation list, replacing whatever it held. Returns how many entries
         /// landed. A missing file is normal (no bans yet), not an error.</summary>

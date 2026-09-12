@@ -482,6 +482,16 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
             // on purpose: `wipe` resets the world, and unbanning everyone is not part of that.
             BanStore.Load(Server.Transactions.Moderation);
             Server.Transactions.BansChanged = () => BanStore.Save(Server.Transactions.Moderation);
+            // ⚠ THE LOCAL PLAYER CANNOT BE BANNED OUT OF THEIR OWN GAME. This is the consuming loopback --
+            // "singleplayer" is a listen server, and the host connects over MemTransport as "local" with no
+            // address. `ban local` in the SP console therefore wrote a permanent row that the handshake
+            // honoured on the NEXT BOOT: the loopback Connect was rejected, TickLocal returned early
+            // forever, and the world came up hollow with nothing on screen explaining why. Recovery was
+            // finding and deleting a TSV in Godot's user directory.
+            //
+            // Remote joiners on a listen server still get the gate; it is only the host's own loopback that
+            // is exempt, and it is exempt because it is the one connection that cannot be an intruder.
+            Server.Session.BanExempt = conn => conn is SDG.NetTransport.Mem.MemTransportConnection;
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Save.Tick(dt), "net.save.autosave"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             Log.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");

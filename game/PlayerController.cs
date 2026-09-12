@@ -2906,6 +2906,8 @@ namespace UnturnedGodot
         public SDG.Unturned.NpcDialogue CurrentDialogue { get; private set; }
         public NpcCharacter CurrentSpeaker { get; private set; }
         DialogueUI _dialogueUI;
+        /// <summary>The conversation window, if one is open. Chat asks so it does not steal Enter mid-dialogue.</summary>
+        public DialogueUI Dialogue => _dialogueUI;
         TradeUI _tradeUI;
 
         /// <summary>Repaint the bag. Public because the trade window changes what is IN it and the panel that
@@ -5108,7 +5110,13 @@ namespace UnturnedGodot
         /// `MouseMode == Captured`, so the player starts walking and auto-firing while staring at a dashboard
         /// they can no longer click. Review 2026-08-16.</summary>
         public bool AnyBlockingUiOpen
-            => (_invUI?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (AmmoRadial?.IsOpen ?? false);
+            => (_invUI?.IsOpen ?? false) || (_skillsUI?.IsOpen ?? false) || (AmmoRadial?.IsOpen ?? false)
+            // v49: an open chat box holds the keyboard, so toggling the console twice over it must not
+            // recapture the cursor and bring the movement poll back to life underneath.
+            || (ChatBox?.IsTyping ?? false);
+
+        /// <summary>The chat box, if this player has one. Set by ClientWorldSession.</summary>
+        public ChatUI ChatBox;
         public void DebugCloseCrate() => CloseCrate();          // L1 net tests: the ESC/Tab crate-close path without an InputEvent
 
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The

@@ -77,6 +77,11 @@ namespace UnturnedGodot.Net
         /// them a moment later would still mint a player id, occupy a slot and spawn a body.</summary>
         public Func<uint, string, string> BanCheck;
 
+        /// <summary>Connections the ban gate never applies to. Set by the consuming loopback so the host of
+        /// a listen server cannot ban themselves out of their own singleplayer game -- see MpLoopback for
+        /// what that failure actually looked like. Remote joiners are still gated.</summary>
+        public Func<ITransportConnection, bool> BanExempt;
+
         public NetServerSession(IServerTransport transport,
                                 ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                                 byte protocolVersion = NetProtocol.Version,
@@ -114,6 +119,10 @@ namespace UnturnedGodot.Net
 
             foreach (var peer in _peers)
                 peer.Session.Tick(_tick);
+
+            // A kick queued outside a dispatch loop still has to land; inside one, the host has already
+            // flushed it before we get here and this is a no-op.
+            FlushPendingKicks();
 
             // timeout + reassembly-abuse scan (collected first: removal mutates _peers)
             _timedOut.Clear();
@@ -214,7 +223,7 @@ namespace UnturnedGodot.Net
                         // refused peer never reaches the roster. Note peer.Name stays null on this path,
                         // which is what stops RemovePeer firing a PeerDisconnected for a join that never
                         // happened (see the `peer.Name != null` guard there).
-                        if (BanCheck != null)
+                        if (BanCheck != null && !(BanExempt?.Invoke(peer.Connection) ?? false))
                         {
                             peer.Connection.TryGetIPv4Address(out uint banIp);
                             string banReason = BanCheck(banIp, name ?? "");
@@ -276,13 +285,35 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Server-initiated removal (kick): best-effort Disconnect blast, then drop the peer.</summary>
+        /// <summary>Kick a peer. The Disconnect control goes out IMMEDIATELY (so it is sent while the
+        /// session still exists) but the removal is DEFERRED to the next FlushPendingKicks.
+        ///
+        /// ⚠ WHY DEFERRED, found by review and reproduced: a `kick` arrives as a console command, and
+        /// commands are dispatched from `foreach (var peer in Session.Peers)` in NetWorldServer's
+        /// TickSimulation. Peers IS the backing List, so removing inside that loop throws
+        /// InvalidOperationException out of the foreach -- outside CommandRegistry's per-handler catch,
+        /// and outside anything above it. The kick itself landed, so it looked like it worked, while every
+        /// remaining sim step for that tick (players, vehicles, autosave, replication) was skipped.
+        /// Session.Tick already collects-then-removes for timeouts, for exactly this reason.</summary>
         public void DisconnectPeer(NetPeer peer)
         {
             if (!_peersByConn.ContainsKey(peer.Connection)) return;
+            if (_pendingKicks.Contains(peer)) return;   // kicked twice in one tick is one kick
             for (int i = 0; i < 3; i++)
                 peer.Session.SendControl(NetControlType.Disconnect, w => w.WriteUInt8((byte)NetDisconnectReason.Kicked));
-            RemovePeer(peer, NetDisconnectReason.Kicked);
+            _pendingKicks.Add(peer);
         }
+
+        /// <summary>Apply removals queued by DisconnectPeer. Called by the host AFTER its dispatch loop,
+        /// and again from Tick so a kick issued outside a dispatch still lands within a tick.</summary>
+        public void FlushPendingKicks()
+        {
+            if (_pendingKicks.Count == 0) return;
+            for (int i = 0; i < _pendingKicks.Count; i++) RemovePeer(_pendingKicks[i], NetDisconnectReason.Kicked);
+            _pendingKicks.Clear();
+        }
+
+        readonly List<NetPeer> _pendingKicks = new List<NetPeer>();
 
         /// <summary>Per-source accounting key (review H1): the real IPv4 when the transport knows it, else
         /// a key unique to the endpoint (high bit namespace keeps the two spaces disjoint). MemTransport

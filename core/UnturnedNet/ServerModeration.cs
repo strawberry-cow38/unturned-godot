@@ -60,16 +60,39 @@ namespace SDG.Unturned
             !string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) &&
             string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Record a removal. Replaces any existing entry for the same handle rather than stacking, so
-        /// re-banning someone extends their sentence instead of leaving two rows that disagree.</summary>
+        /// <summary>Record a removal. One row per handle rather than a stack -- but the new row keeps
+        /// whichever sentence is LONGER, so re-banning genuinely extends.
+        ///
+        /// ⚠ It used to just Remove-then-Add, which the doc called "extends" and the code did not do. Three
+        /// ways that lost time somebody had already been given: `ban bob perm` then `ban bob 10m` SHORTENED
+        /// a permanent ban to ten minutes; `ban bob perm` then `kick alice 10m` from bob's household IP
+        /// replaced bob's row entirely; and a permanent row could be dropped by a timed one arriving on the
+        /// other handle. Permanent (0) always wins, and a later expiry beats an earlier one.</summary>
         public void Add(uint ipv4, string name, long expiresUnix, string reason, ModerationKind kind)
         {
+            // What the matching rows already carry, before they go.
+            bool hadPermanent = false;
+            long longest = long.MinValue;
+            foreach (var e in _entries)
+            {
+                bool byIp = e.Ipv4 != 0 && ipv4 != 0 && e.Ipv4 == ipv4;
+                bool byName = !string.IsNullOrEmpty(name) && NameMatches(e.Name, name);
+                if (!byIp && !byName) continue;
+                if (e.IsPermanent) hadPermanent = true;
+                else if (e.ExpiresUnix > longest) longest = e.ExpiresUnix;
+            }
+
             Remove(ipv4, name);
+
+            long keep = expiresUnix;
+            if (hadPermanent || expiresUnix == 0) keep = 0;              // permanent, either side, stays permanent
+            else if (longest > keep) keep = longest;                     // never shorten an existing sentence
+
             _entries.Add(new BanEntry
             {
                 Ipv4 = ipv4,
                 Name = name ?? "",
-                ExpiresUnix = expiresUnix,
+                ExpiresUnix = keep,
                 Reason = string.IsNullOrEmpty(reason) ? "" : reason,
                 Kind = kind,
             });
@@ -127,6 +150,12 @@ namespace SDG.Unturned
             // 0 would collide with the PERMANENT sentinel, so an explicit zero is rejected rather than silently
             // becoming a forever-ban -- which is the one mistake here that cannot be undone by waiting.
             if (v == 0) return false;
+            // AND SO WOULD AN OVERFLOW. `long.TryParse` happily accepts 9223372036854775807, and multiplying
+            // that by 604800 wraps: measured, "9223372036854775807w" produced -604800 seconds and
+            // "153722867280912931h" produced a 52-minute ban out of nonsense. Both announce a sentence that
+            // is not the one applied. A century is past every real use and far from the wrap point.
+            const long MaxSeconds = 100L * 365L * 86400L;
+            if (v > MaxSeconds / mult) return false;
             seconds = v * mult;
             return true;
         }

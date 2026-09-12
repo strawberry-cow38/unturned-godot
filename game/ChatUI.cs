@@ -135,23 +135,43 @@ namespace UnturnedGodot
             // elsewhere with focus (the console, a rename field) must keep its Enter.
             if (!Keybinds.Matches(GameAction.Chat, k)) return;
             if (GetViewport().GuiGetFocusOwner() != null) return;
+            if (OtherUiOwnsEnter?.Invoke() ?? false) return;
             Open();
             GetViewport().SetInputAsHandled();
         }
+
+        /// <summary>Who to ask whether some OTHER UI still wants the cursor, so closing chat does not
+        /// recapture it out from under an open inventory. Same contract DevConsole uses.</summary>
+        public System.Func<bool> OtherUiWantsCursor;
+
+        /// <summary>True when some other UI is mid-interaction and Enter belongs to IT. Dialogue is the
+        /// case that caught this: it pages on Enter, and on the LAST page the keypress falls through and
+        /// opens chat over the conversation.</summary>
+        public System.Func<bool> OtherUiOwnsEnter;
 
         public void Open()
         {
             _input.Text = "";
             _input.Visible = true;
             _input.GrabFocus();
+            // ⚠ RELEASE THE MOUSE, and this is not cosmetic. PlayerController gates ALL polled input on
+            // `Input.MouseMode != Captured`, and keyboard focus is independent of mouse mode -- so without
+            // this, typing "sss" also walks the player backwards, Space jumps, and a click fires the gun
+            // through the chat box. DevConsole does exactly this for exactly this reason (its 2026-08-16
+            // review note); chat is the second text field in the game and inherited the same requirement.
+            Input.MouseMode = Input.MouseModeEnum.Visible;
             _log.Visible = _lines.Count > 0;   // show the history you are replying to
             Repaint();
         }
 
         public void Close()
         {
+            if (!_input.Visible) return;   // idempotent: don't recapture a cursor we never released
             _input.Visible = false;
             _input.ReleaseFocus();
+            // Only recapture if nothing else still wants it -- closing chat over an open inventory must
+            // not steal the cursor back and re-enable walking through the grid.
+            if (!(OtherUiWantsCursor?.Invoke() ?? false)) Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
         // ---- test hooks. The scrollback is a rendered Label, so a test that read _log.Text would be

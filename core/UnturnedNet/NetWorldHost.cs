@@ -139,7 +139,20 @@ namespace UnturnedGodot.Net
             // ServerTransactions owns the RULES and reaches for none of this itself: the peer table, the
             // socket and the clock all live out here, and injecting them keeps the rule layer testable
             // without any of them.
-            Transactions.NameOf = pid => Session.FindPeer(pid)?.Name;
+            // THE PROFILE NAME, not the raw Connect payload. peer.Name is the unsanitised handshake
+            // string, which is NOT what anyone sees: nameplates show ProfileRules.SanitizeName of it, and
+            // CommandSetProfile replaces it moments later. Using the raw one made chat in singleplayer read
+            // "local: ..." (MpLoopback's handshake name), and made `kick <the name on the nameplate>` answer
+            // "no connected player matches" whenever the sanitiser had changed a character.
+            Transactions.NameOf = pid =>
+            {
+                if (Profiles != null && Profiles.TryGet(pid, out var prof) && !string.IsNullOrEmpty(prof.Name))
+                    return prof.Name;
+                // Before the profile lands, fall back to the sanitised handshake name rather than the raw
+                // one, so the two never disagree about the same player.
+                string raw = Session.FindPeer(pid)?.Name;
+                return string.IsNullOrEmpty(raw) ? raw : ProfileRules.SanitizeName(raw);
+            };
             Transactions.ConnectedPlayers = () =>
             {
                 // NAMED peers only. A half-open session has a minted id and a null Name, and including it
@@ -149,6 +162,9 @@ namespace UnturnedGodot.Net
                 return live;
             };
             Transactions.NowSeconds = () => Session.CurrentTick / (double)NetProtocol.TicksPerSecond;
+            // Bans need a clock that survives a reconnect and a restart; the rate limiter needs one that
+            // cannot jump. Two sources, deliberately, and the handshake gate below reads the same one.
+            Transactions.NowUnix = () => System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             Transactions.IdentityOf = pid =>
             {
                 var p = Session.FindPeer(pid);
@@ -160,6 +176,10 @@ namespace UnturnedGodot.Net
             {
                 var p = Session.FindPeer(pid);
                 if (p == null) return false;
+                // TELL THEM FIRST. The broadcast notice goes to Session.Peers, which no longer contains
+                // them by the time it fires -- so everyone except the one person who needs to know why was
+                // being told. DisconnectPeer now defers the removal, so this reliably goes out ahead of it.
+                if (!string.IsNullOrEmpty(reason)) Transactions.SendServerLineTo(pid, reason);
                 Session.DisconnectPeer(p);
                 return true;
             };
@@ -577,6 +597,10 @@ namespace UnturnedGodot.Net
                 while (peer.TryReceiveReliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
                 while (peer.TryReceiveUnreliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
             }
+            // A command handler may have kicked somebody (v49 moderation). DisconnectPeer queues rather
+            // than removing, because Peers IS the list this loop just walked; apply the queue now that the
+            // enumerator is done.
+            Session.FlushPendingKicks();
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
             VehicleHost.Step(Session.CurrentTick);   // drivers ride their vehicle entity; dead drivers exit
             // B5: BETWEEN VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's

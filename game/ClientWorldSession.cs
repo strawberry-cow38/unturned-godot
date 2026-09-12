@@ -189,7 +189,17 @@ namespace UnturnedGodot
             };
             // GLOBAL CHAT (v49). The UI is a CanvasLayer of its own rather than part of the HUD: it has to
             // survive the HUD being hidden and it owns keyboard focus while typing, which the HUD does not.
-            Chat = new ChatUI { Send = text => Client.SendChat(text) };
+            Chat = new ChatUI
+            {
+                Send = text => Client.SendChat(text),
+                // Shell arrives later (first authoritative sample), so this is a delegate rather than a
+                // captured reference -- closing chat must ask the CURRENT player whether some other UI
+                // still wants the cursor.
+                OtherUiWantsCursor = () => Shell != null && IsInstanceValid(Shell) && Shell.AnyBlockingUiOpen,
+                // Dialogue pages on Enter; on its last page the key would otherwise fall through and open
+                // chat on top of the conversation.
+                OtherUiOwnsEnter = () => Shell != null && IsInstanceValid(Shell) && (Shell.Dialogue?.IsOpen ?? false),
+            };
             AddChild(Chat);
             Client.ChatMessage += e => { if (IsInstanceValid(Chat)) Chat.Receive(e); };
 
@@ -656,6 +666,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))
                 shell.AdoptReplicatedInventory(invEntry.Inventory);
             Shell = shell;
+            if (shell != null) shell.ChatBox = Chat;   // so AnyBlockingUiOpen can see an open chat box
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             Log.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");

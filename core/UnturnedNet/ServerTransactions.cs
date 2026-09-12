@@ -164,9 +164,17 @@ namespace UnturnedGodot.Net
         /// Returns false if the id is not connected.</summary>
         public Func<ushort, (uint ipv4, string name)?> IdentityOf;
 
-        /// <summary>Wall-clock seconds, injected for the same reason _tick is: the rules are testable
-        /// without a clock and the server supplies the real one.</summary>
+        /// <summary>Seconds since server boot, for RATE LIMITING. Monotonic and unaffected by a clock
+        /// change, which is what a rate limiter wants -- and what a ban emphatically does not.</summary>
         public Func<double> NowSeconds;
+
+        /// <summary>UNIX seconds, for BAN EXPIRY. Separate from NowSeconds and that separation is the whole
+        /// point: a ban is written now and read after a reconnect or a restart, so it must be stamped on a
+        /// clock that means the same thing on both sides. Mixing the two made every timed ban expire the
+        /// instant anyone checked it -- stored at ~4200 (uptime), judged against ~1.79e9 (unix), deleted as
+        /// ancient, and the player walked straight back in. Only permanent bans worked, and `bans` printed
+        /// a confident "9m left" for a row the door was ignoring.</summary>
+        public Func<long> NowUnix;
 
         /// <summary>Called when the ban list changes, so the game side can persist it.</summary>
         public Action BansChanged;
@@ -1798,7 +1806,7 @@ namespace UnturnedGodot.Net
                 { seconds = secs; permanent = perm; timed = !perm; i = 2; }
                 string reason = string.Join(' ', a, i, a.Length - i).Trim();
 
-                long nowUnix = NowSeconds != null ? (long)NowSeconds() : 0L;
+                long nowUnix = NowUnix != null ? NowUnix() : System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 string window = ServerModeration.DescribeDuration(seconds, permanent);
 
                 // Record BEFORE disconnecting. The other order loses the identity: once the peer is gone
@@ -1824,8 +1832,15 @@ namespace UnturnedGodot.Net
 
             if (verb == "unban")
             {
-                if (arg.Length == 0) { Diag.ConsoleRejected++; return "usage: unban <name>"; }
-                int n = Moderation.Remove(0u, arg);
+                if (arg.Length == 0) { Diag.ConsoleRejected++; return "usage: unban <name|a.b.c.d>"; }
+                // A peer that connected with an empty handshake name leaves a row with ONLY an address, and
+                // a name-only unban could never lift it -- the admin's sole recovery was editing the TSV.
+                uint byIp = 0u;
+                var oct = arg.Split('.');
+                if (oct.Length == 4 && byte.TryParse(oct[0], out byte o0) && byte.TryParse(oct[1], out byte o1)
+                    && byte.TryParse(oct[2], out byte o2) && byte.TryParse(oct[3], out byte o3))
+                    byIp = (uint)((o0 << 24) | (o1 << 16) | (o2 << 8) | o3);
+                int n = Moderation.Remove(byIp, byIp != 0 ? null : arg);
                 if (n > 0) BansChanged?.Invoke();
                 Diag.ConsoleApplied++;
                 return n > 0 ? $"lifted {n} ban entr{(n == 1 ? "y" : "ies")} matching '{arg}'"
@@ -1834,7 +1849,7 @@ namespace UnturnedGodot.Net
 
             if (verb == "bans")
             {
-                long nowUnix = NowSeconds != null ? (long)NowSeconds() : 0L;
+                long nowUnix = NowUnix != null ? NowUnix() : System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 Moderation.Prune(nowUnix);
                 if (Moderation.Count == 0) return "no active bans";
                 var sb = new System.Text.StringBuilder();

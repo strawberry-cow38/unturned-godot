@@ -253,6 +253,54 @@ namespace UnturnedNet.Tests
             Assert.That(e.IsPermanent, Is.False);
         }
 
+        // ---- the two the fable review found, pinned before fixing ------------------------------------
+
+        // Every moderation test above calls RunConsole DIRECTLY, so none of them go through the command
+        // dispatch loop -- and that loop is `foreach (var peer in Session.Peers)` over the very List that
+        // RemovePeer mutates. A kick sent the way a real admin sends it therefore throws
+        // InvalidOperationException out of TickSimulation, skipping every remaining sim step that tick.
+        [Test]
+        public void A_Kick_Sent_Over_The_WIRE_Does_Not_Break_The_Tick()
+        {
+            var h = new TransactionalHarness(20);
+            var a = h.AddClient("Alice");
+            var b = h.AddClient("Griefer");
+            h.StepUntil(() => a.State == NetSessionState.Connected && b.State == NetSessionState.Connected);
+
+            a.SendConsole("kick Griefer");
+            Assert.DoesNotThrow(() => h.Step(30), "removing a peer mid-dispatch must not break the loop");
+            Assert.That(b.State, Is.Not.EqualTo(NetSessionState.Connected), "and the kick still lands");
+
+            // The tick must still be doing its job afterwards, not silently dead from the throw.
+            var c = h.AddClient("Carol");
+            h.StepUntil(() => c.State == NetSessionState.Connected, maxTicks: 200);
+            Assert.That(c.State, Is.EqualTo(NetSessionState.Connected), "the server still accepts joins");
+        }
+
+        // TWO CLOCKS. NowSeconds is uptime (tick/50) and the handshake gate is Unix time, so a timed ban is
+        // stored at ~4200 and judged against ~1.79e9 -- expired on arrival, deleted, and the player walks
+        // in. Only permanent bans worked. The existing rejoin test used a PERMANENT ban and so was blind.
+        [Test]
+        public void A_TIMED_Ban_Is_Still_Enforced_On_Reconnect()
+        {
+            var h = new TransactionalHarness(21);
+            var a = h.AddClient("Alice");
+            var b = h.AddClient("Cheater");
+            h.StepUntil(() => a.State == NetSessionState.Connected && b.State == NetSessionState.Connected);
+
+            h.Server.Transactions.RunConsole(a.PlayerId, "ban Cheater 2h aimbot");
+            h.Step(30);
+            Assert.That(h.Server.Transactions.Moderation.Count, Is.EqualTo(1));
+            Assert.That(h.Server.Transactions.Moderation.Entries[0].IsPermanent, Is.False, "a timed ban");
+
+            var again = h.AddClient("Cheater");
+            h.Step(80);
+            Assert.That(again.State, Is.Not.EqualTo(NetSessionState.Connected),
+                        "a 2h ban must still be in force one tick later");
+            Assert.That(h.Server.Transactions.Moderation.Count, Is.EqualTo(1),
+                        "and the entry must not have been pruned as already-expired");
+        }
+
         [Test]
         public void Say_Posts_As_The_Server()
         {

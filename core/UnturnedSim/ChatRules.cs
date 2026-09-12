@@ -63,22 +63,29 @@ namespace SDG.Unturned
             int marks = 0;
             bool pendingSpace = false;
 
-            foreach (char c in src)
+            // ITERATE BY RUNE, not by char. `foreach (char c in src)` walks UTF-16 code UNITS, and every
+            // astral character (emoji, CJK ext-B) is a surrogate PAIR -- so a category check saw two
+            // Surrogate units and dropped both. Measured: "gg 😀 wp" came out "gg wp" and a lone emoji came
+            // out empty and was rejected as blank, while the LineEdit happily accepted it. It also meant the
+            // length cap could cut between the halves of a pair and emit a lone surrogate.
+            foreach (var rune in src.EnumerateRunes())
             {
-                var cat = CharUnicodeInfo.GetUnicodeCategory(c);
+                var cat = Rune.GetUnicodeCategory(rune);
 
-                // WHITESPACE IS TESTED FIRST, and the order is load-bearing. Tab, CR and LF are BOTH
+                // Whitespace is tested FIRST and the order is load-bearing. Tab, CR and LF are BOTH
                 // whitespace and category Control, so dropping controls first deleted them outright and
-                // welded the words either side together -- "hello\nworld" became "helloworld", which
-                // silently changes what the player said. They collapse to a space instead; the control
-                // characters that are NOT whitespace still go, below. (U+200B and friends are Format, not
-                // whitespace, so they still vanish entirely rather than becoming a space.)
-                if (char.IsWhiteSpace(c)) { pendingSpace = sb.Length > 0; continue; }
+                // welded the words either side together -- "hello\nworld" became "helloworld", silently
+                // changing what the player said. They collapse to a space instead; the control characters
+                // that are NOT whitespace still go, below. (U+200B and friends are Format, not whitespace,
+                // so they still vanish entirely rather than becoming a space.)
+                if (Rune.IsWhiteSpace(rune)) { pendingSpace = sb.Length > 0; continue; }
 
-                // Dropped outright, and dropped BEFORE the result is matched or measured.
+                // Dropped outright, and dropped BEFORE the result is matched or measured. Surrogate stays
+                // in the list for UNPAIRED halves, which EnumerateRunes surfaces as U+FFFD.
                 if (cat == UnicodeCategory.Control || cat == UnicodeCategory.Format
                     || cat == UnicodeCategory.Surrogate || cat == UnicodeCategory.PrivateUse
                     || cat == UnicodeCategory.OtherNotAssigned) continue;
+                if (rune.Value == 0xFFFD) continue;   // an unpaired surrogate, replaced by the enumerator
 
                 bool isMark = cat == UnicodeCategory.NonSpacingMark || cat == UnicodeCategory.SpacingCombiningMark
                            || cat == UnicodeCategory.EnclosingMark;
@@ -89,21 +96,32 @@ namespace SDG.Unturned
                 }
                 else marks = 0;
 
+                // Measure in the units the cap is written in, and never split a rune across it.
+                int width = rune.Utf16SequenceLength;
                 if (pendingSpace)
                 {
-                    if (sb.Length >= MaxMessageChars) break;
+                    if (sb.Length + 1 + width > MaxMessageChars) break;
                     sb.Append(' ');
                     pendingSpace = false;
                 }
-                if (sb.Length >= MaxMessageChars) break;
+                if (sb.Length + width > MaxMessageChars) break;
 
                 // NEUTRALISED, not dropped: a bracket that vanishes turns "[img]x[/img]" into "imgx/img",
                 // which is harmless but silently rewrites what the player typed. Turning it into a paren
                 // keeps the line honest and still makes a tag impossible to form.
-                sb.Append(c == '[' ? '(' : c == ']' ? ')' : c);
+                if (rune.Value == '[') sb.Append('(');
+                else if (rune.Value == ']') sb.Append(')');
+                else sb.Append(rune);
             }
 
-            return sb.ToString().TrimEnd();
+            // RE-NORMALISE. Deleting a Format/Control unit from BETWEEN a base and a combining mark leaves
+            // a sequence NFC would now compose, so a single pass was not idempotent: "e\u200B\u0301"
+            // sanitised to "e\u0301", which sanitised again to "é". IsClean is defined as "Sanitize is a
+            // no-op", so without this it reported a already-clean string as dirty.
+            string outp = sb.ToString().TrimEnd();
+            try { outp = outp.Normalize(NormalizationForm.FormC); }
+            catch (ArgumentException) { }
+            return outp.Length > MaxMessageChars ? outp.Substring(0, MaxMessageChars) : outp;
         }
 
         /// <summary>True if the text is already in its sanitised form -- i.e. Sanitize is a no-op. Lets the
