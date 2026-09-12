@@ -17,24 +17,26 @@
 shader_type spatial;
 render_mode unshaded, fog_disabled, depth_draw_never, depth_test_disabled, cull_disabled;
 
-uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear;
+uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_nearest;
 
-uniform vec3 water_tint : source_color = vec3(0.10, 0.34, 0.47);   // the colour distance fades TOWARD
-uniform float murk = 0.11;           // per-metre absorption; the murkier the water the less you see
+uniform vec3 water_tint : source_color = vec3(0.17, 0.42, 0.51);   // the colour distance fades TOWARD
+uniform float murk = 0.045;           // per-metre absorption; the murkier the water the less you see
 // YOU ARE INSIDE THE MEDIUM, and that is the difference between "underwater" and "blue fog". Distance
 // absorption alone leaves anything a couple of metres away almost untouched -- the first render came out as a
 // crisp road under a blue sky, because a 2 m path through water absorbs almost nothing. Real submerged vision
 // also carries light SCATTERED into the eye from every direction, which tints the whole field of view at once
 // regardless of how near the subject is. This is that term: a floor under the distance fade, not a replacement
 // for it, so near things are clearly in water and far things still disappear into it.
-uniform float base_tint = 0.30;
+uniform float base_tint = 0.05;
 uniform float submersion = 1.0;      // 0 at the waterline .. 1 fully under -- fades the whole effect in
 uniform float depth_below = 0.0;     // metres the eye is under the surface -> deeper is darker and bluer
 uniform float wobble = 0.006;        // screen-space refraction amplitude
 uniform float wobble_speed = 1.4;
-uniform float vignette = 0.38;
-uniform float red_loss = 0.55;       // how much of the red channel the water has eaten by full murk
+uniform float vignette = 0.30;
+uniform float blur = 2.6;            // SCATTERING: mip level at full absorption -- what makes it read as WATER
+uniform float blur_near = 0.35;      // metres before any blur, so a surface at your mask stays sharp
+uniform float red_loss = 0.36;       // how much of the red channel the water has eaten by full murk
 
 void vertex() {
     POSITION = vec4(VERTEX, 1.0);   // 2x2 quad -> clip space directly: exact fullscreen at any FOV/aspect
@@ -52,18 +54,28 @@ void fragment() {
     ) * wobble * submersion;
     vec2 wuv = clamp(uv + warp, vec2(0.001), vec2(0.999));   // a warp off the edge would sample garbage
 
-    vec3 col = texture(screen_tex, wuv).rgb;
-
-    // View-space distance to whatever is behind this pixel. Exact rather than a fudge curve: unproject the depth
-    // sample through INV_PROJECTION_MATRIX, which a spatial shader actually has. The SKY sits at the far plane and
-    // comes back enormous, which is what we want -- it should be fully absorbed into the water colour.
+    // DEPTH FIRST, because the colour is now sampled at a distance-dependent mip. View-space distance to whatever
+    // is behind this pixel: unproject the depth sample through INV_PROJECTION_MATRIX, which a spatial shader
+    // actually has. The SKY sits at the far plane and comes back enormous, which is what we want.
     float d = texture(depth_tex, wuv).x;
     vec4 view = INV_PROJECTION_MATRIX * vec4(vec3(wuv * 2.0 - 1.0, d), 1.0);
     float dist = -view.z / max(view.w, 1e-6);
 
     // ABSORPTION, Beer-Lambert: what survives falls off exponentially with the water it came through, and red
     // falls off fastest -- which is why deep water is blue rather than merely dim.
-    float fade = 1.0 - (1.0 - base_tint) * exp(-murk * max(dist, 0.0));   // never falls below base_tint, even at zero distance
+    //
+    // ⚠ base_tint USED TO BE 0.30, which meant 30% of the tint applied at ZERO distance -- a flat blue filter over
+    // the whole screen no matter what you were looking at. The old comment called that "never falls below
+    // base_tint" as though it were a feature. It is the single reason this read as FOG rather than water
+    // (strawberry, 2026-09-12: "tone down the BLUE... should blur not fog"). Water is nearly clear at arm's
+    // length; what hides the far wall is SCATTERING, which is blur, not a stronger tint.
+    float fade = 1.0 - (1.0 - base_tint) * exp(-murk * max(dist, 0.0));
+
+    // SCATTERING = BLUR. Light from far objects arrives having bounced off particles, so it lands smeared rather
+    // than merely tinted. Sampling a higher mip the further the light travelled is that, cheaply. This is the half
+    // the shader never had -- grep blur on the old file returned zero.
+    float blur_lod = blur * fade * smoothstep(blur_near, blur_near + 1.5, dist) * submersion;
+    vec3 col = textureLod(screen_tex, wuv, blur_lod).rgb;
     vec3 absorbed = col * vec3(1.0 - red_loss * fade, 1.0 - 0.22 * fade, 1.0);
     col = mix(absorbed, water_tint, fade);
 

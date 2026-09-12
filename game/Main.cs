@@ -444,6 +444,12 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1600, 720);
                 _shotPath = shot;
                 BuildStationTest();
+                // UG_UNDERWATER over a CONTROLLED surface. The submerged pass is distance-absorption, so judging
+                // it needs geometry at KNOWN, varied distances -- which a line-up of 9 stations is and a landscape
+                // is not. It was only attached on the --peidrive path, where the shot harness boots without a
+                // player camera and captures the inside of the terrain, so the effect could never be photographed
+                // at all. That is how it shipped tuned by arithmetic and never looked at.
+                Underwater.DebugAttach(this);
                 return;
             }
 
