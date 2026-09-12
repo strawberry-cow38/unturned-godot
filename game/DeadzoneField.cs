@@ -41,12 +41,18 @@ namespace UnturnedGodot
             => AddVolume(center, halfExtent, DeadzoneDef.Default(kind));
 
         public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneDef zone)
+            => AddVolume(center, halfExtent, DeadzoneShape.Box, zone);
+
+        /// <summary>Shape-aware add. The map's volumes come through here; the box-only overloads above are
+        /// kept verbatim so every existing caller and test means exactly what it did before.</summary>
+        public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneShape shape, DeadzoneDef zone)
         {
             _volumes.Add(new DeadzoneVolumeDef
             {
                 Center = new UVector3(center.X, center.Y, center.Z),
                 HalfExtent = new UVector3(halfExtent.X, halfExtent.Y, halfExtent.Z),
                 Zone = zone,
+                Shape = shape,
             });
         }
 
