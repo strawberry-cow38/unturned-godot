@@ -106,6 +106,34 @@ namespace UnturnedGodot
             Engine.MaxFps = TargetFps;
         }
         public static void ApplyUiScale(Node ctx) { var root = ctx?.GetTree()?.Root; if (root != null) root.ContentScaleFactor = UiScale; }
+
+        /// <summary>Render the 3D at the window's ACTUAL pixel count.
+        ///
+        /// The bug: Godot sizes the root viewport from the stretch base, so the 3D buffer came out at
+        /// window^2 / ContentScaleSize. Measured at two very different sizes -- a 2880-wide window rendered
+        /// 3240 (2880^2/2560) and a 1024-wide one rendered 410. Only a 2560-wide window was ever correct:
+        /// below it the world renders SMALLER than the screen and is upscaled (a 1080p monitor was getting
+        /// 1440x810 and looking soft), above it we render MORE pixels than the display has and throw them away
+        /// (2880 panel: 3240 wide, ~27% wasted).
+        ///
+        /// The fix is NOT to make the stretch base follow the window. That base is what scales the HUD per
+        /// monitor; collapsing it to 1:1 would fix the world and break the interface in the same commit, and
+        /// the broken half still looks right in a screenshot (tinyclaw). So the canvas keeps its 2560 base and
+        /// only the 3D buffer is corrected, via Scaling3DScale -- the one knob that separates them.
+        ///
+        /// scale = base / window, because render = viewport * scale and viewport = window^2 / base.
+        /// Godot clamps the scale to [0.25, 2], so a window under 1280 wide cannot reach native and keeps some
+        /// upscale; that is a far smaller error than the one being fixed, and it fails soft.
+        /// UG_NO3DSCALE=1 restores the old behaviour for an A/B in one binary.
+        public static void Apply3DScale(Node ctx)
+        {
+            var root = ctx?.GetTree()?.Root;
+            if (root == null || System.Environment.GetEnvironmentVariable("UG_NO3DSCALE") == "1") return;
+            var win = DisplayServer.WindowGetSize();
+            var basis = root.ContentScaleSize;
+            if (win.X <= 0 || basis.X <= 0) return;
+            root.Scaling3DScale = Mathf.Clamp((float)basis.X / win.X, 0.25f, 2f);
+        }
         /// <summary>The world's environment (WorldEnvironment nodes in group "world_env"): AO, bloom, SSR, sun shafts.</summary>
         public static void ApplyEnvironment(Node ctx)
         {
@@ -375,7 +403,7 @@ namespace UnturnedGodot
             ApplyAA(ctx);
             ApplyShadows();
             ApplyShadowDistance(ctx);
-            ApplyWindow(); ApplyUiScale(ctx); ApplyEnvironment(ctx); ApplyEffects(); ApplyWater();
+            ApplyWindow(); ApplyUiScale(ctx); Apply3DScale(ctx); ApplyEnvironment(ctx); ApplyEffects(); ApplyWater();
             ApplyAniso();
             ApplyResolution();
             ApplyRenderDistance(ctx?.GetTree()?.Root);
