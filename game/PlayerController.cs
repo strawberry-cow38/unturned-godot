@@ -9939,7 +9939,11 @@ namespace UnturnedGodot
             // folds in WearingHeadlamp. Pushed on the same per-frame reconcile as the beam, and for the same
             // reason -- three separate paths can take the gear off your face, and a lit lens stranded on a bare
             // head is the same bug as a stranded beam.
-            _body?.SetGlassesGlow(NightVision.Active || wantLamp);
+            // ...at the WORN item's own brightness: a headlamp is a lamp, nightvision tubes are not (strawberry
+            // 2026-09-13 "tone down the glow on both nvgs"). One shared energy made the two NVG palettes -- a
+            // saturated green and a near-white -- bloom harder than the headlamp's cream at the same number.
+            _body?.SetGlassesGlow(NightVision.Active || wantLamp,
+                                  ClothingContent.LensEnergy(Inventory?.wornGlasses?.id ?? 0));
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)

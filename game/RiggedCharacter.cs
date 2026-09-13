@@ -225,7 +225,7 @@ namespace UnturnedGodot
 
         /// <summary>Light the worn glasses' lens, or put it out. A no-op on gear with no emission bound, so it is
         /// safe to call every frame from whatever owns the device's on/off state.</summary>
-        public void SetGlassesGlow(bool on, float energy = 3.2f)
+        public void SetGlassesGlow(bool on, float energy = ClothingContent.DefaultLensEnergy)
         {
             var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
                 ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;

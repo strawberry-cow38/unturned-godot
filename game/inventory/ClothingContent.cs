@@ -87,6 +87,32 @@ namespace UnturnedGodot
 
         public static bool HasGlowLens(int id) => GlowLensIds.Contains(id);
 
+        /// <summary>How hard a lens item's lens burns (strawberry 2026-09-13: "tone down the glow on both
+        /// nvgs"). Per ITEM rather than one constant at the call site, because the three are not the same kind
+        /// of device and were never meant to read alike:
+        ///
+        ///   HEADLAMP is a LAMP. It is supposed to look like a light source pointed at the world, so it keeps
+        ///   the 3.2 everything used to share.
+        ///
+        ///   THE NIGHTVISIONS are things you look THROUGH. Their tubes should read as powered, not as
+        ///   headlights -- and they were the two that looked wrong, which is consistent with the palettes: the
+        ///   military lens is a fully saturated (0,255,0) and the civilian a near-white (200,200,200), so at a
+        ///   shared energy they push further past the HDR bloom threshold (0.9) than the headlamp's warmer,
+        ///   channel-spread cream does. Same number, brighter result, which is why one value could not serve.
+        ///
+        /// 1.4 is "a bit under half", chosen as a visible step rather than derived from anything -- there is no
+        /// retail figure for this (no shipped emission map at all for these three). UG_NVGLOW overrides it at
+        /// runtime so it can be tuned against a picture instead of guessed at twice.</summary>
+        public static float LensEnergy(int id) => id switch
+        {
+            334 or 1044 => NvgLensEnergy,
+            _ => DefaultLensEnergy,
+        };
+
+        public const float DefaultLensEnergy = 3.2f;
+        static readonly float NvgLensEnergy =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_NVGLOW"), out float e) ? e : 1.4f;
+
         /// <summary>An emission mask for a lens item: the albedo with everything BUT the lens cell blacked out, so
         /// one material and one draw call give "only the lens glows". Null for anything not opted in.
         ///

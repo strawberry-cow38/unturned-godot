@@ -2517,7 +2517,8 @@ void fragment() {
             // the gear material whenever the worn set moves, which drops the energy back to 0 -- an on-change
             // write would be silently lost by the next re-dress, which is exactly the moment you are looking at
             // this panel. It is a guarded float write, the same cost as MatchPaperdollLight above.
-            _pdBody.SetGlassesGlow(Player.NightVisionOn || Player.HeadlampOn);
+            _pdBody.SetGlassesGlow(Player.NightVisionOn || Player.HeadlampOn,
+                                   ClothingContent.LensEnergy(Inv?.wornGlasses?.id ?? 0));
             _pdBody.SetMeleeGlow(Player.HeldLightOn && Player.HoldingLight);
         }
 
