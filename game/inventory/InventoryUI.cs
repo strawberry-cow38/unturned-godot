@@ -804,6 +804,27 @@ void fragment() {
                 CloseSelection(); Refresh();
                 return;
             }
+            // FROM A CONTAINER ONTO THE PLAYER = TAKE IT (strawberry 2026-09-13: "allow dragging straight onto
+            // the player ... to drop items from a container"). The doll means "give it to me", so a crate's item
+            // dragged there lands in the first cell of your own pages that fits it.
+            //
+            // This sits ABOVE the hand-action branch on purpose. That branch refuses a STORAGE source for a real
+            // reason -- putting a crate's bandage straight into your hands leaves the item in the crate while
+            // your hands claim it -- and taking it first is exactly the missing step, not a reason to say no.
+            // The move goes through the ordinary cross-page path, the same one a drag into a bag cell uses, so
+            // the server owns it and the echo repaints; nothing new has to be validated.
+            //
+            // ⚠ A FULL BAG SNAPS HOME rather than falling through. Below this, an unmatched release on the right
+            // half of the screen DROPS the item -- so without this return, dragging onto your own body with no
+            // room would throw a crate's item on the floor, which is the opposite of what the gesture means.
+            if (toDoll && sp == PlayerInventory.STORAGE && _dragJar?.GetAsset() is { } takeAsset)
+            {
+                if (FirstFreeOwnCell(takeAsset, out byte tkPage, out byte tkX, out byte tkY)
+                    && (Player == null || !Player.RequestMoveItem(sp, sx, sy, tkPage, tkX, tkY, 0)))
+                    Inv.TryDrag(sp, sx, sy, tkPage, tkX, tkY, 0);
+                CloseSelection(); Refresh();
+                return;
+            }
             // ...and ANYTHING ELSE you can hold, dropped on the paperdoll, goes into your hands (master 2026-09-04
             // "dragging ANYTHING you can hold onto the paperdoll should equip it, too"): the exact chain the item
             // menu's one hand button runs (Hold a consumable / bottle / gas can, Equip a deployable / tool / rod /
@@ -821,9 +842,19 @@ void fragment() {
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
             {
                 // RIGHT-HALF release = DROP IT (master 2026-09-04): let go anywhere on the right half of the screen that is
-                // not a real grid/slot (those matched above) and the item goes on the ground. Only from your OWN pages --
-                // a crate's or the ground's items just snap home.
-                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE)
+                // not a real grid/slot (those matched above) and the item goes on the ground.
+                //
+                // A CONTAINER IS NOW A VALID SOURCE (strawberry 2026-09-13: "dragging onto floor to drop items
+                // from a container"). Safe because the open crate's page 7 IS the live grid while you have it
+                // open -- ServerTransactions: "a player with this container open holds the live grid in his own
+                // STORAGE page; crate.Storage is only brought up to date when he is closed out of it" -- so the
+                // server's OnDropItem removes the real jar and the close writes the emptied grid back. Had page 7
+                // been a COPY this would have duplicated the item, which is why it was worth checking rather than
+                // just deleting the guard.
+                //
+                // AREA stays excluded: that page is loose items already lying on the ground, and dropping one
+                // where it already is means nothing.
+                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA)
                 {
                     _selPage = sp; _selX = sx; _selY = sy;
                     DropSelected();   // MP request / SP world drop + the held-hand reset, then CloseSelection+Refresh
@@ -1398,6 +1429,25 @@ void fragment() {
             if (!pg.checkSpaceEmpty(x, y, sx, sy, 0)) return false;
             pg.addItem(x, y, 0, it);
             return true;
+        }
+
+        /// <summary>First cell in the player's OWN pages that fits `a` unrotated, scanning pockets-then-clothing
+        /// the same order tryAddItem walks. False = no room anywhere, and the caller must NOT fall through to a
+        /// path that would drop the item instead.</summary>
+        bool FirstFreeOwnCell(ItemAsset a, out byte page, out byte x, out byte y)
+        {
+            page = x = y = 0;
+            if (Inv == null || a == null) return false;
+            byte w = System.Math.Max((byte)1, a.size_x), h = System.Math.Max((byte)1, a.size_y);
+            for (byte p = PlayerInventory.SLOTS; p < PlayerInventory.OWNPAGES; p++)
+            {
+                var pg = Inv.items[p];
+                if (pg == null || pg.width < w || pg.height < h) continue;
+                for (byte cy = 0; (byte)(cy + h) <= pg.height; cy++)
+                    for (byte cx = 0; (byte)(cx + w) <= pg.width; cx++)
+                        if (pg.checkSpaceEmpty(cx, cy, w, h, 0)) { page = p; x = cx; y = cy; return true; }
+            }
+            return false;
         }
 
         void ReturnToGrid(Item it)
