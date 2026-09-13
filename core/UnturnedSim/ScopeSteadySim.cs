@@ -21,9 +21,20 @@ namespace SDG.Unturned
     public sealed class ScopeSteadySim
     {
         /// <summary>Sway amplitude multiplier while steadying. "Almost nothing", deliberately not zero: a
-        /// perfectly frozen optic reads as the game having paused rather than as a held breath, and it would
-        /// make a scoped rifle strictly better than a bipod. 6% leaves a visible tremor.</summary>
-        public const float SteadySwayScale = 0.06f;
+        /// perfectly frozen optic reads as the game having paused rather than as a held breath.
+        ///
+        /// ⚠ 0.06 DID NOT DELIVER THAT AND THE FIRST VERSION OF THIS COMMENT CLAIMED IT DID. cow tools
+        /// measured both arms on an augewehr (hardcoded 4x, Fov 22.5), 22k+ settled samples each:
+        ///
+        ///     unsteadied   peak 0.379°  =  1.69% of FOV  =  21.6 px of wander @1280
+        ///     at 0.06      peak 0.023°  =  0.10% of FOV  =   1.3 px of wander @1280
+        ///
+        /// One to two pixels is not a tremor, it is frozen -- so 6% bought none of the thing it was chosen
+        /// for while still being a magic number rather than an honest zero. 0.18 puts the residual at
+        /// roughly 4 px, which moves visibly without undoing the 82% reduction that makes steadying worth
+        /// the air. If a frozen optic turns out to be preferred, this should go to 0f rather than back to a
+        /// value that splits the difference and achieves neither.</summary>
+        public const float SteadySwayScale = 0.18f;
 
         /// <summary>Oxygen at which steadying cuts out.
         ///

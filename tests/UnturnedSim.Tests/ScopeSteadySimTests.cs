@@ -24,8 +24,13 @@ namespace UnturnedSim.Tests
             var s = new ScopeSteadySim();
             float ox = 1f;
             Assert.That(s.Step(true, ref ox, Tick), Is.True);
-            Assert.That(s.SwayScale, Is.LessThan(0.1f), "almost nothing");
-            Assert.That(s.SwayScale, Is.GreaterThan(0f), "but not frozen -- a dead-still optic reads as a paused game");
+            // Bounded on BOTH sides, and the upper bound is the point. "Almost nothing" needs a large
+            // reduction; "not frozen" needs a residual a player can actually see. Measured at 4x, 0.06 was
+            // 1.3 px of wander -- indistinguishable from zero, so the lower bound was the only one doing
+            // work and it passed a value that failed the intent.
+            Assert.That(s.SwayScale, Is.LessThan(0.30f), "almost nothing: a large reduction");
+            Assert.That(s.SwayScale, Is.GreaterThan(0.10f),
+                        "but visibly moving -- below ~0.10 the residual is 1-2 px at 4x, which is frozen");
         }
 
         [Test]
