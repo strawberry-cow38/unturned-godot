@@ -2502,6 +2502,23 @@ void fragment() {
                 else { _pdBody.AttachMelee(melee); _pdBody.ShowMeleeHold(melee); }
                 _pdMeleeName = melee;
             }
+
+            // A LIT DEVICE IS LIT ON THE DOLL TOO (strawberry 2026-09-13: "show the flashlight/headlamp/nvgs
+            // on/off glow in the inventory paperdoll"). The doll dressed itself in the gear and then rendered
+            // every lens DARK, because the glow is pushed by PlayerController onto the LIVE 3P body and the doll
+            // is a different RiggedCharacter in its own viewport -- so the one place you stand still and look at
+            // your own kit was the one place it never lit up.
+            //
+            // The same two calls the live body takes, off the same state, so the doll cannot disagree with the
+            // body standing next to it. HeadlampOn folds in WearingHeadlamp and NightVision.Active is only true
+            // while goggles are worn AND on, so neither needs a worn-check here.
+            //
+            // Pushed EVERY frame rather than on a change, deliberately: PlayerClothingController.Refresh rebuilds
+            // the gear material whenever the worn set moves, which drops the energy back to 0 -- an on-change
+            // write would be silently lost by the next re-dress, which is exactly the moment you are looking at
+            // this panel. It is a guarded float write, the same cost as MatchPaperdollLight above.
+            _pdBody.SetGlassesGlow(Player.NightVisionOn || Player.HeadlampOn);
+            _pdBody.SetMeleeGlow(Player.HeldLightOn && Player.HoldingLight);
         }
 
         // a wide single-row slot (PRIMARY / SECONDARY) placed at an explicit position inside `parent`

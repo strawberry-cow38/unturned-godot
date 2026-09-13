@@ -7434,6 +7434,34 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            // UG_PDGLOW=<glassesId>[,on] : wear a lens device and (optionally) switch it ON, so the paperdoll's
+            // on/off glow can be photographed (strawberry 2026-09-13). UG_PDTORCH=1 puts the handheld flashlight
+            // in the doll's hand as well. Render-only dressing, same shape as UG_QUICKCRAFT / UG_MAGLOAD.
+            if (System.Environment.GetEnvironmentVariable("UG_PDGLOW") is string pdg && pdg.Length > 0)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                var parts = pdg.Split(',');
+                if (ushort.TryParse(parts[0], out ushort pdId) && pdId > 0)
+                {
+                    player.Inventory.wearGlasses(new SDG.Unturned.Item(pdId));
+                    // The switch, not the item: ToggleNightVision/ToggleHeadlamp each self-guard on the matching
+                    // item actually being worn, so asking for both lights exactly the one that is on your face.
+                    if (parts.Length > 1 && parts[1] == "on")
+                    {
+                        player.ToggleNightVision();
+                        player.ToggleHeadlamp();
+                    }
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_PDTORCH") == "1")
+                {
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(276));   // Flashlight (melee, `Light`) -- id read off items_catalog.tsv, NOT guessed (19 is Timberwolf Iron Sights)
+                    player.EquipHeldMelee("flashlight");
+                    // ⚠ ToggleHeldLight refuses while the equip animation is still running (source's isBusy), and
+                    // in a one-shot harness that clip is still playing at the settle frame -- so the switch is
+                    // thrown on a timer rather than inline, or the torch photographs dark and reads as the bug.
+                    GetTree().CreateTimer(1.5).Timeout += () => { if (IsInstanceValid(player) && !player.HeldLightOn) player.ToggleHeldLight(); };
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
