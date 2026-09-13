@@ -10247,18 +10247,22 @@ namespace UnturnedGodot
         /// scope is bolted on), so it overrides a stale mask rather than being hidden by one.</summary>
         void ApplyInstalledAttachments(SDG.Unturned.Item gun)
         {
+            // THE RAIL SWITCH RESETS WITH THE GUN, which is retail rather than a convenience: `interact` is a
+            // field on UseableGun, and UseableGun is destroyed and rebuilt every time you equip, so a laser you
+            // left on is off when you draw the weapon again. Lands here because this is the choke every equip
+            // and every attachment change already goes through for the meshes.
+            //
+            // ⚠ ABOVE the guard below, not under it. The switch is player state, not viewmodel state: a headless
+            // fixture and a server avatar both have a null _viewmodel, and a reset that only runs when there is a
+            // model to update would leave the beam lit on exactly the paths that cannot see it.
+            _tacticalOn = false;
+            ApplyTacticalLight();
+            _viewmodel?.SetTacticalLit(false);
             if (gun == null || _viewmodel == null) return;
             // The barrel's SHOT AUDIO + silenced flag, from the same installed id the meshes come from. Done here
             // rather than at the menu click so a gun re-equipped with a suppressor already on it sounds right on
             // the first shot -- the same reason this method exists for the meshes.
             _viewmodel.SetBarrelAudio(AttachmentFit.InstalledId(gun, "Barrel"));
-            // THE RAIL SWITCH RESETS WITH THE GUN, which is retail rather than a convenience: `interact` is a
-            // field on UseableGun, and UseableGun is destroyed and rebuilt every time you equip, so a laser you
-            // left on is off when you draw the weapon again. Lands here because this is the choke every equip
-            // and every attachment change already goes through for the meshes.
-            _tacticalOn = false;
-            ApplyTacticalLight();
-            _viewmodel.SetTacticalLit(false);
             foreach (var slot in AttachmentFit.Slots)
             {
                 int id = AttachmentFit.InstalledId(gun, slot);
