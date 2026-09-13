@@ -252,6 +252,9 @@ namespace UnturnedGodot
         /// <summary>Client-side hold-breath state. Prediction for the optic only; the server's instance is
         /// the authority for the oxygen bar itself.</summary>
         readonly SDG.Unturned.ScopeSteadySim _scopeSteady = new SDG.Unturned.ScopeSteadySim();
+        /// <summary>Set from the steady sim each frame, read by the local vitals step one call later. A frame
+        /// of lag on a refill suppression is not observable; reaching across the two call sites would be.</summary>
+        bool _steadyHoldsBreath;
         /// <summary>True while the steady is actually in effect -- read by ClientWorldSession to set the
         /// wire bit, so what the scope does and what the server is told cannot disagree.</summary>
         public bool SteadyingNow { get; private set; }
@@ -7172,6 +7175,10 @@ namespace UnturnedGodot
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
                 SurvivalDrain = Skills.SurvivalDrainMultiplier(),                 // SURVIVAL slows hunger/thirst
                 VitalityRegen = Skills.VitalityRegenMultiplier(),                 // VITALITY speeds regen while fed + hydrated
+                // Without this the 0.25/s surface refill outruns the 0.133/s steady drain and the bar goes
+                // UP while you hold your breath. The server has always set this; the local step never did,
+                // which is half of why steadying cost nothing here.
+                HoldingBreath = _steadyHoldsBreath,
             });
             // P3a: while server-owned, the cosmetic vitals above (stamina/food/water/infection) still step for
             // the local HUD, but HP is re-pinned to the adopted server value as the LAST writer of the tick --
@@ -9762,13 +9769,15 @@ namespace UnturnedGodot
                     // identical swing for every gun -- its PASS would look exactly like its FAILURE, which is how
                     // the 0.3 on the AUG/SG550 shipped broken in the first place. It still does NOT cover the real
                     // oscillator's zoom/stance/breath terms; only that the gun's number arrives and scales.
-                    _scopeSwayT += (float)delta;
+                    // The RATE, matching the real oscillator -- this advances the synthetic clock rather
+                    // than scaling the synthetic amplitude, or a headless steady test would measure the
+                    // recentring bug as a pass.
+                    _scopeSwayT += (float)delta * Mathf.Clamp(_scopeSteady.SwayRateScale, 0f, 1f);
                     float ss = _viewmodel?.ScopeSwayScale ?? 1f;
                     // ...and the hold-breath multiplier, for the same reason the per-gun scale is here. The
                     // real oscillator applies it in Viewmodel; if this synthetic one did not, a headless
                     // test of steadying would measure an identical swing steadying or not -- its PASS would
                     // look exactly like its FAILURE, which is the trap the note above already records.
-                    ss *= Mathf.Clamp(_scopeSteady.SwayScale, 0f, 1f);
                     sway = new Vector2(Mathf.Sin(_scopeSwayT * 3.33f) * 0.30f * ss, Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * 0.42f * ss);
                 }
                 float tgtP = sway.X, tgtY = sway.Y;
@@ -10982,13 +10991,33 @@ namespace UnturnedGodot
             // clips at the same seed, so the harness needs a way to hold the key. Still gated on actually
             // aiming through a magnifying optic, so it cannot fake a state the player could not reach.
             bool steadyKey = sprintNow || System.Environment.GetEnvironmentVariable("UG_STEADY") == "1";
-            bool wantsSteady = steadyKey && (_viewmodel?.IsAiming ?? false) && (_viewmodel?.ScopeZoom ?? 1f) > 1f;
+            // `|| DebugForceScopeSway` is the headless stand-in and not a loosening of the gate: ScopeZoom
+            // reads 90/Fov off the optic's SubViewport CAMERA, which does not exist under --headless, so it
+            // is 0 there and the real condition can NEVER be true in an L1 test. DebugForceScopeSway is the
+            // existing flag that means "pretend this player is looking through an optic" and it is set by
+            // nothing but the harness. Without it the only coverage of this feature is a sim test that owns
+            // its own oxygen and a wire test that posts the button itself -- which is exactly the pair that
+            // let a discarded drain and a recentring bug both ship.
+            bool wantsSteady = steadyKey
+                               && ((_viewmodel?.IsAiming ?? false) && (_viewmodel?.ScopeZoom ?? 1f) > 1f
+                                   || DebugForceScopeSway);
             {
                 float ox = _vitals.Oxygen;
                 _scopeSteady.Step(wantsSteady, ref ox, (float)delta);
-                // The client does NOT write the bar back -- oxygen is server-owned (v33) and a local write
-                // would fight the next replicated sample. Only the sway multiplier is taken from this.
-                if (_viewmodel != null) _viewmodel.SteadySwayScale = _scopeSteady.SwayScale;
+                // ⚠ THE RESULT USED TO BE THROWN AWAY, AND THAT WAS THE WHOLE OXYGEN COST OF THE FEATURE.
+                // The old comment here said the client must not write the bar because oxygen is server-owned
+                // (v33) -- true of AUTHORITY, and I read it as "do not write", which left `ox` a local that
+                // was re-read from the replicated value every frame and discarded every frame. It could
+                // therefore never fall, never reach the floor, and never arm the lockout. Steadying was free
+                // and unlimited, and in singleplayer -- where nothing else drains it either -- the bar simply
+                // did not move. strawberry, on the shipped build: "also my oxygen isnt draining".
+                //
+                // The line below is PREDICTION, not authority, and it is the same status as the stamina,
+                // food and water this shell already steps locally for the HUD (see the vitals step): the
+                // server runs the identical ScopeSteadySim and its sample corrects this one.
+                _vitals.Oxygen = ox;
+                _steadyHoldsBreath = _scopeSteady.Steadying;   // suppress the surface refill in the vitals step
+                if (_viewmodel != null) _viewmodel.SteadyRateScale = _scopeSteady.SwayRateScale;
             }
             SteadyingNow = _scopeSteady.Steadying;
             bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure

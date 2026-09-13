@@ -20,8 +20,22 @@ namespace SDG.Unturned
     /// in Keybinds: tagging two actions as exclusive does not MAKE them exclusive; this pair already was.</summary>
     public sealed class ScopeSteadySim
     {
-        /// <summary>Sway amplitude multiplier while steadying. "Almost nothing", deliberately not zero: a
-        /// perfectly frozen optic reads as the game having paused rather than as a held breath.
+        /// <summary>Multiplier on the RATE the sway advances while steadying -- NOT on its amplitude.
+        ///
+        /// ⚠ THIS WAS AN AMPLITUDE SCALE AND THAT WAS THE WRONG MECHANIC. Scaling amplitude shrinks the
+        /// orbit toward its CENTRE, so holding the control walked the player's sight back to the middle of
+        /// the sway -- a free re-aim, and not what holding your breath does. strawberry, on the shipped
+        /// build: "the shift to steady shouldnt move us to center, it should just stop the swaying from
+        /// continuing." Scaling the rate instead freezes the drift WHERE IT IS: the sight stops travelling,
+        /// it does not travel home.
+        ///
+        /// Retail already worked this way and the answer was sitting in our own file. Viewmodel's
+        /// SteadyAccuracy note reads: "Source advances swayTime at (1 - steadyAccuracy/4), so steadying
+        /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily." I wrote the
+        /// amplitude version anyway, with that comment two lines from the code I was editing.
+        ///
+        /// "Almost nothing", deliberately not zero: at 0.18 the 8.38s sway period stretches to ~47s, which
+        /// creeps rather than freezes. A hard 0 reads as the game having paused rather than as a held breath.
         ///
         /// ⚠ 0.06 DID NOT DELIVER THAT AND THE FIRST VERSION OF THIS COMMENT CLAIMED IT DID. cow tools
         /// measured both arms on an augewehr (hardcoded 4x, Fov 22.5), 22k+ settled samples each:
@@ -29,12 +43,12 @@ namespace SDG.Unturned
         ///     unsteadied   peak 0.379°  =  1.69% of FOV  =  21.6 px of wander @1280
         ///     at 0.06      peak 0.023°  =  0.10% of FOV  =   1.3 px of wander @1280
         ///
-        /// One to two pixels is not a tremor, it is frozen -- so 6% bought none of the thing it was chosen
-        /// for while still being a magic number rather than an honest zero. 0.18 puts the residual at
-        /// roughly 4 px, which moves visibly without undoing the 82% reduction that makes steadying worth
-        /// the air. If a frozen optic turns out to be preferred, this should go to 0f rather than back to a
-        /// value that splits the difference and achieves neither.</summary>
-        public const float SteadySwayScale = 0.18f;
+        /// Those were AMPLITUDE figures and the mechanic is no longer amplitude, but the 0.18 carries over
+        /// on the same reasoning: it is the fraction of normal behaviour left over, small enough to read as
+        /// stopped and non-zero so it is not a pause. If a truly frozen optic turns out to be preferred,
+        /// this should go to 0f rather than back to a value that splits the difference and achieves
+        /// neither.</summary>
+        public const float SteadyRateScale = 0.18f;
 
         /// <summary>Oxygen at which steadying cuts out.
         ///
@@ -182,10 +196,13 @@ namespace SDG.Unturned
             if (MathF.Abs(Blend - want) < 1e-4f) Blend = want;   // snap the tail so it genuinely arrives
         }
 
-        /// <summary>Sway multiplier for the current state, EASED. 1 = full sway, SteadySwayScale = fully
-        /// steadied. Interpolated through Blend rather than stepped, so the caller cannot reintroduce the
-        /// snap by reading a boolean.</summary>
-        public float SwayScale => 1f - Blend * (1f - SteadySwayScale);
+        /// <summary>Multiplier on the sway's RATE OF ADVANCE for the current state, EASED. 1 = normal drift,
+        /// SteadyRateScale = all but stopped. Interpolated through Blend rather than stepped, so the caller
+        /// cannot reintroduce the snap by reading a boolean.
+        ///
+        /// The caller multiplies its swayTime ADVANCE by this. Multiplying the offset by it instead is the
+        /// bug this replaced -- same number, and it drags the sight to centre.</summary>
+        public float SwayRateScale => 1f - Blend * (1f - SteadyRateScale);
 
         /// <summary>Drop all state -- death, respawn, or a peer id being recycled. A lockout that outlives
         /// the life that earned it is a bug nobody would attribute to this class.</summary>

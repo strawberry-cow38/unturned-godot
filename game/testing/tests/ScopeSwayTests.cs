@@ -107,4 +107,103 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    /// <summary>The two things about hold-breath-to-steady that shipped WRONG, both caught by strawberry on
+    /// the running build rather than by any of the 21 green tests over the feature.
+    ///
+    /// ⚠ WHY THE GREEN SUITE MISSED BOTH, because it is the same reason twice. ScopeSteadySimTests drives
+    /// `ScopeSteadySim.Step(wants, ref ox, dt)` with an oxygen variable IT owns, so the drain accumulates
+    /// across ticks and the floor is reached -- production re-read the replicated bar into a fresh local
+    /// every frame and discarded the result, so it could never fall at all. And ScopeSteadyWireTests posts
+    /// `MoveInput.ButtonSteady` onto the wire directly, which proves the SERVER spends air for a bit it was
+    /// handed, never that anything on this side produces the bit or spends anything locally.
+    ///
+    /// So this test presses the control the way a player does -- through PlayerController, on a real scoped
+    /// gun -- and reads the two values a player actually sees: the bar, and where the sight is pointing.</summary>
+    public sealed class ScopeSteadyBehavesTests : GameTest
+    {
+        public override string Name => "gun.scope_steady";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = new PlayerController { CaptureMouse = false, Inventory = new SDG.Unturned.PlayerInventory() };
+            World.AddChild(p);
+            p.GlobalPosition = new Vector3(0f, 1f, 0f);
+            yield return Ticks(40);
+            p.EquipHeldGun("timberwolf");
+            yield return Until(() => p.HeldItemReady, 6);
+            p.DebugSetPitch(0f);
+            // The SYNTHETIC oscillator, because `ScopeZoom` is 90/Fov off a SubViewport camera that headless
+            // does not create -- the real one cannot run here at all. It is driven by the same clock and the
+            // same SwayRateScale, so it models the mechanic under test; what it does NOT cover is the real
+            // oscillator's zoom and stance terms, which gun.scope_sway owns.
+            p.DebugForceScopeSway = true;
+            System.Environment.SetEnvironmentVariable("UG_STEADY", null);
+            yield return Ticks(120);
+            float offCentre = 0f; int waited = 0;
+            while (offCentre < 0.004f && waited++ < 600) { yield return Ticks(1); offCentre = p.DebugScopeSway.Length(); }
+            T.Check($"the sight has drifted off centre before we steady ({offCentre:0.####} deg)", offCentre >= 0.004f);
+
+            float oxBefore = p.Oxygen;
+            var atEngage = p.DebugScopeSway;
+
+            System.Environment.SetEnvironmentVariable("UG_STEADY", "1");
+            yield return Ticks(100);                       // 2 s of held breath
+
+            // ---- 1. IT FREEZES, IT DOES NOT RECENTRE (strawberry: "it should just stop the swaying from
+            // continuing", on the build where scaling the AMPLITUDE dragged the aim back to the middle).
+            var held = p.DebugScopeSway;
+            T.Check($"the sight did NOT walk back to centre ({atEngage.Length():0.####} -> {held.Length():0.####} deg)",
+                    held.Length() > atEngage.Length() * 0.55f);
+
+            // TRAVEL, as a RATIO against the same measurement unsteadied. An absolute threshold here was
+            // calibrated against the REAL oscillator (0.75 rad/s) and applied to the SYNTHETIC one (3.33
+            // rad/s, 4.4x faster) -- it failed at 0.084 deg/s and the code was correct. A ratio cancels the
+            // carrier out, which is the only reason this number means anything on either oscillator.
+            float steadiedTravel = 0f;
+            var prev = p.DebugScopeSway;
+            for (int i = 0; i < 50; i++)
+            {
+                yield return Ticks(1);
+                steadiedTravel += (p.DebugScopeSway - prev).Length();
+                prev = p.DebugScopeSway;
+            }
+
+            // The eased rate has landed by now, and this one IS exact -- it is the value the oscillator
+            // multiplies its clock by, read after it has settled.
+            T.Check($"the steadied rate reached the viewmodel ({p.VM.SteadyRateScale:0.###})",
+                    Mathf.Abs(p.VM.SteadyRateScale - SDG.Unturned.ScopeSteadySim.SteadyRateScale) < 0.02f);
+
+            // ---- 2. IT COSTS AIR, READ WHILE THE BREATH IS STILL HELD. The first cut of this read the bar
+            // after the release and the baseline measurement -- 2.2 s at the 0.25/s refill, which restores
+            // anything the drain had taken and reports "1 -> 1" for a drain that worked perfectly.
+            float oxHeld = p.Oxygen;
+            T.Check($"steadying spent oxygen ({oxBefore:0.###} -> {oxHeld:0.###})", oxHeld < oxBefore - 0.15f);
+            T.Check($"and never past the reserve ({oxHeld:0.###})",
+                    oxHeld >= SDG.Unturned.ScopeSteadySim.SteadyFloor - 0.01f);
+
+            System.Environment.SetEnvironmentVariable("UG_STEADY", null);
+            yield return Ticks(60);                        // let the release finish before measuring the baseline
+            float freeTravel = 0f;
+            prev = p.DebugScopeSway;
+            for (int i = 0; i < 50; i++)
+            {
+                yield return Ticks(1);
+                freeTravel += (p.DebugScopeSway - prev).Length();
+                prev = p.DebugScopeSway;
+            }
+            float ratio = steadiedTravel / Mathf.Max(freeTravel, 1e-6f);
+            T.Check($"...and it all but stopped travelling ({steadiedTravel:0.####} vs {freeTravel:0.####} deg/s, {ratio:0.##}x)",
+                    ratio < 0.45f);
+            T.Check($"...but is still creeping, not frozen solid ({ratio:0.###}x)", ratio > 0.02f);
+
+            // ---- 2. IT COSTS AIR. The bug: the drain was computed and thrown away, so the bar never moved.
+            // ---- 3. RELEASING RESTORES BOTH. The sway is covered by freeTravel above (measured AFTER the
+            // release, and non-zero by the ratio bound); this is the bar, which the drain bug also froze.
+            T.Check($"the bar refills once the breath is let go ({oxHeld:0.###} -> {p.Oxygen:0.###})",
+                    p.Oxygen > oxHeld + 0.01f);
+        }
+    }
 }

@@ -1068,37 +1068,20 @@ namespace UnturnedGodot
         public Vector3 DebugRecoilRot => _recoilRotSpring.CurrentPosition;
         /// <summary>Set from the equipped gun's Scope_Sway_Scale. 1 = the shared default.</summary>
         public float ScopeSwayScale = 1f;
-        public Vector2 ScopeSwayDegrees
-        {
-            // THE BREATH ENVELOPE IS APPLIED HERE, ON THE OUTPUT, NOT ON THE OSCILLATOR'S TARGET, and that is
-            // the whole of the "properly" in strawberry's "design and fix it properly".
-            //
-            // Scaling the TARGET was the version that shipped first, and it silently handed the entire feel of
-            // the mechanic to the line below it: `_scopeSway.Lerp(target, delta * 4f)` is the house position
-            // smoother, tau 0.25s, and the current offset can only ever chase the shrunken orbit at THAT rate.
-            // So the breath-hold settled in 0.55s because everything on this optic settles in 0.55s, and no
-            // rate ScopeSteadySim chose could have been faster -- a designed 0.18s release would still have
-            // taken 0.55s, bottlenecked by a smoother that is not about breathing at all.
-            //
-            // Multiplying the output separates the two things that were tangled: the Lerp keeps smoothing the
-            // OSCILLATOR (unchanged for every other gun and state), and the envelope scales the RESULT at the
-            // rate ScopeSteadySim.EaseBlend actually asks for. Two independent time constants, which is what
-            // asymmetry needs -- with them multiplied together there is only one.
-            get
-            {
-                float s = Mathf.Clamp(SteadySwayScale, 0f, 1f);
-                return new Vector2(_scopeSway.X * s, _scopeSway.Y * s);
-            }
-        }
+        public Vector2 ScopeSwayDegrees => new Vector2(_scopeSway.X, _scopeSway.Y);
         /// <summary>Steadiness 0..1 (breath-hold). Source advances swayTime at (1 - steadyAccuracy/4), so steadying
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
         public float SteadyAccuracy;
 
-        /// <summary>Scope-sway amplitude multiplier from the hold-breath mechanic (1 = full sway), driven by
-        /// ScopeSteadySim.SwayScale -- which is ALREADY eased, so this must not be smoothed again on the way
-        /// in. Applied once, in `ScopeSwayDegrees`, which is the single value PlayerController folds into the
-        /// aim: scaling it in two places would halve it twice, and the optic and the bullets must agree.</summary>
-        public float SteadySwayScale = 1f;
+        /// <summary>Multiplier on the RATE the scope sway advances, from the hold-breath mechanic (1 = normal
+        /// drift), driven by ScopeSteadySim.SwayRateScale -- which is ALREADY eased, so it must not be
+        /// smoothed again on the way in.
+        ///
+        /// ⚠ IT MULTIPLIES `_swayTime`, NOT THE OFFSET. Multiplying the offset shrinks the orbit toward its
+        /// centre, which walks the player's aim back to the middle of the sway for free; that shipped, and
+        /// strawberry caught it on the build: "it should just stop the swaying from continuing". Slowing the
+        /// clock leaves the sight exactly where it drifted to and stops it going anywhere else.</summary>
+        public float SteadyRateScale = 1f;
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
@@ -1885,7 +1868,11 @@ namespace UnturnedGodot
             {
                 float sway = (1f - 1f / scopeZoom) * 1.25f * ScopeSwayScale;   // per-gun scale. NO steady term -- see ScopeSwayDegrees
                 sway *= _stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };
-                _swayTime += (float)delta * (1f - Mathf.Clamp(SteadyAccuracy, 0f, 1f) / 4f);
+                // Both breath terms act on the CLOCK, which is what the source does and what makes the sight
+                // stop rather than recentre: SteadyAccuracy is the passive skill, SteadyRateScale the held
+                // breath. At the steadied 0.18 the 8.38s sway period stretches to ~47s.
+                _swayTime += (float)delta * (1f - Mathf.Clamp(SteadyAccuracy, 0f, 1f) / 4f)
+                                          * Mathf.Clamp(SteadyRateScale, 0f, 1f);
                 var target = new Vector3(Mathf.Sin(0.75f * _swayTime) * sway, Mathf.Sin(1.0f * _swayTime) * sway, 0f);
                 _scopeSway = _scopeSway.Lerp(target, Mathf.Clamp((float)delta * 4f, 0f, 1f));
             }

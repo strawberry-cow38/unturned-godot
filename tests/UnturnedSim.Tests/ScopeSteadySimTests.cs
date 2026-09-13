@@ -26,7 +26,7 @@ namespace UnturnedSim.Tests
         static float SecondsToCover(ScopeSteadySim s, ref float ox, bool wants, float dest, float frac,
                                     float capSeconds = 10f)
         {
-            float from = s.SwayScale;
+            float from = s.SwayRateScale;
             float mark = from + (dest - from) * frac;
             bool falling = dest < from;
             float t = 0f;
@@ -34,7 +34,7 @@ namespace UnturnedSim.Tests
             {
                 s.Step(wants, ref ox, Tick);
                 t += Tick;
-                if (falling ? s.SwayScale <= mark : s.SwayScale >= mark) return t;
+                if (falling ? s.SwayRateScale <= mark : s.SwayRateScale >= mark) return t;
             }
             return float.NaN;   // never got there -- the caller's Is.EqualTo will say so loudly
         }
@@ -50,8 +50,8 @@ namespace UnturnedSim.Tests
             // reduction; "not frozen" needs a residual a player can actually see. Measured at 4x, 0.06 was
             // 1.3 px of wander -- indistinguishable from zero, so the lower bound was the only one doing
             // work and it passed a value that failed the intent.
-            Assert.That(s.SwayScale, Is.LessThan(0.30f), "almost nothing: a large reduction");
-            Assert.That(s.SwayScale, Is.GreaterThan(0.10f),
+            Assert.That(s.SwayRateScale, Is.LessThan(0.30f), "almost nothing: a large reduction");
+            Assert.That(s.SwayRateScale, Is.GreaterThan(0.10f),
                         "but visibly moving -- below ~0.10 the residual is 1-2 px at 4x, which is frozen");
         }
 
@@ -68,7 +68,7 @@ namespace UnturnedSim.Tests
             float ox = 1f;
             s.Step(true, ref ox, Tick);
             Assert.That(s.Steadying, Is.True, "the STATE is immediate");
-            Assert.That(s.SwayScale, Is.GreaterThan(0.9f),
+            Assert.That(s.SwayRateScale, Is.GreaterThan(0.9f),
                         "...but the SWAY is not -- one tick of a 0.9s settle is barely any of it");
         }
 
@@ -77,7 +77,7 @@ namespace UnturnedSim.Tests
         {
             var s = new ScopeSteadySim();
             float ox = 1f;
-            float t = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadySwayScale, 0.9f);
+            float t = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadyRateScale, 0.9f);
             Assert.That(t, Is.EqualTo(ScopeSteadySim.EngageSeconds).Within(0.05f),
                         "90% of the settle should land on EngageSeconds -- that is what the constant means");
         }
@@ -99,7 +99,7 @@ namespace UnturnedSim.Tests
         {
             var s = new ScopeSteadySim();
             float ox = 1f;
-            float engage = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadySwayScale, 0.9f);
+            float engage = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadyRateScale, 0.9f);
             RunHeld(s, ref ox, 1f);
             float release = SecondsToCover(s, ref ox, false, 1f, 0.9f);
 
@@ -140,7 +140,7 @@ namespace UnturnedSim.Tests
                 float ox = 1f;
                 int ticks = (int)MathF.Round(0.5f / dt);
                 for (int i = 0; i < ticks; i++) s.Step(true, ref ox, dt);
-                return s.SwayScale;
+                return s.SwayRateScale;
             }
             float fast = At(1f / 144f), slow = At(1f / 30f), mid = At(1f / 50f);
             Assert.That(slow, Is.EqualTo(fast).Within(0.01f), "30 fps and 144 fps must reach the same place");
@@ -160,13 +160,13 @@ namespace UnturnedSim.Tests
             // The cut-out tick eases too, so this is ONE release tick past steadied (0.18 -> ~0.32), not the
             // steadied value itself. Bounding it at 0.18 would be asserting that the release had not started,
             // which is a different claim and a wrong one.
-            Assert.That(s.SwayScale, Is.LessThan(0.40f), "the sway is still down at the instant it cuts out");
+            Assert.That(s.SwayRateScale, Is.LessThan(0.40f), "the sway is still down at the instant it cuts out");
 
             RunHeld(s, ref ox, ScopeSteadySim.ReleaseSeconds * 0.5f);
-            Assert.That(s.SwayScale, Is.InRange(0.30f, 0.95f),
+            Assert.That(s.SwayRateScale, Is.InRange(0.30f, 0.95f),
                         "and comes back through the middle -- running out is a release, not a snap");
             RunHeld(s, ref ox, 1f);
-            Assert.That(s.SwayScale, Is.EqualTo(1f).Within(0.01f), "...and it arrives");
+            Assert.That(s.SwayRateScale, Is.EqualTo(1f).Within(0.01f), "...and it arrives");
         }
 
         [Test]
@@ -178,11 +178,11 @@ namespace UnturnedSim.Tests
             {
                 s.Step(i % 7 < 3, ref ox, Tick);     // chattering the control
                 Assert.That(s.Blend, Is.InRange(0f, 1f), $"tick {i}");
-                Assert.That(s.SwayScale, Is.InRange(ScopeSteadySim.SteadySwayScale, 1f), $"tick {i}");
+                Assert.That(s.SwayRateScale, Is.InRange(ScopeSteadySim.SteadyRateScale, 1f), $"tick {i}");
             }
             s.Reset();
             Assert.That(s.Blend, Is.EqualTo(0f));
-            Assert.That(s.SwayScale, Is.EqualTo(1f), "a fresh life starts un-steadied, mid-transition or not");
+            Assert.That(s.SwayRateScale, Is.EqualTo(1f), "a fresh life starts un-steadied, mid-transition or not");
         }
 
         [Test]
@@ -192,7 +192,7 @@ namespace UnturnedSim.Tests
             float ox = 1f;
             Assert.That(s.Step(false, ref ox, Tick), Is.False);
             Assert.That(ox, Is.EqualTo(1f), "no drain when not asking");
-            Assert.That(s.SwayScale, Is.EqualTo(1f));
+            Assert.That(s.SwayRateScale, Is.EqualTo(1f));
         }
 
         [Test]
