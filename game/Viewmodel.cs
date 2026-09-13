@@ -1187,7 +1187,24 @@ namespace UnturnedGodot
             if (_arms.ClipLength(_meleeCap + "_Stop_Swing") > 0f) _arms.Play(_meleeCap + "_Stop_Swing");
             else _arms.Play(_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip");   // no stop clip: settle back to the ready hold
         }
-        public void PlayMeleeInspect() { if (_meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Inspect") > 0f) _arms.Play(_meleeCap + "_Inspect"); }
+        /// <summary>A melee's own Inspect. Now records _inspecting like the gun path does -- it did not, so
+        /// IsInspecting read false while a knife was plainly mid-inspect and CancelInspect could not stop it.
+        /// That asymmetry did not matter until something needed to INTERRUPT an inspect (strawberry 2026-09-13:
+        /// a sprint cancels one in flight), at which point "guns only" would have been an invisible half-fix.
+        /// _inspectCapture stays off: that flag is the gun's hand-bone tilt and means nothing for a blade.</summary>
+        public void PlayMeleeInspect()
+        {
+            if (_meleeCap == null || _arms == null || SprintingNow || _inspecting) return;
+            float len = _arms.ClipLength(_meleeCap + "_Inspect");
+            if (len <= 0f) return;
+            _arms.Play(_meleeCap + "_Inspect");
+            _inspecting = true; _inspectTimer = len;
+        }
+
+        /// <summary>Actually RUNNING, not merely holding the un-shouldered pose. _wantSprint also fires on `_safe`
+        /// (weapon lowered), and lowering your weapon is not a reason to refuse an inspect -- it is nearly the
+        /// opposite. So the inspect rules key off this and the sprint POSE keeps its own wider condition.</summary>
+        bool SprintingNow => _stance == EPlayerStance.SPRINT && _moving;
 
         CpuParticles3D _torchSparks;   // blowtorch: the REAL "Hit" ParticleSystem from item.prefab -- the game's own blue spark sprite, emitted from the nozzle while the torch is used (source UseableMelee.firstEmitter)
         public void SetTorchSparks(bool on)
@@ -1343,7 +1360,10 @@ namespace UnturnedGodot
         // PlayerEquipment.canInspect gating on animator.checkExists("Inspect"). Blocked mid-reload.
         public void PlayInspect()
         {
-            if (_inspectClip == null || _reloading || _inspecting) return;
+            // NO INSPECTING AT A RUN (strawberry 2026-09-13). Gated HERE rather than at the F-chain in
+            // PlayerController so both entry points are covered by one rule and the rest of that chain -- open a
+            // crate, sit down, harvest -- keeps working while sprinting, since none of those were asked about.
+            if (_inspectClip == null || _reloading || _inspecting || SprintingNow) return;
             _aiming = false; _arms?.Play(_inspectClip);
             _inspecting = true; _inspectCapture = true;
             _inspectTimer = _arms != null && _arms.ClipLength(_inspectClip) > 0f ? _arms.ClipLength(_inspectClip) : 3.3f;
@@ -2041,6 +2061,12 @@ namespace UnturnedGodot
             //      Sprint is the LOWEST-tier pose (master): aim, fire, reload, rack, inspect, attach ALL override it,
             //      and it must ALWAYS hand the base back or the un-shouldered clip lingers.
             if (_shootHold > 0f) _shootHold -= (float)delta;   // a shot suppresses sprint for its burst (source: Sprint_Start needs !isShooting)
+            // BREAKING INTO A RUN CANCELS AN INSPECT (strawberry 2026-09-13: "when starting a sprint, cancel any
+            // inspect in flight"). Before _wantSprint is computed, deliberately: that condition EXCLUDES
+            // _inspecting, so an inspect used to win and the sprint pose simply never engaged -- you ran with the
+            // gun still held up being examined. Dropping the inspect first lets the sprint take over on the same
+            // frame instead of a frame later, so there is no gap where the arms are in neither pose.
+            if (SprintingNow && _inspecting) CancelInspect();
             bool _wantSprint = IsGunViewmodel && EquipDone && !_reloading && !_hammering && !_inspecting && !_attachView && !_aiming
                                && _shootHold <= 0f && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);   // GUNS ONLY: the un-shoulder/safety pose is a gun thing. melee/consumable/deployable/fists never enter it -> they just keep their hold + bob (master: melee sprint-END animated buggily because it flipped _sprinting with null clips then hit the exit snap)
             if (_wantSprint && !_sprinting)
