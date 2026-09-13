@@ -412,6 +412,10 @@ void fragment() {
             return true;
         }
         public bool DebugIsDragging => _dragging;                                    // #3 test seam
+        /// <summary>Test seam: the change-poll hash. Exposed so a test can assert that WEARING something moves
+        /// it -- the dashboard repaints off this and nothing else, so a change this hash cannot see is a change
+        /// the UI never draws.</summary>
+        public long DebugInventorySignature() => InventorySignature();
         public bool DebugRmbCancel() => CancelDrag();                                // #3 test: exercise the real cancel path
         public bool DebugStartDrag(byte page, byte x, byte y)                        // #3 test: set up a grid drag headless (StartDrag's grid branch)
         {
@@ -487,6 +491,22 @@ void fragment() {
         {
             if (Inv == null) return 0;
             long h = 1469598103934665603L;
+            // ⚠ THE WORN SLOTS ARE PART OF THE INVENTORY, and leaving them out of this hash is why clothing
+            // "needed an inventory poke to apply" (strawberry 2026-09-13: hats and face coverings "arent being
+            // applied onto the player until the inventory is updated by moving something").
+            //
+            // A garment worn from the GRID happens to repaint, because it leaves a page and the page hash moves.
+            // A garment AUTO-WORN ON PICKUP never touches a page at all -- AdoptReplicatedInventory's own comment
+            // says it: server-owned pickup includes "the one that dresses you". So the outfit changed, the grid
+            // did not, this hash did not, and the dashboard kept drawing the old head until the next unrelated
+            // move. That is not clothing being slow; it is the poll not watching the thing that changed.
+            //
+            // The ON-BODY visual already self-corrects (PlayerClothingController.ReconcileTick, added for the
+            // 2026-09-07 report of the same shape). This is that fix's other half: the UI paperdoll and the worn
+            // tiles repaint from InventoryUI.Refresh alone, so they need the change to be VISIBLE to this poll.
+            void MixWorn(Item it) { h = (h ^ (long)(it?.id ?? 0)) * 1099511628211L; }
+            MixWorn(Inv.wornHat); MixWorn(Inv.wornGlasses); MixWorn(Inv.wornMask); MixWorn(Inv.wornShirt);
+            MixWorn(Inv.wornVest); MixWorn(Inv.wornBackpack); MixWorn(Inv.wornPants);
             foreach (var pg in Inv.items)
             {
                 h = (h ^ ((long)pg.width << 8 | pg.height)) * 1099511628211L;
