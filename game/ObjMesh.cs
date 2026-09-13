@@ -304,6 +304,28 @@ namespace UnturnedGodot
         // the rule is about a vertex EXTENT rather than an average. A clock hand is identified by its MAX reach from the
         // dial centre (the hand's tip); a centroid can't tell a 0-to-0.37 hand from a 0-to-0.50 dial-disc triangle whose
         // average radius happens to land in the hand's band. Passing the verts lets the caller test max-reach directly.
+        /// <summary>Camera_0 (the CCTV) split into its HOUSING and its wall ARM (strawberry 2026-09-13: "split
+        /// the CCTV camera prop into two pieces. the camera body and the arm").
+        ///
+        /// ⚠ MEASURED OFF THE MESH, and the two obvious rules both fail:
+        ///   - BY PALETTE, the way the lamps split: Camera_0's texture is a 2x1 of (179,179,179) and (35,35,35),
+        ///     and the dark texel is TWO FACES totalling 0.14m -- that is the LENS, not the arm. 42 of 44 faces
+        ///     share the light texel, so the palette cannot see this seam at all.
+        ///   - BY CONNECTED SHELL: the rip is 19 disconnected quads, welded to nothing. There is no "arm object".
+        ///
+        /// What DOES separate them is a thin band in X. The arm is a bar 0.082 wide sitting at X -0.125..-0.043
+        /// and reaching back and down (Y -0.227..+0.154, Z -0.386..-0.032) past the housing on both axes; the
+        /// housing spans the full X -0.375..+0.207. So the rule is "every vertex inside the bar's X band", which
+        /// lands 16 faces of arm against 28 of body -- and the body keeps the lens, which is what you want: the
+        /// half that sees is the half that moves.
+        ///
+        /// The band is in the OBJ's RAW frame, which is what Load hands back: CONV defaults to 1, "raw Unity",
+        /// so vertex positions are the file's own numbers untransformed. Checked rather than assumed.</summary>
+        public const float CameraArmMinX = -0.130f, CameraArmMaxX = -0.040f;
+        public static (ArrayMesh Body, ArrayMesh Arm) SplitCameraArm(ArrayMesh src)
+            => SplitByFaceVerts(src, (a, b, c) => InArmBand(a) && InArmBand(b) && InArmBand(c));
+        static bool InArmBand(Vector3 v) => v.X >= CameraArmMinX && v.X <= CameraArmMaxX;
+
         public static (ArrayMesh Body, ArrayMesh Region) SplitByFaceVerts(ArrayMesh src, System.Func<Vector3, Vector3, Vector3, bool> triIn)
         {
             if (src == null || src.GetSurfaceCount() < 1) return (src, null);

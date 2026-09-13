@@ -1066,6 +1066,29 @@ namespace UnturnedGodot
                 // MESH's local AABB has its vertical extent on Z, not Y -- the same frame gotcha the placement
                 // code carries (mesh(x,y,z) = node(x,z,-y)). Written with Size.Y first, which made this whole
                 // test inert: Line_Parking_0 is 12.5 x 5.0 x 0.00, so Y is 5 m and nothing was ever a decal.
+                // CCTV: THE HOUSING AND THE ARM ARE TWO PIECES (strawberry 2026-09-13: "split the CCTV camera
+                // prop into two pieces. the camera body and the arm"). The housing keeps the lens and becomes
+                // `mainMi`, so the half that SEES is the half that can later be aimed, moved or fed from; the
+                // wall arm becomes its own sibling and stays put. See ObjMesh.SplitCameraArm for why the seam is
+                // an X band rather than the palette or a connected shell -- both of those were tried against the
+                // real mesh first and neither can see this cut.
+                MeshInstance3D cameraArm = null;
+                if (name == "Camera_0" && mode != WorldMode.Dedicated)
+                {
+                    var (camBody, camArm) = ObjMesh.SplitCameraArm(mesh);
+                    if (camBody != null && camArm != null)
+                    {
+                        visMesh = camBody;
+                        cameraArm = new MeshInstance3D
+                        {
+                            Name = "CameraArm", Mesh = camArm, MaterialOverride = WetMatFor(matName),
+                            Transform = new Transform3D(basis, gpos),
+                            VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
+                        };
+                        root.AddChild(cameraArm);
+                    }
+                }
+
                 _SEG(1);
                 var vaabb = visMesh.GetAabb();
                 bool isDecal = vaabb.Size.Z < 0.06f && Mathf.Max(vaabb.Size.X, vaabb.Size.Y) > 0.5f;
