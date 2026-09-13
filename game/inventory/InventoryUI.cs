@@ -821,12 +821,16 @@ void fragment() {
         /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the item's own .dat): the slot it
         /// PREFERS -- secondary-able (sidearms, ALL melee) -> SECONDARY, primary-only -> PRIMARY; null for anything
         /// that is not a holster item.</summary>
+        /// <summary>Which hand slot a weapon dragged onto the paperdoll goes to. Was `PreferredSlot()` flat, so
+        /// a sidearm always took the SECONDARY and threw out whatever was in it even with the primary standing
+        /// empty -- while right-clicking the same item put it in the empty one. Same gesture, same item, two
+        /// answers. Both now ask PlayerInventory.</summary>
         byte? WeaponSlotFor(ItemJar jar)
         {
             var a = jar?.GetAsset();
             if (a == null || Inv == null) return null;
-            int pref = a.slot.PreferredSlot();
-            return pref < 0 ? null : (byte)pref;
+            int slot = Inv.EquipHandSlotFor(a);
+            return slot < 0 ? null : (byte)slot;
         }
 
         /// <summary>The item menu's one hand button, as a call: the same Hold/Equip dispatch on the selected cell.</summary>
@@ -1741,13 +1745,10 @@ void fragment() {
             // instruction is about where it PREFERS to go, not about always displacing.
             if (_selPage >= PlayerInventory.SLOTS && asset != null)
             {
-                int want = asset.slot.PreferredSlot();
+                int want = Inv.EquipHandSlotFor(asset);
                 if (want >= 0)
                 {
                     byte slot = (byte)want;
-                    if (Inv.items[slot].getItemCount() > 0)
-                        for (byte alt = 0; alt < PlayerInventory.SLOTS; alt++)
-                            if (asset.slot.CanEquipInPage(alt) && Inv.items[alt].getItemCount() == 0) { slot = alt; break; }
                     if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
                         Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);   // TryDrag SWAPS when the destination is occupied
                     // Address, not just the page: a holster is single-item so the item lands at (0,0). The cell is

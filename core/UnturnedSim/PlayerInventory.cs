@@ -160,6 +160,38 @@ namespace SDG.Unturned
         /// drives the visual); a holster item (gun / melee) whose preferred hand slot is empty -- or whose other hand
         /// slot fits and is empty -- goes into that slot; anything else lands in the first page with room. The caller
         /// learns where it went so it can force the weapon into the hands.</summary>
+        /// <summary>The first EMPTY hand slot this item may occupy: its PREFERRED slot when that is free, else
+        /// the other compatible one. -1 when it is not a holster item, or when every slot it fits is occupied.
+        ///
+        /// ⚠ ONE COPY ON PURPOSE. This rule ("fill an empty slot before displacing anything") existed three
+        /// times -- pickup, the right-click equip, and the paperdoll drag -- except the drag never got it, so
+        /// the same sidearm holstered differently depending on whether you dragged it or right-clicked it
+        /// (strawberry 2026-09-13: "when dragging a weapon that could go in either 1/2 slot, always try to fill
+        /// an empty slot rather than replacing"). A rule written down in three places is a rule that will
+        /// disagree with itself again, so the drag was not patched -- all three now ask this.
+        ///
+        /// It reports ONLY emptiness, and deliberately does not fall back to the preferred-but-occupied slot:
+        /// pickup needs "no free slot" to mean "put it in the bag", while the two equip paths want to displace.
+        /// Folding both into one answer would have made -1 mean two different things to two callers.</summary>
+        public int EmptyHandSlotFor(ItemAsset a)
+        {
+            if (a == null) return -1;
+            int pref = a.slot.PreferredSlot();
+            if (pref < 0) return -1;
+            if (items[pref].getItemCount() == 0) return pref;
+            for (byte alt = 0; alt < SLOTS; alt++)
+                if (a.slot.CanEquipInPage(alt) && items[alt].getItemCount() == 0) return alt;
+            return -1;
+        }
+
+        /// <summary>Where an EQUIP gesture should put this item: an empty compatible slot if there is one, else
+        /// its preferred slot, whose occupant the caller displaces. -1 = not a holster item.</summary>
+        public int EquipHandSlotFor(ItemAsset a)
+        {
+            int empty = EmptyHandSlotFor(a);
+            return empty >= 0 ? empty : (a?.slot.PreferredSlot() ?? -1);
+        }
+
         public AutoPlace tryAddItemAuto(Item item, out byte slot)
         {
             slot = byte.MaxValue;
@@ -167,13 +199,8 @@ namespace SDG.Unturned
             if (a != null)
             {
                 if (IsClothingType(a.type) && wornByType(a.type) == null) { wearByType(a.type, item); return AutoPlace.Worn; }
-                int pref = a.slot.PreferredSlot();
-                if (pref >= 0)
-                {
-                    if (items[pref].getItemCount() == 0) { equipToSlot((byte)pref, item); slot = (byte)pref; return AutoPlace.Slot; }
-                    for (byte alt = 0; alt < SLOTS; alt++)
-                        if (a.slot.CanEquipInPage(alt) && items[alt].getItemCount() == 0) { equipToSlot(alt, item); slot = alt; return AutoPlace.Slot; }
-                }
+                int free = EmptyHandSlotFor(a);   // pickup takes an empty slot only -- a full pair means "bag it"
+                if (free >= 0) { equipToSlot((byte)free, item); slot = (byte)free; return AutoPlace.Slot; }
             }
             return tryAddItem(item) ? AutoPlace.Grid : AutoPlace.None;
         }
