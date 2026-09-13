@@ -65,8 +65,14 @@ namespace UnturnedGodot
             if (Kind == EThrowableKind.Flare)
             {
                 // Lit BEFORE the throw, so it burns the whole way down and the sparks trail behind it.
-                AddChild(new FlareBurn { Tint = Tint, Duration = Def?.EffectSeconds ?? 45f });
-                _life = (Def?.EffectSeconds ?? 45f) + 0.5f;   // outlive the burn's own fade by a hair, then take the subtree with us
+                //
+                // ⚠ PARENTED TO THE VISUAL, not to us, and that is what makes FlareBurn.TipZ mean anything:
+                // Integrate spins _vis about Y for the whole flight, so a flame hung off THIS node would sit at
+                // a fixed offset while the flare tumbled underneath it -- on the tip only by luck, once per
+                // rotation. As a child of the model it rides the spin and stays on the cap.
+                float burn = Def?.EffectSeconds ?? SDG.Unturned.Throwables.FlareSeconds;
+                (_vis ?? (Node3D)this).AddChild(new FlareBurn { Tint = Tint, Duration = burn });
+                _life = burn + 0.5f;   // outlive the burn's own fade by a hair, then take the subtree with us
             }
         }
 
@@ -123,8 +129,8 @@ namespace UnturnedGodot
                 var cloud = new SmokeCloud
                 {
                     Tint = Tint,
-                    Radius = Def?.Radius ?? 6f,
-                    Duration = Def?.EffectSeconds ?? 22f,
+                    Radius = Def?.Radius ?? SDG.Unturned.Throwables.SmokeRadius,
+                    Duration = Def?.EffectSeconds ?? SDG.Unturned.Throwables.SmokeSeconds,
                 };
                 // POSITION BEFORE AddChild, the same rule SpawnBlastFx documents: a particle system reads the
                 // transform it had on ENTERING the tree, and a GlobalPosition written after the add spends the

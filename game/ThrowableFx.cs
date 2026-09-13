@@ -15,8 +15,11 @@ namespace UnturnedGodot
     public partial class SmokeCloud : Node3D
     {
         public Color Tint = new Color(0.8f, 0.8f, 0.8f);
-        public float Radius = 6f;
-        public float Duration = 22f;
+        // ⚠ DERIVED, NOT COPIED. These were a literal 6 and 22 -- the pre-2026-09-13 radius and duration -- so
+        // every caller that did not pass a ThrowableDef silently kept the OLD cloud after both were retuned.
+        // A default that restates a constant is the same stale-literal bug as a test that hard-codes a rate.
+        public float Radius = SDG.Unturned.Throwables.SmokeRadius;
+        public float Duration = SDG.Unturned.Throwables.SmokeSeconds;
 
         const float PuffLife = 6.5f;   // how long ONE puff lives -- also the post-stop grace before the node frees
 
@@ -89,7 +92,21 @@ namespace UnturnedGodot
     public partial class FlareBurn : Node3D
     {
         public Color Tint = new Color(0.9f, 0.25f, 0.2f);
-        public float Duration = 45f;
+        public float Duration = SDG.Unturned.Throwables.FlareSeconds;
+
+        /// <summary>Where along the flare the flame actually issues, in the MODEL's own frame.
+        ///
+        /// ⚠ MEASURED OFF THE MESH, not eyeballed (strawberry 2026-09-13: "moving the particle and light
+        /// emitters to the white tip instead of the middle of the body"). content/items/259.txt is a rod along
+        /// Z spanning -0.274..+0.374 with a 2x1 palette, and the faces carrying the light cap texel occupy
+        /// Z -0.274..-0.191 (centroid -0.224) while the coloured body runs +0.025..+0.374. So the emitters,
+        /// which all sat at Z=0, really were in the middle of the BODY -- and this is the far end of the cap,
+        /// where a burning flare actually spits.
+        ///
+        /// ONE constant covers all six colours: 255-260 are byte-identical geometry (md5 ce6f4b3ca2ae), so the
+        /// tip cannot move between them -- only the palette does. (And it does: the Yellow Flare's cap texel is
+        /// BLUE, not white, which is why this keys off GEOMETRY and never off "find the white bit".)</summary>
+        public const float TipZ = -0.274f;
 
         const float FadeTail = 4f;    // the last seconds ramp everything to zero, so it dies down instead of switching off
 
@@ -116,7 +133,10 @@ namespace UnturnedGodot
                 // close to a horizontal surface has N.L ~ 0 everywhere except directly beneath it, so it lit
                 // essentially nothing however far its energy was cranked. The first two renders showed no pool at
                 // all at energy 3.4 and then at 9; the geometry was the problem, not the brightness.
-                Position = new Vector3(0f, 0.45f, 0f),
+                // ⚠ Y STAYS LIFTED. Moving the emitters to the tip (2026-09-13) is a Z change ONLY: the
+                // 0.45 is the fix the comment above describes, and dropping it to the tip's own height would
+                // silently restore the no-pool bug while looking like a faithful "put it on the tip".
+                Position = new Vector3(0f, 0.45f, TipZ),
             };
             AddChild(_light);
             // A second, wide, dim light purely for the POOL on the ground. One omni bright enough to throw a
@@ -126,7 +146,7 @@ namespace UnturnedGodot
             {
                 LightColor = Tint.Lerp(Colors.White, 0.15f),
                 LightEnergy = _baseEnergy * 0.45f, OmniRange = 46f, ShadowEnabled = false,
-                Position = new Vector3(0f, 0.9f, 0f),   // higher still: the wide pool wants the shallowest grazing angle of the two
+                Position = new Vector3(0f, 0.9f, TipZ),   // higher still: the wide pool wants the shallowest grazing angle of the two (Y kept, Z moved to the tip)
             };
             AddChild(_glow);
 
@@ -142,7 +162,7 @@ namespace UnturnedGodot
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                 },
-                Position = new Vector3(0f, 0.06f, 0f),
+                Position = new Vector3(0f, 0.06f, TipZ),
             };
             AddChild(_core);
 
@@ -164,7 +184,7 @@ namespace UnturnedGodot
                     VertexColorUseAsAlbedo = true,
                     AlbedoTexture = PlayerController.BlastSoftTex(), CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 },
-                Position = new Vector3(0f, 0.06f, 0f),
+                Position = new Vector3(0f, 0.06f, TipZ),
             };
             var sr = new Gradient();
             sr.SetColor(0, new Color(1f, 1f, 0.92f, 1f));                       // white hot at birth...
@@ -192,7 +212,7 @@ namespace UnturnedGodot
                     VertexColorUseAsAlbedo = true,
                     AlbedoTexture = PlayerController.BlastSoftTex(), CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 },
-                Position = new Vector3(0f, 0.1f, 0f),
+                Position = new Vector3(0f, 0.1f, TipZ),
             };
             var pr = new Gradient();
             pr.SetColor(0, new Color(Tint, 0f)); pr.SetColor(1, new Color(Tint, 0f));
