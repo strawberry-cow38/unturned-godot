@@ -571,8 +571,16 @@ namespace UnturnedNet.Tests
                         "contaminated ground has to dose the server's player, not only a PlayerController");
             Assert.That(cs.HealthExact, Is.EqualTo(startHp).Within(0.001f),
                         "...and must not take health directly -- the vitals sim owns what infection costs");
-            Assert.That(v.Sim.Infection, Is.EqualTo(startInf).Within(0.001f),
-                        "a four-second brush leaves no lasting scar");
+            // ⚠ THE TOLERANCE IS DERIVED FROM THE DOSE RATE. A flat 0.001 encoded "four seconds scars
+            // nothing" as an absolute, and four seconds stopped being a brush when the rate tripled
+            // (2026-09-13) -- it went red at 0.0015, correctly measuring a real change and wrongly reading
+            // as a broken invariant. What must hold at any rate is that the scar is far below the 0.5
+            // self-clear mark, i.e. it washes off. That is the design promise; 0.001 was one rate's version
+            // of it.
+            float brushScar = v.Sim.Infection - startInf;
+            Assert.That(brushScar, Is.LessThan(0.05f),
+                        $"a brief brush leaves {brushScar:0.####} infection, which must wash off well under the 0.5 self-clear mark");
+            Assert.That(brushScar, Is.GreaterThanOrEqualTo(0f), "and it certainly must not HEAL you");
 
             // ...and standing in it does. Same server, same volume, just long enough for the carried dose to
             // out-climb the self-clear -- which is the claim the old single assertion was really making.

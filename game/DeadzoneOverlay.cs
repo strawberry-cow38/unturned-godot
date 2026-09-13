@@ -90,6 +90,28 @@ namespace UnturnedGodot
             : ExposureFor(Player);
         public bool DebugVisible => _rect != null && _rect.Visible;
 
+        /// <summary>The uniform names the shader ACTUALLY compiled with, for tests.
+        ///
+        /// ⚠ THIS EXISTS BECAUSE MOUNTING THE OVERLAY IS NOT A COMPILE CHECK. The obvious test -- add the
+        /// node, assert it is visible and being driven -- passes with a deliberate syntax error in the
+        /// shader, because the ColorRect mounts and the exposure is computed in C#; Godot logs the parse
+        /// failure and carries on drawing nothing. Verified by breaking it on purpose: 15/15 green either
+        /// way. A shader that failed to parse exposes NO uniforms, so this is the difference between the two
+        /// states, and it doubles as a check that a named parameter is really there rather than being
+        /// silently ignored on SetShaderParameter -- which is also not an error in Godot.</summary>
+        public string[] DebugShaderUniforms
+        {
+            get
+            {
+                var sh = _mat?.Shader;
+                if (sh == null) return System.Array.Empty<string>();
+                var list = new System.Collections.Generic.List<string>();
+                foreach (var d in sh.GetShaderUniformList())
+                    if (d.AsGodotDictionary().TryGetValue("name", out var n)) list.Add(n.AsString());
+                return list.ToArray();
+            }
+        }
+
         /// <summary>UG_DEADZONE=&lt;seconds&gt; over a harness scene, mirroring ChromaticAberration.DebugAttach and
         /// existing for the same stated reason: the real mount is on the PEI world path, PEI renders take ~400 s
         /// against ~120 for the deploy-test stage, and a purely visual change has to be lookable-at.

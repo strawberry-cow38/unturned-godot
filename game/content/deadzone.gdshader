@@ -17,6 +17,12 @@ uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
 uniform float exposure = 0.0;        // 0 = just arrived, 1 = fully dosed. Driven by DeadzoneOverlay.
 uniform float time_seconds = 0.0;    // fed from the engine: the grain has to MOVE or it reads as dirt on the lens
 uniform float grain_max = 0.35;      // grain amplitude at full exposure
+// GRAIN SIZE IN SCREEN PIXELS (strawberry 2026-09-13: "up the size of the film grains for rads").
+// There was no size to turn up: hashing SCREEN_UV directly gives every pixel its own value, so the grain
+// was one pixel by construction and reads as sensor noise rather than film. Quantising to a cell makes it
+// an actual grain. In PIXELS off FRAGCOORD, not a UV divisor, so it stays the same physical size at any
+// resolution -- a UV-based cell count would halve the grain when someone plays at 4K.
+uniform float grain_px = 3.0;
 uniform float desat_max = 0.85;      // how much colour is gone at full exposure (1.0 = greyscale)
 
 // A cheap per-pixel hash. Deliberately not a texture lookup: film grain wants a different value every pixel
@@ -41,7 +47,13 @@ void fragment() {
 
     // GRAIN, signed so it darkens as often as it brightens -- one-sided noise just washes the image out.
     // Seeded on the pixel AND on time so it crawls; a static seed is dirt on the lens, not grain.
-    float n = hash(SCREEN_UV * vec2(1024.0, 1024.0) + vec2(time_seconds * 60.0, time_seconds * 37.0));
+    // One hash per CELL rather than per pixel. The two time rates stay different so the crawl is not a
+    // diagonal march, and they are folded with mod() because they are unbounded otherwise -- sin(dot(...))
+    // loses its precision once the seed gets large, and the grain would quietly go static after long
+    // enough in a zone, which is exactly when anyone is looking at it.
+    vec2 cell = floor(FRAGCOORD.xy / max(grain_px, 1.0));
+    vec2 tseed = mod(vec2(time_seconds * 60.0, time_seconds * 37.0), 1024.0);
+    float n = hash(cell + tseed);
     float g = (n - 0.5) * 2.0 * grain_max * ramp;
 
     // Applied multiplicatively so the grain rides the image's own brightness: noise added flat would be

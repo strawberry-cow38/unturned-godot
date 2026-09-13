@@ -215,14 +215,30 @@ namespace UnturnedSim.Tests
         public void A_Short_Visit_Stays_Under_The_Self_Clearing_Mark()
         {
             // The interaction that makes brief trips survivable BY DESIGN: PlayerVitalsSim drains infection
-            // back down below 0.5, so a dose that stops short of halfway heals off. Ten seconds unprotected
-            // -- long enough to grab something and run -- has to land under that mark, or "duck in and out"
-            // is not a playable option and the zone is a wall after all.
+            // back down below 0.5, so a dose that stops short of halfway heals off. "Duck in and out" has to
+            // stay a playable option, or the zone is a wall.
+            //
+            // ⚠ THE DURATION IS DERIVED, NOT WRITTEN, and that is the point. This asserted a hardcoded 10 s
+            // and went red the moment the dose rate tripled (2026-09-13) -- correctly, but for the wrong
+            // reason: the design intent is "a brief trip is forgivable", and how long "brief" is depends
+            // entirely on the rate. A literal duration turns a rate change into a red test that accuses the
+            // rate of breaking a rule it is allowed to move.
             var zone = DeadzoneDef.Default();
+            const float SelfClear = 0.5f;
+            float windowSeconds = SelfClear / zone.UnprotectedRadiationPerSecond;
+
+            // What DOES have to hold across any rate: the forgiving window is long enough to be usable. A
+            // rate high enough to make it two seconds has made the zone a wall by arithmetic, and this is
+            // the assertion that would say so instead of quietly passing.
+            Assert.That(windowSeconds, Is.GreaterThan(5f),
+                        $"the self-clearing window is only {windowSeconds:0.#} s -- not long enough to duck in and out");
+
             var sim = Settled(zone, Nothing());
             float dose = 0f;
-            for (int i = 0; i < 10; i++) dose += sim.Step(zone, Nothing(), 1f).Radiation;
-            Assert.That(dose, Is.LessThan(0.5f), $"10 s unprotected doses {dose:0.###}, which must stay under the 0.5 self-clear mark");
+            int ticks = (int)(windowSeconds * 0.75f);
+            for (int i = 0; i < ticks; i++) dose += sim.Step(zone, Nothing(), 1f).Radiation;
+            Assert.That(dose, Is.LessThan(SelfClear),
+                        $"{ticks} s unprotected doses {dose:0.###}, which must stay under the {SelfClear} self-clear mark");
         }
 }
 }

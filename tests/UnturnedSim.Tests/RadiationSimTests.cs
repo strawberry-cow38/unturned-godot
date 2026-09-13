@@ -192,13 +192,33 @@ namespace UnturnedSim.Tests
         [Test]
         public void The_Boundary_Builds_Far_Slower_Than_The_Middle()
         {
+            // ⚠ THE WINDOW IS DERIVED FROM THE RATE, because the dose CLAMPS at 1.0. This stood at a flat
+            // 60 s, which was a fine sample while the middle took 50 s to saturate and a meaningless one the
+            // moment the rate tripled (2026-09-13): the middle pinned at 1.0 after 17 s and the ratio was
+            // then comparing the edge against a clamp rather than against the middle's actual rate. It went
+            // red, and the code was right. A ratio is only a ratio while both sides can still move.
             var box = Box();
-            var edge = Stand(box, new Vector3(9.9f, 0f, 0f), new RadiationGear(), 60f);
-            var middle = Stand(box, new Vector3(0f, 0f, 0f), new RadiationGear(), 60f);
+            float rate = DeadzoneDef.Default().UnprotectedRadiationPerSecond;
+            float sample = 0.5f / rate;            // the middle reaches ~0.5, comfortably short of the clamp
+            var edge = Stand(box, new Vector3(9.9f, 0f, 0f), new RadiationGear(), sample);
+            var middle = Stand(box, new Vector3(0f, 0f, 0f), new RadiationGear(), sample);
 
+            Assert.That(middle.Radiation, Is.LessThan(0.95f),
+                        "the sample window must not saturate the middle, or the comparison below is against a clamp");
             Assert.That(edge.Radiation, Is.LessThan(middle.Radiation * 0.25f), "tamer...");
-            Assert.That(middle.MajorlyIrradiated, Is.True, "...and the middle is not tame at all");
-            Assert.That(edge.MajorlyIrradiated, Is.False, "a minute at the boundary must not cost you your legs");
+            Assert.That(edge.Radiation, Is.GreaterThan(0f), "...but still accruing -- the edge is a warning, not a perch");
+
+            // "The boundary is a warning, not the middle" as a RATIO OF TIMES rather than a verdict at one
+            // fixed duration. The old form asserted the edge could not cost your legs in a minute, which was
+            // true at 0.020/s and is false at 0.060 -- a real behaviour change, flagged to strawberry rather
+            // than deleted. What survives any rate is that the edge is far behind the middle in reaching it.
+            var middleAtMajor = Stand(box, new Vector3(0f, 0f, 0f), new RadiationGear(),
+                                      PlayerVitalsSim.MajorRadiation / rate + 1f);
+            Assert.That(middleAtMajor.MajorlyIrradiated, Is.True, "the middle costs your legs on schedule");
+            var edgeSameTime = Stand(box, new Vector3(9.9f, 0f, 0f), new RadiationGear(),
+                                     PlayerVitalsSim.MajorRadiation / rate + 1f);
+            Assert.That(edgeSameTime.MajorlyIrradiated, Is.False,
+                        "and in the time the middle does, the boundary must not");
         }
 
         [Test]

@@ -29,7 +29,14 @@ namespace UnturnedNet.Tests
 
         const ushort Pid = 7;
         const float Dt = 0.1f;
-        const int Steps = 400;   // 40 s -- well past the entry grace, long enough for the dose to matter
+        /// <summary>Long enough to be well past the entry grace and for the dose to matter, short enough
+        /// that the CENTRE does not hit the 1.0 clamp -- derived, because a fixed 400 (40 s) stopped
+        /// satisfying the second half when the dose rate tripled (2026-09-13) and the middle pinned at 1.0.
+        /// Every test here compares two positions or two sides of the wire, and both comparisons go vacuous
+        /// against a saturated value: a clamped middle makes the edge look tame, and a client and server
+        /// both stuck at 1.0 agree perfectly about nothing.</summary>
+        static readonly int Steps =
+            (int)(0.7f / (DeadzoneDef.Default().UnprotectedRadiationPerSecond * Dt));
 
         static DeadzoneVolumeDef Volume() => new DeadzoneVolumeDef
         {
@@ -92,6 +99,11 @@ namespace UnturnedNet.Tests
             float edge = RunServer(NearTheEdge, gear).Radiation;
             float middle = RunServer(Center, gear).Radiation;
 
+            // Guarded against the clamp, because `middle` saturates at 1.0 and a ratio against a pinned
+            // value stops being a ratio. This read `< middle * 0.6f` and went red at edge 0.645 when the
+            // dose rate tripled (2026-09-13) -- the middle had hit the ceiling and stopped being a yardstick.
+            Assert.That(middle, Is.LessThan(0.99f),
+                        "the run must not saturate the middle, or the comparison below is against a clamp");
             Assert.That(edge, Is.LessThan(middle * 0.6f), "the edge has to be tamer on the server too");
             Assert.That(edge, Is.GreaterThan(0f), "tamer, not free -- the boundary still builds");
         }

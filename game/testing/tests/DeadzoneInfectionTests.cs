@@ -55,9 +55,47 @@ namespace UnturnedGodot.Testing
             float ramp = DeadzoneOverlay.ExposureFor(player);
             T.Check($"the overlay ramp is live but not yet full ({ramp:0.###})", ramp > 0f && ramp < 1f);
 
-            // STARTS TAME, asserted rather than described: 5 s of a 40 s ramp must still be a hint, not a
-            // whiteout. Without this the ramp could be a step function and every other check here would pass.
-            T.Check($"...and is still gentle this early ({ramp:0.###} at {player.DeadzoneSeconds:0.#} s)", ramp < 0.25f);
+            // STARTS TAME, asserted rather than described: early exposure must be a hint, not a whiteout.
+            // Without this the ramp could be a step function and every other check here would pass.
+            //
+            // ⚠ THE BOUND IS DERIVED FROM THE DOSE RATE. It was a flat `< 0.25f` at a flat 5 s, which was a
+            // quarter of the way in at 0.020/s and three quarters of the way in once the rate tripled
+            // (2026-09-13) -- so it went red at a moment that is no longer "early", accusing the rate of
+            // breaking a rule about ramp SHAPE. What the check is actually for is that the ramp tracks the
+            // dose instead of stepping, and that survives any rate if it is written against the fraction of
+            // the way to full exposure rather than against the clock.
+            // THE SHADER ITSELF, mounted and driven. Nothing else in this suite instantiates the overlay, so
+            // deadzone.gdshader was never compiled by any test -- a parse error in it would have shipped with
+            // five green deadzone tests over the feature, which is the same blind spot the DebugAttach note
+            // in DeadzoneOverlay was written about. Godot compiles shaders under --headless, so mounting it
+            // is the whole check.
+            // `Enabled` is a STATIC and this test must hand it back exactly as found -- the first cut set it
+            // true and left it, which passed alone and failed inside the suite. Visibility is deliberately
+            // NOT asserted for the same reason: it gates on that static, so it tests the harness's own
+            // bookkeeping rather than the shader.
+            bool overlayWas = DeadzoneOverlay.Enabled;
+            var overlay = new DeadzoneOverlay { Player = player };
+            World.AddChild(overlay);
+            yield return Ticks(3);
+            T.Check($"the overlay is being driven by the dose ({overlay.DebugExposure:0.###} exposure)",
+                    overlay.DebugExposure > 0f);
+            // ...and that it COMPILED, which the line above cannot see: a shader with a syntax error still
+            // mounts, still reports visible, and still has its exposure computed. Only the uniform list
+            // tells the two apart. grain_px is named explicitly because a SetShaderParameter to a uniform
+            // that does not exist is silently ignored in Godot, so the size control could be inert.
+            var uniforms = overlay.DebugShaderUniforms;
+            T.Check($"the shader compiled ({uniforms.Length} uniforms)", uniforms.Length > 0);
+            T.Check($"...and grain_px is a real uniform, not a silently-ignored name ({string.Join(",", uniforms)})",
+                    System.Array.IndexOf(uniforms, "grain_px") >= 0);
+            overlay.QueueFree();
+            DeadzoneOverlay.Enabled = overlayWas;
+
+            float doseRate = SDG.Unturned.DeadzoneDef.Default().UnprotectedRadiationPerSecond;
+            float fullDoseSeconds = DeadzoneOverlay.FullExposureDose / doseRate;
+            float wayIn = player.DeadzoneSeconds / fullDoseSeconds;
+            T.Check($"this sample really is early ({wayIn:0.##} of the way to a full dose)", wayIn < 0.5f);
+            T.Check($"...and the ramp tracks the dose rather than stepping ({ramp:0.###} at {wayIn:0.##} of the way in)",
+                    ramp < wayIn * 1.5f + 0.05f);
 
             // LEAVING CLEARS IT. The overlay keeps no clock of its own precisely so that walking out ends the
             // effect; if this leaks, the grain stays on screen after the danger is gone.

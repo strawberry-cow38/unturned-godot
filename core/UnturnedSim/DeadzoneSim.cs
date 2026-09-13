@@ -36,13 +36,27 @@ namespace SDG.Unturned
         /// (PlayerVitalsSim.InfectionPerRadiationSecond), so the same number means something else than it did
         /// and the old "~40 s from clean to dead" is not a claim these values still make.
         ///
-        /// Re-derived rather than swept, measured against the old lethality at full intensity, unprotected:
-        /// sprint and jump go at ~30 s (MajorRadiation), death at ~52 s -- close to the 40 s the health-based
-        /// version had, with a warning stage in front of it that it did not have. A sealed suit reaches those
-        /// at ~73 s / ~95 s, and the FILTER is the real clock: at MaskFilterLossPerSecond it runs out at 50 s
-        /// and you finish the zone unprotected. A trip under ~30 s leaves nothing permanent (the dose washes
-        /// out and the infection it caused is below the self-clear line); ~45 s leaves ~0.64 infection that
-        /// never clears, which is the "your infection stays" half of the mechanic.
+        /// ⚠ TRIPLED 2026-09-13 (strawberry: "increase the radiation gain rate by a lot"). At full intensity,
+        /// unprotected, the zone now reads:
+        ///
+        ///     sprint and jump go (MajorRadiation 0.60)    30 s -> 10 s
+        ///     full dose (1.0)                             50 s -> 17 s
+        ///     sealed suit, same two marks               200 s -> 67 s  /  333 s -> 111 s
+        ///
+        /// The FILTER stops being the clock that matters, and that is the actual change in how the zone
+        /// plays. It was the binding constraint before -- MaskFilterLossPerSecond ran the mask out at 50 s,
+        /// so a suited player's danger began when the filter died. At 3x the dose the unprotected mark
+        /// arrives at 10 s, long before anything about the mask is relevant, so the zone is now lethal to
+        /// the unequipped rather than a timer for the equipped. That is a deliberate consequence of the
+        /// instruction, not an oversight, and it is the thing to reconsider first if this feels wrong.
+        ///
+        /// The washout is UNCHANGED (RadiationDecayPerSecond 0.015/s), so the punishment is asymmetric now:
+        /// 10 s in the zone costs ~40 s of recovery outside it, where it used to be roughly break-even. A
+        /// trip that leaves nothing permanent is under ~10 s rather than ~30 s.
+        ///
+        /// PRIOR, re-derived rather than swept and measured against the old lethality: sprint and jump at
+        /// ~30 s, death at ~52 s -- close to the 40 s the health-based version had, with a warning stage in
+        /// front of it that it did not have.
         ///
         /// The 1:6.7 protected-to-unprotected ratio is close to the old 1:8 and means the same thing, because
         /// the washout no longer runs while you are inside -- under a background decay the honest comparison
@@ -51,8 +65,8 @@ namespace SDG.Unturned
         public static DeadzoneDef Default(DeadzoneKind kind = DeadzoneKind.Radiation) => new DeadzoneDef
         {
             Kind = kind,
-            ProtectedRadiationPerSecond = 0.003f,
-            UnprotectedRadiationPerSecond = 0.020f,
+            ProtectedRadiationPerSecond = 0.009f,    // was 0.003 -- 3x, keeping the 1:6.7 suit ratio intact
+            UnprotectedRadiationPerSecond = 0.060f,  // was 0.020
             MaskFilterLossPerSecond = 2f,
         };
     }
