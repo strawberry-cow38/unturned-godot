@@ -249,6 +249,12 @@ namespace UnturnedGodot
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         float _scopeSwayT, _swayAppliedP, _swayAppliedY;   // scope sway: phase clock + what it has already folded into the aim
+        /// <summary>Client-side hold-breath state. Prediction for the optic only; the server's instance is
+        /// the authority for the oxygen bar itself.</summary>
+        readonly SDG.Unturned.ScopeSteadySim _scopeSteady = new SDG.Unturned.ScopeSteadySim();
+        /// <summary>True while the steady is actually in effect -- read by ClientWorldSession to set the
+        /// wire bit, so what the scope does and what the server is told cannot disagree.</summary>
+        public bool SteadyingNow { get; private set; }
         /// <summary>Scope sway's current contribution to the aim, degrees (pitch, yaw). Test seam: the claim is
         /// that sway moves the AIM, and a viewmodel-only sway would leave these at zero forever.</summary>
         public Vector2 DebugScopeSway => new Vector2(_swayAppliedP, _swayAppliedY);
@@ -9758,6 +9764,11 @@ namespace UnturnedGodot
                     // oscillator's zoom/stance/breath terms; only that the gun's number arrives and scales.
                     _scopeSwayT += (float)delta;
                     float ss = _viewmodel?.ScopeSwayScale ?? 1f;
+                    // ...and the hold-breath multiplier, for the same reason the per-gun scale is here. The
+                    // real oscillator applies it in Viewmodel; if this synthetic one did not, a headless
+                    // test of steadying would measure an identical swing steadying or not -- its PASS would
+                    // look exactly like its FAILURE, which is the trap the note above already records.
+                    ss *= Mathf.Clamp(_scopeSteady.SwayScale, 0f, 1f);
                     sway = new Vector2(Mathf.Sin(_scopeSwayT * 3.33f) * 0.30f * ss, Mathf.Sin(_scopeSwayT * 1.95f + 1.3f) * 0.42f * ss);
                 }
                 float tgtP = sway.X, tgtY = sway.Y;
@@ -10958,6 +10969,22 @@ namespace UnturnedGodot
             bool xNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.CrouchToggle);
             bool zNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Prone);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Sprint);
+            // SCOPE STEADY (v49). Same control as sprint and that is not a clash: `equipmentAllowsSprint`
+            // is `!_viewmodel.IsAiming`, so holding it while aiming does nothing today. The exclusivity is
+            // structural and already there -- this only uses the key the aim already freed.
+            //
+            // The client runs its OWN ScopeSteadySim against the REPLICATED oxygen, purely to decide what
+            // the scope looks like this frame. The server runs the same type as the authority and the bar
+            // follows it; a boundary disagreement costs one frame of sway, never a wrong stat.
+            bool wantsSteady = sprintNow && (_viewmodel?.IsAiming ?? false) && (_viewmodel?.ScopeZoom ?? 1f) > 1f;
+            {
+                float ox = _vitals.Oxygen;
+                _scopeSteady.Step(wantsSteady, ref ox, (float)delta);
+                // The client does NOT write the bar back -- oxygen is server-owned (v33) and a local write
+                // would fight the next replicated sample. Only the sway multiplier is taken from this.
+                if (_viewmodel != null) _viewmodel.SteadySwayScale = _scopeSteady.SwayScale;
+            }
+            SteadyingNow = _scopeSteady.Steadying;
             bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure
             // The axes are read BEFORE the stance step now: the submerged-ladder gate below needs to know
             // whether the player is actively climbing OUT of the water, and this block is pure input with no

@@ -46,6 +46,15 @@ namespace SDG.Unturned
             public float SurvivalDrain;          // SURVIVAL slows hunger/thirst
             public float VitalityRegen;          // VITALITY speeds health regen
 
+            /// <summary>Holding breath to steady a scope (ScopeSteadySim). Suppresses the surface REFILL --
+            /// the drain itself is the steady sim's, applied by the caller after this step.
+            ///
+            /// ⚠ WITHOUT THIS THE WHOLE MECHANIC IS FREE ABOVE WATER. Refill is 1/OxygenRefillSeconds =
+            /// 0.25 per second and the steady drain is 0.133; hold your breath on dry land and the bar goes
+            /// UP. It rides Multipliers rather than the Step signature because there are four overloads and
+            /// this is exactly the bag of per-player modifiers they all already carry.</summary>
+            public bool HoldingBreath;
+
             public static Multipliers None => new Multipliers
             { ExerciseStaminaDrain = 1f, CardioStaminaRegen = 1f, SurvivalDrain = 1f, VitalityRegen = 1f };
         }
@@ -168,8 +177,11 @@ namespace SDG.Unturned
             // BREATH. Drains only with the head under and refills far faster than it empties -- a surfacing
             // player gets their air back in a gulp, not over half a minute. Purely a readout: see the note by
             // OxygenSeconds for why running out costs nothing.
+            // Holding your breath is not breathing: the surface refill is suppressed while steadying, or
+            // the refill outruns the steady drain and the mechanic costs nothing on dry land. Submerged
+            // drain still applies -- holding your breath underwater is not free either.
             if (submerged) Oxygen = MathF.Max(0f, Oxygen - dt / OxygenSeconds);
-            else Oxygen = MathF.Min(1f, Oxygen + dt / OxygenRefillSeconds);
+            else if (!m.HoldingBreath) Oxygen = MathF.Min(1f, Oxygen + dt / OxygenRefillSeconds);
 
             // RADIATION WASHES OUT, unconditionally and from any level (strawberry 2026-09-11: "radiation
             // gradually dissipates when leaving a deadzone"). Unlike infection there is no threshold above

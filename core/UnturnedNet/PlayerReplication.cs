@@ -288,6 +288,10 @@ namespace UnturnedGodot.Net
         // above, and adding one is not a wire break.
         public const byte ButtonWornLight = 1 << 3;   // nightvision or headlamp, switched on
         public const byte ButtonHeldLight = 1 << 4;   // the handheld torch, switched on
+        /// <summary>v49: holding breath to steady a scope. Bit 5 of the headroom noted above -- adding a bit
+        /// is not a wire break, and this one needs no new command: the state command already ships every
+        /// tick and the server needs nothing more than "is he holding it".</summary>
+        public const byte ButtonSteady = 1 << 5;
 
         public ushort Seq;        // client-local, monotonically increasing (wrap-around via NetSeq)
         public float MoveX;       // strafe axis [-1,1] (quantized to 8 bits on the wire)

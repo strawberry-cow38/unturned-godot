@@ -1073,6 +1073,12 @@ namespace UnturnedGodot
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
         public float SteadyAccuracy;
 
+        /// <summary>Scope-sway amplitude multiplier from the hold-breath mechanic (1 = full sway). Applied
+        /// HERE, in the single oscillator, because PlayerController folds `ScopeSwayDegrees` into the aim --
+        /// scaling it in both places would halve it twice, and scaling it only there would leave the optic
+        /// visibly swaying while the bullets went straight.</summary>
+        public float SteadySwayScale = 1f;
+
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
         void PlayShoot()   // one OVERLAPPING polyphonic voice per shot so full-auto shots don't restart-cut each other (master)
@@ -1856,7 +1862,7 @@ namespace UnturnedGodot
             float scopeZoom = ScopeZoom;
             if (_aiming && scopeZoom > 1f)
             {
-                float sway = (1f - 1f / scopeZoom) * 1.25f * ScopeSwayScale;   // per-gun: a steadier platform holds its optic better
+                float sway = (1f - 1f / scopeZoom) * 1.25f * ScopeSwayScale * Mathf.Clamp(SteadySwayScale, 0f, 1f);   // per-gun scale, then the hold-breath multiplier
                 sway *= _stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };
                 _swayTime += (float)delta * (1f - Mathf.Clamp(SteadyAccuracy, 0f, 1f) / 4f);
                 var target = new Vector3(Mathf.Sin(0.75f * _swayTime) * sway, Mathf.Sin(1.0f * _swayTime) * sway, 0f);

@@ -434,7 +434,12 @@ namespace UnturnedGodot
             var p = Shell.TruePhysicsPosition;
             byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance)
                                   | (Shell.WornLightOn ? MoveInput.ButtonWornLight : 0)
-                                  | (Shell.TorchLit ? MoveInput.ButtonHeldLight : 0));
+                                  | (Shell.TorchLit ? MoveInput.ButtonHeldLight : 0)
+                                  // v49: taken from SteadyingNow, i.e. what the client's own sim ACTUALLY
+                                  // did this frame -- not from the raw key. Sending the key would tell the
+                                  // server "steadying" during the lockout, and it would drain oxygen for a
+                                  // scope that is visibly still swaying.
+                                  | (Shell.SteadyingNow ? MoveInput.ButtonSteady : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
                                    Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
 

@@ -103,6 +103,16 @@ namespace UnturnedGodot.Net
         /// for a harness with no world.</summary>
         public Func<ushort, bool> SubmergedOf;
 
+        /// <summary>Is this player holding the steady control (v49 scope steady)? The server reads the
+        /// ButtonSteady bit off the state command it already receives every tick; the whole feature needs
+        /// no new command and no version bump.</summary>
+        public Func<ushort, bool> SteadyingOf;
+
+        /// <summary>Per-owner steady state. The rules are engine-free in ScopeSteadySim and the CLIENT runs
+        /// the same type for its own prediction -- this instance is the authoritative one, and it is what
+        /// the replicated oxygen bar reflects.</summary>
+        readonly Dictionary<ushort, ScopeSteadySim> _steady = new Dictionary<ushort, ScopeSteadySim>();
+
         public void ServerStep(long tick, float dt)
         {
             if (_byOwner.Count == 0) return;
@@ -119,7 +129,17 @@ namespace UnturnedGodot.Net
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
                 bool submerged = SubmergedOf != null && SubmergedOf(pid);
-                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
+                // SCOPE STEADY (v49). Resolved BEFORE the vitals step so `HoldingBreath` can suppress the
+                // surface refill in the same tick, and the drain is applied AFTER so it lands on the oxygen
+                // the step produced rather than on a stale copy.
+                bool wantsSteady = SteadyingOf != null && SteadyingOf(pid);
+                if (!_steady.TryGetValue(pid, out var steady)) _steady[pid] = steady = new ScopeSteadySim();
+                m.HoldingBreath = wantsSteady && steady.Lockout <= 0f && e.Sim.Oxygen > ScopeSteadySim.SteadyFloor;
+
+                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);
+                float ox = e.Sim.Oxygen;
+                steady.Step(wantsSteady, ref ox, dt);
+                e.Sim.Oxygen = ox;   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
                 float delta = e.Sim.Health - hpBefore;
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation

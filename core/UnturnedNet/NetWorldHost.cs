@@ -404,6 +404,18 @@ namespace UnturnedGodot.Net
             Vitals.SprintingOf = pid =>
                 PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance == EPlayerStance.SPRINT
                 : Players.TryGetHeldInput(pid, out var mi) && mi.Stance == EPlayerStance.SPRINT;
+            // v49 scope steady, off the buttons the client already ships every tick.
+            //
+            // ⚠ DRIVEN STATE FIRST, and that ordering is the bug this had. A shell client no longer sends
+            // MoveInput at all -- it streams PlayerStateCommand (PlayerReplication ~299) -- and those
+            // buttons land in PlayerAuthority's driven state, NOT in Players.CurrentInput. Reading only
+            // TryGetHeldInput meant the bit was never seen from a real client and the drain never ran; the
+            // rules were perfect and nothing called them. SprintingOf reads driven-state-then-held for
+            // exactly this reason and I copied the wrong half of it.
+            Vitals.SteadyingOf = pid =>
+                PlayerHost.TryGetDrivenState(pid, out var sds)
+                    ? (sds.Buttons & MoveInput.ButtonSteady) != 0
+                    : Players.TryGetHeldInput(pid, out var si) && (si.Buttons & MoveInput.ButtonSteady) != 0;
             Vitals.MultipliersOf = pid => Skills.TryGet(pid, out var se)
                 ? new PlayerVitalsSim.Multipliers
                 {
