@@ -10976,7 +10976,13 @@ namespace UnturnedGodot
             // The client runs its OWN ScopeSteadySim against the REPLICATED oxygen, purely to decide what
             // the scope looks like this frame. The server runs the same type as the authority and the bar
             // follows it; a boundary disagreement costs one frame of sway, never a wrong stat.
-            bool wantsSteady = sprintNow && (_viewmodel?.IsAiming ?? false) && (_viewmodel?.ScopeZoom ?? 1f) > 1f;
+            // UG_STEADY=1 holds the control for a headless render: there is no keyboard in a movie-mode
+            // capture, and sway is MOTION -- a still frame samples one arbitrary point of the oscillation
+            // and looks identical whether steadying is on, off or broken. The only honest instrument is two
+            // clips at the same seed, so the harness needs a way to hold the key. Still gated on actually
+            // aiming through a magnifying optic, so it cannot fake a state the player could not reach.
+            bool steadyKey = sprintNow || System.Environment.GetEnvironmentVariable("UG_STEADY") == "1";
+            bool wantsSteady = steadyKey && (_viewmodel?.IsAiming ?? false) && (_viewmodel?.ScopeZoom ?? 1f) > 1f;
             {
                 float ox = _vitals.Oxygen;
                 _scopeSteady.Step(wantsSteady, ref ox, (float)delta);
