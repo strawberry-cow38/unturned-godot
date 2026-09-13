@@ -1795,6 +1795,31 @@ namespace UnturnedGodot
         /// the main camera's axes -- which makes this directly composable: mainCam.GlobalTransform * this pose
         /// puts the held object where it appears to be in the real world. Exposed for the binocular PiP, which
         /// has to point its camera down the barrels rather than down the player's eyeline.</summary>
+        /// <summary>The fitted TACTICAL attachment's pose, expressed RELATIVE TO THE VIEWMODEL CAMERA. Null when
+        /// nothing is on the rail.
+        ///
+        /// ⚠ IT HAS TO BE CAMERA-RELATIVE, and that is the whole reason this accessor exists rather than a
+        /// GlobalTransform. The gun and arms live in an ISOLATED SubViewport with their own world and their own
+        /// camera, so the node's global transform is in a space the main scene knows nothing about -- handing it
+        /// out directly would put the laser somewhere near the world origin. Divided by this world's camera it
+        /// becomes "where the laser sits relative to the eye", which is exactly what the main camera can
+        /// re-apply.
+        ///
+        /// Reading the LIVE node is the point: sway, bob, recoil, the ADS slide and the inspect animation all
+        /// move it, and all of them should move the beam. A camera-relative CONSTANT (which is what the laser
+        /// used before) is stationary by construction -- the gun drifts and the beam does not follow.</summary>
+        public Transform3D? TacticalViewLocal
+        {
+            get
+            {
+                if (_cam == null || !Godot.GodotObject.IsInstanceValid(_cam)) return null;
+                if (!_attachMesh.TryGetValue("Tactical", out var n)) return null;
+                var m = _gun?.GetNodeOrNull<MeshInstance3D>(n);
+                if (m == null || !Godot.GodotObject.IsInstanceValid(m) || !m.Visible) return null;
+                return _cam.GlobalTransform.AffineInverse() * m.GlobalTransform;
+            }
+        }
+
         public Transform3D? HeldModelViewPose => _gun != null && Godot.GodotObject.IsInstanceValid(_gun) ? _gun.GlobalTransform : null;
 
         public bool AddHeldLens(Material mat, Vector3 localPos, Vector3 localRotDeg, float radius)

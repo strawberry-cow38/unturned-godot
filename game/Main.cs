@@ -2906,6 +2906,18 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _ftPlayer = player;
             if (suppressed) player.SetSuppressor(true);
+            // UG_LASER=1 : fit the Tactical Laser (151) to the held gun and switch it on, so the beam + dot can
+            // be photographed against the downrange wall. Render-only dressing, same shape as UG_HITWALL.
+            if (System.Environment.GetEnvironmentVariable("UG_LASER") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                var lit = new SDG.Unturned.Item(4);   // Eaglefire, per items_catalog.tsv
+                AttachmentFit.SetInstalledId(lit, "Tactical", 151);
+                player.EquipHeldGun(gun ?? "eaglefire", lit);
+                // ⚠ ON A TIMER, not inline: ToggleTactical refuses while the equip clip is still running (the
+                // source isBusy rule), and in a one-shot harness that clip is still playing at the settle frame.
+                GetTree().CreateTimer(1.6).Timeout += () => { if (IsInstanceValid(player) && !player.TacticalOn) player.ToggleTactical(); };
+            }
 
 
             // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest

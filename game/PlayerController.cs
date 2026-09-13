@@ -4800,7 +4800,20 @@ namespace UnturnedGodot
             // split SpawnBullet documents -- and for the same reason, so the eye keeps deciding where it LANDS.
             var cb = _cam.GlobalTransform.Basis;
             Vector3 fxRail = aimFrom + cb.X * 0.10f - cb.Y * 0.06f + aimDir * 0.35f;
-            Vector3 emitter = (!_fp && _body != null && _body.MuzzleWorld is Vector3 bm) ? bm : fxRail;
+            // WHERE THE BEAM LEAVES THE GUN, in order of how much it actually knows:
+            //
+            //   3P -> the body's own muzzle, as before.
+            //   1P -> ⭐ THE LIVE VIEWMODEL'S TACTICAL NODE (strawberry 2026-09-13: "make the tactical laser
+            //         follow the actual gun viewmodel instead of being stationary"). It used to be fxRail, a
+            //         FIXED camera-relative offset -- welded to the eye, so sway, bob, recoil, the ADS slide and
+            //         the inspect animation all moved the gun while the beam stayed exactly where it was. The
+            //         viewmodel lives in its own SubViewport world, so the node's pose comes back relative to
+            //         THAT world's camera and is re-applied to this one; see Viewmodel.TacticalViewLocal.
+            //   neither -> fxRail still, for a headless fixture with no viewmodel and no body.
+            Vector3 emitter;
+            if (!_fp && _body != null && _body.MuzzleWorld is Vector3 bm) emitter = bm;
+            else if (_viewmodel?.TacticalViewLocal is Transform3D tvl) emitter = (_cam.GlobalTransform * tvl).Origin;
+            else emitter = fxRail;
             _laser.Aim(emitter, aimFrom, aimDir, _cam.Fov, aimFrom);
         }
 

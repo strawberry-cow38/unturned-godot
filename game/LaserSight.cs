@@ -34,8 +34,12 @@ namespace UnturnedGodot
         public const float BeamRadius = 0.004f;
         /// <summary>Retail's `scaleMultiplier`, 0.1 on the prefab -- but its quad's own size is serialised data
         /// I cannot read, so this is the one number here that is a choice rather than a reading. Flagged as
-        /// such: it is the dot's apparent size and nothing downstream depends on it.</summary>
-        public const float DotScale = 0.035f;
+        /// such: it is the dot's apparent size and nothing downstream depends on it.
+        ///
+        /// 0.035 -> 0.020 (strawberry 2026-09-13: "make that circle smaller"). The apparent shrink is larger
+        /// than the number suggests, because the dot became a soft ROUND sprite in the same pass -- its edge now
+        /// falls off instead of ending at the quad, so the lit core is smaller again than the geometry.</summary>
+        public const float DotScale = 0.020f;
         /// <summary>Stands in for TacticalLaserScale's AnimationCurve. 1.0 would be exactly constant on-screen
         /// size; below 1 the dot shrinks with distance, which is the curve's stated purpose.</summary>
         public const float DotTaper = 0.85f;
@@ -88,6 +92,13 @@ namespace UnturnedGodot
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 Visible = false,
             };
+            // ⚠ A BARE QUAD IS A SQUARE (strawberry 2026-09-13: "change the laser 'hit' to a circle instead of a
+            // square"). The mesh is still a quad -- it has to be, to billboard -- but it now carries the soft
+            // round sprite the smoke puffs and flare sparks already use, so what is DRAWN is a disc with a
+            // falling-off edge rather than the quad's own corners. Reusing BlastSoftTex rather than authoring a
+            // second circle: it is generated once, cached, and is exactly this shape (smoothstep 1 at the centre
+            // to 0 at radius).
+            _dotMat.AlbedoTexture = PlayerController.BlastSoftTex();
             _dot = new MeshInstance3D
             {
                 Name = "Dot",
