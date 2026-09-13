@@ -409,6 +409,21 @@ namespace UnturnedGodot
             // container path) lit its silhouette without claiming the colour, so it wore the last item's rarity.
             // Harmless to set again when a StoreShelf already did -- both want white.
             OutlineOverlay.ShowOutline(on, Colors.White, BodyOutline, _leafOutline);   // whole prop = body + swinging leaf, one white claim (master: the door highlights the whole thing)
+            // ...AND EVERY OTHER LEAF OF THE SAME PROP (strawberry 2026-09-13: "when highlighting shipping
+            // container doors, highlight both, not just the one we're looking at").
+            //
+            // The grouping already existed -- SetGroup wires a container's or a wardrobe's leaves so they SWING
+            // together and replicate off one lead -- the HIGHLIGHT just never used it. Looking at the left door of
+            // a container lit the body and that one leaf, so half the prop glowed and the other half did not,
+            // which reads as a broken outline rather than as a door you can open.
+            //
+            // StoreShelf.SetShelfFocused already loops the leaves, so the shelf-body focus path was right; this is
+            // the LEAF focus path (PlayerController._focusObjectDoor), which fires when the ray lands on a door
+            // rather than on the body. Fixing it here covers both, and the shelf's loop stays harmlessly idempotent.
+            if (_group == null) return;
+            foreach (var sib in _group)
+                if (sib != this && IsInstanceValid(sib) && sib._leafOutline != null && IsInstanceValid(sib._leafOutline))
+                    sib._leafOutline.Visible = on;
         }
 
         // --- test/debug seams ---
