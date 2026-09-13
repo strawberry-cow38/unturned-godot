@@ -305,21 +305,29 @@ namespace UnturnedGodot
                     // undergrowth into cover. Retail is the same shape: InteractableForage rides a trigger on a
                     // `Forage` child, not the resource's collision.
                     //
-                    // ⚠ SIZED FROM THE MEASURED MESH, not from an eyeball. This used to read "a bush reads ~1.4 m
-                    // across and knee-to-waist high" -- Bush_Mauve_0.obj is 5.35 x 4.67 x 5.63 m, a wide scatter of
-                    // leaf cards rather than a compact shrub, so the guess was out by ~4x. That mattered for more
-                    // than tidiness: LookReach is 2.6 m from the EYE, so a 1.4 m box could only be focused from
-                    // 0.7 + 2.6 = 3.3 m of the centre, i.e. from INSIDE a plant whose leaves reach 2.7 m out. You
-                    // had to stand in the bush to pick it, and the look-at outline traced a 5 m silhouette that ran
-                    // off both edges of the screen because you could never get far enough back to see it whole.
+                    // ⚠ YOU AIM AT THE BERRIES, NOT AT THE SHRUB, and every number here is measured rather than
+                    // guessed. This once read "a bush reads ~1.4 m across and knee-to-waist high" -- an eyeball, and
+                    // wrong twice over. Bush_Mauve_0.obj (the LEAVES) is 5.35 x 4.67 x 5.63 m, a wide scatter of leaf
+                    // cards; the pickable fruit is a separate mesh on the prefab's `Forage` child measuring
+                    // 2.28 x 1.47 x 2.30 m, centred at (-0.114, 1.141, 0.064) and identical across all eight bushes.
                     //
-                    // HALF the mesh footprint, not all of it: the box is what the look RAY hits, so a full-size one
-                    // would swallow the ray for anything standing near or behind the plant. Half puts the stand-off
-                    // at 1.4 + 2.6 = 4.0 m, which is outside the foliage, while staying smaller than the thing you
-                    // are aiming at. Mushrooms are unchanged in practice (1.01 m mesh -> 0.5 m box vs the old 0.45).
+                    // Retail agrees: the BoxCollider on that same `Forage` child is 2.117 x 2.051 x 2.175. Two
+                    // independent sources within 8% on the footprint is the corroboration that makes this a
+                    // measurement instead of another guess.
+                    //
+                    // ⚠ Retail's box CENTRE is NOT imported. It reads (0.023, -0.089, 0.507) in Unity's frame, and
+                    // the bake's transform chain puts the berries at y +1.141 -- so dropping that centre in would
+                    // bury the trigger a metre under the fruit. The horizontal extent transfers cleanly and the
+                    // centre does not, so the centre comes off the baked mesh, which is the thing actually on
+                    // screen. The vertical extent takes retail's more generous 2.05 over the mesh's 1.47, keeping
+                    // this code's original intent that aiming a little high or low still finds the plant.
+                    //
+                    // The mushroom needs no such care: its layout has no offset, and retail's box (0.8, 0.6, 0.8)
+                    // at (0, 0.11, 0) lands on a mesh measuring (1.01, 0.58, 0.96) centred at (-0.008, 0.098, 0).
                     int baseIdx = _instances.Count - xf.Count;
                     bool mushroom = name.StartsWith("Mushroom");
-                    float bw = mushroom ? 0.50f : 2.70f, bh = mushroom ? 0.35f : 2.20f;
+                    Vector3 boxSize   = mushroom ? new Vector3(0.80f, 0.60f, 0.80f) : new Vector3(2.28f, 2.05f, 2.30f);
+                    Vector3 boxCentre = mushroom ? new Vector3(0f, 0.11f, 0f)       : new Vector3(-0.114f, 1.141f, 0.064f);
                     ushort reward = ForageReward(name);
                     for (int k = 0; k < xf.Count; k++)
                     {
@@ -328,11 +336,14 @@ namespace UnturnedGodot
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
                         var body = new ForagePlant { Field = this, Index = baseIdx + k, ResourceName = name, Reward = reward,
                                                      WorldPos = t.Origin, PlacedXf = t, CollisionLayer = ForagePlant.HitLayer,
-                                                     PromptHeight = bh * sh + (mushroom ? 0.30f : 0.45f),
+                                                     PromptHeight = (boxCentre.Y + boxSize.Y * 0.5f) * sh + (mushroom ? 0.30f : 0.45f),
                                                      Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(ForagePlant.HitMeta, body);
-                        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(bw * sr, bh * sh, bw * sr) },
-                                                            Position = new Vector3(0f, bh * sh * 0.5f, 0f) });
+                        body.AddChild(new CollisionShape3D
+                        {
+                            Shape = new BoxShape3D { Size = new Vector3(boxSize.X * sr, boxSize.Y * sh, boxSize.Z * sr) },
+                            Position = new Vector3(boxCentre.X * sr, boxCentre.Y * sh, boxCentre.Z * sr),
+                        });
                         AddChild(body);
                         body.AddToGroup(ColliderBudget.Group);   // stream it like the trunks + ore, or every bush on the map is a body
                         {
@@ -1320,6 +1331,14 @@ namespace UnturnedGodot
         {
             var meshes = Field?.InstanceMeshes(Index);
             if (meshes == null || meshes.Count == 0) { _outline = System.Array.Empty<MeshInstance3D>(); return; }
+            // OUTLINE THE BERRIES, NOT THE SHRUB (strawberry 2026-09-13: "outline just the berries, not the bush
+            // itself"). The fruit is the LAST part, by contract with tools/resource_extract.py, which appends the
+            // prefab's `Forage` child after Model_0's leaves. It is also the right answer visually: the leaf mesh
+            // is a 5.35 m scatter, so outlining it drew a polygon whose corners ran off both edges of the screen,
+            // while the berry cluster is 2.28 m and hugs the thing you are actually picking. A mushroom has one
+            // part and it IS the cap, so the same rule needs no special case.
+            var mesh = meshes[meshes.Count - 1];
+            meshes = new List<Mesh> { mesh };
             var made = new MeshInstance3D[meshes.Count];
             for (int i = 0; i < meshes.Count; i++)
             {
