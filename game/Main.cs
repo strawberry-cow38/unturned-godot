@@ -7926,13 +7926,15 @@ namespace UnturnedGodot
             // becomes a downward cone: what happens to the ceiling it is bolted to, and to the upper walls. With only
             // a floor in the scene both forms paint the same pool and the shot proves nothing. Build the surfaces the
             // difference lands on, or do not claim to have checked it.
-            if (System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1")
+            bool room = System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1";
+            const float RoomCeilY = 3.85f;   // hoisted: a Ceiling-mount deployable has to mount to THIS slab, not near it
+            if (room)
             {
                 // ceilY must clear the fixture's own bounds. Light_0 at mountY 3.0 with the in-situ pitch reaches
                 // Y=3.75, so the first version of this room -- ceiling at 3.2 -- ran the slab straight THROUGH the
                 // prop, and a ceiling decal anchored to the fixture's top projected into empty air above it. The
                 // render was byte-identical to having no decal, which reads as "the feature does nothing".
-                const float half = 4f, ceilY = 3.85f;
+                const float half = 4f; const float ceilY = RoomCeilY;
                 var wallMat = new StandardMaterial3D { AlbedoColor = new Color(0.52f, 0.50f, 0.47f), Roughness = 1f };
                 void Surface(Vector3 pos, Vector3 rotDeg)
                 {
@@ -7960,13 +7962,9 @@ namespace UnturnedGodot
             string tex = objDir + which + "_tex.png";
             if (System.IO.File.Exists(tex)) { var img = ContentProvider.LoadImage(tex); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
 
-            bool ceiling = which == "Light_0" || which == "Light_1";
-            float mountY = ceiling ? 3.0f : 0.0f;   // ceiling lights hang; floor/desk lamps stand on the ground
-            // Light_0 lies FLAT on a ceiling -- all 34 world placements carry pitch ex=270 (tinyclaw), which turns its
-            // 4-unit "height" into LENGTH and points the diffuser straight down. UG_LAMP_PITCH=270 renders it in-situ.
-            float pitch = 0f; float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_PITCH"), out pitch);
-            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f), RotationDegrees = new Vector3(pitch, 0f, 0f) };
-            AddChild(mi);
+            // ⚠ THE FLAGS MOVED ABOVE THE FIXTURE, and that is not tidying. LampLight reads every one of them at
+            // BUILD time, and the deployable branch below builds its lamp inside Barricade.PlaceOnSurface where this
+            // function never gets a turn. Setting them after the mesh worked only for the hand-rolled path.
             LampLight.DebugNoOmni = System.Environment.GetEnvironmentVariable("UG_LAMP_NOOMNI") == "1";   // proof shot: only the emissive part, no room light
             LampLight.CeilingSpot = System.Environment.GetEnvironmentVariable("UG_LAMP_CEILSPOT") == "1";   // ceiling strip as a downward cone (default omni) -- A/B both forms from ONE build
             LampLight.DebugLightPose = System.Environment.GetEnvironmentVariable("UG_LAMP_POSE") == "1";
@@ -7978,9 +7976,43 @@ namespace UnturnedGodot
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_DECALENERGY"), out var de) && de >= 0f) LampLight.CeilingDecalEnergy = de;
             var bulbSideStr = System.Environment.GetEnvironmentVariable("UG_BULB_SIDE");                 // DeskBulb render-pick: +1 / -1
             if (!string.IsNullOrEmpty(bulbSideStr) && float.TryParse(bulbSideStr, out var bs)) LampLight.DebugBulbSide = bs;
-            var lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
-            AddChild(lamp);
-            lamp.SetPowered(!off);
+
+            // ⚠ A CEILING-MOUNT FIXTURE IS BUILT THE WAY THE GAME BUILDS IT. The hand-rolled path below draws the
+            // .obj at RotationDegrees(pitch,0,0) -- authored coordinates, no StandBasis and no MeshBasis -- so it is
+            // structurally incapable of showing an error in the composition. Three pendants shipped hanging UPWARD
+            // into the slab after four rounds of renders through this very scene agreed they were fine (strawberry
+            // 2026-09-13: "they deploy upside down"). A harness that cannot show the transform under test is not a
+            // check, so anything with a Ceiling mount goes through Barricade.PlaceOnSurface instead, onto the room's
+            // real ceiling. PropFixture maps prop name -> def, so this needs no second name list to drift out of date.
+            // Gated on Ceiling specifically: Light_0/Light_1/Lamp_0/Lamp_1 have no such def and shoot exactly as before.
+            var cdef = DeployableDef.PropFixture(which);
+            bool asDeployable = cdef != null && cdef.Mount == BarricadeMount.Ceiling;
+            bool ceiling = asDeployable || which == "Light_0" || which == "Light_1";
+            float mountY = asDeployable ? (room ? RoomCeilY : 3.0f) : (ceiling ? 3.0f : 0.0f);   // ceiling lights hang; floor/desk lamps stand on the ground
+
+            LampLight lamp;
+            if (asDeployable)
+            {
+                var d = Barricade.PlaceOnSurface(this, cdef, new Vector3(0f, mountY, 0f), Vector3.Down, 0f);
+                lamp = null;
+                foreach (var c in d.GetChildren()) if (c is LampLight l) { lamp = l; break; }
+                if (lamp == null) { Log.Err($"[lamptest] {which} placed as {cdef.Name} but built no LampLight"); return; }
+                lamp.GridFed = false;
+                lamp.SetPowered(!off);
+                Log.Print($"[LAMPTEST] {which} placed as {cdef.Name} (mount={cdef.Mount}) on the slab at y={mountY:0.00}, " +
+                          $"body origin y={d.GlobalPosition.Y:0.000}, omni y={lamp.DebugLightWorld.Y:0.000}");
+            }
+            else
+            {
+                // Light_0 lies FLAT on a ceiling -- all 34 world placements carry pitch ex=270 (tinyclaw), which turns its
+                // 4-unit "height" into LENGTH and points the diffuser straight down. UG_LAMP_PITCH=270 renders it in-situ.
+                float pitch = 0f; float.TryParse(System.Environment.GetEnvironmentVariable("UG_LAMP_PITCH"), out pitch);
+                var mi = new MeshInstance3D { Mesh = m, MaterialOverride = mat, Position = new Vector3(0f, mountY, 0f), RotationDegrees = new Vector3(pitch, 0f, 0f) };
+                AddChild(mi);
+                lamp = LampLight.Make(new Vector3(0f, mountY, 0f), mi, LampLight.KindFor(which));   // hand the fixture mesh in so the right part glows when lit (LampLight.KindFor = the one prop->kind table)
+                AddChild(lamp);
+                lamp.SetPowered(!off);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_LAMP_OUTLINE") == "1") lamp.SetLookFocused(true);   // verify the whole-lamp look-outline (toggle lamps only)
             Log.Print($"[LAMPTEST] {which} + LampLight, powered={!off}, lit={lamp.LitForTest}");
 
@@ -7990,7 +8022,12 @@ namespace UnturnedGodot
             // scene a downward cone deliberately stops lighting -- judging "does this still light the room" from it
             // reads as a total blackout when the floor may be fine. Room mode looks ACROSS instead, so floor, far
             // wall and ceiling are all in frame at once.
-            if (ceiling && System.Environment.GetEnvironmentVariable("UG_LAMP_ROOM") == "1")
+            if (asDeployable)   // a pendant: close, slightly BELOW it, so the plate against the slab and the drop are both in frame
+            {
+                cam.Position = new Vector3(1.0f, 2.85f, 1.3f);
+                cam.LookAt(new Vector3(0f, mountY - 0.30f, 0f), Vector3.Up);
+            }
+            else if (ceiling && room)
             {
                 cam.Position = new Vector3(3.0f, 1.55f, 3.3f);
                 cam.LookAt(new Vector3(-0.6f, 1.35f, -1.6f), Vector3.Up);

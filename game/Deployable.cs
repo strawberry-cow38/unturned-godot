@@ -28,6 +28,16 @@ namespace UnturnedGodot
         CpuParticles3D _smoke, _smoke0, _fire;
         OmniLight3D _fireLight;
         MeshInstance3D _mesh;      // the body mesh (charred on explode)
+        /// <summary>The body mesh, for tests that need the fixture's real WORLD bounds -- i.e. after both the
+        /// StandBasis stand-up on this node and the def's MeshEuler on the mesh. Reading the .obj, or the mesh's
+        /// own local AABB, measures the authored frame and is blind to exactly the composition that goes wrong
+        /// (deploy.ceiling_hangs).</summary>
+        public MeshInstance3D DebugMesh => _mesh;
+
+        /// <summary>Re-resolve this body's fixture lamp after the node has been MOVED. LampLight is TopLevel and
+        /// anchors off the fixture's world transform at build time, so a re-seat after Spawn has to announce
+        /// itself -- see LampLight.Reanchor for what went wrong without it.</summary>
+        public void ReanchorLamp() { if (_fixtureLamp != null && IsInstanceValid(_fixtureLamp)) _fixtureLamp.Reanchor(); }
         MeshInstance3D _switchLight;   // a Power Switch's on/off state light (green = on, red = off)
         Vector3 _firePos;          // world-space fire/smoke origin (top of the object); particles are TopLevel so they rise in WORLD up despite the stood-up body basis
         const float ExplodeDelay = 4f, SmokeFrac = 0.45f, HeavyFrac = 0.22f;   // light smoke < 45% HP, heavy < 22% (vehicle uses ~200/100 of ~600)

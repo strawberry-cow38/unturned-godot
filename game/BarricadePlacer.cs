@@ -140,7 +140,17 @@ namespace UnturnedGodot
         // port's DeployableDef.Offset is authored as a GROUND vertical clearance (~mesh half-height); as a wall
         // standoff that floats the piece a metre off the surface, so clamp it to a small hug for Wall/Sticky. A real
         // barricade asset's small Offset passes through unchanged.
-        float WallStandoff => Def == null ? 0f : Mathf.Min(Def.Offset, 0.1f);
+        float WallStandoff => Def == null ? 0f : Standoff(Mount, Def);
+
+        /// <summary>The hug off a wall/ceiling along the surface normal, shared with Barricade.PlaceOnSurface so the
+        /// ghost and the placed object cannot disagree about where the thing sits.
+        ///
+        /// A CEILING plate is flush: a canopy is screwed to the slab. Offset's clamped 0.05 hung the pendants a
+        /// visible 5 cm below the ceiling, which reads as a floating fixture. 0.005 is a z-fight gap, not a design
+        /// number. Offset keeps its OTHER job unchanged -- it also centres the placement clearance sphere (Aim), and
+        /// shrinking that for a 0.30-radius dome would put the probe inside the slab it is mounting to.</summary>
+        public static float Standoff(BarricadeMount mount, DeployableDef def) =>
+            def == null ? 0f : mount == BarricadeMount.Ceiling ? 0.005f : Mathf.Min(def.Offset, 0.1f);
 
         // Lift so the mesh seats on the surface: Floor stands its base on the point (GroundLift along up); Wall/Sticky
         // hug the surface by WallStandoff along the normal.

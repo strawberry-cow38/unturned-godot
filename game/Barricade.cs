@@ -28,8 +28,9 @@ namespace UnturnedGodot
             // -- see BarricadePlacer.WallStandoff; src point = hit + normal*offset, UseableBarricade.cs:817).
             Vector3 origin = m == BarricadeMount.Floor
                 ? point + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab))
-                : point + normal * Mathf.Min(def.Offset, 0.1f);
+                : point + normal * BarricadePlacer.Standoff(m, def);   // one definition, so the ghost and the placed object agree
             d.GlobalTransform = new Transform3D(BarricadePlacer.MountBasis(m, normal, yawDeg, def.Upright), origin);
+            d.ReanchorLamp();   // the re-seat just moved the body out from under its TopLevel LampLight (LampLight.Reanchor)
             d.AddToGroup("barricades");   // a surface barricade (still a "deployable" too — look-at / repair target it either way)
             return d;
         }

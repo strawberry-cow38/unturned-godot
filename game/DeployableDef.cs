@@ -608,8 +608,18 @@ namespace UnturnedGodot
         // SurfaceOk gates it to normal.y <= -0.01, the exact mirror of Floor's >= 0.01. Without it these would
         // take Floor and you could stand a pendant on the grass, hanging upward out of the ground.
         //
-        // No MeshEuler: the meshes are authored HANGING, from z=0 at the plate into negative Z, so they need no
-        // flip. Lamp_0/Lamp_1 above carry (180,0,0) because those are authored standing up off a floor.
+        // ⚠ MeshEuler (180,0,0) ON ALL THREE, AND THE COMMENT THAT USED TO SIT HERE HAD THE SIGN BACKWARDS.
+        // It read: "the meshes are authored HANGING, from z=0 at the plate into negative Z, so they need no
+        // flip." The premise is true -- the plate is at z=0 and the bulb at z=-0.398 -- and the conclusion is
+        // exactly wrong, because in this frame NEGATIVE Z IS UP. StandBasis is a +90 about X, which sends mesh
+        // -Z to world +Y; the Spotlight note 60 lines above already spells that out ("barricade meshes are
+        // authored +Z DOWN"). Shipped without the flip, all three hung UPWARD into the slab -- the plate on the
+        // ceiling and the bulb inside it (strawberry, on the build: "they deploy upside down, point up into the
+        // ceiling instead of hanging down"). The 180 about X sends the body to +Z, i.e. world -Y. Same fixup
+        // Lamp_0/Lamp_1 carry, and for the same reason, not the opposite one.
+        //
+        // Guarded by deploy.ceiling_hangs, which composes the real StandBasis x MeshBasis for EVERY Ceiling-mount
+        // def and fails if the mesh's lowest point is not below the mount. Drop the MeshEuler and it goes red.
         //
         // The "real omni" is inherited rather than declared: LampKind = CeilingBulb routes through
         // LampLight.MakeLight, which builds an OmniLight3D at the shared Range 8 / Energy 2.2 and anchors it AT
@@ -623,7 +633,7 @@ namespace UnturnedGodot
 
         public static readonly DeployableDef CeilingBulbLamp = new()
         {
-            Id = 9210, Name = "Ceiling Bulb", Model = "Ceiling_Bulb_0", PlaceSound = "metalplacement",
+            Id = 9210, Name = "Ceiling Bulb", Model = "Ceiling_Bulb_0", PlaceSound = "metalplacement", MeshEuler = new Vector3(180f, 0f, 0f),
             Mount = BarricadeMount.Ceiling,
             Size = new Vector3(0.4f, 0.4f, 0.5f), Offset = 0.05f, Radius = 0.12f, Range = 4f, Health = 120f,
             ShatterOnDeath = true,
@@ -633,7 +643,7 @@ namespace UnturnedGodot
 
         public static readonly DeployableDef CeilingConeLamp = new()
         {
-            Id = 9211, Name = "Cone Pendant", Model = "Ceiling_Shade_Cone_0", PlaceSound = "metalplacement",
+            Id = 9211, Name = "Cone Pendant", Model = "Ceiling_Shade_Cone_0", PlaceSound = "metalplacement", MeshEuler = new Vector3(180f, 0f, 0f),
             Mount = BarricadeMount.Ceiling,
             Size = new Vector3(0.4f, 0.4f, 0.4f), Offset = 0.05f, Radius = 0.14f, Range = 4f, Health = 150f,
             ShatterOnDeath = true,
@@ -643,7 +653,7 @@ namespace UnturnedGodot
 
         public static readonly DeployableDef CeilingDomeLamp = new()
         {
-            Id = 9212, Name = "Dome Pendant", Model = "Ceiling_Shade_Dome_0", PlaceSound = "metalplacement",
+            Id = 9212, Name = "Dome Pendant", Model = "Ceiling_Shade_Dome_0", PlaceSound = "metalplacement", MeshEuler = new Vector3(180f, 0f, 0f),
             Mount = BarricadeMount.Ceiling,
             Size = new Vector3(0.7f, 0.7f, 0.4f), Offset = 0.05f, Radius = 0.30f, Range = 4f, Health = 150f,
             ShatterOnDeath = true,

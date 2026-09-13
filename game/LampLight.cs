@@ -458,5 +458,31 @@ namespace UnturnedGodot
         public void SetLookFocused(bool on) { if (_outline != null && IsInstanceValid(_outline)) OutlineOverlay.ShowOutline(on, Colors.White, _outline); }
 
         public bool LitForTest => _light != null && _light.LightEnergy > 0f;
+
+        /// <summary>The built light's WORLD position. LampLight is TopLevel with an identity basis, so this is
+        /// just its own origin plus the local anchor ComputeLightLocal picked. Tests use it to check the emitter
+        /// ended up where the fixture's visible bulb is rather than at the fixture centre.</summary>
+        public Vector3 DebugLightWorld => _light != null ? GlobalPosition + _light.Position : GlobalPosition;
+
+        /// <summary>Re-resolve the emitter pose from the fixture's CURRENT world transform.
+        ///
+        /// ⚠ LampLight is TopLevel, so it does NOT ride its parent. BuildVisual resolves the anchor off the
+        /// fixture's GlobalTransform once, and moving the fixture afterwards leaves the light behind. Nothing in
+        /// the project moved one until ceiling pendants arrived: Barricade.PlaceOnSurface re-seats the body AFTER
+        /// Deployable.Spawn has already built the lamp, and for the FLOOR family the two seats are the same
+        /// arithmetic (point + up * GroundLift), so the stale anchor was exactly zero and the bug was unreachable.
+        /// A Ceiling mount re-seats by the ground lift PLUS the standoff, and the pendant's omni was left 0.09 m
+        /// inside the slab -- lighting the ceiling cavity, with the bulb below it dark. Caught by
+        /// deploy.ceiling_hangs, not by anything that existed before.
+        ///
+        /// The rule this leaves behind: MOVING a deployable that owns a LampLight means calling this.</summary>
+        public void Reanchor()
+        {
+            if (_light == null || _fixture == null || !IsInstanceValid(_fixture)) return;
+            GlobalPosition = _fixture.GlobalTransform * (_fixture.Mesh?.GetAabb() ?? new Aabb()).GetCenter();
+            _light.Position = ComputeLightLocal();
+            if (_fill != null && IsInstanceValid(_fill)) _fill.Position = _light.Position;
+            if (_decal != null && IsInstanceValid(_decal)) _decal.Position = ComputeCeilingLocal();
+        }
     }
 }
