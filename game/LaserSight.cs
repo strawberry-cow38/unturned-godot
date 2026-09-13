@@ -52,6 +52,7 @@ namespace UnturnedGodot
 
         StandardMaterial3D _beamMat, _dotMat;
         Color _color = Colors.Red;
+        bool _hasColor;
 
         public override void _Ready()
         {
@@ -115,7 +116,14 @@ namespace UnturnedGodot
         /// result, on the slot this shading mode actually reads.</summary>
         public void SetColor(Color c)
         {
-            _color = c;
+            // ON CHANGE, NOT PER FRAME. The caller re-asserts the fitted attachment's colour every tick (it is
+            // the cheapest way to stay right when the rail is swapped mid-beam), so without this guard two
+            // material properties cross into the RenderingServer sixty times a second to be set to the value
+            // they already hold. Idempotent work belongs behind a change test; only DRIVEN work belongs on the
+            // tick. `_hasColor` rather than comparing against the field's initial value, so the first call
+            // always writes even when the attachment really is the default red.
+            if (_hasColor && c == _color) return;
+            _color = c; _hasColor = true;
             if (_beamMat == null) return;
             _beamMat.AlbedoColor = new Color(c.R * EmissionGain, c.G * EmissionGain, c.B * EmissionGain, BeamAlpha);
             _dotMat.AlbedoColor = new Color(c.R * EmissionGain, c.G * EmissionGain, c.B * EmissionGain, DotAlpha);
