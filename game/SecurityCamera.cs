@@ -28,6 +28,24 @@ namespace UnturnedGodot
         public const float FeedFar = 60f;
         public const float FeedFov = 70f;
 
+        /// <summary>WHERE THE LENS IS, in the housing mesh's own frame, and WHICH WAY IT LOOKS (strawberry
+        /// 2026-09-13: "put the camera viewport camera just in front of the black part").
+        ///
+        /// ⚠ MEASURED OFF Camera_0.obj, not placed by eye. The "black part" is the dark cell of the prop's 2x1
+        /// palette -- two faces, the only two that sample u &gt; 0.5 -- and averaging them gives a centroid of
+        /// (-0.2665, +0.2957, -0.1281) and a face normal of (-0.683, +0.683, -0.259). The normal is confirmed
+        /// OUTWARD rather than assumed: dotted against (lens centroid - body centroid) it comes out +0.17, so it
+        /// points away from the housing bulk and not into it.
+        ///
+        /// This replaces using the prop's ORIGIN and its -Z, which is where the feed camera sat before -- the
+        /// origin is wherever the exporter left it and the housing's -Z is not the direction the lens faces, so
+        /// the picture was of roughly the right place from roughly the wrong spot.</summary>
+        public static readonly Vector3 LensLocal = new Vector3(-0.2665f, 0.2957f, -0.1281f);
+        public static readonly Vector3 LensNormalLocal = new Vector3(-0.6830f, 0.6830f, -0.2588f).Normalized();
+        /// <summary>How far in front of the glass the eye sits. Just clear of it: far enough that the lens quad
+        /// itself is never in shot, near enough that the picture is the camera's and not the wall behind it.</summary>
+        public const float LensStandoff = 0.03f;
+
         readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
         ConnectionPort _plug, _dataOut;
         SubViewport _vp;
@@ -127,9 +145,23 @@ namespace UnturnedGodot
             fenv.TonemapMode = Godot.Environment.ToneMapper.Linear;
             _cam.Environment = fenv;
             _vp.AddChild(_cam);
-            // The lens looks along the housing's own forward. Godot cameras look down -Z, and the housing's
-            // transform is the prop placement, so this is simply "where the model faces".
-            _cam.GlobalTransform = GlobalTransform;
+            AimAtLens();
+        }
+
+        /// <summary>Put the eye just in front of the glass, looking the way the glass faces. Both come from the
+        /// measured lens plate (see LensLocal), mapped through the housing's own transform -- so a camera placed
+        /// at any angle on any wall still films out of its lens rather than out of its origin.</summary>
+        void AimAtLens()
+        {
+            if (_cam == null || !IsInstanceValid(_cam)) return;
+            Vector3 eye = GlobalTransform * (LensLocal + LensNormalLocal * LensStandoff);
+            Vector3 dir = (GlobalTransform.Basis * LensNormalLocal).Normalized();
+            if (dir.LengthSquared() < 1e-6f) { _cam.GlobalTransform = GlobalTransform; return; }
+            // LookAt needs an up that is not parallel to the view; a camera aimed near-vertically would
+            // otherwise produce a degenerate basis. Fall back to +X, which cannot also be vertical.
+            Vector3 up = Mathf.Abs(dir.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
+            _cam.GlobalPosition = eye;
+            _cam.LookAt(eye + dir, up);
         }
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine callback is off

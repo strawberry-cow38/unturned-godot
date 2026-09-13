@@ -8166,7 +8166,18 @@ namespace UnturnedGodot
             var housing = new MeshInstance3D { Name = "CameraBody", Mesh = camBody ?? camMesh, MaterialOverride = mat };
             AddChild(housing);
             housing.GlobalPosition = new Vector3(0f, 3.0f, -2.5f);
-            housing.LookAt(subject, Vector3.Up);   // a Godot camera looks down -Z, and SecurityCamera copies this transform
+            // ⚠ AIM THE LENS, NOT THE MODEL'S -Z. SecurityCamera films along the measured lens normal now, which
+            // is not the housing's forward -- so a plain LookAt (which points -Z at the target) aims the prop at
+            // the subject and the CAMERA somewhere else entirely. Rotate whatever direction the lens faces onto
+            // the direction we want it to face.
+            {
+                Vector3 want = (subject - housing.GlobalPosition).Normalized();
+                Vector3 have = SecurityCamera.LensNormalLocal;
+                float d = Mathf.Clamp(have.Dot(want), -1f, 1f);
+                housing.Basis = d > 0.9999f ? Basis.Identity
+                              : d < -0.9999f ? new Basis(have.Cross(Vector3.Up).Normalized(), Mathf.Pi)
+                              : new Basis(have.Cross(want).Normalized(), Mathf.Acos(d));
+            }
             if (camArm != null)
             {
                 var armMi = new MeshInstance3D { Name = "CameraArm", Mesh = camArm, MaterialOverride = mat };
