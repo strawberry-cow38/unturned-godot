@@ -52,6 +52,21 @@ namespace UnturnedGodot
         /// DebugTrunk so a test can check the thing you SEE and the thing you WALK INTO agree.</summary>
         public Transform3D DebugInstanceXf(int index) => index >= 0 && index < _instances.Count ? _instances[index].Xf : default;
 
+        /// <summary>The part MESHES one placed instance draws, in part order. A bush or a mushroom has no node of
+        /// its own -- it is a slot in a shared MultiMesh -- so this is the only way to get at the geometry that is
+        /// actually on screen in order to build a look-at silhouette from it.
+        ///
+        /// Read off the SLOTS rather than re-loading the .obj, so the outline can never drift from what is drawn:
+        /// same Mesh object, same part count, whatever the loader decided.</summary>
+        public List<Mesh> InstanceMeshes(int index)
+        {
+            var outp = new List<Mesh>();
+            if (index < 0 || index >= _instances.Count) return outp;
+            foreach (var (mm, _) in _instances[index].Slots)
+                if (mm != null && mm.Mesh != null) outp.Add(mm.Mesh);
+            return outp;
+        }
+
         /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
         /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
         /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>
@@ -290,12 +305,21 @@ namespace UnturnedGodot
                     // undergrowth into cover. Retail is the same shape: InteractableForage rides a trigger on a
                     // `Forage` child, not the resource's collision.
                     //
-                    // Sized off the instance rather than the mesh: a bush reads ~1.4 m across and knee-to-waist
-                    // high, a mushroom is a hand's width. Both are generous vertically so aiming at the ground
-                    // in front of one still finds it -- you are pointing at a plant, not threading a needle.
+                    // ⚠ SIZED FROM THE MEASURED MESH, not from an eyeball. This used to read "a bush reads ~1.4 m
+                    // across and knee-to-waist high" -- Bush_Mauve_0.obj is 5.35 x 4.67 x 5.63 m, a wide scatter of
+                    // leaf cards rather than a compact shrub, so the guess was out by ~4x. That mattered for more
+                    // than tidiness: LookReach is 2.6 m from the EYE, so a 1.4 m box could only be focused from
+                    // 0.7 + 2.6 = 3.3 m of the centre, i.e. from INSIDE a plant whose leaves reach 2.7 m out. You
+                    // had to stand in the bush to pick it, and the look-at outline traced a 5 m silhouette that ran
+                    // off both edges of the screen because you could never get far enough back to see it whole.
+                    //
+                    // HALF the mesh footprint, not all of it: the box is what the look RAY hits, so a full-size one
+                    // would swallow the ray for anything standing near or behind the plant. Half puts the stand-off
+                    // at 1.4 + 2.6 = 4.0 m, which is outside the foliage, while staying smaller than the thing you
+                    // are aiming at. Mushrooms are unchanged in practice (1.01 m mesh -> 0.5 m box vs the old 0.45).
                     int baseIdx = _instances.Count - xf.Count;
                     bool mushroom = name.StartsWith("Mushroom");
-                    float bw = mushroom ? 0.45f : 1.4f, bh = mushroom ? 0.35f : 1.1f;
+                    float bw = mushroom ? 0.50f : 2.70f, bh = mushroom ? 0.35f : 2.20f;
                     ushort reward = ForageReward(name);
                     for (int k = 0; k < xf.Count; k++)
                     {
@@ -303,7 +327,8 @@ namespace UnturnedGodot
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
                         var body = new ForagePlant { Field = this, Index = baseIdx + k, ResourceName = name, Reward = reward,
-                                                     WorldPos = t.Origin, CollisionLayer = ForagePlant.HitLayer,
+                                                     WorldPos = t.Origin, PlacedXf = t, CollisionLayer = ForagePlant.HitLayer,
+                                                     PromptHeight = bh * sh + (mushroom ? 0.30f : 0.45f),
                                                      Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(ForagePlant.HitMeta, body);
                         body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(bw * sr, bh * sh, bw * sr) },
@@ -1253,7 +1278,59 @@ namespace UnturnedGodot
                                        // this, and reading it off GlobalTransform would depend on when the sync is
                                        // constructed relative to the node entering the tree
 
+        /// <summary>The FULL placed transform, scale included -- what the MultiMesh slot was given. The body's own
+        /// Transform orthonormalises the basis (a collider wants no scale), so it is the wrong thing to hang a
+        /// silhouette on: the outline would be the right shape at the wrong size on every non-unit instance.</summary>
+        public Transform3D PlacedXf;
+
+        /// <summary>How high above WorldPos the prompt billboard floats -- the body's own height plus clearance, so
+        /// a knee-high bush and a hand-sized mushroom each get a label just over the plant instead of one buried in
+        /// the leaves and one hanging in the air.</summary>
+        public float PromptHeight = 1.0f;
+
         public bool Alive => Field == null || Field.IsAlive(Index);
+
+        /// <summary>What foraging this actually hands you, e.g. "Raw Jazzberries". Worth showing, because the bush
+        /// COLOUR does not name its berry -- Amber gives Jazzberries and Ameberries come off Mauve -- so "a bush"
+        /// is not something a player can otherwise tell apart. Falls back to the resource name if the item catalog
+        /// has not been registered (offline harnesses), rather than drawing an empty label.</summary>
+        public string DisplayName =>
+            SDG.Unturned.Assets.find(Reward) is { } a && !string.IsNullOrEmpty(a.itemName) ? a.itemName
+            : (ResourceName ?? "").Replace("_Snow", "").Replace("_0", "").Replace("Bush_", "") + " Bush";
+
+        // ---- LOOK-AT SILHOUETTE -------------------------------------------------------------------------------
+        // Built LAZILY, on the first focus, and then kept. Eagerly building one per plant would mean ~141 hidden
+        // MeshInstance3D on PEI for the handful you ever look at; rebuilding on every focus gain would churn as the
+        // ray flickers between two bushes in a patch. Keeping it bounds the cost at "plants this player has looked
+        // at", which is the number that matters.
+        MeshInstance3D[] _outline;
+
+        public void SetLookFocused(bool on)
+        {
+            if (on && _outline == null) BuildOutline();
+            if (_outline == null) return;
+            // One colour claim for the whole plant, then the rest toggled: ShowOutline claims WorldItem.FocusColor
+            // on every call, and a bush is one thing even when its mesh arrives in several parts.
+            OutlineOverlay.ShowOutline(on, Colors.White, _outline[0]);
+            for (int i = 1; i < _outline.Length; i++)
+                if (GodotObject.IsInstanceValid(_outline[i])) _outline[i].Visible = on;
+        }
+
+        void BuildOutline()
+        {
+            var meshes = Field?.InstanceMeshes(Index);
+            if (meshes == null || meshes.Count == 0) { _outline = System.Array.Empty<MeshInstance3D>(); return; }
+            var made = new MeshInstance3D[meshes.Count];
+            for (int i = 0; i < meshes.Count; i++)
+            {
+                // Parented to the FIELD, not to this body: MultiMesh instance transforms are relative to the
+                // MultiMeshInstance3D, which is a plain child of the field at identity, so PlacedXf read straight
+                // into field space puts the silhouette exactly where the instance is drawn.
+                made[i] = OutlineOverlay.MakeOutline(meshes[i], PlacedXf);
+                Field.AddChild(made[i]);
+            }
+            _outline = made;
+        }
     }
 
     public partial class OreRock : StaticBody3D

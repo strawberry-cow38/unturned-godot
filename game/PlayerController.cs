@@ -951,7 +951,18 @@ namespace UnturnedGodot
                 _focusMonitor = hitMonitor;
                 _focusMonitor?.SetLookFocused(true);
             }
-            _focusForage = hitForage;   // no outline pass: a bush is a MultiMesh slot, not a node with a mesh to tint
+            // BERRY BUSH / MUSHROOM look-focus. This used to be a bare assignment with "no outline pass: a bush is
+            // a MultiMesh slot, not a node with a mesh to tint" -- true, and the reason it had no affordance at all:
+            // 141 forageables on PEI (61 bushes, 80 mushrooms) that looked exactly like the scenery bushes next to
+            // them, with nothing to say Interact would do anything. ForagePlant now builds a silhouette out of the
+            // very meshes its MultiMesh slot draws, so there IS something to tint (strawberry 2026-09-13).
+            if (hitForage != _focusForage)
+            {
+                if (IsInstanceValid(_focusForage)) _focusForage.SetLookFocused(false);
+                _focusForage = hitForage;
+                if (_focusForage != null) _focusForage.SetLookFocused(true);
+                ForagePromptSet(_focusForage);
+            }
             _focusCarLift = hitLift;
             if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
             {
@@ -1979,6 +1990,26 @@ namespace UnturnedGodot
 
         // A center-screen pickup readout (fluid devices have no per-device progress billboard like a generator's).
         CanvasLayer _fluidPickupLayer; Label _fluidPickupLabel;
+        // FORAGE PROMPT. ONE billboard, moved to whichever plant is focused -- not one per plant. A bush has no node
+        // of its own and there are 141 of them on PEI; giving each a SubViewport would be 141 idle render targets to
+        // serve the one you are looking at. InfoBillboard is the port's existing look-at prompt (vehicles, deployables,
+        // grid sources), so foraging reads like every other "walk up and press a key" prop rather than inventing a
+        // second convention.
+        //
+        // It names the ITEM, not the plant, because the bush colour does not name its berry -- Amber gives
+        // Jazzberries, Ameberries come off Mauve -- so "Amber Bush" tells a player nothing they can act on.
+        InfoBillboard _forageInfo;
+
+        void ForagePromptSet(ForagePlant p)
+        {
+            if (p == null || !IsInstanceValid(p)) { _forageInfo?.SetActive(false); return; }
+            if (_forageInfo == null) { _forageInfo = new InfoBillboard { TopLevel = true }; AddChild(_forageInfo); }
+            _forageInfo.GlobalPosition = p.WorldPos + Vector3.Up * p.PromptHeight;
+            _forageInfo.SetName(p.DisplayName, Colors.White);
+            _forageInfo.SetPrompt($"[{Keybinds.Get(GameAction.Interact).Label}] forage", Colors.White);
+            _forageInfo.SetActive(true);
+        }
+
         void FluidPickupHudSet(string text)
         {
             if (string.IsNullOrEmpty(text)) { if (_fluidPickupLabel != null) _fluidPickupLabel.Visible = false; return; }
