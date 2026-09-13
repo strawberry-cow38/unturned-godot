@@ -58,6 +58,14 @@ namespace UnturnedGodot
 
         /// <summary>Does `a` fit `slot` on a gun of `gunCaliber`? Pure, engine-free, and the single place the rule
         /// lives -- the menu asks this rather than re-deriving it per button.</summary>
+        /// <summary>⚠ NO CARTRIDGE MEANS "UNKNOWN", AND UNKNOWN IS A REFUSAL, not a waiver. A restricted
+        /// attachment (anything in CaliberNames -- today the 5.56 Silencer) is REFUSED through this overload,
+        /// because a restriction that lapses whenever the caller forgets an argument is not a restriction.
+        ///
+        /// Every real gun is safe: all 62 shipped .dats declare Caliber_Name (counted 2026-09-13), so a live
+        /// caller that reads it off the GunDef always has one. This overload exists for the caliber-GROUP-only
+        /// questions -- magazines -- and a caller that can reach a cartridge should pass it rather than land
+        /// here, since the failure is silent: the item simply stops being offered.</summary>
         public static bool Fits(ItemAsset a, string slot, int gunCaliber) => Fits(a, slot, gunCaliber, null);
 
         /// <summary>As above, with the gun's real CARTRIDGE (GunDef.CaliberName) so an attachment can be

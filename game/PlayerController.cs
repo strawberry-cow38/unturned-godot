@@ -6623,7 +6623,12 @@ namespace UnturnedGodot
         public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, SDG.Unturned.Item item, byte page, byte idx)> SpareMags()
         {
             if (!UsesMagItem) return new();
-            var all = AttachmentFit.InBagInstances(Inventory, "Magazine", Gun.Caliber);
+            // The cartridge is passed even though NO magazine is cartridge-restricted today: omitting it means
+            // "the cartridge is unknown", and Fits reads that as a REFUSAL for anything restricted. Harmless
+            // here only because CaliberNames currently lists one barrel and no magazines -- which is a fact
+            // about the table, not about this call, and the day a magazine joins it this line would start
+            // silently returning nothing.
+            var all = AttachmentFit.InBagInstances(Inventory, "Magazine", Gun.Caliber, Gun.CaliberName);
             // exclude mags that FIT the gun (same caliber GROUP) but hold the WRONG round -- a .300 BLK mag for a 5.56
             // gun, or vice versa (master). magRound distinguishes them within a shared STANAG group.
             string round = Gun.CaliberName;

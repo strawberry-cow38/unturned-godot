@@ -90,8 +90,12 @@ namespace UnturnedGodot.Testing
             T.Check("N again switches it off", !p.TacticalLightOn && (p.DebugTacticalLight == null || !p.DebugTacticalLight.Visible));
 
             // ---- 2. THE LASER RAYCASTS -------------------------------------------------------------------------
-            // A wall placed ON the camera's own forward axis, at a distance nothing else in the scene shares, so
-            // "the dot is 6 m away" can only have come from hitting THIS.
+            // ⚠ SETTLE FIRST. The rig player spawns at y=1 above a ground plane and FALLS, so an eye captured
+            // before the drop is metres from the eye that will do the aiming. The first cut of this placed the
+            // wall off the pre-fall eye and then measured against a remembered scalar; the dot landed at 6.29
+            // against a wall "at 6" and it read as the feature being wrong. It was the camera that moved.
+            yield return Until(() => p.IsOnFloor(), 5);
+            yield return Ticks(5);
             Vector3 eye = p.Camera.GlobalPosition;
             Vector3 aim = -p.Camera.GlobalTransform.Basis.Z;
             const float WallDist = 6f;
@@ -116,12 +120,15 @@ namespace UnturnedGodot.Testing
                 eye = p.Camera.GlobalPosition; aim = -p.Camera.GlobalTransform.Basis.Z;
                 float along = (las.DotWorld - eye).Dot(aim);
                 float lateral = (las.DotWorld - eye - aim * along).Length();
-                // ⭐ THE CLAIM. The dot sits on the WALL's face, roughly WallDist out (less the 0.2 m half-slab
-                // and retail's 5 cm surface lift), and dead on the aim axis. A beam of fixed length, or one that
-                // never raycast at all, lands somewhere else on both counts.
-                T.Check($"the dot landed ON the wall, not at a fixed range ({along:0.00} m out, wall at {WallDist})",
-                        along > WallDist - 1f && along < WallDist);
+                // ⭐ THE CLAIM, asserted against the WALL rather than against a number remembered from before it
+                // was placed: the dot lies on the slab's own near face. Distance from that plane is the honest
+                // measure of "it landed on the wall" and it cannot drift when the player or the camera moves.
+                float halfThick = 0.2f;   // the 0.4 m slab, and LookAt put that thickness along the aim
+                float faceDist = (las.DotWorld - wall.GlobalPosition).Length();
+                T.Check($"the dot lies ON the wall's surface ({faceDist:0.00} m from its centre, half-thickness {halfThick})",
+                        faceDist > halfThick - 0.1f && faceDist < halfThick + 0.15f);
                 T.Check($"...and dead on the aim axis ({lateral:0.000} m off)", lateral < 0.05f);
+                T.Check($"...in front of the player, not behind ({along:0.00} m out)", along > 1f);
                 T.Check($"the beam spans gun -> dot ({las.BeamLength:0.00} m vs {(las.DotWorld - las.BeamFrom).Length():0.00})",
                         Mathf.IsEqualApprox(las.BeamLength, (las.DotWorld - las.BeamFrom).Length(), 0.02f));
                 // The beam starts at the GUN and the ray at the EYE -- deliberately different points (the same
@@ -130,6 +137,18 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and starts at the gun, not at the eye ({(las.BeamFrom - eye).Length():0.000} m apart)",
                         (las.BeamFrom - eye).Length() > 0.05f);
             }
+
+            // ⭐⭐ AND THE REAL TEETH: MOVE THE WALL AND THE DOT MOVES WITH IT. Every check above is satisfied by
+            // a beam of the right fixed length that never raycasts at all -- it would land on the wall's face
+            // for exactly as long as the wall stays where it was put. Pulling the wall in by 2 m is the one
+            // thing a fixed-length beam cannot follow, and it needs no absolute distance to be true.
+            float before = las != null ? (las.DotWorld - eye).Dot(aim) : -1f;
+            wall.GlobalPosition = eye + aim * (WallDist - 2f);
+            wall.LookAt(eye, Vector3.Up);
+            yield return Ticks(3);
+            float after = p.DebugLaser != null ? (p.DebugLaser.DotWorld - eye).Dot(aim) : -1f;
+            T.Check($"pulling the wall 2 m closer pulls the dot with it ({before:0.00} -> {after:0.00} m)",
+                    before > 0f && after > 0f && before - after > 1.5f && before - after < 2.5f);
 
             // ---- 3. PUTTING THE GUN AWAY KILLS IT --------------------------------------------------------------
             // TacticalOn is `switch AND attachment`, the same shape as HeadlampOn, so this needs no clear call at

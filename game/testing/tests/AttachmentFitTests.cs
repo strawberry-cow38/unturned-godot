@@ -162,10 +162,24 @@ namespace UnturnedGodot.Testing
             bag.tryAddItem(new Item(6, 12));
             bag.tryAddItem(new Item(13));   // canned beans -- must never appear
 
-            var forSight = AttachmentFit.InBag(inv, "Sight", 1);
-            var forBarrel = AttachmentFit.InBag(inv, "Barrel", 1);
-            var forMag = AttachmentFit.InBag(inv, "Magazine", 1);
-            var forGrip = AttachmentFit.InBag(inv, "Grip", 1);
+            // ⚠ ASK THE WAY THE MENU ASKS -- caliber AND cartridge. These four passed the group alone, which
+            // Fits reads as "the cartridge is unknown" and therefore refuses every restricted attachment: the
+            // 5.56 Silencer vanished from its own slot and this read as a regression in the restriction rather
+            // than as a stale call. AttachmentMenu has always passed both (AttachmentMenu.cs:103), and this file
+            // passes both in every other check in it -- these four were simply written before the cartridge
+            // axis existed and never revisited.
+            var forSight = AttachmentFit.InBag(inv, "Sight", gun.Caliber, gun.CaliberName);
+            var forBarrel = AttachmentFit.InBag(inv, "Barrel", gun.Caliber, gun.CaliberName);
+            var forMag = AttachmentFit.InBag(inv, "Magazine", gun.Caliber, gun.CaliberName);
+            var forGrip = AttachmentFit.InBag(inv, "Grip", gun.Caliber, gun.CaliberName);
+
+            // ...and the CONTROL for that rule, so "pass the cartridge" cannot quietly become "the cartridge is
+            // ignored": the same bag, asked with the cartridge UNKNOWN, must still refuse the restricted barrel
+            // while the universal sight is unaffected.
+            T.Check($"an unknown cartridge refuses the restricted barrel ({AttachmentFit.InBag(inv, "Barrel", gun.Caliber).Count})",
+                    AttachmentFit.InBag(inv, "Barrel", gun.Caliber).Count == 0);
+            T.Check($"...and does not touch an unrestricted slot ({AttachmentFit.InBag(inv, "Sight", gun.Caliber).Count})",
+                    AttachmentFit.InBag(inv, "Sight", gun.Caliber).Count == 1);
 
             T.Check($"the Sight slot offers exactly the one sight carried ({forSight.Count})", forSight.Count == 1 && forSight[0].Asset.id == 5);
             T.Check($"the Barrel slot offers the suppressor ({forBarrel.Count})", forBarrel.Count == 1 && forBarrel[0].Asset.id == 7);
