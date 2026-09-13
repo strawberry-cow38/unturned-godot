@@ -8465,6 +8465,11 @@ namespace UnturnedGodot
             }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = PelletsPerShot;   // shotgun buckshot: the LOADED AMMO decides, loose shell or magazine alike
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
+            // A SILENCED SHOT LEAVES SLOWER (strawberry 2026-09-13) -- the cost that pays for being unheard: more
+            // drop and more lead at range. See AttachmentFit.SilencedVelocityMultiplier; it is a design choice,
+            // not a ported number, and it is applied HERE so it rides the real ballistic sim rather than being
+            // faked into the damage.
+            if (Suppressed) muzzleVel *= AttachmentFit.SilencedVelocityMultiplier;
             int steps = Gun?.BallisticSteps ?? 20;
             float gravity = -9.81f * (Gun?.GravityMultiplier ?? 4f);
             for (int i = 0; i < pellets; i++)
@@ -10119,6 +10124,10 @@ namespace UnturnedGodot
         void ApplyInstalledAttachments(SDG.Unturned.Item gun)
         {
             if (gun == null || _viewmodel == null) return;
+            // The barrel's SHOT AUDIO + silenced flag, from the same installed id the meshes come from. Done here
+            // rather than at the menu click so a gun re-equipped with a suppressor already on it sounds right on
+            // the first shot -- the same reason this method exists for the meshes.
+            _viewmodel.SetBarrelAudio(AttachmentFit.InstalledId(gun, "Barrel"));
             foreach (var slot in AttachmentFit.Slots)
             {
                 int id = AttachmentFit.InstalledId(gun, slot);
@@ -10184,7 +10193,28 @@ namespace UnturnedGodot
         public int DebugTracerCount { get { int n = 0; foreach (var b in _bullets) if (b.Tracer != null) n++; return n; } }
         public int DebugBulletCount => _bullets.Count;
 
-        public bool Suppressed => (_viewmodel?.IsSuppressed ?? false) || (Gun?.IntegrallySuppressed ?? false);
+        /// <summary>Is the shot actually SILENCED -- the one question the tracer, the muzzle flash, the zombie
+        /// alert and the muzzle velocity all key off.
+        ///
+        /// ⚠ "A BARREL IS ATTACHED" IS NOT THE SAME QUESTION, which is what this used to ask. Military Barrel and
+        /// Ranger Barrel are accuracy parts and the two Muzzles are BRAKES -- all four are Barrel-slot attachments
+        /// that leave a gun exactly as loud, and fitting one would have made you tracerless, flashless and
+        /// inaudible to zombies. The retail .dat answers it with a bare `Silenced` key, so the INSTALLED ITEM is
+        /// asked whenever there is one.
+        ///
+        /// The viewmodel's slot state is still consulted as a fallback, for the legacy path where the T menu
+        /// toggled the Barrel slot by MASK with no installed id recorded -- there, the only thing that mask could
+        /// ever have meant was the suppressor.</summary>
+        public bool Suppressed
+        {
+            get
+            {
+                if (Gun?.IntegrallySuppressed ?? false) return true;
+                int barrelId = AttachmentFit.InstalledId(_heldItem, "Barrel");
+                if (barrelId > 0) return AttachmentFit.IsSilencer(barrelId);
+                return _viewmodel?.IsSuppressed ?? false;
+            }
+        }
         bool _aimForced;   // ADS driven by the debug/render hook rather than by RMB -- exempt from the menu-drops-the-sights rule
         public void ForceAim(bool on) { _aimForced = on; _viewmodel?.SetAiming(on); }   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
 

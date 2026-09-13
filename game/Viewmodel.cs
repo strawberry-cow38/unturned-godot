@@ -171,6 +171,14 @@ namespace UnturnedGodot
         float _flashRoll;           // ACCUMULATED flash roll -- each shot rolls it L/R by an amount, remembering the last (master)
         AudioStreamPlayer _shootSnd, _reloadSnd, _hammerSnd, _drySnd;   // real per-gun Shoot / Reload / Hammer(rack) sounds; dry-fire = its own click (none shipped yet)
         AudioStream _shootStream; AudioStreamPlaybackPolyphonic _shootPoly;   // shoot = overlapping polyphonic voices so full-auto shots ring out fully (no restart-cut)
+        AudioStream _gunShootStream;   // the GUN's OWN clip, kept so taking the barrel off restores it
+        float _shootVolDb;             // the installed barrel's Volume, in dB (0 = the gun's own loudness)
+
+        /// <summary>Does the installed barrel SILENCE the shot? Not "is a barrel attached" -- a Military Barrel and
+        /// a muzzle brake are Barrel-slot attachments that make a gun no quieter at all, and the retail .dat says
+        /// which is which with a bare `Silenced` key. Drives the muzzle flash here and the tracer/zombie-alert
+        /// gating in PlayerController.</summary>
+        public bool BarrelSilenced { get; private set; }
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
@@ -938,7 +946,7 @@ namespace UnturnedGodot
                     // Full-auto: each shot must ring out FULLY, not restart-cut the previous (master). A lone
                     // AudioStreamPlayer restarts on Play(); an AudioStreamPolyphonic mixes each shot as its OWN
                     // voice so they overlap like real gunfire. Play() arms it once; PlayShoot() adds a voice per shot. Polyphony 32 = headroom past the worst full-auto (zubeknakov ~18 voices = 1.78s x 600rpm); 16 exhausted + PlayStream silently dropped the shot -> cut out on sustained fire (master).
-                    _shootStream = LoadOgg($"res://content/{gv.Shoot}");
+                    _shootStream = _gunShootStream = LoadOgg($"res://content/{gv.Shoot}");
                     _shootSnd = new AudioStreamPlayer { Stream = new AudioStreamPolyphonic { Polyphony = 32 }, VolumeDb = -3f };
                     mi.AddChild(_shootSnd);
                     _shootSnd.Play();
@@ -1088,13 +1096,37 @@ namespace UnturnedGodot
         /// SLOWS the drift rather than shrinking it -- the sight still wanders, just lazily.</summary>
         public float SteadyAccuracy;
 
+        /// <summary>Install the barrel's SHOT AUDIO, exactly as retail UseableGun.playGunshot does it:
+        ///
+        ///     AudioClip clip = equippedGunAsset.shoot;
+        ///     if (barrelAsset != null &amp;&amp; state[16] > 0) {
+        ///         if (barrelAsset.shoot != null) clip = barrelAsset.shoot;   // the BARREL's own clip wins
+        ///         volume *= barrelAsset.volume;
+        ///         maxDistance *= barrelAsset.gunshotRolloffDistanceMultiplier;   // silenced => 0.5
+        ///     }
+        ///
+        /// A suppressor is not a filter applied to the gunshot -- it is a DIFFERENT RECORDING, shipped in the
+        /// barrel's own bundle, which is why turning the gun's own clip down would never have sounded right.
+        /// Every silenced barrel in the game ships one and no unsilenced barrel does, so the presence of a clip
+        /// and the `Silenced` key agree; both are read rather than one inferred from the other.
+        ///
+        /// id 0 / an unknown barrel = back to the gun's own clip at its own loudness.</summary>
+        public void SetBarrelAudio(int barrelItemId)
+        {
+            var def = AttachmentFit.BarrelFor(barrelItemId);
+            BarrelSilenced = def.Silenced;
+            _shootVolDb = Mathf.IsEqualApprox(def.Volume, 1f) ? 0f : Mathf.LinearToDb(Mathf.Max(def.Volume, 0.0001f));
+            var clip = string.IsNullOrEmpty(def.ShootClip) ? null : LoadOgg($"res://content/{def.ShootClip}");
+            _shootStream = clip ?? _gunShootStream;
+        }
+
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
         void PlayShoot()   // one OVERLAPPING polyphonic voice per shot so full-auto shots don't restart-cut each other (master)
         {
             if (_shootStream == null) return;
             _shootPoly ??= _shootSnd?.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;   // (re)fetch lazily in case Play() armed it a frame late
-            _shootPoly?.PlayStream(_shootStream);
+            _shootPoly?.PlayStream(_shootStream, 0f, _shootVolDb);   // the barrel's Volume rides here, not on the player (which every other voice shares)
         }
 
         public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
@@ -1796,7 +1828,10 @@ namespace UnturnedGodot
             _equipElapsed += (float)delta;
             _flash = Mathf.Max(0f, _flash - (float)delta);
             if (System.Environment.GetEnvironmentVariable("UG_FLASHHOLD") == "1") _flash = 0.05f;   // render-harness: hold the flash so a single-frame --shot captures its bloom
-            if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f;
+            // NO FLASH ON A SILENCED SHOT (strawberry 2026-09-13). The flash is a light AND a billboard, so leaving
+            // it on would keep lighting the room from a gun that is meant to be hiding you -- the tell that matters
+            // most at night, and the one the tracer/zombie-alert gating already removes on the other axes.
+            if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f && !BarrelSilenced;
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);

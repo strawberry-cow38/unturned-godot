@@ -301,6 +301,59 @@ namespace UnturnedGodot
                 ? ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath($"res://content/{rel}"))
                 : null;
 
+        /// <summary>What a BARREL does to the shot, read off the retail
+        /// Bundles/Items/Barrels/&lt;Name&gt;/&lt;Name&gt;.dat: its own Shoot clip, its Volume multiplier, and the bare
+        /// `Silenced` key.
+        ///
+        /// ⚠ "A BARREL IS ATTACHED" IS NOT "THE GUN IS SILENCED", and the port assumed it was -- IsSuppressed read
+        /// `SlotAttached("Barrel")` under the comment "the only Barrel attachment is the silenced suppressor".
+        /// That was true of the content then and is not true of the game: Military Barrel (149) and Ranger Barrel
+        /// (1191) are accuracy parts, and the two Muzzles (150, 1190) are BRAKES. Fitting a muzzle brake would
+        /// have made you inaudible to zombies, tracerless and flashless.
+        ///
+        /// The ten that silence each ship their own Shoot.ogg and the four that do not ship none, so the clip and
+        /// the flag agree -- both are recorded here rather than deriving one from the other, because they answer
+        /// different questions and a future barrel could easily break the coincidence.</summary>
+        public readonly struct BarrelDef
+        {
+            public readonly string ShootClip; public readonly float Volume; public readonly bool Silenced;
+            public BarrelDef(string clip, float volume, bool silenced) { ShootClip = clip; Volume = volume; Silenced = silenced; }
+        }
+
+        static readonly System.Collections.Generic.Dictionary<ushort, BarrelDef> Barrels = new()
+        {
+            { 7,    new BarrelDef("military_suppressor_shoot.ogg",  0.30f, true) },   // 5.56 Silencer
+            { 144,  new BarrelDef("ranger_suppressor_shoot.ogg",    0.30f, true) },
+            { 477,  new BarrelDef("makeshift_muffler_shoot.ogg",    0.80f, true) },
+            { 1444, new BarrelDef("bluntforce_muffler_shoot.ogg",   0.80f, true) },
+            { 117,  new BarrelDef("honeybadger_barrel_shoot.ogg",   0.90f, true) },   // integrally suppressed gun's own barrel
+            { 1002, new BarrelDef("matamorez_barrel_shoot.ogg",     0.80f, true) },
+            { 1167, new BarrelDef("nailgun_barrel_shoot.ogg",       0.50f, true) },
+            { 1338, new BarrelDef("paintballgun_barrel_shoot.ogg",  0.90f, true) },
+            { 350,  new BarrelDef("crossbow_barrel_shoot.ogg",      0.60f, true) },
+            { 354,  new BarrelDef("bow_barrel_shoot.ogg",           0.60f, true) },
+            { 149,  new BarrelDef(null, 1f, false) },   // Military Barrel -- accuracy
+            { 150,  new BarrelDef(null, 1f, false) },   // Military Muzzle -- BRAKED, not silenced
+            { 1191, new BarrelDef(null, 1f, false) },   // Ranger Barrel
+            { 1190, new BarrelDef(null, 1f, false) },   // Ranger Muzzle -- braked
+        };
+
+        /// <summary>The barrel's shot profile; an unknown or absent barrel reads as "the gun's own, unsilenced".</summary>
+        public static BarrelDef BarrelFor(int id)
+            => id > 0 && Barrels.TryGetValue((ushort)id, out var b) ? b : new BarrelDef(null, 1f, false);
+
+        /// <summary>Does this barrel actually silence? The ONE place that question is answered.</summary>
+        public static bool IsSilencer(int id) => BarrelFor(id).Silenced;
+
+        /// <summary>Muzzle-velocity multiplier on a silenced shot (strawberry 2026-09-13: "lower velocity").
+        ///
+        /// ⚠ NOT A PORT FIDELITY VALUE -- a deliberate deviation, flagged as one. Retail's barrels change damage
+        /// (ballisticDamageMultiplier) and bullet GRAVITY (BallisticGravityMultiplier); nothing in ItemBarrelAsset
+        /// or ItemCaliberAsset touches velocity, so there is no number to be faithful to. It is realistic --
+        /// a suppressed weapon runs subsonic ammunition -- and it gives the silencer a cost to match its benefit:
+        /// more drop and more lead at range in exchange for being unheard. One constant, easy to retune.</summary>
+        public const float SilencedVelocityMultiplier = 0.80f;
+
         public static string MeshFor(ushort id)
         {
             if (Meshes.TryGetValue(id, out var m)) return m;

@@ -114,6 +114,43 @@ namespace UnturnedGodot.Testing
             T.Check("...and mounts nothing there when none is", 
                 !AttachmentFit.PartsFor("eaglefire", 0, 0, 0, 0).Exists(p2 => p2.Slot == "Tactical"));
 
+            // ---- SILENCING (strawberry 2026-09-13: "make the silencer actually suppress the sound of shooting").
+            //
+            // ⚠ THE MUZZLE BRAKE IS THE CONTROL, and it is the whole point. IsSuppressed used to read
+            // `SlotAttached("Barrel")` under the comment "the only Barrel attachment is the silenced suppressor",
+            // so ANY barrel part silenced the gun -- and Military Muzzle is a BRAKE, which makes a rifle louder if
+            // anything. A test that only checked "the suppressor silences" would have passed on that code.
+            T.Check("the 5.56 Silencer silences", AttachmentFit.IsSilencer(7));
+            T.Check("the Makeshift Muffler does too", AttachmentFit.IsSilencer(477));
+            T.Check("...but a Military BARREL does NOT (accuracy part)", !AttachmentFit.IsSilencer(149));
+            T.Check("...nor a Military MUZZLE (a brake)", !AttachmentFit.IsSilencer(150));
+            T.Check("...nor a Ranger Barrel/Muzzle", !AttachmentFit.IsSilencer(1191) && !AttachmentFit.IsSilencer(1190));
+            T.Check("...and no barrel at all is not silenced", !AttachmentFit.IsSilencer(0));
+
+            // The retail Volume per barrel -- the suppressor is the quietest thing in the game at 0.30.
+            T.Check($"the 5.56 Silencer carries its real Volume ({AttachmentFit.BarrelFor(7).Volume:0.00})",
+                Mathf.Abs(AttachmentFit.BarrelFor(7).Volume - 0.30f) < 0.001f);
+            T.Check($"...and the Makeshift Muffler is louder ({AttachmentFit.BarrelFor(477).Volume:0.00})",
+                AttachmentFit.BarrelFor(477).Volume > AttachmentFit.BarrelFor(7).Volume);
+
+            // ⚠ A SILENCED SHOT IS A DIFFERENT RECORDING, not the gun's clip turned down -- so every silencing
+            // barrel must NAME a clip and that clip must EXIST on disk. A missing file is silent, and "silent"
+            // is indistinguishable from "working" for a suppressor, which is the worst possible failure here.
+            foreach (var id in new[] { 7, 144, 477, 1444, 117, 1002, 1167, 1338, 350, 354 })
+            {
+                var d = AttachmentFit.BarrelFor(id);
+                T.Check($"barrel {id} names a shot clip ({d.ShootClip ?? "null"})", !string.IsNullOrEmpty(d.ShootClip));
+                T.Check($"...and {d.ShootClip} is on disk",
+                    d.ShootClip != null && System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{d.ShootClip}")));
+            }
+            // ...and the four that do NOT silence must name none, or they would swap the gun's own shot sound for
+            // nothing at all.
+            foreach (var id in new[] { 149, 150, 1191, 1190 })
+                T.Check($"barrel {id} names no clip (keeps the gun's own shot)", string.IsNullOrEmpty(AttachmentFit.BarrelFor(id).ShootClip));
+
+            T.Check($"a silenced shot leaves slower ({AttachmentFit.SilencedVelocityMultiplier:0.00}x)",
+                AttachmentFit.SilencedVelocityMultiplier > 0f && AttachmentFit.SilencedVelocityMultiplier < 1f);
+
             // ---- The bag scan: what the menu actually shows.
             var inv = new PlayerInventory();
             inv.wearBackpack(new Item(253));
