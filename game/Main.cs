@@ -260,7 +260,7 @@ namespace UnturnedGodot
             bool rainMatTest = false;
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -396,6 +396,7 @@ namespace UnturnedGodot
                 else if (arg == "--bakelods-dry") { bakeLods = true; bakeLodsDry = true; }
                 else if (arg == "--treesweep") treeSweep = true;   // step the camera ACROSS the tree->imposter handover and count tree pixels at each distance
                 else if (arg == "--imptest") impTest = true;   // bake the tree billboards and DUMP them side by side -- the only check that answers "does it look like a tree"
+                else if (arg == "--cctvtest") cctvTest = true;   // a powered CCTV wired to a powered TV -> the screen shows what the camera sees
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
                 else if (arg == "--beamtest") beamTest = true;   // the lighthouse's sweeping beam at night (static frame)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
@@ -798,6 +799,14 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _ = BuildImpostorTest(shot);   // _shotPath is armed INSIDE, after the bake -- see the note there
+                return;
+            }
+
+            if (cctvTest)   // camera + TV + generator + wires: prove a feed actually reaches a screen
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildCctvTest();
                 return;
             }
 
@@ -8108,6 +8117,131 @@ namespace UnturnedGodot
             // the shot fired after three of six and the other three looked like failed bakes -- no error, no
             // billboards, nothing to distinguish "broken" from "not finished yet".
             _shotPath = shot;
+        }
+
+        /// <summary>--cctvtest: a powered CCTV wired to a powered TV, aimed at something unmistakable, with the
+        /// main camera framed on the SCREEN. The whole point is that the picture on the TV is a picture OF THE
+        /// SCENE -- so the camera looks at a row of primary-coloured blocks that appear nowhere near the TV,
+        /// and any feed that is really working shows them.
+        ///
+        /// UG_CCTVCUT=1 cuts the data wire instead, so the same frame can be taken with the aerial dark. That is
+        /// the control: without it a screen showing SOMETHING proves nothing, because a test card is also
+        /// something.</summary>
+        void BuildCctvTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.10f, 0.12f, 0.16f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.68f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.4f });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.30f, 0.26f) };
+            ground.AddChild(gm);
+            AddChild(ground);
+
+            // WHAT THE CAMERA LOOKS AT: three primary blocks, well away from the TV, so a working feed is
+            // unmistakable and a test card cannot be mistaken for one.
+            var subject = new Vector3(0f, 1.0f, -9f);
+            var cols = new[] { new Color(0.92f, 0.18f, 0.18f), new Color(0.20f, 0.85f, 0.30f), new Color(0.25f, 0.45f, 0.95f) };
+            for (int i = 0; i < 3; i++)
+            {
+                var b = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.1f, 2.0f, 1.1f) } };
+                b.MaterialOverride = new StandardMaterial3D { AlbedoColor = cols[i] };
+                b.Position = subject + new Vector3((i - 1) * 1.6f, 0f, 0f);
+                AddChild(b);
+            }
+
+            // THE CAMERA: the housing half of the split prop, aimed at the blocks.
+            var camMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Camera_0.obj"));
+            var (camBody, camArm) = ObjMesh.SplitCameraArm(camMesh);
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.70f, 0.70f, 0.70f), CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var housing = new MeshInstance3D { Name = "CameraBody", Mesh = camBody ?? camMesh, MaterialOverride = mat };
+            AddChild(housing);
+            housing.GlobalPosition = new Vector3(0f, 3.0f, -2.5f);
+            housing.LookAt(subject, Vector3.Up);   // a Godot camera looks down -Z, and SecurityCamera copies this transform
+            if (camArm != null)
+            {
+                var armMi = new MeshInstance3D { Name = "CameraArm", Mesh = camArm, MaterialOverride = mat };
+                AddChild(armMi);
+                armMi.GlobalTransform = housing.GlobalTransform;
+            }
+            var cctv = SecurityCamera.Make(housing, (camBody ?? camMesh).GetAabb());
+            AddChild(cctv);
+
+            // THE SCREEN: a real TV prop, facing the main camera.
+            var tvMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Television_0.obj"));
+            MeshInstance3D tvBody = null; TVDevice tv = null;
+            if (tvMesh != null)
+            {
+                tvBody = new MeshInstance3D { Name = "TVBody", Mesh = tvMesh,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.58f), CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                AddChild(tvBody);
+                // ⚠ STAND IT UP. Television_0's own AABB is 3.75 x 0.23 x 2 -- it is authored FLAT, lying on its
+                // back, like every other prop the world builder stands up at placement time. Left as authored,
+                // the "screen" faces the sky and the framing camera lands inside the cabinet, which is exactly
+                // what the first render showed. Measured from the mesh rather than assumed: the thin axis is Y.
+                tvBody.RotationDegrees = new Vector3(-90f, 180f, 0f);   // ...and turned to FACE the framing camera; -90 alone stood it up with its back to us
+                tvBody.GlobalPosition = new Vector3(0f, 1.0f, 3.0f);
+                tv = TVDevice.Make(tvBody, "Television_0");
+                if (tv != null) AddChild(tv);
+            }
+            if (tv == null) { Log.Err("[cctvtest] no TV prop -- cannot show a feed"); }
+
+            // POWER + WIRES. One generator feeds both; the camera's data out feeds the TV's aerial.
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(5f, 0f, 0f), 0f);
+            var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+            void Link(ConnectionPort a, ConnectionPort b)
+            {
+                if (a == null || b == null) { Log.Err("[cctvtest] a wire end is missing"); return; }
+                var w = new Wire(); AddChild(w); w.Source = a; w.Consumer = b; w.AddToGroup("wires");
+                w.SetPoints(new System.Collections.Generic.List<Vector3> { a.GlobalPosition, b.GlobalPosition }, valid: true);
+            }
+            var camPlug = cctv?.PowerPorts.Count > 0 ? cctv.PowerPorts[0] : null;
+            Link(genOut, camPlug);
+            Link(genOut, tv?.PowerPorts.Count > 0 ? tv.PowerPorts[0] : null);
+            if (System.Environment.GetEnvironmentVariable("UG_CCTVCUT") != "1")
+                Link(cctv?.DataOut, tv?.DataInPort);   // the aerial -- omitted for the control shot
+            gen.TogglePower();
+            PowerNet.Recompute(GetTree());
+
+            // The main camera frames the SCREEN, because the screen is the claim -- and it frames it off the
+            // prop's REAL bounds rather than numbers I guessed. The first cut of this put the eye at a
+            // hand-picked (0,1.6,5.6) and landed INSIDE the cabinet: Television_0 is not the size I assumed,
+            // and a harness that has the mesh in hand has no business guessing at its scale.
+            var cam = new Camera3D { Fov = 45f, Current = true };
+            AddChild(cam);
+            if (tvBody != null)
+            {
+                var tab = tvBody.GetAabb();
+                Vector3 centre = tvBody.GlobalTransform * tab.GetCenter();   // through the basis: the prop is rotated
+                float span = Mathf.Max(tab.Size.X, Mathf.Max(tab.Size.Y, tab.Size.Z));
+                cam.GlobalPosition = centre + new Vector3(0f, span * 0.25f, span * 2.2f);   // back off by the prop's own size
+                cam.LookAt(centre, Vector3.Up);
+                Log.Print($"[cctvtest] tv aabb size={tab.Size} centre={centre} eye={cam.GlobalPosition}");
+            }
+            else { cam.GlobalPosition = new Vector3(0f, 1.6f, 5.6f); cam.LookAt(Vector3.Up, Vector3.Up); }
+            Log.Print($"[cctvtest] camera={(cctv != null)} tv={(tv != null)} gen={gen != null} cut={System.Environment.GetEnvironmentVariable("UG_CCTVCUT")}");
+            // Walk the whole chain out loud a moment after everything has settled. Every link can fail silently
+            // -- an unpowered camera, a port nothing wired, a viewport that has not rendered yet -- and each one
+            // looks identical from the outside: a TV showing its own test card.
+            GetTree().CreateTimer(2.4).Timeout += () =>
+            {
+                if (!IsInstanceValid(cctv) || tv == null || !IsInstanceValid(tv)) { Log.Print("[cctvdbg] a node went away"); return; }
+                var src = tv.FeedSource();
+                Log.Print($"[cctvdbg] camPlug.Powered={(camPlug != null && camPlug.Powered)} "
+                        + $"dataOut.Live={cctv.DataOut?.DataLive} dataOut.Occupied={cctv.DataOut?.Occupied} "
+                        + $"filming={cctv.Filming} tex={(cctv.FeedTexture != null)} "
+                        + $"| tv.HasFeed={tv.HasFeed} tv.dataIn.Live={tv.DataInPort?.DataLive} "
+                        + $"tv.HasVideoFeed={tv.HasVideoFeed} feedSource={(src != null)}");
+            };
         }
 
         void BuildLampTest()

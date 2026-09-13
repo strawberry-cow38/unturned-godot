@@ -901,6 +901,9 @@ namespace UnturnedGodot
         /// <summary>Is a live stream arriving? POWER AND SIGNAL BOTH -- a fed set that is unplugged shows
         /// nothing, and a powered set with a dark aerial shows its own programming, which is what makes the
         /// data port worth having rather than just a second switch.</summary>
+        /// <summary>The aerial socket, for a harness or a test that wires one by hand.</summary>
+        public ConnectionPort DataInPort => _dataIn;
+
         public bool HasVideoFeed => HasFeed && _dataIn != null && IsInstanceValid(_dataIn) && _dataIn.DataLive;
 
         /// <summary>The camera on the other end of the aerial wire, or null. Resolved through the wire rather
@@ -1617,7 +1620,6 @@ namespace UnturnedGodot
         {
             if (_light != null) _light.LightColor = Spill;
             ApplyLevels();
-            SyncVideoFeed();
         }
 
         ScreenProgram _preFeedProgram;   // what was showing before an aerial went live, so cutting the wire returns to it
@@ -1637,6 +1639,8 @@ namespace UnturnedGodot
         void SyncVideoFeed()
         {
             bool feed = HasVideoFeed;
+            if (System.Environment.GetEnvironmentVariable("UG_CCTVDBG") == "1" && feed != _onFeed)
+                Log.Print($"[tvfeed] flip -> {feed}, mat={_screenMat != null}, src={(FeedSource() != null)}");
             if (feed == _onFeed) return;
             _onFeed = feed;
             if (feed)
@@ -1693,6 +1697,7 @@ namespace UnturnedGodot
 
         public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
+            SyncVideoFeed();   // a wired camera going live/dark swaps the programme (see SyncVideoFeed)
             // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains
             // arriving as a push -- DayNightCycle sweeps the "tvdevices" group on a grid change. That works for the
             // scheduled blackout and for nothing else: `toggleGlobalPower` from the console, or any other caller of

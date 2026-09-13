@@ -32,7 +32,7 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
-            var src = ObjMesh.Load("res://content/objects/Camera_0.obj");
+            var src = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Camera_0.obj"));
             T.Check("Camera_0 loads", src != null && Tris(src) > 0);
             if (src == null) yield break;
             int total = Tris(src);

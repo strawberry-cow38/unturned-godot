@@ -113,6 +113,19 @@ namespace UnturnedGodot
             };
             AddChild(_vp);
             _cam = new Camera3D { Fov = FeedFov, Far = FeedFar, Current = true };
+            // ⚠ LINEAR TONEMAP ON THE FEED CAMERA, or the picture is TONEMAPPED TWICE and the screen washes out.
+            // The feed is rendered, encoded into a texture, and then that texture is sampled by the screen
+            // material and tonemapped AGAIN by the main pass -- ACES applied on top of ACES, which lifts the
+            // midtones until a grey-green field reads as near-white. (Seen exactly that in the first render: the
+            // ground was pale and the coloured blocks had washed out of it.) The scope PiP already carries this
+            // scar, with its own note about a LINEAR env so the lens is not double-tonemapped.
+            //
+            // The world's environment is DUPLICATED rather than replaced, so the feed keeps the map's own sky,
+            // fog and ambient and differs from the naked-eye view in exactly one property.
+            var worldEnv = DayNightCycle.Current?.Env;
+            var fenv = worldEnv != null ? (Godot.Environment)worldEnv.Duplicate() : new Godot.Environment();
+            fenv.TonemapMode = Godot.Environment.ToneMapper.Linear;
+            _cam.Environment = fenv;
             _vp.AddChild(_cam);
             // The lens looks along the housing's own forward. Godot cameras look down -Z, and the housing's
             // transform is the prop placement, so this is simply "where the model faces".
