@@ -1088,6 +1088,7 @@ namespace UnturnedGodot
                         root.AddChild(cameraArm);
                     }
                 }
+                SecurityCamera placedCamera = null;   // built below, once mainMi (the housing) exists
 
                 _SEG(1);
                 var vaabb = visMesh.GetAabb();
@@ -1096,6 +1097,14 @@ namespace UnturnedGodot
                     CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 if (mainMi != null) { long _mi0 = System.Diagnostics.Stopwatch.GetTimestamp(); root.AddChild(mainMi); _objMiT += System.Diagnostics.Stopwatch.GetTimestamp() - _mi0; }
+                // A CCTV housing becomes a wired device: a power socket and a data output, and a feed while both
+                // are satisfied. Hung off the HOUSING, whose transform is where the lens is and which way it
+                // faces -- the arm is a bracket and points nowhere.
+                if (cameraArm != null && mainMi != null)
+                {
+                    placedCamera = SecurityCamera.Make(mainMi, visMesh.GetAabb());
+                    if (placedCamera != null) root.AddChild(placedCamera);
+                }
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
                 // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
                 // with distance instead of only vanishing at the end of one.

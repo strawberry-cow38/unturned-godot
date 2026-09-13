@@ -29,6 +29,10 @@ uniform float banner = 0.0;          // the flatscreen's "input" OSD, over the r
 uniform vec3 screen_black = vec3(0.0);   // the MESH's own screen colour -- what an unlit pixel shows, instead of 0
 uniform sampler2D blob_tex : source_color, filter_linear, repeat_disable;   // the studio logo, bounced like a DVD
 uniform sampler2D bg_tex : source_color, filter_linear, repeat_disable;     // a map preview, behind the instrument panel
+// A LIVE CAMERA FEED (program 8): the SubViewport a wired, powered CCTV renders into. Its own sampler rather
+// than borrowing bg_tex, because the two are live at the same time on a flatscreen and sharing one would make
+// the map preview and the camera fight over a slot.
+uniform sampler2D feed_tex : source_color, filter_linear, repeat_disable;
 uniform vec2 blob_half = vec2(0.12, 0.18);   // half-size in UV, aspect-corrected in C# so the logo stays SQUARE on a
                                              // 2:1 flatscreen instead of being stretched into a smear
 uniform vec2 blob_pos = vec2(0.5);   // the DVD blob's centre, in UV. Driven from C# so the SPILL LIGHT can be placed
@@ -256,6 +260,10 @@ void fragment() {
     else if (program == 5) c = prog_scroll(uv);
     else if (program == 6) c = prog_bars(uv);
     else if (program == 7) c = prog_static_mono(fc);
+    // 8 = CAMERA FEED. The picture is whatever the wired camera sees, put through the same tint/mono/roll path
+    // as every other program below -- so a feed on a mono tube is still monochrome, still rolls when the
+    // vertical hold slips, and still fades in with the warmup rather than snapping on.
+    else if (program == 8) c = texture(feed_tex, vec2(uv.x, 1.0 - uv.y)).rgb;
     else c = vec3(1.0);                      // 3 Colour: the flat colour rides `tint`
 
     // THE BLACK IS THE GLASS (strawberry: "change the black color for all screen types on all channels to not be
