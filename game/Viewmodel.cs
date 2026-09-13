@@ -1412,6 +1412,20 @@ namespace UnturnedGodot
         // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
         static readonly System.Collections.Generic.Dictionary<string, string> _attachMesh =
             new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" }, { "Tactical", "Tactical" } };
+        /// <summary>Emission energy for a lit rail attachment. Shaded material, so it reaches HDR and blooms --
+        /// the same reason StreetLight.LensEmission is 3 rather than 1.</summary>
+        public const float TacticalLensEmission = 3.0f;
+
+        /// <summary>The rail attachment's own emitter follows the switch (retail: lightHook.SetActive(interact)).
+        /// A float write on the mask bound at mount; a no-op on a gun with nothing on the rail, or with an
+        /// attachment whose albedo has no distinct bright cell.</summary>
+        public void SetTacticalLit(bool on)
+        {
+            if (!_attachMesh.TryGetValue("Tactical", out var n)) return;
+            if (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.MaterialOverride is StandardMaterial3D sm && sm.EmissionEnabled)
+                sm.EmissionEnergyMultiplier = on ? TacticalLensEmission : 0f;
+        }
+
         public bool SlotHasModel(string slot) => _attachMesh.TryGetValue(slot, out var n) && _gun?.GetNodeOrNull<MeshInstance3D>(n) != null;
         public bool SlotAttached(string slot) => _attachMesh.TryGetValue(slot, out var n) && (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.Visible ?? false);
         public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
@@ -1484,13 +1498,28 @@ namespace UnturnedGodot
                 // warm bulb). Bound white so the palette is not muted, NEAREST so a 32px cell stays a hard edge.
                 // Without this they mount correctly and render as two identical dark boxes.
                 var _tacTex = AttachmentFit.TexFor(TacticalIdFor(txtName));
-                m.MaterialOverride = new StandardMaterial3D
+                var _tacMat = new StandardMaterial3D
                 {
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     AlbedoColor = _tacTex != null ? Colors.White : new Color(0.06f, 0.06f, 0.065f),
                     AlbedoTexture = _tacTex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
                     Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
                 };
+                // THE EMITTER CELL LIGHTS UP WITH THE SWITCH -- retail's
+                // `firstAttachments.lightHook.gameObject.SetActive(interact)`. The port has no separate hook
+                // object because the emitter is not one: it is a CELL of the 32x32 palette (the laser's pure
+                // red, the light's warm bulb). So it is the same derived lens mask the torch, the goggles and
+                // the headlamp already use, bound at ZERO energy so SetTacticalLit is a float write rather than
+                // a material rebuild on every keypress.
+                if (AttachmentFit.TexPathFor(TacticalIdFor(txtName)) is string _tacRel
+                    && ClothingContent.EmissionMaskFrom(_tacRel, _tacRel) is Texture2D _tacLens)
+                {
+                    _tacMat.EmissionEnabled = true;
+                    _tacMat.EmissionTexture = _tacLens;
+                    _tacMat.Emission = Colors.White;
+                    _tacMat.EmissionEnergyMultiplier = 0f;
+                }
+                m.MaterialOverride = _tacMat;
             }
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {

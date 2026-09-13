@@ -280,6 +280,54 @@ namespace UnturnedGodot
                 body.MountGunAttachment(slot, mesh, pos, tint, tex);
         }
 
+        /// <summary>What a TACTICAL attachment DOES, as the retail .dat states it.
+        ///
+        /// ItemTacticalAsset.PopulateAsset parses four BARE PRESENCE KEYS -- `Laser`, `Light`, `Rangefinder`,
+        /// `Melee` -- plus `Laser_Color` (LegacyParseColor, default Color.red, clamped and forced opaque) and,
+        /// when Light is present, a PlayerSpotLightConfig built from the same SpotLight_* keys the handheld
+        /// torch reads. Presence, not a bool parse, which is why this is a table of flags and not of values.
+        ///
+        /// READ OFF THE FIVE SHIPPED .dats on this box (Bundles/Items/Tacticals/), and reading them settled the
+        /// two things a guess would have got wrong: Tactical_Laser.dat is `Laser` ALONE -- no Laser_Color -- so
+        /// the laser is retail-default RED rather than anything authored; and Tactical_Light.dat is `Light`
+        /// ALONE, no SpotLight_* overrides at all, which is the source's own statement that the rail light IS
+        /// the flashlight (strawberry 2026-09-13: "identical to the flashlight, just on N and attached to the
+        /// gun") rather than a lookalike with its own numbers.
+        ///
+        /// The other three are here as DATA with no behaviour, deliberately: the Rangefinder and the Bayonet are
+        /// different mechanics the port does not have, and Adaptive Chambering is a pure stat part. Listing them
+        /// as known-and-inert is what stops a future `IsLaser` fallback quietly making a rangefinder emit a
+        /// beam -- the table answers "not a laser" for them instead of not knowing.</summary>
+        public readonly struct TacticalDef
+        {
+            public readonly bool Laser, Light, Rangefinder, Melee;
+            public readonly Godot.Color LaserColor;
+            public TacticalDef(bool laser = false, bool light = false, bool rangefinder = false, bool melee = false,
+                               Godot.Color? laserColor = null)
+            { Laser = laser; Light = light; Rangefinder = rangefinder; Melee = melee; LaserColor = laserColor ?? Godot.Colors.Red; }
+            /// <summary>Does N do anything with this fitted? Only the two that have an ON state.</summary>
+            public bool Toggleable => Laser || Light;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<ushort, TacticalDef> Tacticals = new()
+        {
+            { 151,  new TacticalDef(laser: true) },          // Tactical_Laser.dat: `Laser`, no Laser_Color -> retail red
+            { 152,  new TacticalDef(light: true) },          // Tactical_Light.dat: `Light`, no SpotLight_* -> the flashlight's own defaults
+            { 1008, new TacticalDef(rangefinder: true) },    // Rangefinder.dat -- mechanic not ported; here so it is not mistaken for a laser
+            { 1438, new TacticalDef(melee: true) },          // Bayonet.dat -- a jab on the tactical key; not ported
+            { 1007, new TacticalDef() },                     // Adaptive_Chambering.dat -- stats only, nothing to switch on
+        };
+
+        public static TacticalDef TacticalFor(int id)
+            => id > 0 && Tacticals.TryGetValue((ushort)id, out var t) ? t : default;
+        /// <summary>Is the fitted tactical something the tactical key can switch on or off?</summary>
+        public static bool TacticalToggleable(int id) => TacticalFor(id).Toggleable;
+        public static bool IsLaser(int id) => TacticalFor(id).Laser;
+        public static bool IsTacticalLight(int id) => TacticalFor(id).Light;
+        /// <summary>Retail's `laserColor`: the .dat's Laser_Color, default red. Both halves of the beam and the
+        /// dot take it, and the emission is twice it (UseableGun ~4737).</summary>
+        public static Godot.Color LaserColor(int id) => TacticalFor(id).LaserColor;
+
         /// <summary>Attachments whose colour lives in a TEXTURE rather than a flat tint. Almost nothing here needs
         /// one -- a suppressor and a magazine really are one shade of near-black, and the sights carry a per-item
         /// _Color in sights.tsv -- but the tactical pair's entire identity is a palette cell: the laser's 32x32
@@ -296,6 +344,11 @@ namespace UnturnedGodot
         /// ContentProvider.TextureCached rather than a cache of its own: the same laser is mounted on the
         /// viewmodel, the 3P body, the paperdoll and every dropped copy of the gun, and the project already has
         /// one place that answers "this path, as a texture, once".</summary>
+        /// <summary>The attachment albedo's path RELATIVE to res://content, for callers that need the image
+        /// rather than the texture -- the lens-mask derivation reads pixels off disk, not off a Texture2D.</summary>
+        public static string TexPathFor(int id)
+            => id > 0 && Textures.TryGetValue((ushort)id, out var rel) ? rel : null;
+
         public static Godot.Texture2D TexFor(ushort id)
             => Textures.TryGetValue(id, out var rel) && !string.IsNullOrEmpty(rel)
                 ? ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath($"res://content/{rel}"))

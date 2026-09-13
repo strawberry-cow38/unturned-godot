@@ -2088,6 +2088,7 @@ namespace UnturnedGodot
             UpdateOptic();
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
+            UpdateTacticalLaser();   // the gun-rail laser's beam + dot (N)
             // SUBMERGED VIEW (strawberry 2026-09-08). Driven from the CAMERA, not the body: the two disagree
             // exactly when it matters -- wading with your head under, or swimming with the eye just clear of the
             // surface -- and what you see is decided by where the eye is. Built lazily on first submersion so a
@@ -4676,6 +4677,103 @@ namespace UnturnedGodot
                 _cam?.AddChild(_heldLight);   // rides the eye, so the beam points where you look
             }
             _heldLight.Visible = true;
+        }
+
+        // ---- GUN-RAIL TACTICAL: the laser and the light (strawberry 2026-09-13: "give the tactical laser an
+        // actual laser beam. toggles on/off with N. wire the tactical flashlight too ... identical to the
+        // flashlight, just on N and attached to the gun") -----------------------------------------------------
+        //
+        // A THIRD light path, and it has to be: the handheld torch is a MELEE item (MeleeDef.Light), the
+        // headlamp is GLASSES, and this is an ItemTacticalAsset fitted to the gun in your hands. Retail keeps
+        // them apart the same way -- UseableMelee owns the torch, PlayerClothing the goggles, and UseableGun's
+        // `interact` flag owns this one.
+        //
+        // ⚠ THE LIGHT'S NUMBERS ARE NOT COPIED, THEY ARE SHARED. Tactical_Light.dat declares a bare `Light` and
+        // nothing else, exactly like flashlight.dat, so both run on PlayerSpotLightConfig's defaults -- which
+        // now live once, on MeleeDef. "Identical to the flashlight" is the data, not a resemblance.
+        bool _tacticalOn;
+        LaserSight _laser;
+        SpotLight3D _tacLight;
+
+        /// <summary>The tactical attachment fitted to the gun IN HAND, or 0. Reads the item, not the viewmodel:
+        /// the model can be mid-swap while the item is already the new one.</summary>
+        public int TacticalId => HasGunOut ? AttachmentFit.InstalledId(_heldItem, "Tactical") : 0;
+        /// <summary>Is there something on the rail for the tactical key to switch? Rangefinders and bayonets
+        /// are fitted attachments with no ON state, so they answer false and N falls through to the goggles.</summary>
+        public bool HasTacticalToggle => AttachmentFit.TacticalToggleable(TacticalId);
+        /// <summary>The switch AND the attachment, the same shape as HeadlampOn -- so unfitting the laser or
+        /// holstering the gun kills the beam with no clear-site plumbing at any of the dozen equip paths.</summary>
+        public bool TacticalOn => _tacticalOn && HasTacticalToggle;
+        public bool TacticalLaserOn => _tacticalOn && AttachmentFit.IsLaser(TacticalId);
+        public bool TacticalLightOn => _tacticalOn && AttachmentFit.IsTacticalLight(TacticalId);
+        /// <summary>Test seams: the live beam and the live rail lamp, or null when the switch is off. Exposed so
+        /// a test can read WHERE the dot landed and WHAT the lamp's cone is, rather than that a node exists.</summary>
+        public LaserSight DebugLaser => IsInstanceValid(_laser) ? _laser : null;
+        public SpotLight3D DebugTacticalLight => IsInstanceValid(_tacLight) ? _tacLight : null;
+
+        /// <summary>The tactical key with a gun in hand. Source UseableGun.askInteractGun gates the same toggle
+        /// on `player.equipment.IsEquipAnimationFinished` and on not being mid-reload/hammer/unjam/rechamber --
+        /// the port has the first as HeldItemReady and the reload as IsReloading, so both are honoured.</summary>
+        public void ToggleTactical()
+        {
+            if (!HasTacticalToggle) return;
+            if (!HeldItemReady) return;        // mid-swap: the gun is not really in your hands yet (source's isBusy)
+            if (_reloading || _hammerActive) return;   // source refuses the tactical key mid-reload / mid-hammer (askInteractGun)
+            _tacticalOn = !_tacticalOn;
+            ApplyTacticalLight();
+            _viewmodel?.SetTacticalLit(_tacticalOn);   // the attachment's own lens, retail's lightHook.SetActive(interact)
+            PlaySelectorSwitchSound();         // source fires the firemode effect on this toggle (same click as the torch)
+        }
+
+        /// <summary>Bring the rail light in line with the switch. Idempotent, and safe to call when the gun is
+        /// gone: putting the weapon away MUST kill the beam, or you keep a light source with no item holding it.</summary>
+        public void ApplyTacticalLight()
+        {
+            bool want = TacticalLightOn && !_dead;
+            if (!want) { if (IsInstanceValid(_tacLight)) _tacLight.Visible = false; return; }
+            if (!IsInstanceValid(_tacLight))
+            {
+                _tacLight = new SpotLight3D
+                {
+                    // The flashlight's own defaults, by way of the constants BOTH .dats fall back to. SpotAngle
+                    // is Godot's HALF-angle and the constant is Unity's FULL cone, so it is halved here -- the
+                    // same halving the handheld does, and the same one that doubles the cone if it is forgotten.
+                    SpotRange = MeleeDef.DefaultSpotRange,
+                    SpotAngle = MeleeDef.DefaultSpotAngleFull * 0.5f,
+                    LightColor = MeleeDef.DefaultSpotColor,
+                    LightEnergy = MeleeDef.DefaultSpotIntensity,
+                    SpotAngleAttenuation = 1.0f,
+                    ShadowEnabled = false,   // same reason as the other two: a moving shadow-caster re-renders the world every step
+                };
+                _cam?.AddChild(_tacLight);   // rides the eye, like the torch and the headlamp -- the rail points where you look
+            }
+            _tacLight.Visible = true;
+        }
+
+        /// <summary>Per frame: the beam follows the switch AND the attachment. Retail raycasts from
+        /// `player.look.aim` and parks the dot at the contact; the BEAM is drawn from the gun instead, because a
+        /// line starting at the eye has nothing under it.</summary>
+        void UpdateTacticalLaser()
+        {
+            bool on = TacticalLaserOn && !_dead;
+            if (!on) { if (IsInstanceValid(_laser)) _laser.Hide3D(); return; }
+            if (_cam == null) return;
+            if (!IsInstanceValid(_laser))
+            {
+                _laser = new LaserSight();
+                AddChild(_laser);   // TopLevel inside, so it is placed in world space and still dies with the player
+            }
+            _laser.SetColor(AttachmentFit.LaserColor(TacticalId));
+
+            Vector3 aimFrom = _cam.GlobalPosition;
+            Vector3 aimDir = -_cam.GlobalTransform.Basis.Z;
+            // Where the beam is DRAWN from: the 3P gun's own muzzle when there is a body to hang it on, else the
+            // camera-relative visual point the muzzle flash already uses. Exactly the `bodyMuzzle ?? fxMuzzle`
+            // split SpawnBullet documents -- and for the same reason, so the eye keeps deciding where it LANDS.
+            var cb = _cam.GlobalTransform.Basis;
+            Vector3 fxRail = aimFrom + cb.X * 0.10f - cb.Y * 0.06f + aimDir * 0.35f;
+            Vector3 emitter = (!_fp && _body != null && _body.MuzzleWorld is Vector3 bm) ? bm : fxRail;
+            _laser.Aim(emitter, aimFrom, aimDir, _cam.Fov, aimFrom);
         }
 
         /// <summary>The retail clothing WEAR sound (master 2026-09-07: "source the clothing-equip-from-ground sound
@@ -7986,7 +8084,18 @@ namespace UnturnedGodot
                 // N = the vision item in the GLASSES slot, whichever it is: nightvision goggles or the headlamp. Both live in the
                 // same slot so only one can be worn (master 2026-09-05: "you would only want one or the other. if you have a
                 // flashlight why are u using nvgs?"); no ambiguity to resolve.
-                if (WearingNightvision) ToggleNightVision();
+                //
+                // ⚠ THERE IS A THIRD CLAIMANT NOW and it is the one real ambiguity on this key: the gun-rail
+                // tactical laser/light (strawberry 2026-09-13: "toggles on/off with N"). RETAIL USES TWO KEYS --
+                // the rail is ControlsSettings.tactical (default B) and the goggles are the vision toggle -- so
+                // this collision is the port's, created by putting both on N as asked. NVGs plus a laser is an
+                // ordinary loadout, so the order is written down as a RULE rather than left to be whatever an
+                // if-chain happened to do: THE THING IN YOUR HANDS WINS. You pick an attachment shot by shot and
+                // goggles sit in a slot, and HasTacticalToggle self-guards on a gun actually being out, so the
+                // moment you holster it N is the goggles again. A rangefinder or bayonet on the rail has no ON
+                // state and answers false, so it falls straight through rather than eating the key.
+                if (HasTacticalToggle) ToggleTactical();
+                else if (WearingNightvision) ToggleNightVision();
                 else ToggleHeadlamp();     // Flashlight key (now N): the WORN headlamp. The handheld torch moved to RMB. Self-guards on actually wearing one.
             }
             // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
@@ -10143,6 +10252,13 @@ namespace UnturnedGodot
             // rather than at the menu click so a gun re-equipped with a suppressor already on it sounds right on
             // the first shot -- the same reason this method exists for the meshes.
             _viewmodel.SetBarrelAudio(AttachmentFit.InstalledId(gun, "Barrel"));
+            // THE RAIL SWITCH RESETS WITH THE GUN, which is retail rather than a convenience: `interact` is a
+            // field on UseableGun, and UseableGun is destroyed and rebuilt every time you equip, so a laser you
+            // left on is off when you draw the weapon again. Lands here because this is the choke every equip
+            // and every attachment change already goes through for the meshes.
+            _tacticalOn = false;
+            ApplyTacticalLight();
+            _viewmodel.SetTacticalLit(false);
             foreach (var slot in AttachmentFit.Slots)
             {
                 int id = AttachmentFit.InstalledId(gun, slot);
