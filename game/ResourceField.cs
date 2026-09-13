@@ -144,7 +144,21 @@ namespace UnturnedGodot
             if (r.Alive == alive) return;
             r.Alive = alive;
             var hidden = new Transform3D(new Basis(Vector3.Zero, Vector3.Zero, Vector3.Zero), new Vector3(0f, -10000f, 0f));
-            foreach (var (mm, slot) in r.Slots) mm.SetInstanceTransform(slot, alive ? r.Xf : hidden);
+            // PICKING A BERRY BUSH TAKES THE BERRIES, NOT THE BUSH (strawberry 2026-09-13: "keep the bush but
+            // get rid of the berries"). Retail disables the prefab's `Forage` child -- the fruit and its trigger
+            // -- and leaves Model_0's leaves standing, so a picked bush reads as one you have already been to
+            // rather than as a hole in the hedgerow.
+            //
+            // The berries are the LAST slot, the same contract the look-at outline uses: resource_extract.py
+            // appends the Forage part after Model_0's leaves. A MUSHROOM has one part and it IS the cap, so
+            // "hide the last slot" hides the whole thing -- correct, there is nothing left to leave standing.
+            // A tree or a rock is not a ForagePlant and keeps the old all-or-nothing behaviour.
+            int keepBelow = r.Trunk is ForagePlant && r.Slots.Count > 1 ? r.Slots.Count - 1 : 0;
+            for (int i = 0; i < r.Slots.Count; i++)
+            {
+                var (mm, slot) = r.Slots[i];
+                mm.SetInstanceTransform(slot, alive || i < keepBelow ? r.Xf : hidden);
+            }
             if (r.Trunk != null) r.Trunk.CollisionLayer = alive ? r.TrunkLayer : 0;
             // A PICKED BUSH RUSTLES, on everyone's screen. Retail fires the resource's Explosion effect inside
             // ReceiveForageRequest and replicates it; here the sound hangs off the alive bit going false, which
