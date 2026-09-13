@@ -37,6 +37,42 @@ namespace UnturnedGodot
         }
 
         protected virtual string LightGroup => "gridlights";   // DayNightCycle sweeps this group; StreetLight = "streetlights"
+        // ---- "dynlight": the group the player's light-scan reads ---------------------------------------------
+        //
+        // ⚠ GRID LIGHTS WERE NEVER IN IT, and that is a real gap rather than an oversight of mine: the group was
+        // built for light that MOVES or appears (muzzle flash, headlights, flares, burning wrecks), and a
+        // streetlight is neither. But the scan's two consumers both want "what is lighting the player right now"
+        // -- the spill onto the first-person gun, and (2026-09-13) the inventory paperdoll's stage -- and for
+        // that question a streetlight overhead or a lit ceiling lamp is the single most important source in the
+        // world. Standing under one and having the doll stay dark is exactly what strawberry reported.
+        //
+        // Registered only while LIT so the group stays proportional to lights actually burning -- a town at noon
+        // contributes nothing, which matters because the scan marshals the whole group every time it runs and
+        // that cost is why it was throttled to 10 Hz in the first place. The scan filters on energy and
+        // visibility anyway, so a stale entry is harmless; this only keeps the walk short.
+        readonly System.Collections.Generic.List<Light3D> _dynLights = new();
+        bool _dynCollected, _dynJoined;
+        protected void SyncDynGroup(bool lit)
+        {
+            if (lit == _dynJoined && _dynCollected) return;   // on-change only: Refresh runs on every power/day flip
+            if (!_dynCollected) { CollectLights(this, _dynLights); _dynCollected = true; }
+            _dynJoined = lit;
+            foreach (var l in _dynLights)
+            {
+                if (!GodotObject.IsInstanceValid(l)) continue;
+                if (lit) { if (!l.IsInGroup("dynlight")) l.AddToGroup("dynlight"); }
+                else if (l.IsInGroup("dynlight")) l.RemoveFromGroup("dynlight");
+            }
+        }
+        static void CollectLights(Node n, System.Collections.Generic.List<Light3D> into)
+        {
+            foreach (var c in n.GetChildren())
+            {
+                if (c is Light3D l) into.Add(l);
+                if (c is Node cn) CollectLights(cn, into);   // the emitter can sit under a fixture node, not at the root
+            }
+        }
+
         protected abstract void BuildVisual();                 // build the fixture's own emitters (spot/lens/cone, or a lamp bulb)
         protected abstract void ApplyLit(bool lit);            // toggle those emitters on/off (the flicker drives this)
         protected virtual void PostRefresh() { }               // StreetLight folds in its motes here
@@ -90,6 +126,7 @@ namespace UnturnedGodot
             bool lit = Lit;
             _shownLit = lit;
             ApplyLit(lit);
+            SyncDynGroup(lit);
             PostRefresh();
         }
 

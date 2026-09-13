@@ -6836,7 +6836,13 @@ namespace UnturnedGodot
         static float LightRange(Light3D l) => l is OmniLight3D o ? o.OmniRange : l is SpotLight3D s ? s.SpotRange : 12f;
         void ScanWorldLights()
         {
-            if (_cam == null || _viewmodel == null) return;
+            // ⚠ NO VIEWMODEL IS NOT A REASON TO SKIP THE SCAN. This used to bail on `_viewmodel == null`, which was
+            // right when the only consumer was the spill onto the first-person gun -- no gun, nothing to light.
+            // The paperdoll is a second consumer with a different answer: it wants to know how lit YOU are, and
+            // you are just as lit with your fists up. Bailing left NearbyLightEnergy frozen at whatever it last
+            // was (usually 0) for every unarmed player, which is a silent wrong answer rather than a skipped
+            // optional effect. Only the MIRROR needs a viewmodel now, and it is guarded at the bottom.
+            if (_cam == null) return;
             if (--_lightScanCd > 0) return;
             _lightScanCd = 5;   // PERF: 10 Hz (was ~17 Hz); each scan marshals the whole dynlight group
             _mirrorLights.Clear();
@@ -6887,7 +6893,7 @@ namespace UnturnedGodot
                 _mirrorLights.Add((new Vector3(-lp.X, lp.Y, -lp.Z), dl.LightColor, dl.LightEnergy, LightRange(dl)));   // subview cam is 180 deg about Y vs the player cam -> negate X+Z (master: was inverted L/R + fwd/back)
 
             }
-            _viewmodel.SetWorldLights(_mirrorLights);
+            _viewmodel?.SetWorldLights(_mirrorLights);   // the gun-spill half; the light LEVEL above is computed regardless
         }
         int _burstLeft;                               // rounds remaining in the current burst
         float _burstCd;                               // NON-source anti-spam-click cooldown between bursts (master's call)

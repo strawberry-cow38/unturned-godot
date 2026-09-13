@@ -7453,6 +7453,16 @@ namespace UnturnedGodot
             // UG_PDGLOW=<glassesId>[,on] : wear a lens device and (optionally) switch it ON, so the paperdoll's
             // on/off glow can be photographed (strawberry 2026-09-13). UG_PDTORCH=1 puts the handheld flashlight
             // in the doll's hand as well. Render-only dressing, same shape as UG_QUICKCRAFT / UG_MAGLOAD.
+            // UG_PDROOMLIGHT=1 : a bright coloured dynlight beside the player, so the paperdoll's "lit by the
+            // room" path can be photographed on a stage that has no world lights of its own. Mirrors
+            // WorldBuilder's UG_TESTLIGHT.
+            if (System.Environment.GetEnvironmentVariable("UG_PDROOMLIGHT") == "1")
+            {
+                var rl = new OmniLight3D { OmniRange = 7f, LightColor = new Color(1f, 0.25f, 0.12f), LightEnergy = 6f, ShadowEnabled = false };
+                rl.AddToGroup("dynlight");
+                player.AddChild(rl);
+                rl.Position = new Vector3(0.9f, 0.3f, 0f);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_PDGLOW") is string pdg && pdg.Length > 0)
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();

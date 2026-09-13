@@ -449,18 +449,10 @@ void fragment() {
         const float PdKeyFloor = 0.38f, PdAmbientFloor = 0.45f;
         void MatchPaperdollLight()
         {
-            var dn = DayNightCycle.Current;
-            if (dn == null || !IsInstanceValid(dn) || dn.Sun == null || !IsInstanceValid(dn.Sun) || _pdKey == null) return;
-            _pdKey.LightColor = dn.Sun.LightColor;
-            _pdKey.LightEnergy = Mathf.Max(PdKeyFloor, dn.Sun.LightEnergy * 0.75f);   // 0.75 = the authored key strength at full sun
-            if (_pdFill != null) _pdFill.LightEnergy = 0.35f * Mathf.Clamp(_pdKey.LightEnergy / 0.75f, 0.5f, 1f);
-            if (_pdEnv != null && dn.Env != null)
-            {
-                _pdEnv.AmbientLightColor = dn.Env.AmbientLightColor;
-                _pdEnv.AmbientLightEnergy = Mathf.Max(PdAmbientFloor, dn.Env.AmbientLightEnergy);
-            }
-
-            // ...AND THE ROOM, not just the sky (strawberry 2026-09-13: "have the paperdoll lighting follow
+            // THE ROOM, not just the sky -- and ⚠ ABOVE the day/night guard below, not under it. The sun half
+            // rightly bails when there is no DayNightCycle; the ROOM half has nothing to do with the sun, and
+            // sitting under that guard meant it silently never ran anywhere a DayNightCycle was absent. Found by
+            // rendering it: the doll came back pixel-identical with a bright lamp beside the player. (strawberry 2026-09-13: "have the paperdoll lighting follow
             // light sources too, not just sun"). The doll renders in its own isolated SubViewport, so world
             // lights physically cannot reach it -- standing under a streetlight or beside a lit flare left the
             // doll exactly as dim as standing in an empty field.
@@ -488,6 +480,19 @@ void fragment() {
                     _pdEnv.AmbientLightEnergy += lit * 0.12f;
                 }
             }
+
+            var dn = DayNightCycle.Current;
+            if (dn == null || !IsInstanceValid(dn) || dn.Sun == null || !IsInstanceValid(dn.Sun) || _pdKey == null) return;
+            _pdKey.LightColor = dn.Sun.LightColor;
+            _pdKey.LightEnergy = Mathf.Max(PdKeyFloor, dn.Sun.LightEnergy * 0.75f);   // 0.75 = the authored key strength at full sun
+            if (_pdFill != null) _pdFill.LightEnergy = 0.35f * Mathf.Clamp(_pdKey.LightEnergy / 0.75f, 0.5f, 1f);
+            if (_pdEnv != null && dn.Env != null)
+            {
+                _pdEnv.AmbientLightColor = dn.Env.AmbientLightColor;
+                _pdEnv.AmbientLightEnergy = Mathf.Max(PdAmbientFloor, dn.Env.AmbientLightEnergy);
+            }
+
+
         }
 
         public override void _Process(double delta)
