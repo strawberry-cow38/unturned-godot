@@ -35,7 +35,10 @@ namespace UnturnedGodot
         public int ArenaMinPlayers = 2;                              // "wait for >1 player before starting"
         public bool MatchLive { get; private set; }                  // false until ArenaMinPlayers are connected
         // ------------------------------------------------------------------------------------------
-        public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
+        // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. ON by default,
+        // MATCHING the singleplayer default above -- if these disagreed, joining a server would silently turn
+        // survival off and the same world would play by two different rule sets depending on how you launched it.
+        public bool SurvivalDrain = true;
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Godot.Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)

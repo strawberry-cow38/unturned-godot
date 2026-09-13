@@ -434,7 +434,12 @@ namespace UnturnedGodot
         public float Food { get => _vitals.Food; set => _vitals.Food = value; }
         public float Water { get => _vitals.Water; set => _vitals.Water = value; }
         public float Oxygen { get => _vitals.Oxygen; set => _vitals.Oxygen = value; }
-        public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
+        // ON by default (strawberry 2026-09-13: "turn survival on by default"). It shipped off because the
+        // drains were 200 s and 143 s -- survival meant starving to death during your first house, so the
+        // sane default was to leave the mode switched off. 44128d99 made them 2 days and 1 day, which is
+        // what makes it a survival curve instead of a timer, and a survival curve nobody has switched on is
+        // just dead code. F1 console `survival on|off` still toggles it.
+        public static bool SurvivalDrain = true;
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 

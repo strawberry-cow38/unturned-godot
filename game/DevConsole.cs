@@ -1454,7 +1454,7 @@ namespace UnturnedGodot
             }
             else if (verb == "survival" || verb == "hunger")
             {
-                // survival [on|off]  -- toggle hunger/thirst drain (OFF by default). Bare `survival` flips it.
+                // survival [on|off]  -- toggle hunger/thirst drain (ON by default). Bare `survival` flips it.
                 string a = arg.Trim().ToLowerInvariant();
                 PlayerController.SurvivalDrain = a == "on" || a == "1" || a == "true" ? true
                                                : a == "off" || a == "0" || a == "false" ? false

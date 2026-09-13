@@ -37,7 +37,7 @@ namespace SDG.Unturned
         // it as unasked-for, and they said to pull it (2026-09-07). Their call, not mine to infer twice.
         //
         // If it ever comes back: it belongs HERE, reported apart from the health delta, because the server
-        // gates that delta behind SurvivalDrain (hunger ships off) and breath must not ship off with it.
+        // gates that delta behind SurvivalDrain and breath must not ride that switch with it.
 
         public struct Multipliers
         {
@@ -181,7 +181,7 @@ namespace SDG.Unturned
             else { StaminaRegenDelay = MathF.Max(0f, StaminaRegenDelay - dt); if (StaminaRegenDelay <= 0f) Stamina = MathF.Min(1f, Stamina + 0.33f * dt * m.CardioStaminaRegen); }
             bool cold = band == PlayerTemperatureSim.Band.Cold || band == PlayerTemperatureSim.Band.Freezing;
             bool hot = band == PlayerTemperatureSim.Band.Hot || band == PlayerTemperatureSim.Band.Boiling;
-            if (survivalDrain)   // hunger/thirst OFF by default (strawberry); F1 console `survival` toggles it
+            if (survivalDrain)   // hunger/thirst ON by default (strawberry 2026-09-13); F1 console `survival` toggles it
             {
                 // Temperature MULTIPLIES the existing drain rather than adding its own, so it rides the same
                 // survival toggle. Turning survival off and still starving from the cold would be a surprise.

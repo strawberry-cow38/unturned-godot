@@ -19,8 +19,8 @@ namespace UnturnedGodot.Net
     /// starvation LOSS through the queued <see cref="DamageSink"/> (ServerCombat.DamagePlayerExternal, env
     /// attacker 0, death-capable, landing in THIS tick's Combat.Step), regen through the direct
     /// <see cref="RegenSink"/> HealthExact raise. Death/respawn stay owned by ServerCombat. The HP-delta
-    /// routing runs only while <see cref="SurvivalDrain"/> is on: OFF (the strawberry default) leaves the
-    /// coarse-HP path byte-identical -- no passive regen, no starvation -- while stamina/infection still
+    /// routing runs only while <see cref="SurvivalDrain"/> is on (ON by default since 2026-09-13); OFF leaves
+    /// the coarse-HP path byte-identical -- no passive regen, no starvation -- while stamina/infection still
     /// step + replicate. Stamina is server-owned but sprint stays client-auth: the server derives
     /// `sprinting` from the ADOPTED stance (<see cref="SprintingOf"/>), no second body.
     ///
@@ -136,7 +136,7 @@ namespace UnturnedGodot.Net
                 //
                 // Found by deadzones losing their kill entirely (strawberry 2026-09-11 moved them onto
                 // infection). Contaminated ground used to kill through its own DamageSink; with that removed
-                // the death depended on this gate, which is OFF by default, so on the default server a player
+                // the death depended on this gate, which was OFF by default at the time, so on the default server a player
                 // sat at 100% infection indefinitely -- the probe showed infection pinned at 1.0 for 5000
                 // ticks with alive=True. Nothing else in the suite covered it because nothing else could
                 // reach 100% virus on its own.
