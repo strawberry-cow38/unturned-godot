@@ -219,6 +219,38 @@ namespace UnturnedGodot
         /// <summary>The mesh a dropped stack of this id and amount should draw. The full mesh for every
         /// ordinary item; a triangle PREFIX for a bundle, which drops the top round(s) and leaves the rest
         /// resting on the ground (the installers assert that ordering, since a wrong one floats a round).</summary>
+        /// <summary>Show a dropped gun's fitted attachments (strawberry 2026-09-13: "make sure attachments are
+        /// shown on dropped gun models"). A gun on the ground carried its scope and magazine the whole time --
+        /// the ids live on the Item, which is exactly what makes them survive the drop -- it simply rendered the
+        /// bare body, so a scoped rifle you threw down looked like a different weapon to the one you pick back up.
+        ///
+        /// Parented to _mesh, not to the body, so the attachments inherit the dropped model's own transform for
+        /// free -- including the +90 X a dropped item is laid down with. That works because the dropped mesh IS
+        /// the viewmodel mesh: content/items/4.txt and content/eaglefire_gun.txt are the same 430 verts with the
+        /// same bounds on all three axes, so the hook positions transfer without a second frame to reason about.
+        /// CHECKED rather than assumed -- the dropped models come from their own rip through items_manifest.json,
+        /// and if that rip had been reoriented these hooks would have hung a scope in mid-air.
+        ///
+        /// Reads AttachmentFit.PartsFor, the same list the 3P body and the inventory paperdoll mount from. The
+        /// factory fallback inside it means a gun nobody has modified still shows its irons, which is why an
+        /// untouched dropped rifle also stops rendering sightless.</summary>
+        void MountDroppedAttachments(int id)
+        {
+            if (Item == null || _mesh == null || id <= 0) return;
+            if (Assets.find((ushort)id) is not { } a || string.IsNullOrEmpty(a.gunName)) return;
+            foreach (var (slot, mesh, pos, tint) in AttachmentFit.PartsFor(a.gunName,
+                         AttachmentFit.InstalledId(Item, "Sight"),
+                         AttachmentFit.InstalledId(Item, "Magazine"),
+                         AttachmentFit.InstalledId(Item, "Barrel")))
+                _mesh.AddChild(new MeshInstance3D
+                {
+                    Name = "Attach_" + slot,
+                    Mesh = mesh,
+                    Position = pos,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = tint, Roughness = 0.6f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                });
+        }
+
         static ArrayMesh MeshForAmount(Model m, int itemId, int amount)
         {
             if (m?.Rounds == null || m.Rounds.Length <= 1 || amount <= 0) return m?.Mesh;
@@ -392,6 +424,7 @@ namespace UnturnedGodot
             col.Shape = new BoxShape3D { Size = boxSize };
             col.Position = boxCenter;                   // mesh sits in model space; the best-fit box is offset to wrap it
             AddChild(_mesh);
+            MountDroppedAttachments(id);
             AddChild(col);
             _boxCtr = boxCenter;
             var hh = boxSize * 0.5f;                     // hitbox samples: centre + 8 corners (local) -> full-hitbox LOS cull

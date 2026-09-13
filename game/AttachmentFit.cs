@@ -202,20 +202,39 @@ namespace UnturnedGodot
         /// Hook positions and colours are the ones the viewmodel attach loop uses. Falls back to the gun's factory
         /// iron sight and default magazine when nothing is fitted; a barrel only appears when one actually is,
         /// because guns ship bare.</summary>
+        /// <summary>The parts a gun should be WEARING -- (slot, mesh, position in the gun's own frame, tint) --
+        /// given what its item says is installed. Falls back to the gun's FACTORY sight and magazine when a slot
+        /// has no installed id, so a gun that has never been touched still wears its irons.
+        ///
+        /// ⚠ THE ONE PLACE THE HOOKS LIVE. MountOn already existed to stop the 3P body and the inventory
+        /// paperdoll drifting apart ("a second copy of this in the UI would drift the moment one of the two hook
+        /// positions or fallbacks changed, which is how the paperdoll ended up bare in the first place"). A
+        /// DROPPED gun is the third consumer and it is not a RiggedCharacter, so rather than write those
+        /// positions out a second time the decision moved here and MountOn became one of its callers.</summary>
+        public static System.Collections.Generic.List<(string Slot, Godot.Mesh Mesh, Godot.Vector3 Pos, Godot.Color Tint)>
+            PartsFor(string gunName, int sightId, int magId, int barrelId)
+        {
+            var parts = new System.Collections.Generic.List<(string, Godot.Mesh, Godot.Vector3, Godot.Color)>();
+            if (string.IsNullOrEmpty(gunName)) return parts;
+            var gv = Viewmodel.VisualForTest(gunName);
+            string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
+            if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
+                parts.Add(("Sight", sm, gv.SightPos != Godot.Vector3.Zero ? gv.SightPos : new Godot.Vector3(0f, 0.1312f, -0.118f),
+                           gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f)));
+            string magTxt = magId > 0 ? MeshFor((ushort)magId) : gv.Mag;
+            if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
+                parts.Add(("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f)));
+            if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
+                parts.Add(("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f)));
+            return parts;
+        }
+
         public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId)
         {
             if (body == null || string.IsNullOrEmpty(gunName)) return;
             body.ClearGunAttachments();
-            var gv = Viewmodel.VisualForTest(gunName);
-            string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
-            if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
-                body.MountGunAttachment("Sight", sm, gv.SightPos != Godot.Vector3.Zero ? gv.SightPos : new Godot.Vector3(0f, 0.1312f, -0.118f),
-                                        gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f));
-            string magTxt = magId > 0 ? MeshFor((ushort)magId) : gv.Mag;
-            if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
-                body.MountGunAttachment("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f));
-            if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
-                body.MountGunAttachment("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f));
+            foreach (var (slot, mesh, pos, tint) in PartsFor(gunName, sightId, magId, barrelId))
+                body.MountGunAttachment(slot, mesh, pos, tint);
         }
 
         public static string MeshFor(ushort id)
