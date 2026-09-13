@@ -50,7 +50,20 @@ namespace UnturnedGodot
                 Mesh = new QuadMesh { Size = Vector2.One },
                 MaterialOverride = new StandardMaterial3D
                 {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    // ⚠ SHADED, AND IT USED TO BE UNSHADED (strawberry 2026-09-13: "make the smoke of smoke
+                    // grenades actually respect lighting and not glow at night").
+                    //
+                    // Unshaded does not mean "cheap", it means the albedo is written STRAIGHT to the buffer with
+                    // no lighting term at all -- so a smoke cloud rendered at full daylight brightness in a
+                    // midnight field, which reads as the smoke emitting light. Nothing was glowing; the puffs
+                    // were simply never being lit in the first place.
+                    //
+                    // PerPixel is the shaded default, so the cloud now takes the sun, the moon and any nearby
+                    // lamp -- which is also what makes a flare thrown into smoke look right.
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,
+                    // ...and smoke is not a shiny surface: without this the puffs pick up a specular highlight
+                    // from the sun and read as wet plastic rather than as particulate.
+                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, BillboardKeepScale = true,
                     VertexColorUseAsAlbedo = true,

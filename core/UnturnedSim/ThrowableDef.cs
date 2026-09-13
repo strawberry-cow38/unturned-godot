@@ -55,10 +55,15 @@ namespace SDG.Unturned
         /// multiplication rather than as a bare 66 so the change stays legible as "three times the old smoke",
         /// which is what was actually asked for.</summary>
         public const float SmokeSeconds = 22f * 3f;
-        /// <summary>How wide the cloud draws. 6.0 x 1.3 (strawberry 2026-09-13: "make the smoke cloud 30%
-        /// bigger"), kept as the multiplication so the change stays legible. Smoke carries no damage, so this is
-        /// purely how big it looks -- and it is a const so the game layer's fallbacks cannot drift off it.</summary>
-        public const float SmokeRadius = 6f * 1.3f;
+        /// <summary>How wide the cloud draws, and therefore its area of effect -- smoke carries no damage, so
+        /// the radius IS the effect. Retail has no such number at all (its smoke is a particle system, not a
+        /// radius), so every factor here is a game-feel call by strawberry, kept as the chain of
+        /// multiplications that produced it rather than collapsed into one decimal:
+        ///   6.0   the original
+        ///   x1.3  2026-09-13 "make the smoke cloud 30% bigger"
+        ///   x1.2  2026-09-13 "make the aoe 20% bigger"
+        /// A const, so the game layer's own fallbacks cannot drift off it (they did once already).</summary>
+        public const float SmokeRadius = 6f * 1.3f * 1.2f;
         /// <summary>A flare burns exactly as long as a smoke pours (strawberry 2026-09-13). Derived rather than
         /// copied: retuning one retunes both, which is the point of them being "that same lifetime".</summary>
         public const float FlareSeconds = SmokeSeconds;
