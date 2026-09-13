@@ -103,7 +103,21 @@ namespace UnturnedGodot
 
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
-        public enum PortKind { Output, Consumer, Passthrough }
+        /// <summary>What a wire socket DOES.
+        ///
+        /// Output/Consumer/Passthrough are POWER and go to the solver. DataOut/DataIn are SIGNAL
+        /// (strawberry 2026-09-13: "a new type of power io: data io. doesnt give power. doesnt recieve power.
+        /// but a context sensitive way to connect multiple props") -- they carry no watts in either direction
+        /// and are deliberately invisible to PowerSolver, so wiring a camera to a TV can never change what
+        /// either draws or brown out a circuit.
+        ///
+        /// ⚠ APPEND-ONLY. The value crosses the wire as a byte in DeployablePortSpec and is written into saves,
+        /// so inserting a kind in the middle silently reassigns every port on every placed deployable in every
+        /// existing world.</summary>
+        public enum PortKind { Output, Consumer, Passthrough, DataOut, DataIn }
+
+        /// <summary>Signal rather than power: never enters the power solve.</summary>
+        public static bool IsDataPort(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIn;
         public enum SwitchRole { None, TurnOn, TurnOff }   // a SWITCH's side trigger inputs: fed >=1w -> set the switch state on / off (they draw 0w)
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();

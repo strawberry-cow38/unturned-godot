@@ -188,8 +188,14 @@ namespace UnturnedGodot
         }
 
         // Info line for the wire-tool look-at HUD -- reflects the LIVE power flowing through this port.
+        /// <summary>SIGNAL state, the data equivalent of Powered. An OUTPUT is live while its own device has
+        /// power; an INPUT is live while wired to a live output. Written by PowerNet.SolveData.</summary>
+        public bool DataLive;
+
         public string InfoLine() => Kind switch
         {
+            DeployableDef.PortKind.DataOut => $"{ProviderName} — data out ({(DataLive ? "streaming" : "no signal — needs power")})",
+            DeployableDef.PortKind.DataIn => $"{ProviderName} — data in ({(DataLive ? "receiving" : Occupied ? "wired, no signal" : "not connected")})",
             DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output · {Draw:0}w drawn",
             DeployableDef.PortKind.Consumer => Watts > 0f
                 ? $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})"
@@ -203,7 +209,14 @@ namespace UnturnedGodot
 
         // The port cube's BASE fill colour. I/O ports (Role None) are grey, shading light (free) -> dark (Occupied) as a
         // wire attaches; switch trigger ports keep their green/red semantic.
-        Color CubeColor() => Role != DeployableDef.SwitchRole.None ? BaseColor(Kind, Role) : (Occupied ? IoUsed : IoFree);
+        // ⚠ DATA PORTS ARE A DIFFERENT COLOUR ON PURPOSE. Power I/O is grey; a signal socket is CYAN, and it
+        // brightens when a stream is actually flowing. They are not interchangeable and the wire tool refuses to
+        // pair them, so two identical grey cubes would make that refusal read as a bug rather than as a rule --
+        // you would aim at a socket that looks exactly like every other socket and be told no.
+        static readonly Color DataIdle = new Color(0.16f, 0.42f, 0.50f);   // a signal socket with nothing coming through
+        static readonly Color DataFlow = new Color(0.35f, 0.88f, 1.00f);   // ...and one that is carrying a stream
+        Color CubeColor() => DeployableDef.IsDataPort(Kind) ? (DataLive ? DataFlow : DataIdle)
+                           : Role != DeployableDef.SwitchRole.None ? BaseColor(Kind, Role) : (Occupied ? IoUsed : IoFree);
 
         // Wire-tool highlight state (driven by PlayerController): None = base grey; Focus = a little brighter on look-at
         // (master); WireOk/WireBad = green/red cube + arrow while routing a wire onto this port (valid vs occupied/

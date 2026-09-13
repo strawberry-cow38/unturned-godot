@@ -95,6 +95,8 @@ namespace UnturnedGodot
         {
             var devices = new System.Collections.Generic.List<PowerDevice>();
             var portMap = new System.Collections.Generic.Dictionary<ConnectionPort, PowerPort>();
+            var dataOwner = new System.Collections.Generic.Dictionary<ConnectionPort, PowerDevice>();
+            var dataWires = new System.Collections.Generic.List<(ConnectionPort From, ConnectionPort To)>();
             foreach (var n in tree.GetNodesInGroup("deployables"))
                 if (n is IPowerDevice d)   // a Deployable OR a powered world fixture (gas pump)
                 {
@@ -103,6 +105,12 @@ namespace UnturnedGodot
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
                         p.Occupied = false;   // reset; the wire loop below re-marks the wired ports
+                        // ⚠ DATA PORTS NEVER REACH THE SOLVER. They carry signal, not watts, so they get no
+                        // PowerPort at all -- which is what guarantees that wiring a camera to a TV cannot
+                        // change either device's load or brown out the circuit they sit on. Their owning device
+                        // is remembered instead, because a data OUTPUT is live only while its own device has
+                        // power, and that answer only exists after the power solve below.
+                        if (DeployableDef.IsDataPort(p.Kind)) { dataOwner[p] = dev; continue; }
                         float watts = p.Kind == DeployableDef.PortKind.Output ? p.Watts * d.PowerScale : p.Watts;   // a generator's output CAP ramps with its spin-up/cooldown (master); consumer/passthrough unscaled
                         portMap[p] = dev.AddPort(Kind(p.Kind), watts);
                     }
@@ -114,7 +122,9 @@ namespace UnturnedGodot
                 if (n is Wire w && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer))
                 {
                     w.Source.Occupied = true; w.Consumer.Occupied = true;   // a wired port shades darker
-                    if (portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
+                    if (DeployableDef.IsDataPort(w.Source.Kind) || DeployableDef.IsDataPort(w.Consumer.Kind))
+                        dataWires.Add((w.Source, w.Consumer));   // signal, resolved after the power solve
+                    else if (portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
                         wires.Add(new PowerWire(src, cons));
                 }
 
@@ -127,6 +137,52 @@ namespace UnturnedGodot
                 kv.Key.Draw = kv.Value.Draw;
                 kv.Key.UpdateCubeColor();   // reflect the new occupancy shade
             }
+
+            SolveData(dataOwner, dataWires);
+        }
+
+        /// <summary>The SIGNAL pass, run after the power solve because it depends on its answer.
+        ///
+        /// A data OUTPUT is live while its own device has power -- an unpowered camera films nothing. A data
+        /// INPUT is live while it is wired to a live output. That is the whole rule, and it is deliberately not
+        /// a network: signal does not pass THROUGH a device the way power passes through a splitter, so there is
+        /// no flow to balance, nothing to divide, and no possibility of a loop. One hop, evaluated once.</summary>
+        static void SolveData(System.Collections.Generic.Dictionary<ConnectionPort, PowerDevice> dataOwner,
+                              System.Collections.Generic.List<(ConnectionPort From, ConnectionPort To)> dataWires)
+        {
+            foreach (var kv in dataOwner)
+            {
+                // An OUTPUT asks its own device for power; an INPUT starts dark and is lit by a wire below.
+                kv.Key.DataLive = kv.Key.Kind == DeployableDef.PortKind.DataOut && DevicePowered(kv.Value);
+                kv.Key.UpdateCubeColor();
+            }
+            foreach (var (from, to) in dataWires)
+            {
+                // Direction is not assumed from the wire's own source/consumer roles: the wire tool records
+                // which end was clicked FIRST, and either end of a data link is a legitimate place to start.
+                var outp = from.Kind == DeployableDef.PortKind.DataOut ? from
+                         : to.Kind == DeployableDef.PortKind.DataOut ? to : null;
+                var inp = from.Kind == DeployableDef.PortKind.DataIn ? from
+                        : to.Kind == DeployableDef.PortKind.DataIn ? to : null;
+                if (outp == null || inp == null) continue;   // data<->power is refused at the tool; ignore if one slips through
+                if (outp.DataLive) { inp.DataLive = true; inp.UpdateCubeColor(); }
+            }
+        }
+
+        /// <summary>Is this device actually drawing power right now? A device with no consumer port at all (a
+        /// bare generator) counts as powered -- it is running under its own steam, and a camera bolted to one
+        /// should film.</summary>
+        static bool DevicePowered(PowerDevice dev)
+        {
+            bool sawConsumer = false;
+            foreach (var p in dev.Ports)
+            {
+                if (p.Kind == SDG.Unturned.PowerPortKind.Output && dev.Producing) return true;
+                if (p.Kind != SDG.Unturned.PowerPortKind.Consumer) continue;
+                sawConsumer = true;
+                if (p.Powered) return true;
+            }
+            return !sawConsumer;
         }
 
         // Pre-warm helper: flash every wire-tool port arrow visible (show) or hide, so their shared spatial-shader

@@ -1122,6 +1122,16 @@ namespace UnturnedGodot
             return false;
         }
         // a SOURCE end: an output, or a passthrough re-exporting its leftover (daisy-chaining the next spotlight)
+        // ⚠ A DATA LINK IS ITS OWN CIRCUIT. A data port pairs only with the opposite data port -- never with a
+        // power port -- so a signal wire can never be mistaken for a feed and a camera can never be asked to
+        // power a TV. Checked at the tool rather than only at the solver, because a refusal the player sees
+        // while aiming is a rule; one applied silently after the wire exists is a bug report.
+        static bool IsDataSourcePort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.DataOut;
+        static bool IsDataConsumerPort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.DataIn;
+        /// <summary>Are these two ends a legal pair? Power to power, or data to data, never across.</summary>
+        static bool PortsPair(ConnectionPort a, ConnectionPort b)
+            => (IsSourcePort(a) && IsConsumerPort(b)) || (IsDataSourcePort(a) && IsDataConsumerPort(b));
+
         static bool IsSourcePort(ConnectionPort p) => p != null && (p.Kind == DeployableDef.PortKind.Output || p.Kind == DeployableDef.PortKind.Passthrough);
         // a CONSUMER end: a device input (a spotlight's usage, a splitter's relay input)
         static bool IsConsumerPort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.Consumer;
@@ -1129,9 +1139,11 @@ namespace UnturnedGodot
         // complete a wire started at `start`? -> opposite roles, usable, unwired, on a different deployable.
         bool CanCompleteWire(ConnectionPort start, ConnectionPort target) =>
             start != null && target != null && target.Usable && target.Owner != start.Owner && !PortWired(target)
-            && (IsSourcePort(start) ? IsConsumerPort(target) : IsSourcePort(target));
-        // order the two picked ends into (source, consumer) for the power graph, regardless of which you started from
-        static (ConnectionPort src, ConnectionPort cons) OrderWireEnds(ConnectionPort a, ConnectionPort b) => IsSourcePort(a) ? (a, b) : (b, a);
+            && (PortsPair(start, target) || PortsPair(target, start));
+        // order the two picked ends into (source, consumer) for the graph, regardless of which you started from.
+        // A data link orders the same way -- OUT first -- so the wire record reads identically for both kinds.
+        static (ConnectionPort src, ConnectionPort cons) OrderWireEnds(ConnectionPort a, ConnectionPort b)
+            => (IsSourcePort(a) || IsDataSourcePort(a)) ? (a, b) : (b, a);
 
         // LMB with the wire tool: pick a SOURCE (output/passthrough) to start, place a node while routing, or complete on a CONSUMER.
         void WireLmb()
@@ -1140,7 +1152,10 @@ namespace UnturnedGodot
             if (!_wiring)
             {
                 // start from EITHER end -- a source (output/passthrough) OR a consumer input (strawberry: wire from the input side too)
-                if ((IsSourcePort(_wirePort) || IsConsumerPort(_wirePort)) && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
+                // start from EITHER end of EITHER kind -- power (output/passthrough/consumer) or data (out/in)
+                if ((IsSourcePort(_wirePort) || IsConsumerPort(_wirePort)
+                     || IsDataSourcePort(_wirePort) || IsDataConsumerPort(_wirePort))
+                    && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
