@@ -166,6 +166,38 @@ void fragment() {
         Vector2 _dragMouse;                   // last cursor pos during a drag (for the over-a-mag hint in _Draw)
         const float LOAD_INTERVAL = 0.5f;     // seconds per round -- a 0.5s cooldown between each round (master)
         bool _magFxWasActive;                 // so the overlay gets ONE final clear-redraw when the wheel finishes (else the last frame lingers)
+
+        // ---- HOLD-TO-TRANSFER (strawberry 2026-09-13) --------------------------------------------------
+        /// <summary>Seconds of holding before the hovered item moves. Short enough to clear a crate without
+        /// tedium, long enough that sweeping the cursor across a row does not fire on items you passed
+        /// over -- which is the whole reason it is a delay and not a keypress.</summary>
+        public const float QuickTransferSeconds = 0.35f;
+        byte _qtPage = 255, _qtX, _qtY;       // the ITEM being charged, keyed by its own cell, not the cursor's
+        /// <summary>Harness seams. These inject ONLY the two environmental reads -- is the key down, where is
+        /// the pointer -- because headless has neither a keyboard nor a cursor. Everything else runs for real:
+        /// the mouse point still goes through PointToCell, so the hit test, the page filter, the one-charge-at-
+        /// a-time keying and the transfer are all the production path. What they DO NOT cover, said plainly
+        /// rather than implied: that H is bound to this action, and that a real pointer lands where the test
+        /// says it does.</summary>
+        public bool DebugQtHeld;
+        public Vector2? DebugQtMouse;
+        public float DebugQtProgress => _qtPage == 255 ? 0f : Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f);
+
+        /// <summary>Mid-cell screen point for a grid cell, so a test can put the "cursor" somewhere real and let
+        /// PointToCell do the resolving rather than being handed the answer. Mid-cell, not top-left: PointToCell
+        /// floors, and the corner is ambiguous. False if that page has no laid-out grid -- which a test must
+        /// report as unrunnable, never as a pass.</summary>
+        public bool DebugCellPoint(byte page, byte x, byte y, out Vector2 pt)
+        {
+            pt = Vector2.Zero;
+            Control grid = null;
+            foreach (var (p, c, slot) in _drop) if (p == page && !slot) { grid = c; break; }
+            if (grid == null || grid.Size.X <= 1f || grid.Size.Y <= 1f) return false;
+            pt = grid.GlobalPosition + new Vector2(x * CELL + CELL * 0.5f, y * CELL + CELL * 0.5f);
+            return true;
+        }
+        float _qtT;                           // seconds charged so far
+        bool _qtToCrate;                      // which way it is about to go -- the ring is drawn differently
         // Same ORDER as SDG.Unturned.MagLoadResult -- the casts below are ordinal. Kept as a local alias
         // rather than using the core enum directly only because the drawing code reads better with the
         // short name; if you reorder either one, reorder both.
@@ -388,6 +420,7 @@ void fragment() {
         {
             if (Player != null && IsInstanceValid(Player)) Player.CloseCrate();
             _open = false; _pdDragging = false; _pendingSlotEquip = -1;
+            CancelQuickTransfer();   // a charge must not outlive the crate it was aimed at
             if (_swoop == null || !_swoop.Out()) { Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }
         }
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
@@ -475,11 +508,64 @@ void fragment() {
             if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGLOAD") == "1") { _magDemoFired = true; DebugStartLoadFirstMag(5004); }   // render harness: auto-load the first mag with 5.56
             else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGUNLOAD") == "1") { _magDemoFired = true; DebugStartUnloadFirstMag(); }   // render harness: auto-unload the first loaded mag
             else if (!_magDemoFired && System.Environment.GetEnvironmentVariable("UG_MAGVERT") == "1") { _magDemoFired = true; DebugRotateFirstMag(); DebugStartLoadFirstMag(5004); }   // render harness: rotate the mag vertical + load it
+            TickQuickTransfer((float)delta);   // hold-to-transfer: charge the hovered item, move it when full
             TickMagOps((float)delta);   // advance any active mag load/unload (one round every LOAD_INTERVAL)
             bool magFxActive = _magOps.Count > 0 || (_dragging && _dragJar != null && _dragJar.GetAsset()?.isAmmo == true);
             if (magFxActive || _magFxWasActive) _magFx?.QueueRedraw();   // one extra redraw on the falling edge -> the wheel CLEARS when the op finishes (full/empty/out), not lingers (master)
             _magFxWasActive = magFxActive;
         }
+
+        /// <summary>Hold QuickTransfer (H) with a crate open and whatever you are hovering charges up; when it
+        /// fills, it moves across. Your pages -> the crate, the crate -> your pages, same gesture both ways
+        /// (strawberry: "and the same applies the other way too").
+        ///
+        /// ONE CHARGE AT A TIME, and it is keyed to the ITEM's cell rather than to the cursor: sweeping onto a
+        /// different item abandons the first from zero rather than inheriting its progress, which is what stops
+        /// a fast drag across a full row from firing on everything it brushed.
+        ///
+        /// After a successful move the key is cleared so the next frame re-acquires. That is what gives
+        /// "then the next item, next item" for free when the grid reflows under a stationary cursor -- the
+        /// item that slides into the vacated cell simply starts its own charge.
+        ///
+        /// The transfer itself is QuickAction, the SAME path Ctrl+RMB takes, deliberately: it already resolves
+        /// crate-vs-pages by direction, routes as a server REQUEST when the bag is server-owned, and puts the
+        /// item back when the destination has no room. A second transfer path here would be a second thing to
+        /// get wrong about a server-owned bag.</summary>
+        void TickQuickTransfer(float dt)
+        {
+            if (Inv == null) { _qtPage = 255; return; }
+            // A crate has to be open: the gesture is "move it across", and with nothing to move it to there is
+            // no sensible target. Never while dragging -- the cursor already means something else then.
+            bool crateOpen = Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0;
+            bool held = DebugQtHeld || Keybinds.Pressed(GameAction.QuickTransfer);
+            if (!crateOpen || _dragging || _selPanel != null || !held) { _qtPage = 255; _qtT = 0f; return; }
+
+            if (!PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte page, out byte cx, out byte cy, out _, out bool isSlot)
+                || isSlot || page > PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
+            { _qtPage = 255; _qtT = 0f; return; }
+
+            byte idx = Inv.items[page].getIndex(cx, cy);
+            if (idx == byte.MaxValue) { _qtPage = 255; _qtT = 0f; return; }
+            var jar = Inv.items[page].getItem(idx);
+            if (jar?.item == null) { _qtPage = 255; _qtT = 0f; return; }
+
+            if (page != _qtPage || jar.x != _qtX || jar.y != _qtY)   // a different item -> start ITS charge from zero
+            { _qtPage = page; _qtX = jar.x; _qtY = jar.y; _qtT = 0f; }
+            _qtToCrate = page != PlayerInventory.STORAGE;
+
+            _qtT += dt;
+            _magFx?.QueueRedraw();          // the ring lives on the existing overlay
+            if (_qtT < QuickTransferSeconds) return;
+
+            _qtPage = 255; _qtT = 0f;       // re-acquire next frame against whatever is under the cursor now
+            QuickAction(page, cx, cy);
+        }
+
+        /// <summary>Abandon any charge. Called from Close, because a delay that survives the UI would fire into
+        /// a crate the player has already walked away from (strawberry: "both are cancelled when closing the
+        /// ui"). Refresh() does NOT clear it on purpose -- a background rebuild while you hold over an item is
+        /// not you letting go.</summary>
+        void CancelQuickTransfer() { _qtPage = 255; _qtT = 0f; }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
         // STORAGE with zero jars moving) -> detects any background change without rebuilding each frame.
@@ -1072,6 +1158,12 @@ void fragment() {
                 if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r))
                     DrawWheel(r, op.unloading ? op.batch - op.done : op.done, op.batch, op.unloading);   // load fills done/batch; unload empties (remaining = batch-done)/batch
             }
+            if (_qtPage != 255 && _qtT > 0f)
+            {
+                var qJar = JarAt(_qtPage, _qtX, _qtY);
+                if (qJar?.GetAsset() is { } qA && MagRect(_qtPage, _qtX, _qtY, qA, qJar.rot, out Rect2 qr))
+                    DrawTransferRing(qr, Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f), _qtToCrate);
+            }
             if (_dragging && _dragJar != null)
             {
                 var bA = _dragJar.GetAsset();
@@ -1084,6 +1176,20 @@ void fragment() {
                 }
             }
         }
+        /// <summary>The hold-to-transfer charge, as a ring that closes on the item being moved. Drawn in its own
+        /// colour rather than reusing DrawWheel's: that wheel means "rounds moving in or out of a magazine", and
+        /// an identical graphic meaning "this item is about to leave" would be actively misleading on a mag,
+        /// which is exactly where both can appear.</summary>
+        void DrawTransferRing(Rect2 area, float t, bool intoCrate)
+        {
+            var c = area.Position + area.Size * 0.5f;
+            float r = Mathf.Min(area.Size.X, area.Size.Y) * 0.34f;
+            var tint = intoCrate ? new Color(0.45f, 0.78f, 1f) : new Color(1f, 0.82f, 0.35f);   // in / out, told apart at a glance
+            _magFx.DrawArc(c, r, -Mathf.Pi / 2f, -Mathf.Pi / 2f + Mathf.Tau, 40, new Color(0f, 0f, 0f, 0.45f), 4f, true);
+            if (t > 0f)
+                _magFx.DrawArc(c, r, -Mathf.Pi / 2f, -Mathf.Pi / 2f + Mathf.Tau * t, 40, tint, 3f, true);
+        }
+
         void DrawWheel(Rect2 area, int filled, int total, bool unloading)
         {
             if (total <= 0) return;

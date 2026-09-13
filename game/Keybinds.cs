@@ -14,6 +14,7 @@ namespace UnturnedGodot
         MoveForward, MoveBack, MoveLeft, MoveRight,
         Jump, Sprint, Crouch, CrouchToggle, Prone, LeanLeft, LeanRight,
         Fire, Aim, Reload, Firemode, Melee, Grenade, Interact, AttachMenu, ToggleFirstPerson, Flashlight,
+        QuickTransfer,
         Inventory, Map, Craft, Skills, Console, Chat,
         Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
         VehicleHandbrake, VehicleDoor,
@@ -153,6 +154,14 @@ namespace UnturnedGodot
                                                         // ability to bind it at all, which is a different request.
             [GameAction.Interact] = new Bind(Key.F),
             [GameAction.AttachMenu] = new Bind(Key.T),          // hold to open the weapon-attachment menu (code reality; supersedes the guessed Inspect)
+            // HOLD OVER AN ITEM WITH A CRATE OPEN -> it charges and transfers, either direction (strawberry
+            // 2026-09-13). Shares H with ToggleFirstPerson, and that is NOT the double-booking that drove
+            // ToggleFirstPerson off H once before: that clash was two GAMEPLAY actions live at the same
+            // moment. This pair is structurally exclusive and not by declaration -- PlayerController's
+            // _UnhandledInput (~7528) drops every key except Inventory/Interact/Tab/Escape while the bag is
+            // open, so H cannot reach the camera toggle while this gesture is possible, and this gesture
+            // requires the bag. Rebinding either one leaves the other alone.
+            [GameAction.QuickTransfer] = new Bind(Key.H),
             [GameAction.ToggleFirstPerson] = new Bind(Key.H),   // BACK ON H (strawberry 2026-08-24: "H should be 3p by default").
                                                                 // It had been moved to K precisely because H was double-booked with
                                                                 // Grenade; unbinding Grenade above is what frees H to come back, so
