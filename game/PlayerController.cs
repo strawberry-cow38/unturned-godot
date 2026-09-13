@@ -4731,6 +4731,13 @@ namespace UnturnedGodot
         {
             bool want = TacticalLightOn && !_dead;
             if (!want) { if (IsInstanceValid(_tacLight)) _tacLight.Visible = false; return; }
+            // ⚠ NO CAMERA, NO LAMP -- and crucially, NO CACHED ONE EITHER. `_cam?.AddChild(x)` on a null camera
+            // is a silent no-op, so building the light first and parenting it second would leave a valid-but-
+            // orphaned SpotLight3D in the field: IsInstanceValid stays true for ever, this method never retries,
+            // and the lamp is permanently dark with nothing null to catch. Same shape as GetNodeOrNull refusing
+            // silently. (The handheld torch and the headlamp above are written the older way and share it --
+            // harmless there today because both are reached only from input, which needs a camera anyway.)
+            if (_cam == null) return;
             if (!IsInstanceValid(_tacLight))
             {
                 _tacLight = new SpotLight3D
@@ -4745,7 +4752,15 @@ namespace UnturnedGodot
                     SpotAngleAttenuation = 1.0f,
                     ShadowEnabled = false,   // same reason as the other two: a moving shadow-caster re-renders the world every step
                 };
-                _cam?.AddChild(_tacLight);   // rides the eye, like the torch and the headlamp -- the rail points where you look
+                // Rides the eye, like the torch and the headlamp -- the rail points where you look.
+                //
+                // ⚠ LOCAL ONLY, and flagged rather than left to be found: retail activates the rail light on the
+                // THIRD-person attachments too (`thirdAttachments.lightHook.SetActive(interact)` plus a fake
+                // light), so another player's lit rail lights the room for you. Parented to the camera, this one
+                // is yours alone. The laser DOT is local-only in retail as well (its whole block sits inside
+                // `if (channel.IsLocalPlayer)`), so only the light half is a gap, and closing it is a 3P mount +
+                // a replicated bit rather than anything here.
+                _cam.AddChild(_tacLight);
             }
             _tacLight.Visible = true;
         }
