@@ -41,12 +41,40 @@ namespace UnturnedGodot
         /// what every non-magazine attachment resolves to today. Keyed by item id.</summary>
         public static readonly System.Collections.Generic.Dictionary<ushort, ushort[]> Calibers = new();
 
+        /// <summary>Per-item CARTRIDGE restrictions, keyed by item id. Empty = universal, same rule as Calibers.
+        ///
+        /// ⚠ A SEPARATE AXIS FROM Calibers, and it has to be. Calibers holds Unturned's abstract magazine GROUP,
+        /// and "only fits 5.56 guns" cannot be written in that space: the ten guns chambered in 5.56x45mm NATO are
+        /// spread across FIVE groups (eaglefire/maplestrike/swissgewehr/the three wood rifles = 1, dragonfang = 12,
+        /// augewehr = 201, nightraider = 202, fusilaut = 204), and group 1 ALSO holds the honeybadger, which is
+        /// .300 BLK. Restricting by group would simultaneously miss four fifths of the 5.56 rifles and wrongly fit
+        /// the one gun in the list that is not 5.56 -- because a group answers "what magazine feeds it", and this
+        /// question is "what comes out of the barrel". GunDef keeps the two apart for the same reason.</summary>
+        public static readonly System.Collections.Generic.Dictionary<ushort, string[]> CaliberNames = new()
+        {
+            // strawberry 2026-09-13: the Military Suppressor "only fits 5.56 guns, rename it to 5.56 silencer".
+            { 7, new[] { "5.56x45mm NATO" } },
+        };
+
         /// <summary>Does `a` fit `slot` on a gun of `gunCaliber`? Pure, engine-free, and the single place the rule
         /// lives -- the menu asks this rather than re-deriving it per button.</summary>
-        public static bool Fits(ItemAsset a, string slot, int gunCaliber)
+        public static bool Fits(ItemAsset a, string slot, int gunCaliber) => Fits(a, slot, gunCaliber, null);
+
+        /// <summary>As above, with the gun's real CARTRIDGE (GunDef.CaliberName) so an attachment can be
+        /// restricted to what the barrel actually fires rather than to what feeds it. Null = unknown, which
+        /// leaves a cartridge-restricted attachment refusing rather than fitting: a caller that does not know
+        /// what the gun chambers has not earned a yes.</summary>
+        public static bool Fits(ItemAsset a, string slot, int gunCaliber, string gunCaliberName)
         {
             if (a == null) return false;
             if (a.type != TypeFor(slot)) return false;
+            if (CaliberNames.TryGetValue(a.id, out var names) && names != null && names.Length > 0)
+            {
+                if (string.IsNullOrEmpty(gunCaliberName)) return false;
+                bool ok = false;
+                foreach (var n in names) if (n == gunCaliberName) { ok = true; break; }
+                if (!ok) return false;
+            }
             // A MAGAZINE carries its caliber directly (magCaliber, already extracted) and must match exactly --
             // this is the same test FindBestMag uses, kept identical on purpose so the menu and the reload agree
             // about what fits. A mismatch here would let you attach a magazine the gun then refuses to reload from.
@@ -65,7 +93,7 @@ namespace UnturnedGodot
         /// a choice they cannot make, and consuming "any one of that id" would let them click the full one and get
         /// the empty one.</summary>
         public static System.Collections.Generic.List<(ItemAsset Asset, Item Item, byte Page, byte Index)> InBagInstances(
-            PlayerInventory inv, string slot, int gunCaliber)
+            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null)
         {
             var outp = new System.Collections.Generic.List<(ItemAsset, Item, byte, byte)>();
             if (inv == null) return outp;
@@ -78,7 +106,7 @@ namespace UnturnedGodot
                     var jar = pg.getItem(i);
                     if (jar?.item == null) continue;
                     var a = Assets.find(jar.item.id);
-                    if (!Fits(a, slot, gunCaliber)) continue;
+                    if (!Fits(a, slot, gunCaliber, gunCaliberName)) continue;
                     outp.Add((a, jar.item, b, i));
                 }
             }
@@ -91,7 +119,7 @@ namespace UnturnedGodot
         /// Scans the same page range FindBestMag does -- OWNPAGES excludes the external container pages, so a sight
         /// sewn into a shirt is not offered.</summary>
         public static System.Collections.Generic.List<(ItemAsset Asset, int Count)> InBag(
-            PlayerInventory inv, string slot, int gunCaliber)
+            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null)
         {
             var outp = new System.Collections.Generic.List<(ItemAsset, int)>();
             if (inv == null) return outp;
@@ -106,7 +134,7 @@ namespace UnturnedGodot
                     var jar = pg.getItem(i);
                     if (jar?.item == null) continue;
                     var a = Assets.find(jar.item.id);
-                    if (!Fits(a, slot, gunCaliber)) continue;
+                    if (!Fits(a, slot, gunCaliber, gunCaliberName)) continue;
                     if (seen.TryGetValue(a.id, out var n)) seen[a.id] = n + 1;
                     else { seen[a.id] = 1; order.Add(a.id); }
                 }
@@ -211,31 +239,67 @@ namespace UnturnedGodot
         /// positions or fallbacks changed, which is how the paperdoll ended up bare in the first place"). A
         /// DROPPED gun is the third consumer and it is not a RiggedCharacter, so rather than write those
         /// positions out a second time the decision moved here and MountOn became one of its callers.</summary>
-        public static System.Collections.Generic.List<(string Slot, Godot.Mesh Mesh, Godot.Vector3 Pos, Godot.Color Tint)>
-            PartsFor(string gunName, int sightId, int magId, int barrelId)
+        public static System.Collections.Generic.List<(string Slot, Godot.Mesh Mesh, Godot.Vector3 Pos, Godot.Color Tint, Godot.Texture2D Tex)>
+            PartsFor(string gunName, int sightId, int magId, int barrelId) => PartsFor(gunName, sightId, magId, barrelId, 0);
+
+        public static System.Collections.Generic.List<(string Slot, Godot.Mesh Mesh, Godot.Vector3 Pos, Godot.Color Tint, Godot.Texture2D Tex)>
+            PartsFor(string gunName, int sightId, int magId, int barrelId, int tacticalId)
         {
-            var parts = new System.Collections.Generic.List<(string, Godot.Mesh, Godot.Vector3, Godot.Color)>();
+            var parts = new System.Collections.Generic.List<(string, Godot.Mesh, Godot.Vector3, Godot.Color, Godot.Texture2D)>();
             if (string.IsNullOrEmpty(gunName)) return parts;
             var gv = Viewmodel.VisualForTest(gunName);
             string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
             if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
                 parts.Add(("Sight", sm, gv.SightPos != Godot.Vector3.Zero ? gv.SightPos : new Godot.Vector3(0f, 0.1312f, -0.118f),
-                           gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f)));
+                           gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f), null));
             string magTxt = magId > 0 ? MeshFor((ushort)magId) : gv.Mag;
             if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
-                parts.Add(("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f)));
+                parts.Add(("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f), null));
             if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
-                parts.Add(("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f)));
+                parts.Add(("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f), null));
+            // TACTICAL (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments"). The hook is the
+            // one Viewmodel._hookLocal already publishes for the slot -- the same table the T menu projects to place
+            // its slot icons, so the part lands exactly where the menu says the slot is. There is no factory
+            // fallback: no gun ships with a laser or a light, so nothing mounts here unless one was installed.
+            if (tacticalId > 0 && MeshFor((ushort)tacticalId) is string tt && ContentProvider.ParseObj($"res://content/{tt}") is Godot.Mesh tm)
+                // WHITE tint with the real albedo bound: the texture IS the colour here, and modulating it by a
+                // grey would mute the one cell that distinguishes a laser from a light.
+                parts.Add(("Tactical", tm, new Godot.Vector3(-0.0601f, 0.3815f, -0.0851f),
+                           Godot.Colors.White, TexFor((ushort)tacticalId)));
             return parts;
         }
 
         public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId)
+            => MountOn(body, gunName, sightId, magId, barrelId, 0);
+
+        public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId, int tacticalId)
         {
             if (body == null || string.IsNullOrEmpty(gunName)) return;
             body.ClearGunAttachments();
-            foreach (var (slot, mesh, pos, tint) in PartsFor(gunName, sightId, magId, barrelId))
-                body.MountGunAttachment(slot, mesh, pos, tint);
+            foreach (var (slot, mesh, pos, tint, tex) in PartsFor(gunName, sightId, magId, barrelId, tacticalId))
+                body.MountGunAttachment(slot, mesh, pos, tint, tex);
         }
+
+        /// <summary>Attachments whose colour lives in a TEXTURE rather than a flat tint. Almost nothing here needs
+        /// one -- a suppressor and a magazine really are one shade of near-black, and the sights carry a per-item
+        /// _Color in sights.tsv -- but the tactical pair's entire identity is a palette cell: the laser's 32x32
+        /// albedo is dark grey with a pure RED (255,0,0) emitter, the light's the same grey with a warm
+        /// (239,223,156) bulb. Tinted flat they render as two identical dark boxes, which is the shape of "wired"
+        /// that is really "present but indistinguishable".</summary>
+        static readonly System.Collections.Generic.Dictionary<ushort, string> Textures = new()
+        {
+            { 151, "tactical_laser_tex.png" },
+            { 152, "tactical_light_tex.png" },
+        };
+
+        /// <summary>The attachment's albedo, or null when it is a flat-tint part. Goes through
+        /// ContentProvider.TextureCached rather than a cache of its own: the same laser is mounted on the
+        /// viewmodel, the 3P body, the paperdoll and every dropped copy of the gun, and the project already has
+        /// one place that answers "this path, as a texture, once".</summary>
+        public static Godot.Texture2D TexFor(ushort id)
+            => Textures.TryGetValue(id, out var rel) && !string.IsNullOrEmpty(rel)
+                ? ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath($"res://content/{rel}"))
+                : null;
 
         public static string MeshFor(ushort id)
         {
@@ -287,6 +351,8 @@ namespace UnturnedGodot
             { 17,  "military_100_mag.txt" },        // Military Drum -- real ripped drum model (96v; was the STANAG military_30 stand-in)
             { 21,  "scope_8x_sight.txt" },          // 8x Scope (was a red_kobra stand-in)
             { 22,  "cross_scope_sight.txt" },       // Cross Scope (was a red_halo stand-in)
+            { 151, "tactical_laser.txt" },          // Tactical Laser  -- items/tacticals/tactical_laser (136v)
+            { 152, "tactical_light.txt" },          // Tactical Light  -- items/tacticals/tactical_light (136v)
             { 146, "red_dot_sight.txt" },           // Dot Sight (electronic aiming point)
             { 147, "red_halo_sight.txt" },          // Halo Sight (electronic aiming halo)
             { 148, "chevron_scope_sight.txt" },     // Chevron Scope

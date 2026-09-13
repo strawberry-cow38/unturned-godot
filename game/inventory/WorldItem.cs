@@ -238,16 +238,17 @@ namespace UnturnedGodot
         {
             if (Item == null || _mesh == null || id <= 0) return;
             if (Assets.find((ushort)id) is not { } a || string.IsNullOrEmpty(a.gunName)) return;
-            foreach (var (slot, mesh, pos, tint) in AttachmentFit.PartsFor(a.gunName,
+            foreach (var (slot, mesh, pos, tint, tex) in AttachmentFit.PartsFor(a.gunName,
                          AttachmentFit.InstalledId(Item, "Sight"),
                          AttachmentFit.InstalledId(Item, "Magazine"),
-                         AttachmentFit.InstalledId(Item, "Barrel")))
+                         AttachmentFit.InstalledId(Item, "Barrel"),
+                         AttachmentFit.InstalledId(Item, "Tactical")))
                 _mesh.AddChild(new MeshInstance3D
                 {
                     Name = "Attach_" + slot,
                     Mesh = mesh,
                     Position = pos,
-                    MaterialOverride = new StandardMaterial3D { AlbedoColor = tint, Roughness = 0.6f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = tint, AlbedoTexture = tex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.6f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
                 });
         }
 

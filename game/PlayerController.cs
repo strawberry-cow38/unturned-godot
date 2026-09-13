@@ -10153,7 +10153,8 @@ namespace UnturnedGodot
             AttachmentFit.MountOn(body, _gunName,
                 _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0,
                 _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0,
-                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0);
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0,
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Tactical") : 0);
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---

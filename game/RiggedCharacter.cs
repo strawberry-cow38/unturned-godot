@@ -556,11 +556,16 @@ namespace UnturnedGodot
                 if (ch is Node n && n.Name.ToString().StartsWith("A_")) n.QueueFree();
         }
 
-        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color)
+        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color) => MountGunAttachment(name, mesh, pos, color, null);
+
+        /// <summary>...with an optional albedo, for the few attachments whose colour is a palette rather than one
+        /// tint (the tactical laser's red emitter, the light's warm bulb). Nearest filtering is already set, which
+        /// is what these 32x32 palettes need.</summary>
+        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color, Texture2D tex)
         {
             var gm = HeldGunMesh;
             if (gm == null || mesh == null) return;
-            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = color, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = color, AlbedoTexture = tex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
             gm.AddChild(new MeshInstance3D { Name = "A_" + name, Mesh = mesh, MaterialOverride = mat, Position = pos });
         }
 

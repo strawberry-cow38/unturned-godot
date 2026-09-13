@@ -891,6 +891,21 @@ namespace UnturnedGodot
                     var barrelMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.05f, 0.05f, 0.055f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f };   // dark matte, like the gun body
                     mi.AddChild(new MeshInstance3D { Name = "Barrel", Mesh = ContentProvider.ParseObj("res://content/suppressor.txt"), MaterialOverride = barrelMat, Position = new Vector3(0f, 0.7307f, -0.0818f), Visible = false });
 
+                    // TACTICAL slot (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments").
+                    // Empty and hidden until something is installed -- unlike Sight and Magazine, NO gun ships with a
+                    // laser or a light, so there is no factory mesh to seed it with. SetSlotMesh fills it.
+                    //
+                    // ⚠ The node has to EXIST even while empty. SlotHasModel and SetSlotMesh both resolve the slot by
+                    // GetNodeOrNull, so a slot with no node is not "an empty slot", it is a slot that silently refuses
+                    // every attachment: the T menu would list the laser, take it out of your bag, record it installed
+                    // on the item, and render nothing. Hidden-but-present is the difference.
+                    mi.AddChild(new MeshInstance3D
+                    {
+                        Name = "Tactical", Visible = false,
+                        Position = new Vector3(-0.0601f, 0.3815f, -0.0851f),   // the slot's own hook, same value _hookLocal publishes
+                        MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.065f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f },
+                    });
+
                     // ADS anchor marker at the sight's real Aim hook (gv.AimHook, per-gun) — ADS slides the arms so this
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
@@ -1334,7 +1349,7 @@ namespace UnturnedGodot
         // only Sight (iron sights) + Magazine ship a model, so detach/attach = toggling that model's visibility. The
         // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
         static readonly System.Collections.Generic.Dictionary<string, string> _attachMesh =
-            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" } };
+            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" }, { "Tactical", "Tactical" } };
         public bool SlotHasModel(string slot) => _attachMesh.TryGetValue(slot, out var n) && _gun?.GetNodeOrNull<MeshInstance3D>(n) != null;
         public bool SlotAttached(string slot) => _attachMesh.TryGetValue(slot, out var n) && (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.Visible ?? false);
         public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
@@ -1379,6 +1394,16 @@ namespace UnturnedGodot
         public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
+        /// <summary>The tactical item whose mesh this is. SetSlotMesh is handed a MESH NAME, not an id, so the
+        /// albedo has to be found back from it -- two entries, kept next to the branch that uses them rather than
+        /// threading an id through a signature every other slot would ignore.</summary>
+        static ushort TacticalIdFor(string txtName) => txtName switch
+        {
+            "tactical_laser.txt" => 151,
+            "tactical_light.txt" => 152,
+            _ => 0,
+        };
+
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to
         // the same child-node position as the default, so swapping just the mesh mounts the new part on the same hook.
         public void SetSlotMesh(string slot, string txtName)
@@ -1390,6 +1415,21 @@ namespace UnturnedGodot
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
             m.Visible = true;   // the node may have been hidden by a detach -- a freshly mounted mesh must show (was: new scope stayed invisible after detaching the old one)
+            if (slot == "Tactical")
+            {
+                // The tactical pair are the only attachments whose colour is a TEXTURE rather than a flat tint --
+                // a 32x32 palette, dark grey body with one emitter cell (the laser's is pure red, the light's a
+                // warm bulb). Bound white so the palette is not muted, NEAREST so a 32px cell stays a hard edge.
+                // Without this they mount correctly and render as two identical dark boxes.
+                var _tacTex = AttachmentFit.TexFor(TacticalIdFor(txtName));
+                m.MaterialOverride = new StandardMaterial3D
+                {
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    AlbedoColor = _tacTex != null ? Colors.White : new Color(0.06f, 0.06f, 0.065f),
+                    AlbedoTexture = _tacTex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
+                };
+            }
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);

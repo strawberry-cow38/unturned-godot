@@ -67,6 +67,9 @@ namespace UnturnedGodot
             ClearRings();
             if (VM == null) return;
             int caliber = Player?.Gun?.Caliber ?? 0;
+            // ...and the CARTRIDGE, which is a different axis from the magazine group and the only one that can
+            // answer "5.56 only" (AttachmentFit.CaliberNames explains why the group cannot).
+            string caliberName = Player?.Gun?.CaliberName;
             foreach (var slot in Slots)
             {
                 if (slot == "Sight" && VM.IntegralSight) continue;   // aug: integral scope, no detachable/replaceable Sight slot (master)
@@ -97,7 +100,7 @@ namespace UnturnedGodot
                 // many times in the orbit"). InBag collapses duplicates to (asset, count) because the old fan was a
                 // text list where "x6" was the readable answer; a ring of icons has nowhere to put a multiplier, and
                 // six magazines drawn six times is the point -- the ring IS the count.
-                foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber))
+                foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber, caliberName))
                 {
                     var a = asset; var inst = item;
                     int rounds = isMag ? item.amount : -1;   // Item.amount IS the rounds left in THAT magazine
