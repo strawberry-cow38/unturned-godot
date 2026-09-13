@@ -172,7 +172,21 @@ void fragment() {
         /// tedium, long enough that sweeping the cursor across a row does not fire on items you passed
         /// over -- which is the whole reason it is a delay and not a keypress.</summary>
         public const float QuickTransferSeconds = 0.35f;
-        byte _qtPage = 255, _qtX, _qtY;       // the ITEM being charged, keyed by its own cell, not the cursor's
+        /// <summary>The transfer queue, in the order you touched them. The HEAD is the one charging; the rest
+        /// wait their turn (strawberry 2026-09-13: "when hovering, add the item to the transfer delay queue,
+        /// dont have to hold H on each item").
+        ///
+        /// ⚠ THE FIRST CUT ABANDONED ON SWEEP INSTEAD OF COLLECTING, and it read her "then the next item, next
+        /// item etc." as the grid reflowing under a still cursor. It is the opposite: the cursor is how you
+        /// PICK the batch. Holding until each one individually completed made clearing a crate slower than
+        /// clicking it, which is the entire thing the gesture exists to beat.
+        ///
+        /// Cells, not jar references: an ItemJar can be replaced wholesale by a Refresh or a server echo, and a
+        /// stale reference would charge an item that is no longer there. A cell is re-resolved every tick and
+        /// simply drops out of the queue when nothing answers to it. Grid items do not shuffle when a
+        /// neighbour leaves, so a queued (page,x,y) stays valid across the transfers ahead of it.</summary>
+        readonly List<(byte page, byte x, byte y)> _qtQueue = new();
+        byte _qtPage = 255, _qtX, _qtY;       // the head, mirrored for the draw + the debug accessors
         /// <summary>Harness seams. These inject ONLY the two environmental reads -- is the key down, where is
         /// the pointer -- because headless has neither a keyboard nor a cursor. Everything else runs for real:
         /// the mouse point still goes through PointToCell, so the hit test, the page filter, the one-charge-at-
@@ -182,6 +196,7 @@ void fragment() {
         public bool DebugQtHeld;
         public Vector2? DebugQtMouse;
         public float DebugQtProgress => _qtPage == 255 ? 0f : Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f);
+        public int DebugQtQueued => _qtQueue.Count;
 
         /// <summary>Mid-cell screen point for a grid cell, so a test can put the "cursor" somewhere real and let
         /// PointToCell do the resolving rather than being handed the answer. Mid-cell, not top-left: PointToCell
@@ -533,39 +548,53 @@ void fragment() {
         /// get wrong about a server-owned bag.</summary>
         void TickQuickTransfer(float dt)
         {
-            if (Inv == null) { _qtPage = 255; return; }
+            if (Inv == null) { CancelQuickTransfer(); return; }
             // A crate has to be open: the gesture is "move it across", and with nothing to move it to there is
             // no sensible target. Never while dragging -- the cursor already means something else then.
             bool crateOpen = Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0;
             bool held = DebugQtHeld || Keybinds.Pressed(GameAction.QuickTransfer);
-            if (!crateOpen || _dragging || _selPanel != null || !held) { _qtPage = 255; _qtT = 0f; return; }
+            if (!crateOpen || _dragging || _selPanel != null || !held) { CancelQuickTransfer(); return; }
 
-            if (!PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte page, out byte cx, out byte cy, out _, out bool isSlot)
-                || isSlot || page > PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
-            { _qtPage = 255; _qtT = 0f; return; }
+            // 1. COLLECT. Whatever is under the cursor joins the back of the queue, once.
+            if (PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
+                && !isSlot && hp <= PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
+            {
+                byte hidx = Inv.items[hp].getIndex(hx, hy);
+                if (hidx != byte.MaxValue && Inv.items[hp].getItem(hidx) is { item: not null } hj)
+                {
+                    var key = (hp, hj.x, hj.y);               // the item's OWN origin, so the same item can't enqueue twice
+                    if (!_qtQueue.Contains(key)) _qtQueue.Add(key);
+                }
+            }
 
-            byte idx = Inv.items[page].getIndex(cx, cy);
-            if (idx == byte.MaxValue) { _qtPage = 255; _qtT = 0f; return; }
-            var jar = Inv.items[page].getItem(idx);
-            if (jar?.item == null) { _qtPage = 255; _qtT = 0f; return; }
+            // 2. DRAIN. Only the head charges -- "only one delay is counting down at a time".
+            while (_qtQueue.Count > 0)
+            {
+                var (page, x, y) = _qtQueue[0];
+                byte idx = Inv.items[page].getIndex(x, y);
+                var jar = idx == byte.MaxValue ? null : Inv.items[page].getItem(idx);
+                if (jar?.item == null) { _qtQueue.RemoveAt(0); _qtT = 0f; continue; }   // gone from under us -> skip it
+                if (page != _qtPage || x != _qtX || y != _qtY) { _qtPage = page; _qtX = x; _qtY = y; _qtT = 0f; }
+                _qtToCrate = page != PlayerInventory.STORAGE;
 
-            if (page != _qtPage || jar.x != _qtX || jar.y != _qtY)   // a different item -> start ITS charge from zero
-            { _qtPage = page; _qtX = jar.x; _qtY = jar.y; _qtT = 0f; }
-            _qtToCrate = page != PlayerInventory.STORAGE;
+                _qtT += dt;
+                _magFx?.QueueRedraw();
+                if (_qtT < QuickTransferSeconds) return;       // still charging: nothing else runs this tick
 
-            _qtT += dt;
-            _magFx?.QueueRedraw();          // the ring lives on the existing overlay
-            if (_qtT < QuickTransferSeconds) return;
-
-            _qtPage = 255; _qtT = 0f;       // re-acquire next frame against whatever is under the cursor now
-            QuickAction(page, cx, cy);
+                _qtQueue.RemoveAt(0);
+                _qtPage = 255; _qtT = 0f;
+                QuickAction(page, x, y);
+                return;    // ONE transfer per tick. A long frame must not empty the whole queue in one go --
+                           // the delay is the mechanic, and dt-driven catch-up would silently delete it.
+            }
+            _qtPage = 255; _qtT = 0f;
         }
 
         /// <summary>Abandon any charge. Called from Close, because a delay that survives the UI would fire into
         /// a crate the player has already walked away from (strawberry: "both are cancelled when closing the
         /// ui"). Refresh() does NOT clear it on purpose -- a background rebuild while you hold over an item is
         /// not you letting go.</summary>
-        void CancelQuickTransfer() { _qtPage = 255; _qtT = 0f; }
+        void CancelQuickTransfer() { _qtQueue.Clear(); _qtPage = 255; _qtT = 0f; }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
         // STORAGE with zero jars moving) -> detects any background change without rebuilding each frame.
@@ -1158,11 +1187,15 @@ void fragment() {
                 if (MagRect(op.page, op.x, op.y, jar.GetAsset(), jar.rot, out Rect2 r))
                     DrawWheel(r, op.unloading ? op.batch - op.done : op.done, op.batch, op.unloading);   // load fills done/batch; unload empties (remaining = batch-done)/batch
             }
-            if (_qtPage != 255 && _qtT > 0f)
+            for (int qi = 0; qi < _qtQueue.Count; qi++)
             {
-                var qJar = JarAt(_qtPage, _qtX, _qtY);
-                if (qJar?.GetAsset() is { } qA && MagRect(_qtPage, _qtX, _qtY, qA, qJar.rot, out Rect2 qr))
-                    DrawTransferRing(qr, Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f), _qtToCrate);
+                var (qp, qx, qy) = _qtQueue[qi];
+                var qJar = JarAt(qp, qx, qy);
+                if (qJar?.GetAsset() is not { } qA || !MagRect(qp, qx, qy, qA, qJar.rot, out Rect2 qr)) continue;
+                // The head shows its real charge; everything behind it shows an empty ring, so a queued item is
+                // visibly WAITING rather than indistinguishable from one you merely passed over.
+                DrawTransferRing(qr, qi == 0 ? Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f) : 0f,
+                                 qp != PlayerInventory.STORAGE);
             }
             if (_dragging && _dragJar != null)
             {

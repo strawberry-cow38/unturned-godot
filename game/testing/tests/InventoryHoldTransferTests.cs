@@ -72,37 +72,61 @@ namespace UnturnedGodot.Testing
             { Aim(ui, PlayerInventory.STORAGE, cj.x, cj.y); yield return Ticks(1); }
             T.Check($"it came back out of the crate ({guard} ticks)", inv.items[PlayerInventory.STORAGE].getItemCount() == 0);
 
-            // ---- 4. ONE AT A TIME. Charge item A most of the way, sweep to B, and A must NOT complete on
-            // B's remaining time -- progress belongs to the item, not the cursor.
+            // ---- 4. HOVERING COLLECTS, IT DOES NOT ABANDON. strawberry: "when hovering, add the item to the
+            // transfer delay queue, dont have to hold H on each item." The first cut restarted the charge on
+            // every sweep, so touching a second item threw the first away -- this asserts the opposite, and
+            // would fail against that build.
             inv.items[2].tryAddItem(new Item(15));
-            inv.items[PlayerInventory.STORAGE].tryAddItem(new Item(15));
+            inv.items[2].tryAddItem(new Item(15));
             yield return Ticks(2);
+            int bagBefore = inv.items[2].getItemCount();
+            T.Check($"two items to sweep over ({bagBefore})", bagBefore >= 2);
             var a = inv.items[2].getItem(0);
-            var b = inv.items[PlayerInventory.STORAGE].getItem(0);
-            // UNCHANGED, not a literal. This asserted `== 1` and went red because step 3 returns its item to
-            // "the first of my pages with room", which is page 2 -- so the page legitimately held two. The
-            // claim is that the sweep did not COMPLETE A's move, and that is a delta, not a count.
-            int aPageBefore = inv.items[2].getItemCount();
+            var b = inv.items[2].getItem(1);
+
             Aim(ui, 2, a.x, a.y);
-            yield return Ticks(12);                       // ~0.24 s on A, most of the way
-            float onA = ui.DebugQtProgress;
-            T.Check($"A is well charged before the sweep ({onA:0.##})", onA > 0.4f && onA < 1f);
-            Aim(ui, PlayerInventory.STORAGE, b.x, b.y);   // sweep onto B
+            yield return Ticks(2);
+            Aim(ui, 2, b.x, b.y);          // sweep onto the second WITHOUT waiting for the first
             yield return Ticks(1);
-            T.Check($"the sweep restarted the charge from zero ({ui.DebugQtProgress:0.##} after A was at {onA:0.##})",
-                    ui.DebugQtProgress < onA);
-            T.Check($"and A did not transfer on B's time ({aPageBefore} -> {inv.items[2].getItemCount()})",
-                    inv.items[2].getItemCount() == aPageBefore);
+            T.Check($"both are queued after one sweep ({ui.DebugQtQueued})", ui.DebugQtQueued == 2);
+
+            // ...and only the head is counting down. The queue is not two parallel timers.
+            float headAt = ui.DebugQtProgress;
+            yield return Ticks(2);
+            T.Check($"one delay running, and it is advancing ({headAt:0.##} -> {ui.DebugQtProgress:0.##})",
+                    ui.DebugQtProgress > headAt);
+
+            // Both drain, in their own time, with the cursor now parked OFF the grid entirely -- proving the
+            // queue is what carries them and not the hover.
+            ui.DebugQtMouse = new Vector2(-500f, -500f);
+            int guard2 = 0;
+            while (ui.DebugQtQueued > 0 && guard2++ < 200) yield return Ticks(1);
+            T.Check($"the queue drained with the cursor away ({guard2} ticks)", ui.DebugQtQueued == 0);
+            T.Check($"both items left the bag ({bagBefore} -> {inv.items[2].getItemCount()})",
+                    inv.items[2].getItemCount() == bagBefore - 2);
+            // Two delays, not one: draining must not collapse into a single tick's catch-up.
+            // ⚠ HONEST LIMIT: I could not construct a mutation that fails ONLY this bound. Both attempts --
+            // draining the queue in one loop pass, and carrying the charge to the next head -- are neutralised
+            // by the head-change reset in TickQuickTransfer, which zeroes _qtT whenever the front of the queue
+            // changes. So the per-item delay is genuinely covered (removing the charge guard fails the check
+            // above), and this line is a REDUNDANT floor rather than an independently-proven one. Kept because
+            // it would catch a future rewrite that drops that reset, but not counted as teeth.
+            int minTicks = (int)(2 * InventoryUI.QuickTransferSeconds / 0.02f) - 8;
+            T.Check($"it really took two delays ({guard2} ticks, floor {minTicks})", guard2 >= minTicks);
 
             // ---- 5. CLOSING THE UI CANCELS. A charge that outlived the crate would fire into a container
             // the player has already walked away from.
-            Aim(ui, 2, a.x, a.y);
+            inv.items[2].tryAddItem(new Item(15));
+            yield return Ticks(2);
+            var c = inv.items[2].getItem((byte)(inv.items[2].getItemCount() - 1));
+            Aim(ui, 2, c.x, c.y);
             yield return Ticks(12);
             T.Check($"charged again before closing ({ui.DebugQtProgress:0.##})", ui.DebugQtProgress > 0.4f);
             int beforeClose = inv.items[2].getItemCount();
             ui.Close();
             yield return Ticks(2);
-            T.Check($"the charge died with the ui ({ui.DebugQtProgress:0.##})", ui.DebugQtProgress == 0f);
+            T.Check($"the charge AND the queue died with the ui ({ui.DebugQtProgress:0.##}, {ui.DebugQtQueued} queued)",
+                    ui.DebugQtProgress == 0f && ui.DebugQtQueued == 0);
             T.Check($"and nothing transferred after the close ({beforeClose} -> {inv.items[2].getItemCount()})",
                     inv.items[2].getItemCount() == beforeClose);
         }
