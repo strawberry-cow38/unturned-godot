@@ -4705,6 +4705,7 @@ namespace UnturnedGodot
         // nothing else, exactly like flashlight.dat, so both run on PlayerSpotLightConfig's defaults -- which
         // now live once, on MeleeDef. "Identical to the flashlight" is the data, not a resemblance.
         bool _tacticalOn;
+        int _laserDbgT;
         LaserSight _laser;
         SpotLight3D _tacLight;
 
@@ -4722,6 +4723,10 @@ namespace UnturnedGodot
         /// <summary>Test seams: the live beam and the live rail lamp, or null when the switch is off. Exposed so
         /// a test can read WHERE the dot landed and WHAT the lamp's cone is, rather than that a node exists.</summary>
         public LaserSight DebugLaser => IsInstanceValid(_laser) ? _laser : null;
+        /// <summary>Render/test seam: start the inspect gesture. Goes through the viewmodel's own PlayInspect so
+        /// every guard it owns (sprinting, attach view) still applies -- a harness that bypassed them could
+        /// photograph a pose the game will not produce.</summary>
+        public void DebugPlayInspect() => _viewmodel?.PlayInspect();
         public SpotLight3D DebugTacticalLight => IsInstanceValid(_tacLight) ? _tacLight : null;
 
         /// <summary>The tactical key with a gun in hand. Source UseableGun.askInteractGun gates the same toggle
@@ -4784,6 +4789,10 @@ namespace UnturnedGodot
         void UpdateTacticalLaser()
         {
             bool on = TacticalLaserOn && !_dead;
+            if (System.Environment.GetEnvironmentVariable("UG_LASERDBG") == "1" && ++_laserDbgT % 30 == 0)
+                Log.Print($"[laserdbg] on={on} tacOn={_tacticalOn} id={TacticalId} toggleable={HasTacticalToggle} "
+                        + $"gunOut={HasGunOut} inspecting={_viewmodel?.IsInspecting} tvl={(_viewmodel?.TacticalViewLocal != null)} "
+                        + $"lit={DebugLaser?.Lit} len={DebugLaser?.BeamLength:0.00}");
             if (!on) { if (IsInstanceValid(_laser)) _laser.Hide3D(); return; }
             if (_cam == null) return;
             if (!IsInstanceValid(_laser))
@@ -4811,10 +4820,36 @@ namespace UnturnedGodot
             //         THAT world's camera and is re-applied to this one; see Viewmodel.TacticalViewLocal.
             //   neither -> fxRail still, for a headless fixture with no viewmodel and no body.
             Vector3 emitter;
+            Transform3D? tvl = _viewmodel?.TacticalViewLocal;
             if (!_fp && _body != null && _body.MuzzleWorld is Vector3 bm) emitter = bm;
-            else if (_viewmodel?.TacticalViewLocal is Transform3D tvl) emitter = (_cam.GlobalTransform * tvl).Origin;
+            else if (tvl is Transform3D t) emitter = (_cam.GlobalTransform * t).Origin;
             else emitter = fxRail;
-            _laser.Aim(emitter, aimFrom, aimDir, _cam.Fov, aimFrom);
+
+            // ⚠ WHILE INSPECTING, THE BEAM LEAVES THE GUN'S OWN AXIS -- not the aim (strawberry 2026-09-13:
+            // "make the laser just appear straight and follow the gun (not the aim point) when inspecting").
+            //
+            // The normal rule is deliberately the opposite: the ray is cast from the EYE down the aim so the dot
+            // lands where the BULLET goes, which is the whole point of a sight. But an inspect turns the weapon
+            // over in front of your face while your aim stays put -- so that rule draws a beam sweeping across
+            // the screen from a rotating gun to a fixed point, which reads as the laser being detached from the
+            // weapon. During the gesture the gun is a prop being looked at, not a sight being used.
+            //
+            // The tactical node is parented to the gun mesh with a position and no rotation of its own, so its
+            // basis IS the gun's. Rotating the gun therefore rotates the beam with it, for free.
+            //
+            // ⚠ AND THE GUN MODEL'S BARREL RUNS ALONG +Y, NOT -Z. I used -Z first (the camera convention) and
+            // the beam vanished from the render -- it was being cast sideways through the gun. The hooks say so
+            // plainly and I should have read them before guessing: the Barrel attachment mounts at
+            // (0, 0.7307, -0.0818) and the Tactical at (-0.0601, 0.3815, -0.0851), both almost pure +Y, because
+            // these are ripped models in their own frame rather than Godot-convention nodes. 0.73 up the Y axis
+            // IS the muzzle.
+            if (_viewmodel != null && _viewmodel.IsInspecting && tvl is Transform3D it)
+            {
+                var w = _cam.GlobalTransform * it;
+                _laser.AimStraight(w.Origin, w.Basis.Y, _cam.Fov, _cam.GlobalPosition);
+                return;
+            }
+            _laser.Aim(emitter, aimFrom, aimDir, _cam.Fov, _cam.GlobalPosition);
         }
 
         /// <summary>The retail clothing WEAR sound (master 2026-09-07: "source the clothing-equip-from-ground sound
@@ -6791,6 +6826,11 @@ namespace UnturnedGodot
         // group) into the viewmodel subviewport so they spill onto the gun. ADDITIVE on the sun-mirror rig (master). Throttled
         // (~17/s) + capped at 4; each light's view-space offset from the player camera becomes the mirror's local position.
         int _lightScanCd;
+        /// <summary>How much non-sun light is falling on the player right now, and what colour it averages.
+        /// A by-product of the viewmodel's dynlight scan (free -- that loop already walks the group), consumed
+        /// by the inventory paperdoll so the doll is lit by the room rather than only by the sky.</summary>
+        public float NearbyLightEnergy { get; private set; }
+        public Color NearbyLightColor { get; private set; } = Colors.White;
         readonly System.Collections.Generic.List<(Vector3, Color, float, float)> _mirrorLights = new();
         const int MaxMirrorLights = 4;
         static float LightRange(Light3D l) => l is OmniLight3D o ? o.OmniRange : l is SpotLight3D s ? s.SpotRange : 12f;
@@ -6812,6 +6852,33 @@ namespace UnturnedGodot
                     float d2 = camPos.DistanceSquaredTo(dl.GlobalPosition);
                     if (d2 < rng * rng * 4f) found.Add((d2, dl));   // within ~2x its range of the player
                 }
+            // THE SAME SCAN ALSO ANSWERS "HOW LIT IS THE PLAYER" (strawberry 2026-09-13: "have the paperdoll
+            // lighting follow light sources too, not just sun"). The inventory doll lives in its OWN isolated
+            // SubViewport, exactly like the viewmodel, so world lights never reach it and it tracked only the
+            // sun -- leaving you daylit on the doll while standing in a dark room under a red flare.
+            //
+            // Aggregated here rather than scanned again from the UI: this loop has already paid for the group
+            // walk and the distance test, and a second consumer running its own 10 Hz scan of the same group
+            // would double a cost that exists precisely because it was measured and throttled once.
+            //
+            // It is a LEVEL, not a placement: the doll is a preview on a stage, not a simulation of where you
+            // stand, so what it wants is "how much light, what colour" to lift its fill by -- not four lights
+            // positioned in a world whose camera and pose are nothing like the player's.
+            float lsum = 0f; Color lcol = new Color(0f, 0f, 0f);
+            foreach (var (d2, dl) in found)
+            {
+                float rng = LightRange(dl);
+                if (rng <= 0.01f) continue;
+                float t = Mathf.Clamp(1f - Mathf.Sqrt(d2) / rng, 0f, 1f);   // linear falloff, 1 at the bulb
+                float c = dl.LightEnergy * t * t;                           // squared: a light across the street should not wash the doll
+                lsum += c;
+                lcol += new Color(dl.LightColor.R * c, dl.LightColor.G * c, dl.LightColor.B * c);
+            }
+            NearbyLightEnergy = Mathf.Min(lsum, 4f);   // capped: a stack of flares must not blow the doll white
+            NearbyLightColor = lsum > 0.001f
+                ? new Color(lcol.R / lsum, lcol.G / lsum, lcol.B / lsum)   // energy-weighted mean hue
+                : Colors.White;
+
             found.Sort((a, b) => a.d2.CompareTo(b.d2));
             for (int i = 0; i < found.Count && i < MaxMirrorLights; i++)
             {

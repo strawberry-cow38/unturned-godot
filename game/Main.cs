@@ -91,7 +91,7 @@ namespace UnturnedGodot
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest, _tankTest; PlayerController _dtPlayer; Vehicle _ttVeh; Camera3D _ttCam; Vector3 _ttTargetA, _ttTargetB; int _ttLastPf = -1;   // --tanktest=DIR: the tank cannon laid on two targets, with a simulated gunner stealing it in between      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
-        bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
+        bool _fireTest; PlayerController _ftPlayer; int _ftFrame; bool _ftWantLaser, _ftWantInspect, _ftInspected;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
         bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
@@ -2914,9 +2914,13 @@ namespace UnturnedGodot
                 var lit = new SDG.Unturned.Item(4);   // Eaglefire, per items_catalog.tsv
                 AttachmentFit.SetInstalledId(lit, "Tactical", 151);
                 player.EquipHeldGun(gun ?? "eaglefire", lit);
-                // ⚠ ON A TIMER, not inline: ToggleTactical refuses while the equip clip is still running (the
-                // source isBusy rule), and in a one-shot harness that clip is still playing at the settle frame.
-                GetTree().CreateTimer(1.6).Timeout += () => { if (IsInstanceValid(player) && !player.TacticalOn) player.ToggleTactical(); };
+                // ⚠ RETRIED, NOT TIMED. ToggleTactical refuses while the equip clip is still running (the source
+                // isBusy rule), so a single timed call is a guess about clip length that silently does nothing
+                // when it is wrong -- which is exactly what happened: the render came back with no beam and it
+                // took a UG_LASERDBG probe to find `tacOn=False` while every other condition read true. The
+                // per-frame retry below cannot be wrong about the timing because it does not predict it.
+                _ftWantLaser = true;
+                if (System.Environment.GetEnvironmentVariable("UG_LASERINSPECT") == "1") _ftWantInspect = true;
             }
 
 
@@ -9222,7 +9226,10 @@ namespace UnturnedGodot
                 long _ptick = (long)(_pf - _lastPhysFrames); _lastPhysFrames = _pf;
                 Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} objs={Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame)} bodies={_act} pairs={_pairs} ptick={_ptick}/{Engine.PhysicsTicksPerSecond}{FrameTail()} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} s3d={GetViewport().Scaling3DScale:0.00} render3d={(_rt != null ? $"{Mathf.RoundToInt(_rt.GetSize().X * GetViewport().Scaling3DScale)}x{Mathf.RoundToInt(_rt.GetSize().Y * GetViewport().Scaling3DScale)}" : "?")} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
             }
-            if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
+            if (_fireTest && _ftPlayer != null) { _ftFrame++;
+                // the laser switch, retried until it takes (see the UG_LASER block), then the gesture on top of it
+                if (_ftWantLaser && !_ftPlayer.TacticalOn && _ftFrame >= 30) _ftPlayer.ToggleTactical();
+                if (_ftWantInspect && _ftPlayer.TacticalOn && !_ftInspected && _ftFrame >= 45) { _ftInspected = true; _ftPlayer.DebugPlayInspect(); } if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (System.Environment.GetEnvironmentVariable("UG_NOFIRE") == "1") { /* hold fire: a GESTURE (inspect) is being photographed, and firing cancels one -- without this the rig shoots the pose away before the capture */ } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
             {
                 _paT += (float)delta;
@@ -10157,7 +10164,7 @@ namespace UnturnedGodot
             else if (_peiPlay) { if (_peiFrame < 160) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+)
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
-            else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
+            else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (System.Environment.GetEnvironmentVariable("UG_NOFIRE") == "1") { if (_ftFrame < 75) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
             else if (_worldBuild) { if (!_worldReady || ++_frame < ShotSettleFrames) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground

@@ -200,6 +200,55 @@ namespace UnturnedGodot
             _dot.Visible = true;
         }
 
+        /// <summary>Draw the beam STRAIGHT out of the gun for a fixed distance, whatever it does or does not
+        /// hit (strawberry 2026-09-13: "make the laser just appear straight and follow the gun (not the aim
+        /// point) when inspecting").
+        ///
+        /// ⚠ THE ORDINARY RULE HIDES THE BEAM ON A MISS -- retail's own `laserGameObject.SetActive(false)` when
+        /// the raycast finds nothing -- and that is right for a sight, because a dot floating in mid-air would
+        /// be a lie about where the bullet goes. It is WRONG for an inspect: the gesture turns the weapon up and
+        /// over in front of your face, so the barrel spends most of it pointed at the sky, and the beam simply
+        /// vanished for the whole animation. (Rendered it, saw nothing, which is how this was found rather than
+        /// reasoned about.)
+        ///
+        /// So here the beam is unconditional and the DOT is the conditional half: it is drawn only if something
+        /// really is within reach, which keeps the one thing the dot has always meant -- that is a surface, and
+        /// it is that far away.</summary>
+        public void AimStraight(Vector3 emitter, Vector3 dir, float camFovDegrees, Vector3 camPos, float length = 6f)
+        {
+            if (_beam == null) return;
+            dir = dir.Normalized();
+            Vector3 end = emitter + dir * length;
+            bool landed = false;
+
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space != null)
+            {
+                var q = PhysicsRayQueryParameters3D.Create(emitter, end, HitMask);
+                var hit = space.IntersectRay(q);
+                if (hit.Count > 0) { end = (Vector3)hit["position"] - dir * SurfaceLift; landed = true; }
+            }
+
+            Vector3 span = end - emitter;
+            float len = span.Length();
+            if (len < 0.02f) { Hide3D(); return; }
+            Vector3 y = span / len;
+            Vector3 x = y.Cross(Vector3.Up);
+            if (x.LengthSquared() < 1e-6f) x = y.Cross(Vector3.Right);
+            x = x.Normalized();
+            Vector3 z = x.Cross(y).Normalized();
+            _beam.GlobalTransform = new Transform3D(new Basis(x, y * len, z), emitter + y * (len * 0.5f));
+            _beam.Visible = true;
+            BeamFrom = emitter; BeamLength = len;
+
+            if (!landed) { if (_dot != null) _dot.Visible = false; return; }
+            float dist = Mathf.Max(0.05f, (end - camPos).Length());
+            float sr = Mathf.Tan(Mathf.DegToRad(Mathf.Clamp(camFovDegrees, 1f, 179f) * 0.5f));
+            float sc = DotScaleK * Mathf.Pow(dist * sr, DotTaperK);
+            _dot.GlobalTransform = new Transform3D(Basis.Identity.Scaled(new Vector3(sc, sc, sc)), end);
+            _dot.Visible = true;
+        }
+
         /// <summary>World + vehicles + props -- what a laser can paint. Players and debris are out, which is
         /// also what retail's RayMasks.BLOCK_LASER excludes.</summary>
         public const uint HitMask = (1u << 0) | (1u << 5) | (1u << 6);

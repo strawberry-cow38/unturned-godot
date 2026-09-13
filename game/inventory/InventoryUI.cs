@@ -459,6 +459,35 @@ void fragment() {
                 _pdEnv.AmbientLightColor = dn.Env.AmbientLightColor;
                 _pdEnv.AmbientLightEnergy = Mathf.Max(PdAmbientFloor, dn.Env.AmbientLightEnergy);
             }
+
+            // ...AND THE ROOM, not just the sky (strawberry 2026-09-13: "have the paperdoll lighting follow
+            // light sources too, not just sun"). The doll renders in its own isolated SubViewport, so world
+            // lights physically cannot reach it -- standing under a streetlight or beside a lit flare left the
+            // doll exactly as dim as standing in an empty field.
+            //
+            // It rides the FILL rather than the key: the key is the sun's direction and warmth and should stay
+            // the sun's, while a lamp behind you is diffuse by the time it matters here. The doll is a preview on
+            // a stage, not a simulation of where you are standing, so this is a LEVEL lifted from the player's
+            // surroundings, not four lights placed around a mannequin.
+            //
+            // The energy comes free off the viewmodel's existing dynlight scan (PlayerController.ScanWorldLights,
+            // 10 Hz, capped and distance-weighted) rather than a second walk of the same group.
+            if (Player != null && IsInstanceValid(Player) && Player.NearbyLightEnergy > 0.001f)
+            {
+                float lit = Mathf.Min(Player.NearbyLightEnergy, 4f);
+                if (_pdFill != null)
+                {
+                    // Tint TOWARD the room's colour rather than replacing: a red flare should make the doll read
+                    // red-ish, not turn the fill into a pure red spotlight that loses the skin underneath.
+                    _pdFill.LightColor = _pdFill.LightColor.Lerp(Player.NearbyLightColor, Mathf.Min(0.75f, lit * 0.35f));
+                    _pdFill.LightEnergy += lit * 0.30f;
+                }
+                if (_pdEnv != null)
+                {
+                    _pdEnv.AmbientLightColor = _pdEnv.AmbientLightColor.Lerp(Player.NearbyLightColor, Mathf.Min(0.6f, lit * 0.3f));
+                    _pdEnv.AmbientLightEnergy += lit * 0.12f;
+                }
+            }
         }
 
         public override void _Process(double delta)
