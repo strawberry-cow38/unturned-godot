@@ -98,8 +98,18 @@ namespace UnturnedNet.Tests
             var b = h.Clients[1];
             h.Server.Vitals.SurvivalDrain = true;   // turn on hunger so food/water actually drain
 
-            // drain long enough that food drops a wire quantum below 1.0 (0.005/s => ~1 quantum @ 8 bits per ~0.8 s)
-            h.Step(120);
+            // ⚠ DERIVED FROM THE RATE, NOT A CONSTANT. This stepped a flat 120 ticks, on the note "0.005/s =>
+            // ~1 quantum @ 8 bits per ~0.8 s". Food now drains 1/(2 x GameDaySeconds) = 0.000347/s, so 120 ticks
+            // (2.4 s) moves it by 0.0008 -- a THIRD of one 8-bit quantum, so the wire still sent exactly 1.0 and
+            // the owner replica correctly reported no drain. The test then read as a replication failure when
+            // nothing about replication had changed: it was asserting one rate's arithmetic, not the promise.
+            //
+            // The promise is "a drain on the server reaches the owner's replica", so step until there is a drain
+            // big enough for the wire to carry. One quantum is 1/255; ask the constant how long that takes.
+            const int Hz = 50;
+            const float Quantum = 1f / 255f;
+            int drainTicks = (int)(Quantum / PlayerVitalsSim.FoodDrainPerSecond * Hz) + Hz;   // +1 s of slack
+            h.Step(drainTicks);
 
             Assert.That(a.Vitals.TryGet(a.PlayerId, out var mine) && mine.Sim.Food < 1f, Is.True,
                         $"the owner replica received the drain (food {(a.Vitals.TryGet(a.PlayerId, out var m2) ? m2.Sim.Food : 1f):0.000}, seed={h.Net.Seed})");
@@ -187,9 +197,23 @@ namespace UnturnedNet.Tests
             // fed + hydrated by default (food/water 1.0), but damaged: the sim regens HP while fed, routed
             // through the direct HealthExact raise (never a starvation sink)
             Assert.That(h.Server.CombatState.TryGet(a.PlayerId, out var ce), Is.True);
+            Assert.That(h.Server.Vitals.TryGet(a.PlayerId, out var ve), Is.True);
             ce.HealthExact = 50f; ce.Health = 50;
 
-            Assert.That(h.StepUntil(() => ce.HealthExact > 51.5f, 120), Is.True,
+            // ⚠ DROPPING HealthExact IS DAMAGE, as far as the server can tell -- and that is the feature working,
+            // not the fixture being mistreated. ServerStep spots a hit as hp that went missing between the vitals
+            // sim's own last output and this tick's authority read, because combat writes HealthExact directly and
+            // gives the sim no hook. It cannot tell a test's assignment from a rifle round, so the 10 s
+            // post-damage regen lock arms here exactly as it would in a firefight, and the old 120-tick window
+            // expired inside it.
+            //
+            // So: wait the lock out, then allow a window sized by the ACTUAL regen rate. Both derived, because
+            // 120 ticks was only ever "enough at 2 HP/s with nothing blocking", and regen is now ~0.28 HP/s.
+            const int Hz = 50;
+            h.Step((int)(PlayerVitalsSim.RegenDamageLockSeconds * Hz) + Hz);
+            int healTicks = (int)(2f / ve.Sim.HealthRegenPerSecond * Hz) + Hz;   // 2 HP of headroom over the 1.5 asserted
+
+            Assert.That(h.StepUntil(() => ce.HealthExact > 51.5f, healTicks), Is.True,
                         $"regen while fed raised the combat HP (seed={h.Net.Seed})");
             Assert.That(ce.Alive, Is.True, "still alive -- this is regen, not damage");
             Assert.That(ce.HealthExact, Is.LessThanOrEqualTo(100f), "regen never overshoots MaxHealth");

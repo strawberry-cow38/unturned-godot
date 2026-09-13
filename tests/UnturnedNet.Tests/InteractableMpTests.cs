@@ -571,14 +571,28 @@ namespace UnturnedNet.Tests
                         "contaminated ground has to dose the server's player, not only a PlayerController");
             Assert.That(cs.HealthExact, Is.EqualTo(startHp).Within(0.001f),
                         "...and must not take health directly -- the vitals sim owns what infection costs");
-            Assert.That(v.Sim.Infection, Is.EqualTo(startInf).Within(0.001f),
-                        "a four-second brush leaves no lasting scar");
+            // ⚠ A BRUSH NOW LEAVES A TRACE, and that is the infection HEAL rate changing, not the hazard.
+            //
+            // This asserted "exactly unchanged", which was only ever true because one rate out-ran another: the
+            // old self-clear ran at 0.01/s, so four seconds of drain (0.04) completely buried the ~0.005 a brush
+            // accrues and the net landed on zero. A full-game-day clear sheds 0.0028 in the same window, so the
+            // trace survives the step. The comment above this even states the mechanism -- "has to out-climb the
+            // self-clear drain" -- so the test was encoding an arithmetic accident of the two rates, not the spec.
+            //
+            // The SPEC is that a brief trip is survivable and leaves no SCAR, and that is what this asserts now:
+            // nowhere near the line where the virus starts holding and costing health, and gone within seconds.
+            float brush = v.Sim.Infection - startInf;
+            Assert.That(brush, Is.LessThan(PlayerVitalsSim.InfectionSickAbove),
+                        "a four-second brush must not reach the line where the virus holds");
+            Assert.That(brush / PlayerVitalsSim.InfectionClearPerSecond, Is.LessThan(60f),
+                        "...and whatever it did leave sheds in under a minute -- a trace, not a scar");
 
             // ...and standing in it does. Same server, same volume, just long enough for the carried dose to
             // out-climb the self-clear -- which is the claim the old single assertion was really making.
             h.Step(2500);   // +50 s
-            Assert.That(v.Sim.Infection, Is.GreaterThan(0.5f),
-                        "standing in contaminated ground has to scar the server's player permanently");
+            Assert.That(v.Sim.Infection, Is.GreaterThan(PlayerVitalsSim.InfectionSickAbove),
+                        "standing in contaminated ground has to scar the server's player permanently -- past the "
+                        + "line where the virus holds, not merely past the number the old rule used");
             Assert.That(v.Sim.MajorlyIrradiated, Is.True,
                         "and a dose that big costs the server's copy its sprint too");
         }
