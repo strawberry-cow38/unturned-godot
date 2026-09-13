@@ -4,9 +4,15 @@ using SDG.Unturned;
 namespace UnturnedSim.Tests
 {
     // Vitals stepping extracted from PlayerController.UpdateVitals (MP_PLAN §4 Phase 4 sim-core split).
-    // Pins the shipped rates: sprint drains stamina 0.22/s, regen 0.33/s after a 1 s hold, hunger/thirst
-    // 0.005/0.007/s behind the survival toggle, infection clears 0.01/s, health regens 2/s while fed +
-    // hydrated + not sick, starving/dehydrated/sick bleeds 1.5/s (2/s sick), zero health reports death.
+    // Pins the shipped rates: regen 0.33/s after a 1 s hold, infection clears 0.01/s, health regens 2/s while
+    // fed + hydrated + not sick, starving/dehydrated/sick bleeds 1.5/s (2/s sick), zero health reports death.
+    //
+    // ⚠ HUNGER/THIRST/SPRINT ARE ASSERTED AS DURATIONS, NOT DECIMALS (2026-09-13). They used to read
+    // `1f - 0.0050f * 2f`, which restates the implementation in the assertion: the test could only fail if the
+    // constant was EDITED, never if it was WRONG, and it said nothing about what the number was chosen to mean.
+    // strawberry asked for "food 100->0 over 2 days, water over 1" -- so that is what these now check, against
+    // the same day length the game runs on. A rate change that still empties the bar in the intended time passes;
+    // one that quietly turns two days into two minutes fails and says so.
     [TestFixture]
     public class PlayerVitalsSimTests
     {
@@ -19,11 +25,30 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
-        public void Sprint_DrainsStamina_AtPointTwoTwoPerSecond()
+        public void Sprint_EmptiesAFullBar_InAboutThirteenSeconds()
         {
             var v = new PlayerVitalsSim();
             Run(v, 50, sprinting: true);   // 1 s
-            Assert.That(v.Stamina, Is.EqualTo(1f - 0.22f).Within(1e-4f));
+            Assert.That(v.Stamina, Is.EqualTo(1f - PlayerVitalsSim.SprintDrainPerSecond).Within(1e-4f));
+
+            // The number that matters is how long a sprint LASTS. 0.22/s was 4.5 s -- a sprint that ends before
+            // it starts. strawberry asked for double the capacity and a lower decay on top of that.
+            float seconds = 1f / PlayerVitalsSim.SprintDrainPerSecond;
+            Assert.That(seconds, Is.GreaterThan(9f), "a full bar must outlast the old 4.5 s by at least 2x");
+            Assert.That(seconds, Is.LessThan(30f), "...but sprinting should still be a resource, not free");
+        }
+
+        // ⚠ The stamina CEILING is 1.0 by wire contract, not by choice: PlayerVitalsReplication writes it with
+        // WriteUnsignedNormalizedFloat(Clamp01(...)), so a sim value above 1 is silently clamped in MP and the
+        // client reads a full bar while the server holds more. If anyone "doubles the maximum" by raising this
+        // clamp without bumping the wire, the desync is invisible in singleplayer -- so it is pinned here.
+        [Test]
+        public void StaminaNeverExceedsOne_BecauseTheWireCannotCarryIt()
+        {
+            var v = new PlayerVitalsSim();
+            Run(v, 2000);   // 40 s of pure regen from full
+            Assert.That(v.Stamina, Is.LessThanOrEqualTo(1f),
+                "stamina above 1.0 is clamped by WriteUnsignedNormalizedFloat -> MP desync");
         }
 
         [Test]
@@ -49,8 +74,14 @@ namespace UnturnedSim.Tests
             Assert.That(v.Food, Is.EqualTo(1f), "no drain with survival off");
             Assert.That(v.Water, Is.EqualTo(1f));
             Run(v, 100, drain: true);   // 2 s of survival drain
-            Assert.That(v.Food, Is.EqualTo(1f - 0.0050f * 2f).Within(1e-4f));
-            Assert.That(v.Water, Is.EqualTo(1f - 0.0070f * 2f).Within(1e-4f));
+            Assert.That(v.Food, Is.EqualTo(1f - PlayerVitalsSim.FoodDrainPerSecond * 2f).Within(1e-4f));
+            Assert.That(v.Water, Is.EqualTo(1f - PlayerVitalsSim.WaterDrainPerSecond * 2f).Within(1e-4f));
+
+            // THE INTENT, not the constant: a full bar has to last the number of DAYS it was specified in.
+            Assert.That(1f / PlayerVitalsSim.FoodDrainPerSecond,
+                Is.EqualTo(2f * PlayerVitalsSim.GameDaySeconds).Within(1f), "food: 100 -> 0 over two game days");
+            Assert.That(1f / PlayerVitalsSim.WaterDrainPerSecond,
+                Is.EqualTo(1f * PlayerVitalsSim.GameDaySeconds).Within(1f), "water: 100 -> 0 over one game day");
         }
 
         [Test]
@@ -95,8 +126,8 @@ namespace UnturnedSim.Tests
             var m = new PlayerVitalsSim.Multipliers { ExerciseStaminaDrain = 0.5f, CardioStaminaRegen = 2f, SurvivalDrain = 0.8f, VitalityRegen = 2f };
             var v = new PlayerVitalsSim { Health = 50f };
             for (int i = 0; i < 50; i++) v.Step(true, true, Dt, in m);
-            Assert.That(v.Stamina, Is.EqualTo(1f - 0.22f * 0.5f).Within(1e-4f), "EXERCISE halves the sprint drain");
-            Assert.That(v.Food, Is.EqualTo(1f - 0.0050f * 0.8f).Within(1e-4f), "SURVIVAL slows hunger");
+            Assert.That(v.Stamina, Is.EqualTo(1f - PlayerVitalsSim.SprintDrainPerSecond * 0.5f).Within(1e-4f), "EXERCISE halves the sprint drain");
+            Assert.That(v.Food, Is.EqualTo(1f - PlayerVitalsSim.FoodDrainPerSecond * 0.8f).Within(1e-4f), "SURVIVAL slows hunger");
             Assert.That(v.Health, Is.EqualTo(50f + 2f * 2f).Within(1e-3f), "VITALITY doubles regen");
         }
 

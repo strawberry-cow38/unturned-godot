@@ -88,6 +88,31 @@ namespace SDG.Unturned
 
         // HP per second lost while BLEEDING. Slow on purpose (strawberry: "bleeding should slowly drain hp"):
         // ~2.2 minutes from full, so an unbandaged wound is a clock you have to answer, not a death sentence.
+        // SURVIVAL DRAIN, EXPRESSED IN GAME DAYS (strawberry 2026-09-13: food 100->0 over two days, water over one).
+        //
+        // A game day is DayNightCycle.DefaultDayLength = 24 real minutes = 1440 s, so the rates are written as
+        // 1/(days x 1440) rather than as tuned decimals -- the intent stays readable and re-deriving them if the
+        // day length ever moves is arithmetic instead of archaeology.
+        //
+        // They were 0.0050 and 0.0070, i.e. a full bar in 200 s and 143 s. That is not a survival curve, it is a
+        // timer: you starve in the time it takes to loot one house.
+        public const float FoodDaysToEmpty = 2f, WaterDaysToEmpty = 1f;
+        public const float GameDaySeconds = 24f * 60f;   // mirrors DayNightCycle.DefaultDayLength (core cannot reference the game assembly)
+        public const float FoodDrainPerSecond  = 1f / (FoodDaysToEmpty  * GameDaySeconds);   // ~0.000347 -> 2880 s
+        public const float WaterDrainPerSecond = 1f / (WaterDaysToEmpty * GameDaySeconds);   // ~0.000694 -> 1440 s
+
+        // SPRINT DRAIN. strawberry asked for double the stamina MAXIMUM and a lower sprint decay on top.
+        //
+        // ⚠ The maximum stays 1.0 ON PURPOSE: Stamina crosses the wire as
+        // WriteUnsignedNormalizedFloat(Clamp01(Stamina)) (PlayerVitalsReplication), so a value above 1 is silently
+        // clamped in MP -- the client would read a full bar while the server held 2.0. Raising the literal ceiling
+        // is a WIRE change, not a constant change. Stamina therefore stays "fraction of capacity" and the capacity
+        // is doubled where it is actually observable: how long a sprint lasts.
+        //
+        //   0.22  -> 4.5 s of continuous sprint   (was)
+        //   0.11  -> 9.1 s                        ("double the maximum")
+        //   0.075 -> 13.3 s                       (+ the lower decay on top)
+        public const float SprintDrainPerSecond = 0.075f;
         public const float BleedHealthPerSecond = 0.75f;
         // Infection only clears ITSELF below this. Above it the virus has the upper hand and antibiotics are
         // the only way down (strawberry: "below 50% infection drains slowly on its own"). It used to decay
@@ -152,7 +177,7 @@ namespace SDG.Unturned
         public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding,
                          PlayerTemperatureSim.Band band, float dt, in Multipliers m)
         {
-            if (sprinting) { Stamina = MathF.Max(0f, Stamina - 0.22f * dt * m.ExerciseStaminaDrain); StaminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
+            if (sprinting) { Stamina = MathF.Max(0f, Stamina - SprintDrainPerSecond * dt * m.ExerciseStaminaDrain); StaminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
             else { StaminaRegenDelay = MathF.Max(0f, StaminaRegenDelay - dt); if (StaminaRegenDelay <= 0f) Stamina = MathF.Min(1f, Stamina + 0.33f * dt * m.CardioStaminaRegen); }
             bool cold = band == PlayerTemperatureSim.Band.Cold || band == PlayerTemperatureSim.Band.Freezing;
             bool hot = band == PlayerTemperatureSim.Band.Hot || band == PlayerTemperatureSim.Band.Boiling;
@@ -162,8 +187,8 @@ namespace SDG.Unturned
                 // survival toggle. Turning survival off and still starving from the cold would be a surprise.
                 float foodMul = cold ? ColdDrainMultiplier : 1f;
                 float waterMul = cold ? ColdDrainMultiplier : hot ? HotWaterMultiplier : 1f;
-                Food  = MathF.Max(0f, Food  - 0.0050f * dt * m.SurvivalDrain * foodMul);
-                Water = MathF.Max(0f, Water - 0.0070f * dt * m.SurvivalDrain * waterMul);
+                Food  = MathF.Max(0f, Food  - FoodDrainPerSecond  * dt * m.SurvivalDrain * foodMul);
+                Water = MathF.Max(0f, Water - WaterDrainPerSecond * dt * m.SurvivalDrain * waterMul);
             }
             // BREATH. Drains only with the head under and refills far faster than it empties -- a surfacing
             // player gets their air back in a gulp, not over half a minute. Purely a readout: see the note by

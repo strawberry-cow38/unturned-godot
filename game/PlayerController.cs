@@ -7167,7 +7167,14 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
+            // ⚠ SEATED IS NOT SPRINTING (strawberry 2026-09-13: "prevent stamina decay when not able to sprint (ie in a car)").
+            // `moving` is true in a moving car because the VEHICLE is carrying you, and the stance stays whatever it
+            // was when you got in -- so driving anywhere drained stamina as if you had run there. The rule the other
+            // clauses already follow is "if your legs cannot answer, it costs nothing"; broken legs and a major dose
+            // were covered, sitting down was not. Trains and cranes ride the parallel boarded path, so they are named
+            // too rather than left to be discovered as a third case.
+            bool cannotSprint = _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null || IsSeatedOnProp;
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated && !cannotSprint;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
             TemperatureTick(sprinting, dt);
             bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
