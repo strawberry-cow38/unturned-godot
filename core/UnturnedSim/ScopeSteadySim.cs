@@ -61,6 +61,44 @@ namespace SDG.Unturned
         /// alongside the refill -- it is not additive with it.</summary>
         public const float LockoutSeconds = 2.5f;
 
+        // ---- the transition ---------------------------------------------------------------------------
+        // Steadying is not a switch. Taking a breath and settling onto the target is something you feel
+        // yourself do; losing it is not, it just goes. So the envelope is ASYMMETRIC and it is its own
+        // thing rather than whatever the viewmodel's general position smoothing happens to give.
+        //
+        // ⚠ IT USED TO BE INHERITED, WHICH IS NOT THE SAME AS DESIGNED. Scaling the target amplitude let
+        // Viewmodel's house `Lerp(target, delta * 4)` smooth the collapse for free -- measured 0.56s to
+        // 90%, identical in both directions, and identical to how fast every other thing on that optic
+        // settles. It felt acceptable and it was nobody's decision. (strawberry: "design and fix it
+        // properly".)
+
+        /// <summary>Seconds to reach 90% of the steadied state after the control goes down. Deliberately
+        /// slower than the house smoothing: at the house rate the breath-hold settles at exactly the speed
+        /// the optic settles after any other disturbance, so it reads as the sway ending rather than as you
+        /// doing something.</summary>
+        public const float EngageSeconds = 0.90f;
+
+        /// <summary>Seconds to reach 90% of full sway after the control comes up -- or after it cuts out at
+        /// the floor. Much faster than the engage: the breath goes out of you.
+        ///
+        /// 0.25 rather than the 0.18 this was first written at, for a reason visible in the per-tick figures
+        /// rather than in the ratio. The travel here is small -- cow tools measured the whole steadied-to-full
+        /// range at 3.9 px @1280 on a 4x optic -- so a release fast enough to cover most of it inside two
+        /// frames reads as a STEP, and a step is what the whole exercise was replacing. At 50 Hz:
+        ///
+        ///     0.18s   22.6% of the travel in one tick   5.0x the engage
+        ///     0.25s   16.8%                             3.6x
+        ///     0.30s   14.2%                             3.0x  -- the asymmetry starts to disappear
+        ///
+        /// 0.25 also puts the two rates on OPPOSITE sides of the house 0.55s (engage slower, release faster),
+        /// so neither end of the breath ever coincides with ordinary optic settling. That is the property
+        /// worth keeping if these numbers are ever retuned: distinct in both directions, not merely
+        /// different from each other.</summary>
+        public const float ReleaseSeconds = 0.25f;
+
+        /// <summary>0 = full sway, 1 = fully steadied. Eased, not stepped.</summary>
+        public float Blend { get; private set; }
+
         /// <summary>Seconds of steady available from a full bar, which sets the drain rate. Long enough for
         /// a considered shot, short enough that it cannot be held through a fight.</summary>
         public const float SteadySecondsFromFull = 6f;
@@ -106,7 +144,7 @@ namespace SDG.Unturned
             if (_spent && oxygen >= SteadyRearm) _spent = false;
 
             bool allowed = wants && !_spent && Lockout <= 0f && oxygen > SteadyFloor;
-            if (!allowed) { Steadying = false; return false; }
+            if (!allowed) { Steadying = false; EaseBlend(dt); return false; }
 
             oxygen -= DrainPerSecond * dt;
             if (oxygen <= SteadyFloor)
@@ -118,18 +156,39 @@ namespace SDG.Unturned
                 _spent = true;
                 Lockout = LockoutSeconds;
                 Steadying = false;
+                EaseBlend(dt);
                 return false;
             }
 
             Steadying = true;
+            EaseBlend(dt);
             return true;
         }
 
-        /// <summary>Sway multiplier for the current state. 1 = full sway.</summary>
-        public float SwayScale => Steadying ? SteadySwayScale : 1f;
+        /// <summary>Move Blend toward the current state at the rate for the DIRECTION of travel.
+        ///
+        /// `1 - exp(-dt/tau)` rather than `dt * k`: the exponential form is frame-rate independent, so the
+        /// settle takes the same wall time at 30 fps as at 144. The house smoothing this replaces used the
+        /// linear approximation, which is fine at 50 Hz and visibly wrong when frames get long -- exactly
+        /// when a player is least able to hold an aim.</summary>
+        void EaseBlend(float dt)
+        {
+            float want = Steadying ? 1f : 0f;
+            if (dt <= 0f) { return; }
+            float seconds = want > Blend ? EngageSeconds : ReleaseSeconds;
+            const float Ln10 = 2.302585f;                  // 90% settle == 2.3 time constants
+            float tau = MathF.Max(seconds / Ln10, 1e-4f);
+            Blend = want + (Blend - want) * MathF.Exp(-dt / tau);
+            if (MathF.Abs(Blend - want) < 1e-4f) Blend = want;   // snap the tail so it genuinely arrives
+        }
+
+        /// <summary>Sway multiplier for the current state, EASED. 1 = full sway, SteadySwayScale = fully
+        /// steadied. Interpolated through Blend rather than stepped, so the caller cannot reintroduce the
+        /// snap by reading a boolean.</summary>
+        public float SwayScale => 1f - Blend * (1f - SteadySwayScale);
 
         /// <summary>Drop all state -- death, respawn, or a peer id being recycled. A lockout that outlives
         /// the life that earned it is a bug nobody would attribute to this class.</summary>
-        public void Reset() { Lockout = 0f; Steadying = false; _spent = false; }
+        public void Reset() { Lockout = 0f; Steadying = false; _spent = false; Blend = 0f; }
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using NUnit.Framework;
 using SDG.Unturned;
 
@@ -18,12 +19,33 @@ namespace UnturnedSim.Tests
             return t;
         }
 
+        /// <summary>Seconds until SwayScale has covered <paramref name="frac"/> of the distance from where it
+        /// started to <paramref name="dest"/>. Measured in REAL UNITS on the public accessor, because that is
+        /// the number the feel argument is actually about -- an assertion on the internal Blend would pass
+        /// even if SwayScale stopped reading it.</summary>
+        static float SecondsToCover(ScopeSteadySim s, ref float ox, bool wants, float dest, float frac,
+                                    float capSeconds = 10f)
+        {
+            float from = s.SwayScale;
+            float mark = from + (dest - from) * frac;
+            bool falling = dest < from;
+            float t = 0f;
+            while (t < capSeconds)
+            {
+                s.Step(wants, ref ox, Tick);
+                t += Tick;
+                if (falling ? s.SwayScale <= mark : s.SwayScale >= mark) return t;
+            }
+            return float.NaN;   // never got there -- the caller's Is.EqualTo will say so loudly
+        }
+
         [Test]
         public void Holding_Steadies_And_Almost_Kills_The_Sway()
         {
             var s = new ScopeSteadySim();
             float ox = 1f;
             Assert.That(s.Step(true, ref ox, Tick), Is.True);
+            RunHeld(s, ref ox, 3f);                      // let the envelope finish; see the transition tests
             // Bounded on BOTH sides, and the upper bound is the point. "Almost nothing" needs a large
             // reduction; "not frozen" needs a residual a player can actually see. Measured at 4x, 0.06 was
             // 1.3 px of wander -- indistinguishable from zero, so the lower bound was the only one doing
@@ -31,6 +53,136 @@ namespace UnturnedSim.Tests
             Assert.That(s.SwayScale, Is.LessThan(0.30f), "almost nothing: a large reduction");
             Assert.That(s.SwayScale, Is.GreaterThan(0.10f),
                         "but visibly moving -- below ~0.10 the residual is 1-2 px at 4x, which is frozen");
+        }
+
+        // ---- the transition ------------------------------------------------------------------------------
+        // Every one of these is bounded on BOTH sides on purpose. The last constant on this feature shipped
+        // wrong behind a one-sided `Is.LessThan(0.1f)` -- on a quantity whose failure mode was "too small",
+        // so the bound faced away from the failure. A rate has the same shape: "at least this slow" passes a
+        // transition that never arrives, and "at most this slow" passes a snap.
+
+        [Test]
+        public void It_Does_Not_Snap_On_The_First_Tick()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            s.Step(true, ref ox, Tick);
+            Assert.That(s.Steadying, Is.True, "the STATE is immediate");
+            Assert.That(s.SwayScale, Is.GreaterThan(0.9f),
+                        "...but the SWAY is not -- one tick of a 0.9s settle is barely any of it");
+        }
+
+        [Test]
+        public void The_Engage_Takes_The_Designed_Time()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            float t = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadySwayScale, 0.9f);
+            Assert.That(t, Is.EqualTo(ScopeSteadySim.EngageSeconds).Within(0.05f),
+                        "90% of the settle should land on EngageSeconds -- that is what the constant means");
+        }
+
+        [Test]
+        public void The_Release_Takes_The_Designed_Time()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            RunHeld(s, ref ox, 3f);                                  // fully steadied
+            float t = SecondsToCover(s, ref ox, false, 1f, 0.9f);
+            Assert.That(t, Is.EqualTo(ScopeSteadySim.ReleaseSeconds).Within(0.05f));
+        }
+
+        // THE DESIGN CLAIM, as a test rather than as a comment. Symmetric was the inherited behaviour and it
+        // is the thing being replaced, so a regression back to it must fail here.
+        [Test]
+        public void Losing_The_Breath_Is_Much_Faster_Than_Taking_It()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            float engage = SecondsToCover(s, ref ox, true, ScopeSteadySim.SteadySwayScale, 0.9f);
+            RunHeld(s, ref ox, 1f);
+            float release = SecondsToCover(s, ref ox, false, 1f, 0.9f);
+
+            float ratio = engage / release;
+            Assert.That(ratio, Is.GreaterThan(3f),
+                        $"asymmetric by design: {engage:F2}s in vs {release:F2}s out is barely a difference");
+            Assert.That(ratio, Is.LessThan(8f),
+                        "but the release is still a transition -- past ~8x it is a snap with extra steps");
+        }
+
+        // The other half of "designed": it must not be the HOUSE rate. Viewmodel's general position smoothing
+        // is Lerp(target, delta*4) == tau 0.25s == 0.55s to 90%, and while the envelope was inherited from it
+        // the breath-hold settled at exactly the speed every other optic disturbance settles. Copying that
+        // number back in is the specific regression this guards.
+        [Test]
+        public void The_Engage_Is_Distinct_From_The_House_Smoothing()
+        {
+            const float HouseNinety = 0.55f;   // measured, and independently confirmed by cow tools
+            Assert.That(ScopeSteadySim.EngageSeconds, Is.GreaterThan(HouseNinety * 1.4f),
+                        "a deliberate breath must read as slower than ordinary settling, not the same");
+            Assert.That(ScopeSteadySim.EngageSeconds, Is.LessThan(2.0f),
+                        "and not so slow the scope is still settling after the shot has been taken");
+        }
+
+        // `1 - exp(-dt/tau)` instead of `dt * k`. The linear form the house smoothing uses moves a FRACTION
+        // per frame, so a 30 fps player gets a different transition from a 144 fps one -- and at long frames
+        // it can overshoot outright. This is the test that fails if anyone "simplifies" it back.
+        [Test]
+        public void The_Transition_Takes_The_Same_Wall_Time_At_Any_Frame_Rate()
+        {
+            // ROUND, not truncate. `(int)(0.5f / (1f/30f))` is 14, because 1f/30f is a hair ABOVE 1/30 in
+            // float -- so the 30 fps arm silently simulated 0.467s against the others' 0.500s and reported a
+            // 0.02 frame-rate dependence that was entirely mine. The first version of this test failed for
+            // that reason and the sim was correct throughout.
+            float At(float dt)
+            {
+                var s = new ScopeSteadySim();
+                float ox = 1f;
+                int ticks = (int)MathF.Round(0.5f / dt);
+                for (int i = 0; i < ticks; i++) s.Step(true, ref ox, dt);
+                return s.SwayScale;
+            }
+            float fast = At(1f / 144f), slow = At(1f / 30f), mid = At(1f / 50f);
+            Assert.That(slow, Is.EqualTo(fast).Within(0.01f), "30 fps and 144 fps must reach the same place");
+            Assert.That(mid, Is.EqualTo(fast).Within(0.01f));
+        }
+
+        [Test]
+        public void A_Cut_Out_At_The_Floor_Eases_Back_Rather_Than_Snapping()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            // Step to the cut-out and stop THERE. The first cut of this ran a further full second past it and
+            // then asserted the sway had not returned yet -- which of course it had, five release-times ago.
+            int guard = 0;
+            while (s.Step(true, ref ox, Tick) && ++guard < 5000) { }
+            Assert.That(s.Steadying, Is.False, "it cut out at the floor");
+            // The cut-out tick eases too, so this is ONE release tick past steadied (0.18 -> ~0.32), not the
+            // steadied value itself. Bounding it at 0.18 would be asserting that the release had not started,
+            // which is a different claim and a wrong one.
+            Assert.That(s.SwayScale, Is.LessThan(0.40f), "the sway is still down at the instant it cuts out");
+
+            RunHeld(s, ref ox, ScopeSteadySim.ReleaseSeconds * 0.5f);
+            Assert.That(s.SwayScale, Is.InRange(0.30f, 0.95f),
+                        "and comes back through the middle -- running out is a release, not a snap");
+            RunHeld(s, ref ox, 1f);
+            Assert.That(s.SwayScale, Is.EqualTo(1f).Within(0.01f), "...and it arrives");
+        }
+
+        [Test]
+        public void The_Envelope_Stays_In_Range_And_Reset_Clears_It()
+        {
+            var s = new ScopeSteadySim();
+            float ox = 1f;
+            for (int i = 0; i < 400; i++)
+            {
+                s.Step(i % 7 < 3, ref ox, Tick);     // chattering the control
+                Assert.That(s.Blend, Is.InRange(0f, 1f), $"tick {i}");
+                Assert.That(s.SwayScale, Is.InRange(ScopeSteadySim.SteadySwayScale, 1f), $"tick {i}");
+            }
+            s.Reset();
+            Assert.That(s.Blend, Is.EqualTo(0f));
+            Assert.That(s.SwayScale, Is.EqualTo(1f), "a fresh life starts un-steadied, mid-transition or not");
         }
 
         [Test]
