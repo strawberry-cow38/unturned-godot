@@ -11,6 +11,9 @@ namespace UnturnedGodot
         Floor,   // generic barricades (crate/generator/sign-post): upward surfaces only (normal.y >= 0.01), upright, free player yaw (UseableBarricade.cs:805)
         Wall,    // wall-mount (storage/sign/cage/torch): near-vertical surfaces only (|normal.y| < 0.1), UPRIGHT + yaw snapped to face out of the wall (UseableBarricade.cs:1397,1400)
         Sticky,  // charge/note/clock: ANY surface, lies fully flush — all 3 axes follow the normal (UseableBarricade.cs:1483-1494)
+        Ceiling, // hanging fixtures (the pendant lamps): DOWNWARD-facing surfaces only (normal.y <= -0.01), the exact
+                 // mirror of Floor. The models are authored hanging from z=0 into negative Z, so they need no flip --
+                 // they need the surface test inverted and the standoff hug that Wall already has.
         Window,  // window barricade: snaps INTO a building-editor window opening (UV-projected onto the wall plane, NOT
                  // raycast -- the hole has no collider), one per inside/outside face, sized to the opening; ONLY placeable
                  // when the reticle is on a window opening. No retail analogue -- master 2026-08-31.
@@ -112,6 +115,8 @@ namespace UnturnedGodot
         {
             BarricadeMount.Floor => n.Y >= 0.01f,          // upward-facing only (UseableBarricade.cs:805)
             BarricadeMount.Wall => Mathf.Abs(n.Y) < 0.1f,  // near-vertical only (UseableBarricade.cs:1397)
+            BarricadeMount.Ceiling => n.Y <= -0.01f,        // downward-facing only -- the mirror of Floor. A pendant
+                                                            // on the ground is the failure this exists to refuse.
             _ => true,                                      // Sticky: anything (UseableBarricade.cs:1483)
         };
 
@@ -139,6 +144,9 @@ namespace UnturnedGodot
 
         // Lift so the mesh seats on the surface: Floor stands its base on the point (GroundLift along up); Wall/Sticky
         // hug the surface by WallStandoff along the normal.
+        // ⚠ Ceiling deliberately falls into the SECOND branch with Wall/Sticky: it hugs the surface along the
+        // normal. Giving it the Floor branch's GroundLift would push a pendant UP through the ceiling slab by its
+        // own half-height, which is the same arithmetic that seats a crate on the ground and is exactly wrong here.
         Vector3 MountOrigin() => Mount == BarricadeMount.Floor
             ? Point + Vector3.Up * (Def != null && Def.Upright ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb))
             : Point + Normal * WallStandoff;

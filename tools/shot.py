@@ -104,6 +104,11 @@ SCENES = {
     # `PROP=Street_Light_0 tools/shot.py prop`
     "prop":     (["--proptest=" + os.environ.get("PROP", "Street_Light_0"), "--shot={OUT}"], {}, False, 200,
                  "ONE prop at identity + RGB axes (set PROP=Name)"),
+    # The lamp harness, which is the ONLY way to see a fixture's LIT look: the glass and the emissive glow
+    # live in LampLight and are applied to a PLACED lamp, so the `prop` scene above -- which draws raw
+    # geometry with a default material -- cannot show them however you frame it. UG_LAMPOFF=1 for unlit.
+    "lamp":     (["--lamptest", "--shot={OUT}"], {"UG_LAMP": os.environ.get("UG_LAMP", "Light_0")}, False, 200,
+                 "one lit indoor fixture over dark ground (set UG_LAMP=Name, UG_LAMPOFF=1 for unlit)"),
     # building tool. `walls` is the room; `wallclose` is the frame/reveal detail straight on, because
     # frame width is invisible at room distance; `wallswatch` is one panel per retail palette.
     # The death screen. Dying is not something a headless run can do on its own, so UG_BOOTCMD fires the

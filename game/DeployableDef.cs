@@ -601,6 +601,56 @@ namespace UnturnedGodot
             },
         };
 
+        // CEILING PENDANTS (strawberry 2026-09-13: "wire it to be a deployable, only on ceilings. give it a real
+        // omni"). Three fixtures sharing one bulb part and one mount anatomy.
+        //
+        // ⚠ Mount = Ceiling is a NEW family and it is the whole "only on ceilings" requirement: BarricadePlacer's
+        // SurfaceOk gates it to normal.y <= -0.01, the exact mirror of Floor's >= 0.01. Without it these would
+        // take Floor and you could stand a pendant on the grass, hanging upward out of the ground.
+        //
+        // No MeshEuler: the meshes are authored HANGING, from z=0 at the plate into negative Z, so they need no
+        // flip. Lamp_0/Lamp_1 above carry (180,0,0) because those are authored standing up off a floor.
+        //
+        // The "real omni" is inherited rather than declared: LampKind = CeilingBulb routes through
+        // LampLight.MakeLight, which builds an OmniLight3D at the shared Range 8 / Energy 2.2 and anchors it AT
+        // the bulb (see ComputeLightLocal). Left at the same intensity as the ceiling strip on purpose -- a bare
+        // bulb is plausibly dimmer than a 4 m diffuser, but I have no measurement for how much and a number I
+        // invented would be exactly the magic constant this file keeps getting bitten by. Easy to scale later.
+        static Port[] PendantPorts() => new[] {
+            new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.05f, 0f, 0f), Watts = 40f },
+            new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.05f, 0f, 0f), Watts = 0f },
+        };
+
+        public static readonly DeployableDef CeilingBulbLamp = new()
+        {
+            Id = 9210, Name = "Ceiling Bulb", Model = "Ceiling_Bulb_0", PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Ceiling,
+            Size = new Vector3(0.4f, 0.4f, 0.5f), Offset = 0.05f, Radius = 0.12f, Range = 4f, Health = 120f,
+            ShatterOnDeath = true,
+            LampKind = LampLight.Kind.CeilingBulb,
+            Ports = PendantPorts(),
+        };
+
+        public static readonly DeployableDef CeilingConeLamp = new()
+        {
+            Id = 9211, Name = "Cone Pendant", Model = "Ceiling_Shade_Cone_0", PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Ceiling,
+            Size = new Vector3(0.4f, 0.4f, 0.4f), Offset = 0.05f, Radius = 0.14f, Range = 4f, Health = 150f,
+            ShatterOnDeath = true,
+            LampKind = LampLight.Kind.CeilingBulb,
+            Ports = PendantPorts(),
+        };
+
+        public static readonly DeployableDef CeilingDomeLamp = new()
+        {
+            Id = 9212, Name = "Dome Pendant", Model = "Ceiling_Shade_Dome_0", PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Ceiling,
+            Size = new Vector3(0.7f, 0.7f, 0.4f), Offset = 0.05f, Radius = 0.30f, Range = 4f, Health = 150f,
+            ShatterOnDeath = true,
+            LampKind = LampLight.Kind.CeilingBulb,
+            Ports = PendantPorts(),
+        };
+
         // CRAFTING STATIONS (strawberry): placed barricades that grant crafting tags within CraftingRange + LOS.
         // Real world meshes ripped by tools/extract_station_meshes.py (LOD0, like Generator_0); the tag GUIDs +
         // ranges are from the src barricade .dat (PlaceableProvidesCraftingTags + Range). Campfire has no explicit
@@ -637,7 +687,8 @@ namespace UnturnedGodot
         public static readonly DeployableDef[] All = { Generator, Spotlight, Cagelight, DeskLamp, StandingLamp, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
-            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate };
+            DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate,
+            CeilingBulbLamp, CeilingConeLamp, CeilingDomeLamp };
         /// <summary>The deployable a WORLD PROP of this name IS, or null for an ordinary prop (master 2026-09-07:
         /// "change the world props to be the deployable"). Derived from the defs themselves -- Model plus a real
         /// LampKind -- rather than a second name list beside LampLight.KindFor, which is the table that would drift.
@@ -660,6 +711,9 @@ namespace UnturnedGodot
             1222 => Cagelight,
             1918 => DeskLamp,
             1255 => StandingLamp,
+            9210 => CeilingBulbLamp,
+            9211 => CeilingConeLamp,
+            9212 => CeilingDomeLamp,
             1916 => Workbench,
             362 => Campfire,
             1250 => OvenElectric,

@@ -20,7 +20,7 @@ namespace UnturnedGodot
     // ex=270 but not all (one Lamp_1 is ex=295.019 -- tinyclaw), so a hardcoded axis would hang that light in the air.
     public partial class LampLight : GridLight
     {
-        public enum Kind { Generic, CeilingStrip, FloorShade, DeskBulb }
+        public enum Kind { Generic, CeilingStrip, FloorShade, DeskBulb, CeilingBulb }
 
         // ONE source of truth for prop-name -> kind + which kinds are player-toggleable, so WorldBuilder and
         // --lamptest can't drift into disagreeing (tinyclaw: keep the prop list next to the kind table, not as a
@@ -28,6 +28,12 @@ namespace UnturnedGodot
         public static Kind KindFor(string name) => name switch
         {
             "Light_0" or "Light_1" => Kind.CeilingStrip,
+            // The generated pendants (strawberry 2026-09-13). CeilingBulb rather than CeilingStrip even though
+            // both split on the SAME UV quadrant, because the two want different GLASS: a strip's diffuser is
+            // an opaque panel, and these end in a bare glass envelope that has to read as glass when the lamp
+            // is OFF, not as a black lump. Sharing the kind would have meant changing Light_0's diffuser to
+            // fix a bulb, which is a regression to an approved asset for an unrelated reason.
+            "Ceiling_Bulb_0" or "Ceiling_Shade_Cone_0" or "Ceiling_Shade_Dome_0" => Kind.CeilingBulb,
             "Lamp_1"               => Kind.FloorShade,
             "Lamp_0"               => Kind.DeskBulb,
             _                      => Kind.Generic,
@@ -85,6 +91,7 @@ namespace UnturnedGodot
         MeshInstance3D _fixture;               // the prop's own mesh (LOD0), handed in by WorldBuilder
         MeshInstance3D _emissive;              // the light-emitting sub-mesh split off the fixture -- the ONLY part that glows
         Material _fixtureOffMat, _fixtureLitMat;
+        Material _fixtureOffGlassMat, _fixtureLitGlassMat;   // CeilingBulb only -- see the glass note in the build
         MeshInstance3D _outline;               // whole-lamp white silhouette (OutlineOverlay), shown while looked at -- toggle lamps only
         AudioStreamPlayer3D _hum;              // ceiling-strip fluorescent hum, looping; volume RIDES the flicker (ApplyEffective) + hard-mutes off/broken
         float _humDb;                          // the hum's full volume in dB (dropped to -80 = silent when the light is off)
@@ -122,12 +129,40 @@ namespace UnturnedGodot
                 lit.EmissionEnabled = true; lit.Emission = BulbColor; lit.EmissionEnergyMultiplier = FixtureEmission * _worn;
                 _fixtureLitMat = lit;
 
+                // A BARE BULB IS GLASS, AND IT IS GLASS WHEN IT IS OFF TOO (strawberry: "give it a glass
+                // material, as well as an emissive glow when on"). The emissive sub-mesh otherwise wears the
+                // HOUSING's matte material while unlit, which is right for a painted diffuser panel and wrong
+                // for an envelope -- it renders as a black lump, which is exactly what she saw in the renders.
+                //
+                // Scoped to CeilingBulb on purpose. Light_0's diffuser is an opaque panel and must not become
+                // transparent because a pendant needed to.
+                if (_kind == Kind.CeilingBulb)
+                {
+                    var glass = new StandardMaterial3D
+                    {
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        AlbedoColor = new Color(0.86f, 0.88f, 0.92f, 0.28f),   // faintly cool, mostly see-through
+                        Roughness = 0.08f, Metallic = 0f, MetallicSpecular = 0.85f,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,        // see the far wall of the envelope
+                    };
+                    _fixtureOffGlassMat = glass;
+                    // Lit: the same glass, still translucent, with the warm filament glow through it. Duplicated
+                    // rather than mutated so the off state is not retroactively lit by a shared reference.
+                    var litGlass = (StandardMaterial3D)glass.Duplicate();
+                    litGlass.EmissionEnabled = true;
+                    litGlass.Emission = BulbColor;
+                    litGlass.EmissionEnergyMultiplier = FixtureEmission * _worn;
+                    litGlass.AlbedoColor = new Color(1f, 0.96f, 0.88f, 0.55f);  // hotter and less transparent when lit
+                    _fixtureLitGlassMat = litGlass;
+                }
+
                 // Carve the emitting sub-mesh per kind; the housing keeps its own matte material.
                 var src = _fixture.Mesh as ArrayMesh;
                 ArrayMesh body = null, emit = null;
                 switch (_kind)
                 {
-                    case Kind.CeilingStrip: (body, emit) = ObjMesh.SplitLens(src); break;
+                    case Kind.CeilingStrip:
+                    case Kind.CeilingBulb:  (body, emit) = ObjMesh.SplitLens(src); break;   // same UV-quadrant emitter; they differ only in the lens MATERIAL below
                     case Kind.FloorShade:   (body, emit) = ObjMesh.SplitByUvCentroid(src, uv => uv.X < 0.5f && uv.Y > 0.5f); break;
                     case Kind.DeskBulb:     (body, emit) = ObjMesh.SplitByFace(src, (c, n) => c.Z > 0.6f && n.Z < -0.4f && n.X * DebugBulbSide > 0f); break;   // head "opening" face: on the head, facing down + to the picked side
                     // Generic: no split (whole small fixture glows).
@@ -135,7 +170,7 @@ namespace UnturnedGodot
                 if (emit != null)
                 {
                     _fixture.Mesh = body;
-                    _emissive = new MeshInstance3D { Name = "Emissive", Mesh = emit, MaterialOverride = _fixtureOffMat };
+                    _emissive = new MeshInstance3D { Name = "Emissive", Mesh = emit, MaterialOverride = _fixtureOffGlassMat ?? _fixtureOffMat };
                     // Cull the glow WITH its housing. VisibilityRange is per-instance and is NOT inherited from the
                     // parent fixture's range, so a freshly-built emissive node keeps rendering at ANY distance even
                     // after the fixture has distance-culled -- the lit bulb then glows across the whole map (master:
@@ -305,6 +340,21 @@ namespace UnturnedGodot
                     float bottomY = WorldBottomY(fA, xf) - 0.9f;   // FLOATING well below the prop (master 2026-08-09: "a lil bit lower" then "lower still")
                     return new Vector3(fCenterW.X, bottomY, fCenterW.Z) - GlobalPosition;
                 }
+                case Kind.CeilingBulb:
+                {
+                    // AT THE BULB, not 0.9 m under the fixture like the strip. A pendant's light source is the
+                    // envelope you can see, and the strip's float exists because a flush ceiling panel has no
+                    // visible emitter to sit in. Anchored to the emissive sub-mesh for the same reason
+                    // FloorShade and DeskBulb are: it is the one piece guaranteed to BE the bulb.
+                    //
+                    // ⚠ This case exists because adding an enum member silently inherits `default: Vector3.Zero`,
+                    // which would have parked the light at the fixture's own centre -- up inside the shade on two
+                    // of the three, lighting the inside of the dish and nothing else. A new Kind must be walked
+                    // through every switch on Kind, not just the one it was added for.
+                    var em = _emissive?.Mesh as ArrayMesh;
+                    Vector3 bulbW = em != null ? xf * em.GetAabb().GetCenter() : fCenterW;
+                    return bulbW - GlobalPosition;
+                }
                 case Kind.FloorShade:
                 {
                     var em = _emissive?.Mesh as ArrayMesh;
@@ -398,7 +448,7 @@ namespace UnturnedGodot
             if (_fixtureLitMat == null) return;
             var emitMi = (_emissive != null && IsInstanceValid(_emissive)) ? _emissive : _fixture;
             if (emitMi != null && IsInstanceValid(emitMi))
-                emitMi.MaterialOverride = eff ? _fixtureLitMat : _fixtureOffMat;
+                emitMi.MaterialOverride = eff ? (_fixtureLitGlassMat ?? _fixtureLitMat) : (_fixtureOffGlassMat ?? _fixtureOffMat);
         }
 
         // F while looking at a standing/desk lamp flips its manual on/off (grid power is still required to actually emit).

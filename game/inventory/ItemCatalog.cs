@@ -70,6 +70,12 @@ namespace SDG.Unturned
             Add(9117, "Fluid Sluice",         2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Runs water through and turns it into dirty water. Hose water into its input; hose its output into a tank.");
             Add(9119, "Fluid Inlet", 2, 2, EItemType.GENERIC, EItemRarity.RARE,   0, 0, "An infinite water inlet -- but only placeable submerged in water (a valid depth band; the ghost turns blue only there). It has no pressure of its own, so you MUST run a powered pump on its line to draw water up out of it.");
             Add(9120, "Fluid Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
+            // CEILING PENDANTS (strawberry 2026-09-13). Placement is keyed on DeployableDef.ById like the rest of
+            // this block, so GENERIC is the right type -- the ceiling-only rule lives in BarricadeMount.Ceiling,
+            // not here. Named so `give bulb` / `give pendant` match by name the way `give generator` does.
+            Add(9210, "Ceiling Bulb",  1, 1, EItemType.GENERIC, EItemRarity.COMMON,   0, 0, "A bare bulb on a short flex. Place it on a CEILING -- it will refuse a floor or a wall. Wire it into your grid and it lights the room.");
+            Add(9211, "Cone Pendant",  2, 2, EItemType.GENERIC, EItemRarity.COMMON,   0, 0, "A tapered metal shade on a ceiling flex. Throws the light down in a tighter pool than the bare bulb. Ceiling only; wire it into your grid.");
+            Add(9212, "Dome Pendant",  2, 2, EItemType.GENERIC, EItemRarity.COMMON,   0, 0, "A wide enamel dish on a ceiling flex. Spreads the light broadly across a room. Ceiling only; wire it into your grid.");
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
             Add(9130, "Refrigerator",     3, 3, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered fridge. Wire it to power -- while powered, [F] opens its storage and the food inside won't spoil. Cut its power and it warms up again.");
             // DOORS -- ids from DeployableDef.WoodDoors (9160-9171), NOT the 9140 block: that is already the
