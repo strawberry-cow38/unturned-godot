@@ -31,8 +31,18 @@ namespace UnturnedGodot.Testing
                 var ab = rampMesh.GetAabb();
                 // A car-sized slab: wide and long, and THIN. If this ever comes back as the frame instead
                 // (4.4 m tall) the extraction has silently grabbed the wrong renderer.
+                //
+                // ⚠ THE THIN AXIS IS Z, NOT Y, AND THAT IS WHY THIS TEST WAS RED FROM THE DAY IT WAS WRITTEN
+                // (2026-09-10 cab3ff87, never once green). It asserted Godot's Y-up on a mesh that is still in
+                // the .obj's own frame: ObjMesh.Load NEGATES an axis but never SWAPS one, so the AABB comes back
+                // in file space, where vertical is Z (see the prop mesh frame note: mesh(x,y,z) -> node(x,z,-y)).
+                // The asset was correct the whole time -- the file measures 4.000 x 5.128 x 0.320, which is a
+                // car-sized slab 32 cm thick, exactly what the comment above asks for.
                 T.Check($"it is a flat platform, not the frame (size {ab.Size})",
-                        ab.Size.Y < 1.0f && ab.Size.X > 2.5f && ab.Size.Z > 2.5f);
+                        ab.Size.Z < 1.0f && ab.Size.X > 2.5f && ab.Size.Y > 2.5f);
+                // (I added a "no extent reaches the 4.4 m frame" guard here and it was WRONG: the platform is
+                // 5.13 m LONG, which is taller than the frame is tall. The frame check is the VERTICAL extent
+                // and the line above already is it. A max-over-all-axes test cannot express "not tall".)
             }
 
             // ---- THE SOURCE NUMBERS.

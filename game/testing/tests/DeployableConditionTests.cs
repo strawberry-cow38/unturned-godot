@@ -93,8 +93,25 @@ namespace UnturnedGodot.Testing
             DeployableReplication.DeployableEntity second = null;
             foreach (var e in loop.Server.Deployables.All)
                 if (e.DefId == def.Id && !ReferenceEquals(e, placed)) second = e;
-            T.Check($"a FRESH generator still places full ({second?.Fuel:0.0} of {def.Fuel:0.0})",
-                second != null && second.Fuel > def.Fuel * 0.9f);
+            // ⚠ THE CONTROL WAS ON THE WRONG AXIS, WHICH IS WHY THIS WAS RED FROM THE DAY IT WAS WRITTEN
+            // (2026-09-10 5c5e1bbc, never once green). It asserted a fresh generator places with FULL FUEL --
+            // but a fresh fuel container deliberately ships EMPTY: ItemAsset.makeLoot has
+            // `if (a.IsFuelContainer) it.fuelLevel = 0f` under the comment "a fresh gas can starts EMPTY ->
+            // fill it at a pump". So the control demanded the opposite of a rule the code states outright, and
+            // no amount of fixing the placement path could ever have satisfied it.
+            //
+            // The control's JOB is right and still needed: without it, "carries the item's state" would pass on
+            // a change that simply placed everything empty. It just has to run on an axis the empty-on-spawn
+            // rule does not own -- CONDITION. The used one above was placed at 40%; a fresh one is quality 100
+            // (makeLoot only randomises quality for FOOD), so health is the clean discriminator and fuel is not.
+            T.Check($"a FRESH generator places at full CONDITION ({second?.Health:0.0} of {def.Health:0.0})",
+                second != null && second.Health > def.Health * 0.9f);
+            T.Check($"...and is clearly not the used one ({placed.Health:0.0} used vs {second?.Health:0.0} fresh)",
+                second != null && second.Health > placed.Health * 1.3f);
+            // Fuel is asserted the way the shipped rule actually reads, so that rule is pinned too: a fresh
+            // fuel container is NOT full. If someone makes fresh cans spawn full, this is the line that says so.
+            T.Check($"...and its fuel is not full, per the empty-on-spawn rule ({second?.Fuel:0.0} of {def.Fuel:0.0})",
+                second != null && second.Fuel < def.Fuel * 0.5f);
             yield break;
         }
     }

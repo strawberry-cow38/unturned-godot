@@ -94,6 +94,11 @@ namespace UnturnedGodot.Testing
 
         /// <summary>...and the same measurement taken on what ParseObj actually EMITTED. This is the side that
         /// has to come out the same for every family, whatever the file said.</summary>
+        /// <summary>How many triangles the last OpposedFractionOfMesh call had to skip as unanswerable. Exposed
+        /// so the test can assert it stays a HANDFUL: skipping is how a winding check gets quietly disarmed, and
+        /// a threshold that grows until the number goes green is the failure mode this guards against.</summary>
+        static int perpendicular;
+
         static float OpposedFractionOfMesh(ArrayMesh m)
         {
             if (m == null || m.GetSurfaceCount() == 0) return -1f;
@@ -105,6 +110,7 @@ namespace UnturnedGodot.Testing
             int[] idx = idxVar.VariantType == Variant.Type.Nil ? null : idxVar.AsInt32Array();
             int tris = (idx?.Length ?? verts.Length) / 3;
             int opposed = 0, measured = 0;
+            perpendicular = 0;
             for (int i = 0; i < tris; i++)
             {
                 int i0 = idx != null ? idx[i * 3] : i * 3, i1 = idx != null ? idx[i * 3 + 1] : i * 3 + 1, i2 = idx != null ? idx[i * 3 + 2] : i * 3 + 2;
@@ -113,7 +119,19 @@ namespace UnturnedGodot.Testing
                 Vector3 authored = norms[i0] + norms[i1] + norms[i2];
                 if (authored.LengthSquared() <= 1e-12f) continue;
                 float d = geo.Dot(authored);
-                if (d == 0f) continue;   // perpendicular authored normal -- unanswerable, see above
+                // ⚠ NEAR-perpendicular, not EXACTLY perpendicular, and that difference is why this test was red
+                // from the day it was written (2026-09-11 514dd721 -- verified by running it AT that commit:
+                // same 98.4%). The file-side twin skips `d == 0f`, which is exact and correct THERE because the
+                // file's authored normals are the ones the exporter wrote. By the time ParseObj has emitted a
+                // mesh those normals have been summed per-vertex, so a normal that was exactly perpendicular in
+                // the file lands a hair off zero here -- and `d == 0f` stops catching it. The triangle is just
+                // as unanswerable as before (a normal in the face's own plane says nothing about which side is
+                // out); only the arithmetic changed.
+                //
+                // Relative, not absolute: geo scales with triangle AREA, so a fixed epsilon on the raw dot
+                // would skip whole large triangles and no small ones. This is the cosine.
+                float cos = d / Mathf.Sqrt(geo.LengthSquared() * authored.LengthSquared());
+                if (Mathf.Abs(cos) < 1e-3f) { perpendicular++; continue; }
                 measured++;
                 if (d < 0f) opposed++;
             }
@@ -175,6 +193,18 @@ namespace UnturnedGodot.Testing
                 //   AGREES  (c5aa8ec8, broke dropped items): 0 / 0 / 0
                 //   REVERSE EVERYTHING (952f5884): 100 / 0 / 0  <- only the non-vehicle families catch it,
                 //                                                  which is this test's entire reason to exist
+                int skipped = perpendicular;
+                // THE CONTROL ON THE SKIP. The fix above is only honest if it excludes the same handful the
+                // file side already documents (item 10: 4 perpendicular of 127). If a future change makes this
+                // number large, the percentage below has gone green by ignoring the mesh, not by winding it
+                // correctly -- which is exactly how you disarm a check while it still reads PASS.
+                // OBSERVED: 0 / 0 / 4 / 0 across the families -- and that 4 is the SAME 4 the file-side note
+                // above already documents for item 10 ("4 triangles out of 127"). That match is the evidence
+                // this is the documented unanswerable set and not a tolerance tuned until the number went
+                // green; a threshold picked to pass would have no reason to land on someone else's count.
+                // The bound is 8 rather than 4 so a legitimately similar asset does not fail spuriously, but
+                // it is nowhere near loose enough to hide a disarmed guard, which would skip dozens.
+                T.Check($"{name}: only a handful of triangles are unanswerable ({skipped} skipped)", skipped <= 8);
                 T.Check($"{name}: ParseObj emitted {outFrac:P1} opposed -- must be ALL of them "
                         + $"(file was {OpposedFractionOfFile(path):P0})", outFrac >= 0.999f);
             }
