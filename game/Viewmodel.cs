@@ -1194,7 +1194,7 @@ namespace UnturnedGodot
         /// _inspectCapture stays off: that flag is the gun's hand-bone tilt and means nothing for a blade.</summary>
         public void PlayMeleeInspect()
         {
-            if (_meleeCap == null || _arms == null || SprintingNow || _inspecting) return;
+            if (_meleeCap == null || _arms == null || SprintingNow || _inspecting || _attachView) return;
             float len = _arms.ClipLength(_meleeCap + "_Inspect");
             if (len <= 0f) return;
             _arms.Play(_meleeCap + "_Inspect");
@@ -1363,7 +1363,7 @@ namespace UnturnedGodot
             // NO INSPECTING AT A RUN (strawberry 2026-09-13). Gated HERE rather than at the F-chain in
             // PlayerController so both entry points are covered by one rule and the rest of that chain -- open a
             // crate, sit down, harvest -- keeps working while sprinting, since none of those were asked about.
-            if (_inspectClip == null || _reloading || _inspecting || SprintingNow) return;
+            if (_inspectClip == null || _reloading || _inspecting || SprintingNow || _attachView) return;
             _aiming = false; _arms?.Play(_inspectClip);
             _inspecting = true; _inspectCapture = true;
             _inspectTimer = _arms != null && _arms.ClipLength(_inspectClip) > 0f ? _arms.ClipLength(_inspectClip) : 3.3f;
@@ -1384,7 +1384,17 @@ namespace UnturnedGodot
         // the pose while the menu is open (like inspect, but not timed). Exit snaps back to the ready hold.
         public void EnterAttachView()
         {
-            if (_attachView || _reloading || _inspecting) return;
+            if (_attachView || _reloading) return;
+            // T OVERRIDES F (strawberry 2026-09-13: "have the T inspect state override the F inspect state").
+            //
+            // ⚠ THIS USED TO REFUSE, AND THE REFUSAL DESYNCED THE UI. AttachmentMenu.Open sets Visible = true and
+            // THEN calls this, so `_inspecting` in the guard did not mean "pressing T does nothing" -- it meant the
+            // MENU opened while the gun stayed in the inspect pose, with the slot icons projected onto a weapon
+            // that is not where they think it is. A half-open state is worse than either whole one.
+            //
+            // Cancelling rather than refusing also matches every other interruption here: firing cancels an
+            // inspect, ADS cancels an inspect. The attach view is simply another thing that outranks it.
+            if (_inspecting) CancelInspect();
             _aiming = false;
             if (_attachStartClip != null) _arms?.Play(_attachStartClip);
             _attachView = true; _attachCapture = true;

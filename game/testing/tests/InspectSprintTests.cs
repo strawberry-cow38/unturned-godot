@@ -64,6 +64,28 @@ namespace UnturnedGodot.Testing
             vm2.PlayInspect();
             T.Check("and once stopped, inspecting works again", vm2.IsInspecting);
 
+            // ---- T OUTRANKS F (strawberry 2026-09-13: "have the T inspect state override the F inspect state").
+            //
+            // ⚠ BOTH DIRECTIONS, because "override" is not one rule. Opening the attach view must CANCEL an
+            // inspect in flight, and an inspect must not be startable underneath an open attach view -- pin only
+            // the first and F could still barge in a frame later and fight the attach pose.
+            vm2.SetLocomotion(false, EPlayerStance.STAND);
+            vm2.PlayInspect();
+            T.Check("inspecting again (the control for the T case)", vm2.IsInspecting);
+            vm2.EnterAttachView();
+            T.Check("opening the T attach view CANCELS the inspect", !vm2.IsInspecting);
+            T.Check("...and the attach view is actually up", vm2.InAttachView);
+
+            // ⚠ The refusal this replaces was not a no-op: AttachmentMenu.Open sets Visible BEFORE calling in, so
+            // the old guard opened the MENU while the gun stayed in the inspect pose -- slot icons projected onto
+            // a weapon that is not where they think it is.
+            vm2.PlayInspect();
+            T.Check("...and F cannot start an inspect underneath it", !vm2.IsInspecting && vm2.InAttachView);
+
+            vm2.ExitAttachView();
+            vm2.PlayInspect();
+            T.Check("closing the attach view hands F back", vm2.IsInspecting);
+
             vm2.QueueFree();
             yield break;
         }
