@@ -277,6 +277,15 @@ namespace UnturnedGodot
                 Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
                 Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+                // ⚠ THE THROWABLE SPEND IS A DIRECT CALL, not a wire command, and it is the one seam here that
+                // does NOT hand its action to the server. Routing the THROW over the wire (Player.NetGrenade)
+                // would make the server fly it -- and this host has no ProjectileReplicaView, so every grenade,
+                // smoke and flare would go invisible. So the flight stays local and only the BAG goes to the
+                // authority, which is all that was ever wrong: without this seam ReleaseThrow took the offline
+                // branch, removed the item locally, and the next owner echo adopted the server's still-stocked
+                // grid straight back over it (master 2026-09-13: "grenades are getting consumed, but the server
+                // disagrees, when i update my inv, they come back").
+                Player.NetSpendThrowable = itemId => Server.Transactions.SpendThrowable(Client.PlayerId, itemId);
                 Player.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
                 Player.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                     (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,

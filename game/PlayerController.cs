@@ -3536,14 +3536,27 @@ namespace UnturnedGodot
             // ServerTransactions.SpendThrowable) and the owner echo empties the cell -- the same command that
             // mints the projectile pays for it, so the two can no longer disagree. Offline, we still remove it
             // ourselves.
+            //
+            // ⚠ AND THE LISTEN SERVER IS A THIRD CASE, which the first cut of this missed and master found:
+            // "grenades are getting consumed, but the server disagrees, when i update my inv, they come back."
+            // The loopback wires no NetGrenade (it has no ProjectileReplicaView, so a server-flown grenade would
+            // be invisible) -- so it fell to the local-removal branch. But its bag IS the server's: every owner
+            // echo runs AdoptReplicatedInventory over it. So the local removal was real, and then the next echo
+            // put the grenade back, exactly as reported. That is the no-double-mutation invariant MpLoopback's
+            // own seam comment states, broken by a spend that had no seam.
             int left;
             if (NetGrenade != null)
             {
                 left = (Inventory?.getItemCount(id) ?? 1) - 1;   // the echo will empty the cell; count what WILL remain
             }
+            else if (NetSpendThrowable != null)
+            {
+                NetSpendThrowable(id);                           // listen server: the flight is ours, the BAG is the authority's
+                left = (Inventory?.getItemCount(id) ?? 1) - 1;   // ...so count what the echo will leave, never mutate here
+            }
             else
             {
-                Inventory?.removeItemAmount(id, 1);
+                Inventory?.removeItemAmount(id, 1);              // offline, no authority: the local grid is the only grid
                 left = Inventory?.getItemCount(id) ?? 0;
             }
             _viewmodel?.HideHeldItem();   // it is in the air now: the follow-through swings an empty hand (retail's arm is out of frame here either way)
@@ -5701,6 +5714,20 @@ namespace UnturnedGodot
         public System.Action<int, float> NetDamageObject;    // (destructibleIndex, objectDamage) -> the authoritative ServerDestructibles in the loopback. In SP the local bullet path (StepBullets) owns hits, but destructible HEALTH is server-owned (ServerDestructibles mirrors the alive-bit back onto the field), so a local prop hit must route THERE, not break the field locally (a local break gets reverted by the next mirror tick). Null in pure --direct SP (no server) -> props inert there (documented fallback).
         public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
         public System.Action<Vector3, Vector3, ushort> NetGrenade;   // (origin, velocity, throwable item id) -> Client.SendGrenade. The ID is what lets the server pick the right fuse/blast/effect out of SDG.Unturned.Throwables instead of assuming every throw is a frag.
+
+        /// <summary>Spend one thrown item from the SERVER's bag while the flight stays LOCAL. (itemId) -> true if
+        /// it was there. The LISTEN-SERVER seam, and it exists because the loopback cannot use either of the other
+        /// two answers:
+        ///
+        ///   - it cannot use <see cref="NetGrenade"/>, because that hands the flight to the server and the
+        ///     loopback has no ProjectileReplicaView to draw it -- every grenade would go invisible;
+        ///   - it cannot use the plain local removeItemAmount, because the loopback's bag IS the server's
+        ///     (Client.Inventories.ReplicaUpdated -> AdoptReplicatedInventory), so a local removal is overwritten
+        ///     by the next echo and the item comes back.
+        ///
+        /// Same shape as NetDamageSink: a DIRECT authority call rather than a wire command, for a thing the local
+        /// node already did.</summary>
+        public System.Func<ushort, bool> NetSpendThrowable;
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
         public System.Action<uint> NetPickupItem;            // wired by ClientWorldSession: F on a focused WorldItemPuppet asks the server for the item (Client.SendPickupItem)
 
