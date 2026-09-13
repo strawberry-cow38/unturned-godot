@@ -64,8 +64,12 @@ namespace SDG.Unturned
                 Add(d, new ThrowableDef { Id = id, Name = FlareName(id), Kind = EThrowableKind.Flare, Radius = 12f, EffectSeconds = 45f });
 
             // ---- smoke (Throwables/Smoke_*) : likewise no damage, pure effect ----
+            // Radius 7.8 = the old 6.0 +30% (strawberry 2026-09-13: "make the smoke cloud 30% bigger"). Neither
+            // number is ripped -- retail's smoke is a particle system, not a radius -- so this is a game-feel
+            // value, written as the multiplication it was rather than as a new constant that hides where it came
+            // from. Smoke carries no damage, so Radius here is purely how big the cloud draws.
             for (ushort id = 261; id <= 268; id++)
-                Add(d, new ThrowableDef { Id = id, Name = SmokeName(id), Kind = EThrowableKind.Smoke, Radius = 6f, EffectSeconds = 22f });
+                Add(d, new ThrowableDef { Id = id, Name = SmokeName(id), Kind = EThrowableKind.Smoke, Radius = 6f * 1.3f, EffectSeconds = 22f });
 
             return d;
         }

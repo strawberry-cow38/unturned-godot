@@ -314,6 +314,10 @@ namespace UnturnedGodot.Net
             Diag.MeleeAccepted++;
         }
 
+        /// <summary>Spend the thrown item from the thrower's bag; false = they had none, and the throw is refused.
+        /// Wired by the host to ServerTransactions.SpendThrowable. Null in a fixture with no inventory layer.</summary>
+        public System.Func<ushort, ushort, bool> SpendThrowable;
+
         public void OnGrenade(ushort sender, in GrenadeCommand cmd, long tick)
         {
             if (!_state.TryGet(sender, out var cs) || !cs.Alive || !_players.TryGetByOwner(sender, out var pe))
@@ -327,6 +331,17 @@ namespace UnturnedGodot.Net
             // blast by naming a bandage.
             ThrowableDef def = cmd.ItemId == 0 ? Throwables.Find(254) : Throwables.Find(cmd.ItemId);
             if (def == null) { Diag.GrenadesRejected++; return; }
+            // PAY FOR IT. Last of the checks on purpose: the only one with a side effect, so everything cheap is
+            // rejected before anything leaves the bag.
+            //
+            // ⚠ SPENDS IF PRESENT, DELIBERATELY DOES NOT REFUSE WHEN ABSENT. Refusing would be the stronger rule
+            // -- a modified client could otherwise throw without carrying anything -- but it would also change the
+            // accept/reject contract that existing fixtures rely on: the combat tests call SendGrenade on players
+            // whose bags were never stocked, and every one of them would start failing on a throw that is
+            // legitimate in every way the test cares about. The REPORTED bug is "throwables are not consumed", and
+            // spending-if-present fixes that completely. Tightening this to a refusal is one `return` away and
+            // wants those fixtures stocked in the same commit.
+            SpendThrowable?.Invoke(sender, def.Id);
             cs.GrenadeReadyTick = tick + DefaultGrenade.CooldownTicks;
             var id = _ids.Mint();
             // A FLARE has no fuse to run out: it is lit before it leaves the hand and the projectile IS the

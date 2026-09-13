@@ -49,6 +49,8 @@ namespace UnturnedGodot
         float _spin;
         float _life;
 
+        bool _vented;                          // smoke: the cloud has been released and the canister is running out its stay
+        public bool Vented => _vented;         // test seam
         public bool AtRest => _atRest;         // test seam
         public float FuseLeft => Fuse;
 
@@ -106,6 +108,18 @@ namespace UnturnedGodot
 
             if (Kind == EThrowableKind.Smoke)
             {
+                // ⚠ THE CANISTER OUTLIVES ITS FUSE (strawberry 2026-09-13: "make the smoke grenade stay after
+                // smoke starts emitting, and despawn with the smoke"). It used to QueueFree the instant the cloud
+                // spawned, so the thing producing the smoke vanished at the exact moment it started producing --
+                // the one frame a player is looking at it. It now lingers for the cloud's own Duration and goes
+                // when the smoke does, which is also what stops a spent canister lying on the ground forever.
+                if (_vented)
+                {
+                    _life -= dt;
+                    if (_life <= 0f) QueueFree();
+                    return;
+                }
+                _vented = true;
                 var cloud = new SmokeCloud
                 {
                     Tint = Tint,
@@ -124,6 +138,8 @@ namespace UnturnedGodot
                 // explosions.
                 GameAudio.PlayAt(this, GameAudio.SmokeVent(ItemId) ?? GameAudio.Pick("casings", "general"),
                                  GlobalPosition, -2f, 6f, 40f, 1f);
+                _life = cloud.Duration;   // ...and die with the cloud we just made, not before it
+                return;
             }
             else if (IsInstanceValid(Thrower))
             {
@@ -156,12 +172,24 @@ namespace UnturnedGodot
             Vector3 point = (Vector3)hit["position"], n = ((Vector3)hit["normal"]).Normalized();
             float speed = Vel.Length();
             if (speed > 1.5f)
-                // ...and the same for the bounce: throwables_grenade_bounce_use is the retail clip, named for
-                // the bundle it lives in rather than for frags only. Volume tracks how hard it landed, so a
-                // grenade rolling to a stop fades out instead of clacking at full level on every skip.
-                GameAudio.PlayAt(this, GameAudio.ThrowableBounce() ?? GameAudio.Pick("casings", "general"), point,
+            {
+                // WHAT IT LANDED ON, the way a bullet impact asks: the splatmap under the point for terrain, the
+                // prop's own SurfMeta otherwise, concrete when nothing says. The bounce used to play
+                // throwables_grenade_bounce_use, which is BYTE-IDENTICAL to throwables_grenade_use -- so every
+                // skip replayed the pin being pulled (strawberry 2026-09-13: "when they bounce, they are playing
+                // the throw sound for some reason").
+                var sf = PlayerController.Surf.Concrete;
+                if (hit["collider"].As<GodotObject>() is Node hn)
+                {
+                    if (Terrain.Active != null && hn.IsInGroup("terrain")) sf = Terrain.Active.SurfAt(point.X, point.Z);
+                    else if (hn.HasMeta(PlayerController.SurfMeta)) sf = (PlayerController.Surf)(int)hn.GetMeta(PlayerController.SurfMeta);
+                }
+                // Volume tracks how hard it landed, so a grenade rolling to a stop fades out instead of clacking
+                // at full level on every skip.
+                GameAudio.PlayAt(this, GameAudio.ThrowableBounce(sf), point,
                                  Mathf.Lerp(-14f, -2f, Mathf.Min(1f, speed / 12f)), 4f, 30f,
                                  (float)GD.RandRange(0.94, 1.06));
+            }
 
             Vector3 vn = n * Vel.Dot(n), vt = Vel - vn;              // split into into-the-surface and along-it
             Vel = vt * (1f - Friction) - vn * Restitution;           // skid + bounce back out

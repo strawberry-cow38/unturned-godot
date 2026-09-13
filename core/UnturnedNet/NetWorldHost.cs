@@ -137,6 +137,9 @@ namespace UnturnedGodot.Net
                                                   Crops, Resources, Vitals, Interactables);
             ForageHost = new ServerForage(Resources);
             Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
+            // The throw pays for itself: the handler that accepts a grenade is the one that takes it out of the
+            // bag. Wired here because Combat is built before Transactions exists.
+            Combat.SpendThrowable = (sender, itemId) => Transactions.SpendThrowable(sender, itemId);
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
             Transactions.Crafting_ = CraftQueue;
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot

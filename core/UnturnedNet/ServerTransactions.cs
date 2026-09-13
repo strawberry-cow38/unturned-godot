@@ -199,6 +199,27 @@ namespace UnturnedGodot.Net
             return true;
         }
 
+        /// <summary>Take one thrown item out of the thrower's bag. False when they have none, which is what makes
+        /// this the LAST check in OnGrenade: it is the step that cannot be undone, same rule SpendTire follows.
+        ///
+        /// ⚠ THIS IS WHY THROWABLES WERE INFINITE. PlayerController.ReleaseThrow spends the item locally in SP,
+        /// but on a server-owned bag it routed the deletion through NetConsume -> OnConsume, which opens with
+        /// `if (asset == null || !asset.IsConsumable) return;`. A grenade is not a consumable, so the server
+        /// refused every one of them, silently, incrementing ConsumesRejected -- and since the THROW itself was
+        /// accepted by a different handler, the projectile flew and the item stayed in the bag. Singleplayer runs
+        /// through the loopback, so "SP" had it too.
+        ///
+        /// Spending it HERE, in the handler that accepts the throw, is what makes the two agree: the same command
+        /// that mints the projectile is the one that pays for it.</summary>
+        public bool SpendThrowable(ushort sender, ushort itemId)
+        {
+            if (itemId == 0) return false;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(itemId) <= 0) return false;
+            SpendAnyOf(inv, itemId, sender);
+            return true;
+        }
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,

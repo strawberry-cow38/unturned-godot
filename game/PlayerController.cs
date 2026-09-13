@@ -3438,7 +3438,8 @@ namespace UnturnedGodot
             Log.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
         }
 
-        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; }   // switching away mid-swing drops the pending release + tail with it
+        bool _throwHeldDown;   // LMB is down with a throwable in hand: the throw is armed and waiting for the release
+        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; _throwHeldDown = false; }   // switching away mid-swing drops the pending release + tail with it (and any armed-but-unreleased throw: swapping weapons with the button down must not lob one later)
 
         // The item's OWN 1p model in the hand, through the consumable path: it follows the hand bone with the source's
         // held-model roll (PlayerEquipment.firstModel Euler(0,0,90)), TE_0 raises it (the retail "Equip", 0.47 s) and TU_0
@@ -3522,13 +3523,22 @@ namespace UnturnedGodot
             GameAudio.Play2D(this, GameAudio.ThrowableUse(id), -4f);
             Log.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
 
-            // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner
-            // echo empties the cell; in SP we remove it ourselves.
+            // SPEND IT -- and ⚠ NOT THROUGH NetConsume, which is what made throwables infinite.
+            //
+            // This used to route the deletion the way a finished consumable does. OnConsume opens with
+            // `if (asset == null || !asset.IsConsumable) return;` and a grenade is not a consumable, so the server
+            // refused every request, silently. The THROW was accepted by a different handler, so the projectile
+            // flew and the item stayed in the bag -- and singleplayer runs through the loopback, so it was not an
+            // MP-only bug. Diag.ConsumesRejected had been counting it the whole time.
+            //
+            // When the throw goes to the server, the SERVER now spends it (ServerCombat.OnGrenade ->
+            // ServerTransactions.SpendThrowable) and the owner echo empties the cell -- the same command that
+            // mints the projectile pays for it, so the two can no longer disagree. Offline, we still remove it
+            // ourselves.
             int left;
-            if (NetConsume != null)
+            if (NetGrenade != null)
             {
-                if (FindBagCell(id, out byte cp, out byte cx, out byte cy)) NetConsume(cp, cx, cy);
-                left = (Inventory?.getItemCount(id) ?? 1) - 1;
+                left = (Inventory?.getItemCount(id) ?? 1) - 1;   // the echo will empty the cell; count what WILL remain
             }
             else
             {
@@ -7752,7 +7762,7 @@ namespace UnturnedGodot
                 else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
-                else if (HoldingThrowable) ThrowHeld();                 // holding a grenade/smoke/flare: LMB lobs it (strawberry 2026-09-05)
+                else if (HoldingThrowable) _throwHeldDown = true;       // holding a grenade/smoke/flare: LMB ARMS the throw, RELEASE lobs it (strawberry 2026-09-13)
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldPaintItem != null) TrySprayVehicle();     // holding a spraypaint: LMB resprays the vehicle you're aimed at
@@ -7768,6 +7778,11 @@ namespace UnturnedGodot
             else if (Keybinds.JustReleased(GameAction.Fire, @event))
             {
                 if (HoldingFisher) FisherRelease();   // LMB release with a rod: lock in the charge and fling the bobber (UseableFisher.stopPrimary)
+                // HOLD TO DELAY THE THROW (strawberry 2026-09-13: "while holding lmb, delay the hold until its
+                // released, no cooking mechanics, just delaying the throw"). Explicitly NOT cooking: the fuse
+                // still starts when the grenade leaves the hand, so holding longer changes when it flies and
+                // nothing else. The rod next to this already had the shape; a throwable just never used it.
+                else if (HoldingThrowable && _throwHeldDown) { _throwHeldDown = false; ThrowHeld(); }
             }
             else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {

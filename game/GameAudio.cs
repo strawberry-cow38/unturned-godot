@@ -311,9 +311,25 @@ namespace UnturnedGodot
         public static AudioStream SmokeVent(ushort id)
             => ThrowableStem(id) is string st && st.StartsWith("smoke") ? Clip("items", $"throwables_{st}_smoke") : null;
 
-        /// <summary>A thrown thing hitting something. One clip for every throwable, as retail has it -- the
-        /// file is named for the grenade because that is the bundle it lives in, not because it is frag-only.</summary>
-        public static AudioStream ThrowableBounce() => Clip("items", "throwables_grenade_bounce_use");
+        /// <summary>A thrown thing hitting something.
+        ///
+        /// ⚠ NOT throwables_grenade_bounce_use, WHICH IS NOT A BOUNCE. Read the name the way the folder names
+        /// everything else -- `throwables_&lt;item&gt;_&lt;action&gt;` -- and it is the BOUNCE GRENADE (item 1838, the
+        /// bounce-then-launch mechanic listed as unshipped in ThrowableDef) being ACTIVATED. Its pin-pull, not
+        /// anything's landing. The bytes agree: it is identical to throwables_grenade_use, and to every smoke's
+        /// and flashbang's _use clip -- 30 files in this folder are 6 recordings. So every bounce replayed the pin
+        /// being pulled (strawberry 2026-09-13: "when they bounce, they are playing the throw sound for some
+        /// reason"). Not a routing mistake; the filename was read as a description and it is an item name.
+        ///
+        /// Retail ships no throwable bounce clip at all: the throwable bundles contain Use.ogg (and Smoke.ogg for
+        /// smokes) and nothing else, UseableThrowable adds only Grenade/Flashbang/Distraction to the thrown
+        /// prefab, and nothing in the source mentions a bounce. So there is no per-item clip to play.
+        ///
+        /// What retail DOES have is the physics-impact bank -- effects/physics/impacts/&lt;material&gt;_static, the
+        /// sound of a thing striking that surface -- which is what a grenade landing on concrete IS. That makes
+        /// the bounce a SURFACE question rather than an item one, so it takes the struck surface rather than the
+        /// throwable's id, and a canister on gravel and one on metal stop sounding alike.</summary>
+        public static AudioStream ThrowableBounce(PlayerController.Surf surf) => Impact(surf);
 
         /// <summary>Fuel moving between a can and a tank -- pouring in, siphoning out, filling at a pump.
         /// Retail ships one clip per CONTAINER (UseableFuel's own bundle), and the port has all five of the
