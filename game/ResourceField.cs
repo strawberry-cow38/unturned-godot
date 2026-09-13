@@ -475,7 +475,23 @@ namespace UnturnedGodot
                                 if (sways && i == 0) recs[lst[k]].Canopy = (mm, k);   // part 0 is the leaf mesh
                             }
                             var mmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
-                                CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
+                                // EVERY RESOURCE CASTS, not just trees (strawberry 2026-09-13: bushes "are oddly
+                                // super lit all the time. they also arent casting shadows"). This read
+                                // `isTree ? On : Off`, and isTree is a Birch/Maple/Pine PREFIX test -- so every
+                                // bush, mushroom, ore rock and clay deposit on the map was explicitly shadow-off.
+                                //
+                                // The two halves of that report are one bug. A bush's leaf cards are authored with
+                                // UP normals (Bush_Mauve_0 mean normal Y +0.87, against +0.01 for a maple's real
+                                // geometry) -- the usual foliage trick to stop leaves going black. Under an overhead
+                                // sun an up-normal sits at full lambert, so with nothing casting onto it and nothing
+                                // self-shadowing, every card on every bush renders at maximum brightness at once.
+                                // That is the "super lit": not an over-bright material, an absence of anything dark.
+                                // UG_RESSHADOW=0 turns them back off -- the A/B control for what this costs, in the
+                                // same spirit as UG_CELL above: shadow casters are a draw-call trade and which way it
+                                // goes is empirical, so it stays measurable rather than becoming folklore.
+                                CastShadow = System.Environment.GetEnvironmentVariable("UG_RESSHADOW") == "0"
+                                             ? GeometryInstance3D.ShadowCastingSetting.Off
+                                             : GeometryInstance3D.ShadowCastingSetting.On,
                                 VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                             mmi.AddToGroup(NearestFilter.KeepFilterGroup);   // keep the bilinear MakeMat set; the scene-wide sweep would stamp it back to Nearest
                             AddChild(mmi);
