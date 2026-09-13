@@ -732,7 +732,8 @@ namespace UnturnedGodot
                         case "clean": quality = WaterQuality.Clean; break;
                         case "tainted": quality = WaterQuality.Tainted; break;
                         case "dirty": quality = WaterQuality.Dirty; break;
-                        default: Echo($"unknown flag '{fq[1]}' (clean, tainted, dirty)"); return;
+                        case "salty": case "salt": case "sea": quality = WaterQuality.Salty; break;
+                        default: Echo($"unknown flag '{fq[1]}' (clean, tainted, dirty, salty)"); return;
                     }
                 }
                 float ml = -1f;   // no amount -> fill to capacity

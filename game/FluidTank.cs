@@ -49,8 +49,18 @@ namespace UnturnedGodot
         public static string WaterName(FluidType id, WaterQuality q) => id == FluidType.Water
             ? q switch { WaterQuality.Dirty => "Dirty Water", WaterQuality.Tainted => "Tainted Water", WaterQuality.Salty => "Salt Water", _ => "Clean Water" }
             : Name(id);
+        // ⚠ Every quality MUST have an arm here. Salty had a WaterName arm and no colour arm, so it fell through `_`
+        // to the CLEAN blue: the fill bar painted sea water exactly like drinking water while the label beside it
+        // read "Salt Water". The bar is the at-a-glance readout -- the one you act on without reading -- so a
+        // default that resolves to "clean" is the worst possible fallback for a value that means "do not drink".
         public static Color WaterColor(FluidType id, WaterQuality q) => id == FluidType.Water
-            ? q switch { WaterQuality.Dirty => new Color(0.45f, 0.40f, 0.25f), WaterQuality.Tainted => new Color(0.45f, 0.60f, 0.65f), _ => Color(FluidType.Water) }
+            ? q switch
+            {
+                WaterQuality.Dirty   => new Color(0.45f, 0.40f, 0.25f),   // silty brown
+                WaterQuality.Tainted => new Color(0.45f, 0.60f, 0.65f),   // washed-out grey-blue
+                WaterQuality.Salty   => new Color(0.30f, 0.68f, 0.62f),   // sea green -- reads as SEA, not as the clean royal blue
+                _ => Color(FluidType.Water),
+            }
             : Color(id);
         // A BEVERAGE fluid (soda/cola/juice/milk/etc.) -- always drinkable, no water-quality flag. Fuel/oil/gas/plain water are not.
         public static bool IsBeverage(FluidType id) => id == FluidType.Soda || id == FluidType.Cola || id == FluidType.OrangeJuice
