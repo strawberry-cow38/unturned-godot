@@ -8,8 +8,8 @@ namespace UnturnedGodot
     public partial class PauseMenu : CanvasLayer
     {
         Control _root, _settings;
-        public FreezeMode Freeze;      // set by BuildPlayable; null in demos
-        public Node WorldRoot;         // where the freecam is parented
+        public FreezeMode Freeze;      // set by BuildPlayable; null in demos. NOTHING READS IT since the Freeze
+        public Node WorldRoot;         // Mode button was removed -- kept so restoring the button needs no rewiring
 
         public override void _Ready()
         {
@@ -54,16 +54,11 @@ namespace UnturnedGodot
             settingsBtn.Pressed += () => { _root.Visible = false; _settings.Visible = true; };
             vbox.AddChild(settingsBtn);
 
-            // FREEZE MODE: hand the paused world over to a freecam instead of resuming. The tree is ALREADY paused
-            // here, so this hides the menu and lets FreezeMode keep it that way -- it never unpauses in between.
-            var freeze = new Button { Text = "Freeze Mode", CustomMinimumSize = new Vector2(0, 46) };
-            freeze.Pressed += () =>
-            {
-                if (Freeze == null) return;
-                Visible = false;
-                Freeze.Enter(WorldRoot);
-            };
-            vbox.AddChild(freeze);
+            // FREEZE MODE'S BUTTON IS GONE (strawberry 2026-09-13: "remove the freeze mode button from the pause
+            // menu"). The button was the only in-game way into FreezeMode, so the freecam is now unreachable while
+            // playing -- the class, its wiring below and sim.freeze_mode are all left intact, so putting it
+            // back is this block again and nothing else. Deleting the feature outright is a bigger call than the
+            // one that was made.
 
             var toMenu = new Button { Text = "Exit to Menu", CustomMinimumSize = new Vector2(0, 46) };
             toMenu.Pressed += ExitToMenu;

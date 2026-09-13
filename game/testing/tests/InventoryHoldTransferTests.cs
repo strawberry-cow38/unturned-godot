@@ -129,6 +129,43 @@ namespace UnturnedGodot.Testing
                     ui.DebugQtProgress == 0f && ui.DebugQtQueued == 0);
             T.Check($"and nothing transferred after the close ({beforeClose} -> {inv.items[2].getItemCount()})",
                     inv.items[2].getItemCount() == beforeClose);
+
+            // ---- 6. RELEASING H DOES NOT CANCEL WHAT IS ALREADY QUEUED. strawberry: "continue delay progress
+            // even without H held, as long as it was held while the item was added to the queue." H is the
+            // ENQUEUE key; letting go stops you adding more, it does not throw away the run you committed to.
+            // Step 4 above parks the cursor off the grid but keeps the key DOWN, so it never covered this.
+            ui.Open();
+            yield return Ticks(4);
+            while (inv.items[2].getItemCount() < 2) inv.items[2].tryAddItem(new Item(15));
+            yield return Ticks(2);
+            int bag6 = inv.items[2].getItemCount();
+            var d6 = inv.items[2].getItem(0);
+            var e6 = inv.items[2].getItem(1);
+            Aim(ui, 2, d6.x, d6.y);
+            yield return Ticks(2);
+            Aim(ui, 2, e6.x, e6.y);
+            yield return Ticks(1);
+            T.Check($"queued two while holding ({ui.DebugQtQueued})", ui.DebugQtQueued == 2);
+
+            ui.DebugQtHeld = false;                       // LET GO
+            ui.DebugQtMouse = new Vector2(-500f, -500f);
+            yield return Ticks(2);
+            T.Check($"the queue survived the release ({ui.DebugQtQueued} still queued)", ui.DebugQtQueued == 2);
+            int guard6 = 0;
+            while (ui.DebugQtQueued > 0 && guard6++ < 200) yield return Ticks(1);
+            T.Check($"and both still transferred with the key up ({bag6} -> {inv.items[2].getItemCount()})",
+                    inv.items[2].getItemCount() == bag6 - 2);
+
+            // The other half of the same rule, and the one that stops this becoming "hover transfers things":
+            // with the key UP, hovering must add NOTHING. Without this the change above reads as a pass while
+            // the gesture has quietly become keyless.
+            while (inv.items[2].getItemCount() < 1) inv.items[2].tryAddItem(new Item(15));
+            yield return Ticks(2);
+            var f6 = inv.items[2].getItem(0);
+            ui.DebugQtHeld = false;
+            if (ui.DebugCellPoint(2, f6.x, f6.y, out Vector2 pt6)) ui.DebugQtMouse = pt6;
+            yield return Ticks(6);
+            T.Check($"hovering with the key UP enqueues nothing ({ui.DebugQtQueued})", ui.DebugQtQueued == 0);
         }
     }
 }

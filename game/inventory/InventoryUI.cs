@@ -530,9 +530,13 @@ void fragment() {
             _magFxWasActive = magFxActive;
         }
 
-        /// <summary>Hold QuickTransfer (H) with a crate open and whatever you are hovering charges up; when it
-        /// fills, it moves across. Your pages -> the crate, the crate -> your pages, same gesture both ways
-        /// (strawberry: "and the same applies the other way too").
+        /// <summary>Hold QuickTransfer (H) with a crate open and sweep the cursor over items to QUEUE them; each
+        /// charges in turn and moves across when it fills. Your pages -> the crate, the crate -> your pages, same
+        /// gesture both ways (strawberry: "and the same applies the other way too").
+        ///
+        /// H is the ENQUEUE key, not a dead-man's switch: once an item is in the queue its delay runs to completion
+        /// whether or not you are still holding (strawberry: "continue delay progress even without H held, as long
+        /// as it was held while the item was added to the queue").
         ///
         /// ONE CHARGE AT A TIME, and it is keyed to the ITEM's cell rather than to the cursor: sweeping onto a
         /// different item abandons the first from zero rather than inheriting its progress, which is what stops
@@ -552,11 +556,17 @@ void fragment() {
             // A crate has to be open: the gesture is "move it across", and with nothing to move it to there is
             // no sensible target. Never while dragging -- the cursor already means something else then.
             bool crateOpen = Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0;
+            // ⚠ THE KEY GATES COLLECTING, NOT DRAINING (strawberry: "continue delay progress even without H
+            // held, as long as it was held while the item was added to the queue"). Releasing H used to cancel
+            // the whole queue, which made the queue nearly pointless: you had to keep holding for the entire
+            // run of transfers you had already committed to. Now H is how you SAY WHICH items go, and letting
+            // go simply stops you adding more. The three conditions below still cancel, because each is the
+            // player doing something else with the same cursor rather than merely stopping.
             bool held = DebugQtHeld || Keybinds.Pressed(GameAction.QuickTransfer);
-            if (!crateOpen || _dragging || _selPanel != null || !held) { CancelQuickTransfer(); return; }
+            if (!crateOpen || _dragging || _selPanel != null) { CancelQuickTransfer(); return; }
 
-            // 1. COLLECT. Whatever is under the cursor joins the back of the queue, once.
-            if (PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
+            // 1. COLLECT. Whatever is under the cursor joins the back of the queue, once -- while H is down.
+            if (held && PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
                 && !isSlot && hp <= PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
             {
                 byte hidx = Inv.items[hp].getIndex(hx, hy);
