@@ -140,6 +140,11 @@ namespace UnturnedGodot.Net
             // The throw pays for itself: the handler that accepts a grenade is the one that takes it out of the
             // bag. Wired here because Combat is built before Transactions exists.
             Combat.SpendThrowable = (sender, itemId) => Transactions.SpendThrowable(sender, itemId);
+            // A new life gets new vitals. Subscribed HERE rather than in either host's own PlayerRespawned
+            // handler (MpLoopback and DedicatedServer both have one) so that a third host cannot be written
+            // without it -- the reset belongs to the authority that owns the values, not to whoever happens to
+            // be listening for the event.
+            Combat.PlayerRespawned += (pid, tick) => Vitals.ServerResetForNewLife(pid, tick);
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
             Transactions.Crafting_ = CraftQueue;
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot

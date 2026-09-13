@@ -38,6 +38,32 @@ namespace SDG.Unturned
         /// <see cref="RegenDamageLockSeconds"/>. Idempotent -- a burst of hits just re-arms the same timer.</summary>
         public void NotifyDamaged() => RegenLockDelay = RegenDamageLockSeconds;
 
+        /// <summary>A NEW BODY. Every survival vital back to full and every internal timer cleared.
+        ///
+        /// It lives HERE, on the sim, rather than as a handful of field writes at the call site, because two of
+        /// the things that have to be cleared are not writable from outside: <see cref="_doseHold"/> is private,
+        /// and RegenLockDelay is the kind of bookkeeping a caller forgets. Dying with the post-damage lock armed
+        /// and respawning into it is invisible -- you simply never regen for ten seconds of your new life, with
+        /// nothing on screen to say why.
+        ///
+        /// Health is NOT touched: the vitals sim never owns HP (ServerStep re-seeds it from the combat
+        /// authority every tick), and writing it here would be a second opinion about the one value that is
+        /// deliberately single-sourced.
+        ///
+        /// Oxygen and Radiation are reset even though the game layer's own respawn line never listed them --
+        /// drowning and respawning with an empty breath re-drowns you on arrival, and dying in a deadzone would
+        /// otherwise hand the new body the old one's dose.</summary>
+        public void ResetForNewLife()
+        {
+            Stamina = Food = Water = 1f;
+            Oxygen = 1f;
+            Infection = 0f;
+            Radiation = 0f;
+            StaminaRegenDelay = 0f;
+            RegenLockDelay = 0f;
+            _doseHold = 0f;
+        }
+
         /// <summary>A full 0 -> MaxHealth heal in HealthHealDays of game time. Derived from MaxHealth so a
         /// raised ceiling heals proportionally rather than taking twice as long.</summary>
         public float HealthRegenPerSecond => MaxHealth / (HealthHealDays * GameDaySeconds);

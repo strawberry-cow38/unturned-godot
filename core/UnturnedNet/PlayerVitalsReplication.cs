@@ -101,6 +101,34 @@ namespace UnturnedGodot.Net
 
         public void ServerRemove(ushort ownerPlayerId) => _byOwner.Remove(ownerPlayerId);
 
+        /// <summary>Fresh vitals for a respawned player (strawberry 2026-09-13: "fix vitals not being reset on
+        /// death").
+        ///
+        /// ⚠ THE GAME LAYER ALREADY DID THIS AND IT NEVER SURVIVED A TICK. PlayerController.Respawn carries
+        /// `Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;` under the comment
+        /// "fresh vitals on respawn" -- correct, and completely overwritten, because the fine vitals are
+        /// SERVER-OWNED and AdoptReplicatedFineVitals is their sole writer on an adopting client. The local
+        /// reset landed and the next owner echo put the dead player's hunger, thirst and infection straight
+        /// back. The same shape as the throwable spend: the client mutated, the authority disagreed, the echo
+        /// won. A reset has to happen where the value lives.
+        ///
+        /// Called from the host's PlayerRespawned subscription rather than from either game-layer host, so a
+        /// third one cannot be written without it -- and at RESPAWN rather than at death, matching the game
+        /// layer's own line: a corpse's vitals are never read, a new life's are.</summary>
+        public void ServerResetForNewLife(ushort ownerPlayerId, long tick)
+        {
+            if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return;
+            e.Sim.ResetForNewLife();
+            e.Bleeding = false;
+            e.Broken = false;
+            // A NEW BODY HAS NO HISTORY TO MEASURE AGAINST. LastStepHealth is the previous tick's HP, and the
+            // respawn raises HP from 0 to 100 -- a RISE, so it cannot arm the damage lock. But the corpse's
+            // value is still the dead body's, and leaving it would make the first live tick compare the new
+            // life's health against it. NaN is what the entry starts life with and is what this is.
+            e.LastStepHealth = float.NaN;
+            e.StampIfChanged(tick);
+        }
+
         /// <summary>One 50 Hz vitals step for every living server-owned player -- stepped BETWEEN
         /// VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's Combat.Step.
         /// HP is re-seeded from the single authority, the sim steps, and the delta is routed OUT (never a
