@@ -747,6 +747,7 @@ namespace UnturnedGodot
                     {
                         mat.EmissionEnabled = true;
                         mat.EmissionTexture = bulb;
+                        mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see RiggedCharacter.AttachGear: the ADD default glows the whole model
                         mat.Emission = new Color(1f, 1f, 1f);
                         mat.EmissionEnergyMultiplier = 0f;
                     }
@@ -1516,6 +1517,7 @@ namespace UnturnedGodot
                 {
                     _tacMat.EmissionEnabled = true;
                     _tacMat.EmissionTexture = _tacLens;
+                    _tacMat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see RiggedCharacter.AttachGear: the ADD default glows the whole model
                     _tacMat.Emission = Colors.White;
                     _tacMat.EmissionEnergyMultiplier = 0f;
                 }

@@ -61,6 +61,39 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and it is still a mask, not the whole body ({lit} of {total})", lit < total / 4);
             }
 
+            // ---- ⚠⚠ THE MASK IS NOT THE FEATURE. THE MATERIAL IS.
+            //
+            // Every check above passed, for months, while the headlamp and both nightvisions glowed over their
+            // ENTIRE MODEL (strawberry 2026-09-13). Nothing above could see it: the masks really are correct,
+            // and this file only ever looked at the mask IMAGE. The bug was one property on the material --
+            // Godot's emission operator defaults to ADD, and the shader is
+            //     EMISSION = (emission_color + emission_texture) * emission_energy
+            // so a WHITE emission colour emits at full energy through the mask's BLACK texels. The mask was
+            // computed perfectly and then combined with the wrong operator.
+            //
+            // So this builds the real material through the real call and asserts the thing that was wrong. A
+            // check on the mask can never reject this bug; only a check on the material can.
+            var rig = new RiggedCharacter();
+            World.AddChild(rig);
+            yield return Ticks(2);
+            var lensTex = ClothingContent.LensMask(1199);   // the headlamp, which master saw glowing whole
+            rig.AttachGlasses(new BoxMesh { Size = Vector3.One * 0.2f }, null, Vector3.Zero, lensTex);
+            yield return Ticks(1);
+            var gm = rig.DebugGlassesMaterial();
+            T.Check("the glasses material exists", gm != null);
+            if (gm != null)
+            {
+                T.Check($"...it has the lens mask bound ({gm.EmissionTexture != null})", gm.EmissionTexture != null);
+                T.Check($"⭐ ...and MULTIPLIES it rather than ADDING ({gm.EmissionOperator})",
+                        gm.EmissionOperator == BaseMaterial3D.EmissionOperatorEnum.Multiply);
+                // The control for WHY multiply is required: the emission colour is white. Under Add, white is
+                // exactly what leaks through the black texels -- so if someone later "fixes" this by making the
+                // colour black instead, this check tells them the operator still has to be right.
+                T.Check($"...with a white emission colour, which is only safe under Multiply ({gm.Emission})",
+                        gm.Emission.R > 0.9f && gm.Emission.G > 0.9f && gm.Emission.B > 0.9f);
+            }
+            if (GodotObject.IsInstanceValid(rig)) rig.QueueFree();
+
             // ---- CONTROL: this is opt-in. Without it, "derives a mask" would pass on a rule that lit the
             // brightest patch of every hat in the game.
             int optedOut = 0;

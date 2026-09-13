@@ -132,7 +132,14 @@ namespace UnturnedGodot
             var etex = System.IO.File.Exists(ProjectSettings.GlobalizePath(em)) ? LoadTexCached(em) : null;
             m.EmissionEnabled = etex != null;
             m.EmissionTexture = etex;
-            if (etex != null) { m.Emission = Colors.White; m.EmissionEnergyMultiplier = 1.5f; }
+            // Same ADD-default trap as AttachGear, and LIVE rather than latent: face_14 ships an emission map, so
+            // that face has been glowing edge to edge at 1.5 rather than at whatever the map marks.
+            if (etex != null)
+            {
+                m.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;
+                m.Emission = Colors.White;
+                m.EmissionEnergyMultiplier = 1.5f;
+            }
             Face = face;
         }
 
@@ -155,6 +162,21 @@ namespace UnturnedGodot
             {
                 mat.EmissionEnabled = true;
                 mat.EmissionTexture = emission;
+                // ⚠⚠ MULTIPLY, AND THE DEFAULT IS NOT. This one line is why the headlamp and both nightvisions
+                // glowed over their WHOLE MODEL instead of at the lens (strawberry 2026-09-13).
+                //
+                // Godot's default emission operator is ADD, and the shader is
+                //     EMISSION = (emission_color + emission_texture) * emission_energy
+                // so with a WHITE emission colour every texel of the mask -- including the black ones that ARE
+                // the mask -- emits at (1,1,1) * energy. The mask stopped being a mask and became "the lens is
+                // brighter than the rest of the glowing model".
+                //
+                // Nothing upstream was wrong, which is why this took three passes to find: the masks are
+                // correct (measured -- 1 of 4 texels on all three goggles, 812/16384 on the torch), the UVs are
+                // correct (the lens is 0.8-1.7% of each model's SURFACE AREA), the binding is correct and the
+                // energy write is correct. The value was computed perfectly and then combined with the wrong
+                // operator.
+                mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;
                 mat.Emission = new Color(1f, 1f, 1f);
                 mat.EmissionEnergyMultiplier = 0f;
             }
@@ -210,6 +232,16 @@ namespace UnturnedGodot
             if (mi?.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled)
                 m.EmissionEnergyMultiplier = on ? energy : 0f;
         }
+        /// <summary>Test seam: the glasses' live MATERIAL, not just its energy. Exposed because the bug that
+        /// made every lens item glow edge-to-edge was not in the mask, the UVs, the binding or the energy --
+        /// it was the material's emission OPERATOR, and none of those four could see it.</summary>
+        public StandardMaterial3D DebugGlassesMaterial()
+        {
+            var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
+                ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;
+            return mi?.MaterialOverride as StandardMaterial3D;
+        }
+
         public float DebugGlassesGlow()
         {
             var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
@@ -513,6 +545,7 @@ namespace UnturnedGodot
             {
                 mat.EmissionEnabled = true;
                 mat.EmissionTexture = lensMask;
+                mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see AttachGear: the ADD default glows the whole model
                 mat.Emission = new Color(1f, 1f, 1f);
                 mat.EmissionEnergyMultiplier = 0f;
             }
