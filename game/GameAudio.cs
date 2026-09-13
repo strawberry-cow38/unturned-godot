@@ -353,7 +353,16 @@ namespace UnturnedGodot
         // GetAudioDef is keyed by the material NAME, so the suffix picks the clip without any caller ever
         // spelling it. Static is world geometry, dynamic is a thing that moves, which is exactly "what was
         // struck". Found while extracting per-prop surfaces (tools/extract_prop_surfaces.py).
-        public static AudioStream Impact(PlayerController.Surf s) => Pick("impacts", (s switch
+        //
+        // ⚠⚠ AND IT USED Pick, WHICH COULD NEVER HAVE MATCHED A FILE. Pick globs `prefix_*`, which wants the
+        // numbered-variant shape (`concrete_walk_03.wav`); THIS folder is one clip per material,
+        // `concrete_static.wav`, with nothing after the material at all. So `concrete_static_*` matched zero
+        // files for all seven surfaces and Impact returned null every time it was ever called -- the dropped-item
+        // thud in WorldItem has been silent since it was written, and nothing noticed, because a null stream is
+        // the one failure PlayAt handles politely. Caught 2026-09-13 only because the throwable bounce became the
+        // second caller and its test asked whether the clip existed. `Clip` is the exact-file accessor and is
+        // what this always wanted -- the note on Clip itself says so.
+        public static AudioStream Impact(PlayerController.Surf s) => Clip("impacts", (s switch
         {
             PlayerController.Surf.Metal => "metal",
             PlayerController.Surf.Wood => "wood",

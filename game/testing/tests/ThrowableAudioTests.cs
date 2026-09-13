@@ -86,14 +86,29 @@ namespace UnturnedGodot.Testing
                   + "pin-pull (item 1838), not a landing, and there is no bounce clip in the rip", identical);
 
             // So the bounce comes off the physics-impact bank, keyed by what was struck.
-            var onConcrete = GameAudio.ThrowableBounce(PlayerController.Surf.Concrete);
-            var onMetal    = GameAudio.ThrowableBounce(PlayerController.Surf.Metal);
-            T.Check("a bounce on concrete has a clip", onConcrete != null);
-            T.Check("a bounce on metal has a clip", onMetal != null);
-            T.Check("...and concrete and metal are not the same clip", !ReferenceEquals(onConcrete, onMetal));
+            //
+            // ⚠ EVERY Surf VALUE, not a spot check, and this is the one that earned its keep: GameAudio.Impact
+            // reached the folder through `Pick`, whose glob is `prefix_*` -- the numbered-variant shape. This
+            // folder is one clip per material with NOTHING after it (`concrete_static.wav`), so the glob matched
+            // zero files for all seven surfaces and Impact had returned null to every caller it ever had. A null
+            // stream is the failure PlayAt handles politely, so the dropped-item thud in WorldItem had simply
+            // never made a sound. A two-surface spot check would have caught it; a loop says WHICH surfaces, and
+            // keeps saying it when the Surf enum grows (it has, twice).
+            var missing = new List<string>();
+            var byName = new Dictionary<PlayerController.Surf, AudioStream>();
+            foreach (PlayerController.Surf sv in System.Enum.GetValues(typeof(PlayerController.Surf)))
+            {
+                var clip = GameAudio.ThrowableBounce(sv);
+                byName[sv] = clip;
+                if (clip == null) missing.Add(sv.ToString());
+            }
+            T.Check($"every surface has a bounce clip (missing: {(missing.Count == 0 ? "none" : string.Join(", ", missing))})",
+                    missing.Count == 0);
+            T.Check("...and concrete and metal are not the same clip",
+                    !ReferenceEquals(byName[PlayerController.Surf.Concrete], byName[PlayerController.Surf.Metal]));
             T.Check("a bounce is never a throwable's pin-pull",
-                    !ReferenceEquals(onConcrete, GameAudio.ThrowableUse(254))
-                 && !ReferenceEquals(onMetal, GameAudio.ThrowableUse(254)));
+                    !ReferenceEquals(byName[PlayerController.Surf.Concrete], GameAudio.ThrowableUse(254))
+                 && !ReferenceEquals(byName[PlayerController.Surf.Metal], GameAudio.ThrowableUse(254)));
 
             // ---- AN ITEM THAT IS NOT A THROWABLE ASKS FOR NOTHING.
             T.Check("a non-throwable id has no stem", GameAudio.ThrowableStem(13) == null);
