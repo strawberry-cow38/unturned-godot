@@ -6657,6 +6657,13 @@ namespace UnturnedGodot
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
             Health -= amount;
+            // Passive regen must not start on the same tick you were shot (strawberry 2026-09-13: "never when
+            // taking damage"). Armed HERE, at the one local entry point every real hit passes through, rather
+            // than inside the sim -- the sim cannot see combat, only the vitals tick, and by then the hit is a
+            // number that already landed. Deliberately NOT armed by the sim's own bleed/starve/exposure loss:
+            // those already block regen through their own clauses, and arming off them would leave the lock
+            // running for ten seconds after a wound closed for no reason anyone asked for.
+            _vitals.NotifyDamaged();
             if (amount > 1f) Bleeding = true;   // a real hit opens a wound; only a dressing closes it
 
             ShowHurtCosmetics(amount, fromPos);
@@ -7181,7 +7188,7 @@ namespace UnturnedGodot
             bool cannotSprint = _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null || IsSeatedOnProp;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated && !cannotSprint;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
             TemperatureTick(sprinting, dt);
-            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Broken, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen

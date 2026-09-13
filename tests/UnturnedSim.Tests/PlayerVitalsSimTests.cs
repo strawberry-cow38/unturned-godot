@@ -4,8 +4,9 @@ using SDG.Unturned;
 namespace UnturnedSim.Tests
 {
     // Vitals stepping extracted from PlayerController.UpdateVitals (MP_PLAN §4 Phase 4 sim-core split).
-    // Pins the shipped rates: regen 0.33/s after a 1 s hold, infection clears 0.01/s, health regens 2/s while
-    // fed + hydrated + not sick, starving/dehydrated/sick bleeds 1.5/s (2/s sick), zero health reports death.
+    // Pins the shipped rates: stamina regen 0.33/s after a 1 s hold, starving/dehydrated/sick bleeds 1.5/s
+    // (2/s sick), zero health reports death. Infection self-clear and health regen are asserted as DURATIONS
+    // and CONDITIONS below, not as rates -- see the note on days vs decimals.
     //
     // ⚠ HUNGER/THIRST/SPRINT ARE ASSERTED AS DURATIONS, NOT DECIMALS (2026-09-13). They used to read
     // `1f - 0.0050f * 2f`, which restates the implementation in the assertion: the test could only fail if the
@@ -89,7 +90,12 @@ namespace UnturnedSim.Tests
         {
             var v = new PlayerVitalsSim { Health = 50f };
             Run(v, 50);   // 1 s fed + hydrated
-            Assert.That(v.Health, Is.EqualTo(52f).Within(1e-3f), "2/s regen");
+            Assert.That(v.Health, Is.EqualTo(50f + v.HealthRegenPerSecond).Within(1e-3f), "one second of regen");
+            // THE INTENT (strawberry 2026-09-13 "have health slowly regen"): a full 0 -> 100 takes a quarter of
+            // a game day. Asserted as the duration so the number keeps meaning something if MaxHealth moves.
+            Assert.That(v.MaxHealth / v.HealthRegenPerSecond,
+                Is.EqualTo(PlayerVitalsSim.HealthHealDays * PlayerVitalsSim.GameDaySeconds).Within(1f),
+                "a full heal takes HealthHealDays of a game day");
             v.Infection = 0.9f;   // sick blocks regen AND bleeds
             float h = v.Health;
             v.Step(false, false, Dt, in None);
@@ -109,15 +115,17 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
-        public void Infection_Clears_AtPointZeroOnePerSecond()
+        public void Infection_ClearsAFullBarOverOneGameDay()
         {
-            // Started at 0.5 until 2026-09-10, which is now EXACTLY the self-clear threshold and so no longer
-            // clears at all (strawberry: "below 50% infection drains slowly on its own"). The rate this test
-            // exists to pin is unchanged; only its starting point moved off the boundary. The gate itself is
-            // covered by Infection_AtOrAboveFiftyPercent_DoesNotClearItself.
+            // strawberry 2026-09-13: "have infection heal over a full day". Asserted as the DURATION rather than
+            // as 0.40 - 0.02, which was the implementation restated -- that form could only fail if someone
+            // edited the constant, never if the constant was wrong for what it was chosen to mean.
+            Assert.That(1f / PlayerVitalsSim.InfectionClearPerSecond,
+                Is.EqualTo(PlayerVitalsSim.InfectionDaysToClear * PlayerVitalsSim.GameDaySeconds).Within(1f),
+                "infection: a full bar clears over one game day");
             var v = new PlayerVitalsSim { Infection = 0.40f };
             Run(v, 100);   // 2 s
-            Assert.That(v.Infection, Is.EqualTo(0.40f - 0.02f).Within(1e-4f));
+            Assert.That(v.Infection, Is.EqualTo(0.40f - 2f * PlayerVitalsSim.InfectionClearPerSecond).Within(1e-5f));
         }
 
         [Test]
@@ -128,7 +136,7 @@ namespace UnturnedSim.Tests
             for (int i = 0; i < 50; i++) v.Step(true, true, Dt, in m);
             Assert.That(v.Stamina, Is.EqualTo(1f - PlayerVitalsSim.SprintDrainPerSecond * 0.5f).Within(1e-4f), "EXERCISE halves the sprint drain");
             Assert.That(v.Food, Is.EqualTo(1f - PlayerVitalsSim.FoodDrainPerSecond * 0.8f).Within(1e-4f), "SURVIVAL slows hunger");
-            Assert.That(v.Health, Is.EqualTo(50f + 2f * 2f).Within(1e-3f), "VITALITY doubles regen");
+            Assert.That(v.Health, Is.EqualTo(50f + v.HealthRegenPerSecond * 2f).Within(1e-3f), "VITALITY doubles regen");
         }
 
         // ---- oxygen (master 2026-09-06: "depletes when underwater") ------------------------------------
@@ -197,6 +205,61 @@ namespace UnturnedSim.Tests
             for (int i = 0; i < ticks; i++) v.Step(false, false, false, bleeding, Dt, in None);
         }
 
+        static void RunBroken(PlayerVitalsSim v, int ticks, bool broken)
+        {
+            for (int i = 0; i < ticks; i++)
+                v.Step(false, false, false, false, broken, PlayerTemperatureSim.Band.Comfortable, Dt, in None);
+        }
+
+        // ---- what BLOCKS passive regen (strawberry 2026-09-13: "never when taking damage, or having a
+        // bleeding or broken leg effect") -----------------------------------------------------------------
+        //
+        // ⚠ Each of these pairs a blocked run with an IDENTICAL unblocked one. A test that only asserts "health
+        // did not rise" passes just as happily if regen is broken outright, or if the run was too short to move
+        // a 0.28/s rate past the tolerance -- so the control is the half that makes the blocking claim mean
+        // anything. Both halves are the same length and differ only in the flag under test.
+
+        [Test]
+        public void BrokenLegs_BlockRegen_AndAnIntactPlayerHeals()
+        {
+            var hurt = new PlayerVitalsSim { Health = 50f };
+            var fine = new PlayerVitalsSim { Health = 50f };
+            RunBroken(hurt, 250, broken: true);    // 5 s
+            RunBroken(fine, 250, broken: false);   // 5 s -- the control
+            Assert.That(hurt.Health, Is.EqualTo(50f).Within(1e-6f), "a fracture does not heal itself while it is a fracture");
+            Assert.That(fine.Health, Is.GreaterThan(50f), "...and the identical run WITHOUT it does heal, or the test proves nothing");
+        }
+
+        [Test]
+        public void TakingDamage_BlocksRegen_UntilTheLockExpires()
+        {
+            var v = new PlayerVitalsSim { Health = 50f };
+            v.NotifyDamaged();
+            Assert.That(v.RegenLockDelay, Is.EqualTo(PlayerVitalsSim.RegenDamageLockSeconds).Within(1e-6f));
+
+            // most of the way through the lock, but not past it
+            int ticks = (int)((PlayerVitalsSim.RegenDamageLockSeconds - 1f) / Dt);
+            RunBroken(v, ticks, broken: false);
+            Assert.That(v.Health, Is.EqualTo(50f).Within(1e-6f), "no regen while the post-damage lock is running");
+
+            RunBroken(v, (int)(2f / Dt), broken: false);   // step past the lock
+            Assert.That(v.Health, Is.GreaterThan(50f), "regen resumes once the lock expires");
+        }
+
+        [Test]
+        public void RepeatedHits_KeepTheLockArmed_RatherThanLettingItRunDown()
+        {
+            // Sustained fire must not heal you between hits. Re-arming is the whole point of a timer over a bool.
+            var v = new PlayerVitalsSim { Health = 50f };
+            for (int i = 0; i < 20; i++)
+            {
+                v.NotifyDamaged();
+                RunBroken(v, (int)(1f / Dt), broken: false);   // 1 s between hits, 20 s total
+            }
+            Assert.That(v.Health, Is.EqualTo(50f).Within(1e-6f),
+                "20 s of being hit once a second must not regen, even though the lock is only 10 s");
+        }
+
         [Test]
         public void Bleeding_DrainsHealth_AtThreeQuartersPerSecond()
         {
@@ -224,20 +287,36 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
-        public void Infection_BelowFiftyPercent_ClearsItself()
+        public void Infection_BelowTheSickLine_ClearsItself()
         {
             var v = new PlayerVitalsSim { Infection = 0.40f };
             RunBleed(v, 50, bleeding: false);   // 1 s
-            Assert.That(v.Infection, Is.EqualTo(0.39f).Within(1e-3f));
+            Assert.That(v.Infection, Is.LessThan(0.40f), "a mild infection comes down on its own");
+            Assert.That(v.Infection, Is.EqualTo(0.40f - PlayerVitalsSim.InfectionClearPerSecond).Within(1e-6f));
+        }
+
+        // ⚠ 0.60 USED TO BE THE "HOLDS FOREVER" CASE and is now the clearing one, because the gate moved from
+        // "below 50%" to "not currently taking infection damage" (strawberry 2026-09-13). Kept as its own test
+        // rather than deleted: the band between the old threshold and the new one is exactly where the rule
+        // changed, so if it ever stops clearing again, something has quietly restored the old gate.
+        [Test]
+        public void Infection_BetweenTheOldThresholdAndTheSickLine_NowClears()
+        {
+            var v = new PlayerVitalsSim { Infection = 0.60f };
+            RunBleed(v, 250, bleeding: false);   // 5 s
+            Assert.That(v.Infection, Is.LessThan(0.60f), "0.60 is under the sick line, so it heals");
         }
 
         [Test]
-        public void Infection_AtOrAboveFiftyPercent_DoesNotClearItself()
+        public void Infection_WhileItIsCostingYouHealth_DoesNotClearItself()
         {
-            // The shipped sim decayed unconditionally, so this is the assertion that fails on the old code.
-            var v = new PlayerVitalsSim { Infection = 0.60f };
-            RunBleed(v, 250, bleeding: false);   // 5 s -- enough to move it 0.05 under the old rule
-            Assert.That(v.Infection, Is.EqualTo(0.60f).Within(1e-6f), "above the threshold only antibiotics help");
+            // strawberry 2026-09-13: "never heal while taking infection damage". Above InfectionSickAbove the
+            // virus is at -2 HP/s, and that is exactly when it must refuse to fall on its own -- otherwise the
+            // worst state in the game is also a self-solving one.
+            var v = new PlayerVitalsSim { Infection = 0.80f, Health = 100f };
+            RunBleed(v, 250, bleeding: false);   // 5 s
+            Assert.That(v.Infection, Is.EqualTo(0.80f).Within(1e-6f), "only antibiotics bring a sick player down");
+            Assert.That(v.Health, Is.LessThan(100f), "...and it is charging health the whole time, which is the reason");
         }
 
         [Test]

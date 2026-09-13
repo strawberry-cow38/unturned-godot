@@ -39,6 +39,13 @@ namespace UnturnedGodot.Net
             public ushort OwnerPlayerId;
             public PlayerVitalsSim Sim = new PlayerVitalsSim();   // server: stepped; client: value-holder written by ReadSnapshot
             public bool Bleeding, Broken;                          // status bits carried on the wire (server has no source yet -> false)
+
+            /// <summary>Sim.Health as this entry left it last tick, or NaN before the first. ServerStep compares
+            /// the authority's CURRENT hp against it to spot health the vitals sim did not itself remove -- i.e.
+            /// combat -- and arm the post-damage regen lock. Comparing against the sim's own last value rather
+            /// than against the previous raw reading is what keeps the sim's OWN routed starve/bleed loss from
+            /// reading as an incoming hit and re-arming the lock forever.</summary>
+            public float LastStepHealth = float.NaN;
             public long LastChangedTick;
 
             // dirty-detection cache: the last QUANTIZED wire values, so an idle/unchanged block costs no
@@ -115,11 +122,16 @@ namespace UnturnedGodot.Net
 
                 // HP is NEVER owned by the vitals sim: re-seed from the single authority, step, route the delta.
                 float hpBefore = HealthOf != null ? HealthOf(pid) : e.Sim.Health;
+                // EXTERNAL DAMAGE ARMS THE REGEN LOCK (strawberry 2026-09-13: "never when taking damage").
+                // The server has no hook on the way in -- combat writes HealthExact directly and the vitals sim
+                // only ever sees the result -- so the hit is detected as hp that went missing between the sim's
+                // last output and this tick's authority read. 0.01 of slack keeps float noise from arming it.
+                if (!float.IsNaN(e.LastStepHealth) && hpBefore < e.LastStepHealth - 0.01f) e.Sim.NotifyDamaged();
                 e.Sim.Health = hpBefore;
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
                 bool submerged = SubmergedOf != null && SubmergedOf(pid);
-                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
+                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, e.Broken, dt, m);   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed/broken bits are the SERVER's copies -- it owns the HP they cost and gate.
                 float delta = e.Sim.Health - hpBefore;
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation
@@ -141,6 +153,7 @@ namespace UnturnedGodot.Net
                 // ticks with alive=True. Nothing else in the suite covered it because nothing else could
                 // reach 100% virus on its own.
                 else if (diedThisStep && delta < 0f) DamageSink?.Invoke(pid, -delta);
+                e.LastStepHealth = e.Sim.Health;   // the baseline next tick measures incoming damage against
                 e.StampIfChanged(tick);
             }
         }

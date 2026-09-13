@@ -29,16 +29,16 @@ namespace UnturnedSim.Tests
             Idle(v, 80f);
 
             Assert.That(v.Radiation, Is.EqualTo(0f), "a full dose should wash out in ~66 s of being outside");
-            // 0.8 sits ABOVE InfectionSelfClearBelow, so the virus holds -- which is the point. If this ever
-            // reads clean, radiation has started un-infecting people and the two stats have collapsed back
-            // into one.
+            // 0.8 sits ABOVE InfectionSickAbove, so the virus is costing health and refuses to self-clear --
+            // which is the point. If this ever reads clean, radiation has started un-infecting people and
+            // the two stats have collapsed back into one.
             Assert.That(v.Infection, Is.EqualTo(0.8f).Within(0.001f), "the scar must outlive the dose");
         }
 
         [Test]
         public void The_Dose_Decays_From_Any_Level_Unlike_Infection()
         {
-            // Infection holds above 0.5; radiation deliberately has no such threshold, so a dose taken deep
+            // Infection holds once it is costing health; radiation deliberately has no such gate, so a dose deep
             // in a zone is still survivable if you walk out.
             var high = new PlayerVitalsSim { Radiation = 0.9f };
             var low = new PlayerVitalsSim { Radiation = 0.2f };
