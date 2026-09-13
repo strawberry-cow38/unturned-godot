@@ -335,6 +335,14 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // the first AdoptReplicatedVitals. Client.PlayerId is read at hit time (connected by then).
                 Player.ExpectServerVitals();
                 Player.NetDamageSink = amount => Server.Combat.DamagePlayerExternal(Client.PlayerId, amount);
+                // ...and the console's `heal`, the same way round: the fine vitals through the reset a respawn
+                // uses, and HP through the RegenSink the passive regen already raises it with (clamped to 100
+                // inside). Both on the authority, so the next owner echo confirms the heal instead of undoing it.
+                Player.NetHealSelf = () =>
+                {
+                    Server.Vitals.ServerResetForNewLife(Client.PlayerId, Server.Session.CurrentTick);
+                    Server.Vitals.RegenSink?.Invoke(Client.PlayerId, 1000f);
+                };
 
                 // (d) P2 -- world-item (dropped/loot) consume, over the wire. Same shape as the deployable
                 //     view in (a): the SAME diff-materializer the MP client uses (ClientWorldSession:144-145)

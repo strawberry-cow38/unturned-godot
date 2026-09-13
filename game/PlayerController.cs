@@ -5484,6 +5484,36 @@ namespace UnturnedGodot
         /// so those paths stay byte-identical.</summary>
         public System.Action<float> NetDamageSink;
 
+        /// <summary>Heal this player fully ON THE AUTHORITY. Null offline, where the local write IS the truth.
+        ///
+        /// ⚠ IT EXISTS FOR THE REASON THE `sethp` COMMENT NEXT DOOR SPELLS OUT: under the loopback -- which is
+        /// how singleplayer runs -- HP and the fine vitals are SERVER-owned, and a client-side write reads back
+        /// correctly for exactly one tick before the owner echo overwrites it with the server's unchanged copy.
+        /// A heal that only ran locally would look like it worked and then quietly undo itself.</summary>
+        public System.Action NetHealSelf;
+
+        /// <summary>Console `heal`: full HP, full food/water/stamina/breath, no infection, no dose, and every
+        /// condition cleared (strawberry 2026-09-13: "heals hp, food, water, infection, stamina to 100%, as
+        /// well as fixing any health conditions").
+        ///
+        /// The fine vitals go through PlayerVitalsSim.ResetForNewLife -- the same call a respawn uses -- rather
+        /// than a second list of field writes here. "Fixing any health condition" and "what a new body starts
+        /// with" are the same set, and writing it twice is how the two drift: the respawn version already
+        /// remembers the two nobody lists (breath and the hidden radiation dose) and the two internal timers
+        /// (the post-damage regen lock, the stamina delay) that a hand-written heal forgets.
+        ///
+        /// LOCAL FIRST, THEN THE AUTHORITY: the local write makes the HUD answer immediately and is the whole
+        /// story offline; the seam makes the server agree so the next echo confirms it instead of reverting it.</summary>
+        public void DebugHealFully()
+        {
+            _vitals.ResetForNewLife();
+            _vitals.Health = MaxHealth;
+            Bleeding = false;
+            Broken = false;
+            _netAdoptedHealth = MaxHealth;   // keep the adopted pin in sync, or UpdateVitals re-pins HP down next tick
+            NetHealSelf?.Invoke();
+        }
+
         // P3b (review finding 5): the 1-3 tick spawn window before the first AdoptReplicatedVitals latches
         // NetVitalsAdopted -- a fall/starvation death firing there would run the LOCAL death path and fight the
         // server clock. Set at shell spawn (ClientWorldSession/MpLoopback) so local death is suppressed until

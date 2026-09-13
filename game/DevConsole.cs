@@ -69,7 +69,7 @@ namespace UnturnedGodot
         // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
         // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
         // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
-        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] NoArgVerbs = { "heal", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -79,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -263,6 +263,19 @@ namespace UnturnedGodot
             // the actual authority, so the next echo reflects reality instead of fighting a local write it
             // knows nothing about. Caught by comparing a render against the console's OWN reported value, which
             // was correct on read and had already been quietly overwritten by the time the shot was taken.
+            // heal -- full HP, full food/water/stamina/breath, no infection, no dose, every condition cleared.
+            // Routed through DebugHealFully, which writes locally AND tells the authority; see the sethp note
+            // below for why a purely local write reverts one tick later under the loopback.
+            if (verb == "heal")
+            {
+                if (Player == null) { Echo("heal: no player"); return; }
+                Player.DebugHealFully();
+                Echo($"heal: hp {Player.Health:0}/{Player.MaxHealth:0}, food {Player.Food * 100f:0}%, "
+                   + $"water {Player.Water * 100f:0}%, stamina {Player.Stamina * 100f:0}%, "
+                   + $"infection {Player.Infection * 100f:0}%, bleeding {Player.Bleeding}, broken {Player.Broken}");
+                return;
+            }
+
             if (verb == "sethp" && arg.Length > 0)
             {
                 if (Player == null) { Echo("sethp: no player"); return; }
