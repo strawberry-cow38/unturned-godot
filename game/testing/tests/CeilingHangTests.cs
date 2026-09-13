@@ -1,5 +1,8 @@
 using Godot;
 using System.Collections.Generic;
+using SDG.NetTransport.Mem;
+using SDG.Unturned;
+using UnturnedGodot.Net;
 
 namespace UnturnedGodot.Testing
 {
@@ -28,12 +31,15 @@ namespace UnturnedGodot.Testing
         // the parent mesh alone stops at the socket and reports the bulb-less 0.316 m where the model is 0.398 m.
         // Measuring the housing and calling it the fixture is the same class of error as measuring the .obj and
         // calling it the placed object.
-        static Aabb VisualBounds(Node3D root)
+        internal static Aabb VisualBounds(Node3D root)
         {
             Aabb acc = default; bool any = false;
             void Walk(Node n)
             {
-                if (n is MeshInstance3D m && m.Mesh != null)
+                // VISIBLE meshes only. A Deployable carries hidden geometry -- the wire-tool arrows on every
+                // ConnectionPort are MeshInstance3Ds parked until the tool asks for them -- and counting those
+                // measures the scene graph rather than the thing a player looks at.
+                if (n is MeshInstance3D m && m.Mesh != null && m.IsVisibleInTree())
                 {
                     Aabb w = m.GlobalTransform * m.Mesh.GetAabb();
                     acc = any ? acc.Merge(w) : w; any = true;
@@ -102,6 +108,86 @@ namespace UnturnedGodot.Testing
                 T.Check($"{def.Name}: the omni sits below the plate ({lamp.DebugLightWorld.Y - oy:0.000} m off the origin)",
                         lamp.DebugLightWorld.Y < oy - 0.05f);
             }
+        }
+    }
+
+    // ...AND THE SAME THING OVER THE WIRE, which is where it actually broke for the player.
+    //
+    // CeilingHangs above places through Barricade.PlaceOnSurface and passed while the game was still wrong,
+    // because that is the SINGLEPLAYER path. `--peidrive`, the mode the game is played in, is a listen server: the
+    // placement goes out as PlaceDeployableCommand(DefId, Pos, Yaw), the server stores Pos as the raw surface point,
+    // and DeployableReplicaView builds the node. It built every def through Deployable.Spawn -- which lifts a body
+    // UP by GroundLift so its base rests on the point -- so a pendant was shoved up by its own height into the slab
+    // (strawberry: "the light gets placed in the ceiling, but orientation is correct"). Orientation survived because
+    // MountBasis returns plain StandBasis(yaw) for Ceiling: only the SEAT was wrong, which is precisely the half a
+    // local test and a look-at-the-render both pass.
+    //
+    // So this one asserts on the node DeployableReplicaView produced, reached the way the client reaches it.
+    public class NetCeilingPendantSeats : GameTest
+    {
+        public override string Name => "net.ceiling_pendant_seats";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260913);
+            world.Sim.Sim.Add(new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump"));
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "hanger" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            yield return Ticks(10);
+
+            const ushort PendantId = 9210;   // Ceiling Bulb -- the plainest of the three
+            T.Check("server granted the pendant", sHave && sInv.Inventory.tryAddItem(new Item(PendantId)));
+            yield return Until(() => sess.Shell.Inventory.getItemCount(PendantId) == 1, 5);
+            T.Check("the grant echoed into the bag", sess.Shell.Inventory.getItemCount(PendantId) == 1);
+
+            // The point the wire carries is the raw CEILING HIT, well above the player -- exactly what
+            // BarricadePlacer freezes and RequestPlaceDeployable sends.
+            Vector3 hit = sess.Shell.GlobalPosition + new Vector3(0f, 3f, 0f);
+            T.Check("the place request fired", sess.Shell.RequestPlaceDeployable(PendantId, hit, 0f));
+            yield return Until(() => ded.Server.Deployables.Count == 1, 5);
+            T.Check("the SERVER planted it", ded.Server.Deployables.Count == 1);
+
+            Deployable node = null;
+            yield return Until(() =>
+            {
+                foreach (var e in sess.Client.Deployables.All)
+                    if (sess.Deploys.TryGetNode(e.NetIdValue, out node)) return true;
+                return false;
+            }, 5);
+            T.Check("the replica view rendered the node", node != null);
+            if (node == null) yield break;
+            yield return Ticks(3);
+
+            Aabb w = CeilingHangs.VisualBounds(node);   // the WHOLE placed object, port cubes included -- nothing it shows should be inside the slab
+            T.Check($"the fixture is BELOW the ceiling hit, not driven up into it (top {w.End.Y - hit.Y:0.000} m, bottom {w.Position.Y - hit.Y:0.000} m relative to the hit)",
+                    w.End.Y <= hit.Y + 0.01f && w.Position.Y < hit.Y - 0.05f);
+
+            // The failure this replaces put the WHOLE fixture above the hit, so a top-only check would have caught
+            // it -- but the bottom is stated too, because a half-sunk fixture is the shape a partial fix leaves.
+            T.Check($"and it hangs its full height ({w.Size.Y:0.000} m below the slab)",
+                    Mathf.Abs((hit.Y - w.Position.Y) - w.Size.Y) <= 0.02f);
+
+            LampLight lamp = null;
+            foreach (var c in node.GetChildren()) if (c is LampLight l) { lamp = l; break; }
+            T.Check("the replicated pendant built a LampLight", lamp != null);
+            if (lamp != null)
+                T.Check($"and its omni is under the ceiling ({lamp.DebugLightWorld.Y - hit.Y:0.000} m relative to the hit)",
+                        lamp.DebugLightWorld.Y < hit.Y - 0.05f);
         }
     }
 }

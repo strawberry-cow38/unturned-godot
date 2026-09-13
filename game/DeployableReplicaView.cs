@@ -112,7 +112,13 @@ namespace UnturnedGodot
                 }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
-                    node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
+                    // Seat it the way its MOUNT says, not the way the ground does. Deployable.Spawn stands a body
+                    // up on the point, which is right for the Floor family and puts a ceiling pendant inside the
+                    // slab -- see Barricade.NormalFromWire for why the normal is recoverable here at all.
+                    var wPos = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
+                    node = Barricade.SeatsOnSurface(def.Mount)
+                        ? Barricade.PlaceOnSurface(parent, def, wPos, Barricade.NormalFromWire(def.Mount, e.YawDegrees), e.YawDegrees)
+                        : Deployable.Spawn(parent, def, wPos, e.YawDegrees);
                     node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
                     // A container that is NOT the fridge (the campfire) keeps its Deployable body and gets the
                     // grid as a child, so F-open finds it through the same "crates" group a map container uses

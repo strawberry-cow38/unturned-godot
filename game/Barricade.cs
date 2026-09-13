@@ -35,6 +35,38 @@ namespace UnturnedGodot
             return d;
         }
 
+        /// <summary>The surface normal a REPLICATED placement implies, recovered from what the wire actually
+        /// carries. PlaceDeployableCommand sends (DefId, Pos, YawDegrees) and the server stores Pos verbatim as the
+        /// raw surface point -- so how a def SITS on that point is a client-side decision, and the client was making
+        /// the Floor one for everything.
+        ///
+        /// ⚠ THIS IS WHY CEILING PENDANTS ENDED UP INSIDE THE SLAB IN MULTIPLAYER while looking perfect in
+        /// singleplayer (strawberry 2026-09-13: "the light gets placed in the ceiling, but orientation is correct").
+        /// DeployableReplicaView spawns through Deployable.Spawn, which lifts a body UP by GroundLift so its base
+        /// rests on the point -- correct for a crate on the ground, and for a pendant it shoves the whole fixture up
+        /// by its own height into the ceiling. The ORIENTATION survived because MountBasis returns plain
+        /// StandBasis(yaw) for Ceiling, so only the seat was wrong, which is exactly the half a look-at-it check
+        /// passes. And peidrive is a listen server, so this IS the mode the game is played in.
+        ///
+        /// Ceiling is (0,-1,0) by definition. Wall is exact rather than assumed: BarricadePlacer.ResolveYaw sets a
+        /// wall barricade's yaw to YawFacing(n) = atan2(n.x, n.z) AND NOTHING ELSE (R never reaches the wall family),
+        /// so the horizontal normal inverts straight back out of the yaw that is already on the wire.
+        ///
+        /// STICKY IS THE GAP AND IT IS NOT FIXED HERE. Its yaw is the player's manual spin, not the surface, so the
+        /// normal is genuinely absent from the wire -- a charge stuck to a slope replicates flat. Recovering that
+        /// needs the normal sent, which is a protocol change; left alone rather than papered over with a guess.</summary>
+        public static Vector3 NormalFromWire(BarricadeMount mount, float yawDeg) => mount switch
+        {
+            BarricadeMount.Ceiling => Vector3.Down,
+            BarricadeMount.Wall => new Vector3(Mathf.Sin(Mathf.DegToRad(yawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(yawDeg))),
+            _ => Vector3.Up,
+        };
+
+        /// <summary>True if a replicated placement of this def has to be re-seated against a surface rather than
+        /// stood on the ground. Window is excluded because it needs a wall + opening index the wire has no room for,
+        /// and Sticky because its normal is not recoverable (see NormalFromWire).</summary>
+        public static bool SeatsOnSurface(BarricadeMount m) => m == BarricadeMount.Ceiling || m == BarricadeMount.Wall;
+
         // Place a window barricade INTO a building-editor window opening, on one face (inside/outside). Spawned as a
         // CHILD of the WallSurface + stamped with the opening index + face, so BarricadePlacer.SlotFilled sees that
         // slot as taken; scaled to the opening (flat X=width, Z=height) and seated just proud of the aimed face.
