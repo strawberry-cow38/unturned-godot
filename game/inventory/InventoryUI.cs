@@ -158,10 +158,16 @@ void fragment() {
         bool _rmbArmed;
         Vector2 _rmbDownAt;
         byte _rmbPage, _rmbX, _rmbY;
-        // ⭐ This drag carries ONE unit that has NOT been taken off the stack yet. Nothing is mutated until the
-        // drop, and then the SERVER does it: lifting the unit locally first would read back correct for a tick
-        // and then be overwritten by the inventory echo, which is the shape of three separate bugs this month.
-        bool _dragSplitOne;
+        // ⭐ This drag carries N units that have NOT been taken off the stack yet (0 = it is not a split drag).
+        // Nothing is mutated until the drop, and then the SERVER does it: lifting them locally first would read
+        // back correct for a tick and then be overwritten by the inventory echo -- three separate bugs this month.
+        // ⚠ It is also what makes the preview SLOT safe: the stack you are looking at is the only copy that
+        // exists, so an abandoned drag, a double-click or a closed panel cannot mint a second one.
+        int _dragSplitN;
+        bool _dragSplitFromRmb;   // which button must be released to drop it: RMB started it, RMB finishes it
+        Control _splitSlot;                          // the preview slot in the selection panel, if one is open
+        int _splitAmount;                            // how many it is previewing (the slider's value)
+        byte _splitSrcPage, _splitSrcX, _splitSrcY;  // the stack it would come out of
         const float RmbDragSlop = 6f;   // px of travel before a right-press stops being a click
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
@@ -413,7 +419,7 @@ void fragment() {
         // item is NEVER moved out of its page (the drag only previewed a floating tile) -> cancel = drop tile + repaint.
         bool CancelDrag()
         {
-            _dragSplitOne = false;   // nothing was taken, so there is nothing to give back
+            _dragSplitN = 0; _dragSplitFromRmb = false;   // nothing was taken, so there is nothing to give back
             if (!_dragging) return false;
             _dragFromCloth = false;
             _dragging = false;
@@ -604,6 +610,12 @@ void fragment() {
             {
                 if (mb.Pressed)
                 {
+                    // The preview slot is checked FIRST, before the panel hands its clicks to its buttons:
+                    // it is inside the panel, so the guard below would swallow the press that starts the drag.
+                    if (!_dragging && _splitSlot != null && IsInstanceValid(_splitSlot)
+                        && new Rect2(_splitSlot.GlobalPosition, _splitSlot.Size).HasPoint(mb.GlobalPosition))
+                    { StartSplitSlotDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); return; }
+
                     // clicks inside an open selection panel belong to its buttons -- let them through
                     if (_selPanel != null)
                     {
@@ -669,7 +681,7 @@ void fragment() {
             }
             else if (e is InputEventMouseButton rup && rup.ButtonIndex == MouseButton.Right && !rup.Pressed)
             {
-                if (_dragging && _dragSplitOne) { Drop(rup.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                if (_dragging && _dragSplitFromRmb) { Drop(rup.GlobalPosition); GetViewport().SetInputAsHandled(); }
                 else if (_rmbArmed)
                 {
                     _rmbArmed = false;   // never travelled -> it was a click after all, so the menu opens
@@ -788,10 +800,35 @@ void fragment() {
             var one = src.item.Clone();
             one.amount = 1;
             _dragFromCloth = false;
-            _dragSplitOne = true;
+            _dragSplitN = 1; _dragSplitFromRmb = true;
             _dragJar = new ItemJar(one);
             _dragPage = _rmbPage; _dragX0 = src.x; _dragY0 = src.y; _dragRot = 0;
             _grab = new Vector2(CELL / 2f, CELL / 2f);   // the single unit rides under the cursor
+            _dragging = true;
+            RebuildDragTile();
+            PlayInventoryAudio(_dragJar);
+        }
+
+        /// <summary>Lift the preview slot's contents onto the cursor. The panel CLOSES as the drag starts -- it
+        /// sits over the middle of the grid, so leaving it up would cover most of the cells you are trying to
+        /// drop into, and the amount is already committed once you have picked the stack up.</summary>
+        void StartSplitSlotDrag(Vector2 global)
+        {
+            var pg = Inv.items[_splitSrcPage];
+            byte idx = pg.getIndex(_splitSrcX, _splitSrcY);
+            if (idx == byte.MaxValue) { CloseSelection(); return; }
+            var src = pg.getItem(idx);
+            if (src?.item == null || src.item.amount <= 1) { CloseSelection(); return; }
+
+            int n = Mathf.Clamp(_splitAmount, 1, src.item.amount - 1);   // re-clamped against the stack as it is NOW
+            var ghost = src.item.Clone();
+            ghost.amount = (ushort)n;
+            _dragFromCloth = false;
+            _dragSplitN = n; _dragSplitFromRmb = false;   // LMB started it, so LMB finishes it
+            _dragJar = new ItemJar(ghost);
+            _dragPage = _splitSrcPage; _dragX0 = src.x; _dragY0 = src.y; _dragRot = 0;
+            _grab = new Vector2(CELL / 2f, CELL / 2f);
+            CloseSelection();
             _dragging = true;
             RebuildDragTile();
             PlayInventoryAudio(_dragJar);
@@ -836,16 +873,17 @@ void fragment() {
 
         void Drop(Vector2 global)
         {
-            // THE ONE-UNIT CARRY resolves entirely through the split command -- source cell, one unit, target cell
-            // -- so it never touches the move/equip/clothing paths below, none of which know about part of a stack.
-            if (_dragSplitOne)
+            // A SPLIT CARRY resolves entirely through the split command -- source cell, N units, target cell --
+            // so it never touches the move/equip/clothing paths below, none of which know about part of a stack.
+            if (_dragSplitN > 0)
             {
                 byte fp = _dragPage, fx = _dragX0, fy = _dragY0;
-                _dragSplitOne = false; _dragging = false;
+                ushort n = (ushort)_dragSplitN;
+                _dragSplitN = 0; _dragSplitFromRmb = false; _dragging = false;
                 _dragTile?.QueueFree(); _dragTile = null;
                 if (PointToCell(global, out byte tp, out byte tx, out byte ty, out _, out _))
                 {
-                    DoSplitTo(fp, fx, fy, 1, tp, tx, ty);
+                    DoSplitTo(fp, fx, fy, n, tp, tx, ty);
                     PlayInventoryAudio();
                 }
                 Refresh();   // dropped on nothing: the stack was never touched, so this just repaints
@@ -1872,7 +1910,10 @@ void fragment() {
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
 
-        const float SplitStripH = 110f;  // the bottom strip a splittable stack adds to the selection panel
+        // Tall enough to clear the preview SLOT and its caption: a CELL-sized tile plus its frame, the number
+        // box above it and the caption under it. Derived rather than eyeballed -- the slot is a whole inventory
+        // cell, so a strip sized by eye is one CELL change away from hanging out of the panel.
+        const float SplitStripH = 56f + CELL + 8f + 30f;
 
         /// <summary>Split control for a selected stack: a slider, a typed number box, and tick marks at the
         /// fractions people actually want (strawberry 2026-09-14: "a slider plus a number type box. slider
@@ -1900,7 +1941,7 @@ void fragment() {
 
             var box = new SpinBox
             {
-                Position = new Vector2(364, top + 26), Size = new Vector2(100, 28),
+                Position = new Vector2(SplitColX, top + 14), Size = new Vector2(100, 28),
                 MinValue = 1, MaxValue = total - 1, Step = 1, Value = slider.Value,
             };
             panel.AddChild(box);
@@ -1913,6 +1954,8 @@ void fragment() {
                 int c = Mathf.Clamp((int)Mathf.Round((float)v), 1, total - 1);
                 slider.Value = c; box.Value = c;
                 syncing = false;
+                _splitAmount = c;
+                RebuildSplitSlot(jar);   // the slot shows what you would be dragging, so it follows the number
             }
             slider.ValueChanged += Set;
             box.ValueChanged += Set;
@@ -1942,20 +1985,26 @@ void fragment() {
             Mark(total / 3, "1/3");
             Mark(total / 2, "1/2");
 
-            var go = new Button { Text = "Split", Position = new Vector2(364, top + 60), Size = new Vector2(100, 30) };
-            go.Pressed += () => { DoSplit(page, x, y, (ushort)box.Value); CloseSelection(); };
-            panel.AddChild(go);
-        }
-
-        /// <summary>Split N off the stack at (page,x,y). Server-owned where there is a server, exactly like every
-        /// other grid change -- see PlayerController.RequestSplitItem for why a local split does not survive.</summary>
-        void DoSplit(byte page, byte x, byte y, ushort amount)
-        {
-            if (amount < 1) return;
-            if (Player != null && Player.RequestSplitItem(page, x, y, amount)) return;   // MP: the echo lands it
-            var pg = Inv.items[page];
-            byte idx = pg.getIndex(x, y);
-            if (idx != byte.MaxValue) pg.splitItem(idx, amount);
+            // ⭐ THE PREVIEW SLOT. Not a button that performs a split -- a slot holding what the split WOULD be,
+            // which you then drag into a free cell (strawberry 2026-09-14: "change the split button to an item
+            // stack 'slot' ... that we can click drag into a free slot. verified so we dont dupe items").
+            //
+            // ⚠ HOW IT CANNOT DUPE: the slot draws a jar that is not in any page and never enters one. Nothing is
+            // taken off the source until the DROP, and the taking is done by the server against the stack as it
+            // stands then -- so a stale preview (the stack shrank, another split already happened, the panel sat
+            // open) is REFUSED rather than honoured. Closing the panel or abandoning the drag leaves no trace
+            // because nothing was ever moved.
+            _splitSrcPage = page; _splitSrcX = x; _splitSrcY = y;
+            _splitAmount = (int)box.Value;
+            _splitSlot = new Panel { Position = new Vector2(SplitColX, top + 48), Size = new Vector2(CELL + 8, CELL + 8) };
+            panel.AddChild(_splitSlot);
+            // Caption UNDER the slot, not beside it: the right-hand column is only ~136px wide and a cell-sized
+            // slot leaves nothing to put next to it.
+            var hint = new Label { Text = "drag out", Position = new Vector2(SplitColX - 10, top + 48 + CELL + 10),
+                                   Size = new Vector2(CELL + 28, 18), HorizontalAlignment = HorizontalAlignment.Center };
+            hint.AddThemeFontSizeOverride("font_size", 12);
+            panel.AddChild(hint);
+            RebuildSplitSlot(jar);
         }
 
         /// <summary>Split N off (page,x,y) into a NAMED cell -- the RMB carry's drop. Same command as the slider,
@@ -2009,7 +2058,21 @@ void fragment() {
             }
         }
 
-        void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; }
+        /// <summary>Redraw the preview slot's tile for the current split amount. The jar drawn here is a
+        /// throwaway built off a CLONE -- it is never added to a page, so it cannot be picked up, saved or
+        /// replicated, and the only real copy of these items stays in the stack until the drop.</summary>
+        void RebuildSplitSlot(ItemJar src)
+        {
+            if (_splitSlot == null || !IsInstanceValid(_splitSlot) || src?.item == null) return;
+            foreach (Node c in _splitSlot.GetChildren()) c.QueueFree();
+            var ghost = src.item.Clone();
+            ghost.amount = (ushort)Mathf.Clamp(_splitAmount, 1, src.item.amount);
+            var t = MakeTile(new ItemJar(ghost), CELL, CELL);
+            t.Position = new Vector2(4, 4);
+            _splitSlot.AddChild(t);
+        }
+
+        void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; _splitSlot = null; }
 
         void AddActionButton(Control parent, string text, Vector2 pos, System.Action onClick)
         {
@@ -2899,6 +2962,7 @@ void fragment() {
         const float CoinCellX   = 0.17f;  // ...and the first coin's centre, as a fraction of the cell...
         const float CoinCellY   = 0.82f;
         const float CoinGap     = 1.05f;  // coin centre-to-centre spacing, in coin-widths
+        const float SplitColX   = 364f;   // left edge of the split strip's right-hand column (box + preview slot)
         const float FanFill     = 0.88f;  // fraction of the cell the REFERENCE fan is scaled to fill.
                                           // ⚠ THIS is the knob that keeps the fan off the frame, not the arc:
                                           // narrowing the arc shrinks the measured box, and fit-to-cell then

@@ -13,6 +13,8 @@ namespace UnturnedGodot.Net
     {
         public long GridMovesApplied;
         public long GridMovesRejected;      // the server grid said no (illegal cell/overlap/out-of-bounds)
+        public long SplitsApplied;          // stacks actually divided
+        public long SplitsRejected;         // asked for, refused -- a stale amount, no room, or an illegal target
         public long CraftsApplied;
         public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
         public long CraftCancelsApplied;
@@ -946,12 +948,16 @@ namespace UnturnedGodot.Net
             var page = inv?.items[cmd.Page];
             if (page == null) return;
             byte index = page.getIndex(cmd.X, cmd.Y);
-            if (index == byte.MaxValue) return;
-            if (cmd.ToPage == SplitItemCommand.Anywhere) { page.splitItem(index, cmd.Amount); return; }
-            if (cmd.ToPage >= PlayerInventory.PAGES) return;
+            if (index == byte.MaxValue) { Diag.SplitsRejected++; return; }
+            if (cmd.ToPage == SplitItemCommand.Anywhere)
+            {
+                if (page.splitItem(index, cmd.Amount) != null) Diag.SplitsApplied++; else Diag.SplitsRejected++;
+                return;
+            }
+            if (cmd.ToPage >= PlayerInventory.PAGES) { Diag.SplitsRejected++; return; }
 
             var src = page.getItem(index);
-            if (src?.item == null) return;
+            if (src?.item == null) { Diag.SplitsRejected++; return; }
             var dst = inv.items[cmd.ToPage];
 
             // MERGE if the target cell already holds the same item and has room: dragging one note onto another
@@ -960,24 +966,26 @@ namespace UnturnedGodot.Net
             if (at != byte.MaxValue)
             {
                 var into = dst.getItem(at);
-                if (into?.item == null || into == src || into.item.id != src.item.id) return;
+                if (into?.item == null || into == src || into.item.id != src.item.id) { Diag.SplitsRejected++; return; }
                 int cap = System.Math.Max(1, Assets.find(into.item.id)?.stackSize ?? 1);
                 int room = cap - into.item.amount;
-                if (room <= 0) return;
+                if (room <= 0) { Diag.SplitsRejected++; return; }
                 var moved = page.takeFrom(index, System.Math.Min(cmd.Amount, room));
-                if (moved == null) return;
+                if (moved == null) { Diag.SplitsRejected++; return; }
                 into.item.amount = (ushort)(into.item.amount + moved.amount);
                 dst.raiseStateUpdated();
+                Diag.SplitsApplied++;
                 return;
             }
 
             // ⚠ Check the space BEFORE taking. takeFrom reduces the source, so discovering afterwards that the
             // destination will not hold it destroys the items rather than failing the command.
             var probe = new ItemJar(src.item);
-            if (!dst.checkSpaceEmpty(cmd.ToX, cmd.ToY, probe.size_x, probe.size_y, cmd.ToRot)) return;
+            if (!dst.checkSpaceEmpty(cmd.ToX, cmd.ToY, probe.size_x, probe.size_y, cmd.ToRot)) { Diag.SplitsRejected++; return; }
             var taken = page.takeFrom(index, cmd.Amount);
-            if (taken == null) return;
+            if (taken == null) { Diag.SplitsRejected++; return; }
             dst.addItem(cmd.ToX, cmd.ToY, cmd.ToRot, taken);
+            Diag.SplitsApplied++;
         }
 
         void OnDropItem(ushort sender, DropItemCommand cmd)
