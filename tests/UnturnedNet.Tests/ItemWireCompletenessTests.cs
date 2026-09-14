@@ -81,15 +81,22 @@ namespace UnturnedNet.Tests
                 stamped.Add(f);
             }
             h.Server.Inventories.ServerMarkDirty(a.PlayerId);
+            // ⚠ The arrival marker is DERIVED from the same stamper that wrote it. It used to be a literal 7 --
+            // correct only while `amount` was a byte, because Distinctive() picks its value BY TYPE. Widening
+            // amount to ushort moved the stamp to StanagId and the literal could never match again, so the
+            // stamped item arrived and this waited for it forever. A test whose stamper follows the type and
+            // whose assertion does not is one field-type change away from being wrong, silently.
+            var amountField = typeof(Item).GetField("amount");
+            var arrived = System.Convert.ToUInt64(Distinctive(amountField));
             Assert.That(h.StepUntil(() =>
             {
                 if (!a.Inventories.TryGet(a.PlayerId, out var e)) return false;
                 foreach (var pg in e.Inventory.items)
                     for (byte i = 0; i < pg.getItemCount(); i++)
                         if (pg.getItem(i)?.item?.id == TransactionalFixtures.StanagId
-                            && pg.getItem(i).item.amount == 7) return true;
+                            && System.Convert.ToUInt64(pg.getItem(i).item.amount) == arrived) return true;
                 return false;
-            }), Is.True, $"the stamped magazine reached the client (seed={h.Net.Seed})");
+            }), Is.True, $"the stamped magazine reached the client (amount marker {arrived}, seed={h.Net.Seed})");
 
             a.Inventories.TryGet(a.PlayerId, out var ent);
             Item replica = null;

@@ -98,7 +98,13 @@ namespace UnturnedNet.Tests
                 NetId = 3, ItemId = 13, Amount = 1, Quality = 100,
                 Pos = new Vector3(0.5f, 1f, 1.2f), Vel = new Vector3(0f, 2f, 2.5f),
             };
-            Assert.That(Pack(ReplicationIds.EventWorldItemSpawned, evt.Write), Is.EqualTo("10030000000D00016400040C0810C0191010011104"));
+            // ⚠ INTENDED wire change, re-derived rather than pasted from the failure. Amount widened byte ->
+            // ushort for the $500 wallet, so its field grows one byte and everything after it shifts unchanged
+            // (the stream is byte-aligned here). Field by field:
+            //   10 | 03000000 NetId | 0D00 ItemId | 0100 Amount(u16) | 64 Quality | 00040C.. Pos+Vel
+            // The old golden decomposes the same way with `01` in Amount's place, which is how this was checked
+            // -- a golden updated by copying what the code now emits asserts only that the code equals itself.
+            Assert.That(Pack(ReplicationIds.EventWorldItemSpawned, evt.Write), Is.EqualTo("10030000000D0001006400040C0810C0191010011104"));
         }
 
         [Test]
