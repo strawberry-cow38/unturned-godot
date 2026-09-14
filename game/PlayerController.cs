@@ -3455,7 +3455,8 @@ namespace UnturnedGodot
         }
 
         bool _throwHeldDown;   // LMB is down with a throwable in hand: the throw is armed and waiting for the release
-        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; _throwHeldDown = false; }   // switching away mid-swing drops the pending release + tail with it (and any armed-but-unreleased throw: swapping weapons with the button down must not lob one later)
+        float _throwSwingT;    // seconds the wind-up has been running since the press (see BeginThrowSwing)
+        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; _throwHeldDown = false; _throwSwingT = 0f; }   // switching away mid-swing drops the pending release + tail with it (and any armed-but-unreleased throw: swapping weapons with the button down must not lob one later)
 
         // The item's OWN 1p model in the hand, through the consumable path: it follows the hand bone with the source's
         // held-model roll (PlayerEquipment.firstModel Euler(0,0,90)), TE_0 raises it (the retail "Equip", 0.47 s) and TU_0
@@ -3494,18 +3495,45 @@ namespace UnturnedGodot
         /// <summary>LMB with a throwable in hand: lob it, spend one from the bag, and either re-arm with the next
         /// of the same kind or fall back to whatever was held before -- the same tail TickConsume runs when a
         /// stack of food runs out, because "the item left your hand and is gone" is the same problem.</summary>
-        public void ThrowHeld(bool strong = true)
+        /// <summary>LMB DOWN: start the wind-up (strawberry 2026-09-14: "make the throw animation play on click,
+        /// but only throw on release"). The arm comes over the top NOW -- nothing leaves the hand until the button
+        /// comes up, which ThrowHeld handles.
+        ///
+        /// Before this, the press did nothing visible at all and the whole swing was played on the release, so
+        /// every throw looked a frame late no matter how the timings were tuned. The animation is the feedback
+        /// that the input landed; it has to be on the press.
+        ///
+        /// Returns false if a throw cannot start, so the caller does not arm a release that will never fire.</summary>
+        bool BeginThrowSwing()
         {
-            if (_heldThrowable == null || _throwCd > 0f || _throwPendingT > 0f || _dead) return;
-            // The SWING: the arm comes over the top now (TU_0); the canister leaves the hand at 60 % of the clip in
-            // ReleaseThrow (ticked below), and nothing else can be started until the clip has run out.
+            if (_heldThrowable == null || _throwCd > 0f || _throwPendingT > 0f || _dead) return false;
             float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
             if (useLen < 0.1f) useLen = ThrowCooldown;   // no arms rig (headless fixture): the old cadence
             _viewmodel?.PlayThrow();
-            _throwPendingT = useLen * ThrowReleaseFraction;
+            _throwSwingT = 0f;
+            _throwCd = useLen;   // busy for the clip either way: the swing is happening whether you let go or not
+            Log.Print($"[throw] wind-up, busy {useLen:0.00}s");
+            return true;
+        }
+
+        /// <summary>LMB UP: the item leaves the hand. It goes at the clip's release point (60 %) if the button came
+        /// up before then -- a tap therefore throws on exactly the old cadence -- and IMMEDIATELY if the swing has
+        /// already run past it, because a hold has no cooking and must not bank time.</summary>
+        public void ThrowHeld(bool strong = true)
+        {
+            if (_heldThrowable == null || _throwPendingT > 0f || _dead) return;
+            // ⚠ SELF-SUFFICIENT. Most callers are not the LMB hold: the RMB weak toss, the dev console, the movie
+            // harness and four tests all call this on its own and expect a whole swing. If no wind-up is running,
+            // start one here -- so those paths keep the exact cadence they had, and only the LMB press-then-release
+            // path gets the split.
+            if (_throwCd <= 0f && !BeginThrowSwing()) return;
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen < 0.1f) useLen = ThrowCooldown;
             _throwPendingStrong = strong;
-            _throwCd = useLen;
-            Log.Print($"[throw] swing ({(strong ? "strong" : "weak")}), release in {_throwPendingT:0.00}s, busy {useLen:0.00}s");
+            float releaseAt = useLen * ThrowReleaseFraction;
+            if (_throwSwingT >= releaseAt) { ReleaseThrow(); Log.Print($"[throw] release ({(strong ? "strong" : "weak")}), held past the swing"); return; }
+            _throwPendingT = releaseAt - _throwSwingT;
+            Log.Print($"[throw] release ({(strong ? "strong" : "weak")}) in {_throwPendingT:0.00}s, held {_throwSwingT:0.00}s");
         }
 
         /// <summary>The moment in the swing where the item actually leaves the hand -- computed HERE, off the aim at
@@ -8050,7 +8078,7 @@ namespace UnturnedGodot
                 else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
-                else if (HoldingThrowable) _throwHeldDown = true;       // holding a grenade/smoke/flare: LMB ARMS the throw, RELEASE lobs it (strawberry 2026-09-13)
+                else if (HoldingThrowable && BeginThrowSwing()) _throwHeldDown = true;   // LMB starts the WIND-UP; RELEASE lobs it (strawberry 2026-09-13, 2026-09-14)
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldPaintItem != null) TrySprayVehicle();     // holding a spraypaint: LMB resprays the vehicle you're aimed at
@@ -11410,6 +11438,7 @@ namespace UnturnedGodot
             FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
+            if (_throwHeldDown) _throwSwingT += (float)delta;   // how far into the wind-up the button has been held
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
             TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends
