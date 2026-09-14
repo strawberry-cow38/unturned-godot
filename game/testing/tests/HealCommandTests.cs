@@ -52,8 +52,13 @@ namespace UnturnedGodot.Testing
             ve.Sim.NotifyDamaged();
             ve.Bleeding = true; ve.Broken = true;
             ce.HealthExact = 23f; ce.Health = 23;
+            // ⚠ STAMP IT. Writing the fields straight in is not what damage does -- ApplyPlayerDamage marks the
+            // entity changed, and replication sends on that stamp. Without it the wreck is invisible to the
+            // wire, so the replica the shell later adopts is whatever it happened to hold, and the test is
+            // measuring a half-applied world rather than the heal.
+            loop.Server.CombatState.MarkDirty(ce, loop.Server.Session.CurrentTick);
             player.Bleeding = true; player.Broken = true;
-            yield return Ticks(10);
+            yield return Until(() => loop.Client.CombatState.TryGet(loop.Client.PlayerId, out var w) && w.Health == 23, 5);
 
             // THE CONTROL. Without it, "everything is 1 afterwards" also passes on a tree where the wreck never
             // landed -- and the wreck landing on the SERVER is the whole premise.
@@ -81,6 +86,16 @@ namespace UnturnedGodot.Testing
 
             // ...AND IT SURVIVES. One tick of "healed" is what the local-only version already achieved; the point
             // is that it is still true after the echo has had many ticks to overwrite it.
+            // CONVERGE, don't count ticks -- the lesson dropin_dropout just taught, and tinyclaw's point: "never
+            // replicated" and "hadn't replicated YET when I looked" produce identical output, and a fixed wait
+            // cannot tell them apart. Waiting is not weaker: a heal the echo genuinely reverts, or a block that
+            // genuinely never arrives, never satisfies this and it still fails -- with the chain printed below.
+            yield return Until(() => player.Health > 99f && player.Food > 0.9f, 5);
+            // ...AND THEN HOLD. The convergence wait above only proves it ARRIVED; this test's actual claim is
+            // that it STAYS -- one tick of "healed" is what the local-only version already managed, and the echo
+            // reverting it a moment later is the bug. So converge first, then give the echo many ticks to take it
+            // back, and assert after that. Dropping this for the wait alone would have quietly turned the
+            // strongest check in the file into the weakest.
             yield return Ticks(40);
             loop.Server.Vitals.TryGet(loop.Client.PlayerId, out ve);
             T.Check($"(server) still healed 40 ticks later, not reverted by the echo ({ve.Sim.Food:0.00})",
