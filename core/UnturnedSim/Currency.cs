@@ -48,26 +48,23 @@ namespace SDG.Unturned
             return StackId;   // $0: an empty wallet still has to draw as something
         }
 
-        /// <summary>How a stack would actually be PAID OUT: the denominations it breaks into, largest first,
-        /// each listed once however many of it there are (strawberry 2026-09-14: "stacks of notes fanned out
-        /// smallest at the front").
+        /// <summary>The notes and coins this many dollars would actually be paid in, largest first.
         ///
-        /// ⭐ GREEDY IS GENUINELY OPTIMAL HERE, checked rather than assumed: {1,2,5,10,20,50,100} is a canonical
-        /// system, and every value 1..255 was compared against a full dynamic-programming minimum -- no value
-        /// has a shorter breakdown than the one this returns. So the fan is never lying about the change.
+        /// ⚠ This used to take each denomination AT MOST ONCE (`dollars %= v` with no repeat), which meant it
+        /// did not sum to the value for 128 of the 255 reachable wallets -- $249 drew $127 of notes and $250
+        /// drew $150. Nothing caught it because the only consumer is a 72px icon, where "a pile of money" and
+        /// "the RIGHT pile of money" look much the same. Greedy WITH repeats is exact for this set
+        /// ({1,2,5,10,20,50,100} is canonical, so greedy is also the minimum piece count).
         ///
-        /// ⭐ AND IT REACHES EVERY SUBSET. Across $1..$255 these come out as exactly 127 distinct sets, which is
-        /// 2^7 - 1: every non-empty combination of the seven notes, none unreachable and none wasted. That is
-        /// the number of DISTINCT FANS there are -- and the reason none of them needs authoring, since each is
-        /// just the notes it names, layered.</summary>
+        /// Repeats are why a raised stack ceiling costs art rather than code: past $188 -- the largest sum of
+        /// one of each -- a fan necessarily draws the same note twice, and $985 is nine identical $100s.</summary>
         public static System.Collections.Generic.List<ushort> Breakdown(int dollars)
         {
             var outp = new System.Collections.Generic.List<ushort>();
             foreach (var id in Denominations)
             {
                 int v = ValueOf(id);
-                if (dollars < v) continue;
-                outp.Add(id);
+                for (int k = dollars / v; k > 0; k--) outp.Add(id);   // REPEATS: two $100s is what $200 looks like
                 dollars %= v;
             }
             return outp;

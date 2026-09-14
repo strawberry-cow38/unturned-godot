@@ -122,5 +122,40 @@ namespace UnturnedSim.Tests
         [TestCase(255, 1055)]
         public void TheIconIsTheLargestDenominationTheStackCouldPayOut(int dollars, int expectedIcon)
             => Assert.That(Currency.IconIdFor(dollars), Is.EqualTo((ushort)expectedIcon), $"${dollars}");
+
+        // ⭐ THE PROPERTY THAT CATCHES THE BUG THAT SHIPPED: a breakdown must be WORTH the wallet.
+        // Breakdown originally took each denomination at most once, so it silently under-drew 128 of the 255
+        // reachable values ($249 -> $127 of notes). It looked fine because the only consumer is a 72px icon.
+        // Checking the SUM rather than the shape is what rejects it -- every per-value "does it contain a $50"
+        // assertion passed against the broken version.
+        [Test]
+        public void EveryWalletBreaksIntoExactlyItsOwnValue()
+        {
+            int worst = 0, worstShort = 0;
+            for (int d = 1; d <= Currency.MaxPerStack; d++)
+            {
+                int sum = 0;
+                foreach (var id in Currency.Breakdown(d)) sum += Currency.ValueOf(id);
+                if (d - sum > worstShort) { worstShort = d - sum; worst = d; }
+            }
+            Assert.That(worstShort, Is.EqualTo(0), $"${worst} breaks into ${worst - worstShort}, short by ${worstShort}");
+        }
+
+        // The fan's worst case is a LAYOUT budget, not trivia: five notes is what the icon is drawn to hold, and
+        // $185 is the cheapest wallet that needs all five. If a denomination is ever added or the ceiling moves,
+        // this is the number that has to be re-checked against InventoryUI.FanMaxNotes.
+        [Test]
+        public void NoWalletNeedsMoreThanFiveNotesDrawn()
+        {
+            int worst = 0, most = 0;
+            for (int d = 1; d <= Currency.MaxPerStack; d++)
+            {
+                int notes = 0;
+                foreach (var id in Currency.Breakdown(d))
+                    if (Currency.ValueOf(id) >= 5) notes++;
+                if (notes > most) { most = notes; worst = d; }
+            }
+            Assert.That(most, Is.EqualTo(5), $"widest fan is ${worst} at {most} notes");
+        }
     }
 }

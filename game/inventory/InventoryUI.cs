@@ -2633,6 +2633,14 @@ void fragment() {
             return t;
         }
 
+        /// <summary>The dollar figure a money tile DISPLAYS. Normally the stack's own amount; UG_FANVALUE
+        /// overrides it so the label and the fan agree while previewing a ceiling the byte cannot reach.</summary>
+        static int MoneyShown(int amount)
+        {
+            var ov = System.Environment.GetEnvironmentVariable("UG_FANVALUE");
+            return (!string.IsNullOrEmpty(ov) && int.TryParse(ov, out int forced) && forced > 0) ? forced : amount;
+        }
+
         // ---- MONEY FANS ---------------------------------------------------------------------------------------
         //
         // A wallet draws as the notes it would actually pay out, fanned, smallest at the front (strawberry
@@ -2789,7 +2797,21 @@ void fragment() {
             if (all.Count == 0) return;
             var notes = new System.Collections.Generic.List<ushort>();
             var coins = new System.Collections.Generic.List<ushort>();
-            foreach (var id in all) (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
+            // ⭐ ONE OF EACH DENOMINATION PRESENT -- the fan is a SUMMARY, the $N label is the amount.
+            // Breakdown is a true payout and so repeats ($485 is four $100s), but identical notes drawn
+            // overlapping have no edge between them: four hundreds render as one featureless gold blob, not as
+            // four notes. Drawing the SET instead says "hundreds, fifties, twenties, tens and fives" honestly,
+            // caps the fan at five notes so the layout's five-note scale reference stays valid at ANY ceiling,
+            // and leaves the exact figure to the label, which is the part that can actually carry a number.
+            // ⚠ This is needed at the CURRENT $255 cap, not just a raised one: every wallet from $200 up holds
+            // two $100 notes.
+            ushort prev = 0;
+            foreach (var id in all)
+            {
+                if (id == prev) continue;   // Breakdown is largest-first, so repeats are always adjacent
+                prev = id;
+                (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
+            }
 
             // Back to front. Breakdown is largest-first and the largest belongs BEHIND, so building in order
             // leaves the smallest note on top -- "smallest at the front" is the loop's own direction.
@@ -2937,7 +2959,16 @@ void fragment() {
             // ASSET for its icon would draw a coin on a $100 wad. The icon comes off the VALUE instead: the
             // largest denomination the stack could actually pay out.
             bool moneyTile = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
-            if (moneyTile) BuildMoneyFan(tile, jar.item.amount, w, h);
+            int moneyValue = moneyTile ? jar.item.amount : 0;
+            // UG_FANVALUE previews the icon for a wallet the game cannot yet HOLD. `Item.amount` is a byte, so
+            // $485 is unrepresentable until it is widened; this draws the picture for a raised ceiling without
+            // pretending the wire, the saves or the stacking rules support one. Render-only.
+            if (moneyTile)
+            {
+                var ov = System.Environment.GetEnvironmentVariable("UG_FANVALUE");
+                if (!string.IsNullOrEmpty(ov) && int.TryParse(ov, out int forced) && forced > 0) moneyValue = forced;
+                BuildMoneyFan(tile, moneyValue, w, h);
+            }
             var tex = moneyTile ? null
                     : magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true)
                     : (asset != null ? Icon(asset.id) : null);
@@ -2980,7 +3011,7 @@ void fragment() {
             bool isMoney = jar.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
             if (jar.item != null && (isMoney || jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
             {
-                var amt = new Label { Text = isMoney ? "$" + jar.item.amount : "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
+                var amt = new Label { Text = isMoney ? "$" + MoneyShown(jar.item.amount) : "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
                 amt.HorizontalAlignment = HorizontalAlignment.Right;
                 amt.AddThemeColorOverride("font_color", Colors.White);
                 amt.AddThemeColorOverride("font_outline_color", Colors.Black);
