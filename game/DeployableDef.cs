@@ -181,6 +181,15 @@ namespace UnturnedGodot
             // I shipped both defs without it. Caught by tinyclaw reading them to build models against -- and it
             // is the mirror of the bug that put their ceiling pendants through the ceiling the day before,
             // which is a good argument for whoever is about to depend on a def being the one to read it.
+            //
+            // ⚠⚠ THIS FLIP BELONGS TO *THESE TWO MESHES*, NOT TO THESE TWO DEFS. It exists only because Radio_0
+            // and Radio_1 extend into POSITIVE z. Purpose-built replacements are being authored the house way --
+            // base at z=0, body into NEGATIVE z -- and those need NO MeshEuler at all: keeping this line while
+            // swapping the Model would flip them straight back over and trade one upside-down radio for another.
+            //
+            // SO: CHANGING `Model` ON THESE DEFS MEANS RE-DECIDING THIS LINE IN THE SAME COMMIT. Measure the new
+            // mesh's z extents first -- base at z=0 going +Z keeps the flip, going -Z drops it. (tinyclaw, who
+            // is building those replacements, raised this before either of us could walk into it.)
             MeshEuler = new Vector3(180f, 0f, 0f),
             Ports = new[] {
                 new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
