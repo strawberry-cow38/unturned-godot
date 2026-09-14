@@ -1156,6 +1156,11 @@ namespace UnturnedGodot.Net
         public bool SendDropItem(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandDropItem, new DropItemCommand { Page = page, X = x, Y = y }.Write);
 
+        public bool SendSplitItem(byte page, byte x, byte y, ushort amount,
+                                  byte toPage = SplitItemCommand.Anywhere, byte toX = 0, byte toY = 0, byte toRot = 0)
+            => SendCommand(ReplicationIds.CommandSplitItem, new SplitItemCommand {
+                   Page = page, X = x, Y = y, Amount = amount, ToPage = toPage, ToX = toX, ToY = toY, ToRot = toRot }.Write);
+
         public bool SendPickupItem(uint netId)
             => SendCommand(ReplicationIds.CommandPickupItem, new PickupItemCommand { NetId = netId }.Write);
 

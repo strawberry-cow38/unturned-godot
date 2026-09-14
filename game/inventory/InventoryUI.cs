@@ -153,6 +153,16 @@ void fragment() {
         bool _dragFromCloth;          // the drag started on a clothing equip slot (the worn garment, not a page cell)
         EItemType _dragClothType;     // which clothing slot it was grabbed from (only meaningful when _dragFromCloth)
         ItemJar _dragJar;
+        // RMB-drag-one. The press ARMS; only motion turns it into a drag, so a plain right-click still opens the
+        // action menu exactly as it did (strawberry 2026-09-14: "dragging the item with rmb should take 1").
+        bool _rmbArmed;
+        Vector2 _rmbDownAt;
+        byte _rmbPage, _rmbX, _rmbY;
+        // ⭐ This drag carries ONE unit that has NOT been taken off the stack yet. Nothing is mutated until the
+        // drop, and then the SERVER does it: lifting the unit locally first would read back correct for a tick
+        // and then be overwritten by the inventory echo, which is the shape of three separate bugs this month.
+        bool _dragSplitOne;
+        const float RmbDragSlop = 6f;   // px of travel before a right-press stops being a click
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
 
@@ -403,6 +413,7 @@ void fragment() {
         // item is NEVER moved out of its page (the drag only previewed a floating tile) -> cancel = drop tile + repaint.
         bool CancelDrag()
         {
+            _dragSplitOne = false;   // nothing was taken, so there is nothing to give back
             if (!_dragging) return false;
             _dragFromCloth = false;
             _dragging = false;
@@ -641,12 +652,35 @@ void fragment() {
                 if (PointToCell(rmb.GlobalPosition, out byte page, out byte cx, out byte cy, out _, out _))
                 {
                     byte idx = Inv.items[page].getIndex(cx, cy);
-                    if (idx != byte.MaxValue) { var j = Inv.items[page].getItem(idx); OpenSelection(page, j.x, j.y); }
+                    if (idx != byte.MaxValue)
+                    {
+                        var j = Inv.items[page].getItem(idx);
+                        // A stack ARMS instead of opening: the menu still opens if the press turns out to be a
+                        // click (see the release branch). A single item has nothing to split, so it opens at once.
+                        if (j.item != null && j.item.amount > 1)
+                        {
+                            _rmbArmed = true; _rmbDownAt = rmb.GlobalPosition;
+                            _rmbPage = page; _rmbX = j.x; _rmbY = j.y;
+                        }
+                        else OpenSelection(page, j.x, j.y);
+                    }
                 }
                 GetViewport().SetInputAsHandled();
             }
+            else if (e is InputEventMouseButton rup && rup.ButtonIndex == MouseButton.Right && !rup.Pressed)
+            {
+                if (_dragging && _dragSplitOne) { Drop(rup.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                else if (_rmbArmed)
+                {
+                    _rmbArmed = false;   // never travelled -> it was a click after all, so the menu opens
+                    OpenSelection(_rmbPage, _rmbX, _rmbY);
+                    GetViewport().SetInputAsHandled();
+                }
+            }
             else if (e is InputEventMouseMotion mm)
             {
+                if (_rmbArmed && mm.GlobalPosition.DistanceTo(_rmbDownAt) > RmbDragSlop)
+                { _rmbArmed = false; StartSplitDrag(mm.GlobalPosition); GetViewport().SetInputAsHandled(); return; }
                 if (_pdDragging)
                 {
                     _pdYaw += mm.Relative.X * 0.012f;                          // horizontal drag spins the rig around Y; INVERTED 2026-09-09 (strawberry) -- dragging right now turns his right shoulder toward you, i.e. the model follows the cursor rather than opposing it
@@ -737,6 +771,32 @@ void fragment() {
             PlayInventoryAudio();   // #4: source startDrag plays inventory audio on grab
         }
 
+        /// <summary>Begin an RMB drag carrying ONE unit off the armed stack.
+        ///
+        /// The carried jar is a DETACHED copy -- the stack in the grid is untouched until the drop, and then the
+        /// server does the taking. That ordering is the whole point: lifting the unit now would show the right
+        /// number for one tick and then be overwritten by the inventory echo. It also means an abandoned drag
+        /// needs no undo, because nothing was ever done.</summary>
+        void StartSplitDrag(Vector2 global)
+        {
+            var pg = Inv.items[_rmbPage];
+            byte idx = pg.getIndex(_rmbX, _rmbY);
+            if (idx == byte.MaxValue) return;
+            var src = pg.getItem(idx);
+            if (src?.item == null || src.item.amount <= 1) return;
+
+            var one = src.item.Clone();
+            one.amount = 1;
+            _dragFromCloth = false;
+            _dragSplitOne = true;
+            _dragJar = new ItemJar(one);
+            _dragPage = _rmbPage; _dragX0 = src.x; _dragY0 = src.y; _dragRot = 0;
+            _grab = new Vector2(CELL / 2f, CELL / 2f);   // the single unit rides under the cursor
+            _dragging = true;
+            RebuildDragTile();
+            PlayInventoryAudio(_dragJar);
+        }
+
         void RebuildDragTile()
         {
             _dragTile?.QueueFree();
@@ -776,6 +836,21 @@ void fragment() {
 
         void Drop(Vector2 global)
         {
+            // THE ONE-UNIT CARRY resolves entirely through the split command -- source cell, one unit, target cell
+            // -- so it never touches the move/equip/clothing paths below, none of which know about part of a stack.
+            if (_dragSplitOne)
+            {
+                byte fp = _dragPage, fx = _dragX0, fy = _dragY0;
+                _dragSplitOne = false; _dragging = false;
+                _dragTile?.QueueFree(); _dragTile = null;
+                if (PointToCell(global, out byte tp, out byte tx, out byte ty, out _, out _))
+                {
+                    DoSplitTo(fp, fx, fy, 1, tp, tx, ty);
+                    PlayInventoryAudio();
+                }
+                Refresh();   // dropped on nothing: the stack was never touched, so this just repaints
+                return;
+            }
             byte sp = _dragPage, sx = _dragX0, sy = _dragY0, srot = _dragRot;
             bool fromCloth = _dragFromCloth; EItemType fromType = _dragClothType;
             _dragFromCloth = false;
@@ -1668,12 +1743,18 @@ void fragment() {
             if (asset == null) return;
             _selPage = page; _selX = x; _selY = y;
 
-            var panel = new Panel { Size = new Vector2(500, 300) };
+            // A splittable stack gets a strip along the bottom for the slider, so the panel is taller. Decided
+            // BEFORE the panel exists because its height also sets where it is centred.
+            bool splittable = jar.item != null && jar.item.amount > 1;
+            float panelH = splittable ? 300 + SplitStripH : 300;
+
+            var panel = new Panel { Size = new Vector2(500, panelH) };
             StyleBox(panel, UI_PANEL);
             _root.AddChild(panel);
             _selPanel = panel;
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - 300) / 2f));
+            panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - panelH) / 2f));
+            if (splittable) BuildSplitStrip(panel, jar, page, x, y);
 
             // left: the item's tile, fit into a 200x280 icon box
             bool rot = jar.rot % 2 == 1;
@@ -1789,6 +1870,143 @@ void fragment() {
             { AddActionButton(panel, "Unload", new Vector2(228, by), UnloadSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
+        }
+
+        const float SplitStripH = 110f;  // the bottom strip a splittable stack adds to the selection panel
+
+        /// <summary>Split control for a selected stack: a slider, a typed number box, and tick marks at the
+        /// fractions people actually want (strawberry 2026-09-14: "a slider plus a number type box. slider
+        /// should show marks for half, third, quarter").
+        ///
+        /// The slider runs 1..amount-1, not 0..amount: splitting off nothing and splitting off everything are
+        /// both non-operations, and offering them means every press has to explain why it did nothing.
+        ///
+        /// Slider and box are bound BOTH ways through one setter, with a re-entry guard -- each one's ValueChanged
+        /// fires when the other writes it, so without the guard they bounce off each other for a frame.</summary>
+        void BuildSplitStrip(Control panel, ItemJar jar, byte page, byte x, byte y)
+        {
+            int total = jar.item.amount;
+            float top = panel.Size.Y - SplitStripH + 8f;
+
+            var title = new Label { Text = "Split", Position = new Vector2(20, top), Size = new Vector2(120, 22) };
+            panel.AddChild(title);
+
+            var slider = new HSlider
+            {
+                Position = new Vector2(20, top + 30), Size = new Vector2(330, 20),
+                MinValue = 1, MaxValue = total - 1, Step = 1, Value = total / 2,   // half is the common case, so start there
+            };
+            panel.AddChild(slider);
+
+            var box = new SpinBox
+            {
+                Position = new Vector2(364, top + 26), Size = new Vector2(100, 28),
+                MinValue = 1, MaxValue = total - 1, Step = 1, Value = slider.Value,
+            };
+            panel.AddChild(box);
+
+            bool syncing = false;
+            void Set(double v)
+            {
+                if (syncing) return;
+                syncing = true;
+                int c = Mathf.Clamp((int)Mathf.Round((float)v), 1, total - 1);
+                slider.Value = c; box.Value = c;
+                syncing = false;
+            }
+            slider.ValueChanged += Set;
+            box.ValueChanged += Set;
+
+            // Tick marks at the useful fractions. HSlider's own TickCount only does EVENLY spaced ticks, which is
+            // not what a half/third/quarter set is, so these are drawn as thin rects at the fractions themselves.
+            // Positioned off the slider's VALUE range, so they land on the numbers they name at any stack size.
+            var marked = new System.Collections.Generic.HashSet<int>();
+            void Mark(int value, string label)
+            {
+                if (value < 1 || value > total - 1) return;   // a stack too small for this fraction just has no mark
+                // ⚠ Small stacks collapse fractions onto the same number -- a stack of 5 puts both a quarter and a
+                // third at 1 -- and two labels on one tick just print over each other. First one wins, and since
+                // they are marked quarter-third-half the surviving label is the smallest fraction, which is the
+                // one that is exactly right at that number.
+                if (!marked.Add(value)) return;
+                float t = (total - 2) <= 0 ? 0.5f : (value - 1) / (float)(total - 2);
+                float mx = 20 + t * 330;
+                panel.AddChild(new ColorRect { Color = new Color(1, 1, 1, 0.45f),
+                                               Position = new Vector2(mx, top + 52), Size = new Vector2(2, 8) });
+                var l = new Label { Text = label, Position = new Vector2(mx - 20, top + 60), Size = new Vector2(40, 18) };
+                l.HorizontalAlignment = HorizontalAlignment.Center;
+                l.AddThemeFontSizeOverride("font_size", 12);
+                panel.AddChild(l);
+            }
+            Mark(total / 4, "1/4");
+            Mark(total / 3, "1/3");
+            Mark(total / 2, "1/2");
+
+            var go = new Button { Text = "Split", Position = new Vector2(364, top + 60), Size = new Vector2(100, 30) };
+            go.Pressed += () => { DoSplit(page, x, y, (ushort)box.Value); CloseSelection(); };
+            panel.AddChild(go);
+        }
+
+        /// <summary>Split N off the stack at (page,x,y). Server-owned where there is a server, exactly like every
+        /// other grid change -- see PlayerController.RequestSplitItem for why a local split does not survive.</summary>
+        void DoSplit(byte page, byte x, byte y, ushort amount)
+        {
+            if (amount < 1) return;
+            if (Player != null && Player.RequestSplitItem(page, x, y, amount)) return;   // MP: the echo lands it
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx != byte.MaxValue) pg.splitItem(idx, amount);
+        }
+
+        /// <summary>Split N off (page,x,y) into a NAMED cell -- the RMB carry's drop. Same command as the slider,
+        /// with a destination instead of "wherever it fits"; the server still owns whether it is legal.</summary>
+        void DoSplitTo(byte page, byte x, byte y, ushort amount, byte toPage, byte toX, byte toY)
+        {
+            if (amount < 1) return;
+            if (Player != null && Player.RequestSplitItem(page, x, y, amount, toPage, toX, toY, 0)) return;
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return;
+            var src = pg.getItem(idx);
+            if (src?.item == null) return;
+            var dst = Inv.items[toPage];
+            byte at = dst.getIndex(toX, toY);
+            if (at != byte.MaxValue)   // merge onto a same-id stack with room; anything else is a no-op
+            {
+                var into = dst.getItem(at);
+                if (into?.item == null || into == src || into.item.id != src.item.id) return;
+                int cap = System.Math.Max(1, SDG.Unturned.Assets.find(into.item.id)?.stackSize ?? 1);
+                int room = cap - into.item.amount;
+                if (room <= 0) return;
+                var moved = pg.takeFrom(idx, System.Math.Min(amount, room));
+                if (moved == null) return;
+                into.item.amount = (ushort)(into.item.amount + moved.amount);
+                dst.raiseStateUpdated();
+                return;
+            }
+            var probe = new SDG.Unturned.ItemJar(src.item);
+            if (!dst.checkSpaceEmpty(toX, toY, probe.size_x, probe.size_y, 0)) return;
+            var taken = pg.takeFrom(idx, amount);   // space checked FIRST: takeFrom already reduced the source
+            if (taken != null) dst.addItem(toX, toY, 0, taken);
+        }
+
+        /// <summary>UG_SPLITUI=1: open the action panel on the first stack in the bag, once, so the split strip
+        /// can be rendered offline. A harness hook -- there is no cursor to right-click with in a --shot run.</summary>
+        void MaybeShowSplitUi()
+        {
+            if (_splitUiShown || System.Environment.GetEnvironmentVariable("UG_SPLITUI") != "1") return;
+            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.PAGES; pg++)
+            {
+                var page = Inv.items[pg];
+                for (byte k = 0; k < page.getItemCount(); k++)
+                {
+                    var j = page.getItem(k);
+                    if (j?.item == null || j.item.amount <= 1) continue;
+                    _splitUiShown = true;
+                    OpenSelection(pg, j.x, j.y);
+                    return;
+                }
+            }
         }
 
         void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; }
@@ -2291,6 +2509,8 @@ void fragment() {
             return false;
         }
 
+        bool _splitUiShown;   // UG_SPLITUI is a one-shot: the panel must not reopen every repaint
+
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
@@ -2447,6 +2667,7 @@ void fragment() {
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
+            MaybeShowSplitUi();   // render harness only; no-op unless UG_SPLITUI=1
         }
 
         void LayoutDash()

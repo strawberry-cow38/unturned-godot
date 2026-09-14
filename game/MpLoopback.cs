@@ -275,6 +275,7 @@ namespace UnturnedGodot
                 Player.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
                 Player.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
                 Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+                Player.NetSplitItem = (page, x, y, amt, tp, tx, ty, tr) => Client.SendSplitItem(page, x, y, amt, tp, tx, ty, tr);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
                 Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
                 // ⚠ THE THROWABLE SPEND IS A DIRECT CALL, not a wire command, and it is the one seam here that

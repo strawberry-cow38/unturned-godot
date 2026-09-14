@@ -208,6 +208,12 @@ namespace SDG.Unturned
         /// need two fields, the same argument that gave `cooked` its own.</summary>
         public byte frozen;
 
+        /// <summary>A field-for-field copy. Used when a stack SPLITS: the new stack is the same item in every
+        /// respect except how many of it there are. Memberwise rather than an explicit field list because there
+        /// are a dozen of them (gunAmmo, cooked, frozen, fluid, attachments...) and a hand-written copy silently
+        /// drops whichever one is added next -- the split would keep working and quietly lose the state.</summary>
+        public Item Clone() => (Item)MemberwiseClone();
+
         public Item(ushort newID, ushort newAmount = 1, byte newQuality = 100)
         {
             id = newID;

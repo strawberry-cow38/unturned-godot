@@ -7538,6 +7538,12 @@ namespace UnturnedGodot
                     player.Inventory.items[2].addItem(slot++, 0, 0,
                         new SDG.Unturned.Item(SDG.Unturned.Currency.StackId) { amount = (ushort)dollars });
             }
+            // UG_SPLITUI=1 : a stack worth splitting, so the selection panel's split strip can be rendered.
+            if (System.Environment.GetEnvironmentVariable("UG_SPLITUI") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                player.Inventory.items[2].addItem(0, 0, 0, new SDG.Unturned.Item(254) { amount = 5 });   // frag grenades, the new stack-of-5
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();

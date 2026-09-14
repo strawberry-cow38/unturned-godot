@@ -131,6 +131,48 @@ namespace SDG.Unturned
             return true;
         }
 
+        /// <summary>Take `amount` off the stack at `index` into a NEW stack in this page's free space.
+        /// Returns the new jar, or null if the split is illegal or there is nowhere to put it.
+        ///
+        /// Splitting off the WHOLE stack is refused on purpose: that is a move, and letting it through here
+        /// would leave a zero-amount jar sitting in the grid, which every "is there an item in this cell" check
+        /// in the game would answer yes to.
+        ///
+        /// ⚠ Deliberately NOT tryAddItem: that merges same-id stacks, so it would put the split straight back
+        /// into the stack it came out of and the operation would look like it silently did nothing.</summary>
+        public ItemJar splitItem(byte index, int amount)
+        {
+            var src = getItem(index);
+            if (src?.item == null) return null;
+            if (amount < 1 || amount >= src.item.amount) return null;
+            var probe = new ItemJar(src.item);
+            if (!tryFindSpace(probe.size_x, probe.size_y, out var x, out var y, out var rot)) return null;
+            var made = takeFrom(index, amount);
+            if (made == null) return null;
+            var jar = new ItemJar(x, y, rot, made);
+            fillSlot(jar, isOccupied: true);
+            items.Add(jar);
+            onStateUpdated?.Invoke();
+            return jar;
+        }
+
+        /// <summary>DETACH `amount` from the stack at `index` and hand it back, unplaced. The caller decides where
+        /// it goes -- free space, a chosen cell, another page.
+        ///
+        /// ⚠ Callers must know where they are putting it BEFORE calling: this reduces the source, so a caller that
+        /// takes first and then finds it has nowhere to put it has destroyed the items.</summary>
+        public Item takeFrom(byte index, int amount)
+        {
+            var src = getItem(index);
+            if (src?.item == null) return null;
+            if (amount < 1 || amount >= src.item.amount) return null;   // the whole stack is a MOVE, not a split
+            var made = src.item.Clone();
+            made.amount = (ushort)amount;
+            src.item.amount = (ushort)(src.item.amount - amount);
+            onStateUpdated?.Invoke();
+            return made;
+        }
+
         public void removeItem(byte index)
         {
             if (index >= 0 && index < items.Count)

@@ -49,6 +49,33 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>SPLIT: take Amount off the stack at (Page,X,Y) into a new stack in the same page's free space.
+    /// No destination -- the server picks the slot, which removes a whole class of "is that cell really free"
+    /// validation and makes the command the same shape whether it came from the slider or from an RMB drag.</summary>
+    public struct SplitItemCommand
+    {
+        public const byte Anywhere = 255;   // ToPage: let the server find the new stack a slot on the source page
+
+        public byte Page, X, Y;      // the stack being split
+        public ushort Amount;        // how many come off it
+        public byte ToPage, ToX, ToY, ToRot;   // where they land (ToPage == Anywhere -> server's choice)
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(Amount);
+            w.WriteUInt8(ToPage); w.WriteUInt8(ToX); w.WriteUInt8(ToY); w.WriteUInt8(ToRot);
+        }
+        public static bool TryRead(NetPakReader r, out SplitItemCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
+                || !r.ReadUInt16(out ushort amt)
+                || !r.ReadUInt8(out byte tp) || !r.ReadUInt8(out byte tx) || !r.ReadUInt8(out byte ty)
+                || !r.ReadUInt8(out byte tr)) return false;
+            cmd = new SplitItemCommand { Page = p, X = x, Y = y, Amount = amt, ToPage = tp, ToX = tx, ToY = ty, ToRot = tr };
+            return true;
+        }
+    }
+
     public struct PickupItemCommand
     {
         public uint NetId;

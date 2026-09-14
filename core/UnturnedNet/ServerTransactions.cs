@@ -377,6 +377,11 @@ namespace UnturnedGodot.Net
                 OnDropItem,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
+            commands.Register<SplitItemCommand>(ReplicationIds.CommandSplitItem, SplitItemCommand.TryRead,
+                OnSplitItem,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
+                                           && cmd.Amount > 0);
+
             commands.Register<PickupItemCommand>(ReplicationIds.CommandPickupItem, PickupItemCommand.TryRead,
                 OnPickupItem,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -929,6 +934,50 @@ namespace UnturnedGodot.Net
                     new SeatOccupiedEvent { NetId = released, Occupant = 0 }.Write));
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventSeatOccupied,
                 new SeatOccupiedEvent { NetId = cmd.NetId, Occupant = sender }.Write));
+        }
+
+        /// <summary>SPLIT, server side. Every bound is re-checked here rather than trusted: the client sends the
+        /// amount its slider was showing, and a stack can have changed underneath it between the drag starting and
+        /// the command landing. splitItem itself refuses an amount at or above the stack, so an out-of-date client
+        /// gets a no-op instead of a zero-amount jar left in the grid.</summary>
+        void OnSplitItem(ushort sender, SplitItemCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv?.items[cmd.Page];
+            if (page == null) return;
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            if (index == byte.MaxValue) return;
+            if (cmd.ToPage == SplitItemCommand.Anywhere) { page.splitItem(index, cmd.Amount); return; }
+            if (cmd.ToPage >= PlayerInventory.PAGES) return;
+
+            var src = page.getItem(index);
+            if (src?.item == null) return;
+            var dst = inv.items[cmd.ToPage];
+
+            // MERGE if the target cell already holds the same item and has room: dragging one note onto another
+            // wad is the obvious reading of the gesture, and refusing it would be the surprising answer.
+            byte at = dst.getIndex(cmd.ToX, cmd.ToY);
+            if (at != byte.MaxValue)
+            {
+                var into = dst.getItem(at);
+                if (into?.item == null || into == src || into.item.id != src.item.id) return;
+                int cap = System.Math.Max(1, Assets.find(into.item.id)?.stackSize ?? 1);
+                int room = cap - into.item.amount;
+                if (room <= 0) return;
+                var moved = page.takeFrom(index, System.Math.Min(cmd.Amount, room));
+                if (moved == null) return;
+                into.item.amount = (ushort)(into.item.amount + moved.amount);
+                dst.raiseStateUpdated();
+                return;
+            }
+
+            // ⚠ Check the space BEFORE taking. takeFrom reduces the source, so discovering afterwards that the
+            // destination will not hold it destroys the items rather than failing the command.
+            var probe = new ItemJar(src.item);
+            if (!dst.checkSpaceEmpty(cmd.ToX, cmd.ToY, probe.size_x, probe.size_y, cmd.ToRot)) return;
+            var taken = page.takeFrom(index, cmd.Amount);
+            if (taken == null) return;
+            dst.addItem(cmd.ToX, cmd.ToY, cmd.ToRot, taken);
         }
 
         void OnDropItem(ushort sender, DropItemCommand cmd)

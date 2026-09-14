@@ -5831,6 +5831,7 @@ namespace UnturnedGodot
         // client never re-packs its own bag, plants its own generator, or levels its own skill).
         public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
+        public System.Action<byte, byte, byte, ushort, byte, byte, byte, byte> NetSplitItem;   // (page,x,y, amount, toPage,toX,toY,toRot) -> Client.SendSplitItem
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         // (magPage,magX,magY,magId, roundPage,roundX,roundY,roundId, unloading) -> Client.SendMagLoad.
@@ -6082,6 +6083,17 @@ namespace UnturnedGodot
 
         /// <summary>MP drop (InventoryUI Drop): the server removes the jar + tosses the world item; the
         /// echo empties the cell and the item puppet renders the drop.</summary>
+        /// <summary>MP split: the server takes N off the stack and finds the new stack a slot, then the
+        /// inventory echo lands it. Client-side is not an option -- the grid is server-owned, so a local split
+        /// reads back correct for exactly one tick before the echo overwrites it.</summary>
+        public bool RequestSplitItem(byte page, byte x, byte y, ushort amount,
+                                     byte toPage = 255, byte toX = 0, byte toY = 0, byte toRot = 0)
+        {
+            if (NetSplitItem == null) return false;
+            NetSplitItem(page, x, y, amount, toPage, toX, toY, toRot);
+            return true;
+        }
+
         public bool RequestDropItem(byte page, byte x, byte y)
         {
             if (NetDropItem == null) return false;
