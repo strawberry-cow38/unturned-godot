@@ -56,6 +56,7 @@ namespace UnturnedGodot
             public float StrideAcc;                      // metres of ground covered since this puppet's last footstep
             public byte Gesture;                         // v42: the looping gesture this puppet is showing (0 = none), so the clip is played on CHANGE and not every tick
             public bool WornLightOn, HeldLightOn;        // their nightvision/headlamp and torch, off the appearance block
+            public ushort WornGlassesId;                 // WHICH lens device, so their glow uses the same per-item energy the local body does
             public bool Grounded = true;                 // last probe result -- the false->true edge is a landing
             public string MeleeName;                     // melee model in the hand (null = none/fists) -- the hold pose + swing clips key off it
             public bool HeldGun;                         // a gun is in the hand (the overlay layer belongs to it, not to a melee swing)
@@ -259,7 +260,9 @@ namespace UnturnedGodot
                 // otherwise re-dress the whole puppet -- re-attach the gun, re-wear the clothing -- to change one
                 // float. Both calls no-op on gear with no emission bound, so driving both is safe and means the
                 // right one lights whichever they have.
-                av.Body.SetGlassesGlow(av.WornLightOn);
+                // ...at their worn item's own brightness, same table the local body reads, so a peer's goggles
+                // are never brighter on your screen than they are on theirs.
+                av.Body.SetGlassesGlow(av.WornLightOn, ClothingContent.LensEnergy(av.WornGlassesId));
                 av.Body.SetMeleeGlow(av.HeldLightOn);
                 av.Body.Tick(delta);
                 if (av.SwingLeft > 0f)   // a remote melee swing is playing -> park back on the hold when it ends
@@ -352,7 +355,7 @@ namespace UnturnedGodot
             ApplyWorn(av.Inv, ce);
             av.Clothing.Refresh();
             ApplyHeld(av, ce.HeldId, ce.HeldSight, ce.HeldMagazine, ce.HeldBarrel);
-            av.WornLightOn = ce.WornLightOn; av.HeldLightOn = ce.HeldLightOn;
+            av.WornLightOn = ce.WornLightOn; av.HeldLightOn = ce.HeldLightOn; av.WornGlassesId = ce.WornGlasses;
             ApplyGesture(av, ce.Gesture);
         }
 

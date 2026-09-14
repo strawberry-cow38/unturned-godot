@@ -754,12 +754,8 @@ namespace UnturnedGodot.Net
             if (stale != null) foreach (uint id in stale) tombstones.Remove(id);
         }
 
-        static List<uint> SortedIds<T>(NetEntityRegistry<T> registry)
-        {
-            var ids = new List<uint>();
-            foreach (var id in registry.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        /// <summary>Ascending ids -- THE WIRE ORDER. Cached in the registry, which invalidates on every
+        /// Add/Remove/Clear, so it cannot go stale. The list is SHARED: do not mutate it.</summary>
+        static List<uint> SortedIds<T>(NetEntityRegistry<T> registry) => registry.SortedIdValues();
     }
 }

@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753108000000000000002800"));   // byte[1]=0x31 = Version 49 (v49: global chat + moderation -- CommandChatSend/EventChatMessage and NetRejectReason.Banned)
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753208000000000000002800"));   // byte[1]=0x32 = Version 50 (v50: the MERGE of v48 currency/stack-split and v49 chat/moderation -- see NetProtocol.Version for why a merged wire needs its own number rather than either parent's). The ONLY byte that moved is [1]; if a second byte changes with it, the frame shape moved too and that is not a version bump.
         }
 
         [Test]

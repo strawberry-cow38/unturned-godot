@@ -46,6 +46,28 @@ namespace SDG.Unturned
         /// <summary>The same fuse on the server's 50 Hz combat clock.</summary>
         public const int FuseTicks = 150;
 
+        /// <summary>How long a smoke cloud pours, and how long a flare burns. ONE number for both since
+        /// 2026-09-13 (strawberry: "make the duration of the smoke 3x as long. make flares that same lifetime
+        /// too") -- smoke was 22 s and flares 45 s, and 22 x 3 = 66 is now what they share.
+        ///
+        /// Neither was ever ripped: ItemThrowableAsset carries no effect-length key at all, so retail's are
+        /// hard-coded in UseableThrowable and these are the port's own game-feel numbers. Written as the
+        /// multiplication rather than as a bare 66 so the change stays legible as "three times the old smoke",
+        /// which is what was actually asked for.</summary>
+        public const float SmokeSeconds = 22f * 3f;
+        /// <summary>How wide the cloud draws, and therefore its area of effect -- smoke carries no damage, so
+        /// the radius IS the effect. Retail has no such number at all (its smoke is a particle system, not a
+        /// radius), so every factor here is a game-feel call by strawberry, kept as the chain of
+        /// multiplications that produced it rather than collapsed into one decimal:
+        ///   6.0   the original
+        ///   x1.3  2026-09-13 "make the smoke cloud 30% bigger"
+        ///   x1.2  2026-09-13 "make the aoe 20% bigger"
+        /// A const, so the game layer's own fallbacks cannot drift off it (they did once already).</summary>
+        public const float SmokeRadius = 6f * 1.3f * 1.2f;
+        /// <summary>A flare burns exactly as long as a smoke pours (strawberry 2026-09-13). Derived rather than
+        /// copied: retuning one retunes both, which is the point of them being "that same lifetime".</summary>
+        public const float FlareSeconds = SmokeSeconds;
+
         static readonly Dictionary<ushort, ThrowableDef> _byId = Build();
 
         static Dictionary<ushort, ThrowableDef> Build()
@@ -59,13 +81,18 @@ namespace SDG.Unturned
                                       PlayerDamage = 150f, ZombieDamage = 150f, AnimalDamage = 150f, VehicleDamage = 0f,   Radius = 6f });
 
             // ---- flares (Throwables/Flare_*) : no damage keys in the .dat, so none here ----
-            // 45 s of burn is a choice, not a ripped value -- retail's flare effect length lives in code.
+            // Neither burn length is a ripped value -- retail's effect lengths live in code, not in the .dat --
+            // so both are named constants below rather than decimals sitting in a table.
             for (ushort id = 255; id <= 260; id++)
-                Add(d, new ThrowableDef { Id = id, Name = FlareName(id), Kind = EThrowableKind.Flare, Radius = 12f, EffectSeconds = 45f });
+                Add(d, new ThrowableDef { Id = id, Name = FlareName(id), Kind = EThrowableKind.Flare, Radius = 12f, EffectSeconds = FlareSeconds });
 
             // ---- smoke (Throwables/Smoke_*) : likewise no damage, pure effect ----
+            // Radius 7.8 = the old 6.0 +30% (strawberry 2026-09-13: "make the smoke cloud 30% bigger"). Neither
+            // number is ripped -- retail's smoke is a particle system, not a radius -- so this is a game-feel
+            // value, written as the multiplication it was rather than as a new constant that hides where it came
+            // from. Smoke carries no damage, so Radius here is purely how big the cloud draws.
             for (ushort id = 261; id <= 268; id++)
-                Add(d, new ThrowableDef { Id = id, Name = SmokeName(id), Kind = EThrowableKind.Smoke, Radius = 6f, EffectSeconds = 22f });
+                Add(d, new ThrowableDef { Id = id, Name = SmokeName(id), Kind = EThrowableKind.Smoke, Radius = SmokeRadius, EffectSeconds = SmokeSeconds });
 
             return d;
         }

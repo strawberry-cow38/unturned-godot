@@ -13,6 +13,8 @@ namespace UnturnedGodot.Net
     {
         public long GridMovesApplied;
         public long GridMovesRejected;      // the server grid said no (illegal cell/overlap/out-of-bounds)
+        public long SplitsApplied;          // stacks actually divided
+        public long SplitsRejected;         // asked for, refused -- a stale amount, no room, or an illegal target
         public long CraftsApplied;
         public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
         public long CraftCancelsApplied;
@@ -241,6 +243,27 @@ namespace UnturnedGodot.Net
             return true;
         }
 
+        /// <summary>Take one thrown item out of the thrower's bag. False when they have none, which is what makes
+        /// this the LAST check in OnGrenade: it is the step that cannot be undone, same rule SpendTire follows.
+        ///
+        /// ⚠ THIS IS WHY THROWABLES WERE INFINITE. PlayerController.ReleaseThrow spends the item locally in SP,
+        /// but on a server-owned bag it routed the deletion through NetConsume -> OnConsume, which opens with
+        /// `if (asset == null || !asset.IsConsumable) return;`. A grenade is not a consumable, so the server
+        /// refused every one of them, silently, incrementing ConsumesRejected -- and since the THROW itself was
+        /// accepted by a different handler, the projectile flew and the item stayed in the bag. Singleplayer runs
+        /// through the loopback, so "SP" had it too.
+        ///
+        /// Spending it HERE, in the handler that accepts the throw, is what makes the two agree: the same command
+        /// that mints the projectile is the one that pays for it.</summary>
+        public bool SpendThrowable(ushort sender, ushort itemId)
+        {
+            if (itemId == 0) return false;
+            var inv = SenderInventory(sender);
+            if (inv == null || inv.getItemCount(itemId) <= 0) return false;
+            SpendAnyOf(inv, itemId, sender);
+            return true;
+        }
+
         public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
@@ -397,6 +420,11 @@ namespace UnturnedGodot.Net
             commands.Register<DropItemCommand>(ReplicationIds.CommandDropItem, DropItemCommand.TryRead,
                 OnDropItem,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<SplitItemCommand>(ReplicationIds.CommandSplitItem, SplitItemCommand.TryRead,
+                OnSplitItem,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
+                                           && cmd.Amount > 0);
 
             commands.Register<PickupItemCommand>(ReplicationIds.CommandPickupItem, PickupItemCommand.TryRead,
                 OnPickupItem,
@@ -958,6 +986,56 @@ namespace UnturnedGodot.Net
                 new SeatOccupiedEvent { NetId = cmd.NetId, Occupant = sender }.Write));
         }
 
+        /// <summary>SPLIT, server side. Every bound is re-checked here rather than trusted: the client sends the
+        /// amount its slider was showing, and a stack can have changed underneath it between the drag starting and
+        /// the command landing. splitItem itself refuses an amount at or above the stack, so an out-of-date client
+        /// gets a no-op instead of a zero-amount jar left in the grid.</summary>
+        void OnSplitItem(ushort sender, SplitItemCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv?.items[cmd.Page];
+            if (page == null) return;
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            if (index == byte.MaxValue) { Diag.SplitsRejected++; return; }
+            if (cmd.ToPage == SplitItemCommand.Anywhere)
+            {
+                if (page.splitItem(index, cmd.Amount) != null) Diag.SplitsApplied++; else Diag.SplitsRejected++;
+                return;
+            }
+            if (cmd.ToPage >= PlayerInventory.PAGES) { Diag.SplitsRejected++; return; }
+
+            var src = page.getItem(index);
+            if (src?.item == null) { Diag.SplitsRejected++; return; }
+            var dst = inv.items[cmd.ToPage];
+
+            // MERGE if the target cell already holds the same item and has room: dragging one note onto another
+            // wad is the obvious reading of the gesture, and refusing it would be the surprising answer.
+            byte at = dst.getIndex(cmd.ToX, cmd.ToY);
+            if (at != byte.MaxValue)
+            {
+                var into = dst.getItem(at);
+                if (into?.item == null || into == src || into.item.id != src.item.id) { Diag.SplitsRejected++; return; }
+                int cap = System.Math.Max(1, Assets.find(into.item.id)?.stackSize ?? 1);
+                int room = cap - into.item.amount;
+                if (room <= 0) { Diag.SplitsRejected++; return; }
+                var moved = page.takeFrom(index, System.Math.Min(cmd.Amount, room));
+                if (moved == null) { Diag.SplitsRejected++; return; }
+                into.item.amount = (ushort)(into.item.amount + moved.amount);
+                dst.raiseStateUpdated();
+                Diag.SplitsApplied++;
+                return;
+            }
+
+            // ⚠ Check the space BEFORE taking. takeFrom reduces the source, so discovering afterwards that the
+            // destination will not hold it destroys the items rather than failing the command.
+            var probe = new ItemJar(src.item);
+            if (!dst.checkSpaceEmpty(cmd.ToX, cmd.ToY, probe.size_x, probe.size_y, cmd.ToRot)) { Diag.SplitsRejected++; return; }
+            var taken = page.takeFrom(index, cmd.Amount);
+            if (taken == null) { Diag.SplitsRejected++; return; }
+            dst.addItem(cmd.ToX, cmd.ToY, cmd.ToRot, taken);
+            Diag.SplitsApplied++;
+        }
+
         void OnDropItem(ushort sender, DropItemCommand cmd)
         {
             var inv = SenderInventory(sender);
@@ -1269,7 +1347,7 @@ namespace UnturnedGodot.Net
                         : 0;
                 if (cap > 0)
                 {
-                    byte amt = (byte)System.Math.Min(cmd.SpentAmount, cap);
+                    ushort amt = (ushort)System.Math.Min(cmd.SpentAmount, cap);
                     if (amt > 0) inv.tryAddItem(new Item(cmd.SpentId, amt, 100));
                 }
             }

@@ -28,6 +28,46 @@ namespace SDG.Unturned
         public float Radiation;
         public float StaminaRegenDelay;    // seconds to wait after releasing sprint before stamina regenerates
 
+        /// <summary>Seconds left before passive health regen may resume after taking damage. Armed by
+        /// <see cref="NotifyDamaged"/>, counted down in Step. A FIELD rather than a Step parameter because the
+        /// damage that arms it does not arrive on the vitals tick -- it arrives from combat, whenever combat
+        /// happens, and a per-tick "was I hit" flag would have to be cleared by someone who might forget.</summary>
+        public float RegenLockDelay;
+
+        /// <summary>Call when the player takes damage from ANY source, to block passive regen for
+        /// <see cref="RegenDamageLockSeconds"/>. Idempotent -- a burst of hits just re-arms the same timer.</summary>
+        public void NotifyDamaged() => RegenLockDelay = RegenDamageLockSeconds;
+
+        /// <summary>A NEW BODY. Every survival vital back to full and every internal timer cleared.
+        ///
+        /// It lives HERE, on the sim, rather than as a handful of field writes at the call site, because two of
+        /// the things that have to be cleared are not writable from outside: <see cref="_doseHold"/> is private,
+        /// and RegenLockDelay is the kind of bookkeeping a caller forgets. Dying with the post-damage lock armed
+        /// and respawning into it is invisible -- you simply never regen for ten seconds of your new life, with
+        /// nothing on screen to say why.
+        ///
+        /// Health is NOT touched: the vitals sim never owns HP (ServerStep re-seeds it from the combat
+        /// authority every tick), and writing it here would be a second opinion about the one value that is
+        /// deliberately single-sourced.
+        ///
+        /// Oxygen and Radiation are reset even though the game layer's own respawn line never listed them --
+        /// drowning and respawning with an empty breath re-drowns you on arrival, and dying in a deadzone would
+        /// otherwise hand the new body the old one's dose.</summary>
+        public void ResetForNewLife()
+        {
+            Stamina = Food = Water = 1f;
+            Oxygen = 1f;
+            Infection = 0f;
+            Radiation = 0f;
+            StaminaRegenDelay = 0f;
+            RegenLockDelay = 0f;
+            _doseHold = 0f;
+        }
+
+        /// <summary>A full 0 -> MaxHealth heal in HealthHealDays of game time. Derived from MaxHealth so a
+        /// raised ceiling heals proportionally rather than taking twice as long.</summary>
+        public float HealthRegenPerSecond => MaxHealth / (HealthHealDays * GameDaySeconds);
+
         /// <summary>Seconds of air from a full breath, and seconds to refill it at the surface.</summary>
         public const float OxygenSeconds = 30f, OxygenRefillSeconds = 4f;
 
@@ -37,7 +77,7 @@ namespace SDG.Unturned
         // it as unasked-for, and they said to pull it (2026-09-07). Their call, not mine to infer twice.
         //
         // If it ever comes back: it belongs HERE, reported apart from the health delta, because the server
-        // gates that delta behind SurvivalDrain (hunger ships off) and breath must not ship off with it.
+        // gates that delta behind SurvivalDrain and breath must not ride that switch with it.
 
         public struct Multipliers
         {
@@ -97,13 +137,64 @@ namespace SDG.Unturned
 
         // HP per second lost while BLEEDING. Slow on purpose (strawberry: "bleeding should slowly drain hp"):
         // ~2.2 minutes from full, so an unbandaged wound is a clock you have to answer, not a death sentence.
+        // SURVIVAL DRAIN, EXPRESSED IN GAME DAYS (strawberry 2026-09-13: food 100->0 over two days, water over one).
+        //
+        // A game day is DayNightCycle.DefaultDayLength = 24 real minutes = 1440 s, so the rates are written as
+        // 1/(days x 1440) rather than as tuned decimals -- the intent stays readable and re-deriving them if the
+        // day length ever moves is arithmetic instead of archaeology.
+        //
+        // They were 0.0050 and 0.0070, i.e. a full bar in 200 s and 143 s. That is not a survival curve, it is a
+        // timer: you starve in the time it takes to loot one house.
+        public const float FoodDaysToEmpty = 2f, WaterDaysToEmpty = 1f;
+        public const float GameDaySeconds = 24f * 60f;   // mirrors DayNightCycle.DefaultDayLength (core cannot reference the game assembly)
+        public const float FoodDrainPerSecond  = 1f / (FoodDaysToEmpty  * GameDaySeconds);   // ~0.000347 -> 2880 s
+        public const float WaterDrainPerSecond = 1f / (WaterDaysToEmpty * GameDaySeconds);   // ~0.000694 -> 1440 s
+
+        // SPRINT DRAIN. strawberry asked for double the stamina MAXIMUM and a lower sprint decay on top.
+        //
+        // ⚠ The maximum stays 1.0 ON PURPOSE: Stamina crosses the wire as
+        // WriteUnsignedNormalizedFloat(Clamp01(Stamina)) (PlayerVitalsReplication), so a value above 1 is silently
+        // clamped in MP -- the client would read a full bar while the server held 2.0. Raising the literal ceiling
+        // is a WIRE change, not a constant change. Stamina therefore stays "fraction of capacity" and the capacity
+        // is doubled where it is actually observable: how long a sprint lasts.
+        //
+        //   0.22  -> 4.5 s of continuous sprint   (was)
+        //   0.11  -> 9.1 s                        ("double the maximum")
+        //   0.075 -> 13.3 s                       (+ the lower decay on top)
+        public const float SprintDrainPerSecond = 0.075f;
         public const float BleedHealthPerSecond = 0.75f;
-        // Infection only clears ITSELF below this. Above it the virus has the upper hand and antibiotics are
-        // the only way down (strawberry: "below 50% infection drains slowly on its own"). It used to decay
-        // unconditionally, which made a bite something you could always walk off.
-        public const float InfectionSelfClearBelow = 0.50f;
+
+        // INFECTION SELF-CLEAR (strawberry 2026-09-13: "have infection heal over a full day, and never heal
+        // while taking infection damage").
+        //
+        // The gate USED to be "below 50%" and the rate a flat 0.01/s -- a full bar in 100 s, which is not a
+        // sickness, it is a cooldown. It now clears a full bar over one game day at the same 1/(days x
+        // GameDaySeconds) form as food and water, so the three survival curves are read the same way.
+        //
+        // ⚠ The 50% threshold is GONE, replaced by the condition strawberry named: no self-clear while the
+        // virus is actually costing you health. That keeps the point of the old rule -- a bad bite is a
+        // problem you treat, not one you outlast -- because InfectionSickAbove is where the -2 HP/s starts,
+        // so anything bad enough to hurt you still holds until antibiotics bring it under that line.
+        public const float InfectionDaysToClear = 1f;
+        public const float InfectionClearPerSecond = 1f / (InfectionDaysToClear * GameDaySeconds);
+        /// <summary>Above this the virus costs health (-2 HP/s) -- and, since 2026-09-13, refuses to self-clear.</summary>
+        public const float InfectionSickAbove = 0.75f;
         // ...and at a full 100 it kills, rather than merely sitting at the -2 HP/s sick drain.
         public const float InfectionFatal = 1.0f;
+
+        // PASSIVE HEALTH REGEN (strawberry 2026-09-13: "have health slowly regen, never when taking damage,
+        // or having a bleeding or broken leg effect").
+        //
+        // It was 2 HP/s -- a full 0->100 in 50 s, which makes taking a hit free as long as you break contact.
+        // "Slowly" is expressed as a full heal over a QUARTER of a game day (~6 min) so it reads in the same
+        // unit as the other curves; retune HealthHealDays, not a decimal.
+        //
+        // The damage lock is the new part. Bleeding, sickness, exposure and starvation already blocked regen,
+        // but a bullet did not -- you could be shot and start healing on the same tick. RegenLockDelay is armed
+        // by NotifyDamaged() and has to run out before regen resumes, which is what makes disengaging a
+        // decision rather than a formality.
+        public const float HealthHealDays = 0.25f;
+        public const float RegenDamageLockSeconds = 10f;
 
         // RADIATION (strawberry 2026-09-11). A hidden 0..1 dose that builds in contaminated ground and washes
         // out once you leave -- the opposite of infection, which is what it leaves behind.
@@ -156,23 +247,34 @@ namespace SDG.Unturned
         /// <summary>submerged = the player's HEAD is under water (not merely their feet, and not merely "is
         /// swimming" -- treading water at the surface has your face in the air and must not cost you a breath).</summary>
         public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding, float dt, in Multipliers m)
-            => Step(sprinting, submerged, survivalDrain, bleeding, PlayerTemperatureSim.Band.Comfortable, dt, m);
+            => Step(sprinting, submerged, survivalDrain, bleeding, false, PlayerTemperatureSim.Band.Comfortable, dt, m);
 
         public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding,
                          PlayerTemperatureSim.Band band, float dt, in Multipliers m)
+            => Step(sprinting, submerged, survivalDrain, bleeding, false, band, dt, m);
+
+        public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding, bool broken,
+                         float dt, in Multipliers m)
+            => Step(sprinting, submerged, survivalDrain, bleeding, broken, PlayerTemperatureSim.Band.Comfortable, dt, m);
+
+        /// <summary>broken = broken legs (PlayerLife.isBroken). Blocks passive health regen, per strawberry
+        /// 2026-09-13 -- you do not walk a fracture off while it is still a fracture.</summary>
+        public bool Step(bool sprinting, bool submerged, bool survivalDrain, bool bleeding, bool broken,
+                         PlayerTemperatureSim.Band band, float dt, in Multipliers m)
         {
-            if (sprinting) { Stamina = MathF.Max(0f, Stamina - 0.22f * dt * m.ExerciseStaminaDrain); StaminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
+            RegenLockDelay = MathF.Max(0f, RegenLockDelay - dt);   // count down the post-damage regen lock
+            if (sprinting) { Stamina = MathF.Max(0f, Stamina - SprintDrainPerSecond * dt * m.ExerciseStaminaDrain); StaminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
             else { StaminaRegenDelay = MathF.Max(0f, StaminaRegenDelay - dt); if (StaminaRegenDelay <= 0f) Stamina = MathF.Min(1f, Stamina + 0.33f * dt * m.CardioStaminaRegen); }
             bool cold = band == PlayerTemperatureSim.Band.Cold || band == PlayerTemperatureSim.Band.Freezing;
             bool hot = band == PlayerTemperatureSim.Band.Hot || band == PlayerTemperatureSim.Band.Boiling;
-            if (survivalDrain)   // hunger/thirst OFF by default (strawberry); F1 console `survival` toggles it
+            if (survivalDrain)   // hunger/thirst ON by default (strawberry 2026-09-13); F1 console `survival` toggles it
             {
                 // Temperature MULTIPLIES the existing drain rather than adding its own, so it rides the same
                 // survival toggle. Turning survival off and still starving from the cold would be a surprise.
                 float foodMul = cold ? ColdDrainMultiplier : 1f;
                 float waterMul = cold ? ColdDrainMultiplier : hot ? HotWaterMultiplier : 1f;
-                Food  = MathF.Max(0f, Food  - 0.0050f * dt * m.SurvivalDrain * foodMul);
-                Water = MathF.Max(0f, Water - 0.0070f * dt * m.SurvivalDrain * waterMul);
+                Food  = MathF.Max(0f, Food  - FoodDrainPerSecond  * dt * m.SurvivalDrain * foodMul);
+                Water = MathF.Max(0f, Water - WaterDrainPerSecond * dt * m.SurvivalDrain * waterMul);
             }
             // BREATH. Drains only with the head under and refills far faster than it empties -- a surfacing
             // player gets their air back in a gulp, not over half a minute. Purely a readout: see the note by
@@ -191,11 +293,12 @@ namespace SDG.Unturned
             if (_doseHold > 0f) _doseHold = MathF.Max(0f, _doseHold - dt);
             else if (Radiation > 0f) Radiation = MathF.Max(0f, Radiation - RadiationDecayPerSecond * dt);
 
-            // The virus clears on its own ONLY below InfectionSelfClearBelow. Past that it holds, so a bad bite
-            // is a problem you have to treat rather than one you outlast.
-            if (Infection < InfectionSelfClearBelow) Infection = MathF.Max(0f, Infection - 0.01f * dt);
+            // ⚠ `sick` is decided BEFORE the self-clear, not after, because it is now the self-clear's own gate
+            // ("never heal while taking infection damage"). Computing it afterwards would let a tick both take
+            // the damage and count as healed, and at the boundary the two readings disagree.
+            bool sick = Infection > InfectionSickAbove;              // heavy infection makes you ill (loses health)
+            if (!sick) Infection = MathF.Max(0f, Infection - InfectionClearPerSecond * dt);   // a full bar over one game day
             if (Infection >= InfectionFatal) { Health = 0f; return true; }   // 100% virus kills outright
-            bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
             // BLEEDING costs health and blocks regen -- it is no longer a HUD decoration. It does not clear on
             // a timer either; a wound stays open until it is dressed (ItemAsset.useStopsBleeding).
             if (bleeding) Health = MathF.Max(0f, Health - BleedHealthPerSecond * dt);
@@ -203,8 +306,12 @@ namespace SDG.Unturned
             // and a map that can kill you with cold should still do it with hunger switched off.
             bool exposed = band == PlayerTemperatureSim.Band.Freezing || band == PlayerTemperatureSim.Band.Boiling;
             if (exposed) Health = MathF.Max(0f, Health - ExposureHealthPerSecond * dt);
-            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick && !bleeding && !exposed)
-                Health = MathF.Min(MaxHealth, Health + 2f * dt * m.VitalityRegen);     // regen while fed + hydrated (blocked while sick or bleeding)
+            // PASSIVE REGEN, and every clause is a way of saying "nothing is currently hurting you": fed, hydrated,
+            // not sick, not bleeding, not exposed, legs intact, and nothing has hit you for RegenDamageLockSeconds.
+            // The last two are strawberry 2026-09-13; the rest were already here.
+            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick && !bleeding && !exposed
+                && !broken && RegenLockDelay <= 0f)
+                Health = MathF.Min(MaxHealth, Health + HealthRegenPerSecond * dt * m.VitalityRegen);
             else if (Food <= 0f || Water <= 0f || sick)
                 Health = MathF.Max(0f, Health - (sick ? 2f : 1.5f) * dt);   // starve / dehydrate / infection sickness
             return Health <= 0f;

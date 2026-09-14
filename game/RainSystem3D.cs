@@ -26,6 +26,7 @@ namespace UnturnedGodot
             _globalsRegistered = true;
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            RenderingServer.GlobalShaderParameterAdd("swell_scale", RenderingServer.GlobalShaderParameterType.Float, 1f);   // weather wave-height scale; 1 = calm (see swell.gdshaderinc)
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
@@ -63,9 +64,28 @@ namespace UnturnedGodot
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
+            RenderingServer.GlobalShaderParameterSet("swell_scale", 1f);   // back to CALM, not 0 -- 0 would flatten the sea entirely
+            WaveField.AmpScale = 1f;
             RenderingServer.GlobalShaderParameterSet("rain_puddle", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f));
             RenderingServer.GlobalShaderParameterSet("rain_sea_level", NoSea);
+        }
+
+        /// <summary>Wave HEIGHT at full storm, as a multiple of the calm swell.</summary>
+        public const float StormSwell = 2.2f;
+
+        /// <summary>THE ONE PLACE weather-driven wave height is written, GPU and CPU together.
+        ///
+        /// strawberry 2026-09-12 asked whether weather affected the amplitude -- it did not. Chop, whitecaps,
+        /// reflectivity and colour all made the sea LOOK rougher without it BEING rougher. Raising it is only safe
+        /// if three consumers move as one: the vertex displacement, the rain shader (which needs surface height to
+        /// know where a drop stops, and reads the same include), and WaveField -- which is what boats and swimming
+        /// actually sample. Hence one setter rather than an assignment beside each rain_intensity write.</summary>
+        public static void SetWeatherSwell(float rainIntensity)
+        {
+            float s = Mathf.Lerp(1f, StormSwell, Mathf.Clamp(rainIntensity, 0f, 1f));
+            if (_globalsRegistered) RenderingServer.GlobalShaderParameterSet("swell_scale", s);
+            WaveField.AmpScale = s;
         }
 
         public const float NoSea = -100000f;   // "this map has no water": below every drop, so the sea test never fires

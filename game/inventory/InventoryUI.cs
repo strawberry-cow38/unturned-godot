@@ -153,6 +153,22 @@ void fragment() {
         bool _dragFromCloth;          // the drag started on a clothing equip slot (the worn garment, not a page cell)
         EItemType _dragClothType;     // which clothing slot it was grabbed from (only meaningful when _dragFromCloth)
         ItemJar _dragJar;
+        // RMB-drag-one. The press ARMS; only motion turns it into a drag, so a plain right-click still opens the
+        // action menu exactly as it did (strawberry 2026-09-14: "dragging the item with rmb should take 1").
+        bool _rmbArmed;
+        Vector2 _rmbDownAt;
+        byte _rmbPage, _rmbX, _rmbY;
+        // ⭐ This drag carries N units that have NOT been taken off the stack yet (0 = it is not a split drag).
+        // Nothing is mutated until the drop, and then the SERVER does it: lifting them locally first would read
+        // back correct for a tick and then be overwritten by the inventory echo -- three separate bugs this month.
+        // ⚠ It is also what makes the preview SLOT safe: the stack you are looking at is the only copy that
+        // exists, so an abandoned drag, a double-click or a closed panel cannot mint a second one.
+        int _dragSplitN;
+        bool _dragSplitFromRmb;   // which button must be released to drop it: RMB started it, RMB finishes it
+        Control _splitSlot;                          // the preview slot in the selection panel, if one is open
+        int _splitAmount;                            // how many it is previewing (the slider's value)
+        byte _splitSrcPage, _splitSrcX, _splitSrcY;  // the stack it would come out of
+        const float RmbDragSlop = 6f;   // px of travel before a right-press stops being a click
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
 
@@ -451,6 +467,7 @@ void fragment() {
         // item is NEVER moved out of its page (the drag only previewed a floating tile) -> cancel = drop tile + repaint.
         bool CancelDrag()
         {
+            _dragSplitN = 0; _dragSplitFromRmb = false;   // nothing was taken, so there is nothing to give back
             if (!_dragging) return false;
             _dragFromCloth = false;
             _dragging = false;
@@ -460,6 +477,10 @@ void fragment() {
             return true;
         }
         public bool DebugIsDragging => _dragging;                                    // #3 test seam
+        /// <summary>Test seam: the change-poll hash. Exposed so a test can assert that WEARING something moves
+        /// it -- the dashboard repaints off this and nothing else, so a change this hash cannot see is a change
+        /// the UI never draws.</summary>
+        public long DebugInventorySignature() => InventorySignature();
         public bool DebugRmbCancel() => CancelDrag();                                // #3 test: exercise the real cancel path
         public bool DebugStartDrag(byte page, byte x, byte y)                        // #3 test: set up a grid drag headless (StartDrag's grid branch)
         {
@@ -493,6 +514,38 @@ void fragment() {
         const float PdKeyFloor = 0.38f, PdAmbientFloor = 0.45f;
         void MatchPaperdollLight()
         {
+            // THE ROOM, not just the sky -- and ⚠ ABOVE the day/night guard below, not under it. The sun half
+            // rightly bails when there is no DayNightCycle; the ROOM half has nothing to do with the sun, and
+            // sitting under that guard meant it silently never ran anywhere a DayNightCycle was absent. Found by
+            // rendering it: the doll came back pixel-identical with a bright lamp beside the player. (strawberry 2026-09-13: "have the paperdoll lighting follow
+            // light sources too, not just sun"). The doll renders in its own isolated SubViewport, so world
+            // lights physically cannot reach it -- standing under a streetlight or beside a lit flare left the
+            // doll exactly as dim as standing in an empty field.
+            //
+            // It rides the FILL rather than the key: the key is the sun's direction and warmth and should stay
+            // the sun's, while a lamp behind you is diffuse by the time it matters here. The doll is a preview on
+            // a stage, not a simulation of where you are standing, so this is a LEVEL lifted from the player's
+            // surroundings, not four lights placed around a mannequin.
+            //
+            // The energy comes free off the viewmodel's existing dynlight scan (PlayerController.ScanWorldLights,
+            // 10 Hz, capped and distance-weighted) rather than a second walk of the same group.
+            if (Player != null && IsInstanceValid(Player) && Player.NearbyLightEnergy > 0.001f)
+            {
+                float lit = Mathf.Min(Player.NearbyLightEnergy, 4f);
+                if (_pdFill != null)
+                {
+                    // Tint TOWARD the room's colour rather than replacing: a red flare should make the doll read
+                    // red-ish, not turn the fill into a pure red spotlight that loses the skin underneath.
+                    _pdFill.LightColor = _pdFill.LightColor.Lerp(Player.NearbyLightColor, Mathf.Min(0.75f, lit * 0.35f));
+                    _pdFill.LightEnergy += lit * 0.30f;
+                }
+                if (_pdEnv != null)
+                {
+                    _pdEnv.AmbientLightColor = _pdEnv.AmbientLightColor.Lerp(Player.NearbyLightColor, Mathf.Min(0.6f, lit * 0.3f));
+                    _pdEnv.AmbientLightEnergy += lit * 0.12f;
+                }
+            }
+
             var dn = DayNightCycle.Current;
             if (dn == null || !IsInstanceValid(dn) || dn.Sun == null || !IsInstanceValid(dn.Sun) || _pdKey == null) return;
             _pdKey.LightColor = dn.Sun.LightColor;
@@ -503,6 +556,8 @@ void fragment() {
                 _pdEnv.AmbientLightColor = dn.Env.AmbientLightColor;
                 _pdEnv.AmbientLightEnergy = Mathf.Max(PdAmbientFloor, dn.Env.AmbientLightEnergy);
             }
+
+
         }
 
         public override void _Process(double delta)
@@ -612,6 +667,22 @@ void fragment() {
         {
             if (Inv == null) return 0;
             long h = 1469598103934665603L;
+            // ⚠ THE WORN SLOTS ARE PART OF THE INVENTORY, and leaving them out of this hash is why clothing
+            // "needed an inventory poke to apply" (strawberry 2026-09-13: hats and face coverings "arent being
+            // applied onto the player until the inventory is updated by moving something").
+            //
+            // A garment worn from the GRID happens to repaint, because it leaves a page and the page hash moves.
+            // A garment AUTO-WORN ON PICKUP never touches a page at all -- AdoptReplicatedInventory's own comment
+            // says it: server-owned pickup includes "the one that dresses you". So the outfit changed, the grid
+            // did not, this hash did not, and the dashboard kept drawing the old head until the next unrelated
+            // move. That is not clothing being slow; it is the poll not watching the thing that changed.
+            //
+            // The ON-BODY visual already self-corrects (PlayerClothingController.ReconcileTick, added for the
+            // 2026-09-07 report of the same shape). This is that fix's other half: the UI paperdoll and the worn
+            // tiles repaint from InventoryUI.Refresh alone, so they need the change to be VISIBLE to this poll.
+            void MixWorn(Item it) { h = (h ^ (long)(it?.id ?? 0)) * 1099511628211L; }
+            MixWorn(Inv.wornHat); MixWorn(Inv.wornGlasses); MixWorn(Inv.wornMask); MixWorn(Inv.wornShirt);
+            MixWorn(Inv.wornVest); MixWorn(Inv.wornBackpack); MixWorn(Inv.wornPants);
             foreach (var pg in Inv.items)
             {
                 h = (h ^ ((long)pg.width << 8 | pg.height)) * 1099511628211L;
@@ -664,6 +735,12 @@ void fragment() {
             {
                 if (mb.Pressed)
                 {
+                    // The preview slot is checked FIRST, before the panel hands its clicks to its buttons:
+                    // it is inside the panel, so the guard below would swallow the press that starts the drag.
+                    if (!_dragging && _splitSlot != null && IsInstanceValid(_splitSlot)
+                        && new Rect2(_splitSlot.GlobalPosition, _splitSlot.Size).HasPoint(mb.GlobalPosition))
+                    { StartSplitSlotDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); return; }
+
                     // clicks inside an open selection panel belong to its buttons -- let them through
                     if (_selPanel != null)
                     {
@@ -712,12 +789,35 @@ void fragment() {
                 if (PointToCell(rmb.GlobalPosition, out byte page, out byte cx, out byte cy, out _, out _))
                 {
                     byte idx = Inv.items[page].getIndex(cx, cy);
-                    if (idx != byte.MaxValue) { var j = Inv.items[page].getItem(idx); OpenSelection(page, j.x, j.y); }
+                    if (idx != byte.MaxValue)
+                    {
+                        var j = Inv.items[page].getItem(idx);
+                        // A stack ARMS instead of opening: the menu still opens if the press turns out to be a
+                        // click (see the release branch). A single item has nothing to split, so it opens at once.
+                        if (j.item != null && j.item.amount > 1)
+                        {
+                            _rmbArmed = true; _rmbDownAt = rmb.GlobalPosition;
+                            _rmbPage = page; _rmbX = j.x; _rmbY = j.y;
+                        }
+                        else OpenSelection(page, j.x, j.y);
+                    }
                 }
                 GetViewport().SetInputAsHandled();
             }
+            else if (e is InputEventMouseButton rup && rup.ButtonIndex == MouseButton.Right && !rup.Pressed)
+            {
+                if (_dragging && _dragSplitFromRmb) { Drop(rup.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                else if (_rmbArmed)
+                {
+                    _rmbArmed = false;   // never travelled -> it was a click after all, so the menu opens
+                    OpenSelection(_rmbPage, _rmbX, _rmbY);
+                    GetViewport().SetInputAsHandled();
+                }
+            }
             else if (e is InputEventMouseMotion mm)
             {
+                if (_rmbArmed && mm.GlobalPosition.DistanceTo(_rmbDownAt) > RmbDragSlop)
+                { _rmbArmed = false; StartSplitDrag(mm.GlobalPosition); GetViewport().SetInputAsHandled(); return; }
                 if (_pdDragging)
                 {
                     _pdYaw += mm.Relative.X * 0.012f;                          // horizontal drag spins the rig around Y; INVERTED 2026-09-09 (strawberry) -- dragging right now turns his right shoulder toward you, i.e. the model follows the cursor rather than opposing it
@@ -808,6 +908,57 @@ void fragment() {
             PlayInventoryAudio();   // #4: source startDrag plays inventory audio on grab
         }
 
+        /// <summary>Begin an RMB drag carrying ONE unit off the armed stack.
+        ///
+        /// The carried jar is a DETACHED copy -- the stack in the grid is untouched until the drop, and then the
+        /// server does the taking. That ordering is the whole point: lifting the unit now would show the right
+        /// number for one tick and then be overwritten by the inventory echo. It also means an abandoned drag
+        /// needs no undo, because nothing was ever done.</summary>
+        void StartSplitDrag(Vector2 global)
+        {
+            var pg = Inv.items[_rmbPage];
+            byte idx = pg.getIndex(_rmbX, _rmbY);
+            if (idx == byte.MaxValue) return;
+            var src = pg.getItem(idx);
+            if (src?.item == null || src.item.amount <= 1) return;
+
+            var one = src.item.Clone();
+            one.amount = 1;
+            _dragFromCloth = false;
+            _dragSplitN = 1; _dragSplitFromRmb = true;
+            _dragJar = new ItemJar(one);
+            _dragPage = _rmbPage; _dragX0 = src.x; _dragY0 = src.y; _dragRot = 0;
+            _grab = new Vector2(CELL / 2f, CELL / 2f);   // the single unit rides under the cursor
+            _dragging = true;
+            RebuildDragTile();
+            PlayInventoryAudio(_dragJar);
+        }
+
+        /// <summary>Lift the preview slot's contents onto the cursor. The panel CLOSES as the drag starts -- it
+        /// sits over the middle of the grid, so leaving it up would cover most of the cells you are trying to
+        /// drop into, and the amount is already committed once you have picked the stack up.</summary>
+        void StartSplitSlotDrag(Vector2 global)
+        {
+            var pg = Inv.items[_splitSrcPage];
+            byte idx = pg.getIndex(_splitSrcX, _splitSrcY);
+            if (idx == byte.MaxValue) { CloseSelection(); return; }
+            var src = pg.getItem(idx);
+            if (src?.item == null || src.item.amount <= 1) { CloseSelection(); return; }
+
+            int n = Mathf.Clamp(_splitAmount, 1, src.item.amount - 1);   // re-clamped against the stack as it is NOW
+            var ghost = src.item.Clone();
+            ghost.amount = (ushort)n;
+            _dragFromCloth = false;
+            _dragSplitN = n; _dragSplitFromRmb = false;   // LMB started it, so LMB finishes it
+            _dragJar = new ItemJar(ghost);
+            _dragPage = _splitSrcPage; _dragX0 = src.x; _dragY0 = src.y; _dragRot = 0;
+            _grab = new Vector2(CELL / 2f, CELL / 2f);
+            CloseSelection();
+            _dragging = true;
+            RebuildDragTile();
+            PlayInventoryAudio(_dragJar);
+        }
+
         void RebuildDragTile()
         {
             _dragTile?.QueueFree();
@@ -847,6 +998,22 @@ void fragment() {
 
         void Drop(Vector2 global)
         {
+            // A SPLIT CARRY resolves entirely through the split command -- source cell, N units, target cell --
+            // so it never touches the move/equip/clothing paths below, none of which know about part of a stack.
+            if (_dragSplitN > 0)
+            {
+                byte fp = _dragPage, fx = _dragX0, fy = _dragY0;
+                ushort n = (ushort)_dragSplitN;
+                _dragSplitN = 0; _dragSplitFromRmb = false; _dragging = false;
+                _dragTile?.QueueFree(); _dragTile = null;
+                if (PointToCell(global, out byte tp, out byte tx, out byte ty, out _, out _))
+                {
+                    DoSplitTo(fp, fx, fy, n, tp, tx, ty);
+                    PlayInventoryAudio();
+                }
+                Refresh();   // dropped on nothing: the stack was never touched, so this just repaints
+                return;
+            }
             byte sp = _dragPage, sx = _dragX0, sy = _dragY0, srot = _dragRot;
             bool fromCloth = _dragFromCloth; EItemType fromType = _dragClothType;
             _dragFromCloth = false;
@@ -909,6 +1076,27 @@ void fragment() {
                 CloseSelection(); Refresh();
                 return;
             }
+            // FROM A CONTAINER ONTO THE PLAYER = TAKE IT (strawberry 2026-09-13: "allow dragging straight onto
+            // the player ... to drop items from a container"). The doll means "give it to me", so a crate's item
+            // dragged there lands in the first cell of your own pages that fits it.
+            //
+            // This sits ABOVE the hand-action branch on purpose. That branch refuses a STORAGE source for a real
+            // reason -- putting a crate's bandage straight into your hands leaves the item in the crate while
+            // your hands claim it -- and taking it first is exactly the missing step, not a reason to say no.
+            // The move goes through the ordinary cross-page path, the same one a drag into a bag cell uses, so
+            // the server owns it and the echo repaints; nothing new has to be validated.
+            //
+            // ⚠ A FULL BAG SNAPS HOME rather than falling through. Below this, an unmatched release on the right
+            // half of the screen DROPS the item -- so without this return, dragging onto your own body with no
+            // room would throw a crate's item on the floor, which is the opposite of what the gesture means.
+            if (toDoll && sp == PlayerInventory.STORAGE && _dragJar?.GetAsset() is { } takeAsset)
+            {
+                if (FirstFreeOwnCell(takeAsset, out byte tkPage, out byte tkX, out byte tkY)
+                    && (Player == null || !Player.RequestMoveItem(sp, sx, sy, tkPage, tkX, tkY, 0)))
+                    Inv.TryDrag(sp, sx, sy, tkPage, tkX, tkY, 0);
+                CloseSelection(); Refresh();
+                return;
+            }
             // ...and ANYTHING ELSE you can hold, dropped on the paperdoll, goes into your hands (master 2026-09-04
             // "dragging ANYTHING you can hold onto the paperdoll should equip it, too"): the exact chain the item
             // menu's one hand button runs (Hold a consumable / bottle / gas can, Equip a deployable / tool / rod /
@@ -926,9 +1114,19 @@ void fragment() {
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
             {
                 // RIGHT-HALF release = DROP IT (master 2026-09-04): let go anywhere on the right half of the screen that is
-                // not a real grid/slot (those matched above) and the item goes on the ground. Only from your OWN pages --
-                // a crate's or the ground's items just snap home.
-                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA && sp != PlayerInventory.STORAGE)
+                // not a real grid/slot (those matched above) and the item goes on the ground.
+                //
+                // A CONTAINER IS NOW A VALID SOURCE (strawberry 2026-09-13: "dragging onto floor to drop items
+                // from a container"). Safe because the open crate's page 7 IS the live grid while you have it
+                // open -- ServerTransactions: "a player with this container open holds the live grid in his own
+                // STORAGE page; crate.Storage is only brought up to date when he is closed out of it" -- so the
+                // server's OnDropItem removes the real jar and the close writes the emptied grid back. Had page 7
+                // been a COPY this would have duplicated the item, which is why it was worth checking rather than
+                // just deleting the guard.
+                //
+                // AREA stays excluded: that page is loose items already lying on the ground, and dropping one
+                // where it already is means nothing.
+                if (global.X >= GetViewport().GetVisibleRect().Size.X * 0.5f && sp != PlayerInventory.AREA)
                 {
                     _selPage = sp; _selX = sx; _selY = sy;
                     DropSelected();   // MP request / SP world drop + the held-hand reset, then CloseSelection+Refresh
@@ -946,12 +1144,16 @@ void fragment() {
         /// <summary>The hand slot a dragged weapon belongs in, from its asset's Slot (the item's own .dat): the slot it
         /// PREFERS -- secondary-able (sidearms, ALL melee) -> SECONDARY, primary-only -> PRIMARY; null for anything
         /// that is not a holster item.</summary>
+        /// <summary>Which hand slot a weapon dragged onto the paperdoll goes to. Was `PreferredSlot()` flat, so
+        /// a sidearm always took the SECONDARY and threw out whatever was in it even with the primary standing
+        /// empty -- while right-clicking the same item put it in the empty one. Same gesture, same item, two
+        /// answers. Both now ask PlayerInventory.</summary>
         byte? WeaponSlotFor(ItemJar jar)
         {
             var a = jar?.GetAsset();
             if (a == null || Inv == null) return null;
-            int pref = a.slot.PreferredSlot();
-            return pref < 0 ? null : (byte)pref;
+            int slot = Inv.EquipHandSlotFor(a);
+            return slot < 0 ? null : (byte)slot;
         }
 
         /// <summary>The item menu's one hand button, as a call: the same Hold/Equip dispatch on the selected cell.</summary>
@@ -1122,7 +1324,7 @@ void fragment() {
                 if (op.mag.amount <= 0) return false;
                 int bid = BulletIdForRound(MagEffRound(op.mag, mA) ?? mA.magRound);
                 if (bid <= 0 || Inv == null || !Inv.tryAddItem(new SDG.Unturned.Item((ushort)bid, 1))) return false;
-                op.mag.amount = (byte)(op.mag.amount - 1);
+                op.mag.amount = (ushort)(op.mag.amount - 1);
                 if (op.mag.amount <= 0) op.mag.magLoadedRound = null;   // emptied -> unlock the cartridge
                 // TELL THE SERVER. Without this the mutation above is local-only: the authoritative
                 // inventory still holds a full magazine, and the next move of ANY item echoes it back and
@@ -1140,12 +1342,12 @@ void fragment() {
             var (jar, page, pageIdx) = FindStack((ushort)op.bulletId);
             if (jar == null) return false;   // out of that round
             if (op.mag.amount <= 0) op.mag.magLoadedRound = bA.magRound;   // empty -> LOCK to this cartridge
-            op.mag.amount = (byte)(op.mag.amount + 1);
+            op.mag.amount = (ushort)(op.mag.amount + 1);
             // Sent BEFORE the stack is decremented, while jar still names the slot the round came from --
             // the server addresses the source by grid position, and removeItem below can free it.
             Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
                                        pageIdx, jar.x, jar.y, (ushort)op.bulletId, false);
-            jar.item.amount = (byte)(jar.item.amount - 1);
+            jar.item.amount = (ushort)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
             op.done++;
             MagRoundSound(mA);
@@ -1525,6 +1727,25 @@ void fragment() {
             return true;
         }
 
+        /// <summary>First cell in the player's OWN pages that fits `a` unrotated, scanning pockets-then-clothing
+        /// the same order tryAddItem walks. False = no room anywhere, and the caller must NOT fall through to a
+        /// path that would drop the item instead.</summary>
+        bool FirstFreeOwnCell(ItemAsset a, out byte page, out byte x, out byte y)
+        {
+            page = x = y = 0;
+            if (Inv == null || a == null) return false;
+            byte w = System.Math.Max((byte)1, a.size_x), h = System.Math.Max((byte)1, a.size_y);
+            for (byte p = PlayerInventory.SLOTS; p < PlayerInventory.OWNPAGES; p++)
+            {
+                var pg = Inv.items[p];
+                if (pg == null || pg.width < w || pg.height < h) continue;
+                for (byte cy = 0; (byte)(cy + h) <= pg.height; cy++)
+                    for (byte cx = 0; (byte)(cx + w) <= pg.width; cx++)
+                        if (pg.checkSpaceEmpty(cx, cy, w, h, 0)) { page = p; x = cx; y = cy; return true; }
+            }
+            return false;
+        }
+
         void ReturnToGrid(Item it)
         {
             if (it == null || Inv == null) return;
@@ -1709,12 +1930,18 @@ void fragment() {
             if (asset == null) return;
             _selPage = page; _selX = x; _selY = y;
 
-            var panel = new Panel { Size = new Vector2(500, 300) };
+            // A splittable stack gets a strip along the bottom for the slider, so the panel is taller. Decided
+            // BEFORE the panel exists because its height also sets where it is centred.
+            bool splittable = jar.item != null && jar.item.amount > 1;
+            float panelH = splittable ? 300 + SplitStripH : 300;
+
+            var panel = new Panel { Size = new Vector2(500, panelH) };
             StyleBox(panel, UI_PANEL);
             _root.AddChild(panel);
             _selPanel = panel;
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - 300) / 2f));
+            panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - panelH) / 2f));
+            if (splittable) BuildSplitStrip(panel, jar, page, x, y);
 
             // left: the item's tile, fit into a 200x280 icon box
             bool rot = jar.rot % 2 == 1;
@@ -1832,7 +2059,169 @@ void fragment() {
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
 
-        void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; }
+        // Tall enough to clear the preview SLOT and its caption: a CELL-sized tile plus its frame, the number
+        // box above it and the caption under it. Derived rather than eyeballed -- the slot is a whole inventory
+        // cell, so a strip sized by eye is one CELL change away from hanging out of the panel.
+        const float SplitStripH = 56f + CELL + 8f + 30f;
+
+        /// <summary>Split control for a selected stack: a slider, a typed number box, and tick marks at the
+        /// fractions people actually want (strawberry 2026-09-14: "a slider plus a number type box. slider
+        /// should show marks for half, third, quarter").
+        ///
+        /// The slider runs 1..amount-1, not 0..amount: splitting off nothing and splitting off everything are
+        /// both non-operations, and offering them means every press has to explain why it did nothing.
+        ///
+        /// Slider and box are bound BOTH ways through one setter, with a re-entry guard -- each one's ValueChanged
+        /// fires when the other writes it, so without the guard they bounce off each other for a frame.</summary>
+        void BuildSplitStrip(Control panel, ItemJar jar, byte page, byte x, byte y)
+        {
+            int total = jar.item.amount;
+            float top = panel.Size.Y - SplitStripH + 8f;
+
+            var title = new Label { Text = "Split", Position = new Vector2(20, top), Size = new Vector2(120, 22) };
+            panel.AddChild(title);
+
+            var slider = new HSlider
+            {
+                Position = new Vector2(20, top + 30), Size = new Vector2(330, 20),
+                MinValue = 1, MaxValue = total - 1, Step = 1, Value = total / 2,   // half is the common case, so start there
+            };
+            panel.AddChild(slider);
+
+            var box = new SpinBox
+            {
+                Position = new Vector2(SplitColX, top + 14), Size = new Vector2(100, 28),
+                MinValue = 1, MaxValue = total - 1, Step = 1, Value = slider.Value,
+            };
+            panel.AddChild(box);
+
+            bool syncing = false;
+            void Set(double v)
+            {
+                if (syncing) return;
+                syncing = true;
+                int c = Mathf.Clamp((int)Mathf.Round((float)v), 1, total - 1);
+                slider.Value = c; box.Value = c;
+                syncing = false;
+                _splitAmount = c;
+                RebuildSplitSlot(jar);   // the slot shows what you would be dragging, so it follows the number
+            }
+            slider.ValueChanged += Set;
+            box.ValueChanged += Set;
+
+            // Tick marks at the useful fractions. HSlider's own TickCount only does EVENLY spaced ticks, which is
+            // not what a half/third/quarter set is, so these are drawn as thin rects at the fractions themselves.
+            // Positioned off the slider's VALUE range, so they land on the numbers they name at any stack size.
+            var marked = new System.Collections.Generic.HashSet<int>();
+            void Mark(int value, string label)
+            {
+                if (value < 1 || value > total - 1) return;   // a stack too small for this fraction just has no mark
+                // ⚠ Small stacks collapse fractions onto the same number -- a stack of 5 puts both a quarter and a
+                // third at 1 -- and two labels on one tick just print over each other. First one wins, and since
+                // they are marked quarter-third-half the surviving label is the smallest fraction, which is the
+                // one that is exactly right at that number.
+                if (!marked.Add(value)) return;
+                float t = (total - 2) <= 0 ? 0.5f : (value - 1) / (float)(total - 2);
+                float mx = 20 + t * 330;
+                panel.AddChild(new ColorRect { Color = new Color(1, 1, 1, 0.45f),
+                                               Position = new Vector2(mx, top + 52), Size = new Vector2(2, 8) });
+                var l = new Label { Text = label, Position = new Vector2(mx - 20, top + 60), Size = new Vector2(40, 18) };
+                l.HorizontalAlignment = HorizontalAlignment.Center;
+                l.AddThemeFontSizeOverride("font_size", 12);
+                panel.AddChild(l);
+            }
+            Mark(total / 4, "1/4");
+            Mark(total / 3, "1/3");
+            Mark(total / 2, "1/2");
+
+            // ⭐ THE PREVIEW SLOT. Not a button that performs a split -- a slot holding what the split WOULD be,
+            // which you then drag into a free cell (strawberry 2026-09-14: "change the split button to an item
+            // stack 'slot' ... that we can click drag into a free slot. verified so we dont dupe items").
+            //
+            // ⚠ HOW IT CANNOT DUPE: the slot draws a jar that is not in any page and never enters one. Nothing is
+            // taken off the source until the DROP, and the taking is done by the server against the stack as it
+            // stands then -- so a stale preview (the stack shrank, another split already happened, the panel sat
+            // open) is REFUSED rather than honoured. Closing the panel or abandoning the drag leaves no trace
+            // because nothing was ever moved.
+            _splitSrcPage = page; _splitSrcX = x; _splitSrcY = y;
+            _splitAmount = (int)box.Value;
+            _splitSlot = new Panel { Position = new Vector2(SplitColX, top + 48), Size = new Vector2(CELL + 8, CELL + 8) };
+            panel.AddChild(_splitSlot);
+            // Caption UNDER the slot, not beside it: the right-hand column is only ~136px wide and a cell-sized
+            // slot leaves nothing to put next to it.
+            var hint = new Label { Text = "drag out", Position = new Vector2(SplitColX - 10, top + 48 + CELL + 10),
+                                   Size = new Vector2(CELL + 28, 18), HorizontalAlignment = HorizontalAlignment.Center };
+            hint.AddThemeFontSizeOverride("font_size", 12);
+            panel.AddChild(hint);
+            RebuildSplitSlot(jar);
+        }
+
+        /// <summary>Split N off (page,x,y) into a NAMED cell -- the RMB carry's drop. Same command as the slider,
+        /// with a destination instead of "wherever it fits"; the server still owns whether it is legal.</summary>
+        void DoSplitTo(byte page, byte x, byte y, ushort amount, byte toPage, byte toX, byte toY)
+        {
+            if (amount < 1) return;
+            if (Player != null && Player.RequestSplitItem(page, x, y, amount, toPage, toX, toY, 0)) return;
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return;
+            var src = pg.getItem(idx);
+            if (src?.item == null) return;
+            var dst = Inv.items[toPage];
+            byte at = dst.getIndex(toX, toY);
+            if (at != byte.MaxValue)   // merge onto a same-id stack with room; anything else is a no-op
+            {
+                var into = dst.getItem(at);
+                if (into?.item == null || into == src || into.item.id != src.item.id) return;
+                int cap = System.Math.Max(1, SDG.Unturned.Assets.find(into.item.id)?.stackSize ?? 1);
+                int room = cap - into.item.amount;
+                if (room <= 0) return;
+                var moved = pg.takeFrom(idx, System.Math.Min(amount, room));
+                if (moved == null) return;
+                into.item.amount = (ushort)(into.item.amount + moved.amount);
+                dst.raiseStateUpdated();
+                return;
+            }
+            var probe = new SDG.Unturned.ItemJar(src.item);
+            if (!dst.checkSpaceEmpty(toX, toY, probe.size_x, probe.size_y, 0)) return;
+            var taken = pg.takeFrom(idx, amount);   // space checked FIRST: takeFrom already reduced the source
+            if (taken != null) dst.addItem(toX, toY, 0, taken);
+        }
+
+        /// <summary>UG_SPLITUI=1: open the action panel on the first stack in the bag, once, so the split strip
+        /// can be rendered offline. A harness hook -- there is no cursor to right-click with in a --shot run.</summary>
+        void MaybeShowSplitUi()
+        {
+            if (_splitUiShown || System.Environment.GetEnvironmentVariable("UG_SPLITUI") != "1") return;
+            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.PAGES; pg++)
+            {
+                var page = Inv.items[pg];
+                for (byte k = 0; k < page.getItemCount(); k++)
+                {
+                    var j = page.getItem(k);
+                    if (j?.item == null || j.item.amount <= 1) continue;
+                    _splitUiShown = true;
+                    OpenSelection(pg, j.x, j.y);
+                    return;
+                }
+            }
+        }
+
+        /// <summary>Redraw the preview slot's tile for the current split amount. The jar drawn here is a
+        /// throwaway built off a CLONE -- it is never added to a page, so it cannot be picked up, saved or
+        /// replicated, and the only real copy of these items stays in the stack until the drop.</summary>
+        void RebuildSplitSlot(ItemJar src)
+        {
+            if (_splitSlot == null || !IsInstanceValid(_splitSlot) || src?.item == null) return;
+            foreach (Node c in _splitSlot.GetChildren()) c.QueueFree();
+            var ghost = src.item.Clone();
+            ghost.amount = (ushort)Mathf.Clamp(_splitAmount, 1, src.item.amount);
+            var t = MakeTile(new ItemJar(ghost), CELL, CELL);
+            t.Position = new Vector2(4, 4);
+            _splitSlot.AddChild(t);
+        }
+
+        void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; _splitSlot = null; }
 
         void AddActionButton(Control parent, string text, Vector2 pos, System.Action onClick)
         {
@@ -1890,13 +2279,10 @@ void fragment() {
             // instruction is about where it PREFERS to go, not about always displacing.
             if (_selPage >= PlayerInventory.SLOTS && asset != null)
             {
-                int want = asset.slot.PreferredSlot();
+                int want = Inv.EquipHandSlotFor(asset);
                 if (want >= 0)
                 {
                     byte slot = (byte)want;
-                    if (Inv.items[slot].getItemCount() > 0)
-                        for (byte alt = 0; alt < PlayerInventory.SLOTS; alt++)
-                            if (asset.slot.CanEquipInPage(alt) && Inv.items[alt].getItemCount() == 0) { slot = alt; break; }
                     if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
                         Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);   // TryDrag SWAPS when the destination is occupied
                     // Address, not just the page: a holster is single-item so the item lands at (0,0). The cell is
@@ -2335,6 +2721,8 @@ void fragment() {
             return false;
         }
 
+        bool _splitUiShown;   // UG_SPLITUI is a one-shot: the panel must not reopen every repaint
+
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
@@ -2491,6 +2879,7 @@ void fragment() {
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
+            MaybeShowSplitUi();   // render harness only; no-op unless UG_SPLITUI=1
         }
 
         void LayoutDash()
@@ -2580,6 +2969,24 @@ void fragment() {
                 else { _pdBody.AttachMelee(melee); _pdBody.ShowMeleeHold(melee); }
                 _pdMeleeName = melee;
             }
+
+            // A LIT DEVICE IS LIT ON THE DOLL TOO (strawberry 2026-09-13: "show the flashlight/headlamp/nvgs
+            // on/off glow in the inventory paperdoll"). The doll dressed itself in the gear and then rendered
+            // every lens DARK, because the glow is pushed by PlayerController onto the LIVE 3P body and the doll
+            // is a different RiggedCharacter in its own viewport -- so the one place you stand still and look at
+            // your own kit was the one place it never lit up.
+            //
+            // The same two calls the live body takes, off the same state, so the doll cannot disagree with the
+            // body standing next to it. HeadlampOn folds in WearingHeadlamp and NightVision.Active is only true
+            // while goggles are worn AND on, so neither needs a worn-check here.
+            //
+            // Pushed EVERY frame rather than on a change, deliberately: PlayerClothingController.Refresh rebuilds
+            // the gear material whenever the worn set moves, which drops the energy back to 0 -- an on-change
+            // write would be silently lost by the next re-dress, which is exactly the moment you are looking at
+            // this panel. It is a guarded float write, the same cost as MatchPaperdollLight above.
+            _pdBody.SetGlassesGlow(Player.NightVisionOn || Player.HeadlampOn,
+                                   ClothingContent.LensEnergy(Inv?.wornGlasses?.id ?? 0));
+            _pdBody.SetMeleeGlow(Player.HeldLightOn && Player.HoldingLight);
         }
 
         // a wide single-row slot (PRIMARY / SECONDARY) placed at an explicit position inside `parent`
@@ -2659,6 +3066,291 @@ void fragment() {
             return t;
         }
 
+        /// <summary>The dollar figure a money tile DISPLAYS. Normally the stack's own amount; UG_FANVALUE
+        /// overrides it so the label and the fan agree while previewing a ceiling the byte cannot reach.</summary>
+        static int MoneyShown(int amount)
+        {
+            var ov = System.Environment.GetEnvironmentVariable("UG_FANVALUE");
+            return (!string.IsNullOrEmpty(ov) && int.TryParse(ov, out int forced) && forced > 0) ? forced : amount;
+        }
+
+        // ---- MONEY FANS ---------------------------------------------------------------------------------------
+        //
+        // A wallet draws as the notes it would actually pay out, fanned, smallest at the front (strawberry
+        // 2026-09-14). ⭐ NOTHING IS AUTHORED: a fan is the SEVEN ICONS THAT ALREADY EXIST, layered with an
+        // offset. Across $1..$255 the greedy breakdown reaches exactly 127 distinct fans -- 2^7-1, every
+        // non-empty combination of the notes -- so drawing them instead of drawing them ONCE EACH is the
+        // difference between one routine and 127 pieces of art that still would not cover duplicate notes.
+        //
+        // Cached by the COMBINATION rather than by the value, because $137 and $138 are the same five notes and
+        // there is no reason to hold two identical textures. 127 entries is the hard ceiling on this cache.
+        // ⚠ PER-NOTE CONTROLS, NOT ONE FLATTENED TEXTURE. The first cut composited the fan into a single image
+        // with Image.BlendRect, which cannot ROTATE -- so the notes could only be offset in a straight line and
+        // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
+        // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
+        // pattern, and a lil more separate, scaled up a bit too").
+        const float FanStepSame = 5f;     // the FLOOR a same-denomination gap collapses to when the fan runs out
+                                          // of room -- NOT the normal step. Identical notes have no edge between
+                                          // them, so they are the gap that can afford to give way first; but
+                                          // they only give way under pressure (strawberry 2026-09-14: "ONLY
+                                          // collapse similar when limited by space. 188 dollars/7 notes is the
+                                          // golden standard").
+        const float FanStepDeg  = 17f;    // angle between adjacent notes of DIFFERENT denominations. The fan's total splay is this times
+                                          // the gaps between notes, so it grows with the wad instead of flinging
+                                          // two notes as wide as seven (strawberry: "make the fan scale with
+                                          // number of notes"). At the 5-note maximum this is the +/-38 already
+                                          // signed off, so the biggest fan is unchanged.
+        const float FanHingeOut = 0.12f;  // how far PAST a note's short edge the hinge sits, in note-widths.
+                                          // 0 pins every note end to one pixel; a little slack is what stops the
+                                          // narrow ends collapsing into each other ("a lil more separate").
+        const float FanBaseDeg  = -90f;   // the whole fan turned a quarter-turn LEFT: the notes stand UP off a
+                                          // hinge at the bottom instead of lying out from one at the side.
+        const int   FanMaxNotes = 5;      // there are only five NOTE denominations ($5..$100), so a five-note fan
+                                          // is the widest one that can ever exist -- see the reference box below.
+        const float CoinCell    = 0.20f;  // a coin's width as a fraction of the CELL's short side...
+        const float CoinCellX   = 0.17f;  // ...and the first coin's centre, as a fraction of the cell...
+        const float CoinCellY   = 0.82f;
+        const float CoinGap     = 1.05f;  // coin centre-to-centre spacing, in coin-widths
+        const float SplitColX   = 364f;   // left edge of the split strip's right-hand column (box + preview slot)
+        const float FanFill     = 0.88f;  // fraction of the cell the REFERENCE fan is scaled to fill.
+                                          // ⚠ THIS is the knob that keeps the fan off the frame, not the arc:
+                                          // narrowing the arc shrinks the measured box, and fit-to-cell then
+                                          // scales the notes straight back up into the border it just left.
+
+        /// <summary>The icon with the art's OWN baked-in tilt taken back out, cropped tight to the art.
+        ///
+        /// ⭐ Every money icon is pre-rendered at ~45 degrees: each note is a diagonal strip and the loonie is a
+        /// DIAMOND, not a square. That is why fanning the raw icons never looked like a fan -- the middle note was
+        /// already tilted 45 degrees before my arc touched it, and it is why the coins read as diamonds
+        /// (strawberry 2026-09-14: "have them sit vertical"). It also wrecks any attempt to size them: a tilted
+        /// rectangle's bounding box is up to sqrt(2) bigger than the rectangle, and squarer, so the art lands
+        /// small and the leftover margin is unpredictable per denomination.
+        ///
+        /// So measure the tilt off the art and undo it once, at load, into a tight upright texture. After this
+        /// the control IS the note: its aspect is the note's real aspect, rotation 0 means upright, and the fan
+        /// arithmetic downstream describes what you actually see.
+        ///
+        /// The tilt comes from the art quad's CORNERS (the extreme opaque pixels), not from second moments --
+        /// a square's moment matrix is isotropic, so moments recover no angle at all for the coins, which are
+        /// exactly the pieces that needed straightening.</summary>
+        static readonly System.Collections.Generic.Dictionary<ushort, Texture2D> _uprightIcon = new System.Collections.Generic.Dictionary<ushort, Texture2D>();
+        static Texture2D UprightIcon(ushort id)
+        {
+            if (_uprightIcon.TryGetValue(id, out var cached)) return cached;
+            Texture2D result = Icon(id);   // fall back to the raw icon rather than drawing nothing
+            var img = result?.GetImage();
+            if (img != null)
+            {
+                if (img.IsCompressed()) img.Decompress();
+                if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+                int W = img.GetWidth(), H = img.GetHeight();
+                // Whole buffer once, then plain indexing. Two 256x256 GetPixel sweeps per icon is ~130k
+                // marshalled calls each, and the first money tile you ever draw pays for all seven at once --
+                // a visible hitch on opening the inventory, for a result that is then cached forever.
+                byte[] src = img.GetData();
+
+                // Extreme opaque pixels. Scanning top-to-bottom then left-to-right, the FIRST pixel seen is the
+                // topmost; first at each new minimum/maximum x is the leftmost/rightmost. For a convex quad those
+                // are three of its four corners.
+                Vector2 pTop = Vector2.Zero, pLeft = Vector2.Zero, pRight = Vector2.Zero;
+                bool any = false;
+                int bestLeft = int.MaxValue, bestRight = int.MinValue;
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        if (src[((y * W) + x) * 4 + 3] <= 5) continue;
+                        if (!any) { pTop = new Vector2(x, y); any = true; }
+                        if (x < bestLeft)  { bestLeft = x;  pLeft  = new Vector2(x, y); }
+                        if (x > bestRight) { bestRight = x; pRight = new Vector2(x, y); }
+                    }
+
+                if (any)
+                {
+                    // The two quad edges meeting at the top corner. The LONGER is the note's length; for a coin
+                    // they are equal and either one squares it up, which is the whole point of using edges here.
+                    var ea = pTop - pLeft;
+                    var eb = pRight - pTop;
+                    var axis = ea.LengthSquared() >= eb.LengthSquared() ? ea : eb;
+                    if (axis.LengthSquared() < 1f) axis = new Vector2(1f, 0f);
+                    if (axis.X < 0f) axis = -axis;   // keep the note reading left-to-right, never mirrored
+                    axis = axis.Normalized();
+                    var e1 = axis;                                  // along the art's length
+                    var e2 = new Vector2(-axis.Y, axis.X);          // across it
+                    var c = new Vector2(W * 0.5f, H * 0.5f);
+
+                    // Tight bounds in the art's OWN frame.
+                    float uMin = float.MaxValue, uMax = float.MinValue, vMin = float.MaxValue, vMax = float.MinValue;
+                    for (int y = 0; y < H; y++)
+                        for (int x = 0; x < W; x++)
+                        {
+                            if (src[((y * W) + x) * 4 + 3] <= 5) continue;
+                            var d = new Vector2(x, y) - c;
+                            float u = d.Dot(e1), v = d.Dot(e2);
+                            uMin = Mathf.Min(uMin, u); uMax = Mathf.Max(uMax, u);
+                            vMin = Mathf.Min(vMin, v); vMax = Mathf.Max(vMax, v);
+                        }
+
+                    int tw = Mathf.Clamp(Mathf.RoundToInt(uMax - uMin) + 1, 1, 1024);
+                    int th = Mathf.Clamp(Mathf.RoundToInt(vMax - vMin) + 1, 1, 1024);
+                    var outp = new byte[tw * th * 4];
+                    for (int j = 0; j < th; j++)
+                        for (int i = 0; i < tw; i++)
+                        {
+                            var q = c + e1 * (uMin + i) + e2 * (vMin + j);
+                            int sx = Mathf.RoundToInt(q.X), sy = Mathf.RoundToInt(q.Y);
+                            if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;   // stays transparent
+                            // NEAREST on purpose: the source is chunky low-res pixel art and bilinear here just
+                            // smears the note's printed detail into mush before the UI ever scales it.
+                            System.Array.Copy(src, ((sy * W) + sx) * 4, outp, ((j * tw) + i) * 4, 4);
+                        }
+                    result = ImageTexture.CreateFromImage(Image.CreateFromData(tw, th, false, Image.Format.Rgba8, outp));
+                }
+            }
+            _uprightIcon[id] = result;
+            return result;
+        }
+
+        /// <summary>Lay a wallet out as the notes and coins it would pay: NOTES fanned from a hinge just past
+        /// their SHORT EDGE -- a hand of cards, splayed from one end -- with COINS upright and small in front.
+        ///
+        /// ⚠ The hinge belongs on the short side (strawberry 2026-09-14: "i want it as a fan on the short sides,
+        /// this is more like a rainbow"). Hinging under a note's long edge instead sweeps the whole body of each
+        /// note through the arc, so the notes arch OVER each other and the result reads as a rainbow rather than
+        /// as a fan. On the short edge only the far ends spread, which is what a fanned wad actually does.
+        ///
+        /// The two are treated differently on purpose -- a note is a rectangle that fans and a coin is a disc
+        /// that does not, so tilting a loonie along the arc reads as a mistake rather than as a fan. Coins
+        /// therefore sit VERTICAL whatever the notes are doing.
+        ///
+        /// The layout is built in UNIT space (note width = 1) around the hinge, MEASURED, and only then scaled
+        /// to the cell. Picking a size up front and hoping is what left the last one clipped down one side with
+        /// dead space down the other: the extent depends on the per-denomination art margins above, so it is
+        /// not knowable before the pieces exist. Measure, then scale -- that also means the fan is automatically
+        /// as big as the cell allows at whatever arc it is given, which is the "use the real estate" half.</summary>
+        static void BuildMoneyFan(Control tile, int dollars, float w, float h)
+        {
+            var all = SDG.Unturned.Currency.Breakdown(dollars);
+            bool dbg = System.Environment.GetEnvironmentVariable("UG_FANDBG") == "1";
+            if (dbg)
+                Log.Print($"[fan] ${dollars} -> {all.Count} denoms, cell {w}x{h}, icons=[" +
+                          string.Join(",", all.ConvertAll(i => $"{i}:{(Icon(i) != null)}")) + "]");
+            if (all.Count == 0) return;
+            var notes = new System.Collections.Generic.List<ushort>();
+            var coins = new System.Collections.Generic.List<ushort>();
+            foreach (var id in all) (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
+
+            // Back to front. Breakdown is largest-first and the largest belongs BEHIND, so building in order
+            // leaves the smallest note on top -- "smallest at the front" is the loop's own direction.
+            var pieces = new System.Collections.Generic.List<(ushort Id, Texture2D Tex, Vector2 Size, Vector2 Pivot, float Rot)>();
+            Vector2 noteSize = new Vector2(1f, 0.5f);   // overwritten by the first real note; only a fallback
+            // ⭐ EVERY GAP GETS THE FULL STEP WHILE THERE IS ROOM -- $188's five notes at 17 degrees apart is the
+            // look being matched, and a repeat is no different from any other note until space says otherwise.
+            // Collapsing is a RESPONSE TO PRESSURE: only when a full-step fan would not fit does the gap between
+            // two notes of ONE denomination tighten, because identical notes have no edge between them and so
+            // are the gap that costs least to give up. Breakdown is largest-first, so repeats are contiguous.
+            int diffGaps = 0, sameGaps = 0;
+            for (int i = 1; i < notes.Count; i++)
+                if (notes[i] == notes[i - 1]) sameGaps++; else diffGaps++;
+            float maxSpread = FanStepDeg * (FanMaxNotes - 1);
+            float sameStep = FanStepDeg;
+            if ((diffGaps + sameGaps) * FanStepDeg > maxSpread && sameGaps > 0)
+                sameStep = Mathf.Clamp((maxSpread - diffGaps * FanStepDeg) / sameGaps, FanStepSame, FanStepDeg);
+
+            var angle = new float[notes.Count];
+            float spread = 0f;
+            for (int i = 1; i < notes.Count; i++)
+            {
+                spread += notes[i] == notes[i - 1] ? sameStep : FanStepDeg;
+                angle[i] = spread;
+            }
+            // ⚠ CLAMP to the reference arc. The scale is measured off a five-different-note fan, so a wad that
+            // opens wider than that would hang outside the box its own size was chosen from and spill over the
+            // frame -- which is exactly what raw $485 did (eight notes, 83 degrees against a 68 degree box).
+            // Compressing keeps the guarantee true at ANY ceiling instead of only up to $255.
+            float squeeze = spread > maxSpread ? maxSpread / spread : 1f;
+            for (int i = 0; i < notes.Count; i++)
+            {
+                var t = UprightIcon(notes[i]);
+                if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
+                noteSize = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                pieces.Add((notes[i], t, noteSize, new Vector2(-FanHingeOut, noteSize.Y * 0.5f),
+                            FanBaseDeg + (angle[i] - spread * 0.5f) * squeeze));   // centred on the hinge
+            }
+
+            // A Control rotates about PivotOffset, so a corner sits at hinge + Rot(theta) * (corner - pivot) --
+            // independent of where the hinge lands, which is why a box can be measured before a hinge is chosen.
+            void Accumulate(Vector2 size, Vector2 pivot, float rot,
+                            ref float minX, ref float minY, ref float maxX, ref float maxY)
+            {
+                float c = Mathf.Cos(Mathf.DegToRad(rot)), sn = Mathf.Sin(Mathf.DegToRad(rot));
+                for (int k = 0; k < 4; k++)
+                {
+                    var l = new Vector2((k & 1) == 0 ? 0f : size.X, (k & 2) == 0 ? 0f : size.Y) - pivot;
+                    var q = new Vector2(l.X * c - l.Y * sn, l.X * sn + l.Y * c);
+                    minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X);
+                    minY = Mathf.Min(minY, q.Y); maxY = Mathf.Max(maxY, q.Y);
+                }
+            }
+
+            // ⭐ THE BOX IS MEASURED OFF A FIVE-NOTE REFERENCE FAN, NOT OFF THE WALLET IN HAND, so scale and
+            // hinge are the SAME for every value (strawberry 2026-09-14: "the note size should stay the same too
+            // (the $188 dollar size)"). Measuring the actual fan made a $15 note draw bigger than a $188 one,
+            // because a smaller arc left spare room and fit-to-cell claimed it -- which meant the notes changed
+            // size as you spent. Fixing the reference pins them.
+            if (pieces.Count > 0)
+            {
+                float rMinX = float.MaxValue, rMinY = float.MaxValue, rMaxX = float.MinValue, rMaxY = float.MinValue;
+                float refArc = FanStepDeg * (FanMaxNotes - 1) * 0.5f;
+                var refPivot = new Vector2(-FanHingeOut, noteSize.Y * 0.5f);
+                for (int i = 0; i < FanMaxNotes; i++)
+                    Accumulate(noteSize, refPivot,
+                               FanBaseDeg + Mathf.Lerp(-refArc, refArc, i / (float)(FanMaxNotes - 1)),
+                               ref rMinX, ref rMinY, ref rMaxX, ref rMaxY);
+
+                float scale = Mathf.Min(w / Mathf.Max(rMaxX - rMinX, 0.001f),
+                                        h / Mathf.Max(rMaxY - rMinY, 0.001f)) * FanFill;
+                var hinge = new Vector2(w * 0.5f - (rMinX + rMaxX) * 0.5f * scale,
+                                        h * 0.5f - (rMinY + rMaxY) * 0.5f * scale);
+                if (dbg) Log.Print($"[fan]   ref ({rMinX:0.00},{rMinY:0.00})..({rMaxX:0.00},{rMaxY:0.00}) scale={scale:0.0} hinge={hinge}");
+                foreach (var it in pieces)
+                    Place(it.Tex, it.Size * scale, it.Pivot * scale, hinge, it.Rot, it.Id);
+            }
+
+            // ⭐ COINS ARE A CONSTANT OF THE TILE, NOT PART OF THE FAN (strawberry: "the coins should have a
+            // fixed spot/size no matter what"). Laid out straight in CELL fractions, so they neither move nor
+            // resize with the wad, and they are added LAST so they stay in front of the notes.
+            float cs = Mathf.Min(w, h) * CoinCell;
+            for (int i = 0; i < coins.Count; i++)
+            {
+                var t = UprightIcon(coins[i]);
+                if (t == null) continue;
+                var size = new Vector2(cs, cs * t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                var centre = new Vector2(w * CoinCellX + i * cs * CoinGap, h * CoinCellY);
+                Place(t, size, size * 0.5f, centre, 0f, coins[i]);   // a disc does not fan
+            }
+
+            void Place(Texture2D tex, Vector2 size, Vector2 pivot, Vector2 at, float rot, ushort id)
+            {
+                // Build, PARENT, and only THEN size. A TextureRect's minimum size is its texture until ExpandMode
+                // says otherwise, and entering the tree runs a layout pass that snaps Size back up to that minimum
+                // -- so a Size written in the object initializer is silently replaced by the full 256px icon.
+                var r = new TextureRect
+                {
+                    Texture = tex,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.Scale,   // the control IS the art now: no letterboxing
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                tile.AddChild(r);
+                r.CustomMinimumSize = Vector2.Zero;
+                r.Size = size;
+                r.PivotOffset = pivot;
+                r.Position = at - pivot;
+                r.RotationDegrees = rot;
+                if (dbg) Log.Print($"[fan]   {id} size={r.Size} pos={r.Position} rot={rot:0}");
+            }
+        }
+
         // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
         // A 6-arm snowflake drawn CENTERED into a small texture -- so the "cold" badge never depends on a font glyph's
         // off-centre metrics (U+2744 seats crooked in its line box; no offset nudge centres it cleanly). One-time build.
@@ -2710,7 +3402,25 @@ void fragment() {
             // mirrored, and a mag is symmetric enough that the reflection reads as fine by eye (tinyclaw). Reuse the
             // transform, don't copy it (same as CheckLoad -> MagRules).
             bool magStandUp = rotated && asset != null && asset.IsMagazine;
-            var tex = magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true) : (asset != null ? Icon(asset.id) : null);
+            // ⭐ MONEY DRAWS AS WHAT IT IS WORTH, not as the coin that carries it (strawberry 2026-09-14: "the
+            // inventory icon changes depending on the value of the stack -> to the respective coin/note"). The
+            // stack's id is always the $1 loonie -- that is what makes `amount` mean dollars -- so asking the
+            // ASSET for its icon would draw a coin on a $100 wad. The icon comes off the VALUE instead: the
+            // largest denomination the stack could actually pay out.
+            bool moneyTile = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
+            int moneyValue = moneyTile ? jar.item.amount : 0;
+            // UG_FANVALUE previews the icon for a wallet the game cannot yet HOLD. `Item.amount` is a byte, so
+            // $485 is unrepresentable until it is widened; this draws the picture for a raised ceiling without
+            // pretending the wire, the saves or the stacking rules support one. Render-only.
+            if (moneyTile)
+            {
+                var ov = System.Environment.GetEnvironmentVariable("UG_FANVALUE");
+                if (!string.IsNullOrEmpty(ov) && int.TryParse(ov, out int forced) && forced > 0) moneyValue = forced;
+                BuildMoneyFan(tile, moneyValue, w, h);
+            }
+            var tex = moneyTile ? null
+                    : magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true)
+                    : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
@@ -2731,8 +3441,8 @@ void fragment() {
                 }
                 tile.AddChild(ic);
             }
-            else   // no icon on disk -> the old rarity-tinted name label
-            {
+            else if (!moneyTile)   // no icon on disk -> the old rarity-tinted name label. MONEY draws its own fan
+            {                      // above and must not also print its name over the top of it.
                 var lbl = new Label { Text = asset?.itemName ?? "?" };
                 lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 lbl.HorizontalAlignment = HorizontalAlignment.Center;
@@ -2744,9 +3454,13 @@ void fragment() {
                 tile.AddChild(lbl);
             }
 
-            if (jar.item != null && (jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
+            // MONEY READS AS MONEY: "$137", not "x137" (strawberry 2026-09-14). And it shows at any value
+            // including $1, where an ordinary stack would hide its count -- the number IS the item here, so a
+            // coin with no label on it would be the one thing you cannot identify.
+            bool isMoney = jar.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
+            if (jar.item != null && (isMoney || jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
             {
-                var amt = new Label { Text = "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
+                var amt = new Label { Text = isMoney ? "$" + MoneyShown(jar.item.amount) : "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
                 amt.HorizontalAlignment = HorizontalAlignment.Right;
                 amt.AddThemeColorOverride("font_color", Colors.White);
                 amt.AddThemeColorOverride("font_outline_color", Colors.Black);

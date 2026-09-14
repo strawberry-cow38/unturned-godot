@@ -443,7 +443,12 @@ namespace UnturnedGodot
         public float Food { get => _vitals.Food; set => _vitals.Food = value; }
         public float Water { get => _vitals.Water; set => _vitals.Water = value; }
         public float Oxygen { get => _vitals.Oxygen; set => _vitals.Oxygen = value; }
-        public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
+        // ON by default (strawberry 2026-09-13: "turn survival on by default"). It shipped off because the
+        // drains were 200 s and 143 s -- survival meant starving to death during your first house, so the
+        // sane default was to leave the mode switched off. 44128d99 made them 2 days and 1 day, which is
+        // what makes it a survival curve instead of a timer, and a survival curve nobody has switched on is
+        // just dead code. F1 console `survival on|off` still toggles it.
+        public static bool SurvivalDrain = true;
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
@@ -955,7 +960,18 @@ namespace UnturnedGodot
                 _focusMonitor = hitMonitor;
                 _focusMonitor?.SetLookFocused(true);
             }
-            _focusForage = hitForage;   // no outline pass: a bush is a MultiMesh slot, not a node with a mesh to tint
+            // BERRY BUSH / MUSHROOM look-focus. This used to be a bare assignment with "no outline pass: a bush is
+            // a MultiMesh slot, not a node with a mesh to tint" -- true, and the reason it had no affordance at all:
+            // 141 forageables on PEI (61 bushes, 80 mushrooms) that looked exactly like the scenery bushes next to
+            // them, with nothing to say Interact would do anything. ForagePlant now builds a silhouette out of the
+            // very meshes its MultiMesh slot draws, so there IS something to tint (strawberry 2026-09-13).
+            if (hitForage != _focusForage)
+            {
+                if (IsInstanceValid(_focusForage)) _focusForage.SetLookFocused(false);
+                _focusForage = hitForage;
+                if (_focusForage != null) _focusForage.SetLookFocused(true);
+                ForagePromptSet(_focusForage);
+            }
             _focusCarLift = hitLift;
             if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
             {
@@ -1115,6 +1131,16 @@ namespace UnturnedGodot
             return false;
         }
         // a SOURCE end: an output, or a passthrough re-exporting its leftover (daisy-chaining the next spotlight)
+        // ⚠ A DATA LINK IS ITS OWN CIRCUIT. A data port pairs only with the opposite data port -- never with a
+        // power port -- so a signal wire can never be mistaken for a feed and a camera can never be asked to
+        // power a TV. Checked at the tool rather than only at the solver, because a refusal the player sees
+        // while aiming is a rule; one applied silently after the wire exists is a bug report.
+        static bool IsDataSourcePort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.DataOut;
+        static bool IsDataConsumerPort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.DataIn;
+        /// <summary>Are these two ends a legal pair? Power to power, or data to data, never across.</summary>
+        static bool PortsPair(ConnectionPort a, ConnectionPort b)
+            => (IsSourcePort(a) && IsConsumerPort(b)) || (IsDataSourcePort(a) && IsDataConsumerPort(b));
+
         static bool IsSourcePort(ConnectionPort p) => p != null && (p.Kind == DeployableDef.PortKind.Output || p.Kind == DeployableDef.PortKind.Passthrough);
         // a CONSUMER end: a device input (a spotlight's usage, a splitter's relay input)
         static bool IsConsumerPort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.Consumer;
@@ -1122,9 +1148,11 @@ namespace UnturnedGodot
         // complete a wire started at `start`? -> opposite roles, usable, unwired, on a different deployable.
         bool CanCompleteWire(ConnectionPort start, ConnectionPort target) =>
             start != null && target != null && target.Usable && target.Owner != start.Owner && !PortWired(target)
-            && (IsSourcePort(start) ? IsConsumerPort(target) : IsSourcePort(target));
-        // order the two picked ends into (source, consumer) for the power graph, regardless of which you started from
-        static (ConnectionPort src, ConnectionPort cons) OrderWireEnds(ConnectionPort a, ConnectionPort b) => IsSourcePort(a) ? (a, b) : (b, a);
+            && (PortsPair(start, target) || PortsPair(target, start));
+        // order the two picked ends into (source, consumer) for the graph, regardless of which you started from.
+        // A data link orders the same way -- OUT first -- so the wire record reads identically for both kinds.
+        static (ConnectionPort src, ConnectionPort cons) OrderWireEnds(ConnectionPort a, ConnectionPort b)
+            => (IsSourcePort(a) || IsDataSourcePort(a)) ? (a, b) : (b, a);
 
         // LMB with the wire tool: pick a SOURCE (output/passthrough) to start, place a node while routing, or complete on a CONSUMER.
         void WireLmb()
@@ -1133,7 +1161,10 @@ namespace UnturnedGodot
             if (!_wiring)
             {
                 // start from EITHER end -- a source (output/passthrough) OR a consumer input (strawberry: wire from the input side too)
-                if ((IsSourcePort(_wirePort) || IsConsumerPort(_wirePort)) && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
+                // start from EITHER end of EITHER kind -- power (output/passthrough/consumer) or data (out/in)
+                if ((IsSourcePort(_wirePort) || IsConsumerPort(_wirePort)
+                     || IsDataSourcePort(_wirePort) || IsDataConsumerPort(_wirePort))
+                    && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
@@ -1983,6 +2014,26 @@ namespace UnturnedGodot
 
         // A center-screen pickup readout (fluid devices have no per-device progress billboard like a generator's).
         CanvasLayer _fluidPickupLayer; Label _fluidPickupLabel;
+        // FORAGE PROMPT. ONE billboard, moved to whichever plant is focused -- not one per plant. A bush has no node
+        // of its own and there are 141 of them on PEI; giving each a SubViewport would be 141 idle render targets to
+        // serve the one you are looking at. InfoBillboard is the port's existing look-at prompt (vehicles, deployables,
+        // grid sources), so foraging reads like every other "walk up and press a key" prop rather than inventing a
+        // second convention.
+        //
+        // It names the ITEM, not the plant, because the bush colour does not name its berry -- Amber gives
+        // Jazzberries, Ameberries come off Mauve -- so "Amber Bush" tells a player nothing they can act on.
+        InfoBillboard _forageInfo;
+
+        void ForagePromptSet(ForagePlant p)
+        {
+            if (p == null || !IsInstanceValid(p)) { _forageInfo?.SetActive(false); return; }
+            if (_forageInfo == null) { _forageInfo = new InfoBillboard { TopLevel = true }; AddChild(_forageInfo); }
+            _forageInfo.GlobalPosition = p.WorldPos + Vector3.Up * p.PromptHeight;
+            _forageInfo.SetName(p.DisplayName, Colors.White);
+            _forageInfo.SetPrompt($"[{Keybinds.Get(GameAction.Interact).Label}] forage", Colors.White);
+            _forageInfo.SetActive(true);
+        }
+
         void FluidPickupHudSet(string text)
         {
             if (string.IsNullOrEmpty(text)) { if (_fluidPickupLabel != null) _fluidPickupLabel.Visible = false; return; }
@@ -2061,6 +2112,7 @@ namespace UnturnedGodot
             UpdateOptic();
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
+            UpdateTacticalLaser();   // the gun-rail laser's beam + dot (N)
             // SUBMERGED VIEW (strawberry 2026-09-08). Driven from the CAMERA, not the body: the two disagree
             // exactly when it matters -- wading with your head under, or swimming with the eye just clear of the
             // surface -- and what you see is decided by where the eye is. Built lazily on first submersion so a
@@ -3413,7 +3465,9 @@ namespace UnturnedGodot
             Log.Print($"[throw] holding {asset.itemName} ({_throwDef?.Kind.ToString().ToLowerInvariant() ?? "unknown"}) -- LMB to throw, {Throwables.FuseSeconds:0.#}s fuse");
         }
 
-        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; }   // switching away mid-swing drops the pending release + tail with it
+        bool _throwHeldDown;   // LMB is down with a throwable in hand: the throw is armed and waiting for the release
+        float _throwSwingT;    // seconds the wind-up has been running since the press (see BeginThrowSwing)
+        void ClearHeldThrowable() { _heldThrowable = null; _heldThrowableItem = null; _throwDef = null; _throwPendingT = 0f; _throwRevertAtEnd = false; _throwRearmAtEnd = false; _throwHeldDown = false; _throwSwingT = 0f; }   // switching away mid-swing drops the pending release + tail with it (and any armed-but-unreleased throw: swapping weapons with the button down must not lob one later)
 
         // The item's OWN 1p model in the hand, through the consumable path: it follows the hand bone with the source's
         // held-model roll (PlayerEquipment.firstModel Euler(0,0,90)), TE_0 raises it (the retail "Equip", 0.47 s) and TU_0
@@ -3452,18 +3506,45 @@ namespace UnturnedGodot
         /// <summary>LMB with a throwable in hand: lob it, spend one from the bag, and either re-arm with the next
         /// of the same kind or fall back to whatever was held before -- the same tail TickConsume runs when a
         /// stack of food runs out, because "the item left your hand and is gone" is the same problem.</summary>
-        public void ThrowHeld(bool strong = true)
+        /// <summary>LMB DOWN: start the wind-up (strawberry 2026-09-14: "make the throw animation play on click,
+        /// but only throw on release"). The arm comes over the top NOW -- nothing leaves the hand until the button
+        /// comes up, which ThrowHeld handles.
+        ///
+        /// Before this, the press did nothing visible at all and the whole swing was played on the release, so
+        /// every throw looked a frame late no matter how the timings were tuned. The animation is the feedback
+        /// that the input landed; it has to be on the press.
+        ///
+        /// Returns false if a throw cannot start, so the caller does not arm a release that will never fire.</summary>
+        bool BeginThrowSwing()
         {
-            if (_heldThrowable == null || _throwCd > 0f || _throwPendingT > 0f || _dead) return;
-            // The SWING: the arm comes over the top now (TU_0); the canister leaves the hand at 60 % of the clip in
-            // ReleaseThrow (ticked below), and nothing else can be started until the clip has run out.
+            if (_heldThrowable == null || _throwCd > 0f || _throwPendingT > 0f || _dead) return false;
             float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
             if (useLen < 0.1f) useLen = ThrowCooldown;   // no arms rig (headless fixture): the old cadence
             _viewmodel?.PlayThrow();
-            _throwPendingT = useLen * ThrowReleaseFraction;
+            _throwSwingT = 0f;
+            _throwCd = useLen;   // busy for the clip either way: the swing is happening whether you let go or not
+            Log.Print($"[throw] wind-up, busy {useLen:0.00}s");
+            return true;
+        }
+
+        /// <summary>LMB UP: the item leaves the hand. It goes at the clip's release point (60 %) if the button came
+        /// up before then -- a tap therefore throws on exactly the old cadence -- and IMMEDIATELY if the swing has
+        /// already run past it, because a hold has no cooking and must not bank time.</summary>
+        public void ThrowHeld(bool strong = true)
+        {
+            if (_heldThrowable == null || _throwPendingT > 0f || _dead) return;
+            // ⚠ SELF-SUFFICIENT. Most callers are not the LMB hold: the RMB weak toss, the dev console, the movie
+            // harness and four tests all call this on its own and expect a whole swing. If no wind-up is running,
+            // start one here -- so those paths keep the exact cadence they had, and only the LMB press-then-release
+            // path gets the split.
+            if (_throwCd <= 0f && !BeginThrowSwing()) return;
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen < 0.1f) useLen = ThrowCooldown;
             _throwPendingStrong = strong;
-            _throwCd = useLen;
-            Log.Print($"[throw] swing ({(strong ? "strong" : "weak")}), release in {_throwPendingT:0.00}s, busy {useLen:0.00}s");
+            float releaseAt = useLen * ThrowReleaseFraction;
+            if (_throwSwingT >= releaseAt) { ReleaseThrow(); Log.Print($"[throw] release ({(strong ? "strong" : "weak")}), held past the swing"); return; }
+            _throwPendingT = releaseAt - _throwSwingT;
+            Log.Print($"[throw] release ({(strong ? "strong" : "weak")}) in {_throwPendingT:0.00}s, held {_throwSwingT:0.00}s");
         }
 
         /// <summary>The moment in the swing where the item actually leaves the hand -- computed HERE, off the aim at
@@ -3497,17 +3578,39 @@ namespace UnturnedGodot
             GameAudio.Play2D(this, GameAudio.ThrowableUse(id), -4f);
             Log.Print($"[throw] {asset.itemName} away ({(strong ? "strong" : "weak")})");
 
-            // Spend it. Same routing as a finished consumable: in MP the DELETION is the server's and the owner
-            // echo empties the cell; in SP we remove it ourselves.
+            // SPEND IT -- and ⚠ NOT THROUGH NetConsume, which is what made throwables infinite.
+            //
+            // This used to route the deletion the way a finished consumable does. OnConsume opens with
+            // `if (asset == null || !asset.IsConsumable) return;` and a grenade is not a consumable, so the server
+            // refused every request, silently. The THROW was accepted by a different handler, so the projectile
+            // flew and the item stayed in the bag -- and singleplayer runs through the loopback, so it was not an
+            // MP-only bug. Diag.ConsumesRejected had been counting it the whole time.
+            //
+            // When the throw goes to the server, the SERVER now spends it (ServerCombat.OnGrenade ->
+            // ServerTransactions.SpendThrowable) and the owner echo empties the cell -- the same command that
+            // mints the projectile pays for it, so the two can no longer disagree. Offline, we still remove it
+            // ourselves.
+            //
+            // ⚠ AND THE LISTEN SERVER IS A THIRD CASE, which the first cut of this missed and master found:
+            // "grenades are getting consumed, but the server disagrees, when i update my inv, they come back."
+            // The loopback wires no NetGrenade (it has no ProjectileReplicaView, so a server-flown grenade would
+            // be invisible) -- so it fell to the local-removal branch. But its bag IS the server's: every owner
+            // echo runs AdoptReplicatedInventory over it. So the local removal was real, and then the next echo
+            // put the grenade back, exactly as reported. That is the no-double-mutation invariant MpLoopback's
+            // own seam comment states, broken by a spend that had no seam.
             int left;
-            if (NetConsume != null)
+            if (NetGrenade != null)
             {
-                if (FindBagCell(id, out byte cp, out byte cx, out byte cy)) NetConsume(cp, cx, cy);
-                left = (Inventory?.getItemCount(id) ?? 1) - 1;
+                left = (Inventory?.getItemCount(id) ?? 1) - 1;   // the echo will empty the cell; count what WILL remain
+            }
+            else if (NetSpendThrowable != null)
+            {
+                NetSpendThrowable(id);                           // listen server: the flight is ours, the BAG is the authority's
+                left = (Inventory?.getItemCount(id) ?? 1) - 1;   // ...so count what the echo will leave, never mutate here
             }
             else
             {
-                Inventory?.removeItemAmount(id, 1);
+                Inventory?.removeItemAmount(id, 1);              // offline, no authority: the local grid is the only grid
                 left = Inventory?.getItemCount(id) ?? 0;
             }
             _viewmodel?.HideHeldItem();   // it is in the air now: the follow-through swings an empty hand (retail's arm is out of frame here either way)
@@ -4643,6 +4746,166 @@ namespace UnturnedGodot
             _heldLight.Visible = true;
         }
 
+        // ---- GUN-RAIL TACTICAL: the laser and the light (strawberry 2026-09-13: "give the tactical laser an
+        // actual laser beam. toggles on/off with N. wire the tactical flashlight too ... identical to the
+        // flashlight, just on N and attached to the gun") -----------------------------------------------------
+        //
+        // A THIRD light path, and it has to be: the handheld torch is a MELEE item (MeleeDef.Light), the
+        // headlamp is GLASSES, and this is an ItemTacticalAsset fitted to the gun in your hands. Retail keeps
+        // them apart the same way -- UseableMelee owns the torch, PlayerClothing the goggles, and UseableGun's
+        // `interact` flag owns this one.
+        //
+        // ⚠ THE LIGHT'S NUMBERS ARE NOT COPIED, THEY ARE SHARED. Tactical_Light.dat declares a bare `Light` and
+        // nothing else, exactly like flashlight.dat, so both run on PlayerSpotLightConfig's defaults -- which
+        // now live once, on MeleeDef. "Identical to the flashlight" is the data, not a resemblance.
+        bool _tacticalOn;
+        int _laserDbgT;
+        LaserSight _laser;
+        SpotLight3D _tacLight;
+
+        /// <summary>The tactical attachment fitted to the gun IN HAND, or 0. Reads the item, not the viewmodel:
+        /// the model can be mid-swap while the item is already the new one.</summary>
+        public int TacticalId => HasGunOut ? AttachmentFit.InstalledId(_heldItem, "Tactical") : 0;
+        /// <summary>Is there something on the rail for the tactical key to switch? Rangefinders and bayonets
+        /// are fitted attachments with no ON state, so they answer false and N falls through to the goggles.</summary>
+        public bool HasTacticalToggle => AttachmentFit.TacticalToggleable(TacticalId);
+        /// <summary>The switch AND the attachment, the same shape as HeadlampOn -- so unfitting the laser or
+        /// holstering the gun kills the beam with no clear-site plumbing at any of the dozen equip paths.</summary>
+        public bool TacticalOn => _tacticalOn && HasTacticalToggle;
+        public bool TacticalLaserOn => _tacticalOn && AttachmentFit.IsLaser(TacticalId);
+        public bool TacticalLightOn => _tacticalOn && AttachmentFit.IsTacticalLight(TacticalId);
+        /// <summary>Test seams: the live beam and the live rail lamp, or null when the switch is off. Exposed so
+        /// a test can read WHERE the dot landed and WHAT the lamp's cone is, rather than that a node exists.</summary>
+        public LaserSight DebugLaser => IsInstanceValid(_laser) ? _laser : null;
+        /// <summary>Render/test seam: start the inspect gesture. Goes through the viewmodel's own PlayInspect so
+        /// every guard it owns (sprinting, attach view) still applies -- a harness that bypassed them could
+        /// photograph a pose the game will not produce.</summary>
+        public void DebugPlayInspect() => _viewmodel?.PlayInspect();
+        public SpotLight3D DebugTacticalLight => IsInstanceValid(_tacLight) ? _tacLight : null;
+
+        /// <summary>The tactical key with a gun in hand. Source UseableGun.askInteractGun gates the same toggle
+        /// on `player.equipment.IsEquipAnimationFinished` and on not being mid-reload/hammer/unjam/rechamber --
+        /// the port has the first as HeldItemReady and the reload as IsReloading, so both are honoured.</summary>
+        public void ToggleTactical()
+        {
+            if (!HasTacticalToggle) return;
+            if (!HeldItemReady) return;        // mid-swap: the gun is not really in your hands yet (source's isBusy)
+            if (_reloading || _hammerActive) return;   // source refuses the tactical key mid-reload / mid-hammer (askInteractGun)
+            _tacticalOn = !_tacticalOn;
+            ApplyTacticalLight();
+            _viewmodel?.SetTacticalLit(_tacticalOn);   // the attachment's own lens, retail's lightHook.SetActive(interact)
+            PlaySelectorSwitchSound();         // source fires the firemode effect on this toggle (same click as the torch)
+        }
+
+        /// <summary>Bring the rail light in line with the switch. Idempotent, and safe to call when the gun is
+        /// gone: putting the weapon away MUST kill the beam, or you keep a light source with no item holding it.</summary>
+        public void ApplyTacticalLight()
+        {
+            bool want = TacticalLightOn && !_dead;
+            if (!want) { if (IsInstanceValid(_tacLight)) _tacLight.Visible = false; return; }
+            // ⚠ NO CAMERA, NO LAMP -- and crucially, NO CACHED ONE EITHER. `_cam?.AddChild(x)` on a null camera
+            // is a silent no-op, so building the light first and parenting it second would leave a valid-but-
+            // orphaned SpotLight3D in the field: IsInstanceValid stays true for ever, this method never retries,
+            // and the lamp is permanently dark with nothing null to catch. Same shape as GetNodeOrNull refusing
+            // silently. (The handheld torch and the headlamp above are written the older way and share it --
+            // harmless there today because both are reached only from input, which needs a camera anyway.)
+            if (_cam == null) return;
+            if (!IsInstanceValid(_tacLight))
+            {
+                _tacLight = new SpotLight3D
+                {
+                    // The flashlight's own defaults, by way of the constants BOTH .dats fall back to. SpotAngle
+                    // is Godot's HALF-angle and the constant is Unity's FULL cone, so it is halved here -- the
+                    // same halving the handheld does, and the same one that doubles the cone if it is forgotten.
+                    SpotRange = MeleeDef.DefaultSpotRange,
+                    SpotAngle = MeleeDef.DefaultSpotAngleFull * 0.5f,
+                    LightColor = MeleeDef.DefaultSpotColor,
+                    LightEnergy = MeleeDef.DefaultSpotIntensity,
+                    SpotAngleAttenuation = 1.0f,
+                    ShadowEnabled = false,   // same reason as the other two: a moving shadow-caster re-renders the world every step
+                };
+                // Rides the eye, like the torch and the headlamp -- the rail points where you look.
+                //
+                // ⚠ LOCAL ONLY, and flagged rather than left to be found: retail activates the rail light on the
+                // THIRD-person attachments too (`thirdAttachments.lightHook.SetActive(interact)` plus a fake
+                // light), so another player's lit rail lights the room for you. Parented to the camera, this one
+                // is yours alone. The laser DOT is local-only in retail as well (its whole block sits inside
+                // `if (channel.IsLocalPlayer)`), so only the light half is a gap, and closing it is a 3P mount +
+                // a replicated bit rather than anything here.
+                _cam.AddChild(_tacLight);
+            }
+            _tacLight.Visible = true;
+        }
+
+        /// <summary>Per frame: the beam follows the switch AND the attachment. Retail raycasts from
+        /// `player.look.aim` and parks the dot at the contact; the BEAM is drawn from the gun instead, because a
+        /// line starting at the eye has nothing under it.</summary>
+        void UpdateTacticalLaser()
+        {
+            bool on = TacticalLaserOn && !_dead;
+            if (System.Environment.GetEnvironmentVariable("UG_LASERDBG") == "1" && ++_laserDbgT % 30 == 0)
+                Log.Print($"[laserdbg] on={on} tacOn={_tacticalOn} id={TacticalId} toggleable={HasTacticalToggle} "
+                        + $"gunOut={HasGunOut} inspecting={_viewmodel?.IsInspecting} tvl={(_viewmodel?.TacticalViewLocal != null)} "
+                        + $"lit={DebugLaser?.Lit} len={DebugLaser?.BeamLength:0.00}");
+            if (!on) { if (IsInstanceValid(_laser)) _laser.Hide3D(); return; }
+            if (_cam == null) return;
+            if (!IsInstanceValid(_laser))
+            {
+                _laser = new LaserSight();
+                AddChild(_laser);   // TopLevel inside, so it is placed in world space and still dies with the player
+            }
+            _laser.SetColor(AttachmentFit.LaserColor(TacticalId));
+
+            Vector3 aimFrom = _cam.GlobalPosition;
+            Vector3 aimDir = -_cam.GlobalTransform.Basis.Z;
+            // Where the beam is DRAWN from: the 3P gun's own muzzle when there is a body to hang it on, else the
+            // camera-relative visual point the muzzle flash already uses. Exactly the `bodyMuzzle ?? fxMuzzle`
+            // split SpawnBullet documents -- and for the same reason, so the eye keeps deciding where it LANDS.
+            var cb = _cam.GlobalTransform.Basis;
+            Vector3 fxRail = aimFrom + cb.X * 0.10f - cb.Y * 0.06f + aimDir * 0.35f;
+            // WHERE THE BEAM LEAVES THE GUN, in order of how much it actually knows:
+            //
+            //   3P -> the body's own muzzle, as before.
+            //   1P -> ⭐ THE LIVE VIEWMODEL'S TACTICAL NODE (strawberry 2026-09-13: "make the tactical laser
+            //         follow the actual gun viewmodel instead of being stationary"). It used to be fxRail, a
+            //         FIXED camera-relative offset -- welded to the eye, so sway, bob, recoil, the ADS slide and
+            //         the inspect animation all moved the gun while the beam stayed exactly where it was. The
+            //         viewmodel lives in its own SubViewport world, so the node's pose comes back relative to
+            //         THAT world's camera and is re-applied to this one; see Viewmodel.TacticalViewLocal.
+            //   neither -> fxRail still, for a headless fixture with no viewmodel and no body.
+            Vector3 emitter;
+            Transform3D? tvl = _viewmodel?.TacticalViewLocal;
+            if (!_fp && _body != null && _body.MuzzleWorld is Vector3 bm) emitter = bm;
+            else if (tvl is Transform3D t) emitter = (_cam.GlobalTransform * t).Origin;
+            else emitter = fxRail;
+
+            // ⚠ WHILE INSPECTING, THE BEAM LEAVES THE GUN'S OWN AXIS -- not the aim (strawberry 2026-09-13:
+            // "make the laser just appear straight and follow the gun (not the aim point) when inspecting").
+            //
+            // The normal rule is deliberately the opposite: the ray is cast from the EYE down the aim so the dot
+            // lands where the BULLET goes, which is the whole point of a sight. But an inspect turns the weapon
+            // over in front of your face while your aim stays put -- so that rule draws a beam sweeping across
+            // the screen from a rotating gun to a fixed point, which reads as the laser being detached from the
+            // weapon. During the gesture the gun is a prop being looked at, not a sight being used.
+            //
+            // The tactical node is parented to the gun mesh with a position and no rotation of its own, so its
+            // basis IS the gun's. Rotating the gun therefore rotates the beam with it, for free.
+            //
+            // ⚠ AND THE GUN MODEL'S BARREL RUNS ALONG +Y, NOT -Z. I used -Z first (the camera convention) and
+            // the beam vanished from the render -- it was being cast sideways through the gun. The hooks say so
+            // plainly and I should have read them before guessing: the Barrel attachment mounts at
+            // (0, 0.7307, -0.0818) and the Tactical at (-0.0601, 0.3815, -0.0851), both almost pure +Y, because
+            // these are ripped models in their own frame rather than Godot-convention nodes. 0.73 up the Y axis
+            // IS the muzzle.
+            if (_viewmodel != null && _viewmodel.IsInspecting && tvl is Transform3D it)
+            {
+                var w = _cam.GlobalTransform * it;
+                _laser.AimStraight(w.Origin, w.Basis.Y, _cam.Fov, _cam.GlobalPosition);
+                return;
+            }
+            _laser.Aim(emitter, aimFrom, aimDir, _cam.Fov, _cam.GlobalPosition);
+        }
+
         /// <summary>The retail clothing WEAR sound (master 2026-09-07: "source the clothing-equip-from-ground sound
         /// from the source game and wire it to clothes being auto equipped from pickup").
         ///
@@ -4691,14 +4954,30 @@ namespace UnturnedGodot
             p.Finished += p.QueueFree;   // self-cleanup after the one-shot
         }
 
+        /// <summary>Paths this loader has already complained about. A miss is reported ONCE: these are called per
+        /// shot and per footstep, so a warning per call would bury the log in the failure it is describing.</summary>
+        static readonly System.Collections.Generic.HashSet<string> _wavMissWarned = new();
+
+        static AudioStreamWav WavMiss(string resPath, string why)
+        {
+            // ⚠ SAY IT. Every failure path here used to `return null` in silence, and a null AudioStream plays
+            // nothing without complaint -- so a sound that cannot load is indistinguishable from a sound that
+            // correctly is not playing yet. tinyclaw lost a morning to exactly that shape on 2026-09-11: their
+            // geiger ran its whole schedule calling Play() on a null stream, and "correctly silent at zero dose"
+            // looks identical to "physically cannot make noise". They fixed the CALLER; this is the layer under
+            // it, which was just as quiet.
+            if (_wavMissWarned.Add(resPath)) Log.Err($"[wav] {resPath}: {why} -- this sound will be SILENT");
+            return null;
+        }
+
         // Runtime one-shot WAV loader: walk the RIFF chunks for fmt+data (UnityPy exports may carry extra chunks, so the
         // fixed-44-byte-header assumption in Vehicle.LoadWav isn't safe here). 16-bit PCM only; anything else -> no sound.
         public static AudioStreamWav LoadWavOneShot(string resPath, bool loop = false)
         {
             string p = ProjectSettings.GlobalizePath(resPath);
-            if (!System.IO.File.Exists(p)) return null;
+            if (!System.IO.File.Exists(p)) return WavMiss(resPath, "no such file");
             byte[] b = System.IO.File.ReadAllBytes(p);
-            if (b.Length < 44) return null;
+            if (b.Length < 44) return WavMiss(resPath, $"only {b.Length} bytes -- too short to be a RIFF/WAVE");
             int channels = 1, rate = 48000, bits = 16, dataOff = -1, dataLen = 0, i = 12;   // past "RIFF"<size>"WAVE"
             while (i + 8 <= b.Length)
             {
@@ -4708,7 +4987,8 @@ namespace UnturnedGodot
                 else if (cid == "data") { dataOff = i + 8; dataLen = System.Math.Min(csz, b.Length - dataOff); break; }
                 i += 8 + csz + (csz & 1);
             }
-            if (dataOff < 0 || bits != 16) return null;
+            if (dataOff < 0) return WavMiss(resPath, "no `data` chunk in the RIFF");
+            if (bits != 16) return WavMiss(resPath, $"{bits}-bit, and this loader is 16-bit PCM only");
             byte[] pcm = new byte[dataLen]; System.Array.Copy(b, dataOff, pcm, 0, dataLen);
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = loop ? AudioStreamWav.LoopModeEnum.Forward : AudioStreamWav.LoopModeEnum.Disabled, LoopEnd = loop ? dataLen / (channels * bits / 8) : 0 };
@@ -5264,6 +5544,36 @@ namespace UnturnedGodot
         /// so those paths stay byte-identical.</summary>
         public System.Action<float> NetDamageSink;
 
+        /// <summary>Heal this player fully ON THE AUTHORITY. Null offline, where the local write IS the truth.
+        ///
+        /// ⚠ IT EXISTS FOR THE REASON THE `sethp` COMMENT NEXT DOOR SPELLS OUT: under the loopback -- which is
+        /// how singleplayer runs -- HP and the fine vitals are SERVER-owned, and a client-side write reads back
+        /// correctly for exactly one tick before the owner echo overwrites it with the server's unchanged copy.
+        /// A heal that only ran locally would look like it worked and then quietly undo itself.</summary>
+        public System.Action NetHealSelf;
+
+        /// <summary>Console `heal`: full HP, full food/water/stamina/breath, no infection, no dose, and every
+        /// condition cleared (strawberry 2026-09-13: "heals hp, food, water, infection, stamina to 100%, as
+        /// well as fixing any health conditions").
+        ///
+        /// The fine vitals go through PlayerVitalsSim.ResetForNewLife -- the same call a respawn uses -- rather
+        /// than a second list of field writes here. "Fixing any health condition" and "what a new body starts
+        /// with" are the same set, and writing it twice is how the two drift: the respawn version already
+        /// remembers the two nobody lists (breath and the hidden radiation dose) and the two internal timers
+        /// (the post-damage regen lock, the stamina delay) that a hand-written heal forgets.
+        ///
+        /// LOCAL FIRST, THEN THE AUTHORITY: the local write makes the HUD answer immediately and is the whole
+        /// story offline; the seam makes the server agree so the next echo confirms it instead of reverting it.</summary>
+        public void DebugHealFully()
+        {
+            _vitals.ResetForNewLife();
+            _vitals.Health = MaxHealth;
+            Bleeding = false;
+            Broken = false;
+            _netAdoptedHealth = MaxHealth;   // keep the adopted pin in sync, or UpdateVitals re-pins HP down next tick
+            NetHealSelf?.Invoke();
+        }
+
         // P3b (review finding 5): the 1-3 tick spawn window before the first AdoptReplicatedVitals latches
         // NetVitalsAdopted -- a fall/starvation death firing there would run the LOCAL death path and fight the
         // server clock. Set at shell spawn (ClientWorldSession/MpLoopback) so local death is suppressed until
@@ -5542,6 +5852,20 @@ namespace UnturnedGodot
         public System.Action<int, float> NetDamageObject;    // (destructibleIndex, objectDamage) -> the authoritative ServerDestructibles in the loopback. In SP the local bullet path (StepBullets) owns hits, but destructible HEALTH is server-owned (ServerDestructibles mirrors the alive-bit back onto the field), so a local prop hit must route THERE, not break the field locally (a local break gets reverted by the next mirror tick). Null in pure --direct SP (no server) -> props inert there (documented fallback).
         public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
         public System.Action<Vector3, Vector3, ushort> NetGrenade;   // (origin, velocity, throwable item id) -> Client.SendGrenade. The ID is what lets the server pick the right fuse/blast/effect out of SDG.Unturned.Throwables instead of assuming every throw is a frag.
+
+        /// <summary>Spend one thrown item from the SERVER's bag while the flight stays LOCAL. (itemId) -> true if
+        /// it was there. The LISTEN-SERVER seam, and it exists because the loopback cannot use either of the other
+        /// two answers:
+        ///
+        ///   - it cannot use <see cref="NetGrenade"/>, because that hands the flight to the server and the
+        ///     loopback has no ProjectileReplicaView to draw it -- every grenade would go invisible;
+        ///   - it cannot use the plain local removeItemAmount, because the loopback's bag IS the server's
+        ///     (Client.Inventories.ReplicaUpdated -> AdoptReplicatedInventory), so a local removal is overwritten
+        ///     by the next echo and the item comes back.
+        ///
+        /// Same shape as NetDamageSink: a DIRECT authority call rather than a wire command, for a thing the local
+        /// node already did.</summary>
+        public System.Func<ushort, bool> NetSpendThrowable;
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
         public System.Action<uint> NetPickupItem;            // wired by ClientWorldSession: F on a focused WorldItemPuppet asks the server for the item (Client.SendPickupItem)
 
@@ -5552,6 +5876,7 @@ namespace UnturnedGodot
         // client never re-packs its own bag, plants its own generator, or levels its own skill).
         public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
+        public System.Action<byte, byte, byte, ushort, byte, byte, byte, byte> NetSplitItem;   // (page,x,y, amount, toPage,toX,toY,toRot) -> Client.SendSplitItem
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         // (magPage,magX,magY,magId, roundPage,roundX,roundY,roundId, unloading) -> Client.SendMagLoad.
@@ -5568,7 +5893,7 @@ namespace UnturnedGodot
         /// and "fire it, then drag it anywhere" handed back a full magazine.</summary>
         public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
         public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
-        public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
+        public System.Action<byte, byte, byte, ushort, ushort> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte, byte, byte, byte> NetUnwearClothing;   // (slot, page, x, y) -> Client.SendUnwearClothing; page 255 = "anywhere", the pre-drag behaviour
@@ -5803,6 +6128,17 @@ namespace UnturnedGodot
 
         /// <summary>MP drop (InventoryUI Drop): the server removes the jar + tosses the world item; the
         /// echo empties the cell and the item puppet renders the drop.</summary>
+        /// <summary>MP split: the server takes N off the stack and finds the new stack a slot, then the
+        /// inventory echo lands it. Client-side is not an option -- the grid is server-owned, so a local split
+        /// reads back correct for exactly one tick before the echo overwrites it.</summary>
+        public bool RequestSplitItem(byte page, byte x, byte y, ushort amount,
+                                     byte toPage = 255, byte toX = 0, byte toY = 0, byte toRot = 0)
+        {
+            if (NetSplitItem == null) return false;
+            NetSplitItem(page, x, y, amount, toPage, toX, toY, toRot);
+            return true;
+        }
+
         public bool RequestDropItem(byte page, byte x, byte y)
         {
             if (NetDropItem == null) return false;
@@ -6408,10 +6744,10 @@ namespace UnturnedGodot
                     // Expressed with the existing reload intent -- spend this stack, take back what is left --
                     // rather than a new message, so there is no wire format change and no version bump.
                     if (InventoryIsServerOwned && NetReloadSwap != null)
-                        NetReloadSwap(b, jar.x, jar.y, jar.item.id, (byte)System.Math.Max(0, jar.item.amount - t));
+                        NetReloadSwap(b, jar.x, jar.y, jar.item.id, (ushort)System.Math.Max(0, jar.item.amount - t));
                     else
                     {
-                        jar.item.amount = (byte)(jar.item.amount - t);
+                        jar.item.amount = (ushort)(jar.item.amount - t);
                         if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
                     }
                     taken += t;
@@ -6437,7 +6773,12 @@ namespace UnturnedGodot
         public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, SDG.Unturned.Item item, byte page, byte idx)> SpareMags()
         {
             if (!UsesMagItem) return new();
-            var all = AttachmentFit.InBagInstances(Inventory, "Magazine", Gun.Caliber);
+            // The cartridge is passed even though NO magazine is cartridge-restricted today: omitting it means
+            // "the cartridge is unknown", and Fits reads that as a REFUSAL for anything restricted. Harmless
+            // here only because CaliberNames currently lists one barrel and no magazines -- which is a fact
+            // about the table, not about this call, and the day a magazine joins it this line would start
+            // silently returning nothing.
+            var all = AttachmentFit.InBagInstances(Inventory, "Magazine", Gun.Caliber, Gun.CaliberName);
             // exclude mags that FIT the gun (same caliber GROUP) but hold the WRONG round -- a .300 BLK mag for a 5.56
             // gun, or vice versa (master). magRound distinguishes them within a shared STANAG group.
             string round = Gun.CaliberName;
@@ -6587,12 +6928,23 @@ namespace UnturnedGodot
         // group) into the viewmodel subviewport so they spill onto the gun. ADDITIVE on the sun-mirror rig (master). Throttled
         // (~17/s) + capped at 4; each light's view-space offset from the player camera becomes the mirror's local position.
         int _lightScanCd;
+        /// <summary>How much non-sun light is falling on the player right now, and what colour it averages.
+        /// A by-product of the viewmodel's dynlight scan (free -- that loop already walks the group), consumed
+        /// by the inventory paperdoll so the doll is lit by the room rather than only by the sky.</summary>
+        public float NearbyLightEnergy { get; private set; }
+        public Color NearbyLightColor { get; private set; } = Colors.White;
         readonly System.Collections.Generic.List<(Vector3, Color, float, float)> _mirrorLights = new();
         const int MaxMirrorLights = 4;
         static float LightRange(Light3D l) => l is OmniLight3D o ? o.OmniRange : l is SpotLight3D s ? s.SpotRange : 12f;
         void ScanWorldLights()
         {
-            if (_cam == null || _viewmodel == null) return;
+            // ⚠ NO VIEWMODEL IS NOT A REASON TO SKIP THE SCAN. This used to bail on `_viewmodel == null`, which was
+            // right when the only consumer was the spill onto the first-person gun -- no gun, nothing to light.
+            // The paperdoll is a second consumer with a different answer: it wants to know how lit YOU are, and
+            // you are just as lit with your fists up. Bailing left NearbyLightEnergy frozen at whatever it last
+            // was (usually 0) for every unarmed player, which is a silent wrong answer rather than a skipped
+            // optional effect. Only the MIRROR needs a viewmodel now, and it is guarded at the bottom.
+            if (_cam == null) return;
             if (--_lightScanCd > 0) return;
             _lightScanCd = 5;   // PERF: 10 Hz (was ~17 Hz); each scan marshals the whole dynlight group
             _mirrorLights.Clear();
@@ -6608,6 +6960,33 @@ namespace UnturnedGodot
                     float d2 = camPos.DistanceSquaredTo(dl.GlobalPosition);
                     if (d2 < rng * rng * 4f) found.Add((d2, dl));   // within ~2x its range of the player
                 }
+            // THE SAME SCAN ALSO ANSWERS "HOW LIT IS THE PLAYER" (strawberry 2026-09-13: "have the paperdoll
+            // lighting follow light sources too, not just sun"). The inventory doll lives in its OWN isolated
+            // SubViewport, exactly like the viewmodel, so world lights never reach it and it tracked only the
+            // sun -- leaving you daylit on the doll while standing in a dark room under a red flare.
+            //
+            // Aggregated here rather than scanned again from the UI: this loop has already paid for the group
+            // walk and the distance test, and a second consumer running its own 10 Hz scan of the same group
+            // would double a cost that exists precisely because it was measured and throttled once.
+            //
+            // It is a LEVEL, not a placement: the doll is a preview on a stage, not a simulation of where you
+            // stand, so what it wants is "how much light, what colour" to lift its fill by -- not four lights
+            // positioned in a world whose camera and pose are nothing like the player's.
+            float lsum = 0f; Color lcol = new Color(0f, 0f, 0f);
+            foreach (var (d2, dl) in found)
+            {
+                float rng = LightRange(dl);
+                if (rng <= 0.01f) continue;
+                float t = Mathf.Clamp(1f - Mathf.Sqrt(d2) / rng, 0f, 1f);   // linear falloff, 1 at the bulb
+                float c = dl.LightEnergy * t * t;                           // squared: a light across the street should not wash the doll
+                lsum += c;
+                lcol += new Color(dl.LightColor.R * c, dl.LightColor.G * c, dl.LightColor.B * c);
+            }
+            NearbyLightEnergy = Mathf.Min(lsum, 4f);   // capped: a stack of flares must not blow the doll white
+            NearbyLightColor = lsum > 0.001f
+                ? new Color(lcol.R / lsum, lcol.G / lsum, lcol.B / lsum)   // energy-weighted mean hue
+                : Colors.White;
+
             found.Sort((a, b) => a.d2.CompareTo(b.d2));
             for (int i = 0; i < found.Count && i < MaxMirrorLights; i++)
             {
@@ -6616,7 +6995,7 @@ namespace UnturnedGodot
                 _mirrorLights.Add((new Vector3(-lp.X, lp.Y, -lp.Z), dl.LightColor, dl.LightEnergy, LightRange(dl)));   // subview cam is 180 deg about Y vs the player cam -> negate X+Z (master: was inverted L/R + fwd/back)
 
             }
-            _viewmodel.SetWorldLights(_mirrorLights);
+            _viewmodel?.SetWorldLights(_mirrorLights);   // the gun-spill half; the light LEVEL above is computed regardless
         }
         int _burstLeft;                               // rounds remaining in the current burst
         float _burstCd;                               // NON-source anti-spam-click cooldown between bursts (master's call)
@@ -6652,6 +7031,13 @@ namespace UnturnedGodot
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
             Health -= amount;
+            // Passive regen must not start on the same tick you were shot (strawberry 2026-09-13: "never when
+            // taking damage"). Armed HERE, at the one local entry point every real hit passes through, rather
+            // than inside the sim -- the sim cannot see combat, only the vitals tick, and by then the hit is a
+            // number that already landed. Deliberately NOT armed by the sim's own bleed/starve/exposure loss:
+            // those already block regen through their own clauses, and arming off them would leave the lock
+            // running for ten seconds after a wound closed for no reason anyone asked for.
+            _vitals.NotifyDamaged();
             if (amount > 1f) Bleeding = true;   // a real hit opens a wound; only a dressing closes it
 
             ShowHurtCosmetics(amount, fromPos);
@@ -7167,9 +7553,16 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
+            // ⚠ SEATED IS NOT SPRINTING (strawberry 2026-09-13: "prevent stamina decay when not able to sprint (ie in a car)").
+            // `moving` is true in a moving car because the VEHICLE is carrying you, and the stance stays whatever it
+            // was when you got in -- so driving anywhere drained stamina as if you had run there. The rule the other
+            // clauses already follow is "if your legs cannot answer, it costs nothing"; broken legs and a major dose
+            // were covered, sitting down was not. Trains and cranes ride the parallel boarded path, so they are named
+            // too rather than left to be discovered as a third case.
+            bool cannotSprint = _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null || IsSeatedOnProp;
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated && !cannotSprint;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
             TemperatureTick(sprinting, dt);
-            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
+            bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Broken, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
                 CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
@@ -7706,7 +8099,7 @@ namespace UnturnedGodot
                 else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
-                else if (HoldingThrowable) ThrowHeld();                 // holding a grenade/smoke/flare: LMB lobs it (strawberry 2026-09-05)
+                else if (HoldingThrowable && BeginThrowSwing()) _throwHeldDown = true;   // LMB starts the WIND-UP; RELEASE lobs it (strawberry 2026-09-13, 2026-09-14)
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldPaintItem != null) TrySprayVehicle();     // holding a spraypaint: LMB resprays the vehicle you're aimed at
@@ -7722,6 +8115,11 @@ namespace UnturnedGodot
             else if (Keybinds.JustReleased(GameAction.Fire, @event))
             {
                 if (HoldingFisher) FisherRelease();   // LMB release with a rod: lock in the charge and fling the bobber (UseableFisher.stopPrimary)
+                // HOLD TO DELAY THE THROW (strawberry 2026-09-13: "while holding lmb, delay the hold until its
+                // released, no cooking mechanics, just delaying the throw"). Explicitly NOT cooking: the fuse
+                // still starts when the grenade leaves the hand, so holding longer changes when it flies and
+                // nothing else. The rod next to this already had the shape; a throwable just never used it.
+                else if (HoldingThrowable && _throwHeldDown) { _throwHeldDown = false; ThrowHeld(); }
             }
             else if (Keybinds.Matches(GameAction.Aim, @event) && @event is not InputEventKey { Echo: true })
             {
@@ -7925,7 +8323,18 @@ namespace UnturnedGodot
                 // N = the vision item in the GLASSES slot, whichever it is: nightvision goggles or the headlamp. Both live in the
                 // same slot so only one can be worn (master 2026-09-05: "you would only want one or the other. if you have a
                 // flashlight why are u using nvgs?"); no ambiguity to resolve.
-                if (WearingNightvision) ToggleNightVision();
+                //
+                // ⚠ THERE IS A THIRD CLAIMANT NOW and it is the one real ambiguity on this key: the gun-rail
+                // tactical laser/light (strawberry 2026-09-13: "toggles on/off with N"). RETAIL USES TWO KEYS --
+                // the rail is ControlsSettings.tactical (default B) and the goggles are the vision toggle -- so
+                // this collision is the port's, created by putting both on N as asked. NVGs plus a laser is an
+                // ordinary loadout, so the order is written down as a RULE rather than left to be whatever an
+                // if-chain happened to do: THE THING IN YOUR HANDS WINS. You pick an attachment shot by shot and
+                // goggles sit in a slot, and HasTacticalToggle self-guards on a gun actually being out, so the
+                // moment you holster it N is the goggles again. A rangefinder or bayonet on the rail has no ON
+                // state and answers false, so it falls straight through rather than eating the key.
+                if (HasTacticalToggle) ToggleTactical();
+                else if (WearingNightvision) ToggleNightVision();
                 else ToggleHeadlamp();     // Flashlight key (now N): the WORN headlamp. The handheld torch moved to RMB. Self-guards on actually wearing one.
             }
             // BUILD MODE HAS NO KEY (strawberry 2026-08-12: "remove build mode toggle for now. just the hotkey").
@@ -8419,6 +8828,11 @@ namespace UnturnedGodot
             }   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = PelletsPerShot;   // shotgun buckshot: the LOADED AMMO decides, loose shell or magazine alike
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
+            // A SILENCED SHOT LEAVES SLOWER (strawberry 2026-09-13) -- the cost that pays for being unheard: more
+            // drop and more lead at range. See AttachmentFit.SilencedVelocityMultiplier; it is a design choice,
+            // not a ported number, and it is applied HERE so it rides the real ballistic sim rather than being
+            // faked into the damage.
+            if (Suppressed) muzzleVel *= AttachmentFit.SilencedVelocityMultiplier;
             int steps = Gun?.BallisticSteps ?? 20;
             float gravity = -9.81f * (Gun?.GravityMultiplier ?? 4f);
             for (int i = 0; i < pellets; i++)
@@ -9717,7 +10131,11 @@ namespace UnturnedGodot
             // folds in WearingHeadlamp. Pushed on the same per-frame reconcile as the beam, and for the same
             // reason -- three separate paths can take the gear off your face, and a lit lens stranded on a bare
             // head is the same bug as a stranded beam.
-            _body?.SetGlassesGlow(NightVision.Active || wantLamp);
+            // ...at the WORN item's own brightness: a headlamp is a lamp, nightvision tubes are not (strawberry
+            // 2026-09-13 "tone down the glow on both nvgs"). One shared energy made the two NVG palettes -- a
+            // saturated green and a near-white -- bloom harder than the headlamp's cream at the same number.
+            _body?.SetGlassesGlow(NightVision.Active || wantLamp,
+                                  ClothingContent.LensEnergy(Inventory?.wornGlasses?.id ?? 0));
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
@@ -10079,7 +10497,22 @@ namespace UnturnedGodot
         /// scope is bolted on), so it overrides a stale mask rather than being hidden by one.</summary>
         void ApplyInstalledAttachments(SDG.Unturned.Item gun)
         {
+            // THE RAIL SWITCH RESETS WITH THE GUN, which is retail rather than a convenience: `interact` is a
+            // field on UseableGun, and UseableGun is destroyed and rebuilt every time you equip, so a laser you
+            // left on is off when you draw the weapon again. Lands here because this is the choke every equip
+            // and every attachment change already goes through for the meshes.
+            //
+            // ⚠ ABOVE the guard below, not under it. The switch is player state, not viewmodel state: a headless
+            // fixture and a server avatar both have a null _viewmodel, and a reset that only runs when there is a
+            // model to update would leave the beam lit on exactly the paths that cannot see it.
+            _tacticalOn = false;
+            ApplyTacticalLight();
+            _viewmodel?.SetTacticalLit(false);
             if (gun == null || _viewmodel == null) return;
+            // The barrel's SHOT AUDIO + silenced flag, from the same installed id the meshes come from. Done here
+            // rather than at the menu click so a gun re-equipped with a suppressor already on it sounds right on
+            // the first shot -- the same reason this method exists for the meshes.
+            _viewmodel.SetBarrelAudio(AttachmentFit.InstalledId(gun, "Barrel"));
             foreach (var slot in AttachmentFit.Slots)
             {
                 int id = AttachmentFit.InstalledId(gun, slot);
@@ -10114,7 +10547,8 @@ namespace UnturnedGodot
             AttachmentFit.MountOn(body, _gunName,
                 _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Sight") : 0,
                 _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Magazine") : 0,
-                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0);
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Barrel") : 0,
+                _heldItem != null ? AttachmentFit.InstalledId(_heldItem, "Tactical") : 0);
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---
@@ -10144,7 +10578,28 @@ namespace UnturnedGodot
         public int DebugTracerCount { get { int n = 0; foreach (var b in _bullets) if (b.Tracer != null) n++; return n; } }
         public int DebugBulletCount => _bullets.Count;
 
-        public bool Suppressed => (_viewmodel?.IsSuppressed ?? false) || (Gun?.IntegrallySuppressed ?? false);
+        /// <summary>Is the shot actually SILENCED -- the one question the tracer, the muzzle flash, the zombie
+        /// alert and the muzzle velocity all key off.
+        ///
+        /// ⚠ "A BARREL IS ATTACHED" IS NOT THE SAME QUESTION, which is what this used to ask. Military Barrel and
+        /// Ranger Barrel are accuracy parts and the two Muzzles are BRAKES -- all four are Barrel-slot attachments
+        /// that leave a gun exactly as loud, and fitting one would have made you tracerless, flashless and
+        /// inaudible to zombies. The retail .dat answers it with a bare `Silenced` key, so the INSTALLED ITEM is
+        /// asked whenever there is one.
+        ///
+        /// The viewmodel's slot state is still consulted as a fallback, for the legacy path where the T menu
+        /// toggled the Barrel slot by MASK with no installed id recorded -- there, the only thing that mask could
+        /// ever have meant was the suppressor.</summary>
+        public bool Suppressed
+        {
+            get
+            {
+                if (Gun?.IntegrallySuppressed ?? false) return true;
+                int barrelId = AttachmentFit.InstalledId(_heldItem, "Barrel");
+                if (barrelId > 0) return AttachmentFit.IsSilencer(barrelId);
+                return _viewmodel?.IsSuppressed ?? false;
+            }
+        }
         bool _aimForced;   // ADS driven by the debug/render hook rather than by RMB -- exempt from the menu-drops-the-sights rule
         public void ForceAim(bool on) { _aimForced = on; _viewmodel?.SetAiming(on); }   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
 
@@ -11053,6 +11508,7 @@ namespace UnturnedGodot
             FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             if (_throwCd > 0f) _throwCd -= (float)delta;   // busy for the length of the throw clip (mirrors ServerCombat.DefaultGrenade.CooldownTicks as the floor)
+            if (_throwHeldDown) _throwSwingT += (float)delta;   // how far into the wind-up the button has been held
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
             TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends

@@ -188,8 +188,31 @@ namespace UnturnedGodot
         }
 
         // Info line for the wire-tool look-at HUD -- reflects the LIVE power flowing through this port.
+        /// <summary>SIGNAL state, the data equivalent of Powered. An OUTPUT is live while its own device has
+        /// power; an INPUT is live while wired to a live output. Written by PowerNet.SolveData.</summary>
+        public bool DataLive;
+
+        /// <summary>WHAT is being streamed here -- the device the signal ultimately came from, carried along
+        /// the whole chain rather than re-derived at the end.
+        ///
+        /// ⚠ THIS IS WHY A REPEATER WORKS AT ALL. Before wireless links existed, a screen could find its camera
+        /// by walking one wire, because there was only ever one hop. The moment a transmitter/receiver pair sits
+        /// in the middle -- camera -&gt; wire -&gt; transmitter ~~&gt; receiver -&gt; wire -&gt; TV -- that walk finds the
+        /// RECEIVER and stops, and the screen shows nothing while every link reports healthy. Propagating the
+        /// origin makes the number of hops irrelevant: whatever is on the end of the chain asks one question.</summary>
+        public GodotObject DataSource;
+
+        /// <summary>" [ch 0421]" for a wireless link, empty for anything else.</summary>
+        string RadioChannel()
+            => Owner is Deployable d && GodotObject.IsInstanceValid(d) && d.Def != null && d.Def.IsDataRadio
+               ? $" [ch {d.DataCode:0000}]" : "";
+
         public string InfoLine() => Kind switch
         {
+            // A radio names its CHANNEL here: the code is the only thing that decides whether a pair works, and
+            // it is invisible on the model, so the one place a player already looks at a port is where it goes.
+            DeployableDef.PortKind.DataOut => $"{ProviderName}{RadioChannel()} — data out ({(DataLive ? "streaming" : "no signal — needs power")})",
+            DeployableDef.PortKind.DataIn => $"{ProviderName}{RadioChannel()} — data in ({(DataLive ? "receiving" : Occupied ? "wired, no signal" : "not connected")})",
             DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output · {Draw:0}w drawn",
             DeployableDef.PortKind.Consumer => Watts > 0f
                 ? $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})"
@@ -203,7 +226,14 @@ namespace UnturnedGodot
 
         // The port cube's BASE fill colour. I/O ports (Role None) are grey, shading light (free) -> dark (Occupied) as a
         // wire attaches; switch trigger ports keep their green/red semantic.
-        Color CubeColor() => Role != DeployableDef.SwitchRole.None ? BaseColor(Kind, Role) : (Occupied ? IoUsed : IoFree);
+        // ⚠ DATA PORTS ARE A DIFFERENT COLOUR ON PURPOSE. Power I/O is grey; a signal socket is CYAN, and it
+        // brightens when a stream is actually flowing. They are not interchangeable and the wire tool refuses to
+        // pair them, so two identical grey cubes would make that refusal read as a bug rather than as a rule --
+        // you would aim at a socket that looks exactly like every other socket and be told no.
+        static readonly Color DataIdle = new Color(0.16f, 0.42f, 0.50f);   // a signal socket with nothing coming through
+        static readonly Color DataFlow = new Color(0.35f, 0.88f, 1.00f);   // ...and one that is carrying a stream
+        Color CubeColor() => DeployableDef.IsDataPort(Kind) ? (DataLive ? DataFlow : DataIdle)
+                           : Role != DeployableDef.SwitchRole.None ? BaseColor(Kind, Role) : (Occupied ? IoUsed : IoFree);
 
         // Wire-tool highlight state (driven by PlayerController): None = base grey; Focus = a little brighter on look-at
         // (master); WireOk/WireBad = green/red cube + arrow while routing a wire onto this port (valid vs occupied/

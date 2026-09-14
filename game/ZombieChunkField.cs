@@ -312,12 +312,19 @@ namespace UnturnedGodot
             seen = default;
             if (space == null) return false;
             Vector3 eye = from + Vector3.Up * 1.5f;
+            // ONE query object for the whole sweep, and the result DISPOSED each time. Both of these are native
+            // handles: a fresh PhysicsRayQueryParameters3D per candidate anchor plus an abandoned result
+            // Dictionary per ray meant two tracked objects per anchor per call, and this runs over every anchor
+            // of every chunk. WorldItem's LOS scan already reuses a single query object for exactly this reason.
+            var q = PhysicsRayQueryParameters3D.Create(eye, eye, WorldLayers.World);   // a wall between = can't see
+            q.From = eye;
             foreach (var a in _anchors)
             {
                 float dx = a.X - from.X, dz = a.Z - from.Z;
                 if (dx * dx + dz * dz > SightRange * SightRange) continue;
-                var q = PhysicsRayQueryParameters3D.Create(eye, a + Vector3.Up * 1.0f, WorldLayers.World);   // a wall between = can't see
-                if (space.IntersectRay(q).Count == 0) { seen = a; return true; }
+                q.To = a + Vector3.Up * 1.0f;
+                using var hit = space.IntersectRay(q);
+                if (hit.Count == 0) { seen = a; return true; }
             }
             return false;
         }

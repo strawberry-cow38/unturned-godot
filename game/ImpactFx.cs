@@ -107,15 +107,18 @@ namespace UnturnedGodot
             if (itex != null) mat.AlbedoTexture = itex;
             if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true; }   // LOOP (not clamp): a chip's anim value can drift past the last frame -> with Loop=false it clamped onto the blank past-the-end frame instead of a chip
 
-            var dust = new CpuParticles3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, 
-                Emitting = false, OneShot = true, Explosiveness = 1f,   // FIX TEST: fired below AFTER AddChild+position. Set true in the ctor, the one-shot arms at construction; spawned inside a 50Hz physics tick the cycle can burn before the first _process -> fires empty -> no chips (decal still lands).
+            // GPU, via ParticleFx.Emitter -- CpuParticles3D simulated this cone on the MAIN THREAD for a
+            // movie-maker limitation that no longer exists on 4.6.2 (see ParticleFx). Every tuned number below
+            // is carried across unchanged; only where they LIVE moved (node -> ParticleProcessMaterial).
+            var spec = new ParticleFx.Spec { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Emitting = false, OneShot = true, Explosiveness = 1f,   // fired below AFTER AddChild+position. Set true here, the one-shot arms at construction; spawned inside a 50Hz physics tick the cycle can burn before the first _process -> fires empty -> no chips (decal still lands).
                 Amount = ParticleFx.Amount(metal ? 28 : 20), Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
                 Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
                 InitialVelocityMin = metal ? 5f : 3f, InitialVelocityMax = metal ? 9f : 6f,
                 Gravity = new Vector3(0f, -9.8f, 0f),
                 ScaleAmountMin = (metal ? 0.3f : 0.5f) * ParticleFx.SizeScale, ScaleAmountMax = (metal ? 0.6f : 1.0f) * ParticleFx.SizeScale,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
-                VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB)
+                VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB) -- a GPU emitter has the SAME auto-AABB behaviour, so this is still load-bearing
                 // TUMBLE (master 2026-09-07: "apply random rotation and rotation-over-life to bullet impact
                 // debris particles"). Every chip used to spawn at angle 0 and hold it, so a burst was a fan of
                 // identically-oriented quads -- readable as sprites rather than as debris, and worst on the
@@ -126,7 +129,8 @@ namespace UnturnedGodot
                 AngleMin = -180f, AngleMax = 180f,
                 AngularVelocityMin = -360f, AngularVelocityMax = 360f,
             };
-            if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; dust.AnimSpeedMin = 0f; dust.AnimSpeedMax = 0f; }   // AnimSpeed 0 -> each chip HOLDS one static random frame for its whole life. THE BUG: the anim advanced over the 1 s lifetime and (Loop=false) clamped onto the blank past-the-end frame, so a chip sat blank early and only landed on a real frame ~1 lifetime later -> "nothing at impact, a lone straggler ~1 s later" (master + tinyclaw). Loop=true + AnimSpeed 0 = a solid chip from frame 0.
+            if (sheet) { spec.AnimOffsetMin = 0f; spec.AnimOffsetMax = 1f; spec.AnimSpeedMin = 0f; spec.AnimSpeedMax = 0f; }   // AnimSpeed 0 -> each chip HOLDS one static random frame for its whole life. THE BUG: the anim advanced over the 1 s lifetime and (Loop=false) clamped onto the blank past-the-end frame, so a chip sat blank early and only landed on a real frame ~1 lifetime later -> "nothing at impact, a lone straggler ~1 s later" (master + tinyclaw). Loop=true + AnimSpeed 0 = a solid chip from frame 0.
+            var dust = ParticleFx.Emitter(spec);
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
             dust.Emitting = true;   // THE FIX: arm the one-shot AFTER AddChild+position. Emitting=true in the ctor arms it at construction; spawned inside a 50Hz physics tick (StepBullets), the cycle burns before the first _process -> fires EMPTY -> no chips (decal still lands). Firing it here starts a clean cycle regardless of the spawning tick.

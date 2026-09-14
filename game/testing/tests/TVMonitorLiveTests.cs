@@ -1,4 +1,5 @@
 using Godot;
+using System.Linq;
 using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
@@ -109,9 +110,18 @@ namespace UnturnedGodot.Testing
             {
                 T.Check($"the {nm} has a wire-able plug", d.DebugHasPlug);
                 T.Check($"...drawing {w:0} W ({d.DebugPlugWatts:0})", Mathf.IsEqualApprox(d.DebugPlugWatts, w));
-                T.Check($"...exposed to the power graph ({d.PowerPorts.Count} port)", d.PowerPorts.Count == 1);
-                T.Check($"...as a CONSUMER, never a source", d.PowerPorts.Count == 1
-                    && d.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && !d.PowerProducing);
+                // ⚠ COUNT THE POWER PORTS, NOT THE PORTS. Every set grew a DATA-IN aerial when the CCTV feed
+                // landed (strawberry 2026-09-13), so the total is 2 and always will be -- but exactly one of them
+                // is on the power graph, which is what this ever meant to say. Asserting the raw count made this
+                // fail on a feature working as designed.
+                var powerPorts = d.PowerPorts.Where(p => !DeployableDef.IsDataPort(p.Kind)).ToList();
+                T.Check($"...exposed to the power graph ({powerPorts.Count} power of {d.PowerPorts.Count} ports)",
+                    powerPorts.Count == 1);
+                T.Check($"...as a CONSUMER, never a source", powerPorts.Count == 1
+                    && powerPorts[0].Kind == DeployableDef.PortKind.Consumer && !d.PowerProducing);
+                // ...and the aerial really is the other one, so "2 ports" can never quietly become "two plugs".
+                T.Check($"...beside exactly one DATA aerial, not a second plug",
+                    d.PowerPorts.Count(p => p.Kind == DeployableDef.PortKind.DataIn) == 1);
                 // The height axis is only non-degenerate because the prop was stood up. If it were not, the plug would
                 // sit at mid-height -- which is legal but would mean this test silently stopped covering the slide.
                 T.Check($"...and hung at a height, not at the cabinet's midpoint ({d.DebugPlugLocal})",

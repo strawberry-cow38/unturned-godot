@@ -91,12 +91,14 @@ namespace UnturnedGodot
         float _trS, _trRailY = 1.4f; bool _trAnim;
         readonly System.Collections.Generic.List<(Node3D mark, Vehicle veh, Vector3 local)> _pivotMarks = new();   // --pivots: arrow markers pinned to each coupling point
         bool _driveTest, _swarm, _drivethru, _nade, _grassTest, _tankTest; PlayerController _dtPlayer; Vehicle _ttVeh; Camera3D _ttCam; Vector3 _ttTargetA, _ttTargetB; int _ttLastPf = -1;   // --tanktest=DIR: the tank cannon laid on two targets, with a simulated gunner stealing it in between      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car. _grassTest (UG_GRASSTEST=1): a lawn + overhead cam, jeep stays parked -> verify grass displacement
-        bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
+        bool _fireTest; PlayerController _ftPlayer; int _ftFrame; bool _ftWantLaser, _ftWantInspect, _ftInspected;   // --firetest [--supp] : player fires downrange -- viewmodel / tracer / ADS / impact test rig
         bool _paActive; RiggedCharacter _paRig; float _paT; bool _paHit; bool _paGun;   // --puppetanim: drive a player rig idle->walk->run (SetLocomotion+Tick, like RemotePlayers). UG_PAHITBOX: PvP damage zones + idle. UG_PAGUN: gun-hold, and its own hold->ADS->lean sequence
         byte _paStance; float _paLean; bool _paMeasured;   // UG_PASTANCE=stand/crouch/prone/lean holds that pose under the hitbox overlay; dumps the rig's bone Y/Z once posed
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : drive a jeep on real PEI
         int _tpFrame; double _tpPrims, _tpDraws, _tpMs; int _tpN;   // --- UG_TERRPERF terrain cost probe
-        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
+        PlayerController _pdPlayer; int _pdFireT, _holdThrowT, _enterCarT; bool _holdItemDone, _glassPaneDone, _partTestDone;
+        static readonly bool _perfProbeMain = System.Environment.GetEnvironmentVariable("UG_PERFPROBE") == "1";
+        double _fpsElapsed; int _fpsFrames;   // --peidrive on-foot player -> UG_AUTOFIRE terrain-impact verification
         bool _peiPlayable; bool _pdTpDone;   // UG_TP=1: drop to the chase camera once the world is up   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         // --landmarkshot=DIR: after the PEI world loads, fly a camera to a few points at rising distance from the big
@@ -113,13 +115,119 @@ namespace UnturnedGodot
         };
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
+        float _resFixT;   // UG_RES: re-assert the benchmark window size past the project's maximized default
+        ulong _lastPhysFrames;   // UG_PERF: physics ticks actually executed per second vs the configured rate
+        bool _drawSrcDone;   // UG_DRAWSRC: the scene-composition dump below is a ONE-SHOT, not a per-second log
+
+        // WHERE THE DRAW CALLS ACTUALLY COME FROM (UG_DRAWSRC=1, printed once).
+        //
+        // Written 2026-09-12 after I predicted that widening ResourceField's 64 m MultiMesh cells would cut the
+        // draw count, swept it, and watched draws go UP (3,967 -> 4,756). The prediction was wrong because I had a
+        // MODEL of what was drawing and had never counted it. `draws=` says how many; nothing said WHAT. So this
+        // attributes every visible instance to the class that built it and prints the ranking.
+        //
+        // A MultiMeshInstance3D is counted as its SURFACE count, not its instance count -- that is the whole point
+        // of instancing, and conflating the two is exactly the mistake that produced the bad prediction. Instances
+        // are reported alongside, so "1 draw carrying 4,000 trees" and "400 draws carrying 400 props" cannot be
+        // mistaken for each other.
+        static void DumpDrawSources(Node root)
+        {
+            var byOwner = new System.Collections.Generic.Dictionary<string, (int Draws, int Nodes, long Inst)>();
+            var detail = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, int>>();
+            int total = 0, shadowCasters = 0;
+            var stack = new System.Collections.Generic.Stack<Node>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var n = stack.Pop();
+                foreach (var c in n.GetChildren()) stack.Push(c);
+                if (n is not VisualInstance3D vi || !vi.IsVisibleInTree()) continue;
+
+                int draws; long inst = 0;
+                switch (vi)
+                {
+                    case MultiMeshInstance3D mmi:
+                        draws = mmi.Multimesh?.Mesh?.GetSurfaceCount() ?? 0;
+                        inst = mmi.Multimesh?.VisibleInstanceCount >= 0 ? mmi.Multimesh.VisibleInstanceCount : (mmi.Multimesh?.InstanceCount ?? 0);
+                        break;
+                    case MeshInstance3D mi:
+                        draws = mi.Mesh?.GetSurfaceCount() ?? 0; inst = draws > 0 ? 1 : 0;
+                        break;
+                    default:
+                        draws = 1; inst = 1; break;
+                }
+                if (draws <= 0) continue;
+                if (vi is GeometryInstance3D gi && gi.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) shadowCasters += draws;
+                total += draws;
+
+                // Attribute to the nearest ancestor OUR code declared -- that is the thing a fix would edit. A node
+                // with no such ancestor falls back to its own engine class, so nothing is silently dropped.
+                string owner = null;
+                for (Node a = n; a != null && owner == null; a = a.GetParent())
+                    if (a.GetType().Namespace?.StartsWith("UnturnedGodot") == true) owner = a.GetType().Name;
+                owner ??= "(engine) " + n.GetType().Name;
+
+                byOwner.TryGetValue(owner, out var e);
+                byOwner[owner] = (e.Draws + draws, e.Nodes + 1, e.Inst + inst);
+
+                // SECOND LEVEL, for the winner only. "Main is 35.6%" names no code to edit -- Main is where
+                // everything unowned lands. Grouping the top bucket by node name says WHAT those nodes are,
+                // which is the difference between a finding and another model I would have to test later.
+                if (!detail.TryGetValue(owner, out var dd)) { dd = new System.Collections.Generic.Dictionary<string, int>(); detail[owner] = dd; }
+                string nm = n.Name.ToString();
+                int at = nm.IndexOf('@');
+                if (at > 0) nm = nm.Substring(0, at);          // Godot's auto-suffix on duplicate names
+                nm = nm.TrimEnd('0','1','2','3','4','5','6','7','8','9','_');
+                string par = n.GetParent()?.Name.ToString() ?? "-";
+                int pat = par.IndexOf('@'); if (pat > 0) par = par.Substring(0, pat);
+                string key = par + " / " + nm;
+                dd.TryGetValue(key, out int dv); dd[key] = dv + draws;
+            }
+
+            Log.Print($"[drawsrc] total={total} shadowCasting={shadowCasters} owners={byOwner.Count}");
+            var ranked = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, (int Draws, int Nodes, long Inst)>>(byOwner);
+            ranked.Sort((x, y) => y.Value.Draws.CompareTo(x.Value.Draws));
+            for (int i = 0; i < ranked.Count && i < 24; i++)
+            {
+                var r = ranked[i];
+                Log.Print($"[drawsrc]   {r.Value.Draws,6}  {100.0 * r.Value.Draws / System.Math.Max(1, total),5:0.0}%  nodes={r.Value.Nodes,5}  inst={r.Value.Inst,7}  {r.Key}");
+            }
+            for (int i = 0; i < ranked.Count && i < 2; i++)
+            {
+                if (!detail.TryGetValue(ranked[i].Key, out var dd)) continue;
+                var sub = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>(dd);
+                sub.Sort((x, y) => y.Value.CompareTo(x.Value));
+                Log.Print($"[drawsrc] -- inside '{ranked[i].Key}' ({sub.Count} distinct parent/name) --");
+                for (int j = 0; j < sub.Count && j < 14; j++)
+                    Log.Print($"[drawsrc]     {sub[j].Value,6}  {sub[j].Key}");
+            }
+        }
+        // FRAME-TIME PERCENTILES. Average fps is structurally incapable of showing a GC pause: a 12 ms stall on a
+        // 12.5 ms frame is one doubled frame, and at 80 fps average the mean cannot move enough to see it. The
+        // thing a player feels is the tail, so the tail is what gets reported.
+        readonly System.Collections.Generic.List<double> _frameMs = new(512);
+
+        /// <summary>Worst / p99 / hitch-count over the last reporting window, then reset. A hitch is a frame over
+        /// twice the window median -- the doubled frame a GC pause actually produces, which the mean cannot see.</summary>
+        string FrameTail()
+        {
+            if (_frameMs.Count < 8) { _frameMs.Clear(); return ""; }
+            var a = _frameMs.ToArray(); System.Array.Sort(a);
+            double med = a[a.Length / 2], p99 = a[(int)(a.Length * 0.99)], worst = a[a.Length - 1];
+            int hitch = 0; foreach (var v in a) if (v > med * 2.0) hitch++;
+            _frameMs.Clear();
+            return $" worstMs={worst:0.0} p99Ms={p99:0.0} medMs={med:0.0} hitches={hitch}";
+        }
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
         bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
         WeatherManager _stormWm; double _stormT; float[] _stormStrikes; int _stormStrikeIdx;   // --daynight UG_WEATHER + UG_STRIKE_AT=<s,s,s>: fire lightning strikes at those times for the --write-movie storm demo
 
         public override void _Ready()
         {
-            GraphicsOptions.Load(); GraphicsOptions.ApplyAll(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
+            GraphicsOptions.Load(); GraphicsOptions.ApplyAll(this);
+            // The 3D scale is derived from the WINDOW SIZE, so a resize invalidates it. Without this, dragging
+            // a window (or UG_RES settling) leaves the world rendering at the pixel count of the old size.
+            GetWindow().SizeChanged += () => GraphicsOptions.Apply3DScale(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
@@ -152,7 +260,7 @@ namespace UnturnedGodot
             bool rainMatTest = false;
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -288,6 +396,7 @@ namespace UnturnedGodot
                 else if (arg == "--bakelods-dry") { bakeLods = true; bakeLodsDry = true; }
                 else if (arg == "--treesweep") treeSweep = true;   // step the camera ACROSS the tree->imposter handover and count tree pixels at each distance
                 else if (arg == "--imptest") impTest = true;   // bake the tree billboards and DUMP them side by side -- the only check that answers "does it look like a tree"
+                else if (arg == "--cctvtest") cctvTest = true;   // a powered CCTV wired to a powered TV -> the screen shows what the camera sees
                 else if (arg == "--lamptest") lampTest = true;   // one lit INDOOR light over dark ground: UG_LAMP=Light_0(ceiling,default)/Light_1/Lamp_0/Lamp_1, UG_LAMPOFF=1 unlit
                 else if (arg == "--beamtest") beamTest = true;   // the lighthouse's sweeping beam at night (static frame)
                 else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
@@ -342,6 +451,12 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1600, 720);
                 _shotPath = shot;
                 BuildStationTest();
+                // UG_UNDERWATER over a CONTROLLED surface. The submerged pass is distance-absorption, so judging
+                // it needs geometry at KNOWN, varied distances -- which a line-up of 9 stations is and a landscape
+                // is not. It was only attached on the --peidrive path, where the shot harness boots without a
+                // player camera and captures the inside of the terrain, so the effect could never be photographed
+                // at all. That is how it shipped tuned by arithmetic and never looked at.
+                Underwater.DebugAttach(this);
                 return;
             }
 
@@ -363,6 +478,7 @@ namespace UnturnedGodot
                 var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
                 RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
                 RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
+                RainSystem3D.SetWeatherSwell(string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
                 BuildTerrainTest();
                 return;
             }
@@ -683,6 +799,14 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _ = BuildImpostorTest(shot);   // _shotPath is armed INSIDE, after the bake -- see the note there
+                return;
+            }
+
+            if (cctvTest)   // camera + TV + generator + wires: prove a feed actually reaches a screen
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildCctvTest();
                 return;
             }
 
@@ -1276,6 +1400,7 @@ namespace UnturnedGodot
             float wetv = inten; var _rw = System.Environment.GetEnvironmentVariable("UG_RAINWET"); if (!string.IsNullOrEmpty(_rw)) wetv = float.Parse(_rw);
             RenderingServer.GlobalShaderParameterSet("rain_wetness", wetv);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", inten);
+            RainSystem3D.SetWeatherSwell(inten);   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
             AddChild(new RainSystem3D { Cam = cam, Intensity = inten });   // worldspace GPU-particle rain (geometry occludes it)
             Log.Print($"[raintest] worldspace 3D rain, intensity {inten:0.00}. UG_RAININT / UG_RAINWET / UG_RAINCAM.");
         }
@@ -1771,6 +1896,17 @@ namespace UnturnedGodot
         void BuildBoatTest(string type)
         {
             bool night = System.Environment.GetEnvironmentVariable("UG_NIGHT") == "1";   // UG_NIGHT=1: dim sun+sky to verify the caustics FADE at night (don't glow nuclear)
+            // UG_SWELL=<0..1>: drive the weather swell scale directly. This harness never builds a WeatherManager,
+            // so UG_WEATHER does nothing here -- which left the BUOYANCY half of the weather-swell work unverified:
+            // the visuals were rendered, but nothing had shown a boat riding a storm sea, and the CPU twin
+            // (WaveField) is what it actually floats on. Calls the SAME single setter the weather does, so if the
+            // boat sits correctly on the bigger waves, the GPU displacement and the CPU sampler agree by
+            // demonstration rather than by my say-so.
+            {
+                var _sw = System.Environment.GetEnvironmentVariable("UG_SWELL");
+                if (float.TryParse(_sw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float _swv))
+                { RainSystem3D.EnsureGlobals(); RainSystem3D.SetWeatherSwell(Mathf.Clamp(_swv, 0f, 1f)); Log.Print($"[boattest] swell scale forced from UG_SWELL={_swv} -> WaveField.AmpScale={WaveField.AmpScale:0.00}"); }
+            }
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = night ? new Color(0.02f, 0.03f, 0.06f) : new Color(0.42f, 0.58f, 0.75f),
@@ -1793,10 +1929,22 @@ namespace UnturnedGodot
             ShaderMaterial Caust(Color c) { var m = new ShaderMaterial { Shader = caustShader }; m.SetShaderParameter("base_color", c); m.SetShaderParameter("sea_level", Terrain.SeaLevelY); return m; }
             // seabed doubles as the RUNWAY for the land-plane test (raised to Y=0, grey tarmac); else the deep boat floor.
             // UG_PLANESLOPE tilts it into a SLOPE -> reproduce the real terrain (where the plane slides/freaks), not flat.
-            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : -14f, 0f),
-                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f) : Vector3.Zero };
+            // UG_SEASLOPE=1: RAMP the seabed instead of holding it flat at -14 m (strawberry 2026-09-12, "put pei
+            // sand beneath ur boattest"). A flat bed sits past the water's deep-colour threshold everywhere, so it
+            // shows the SAME opacity at every point in frame -- which is why the surface shader's transparency
+            // change was invisible in the last render. Tilting it sweeps the depth from ~2 m to ~22 m across the
+            // view, turning "less transparent" into a gradient you can read off one frame. Same lesson as
+            // UG_DEPTHROW: build the scene so the quantity under test VARIES.
+            bool seaSlope = System.Environment.GetEnvironmentVariable("UG_SEASLOPE") == "1" && !planeGround;
+            var seabed = new StaticBody3D { Position = new Vector3(0f, planeGround ? 0f : (seaSlope ? -12f : -14f), 0f),
+                RotationDegrees = System.Environment.GetEnvironmentVariable("UG_PLANESLOPE") == "1" ? new Vector3(0f, 0f, float.TryParse(System.Environment.GetEnvironmentVariable("UG_SLOPEDEG"), out var _sd) ? _sd : 11f)
+                                : seaSlope ? new Vector3(6f, 0f, 0f) : Vector3.Zero };
+            // PEI SAND, the real value: Terrain.LayerColor's own comment records PEI_Sand_01's extracted albedo
+            // average as (0.69,0.55,0.36). The palette PAINTS layer 5 ocean-blue instead, because layer 5 is
+            // mostly submerged seabed and the water plane used to be a TODO -- that plane ships now, so the
+            // stand-in is stale and a seabed should be sand. Using the measured value rather than inventing one.
             seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) },
-                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.22f, 0.26f, 0.20f)) });
+                MaterialOverride = planeGround ? new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.30f, 0.33f) } : (Material)Caust(new Color(0.69f, 0.55f, 0.36f)) });
             seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(seabed);
             if (System.Environment.GetEnvironmentVariable("UG_ROUGH") == "1")
@@ -2767,6 +2915,22 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _ftPlayer = player;
             if (suppressed) player.SetSuppressor(true);
+            // UG_LASER=1 : fit the Tactical Laser (151) to the held gun and switch it on, so the beam + dot can
+            // be photographed against the downrange wall. Render-only dressing, same shape as UG_HITWALL.
+            if (System.Environment.GetEnvironmentVariable("UG_LASER") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                var lit = new SDG.Unturned.Item(4);   // Eaglefire, per items_catalog.tsv
+                AttachmentFit.SetInstalledId(lit, "Tactical", 151);
+                player.EquipHeldGun(gun ?? "eaglefire", lit);
+                // ⚠ RETRIED, NOT TIMED. ToggleTactical refuses while the equip clip is still running (the source
+                // isBusy rule), so a single timed call is a guess about clip length that silently does nothing
+                // when it is wrong -- which is exactly what happened: the render came back with no beam and it
+                // took a UG_LASERDBG probe to find `tacOn=False` while every other condition read true. The
+                // per-frame retry below cannot be wrong about the timing because it does not predict it.
+                _ftWantLaser = true;
+                if (System.Environment.GetEnvironmentVariable("UG_LASERINSPECT") == "1") _ftWantInspect = true;
+            }
 
 
             // UG_HITWALL: a concrete wall 18 m downrange in the player's default (+Z) fire direction, so the firetest
@@ -2869,12 +3033,30 @@ namespace UnturnedGodot
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.4f, 0.26f), Roughness = 1f } });
             SDG.Unturned.ItemCatalog.RegisterAll();
             var stations = new[] { DeployableDef.Workbench, DeployableDef.Campfire, DeployableDef.ChemistryLab, DeployableDef.Kiln, DeployableDef.Loom, DeployableDef.OvenBrick, DeployableDef.OvenElectric, DeployableDef.SewingTable, DeployableDef.SpinningWheel };
-            for (int i = 0; i < stations.Length; i++)
-                Deployable.Spawn(this, stations[i], new Vector3((i - 4) * 3f, 0f, 0f), 0f);
+            // UG_DEPTHROW=1: stand the row along the VIEW AXIS instead of across it.
+            //
+            // The default layout spreads all nine at the SAME distance, left to right. That is right for eyeballing
+            // extracted models and USELESS for anything distance-dependent: a depth-scaled effect has nothing to
+            // vary over, so "the blur works" and "the blur does nothing" render identically (tinyclaw caught me
+            // claiming the first off a picture that could only ever have shown the second). Receding at 3..76 m
+            // turns a fog/absorption/LOD curve into a GRADIENT you can read straight off one frame.
             var cam = new Camera3D { Fov = 46f, Far = 400f };
             AddChild(cam);
-            cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
-            Log.Print("[stationtest] 9 crafting stations placed");
+            if (System.Environment.GetEnvironmentVariable("UG_DEPTHROW") == "1")
+            {
+                float[] zs = { 3f, 6f, 10f, 16f, 24f, 34f, 46f, 60f, 76f };
+                for (int i = 0; i < stations.Length; i++)
+                    Deployable.Spawn(this, stations[i], new Vector3((i % 2 == 0 ? -1.6f : 1.6f), 0f, -zs[i]), 0f);   // slight stagger so near ones do not fully mask far ones
+                cam.LookAtFromPosition(new Vector3(0f, 2.6f, 3.5f), new Vector3(0f, 1.2f, -40f), Vector3.Up);
+                Log.Print("[stationtest] 9 stations along the VIEW AXIS at 3..76 m (UG_DEPTHROW)");
+            }
+            else
+            {
+                for (int i = 0; i < stations.Length; i++)
+                    Deployable.Spawn(this, stations[i], new Vector3((i - 4) * 3f, 0f, 0f), 0f);
+                cam.LookAtFromPosition(new Vector3(0f, 7f, 17f), new Vector3(0f, 0.8f, 0f), Vector3.Up);
+                Log.Print("[stationtest] 9 crafting stations placed");
+            }
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
@@ -7277,6 +7459,91 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            // UG_PDGLOW=<glassesId>[,on] : wear a lens device and (optionally) switch it ON, so the paperdoll's
+            // on/off glow can be photographed (strawberry 2026-09-13). UG_PDTORCH=1 puts the handheld flashlight
+            // in the doll's hand as well. Render-only dressing, same shape as UG_QUICKCRAFT / UG_MAGLOAD.
+            // UG_PDROOMLIGHT=1 : a bright coloured dynlight beside the player, so the paperdoll's "lit by the
+            // room" path can be photographed on a stage that has no world lights of its own. Mirrors
+            // WorldBuilder's UG_TESTLIGHT.
+            if (System.Environment.GetEnvironmentVariable("UG_PDROOMLIGHT") == "1")
+            {
+                var rl = new OmniLight3D { OmniRange = 7f, LightColor = new Color(1f, 0.25f, 0.12f), LightEnergy = 6f, ShadowEnabled = false };
+                rl.AddToGroup("dynlight");
+                player.AddChild(rl);
+                rl.Position = new Vector3(0.9f, 0.3f, 0f);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PDGLOW") is string pdg && pdg.Length > 0)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                var parts = pdg.Split(',');
+                if (ushort.TryParse(parts[0], out ushort pdId) && pdId > 0)
+                {
+                    player.Inventory.wearGlasses(new SDG.Unturned.Item(pdId));
+                    // The switch, not the item: ToggleNightVision/ToggleHeadlamp each self-guard on the matching
+                    // item actually being worn, so asking for both lights exactly the one that is on your face.
+                    if (parts.Length > 1 && parts[1] == "on")
+                    {
+                        player.ToggleNightVision();
+                        player.ToggleHeadlamp();
+                    }
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_PDTORCH") == "1")
+                {
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(276));   // Flashlight (melee, `Light`) -- id read off items_catalog.tsv, NOT guessed (19 is Timberwolf Iron Sights)
+                    player.EquipHeldMelee("flashlight");
+                    // ⚠ ToggleHeldLight refuses while the equip animation is still running (source's isBusy), and
+                    // in a one-shot harness that clip is still playing at the settle frame -- so the switch is
+                    // thrown on a timer rather than inline, or the torch photographs dark and reads as the bug.
+                    GetTree().CreateTimer(1.5).Timeout += () => { if (IsInstanceValid(player) && !player.HeldLightOn) player.ToggleHeldLight(); };
+                }
+            }
+            // UG_MONEY=1 : stock a spread of wallets so the $value label and the value-driven icon can be seen
+            // side by side -- one per denomination boundary, plus an over-ceiling pickup that has to SPLIT.
+            if (System.Environment.GetEnvironmentVariable("UG_MONEY") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                // Each of these lands as ONE wallet at that value, and should draw the matching coin/note.
+                foreach (var (id, n) in new (ushort, byte)[] {
+                    (1056, 1),    // $1   loonie
+                    (1057, 1),    // $2   toonie
+                    (1051, 1),    // $5
+                    (1052, 1),    // $10
+                    (1053, 1),    // $20
+                    (1054, 1),    // $50
+                    (1055, 1),    // $100
+                    (1053, 3),    // $60  -> still the $50 note: the icon is the biggest thing that FITS
+                })
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(id) { amount = n });
+                // ...and the one that proves nothing is lost to the byte: $300 must become $255 + $45.
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(1055) { amount = 3 });
+            }
+            // UG_MONEYFAN=1 : ONE wallet at $188 -- the only value that breaks into all seven denominations, so
+            // it is the biggest fan there is (strawberry 2026-09-14: "just show me the biggest fan for now").
+            if (System.Environment.GetEnvironmentVariable("UG_MONEYFAN") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                foreach (ushort id in new ushort[] { 1055, 1054, 1053, 1052, 1051, 1057, 1056 })
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(id));   // 100+50+20+10+5+2+1 = $188
+            }
+            // UG_FANSIZES=1 : several wallets SIDE BY SIDE so the arc-vs-note-count rule can be judged at a
+            // glance (strawberry 2026-09-14: "make the fan scale with number of notes. show me this one and one
+            // w only a couple"). These go in through addItem rather than tryAddItem on purpose -- currency
+            // COLLAPSES into one stack, which is the whole point of the carrier design, so the normal pickup
+            // path physically cannot produce two wallets to compare.
+            if (System.Environment.GetEnvironmentVariable("UG_FANSIZES") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                byte slot = 0;
+                foreach (int dollars in new int[] { 188, 85, 35, 15, 7 })   // 5, 4, 3, 2 and 1 note(s); page 2 = the 5x3 pockets
+                    player.Inventory.items[2].addItem(slot++, 0, 0,
+                        new SDG.Unturned.Item(SDG.Unturned.Currency.StackId) { amount = (ushort)dollars });
+            }
+            // UG_SPLITUI=1 : a stack worth splitting, so the selection panel's split strip can be rendered.
+            if (System.Environment.GetEnvironmentVariable("UG_SPLITUI") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                player.Inventory.items[2].addItem(0, 0, 0, new SDG.Unturned.Item(254) { amount = 5 });   // frag grenades, the new stack-of-5
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
@@ -7897,6 +8164,158 @@ namespace UnturnedGodot
             // the shot fired after three of six and the other three looked like failed bakes -- no error, no
             // billboards, nothing to distinguish "broken" from "not finished yet".
             _shotPath = shot;
+        }
+
+        /// <summary>--cctvtest: a powered CCTV wired to a powered TV, aimed at something unmistakable, with the
+        /// main camera framed on the SCREEN. The whole point is that the picture on the TV is a picture OF THE
+        /// SCENE -- so the camera looks at a row of primary-coloured blocks that appear nowhere near the TV,
+        /// and any feed that is really working shows them.
+        ///
+        /// UG_CCTVCUT=1 cuts the data wire instead, so the same frame can be taken with the aerial dark. That is
+        /// the control: without it a screen showing SOMETHING proves nothing, because a test card is also
+        /// something.</summary>
+        void BuildCctvTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.10f, 0.12f, 0.16f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.68f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.4f });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.30f, 0.26f) };
+            ground.AddChild(gm);
+            AddChild(ground);
+
+            // WHAT THE CAMERA LOOKS AT: three primary blocks, well away from the TV, so a working feed is
+            // unmistakable and a test card cannot be mistaken for one.
+            var subject = new Vector3(0f, 1.0f, -9f);
+            var cols = new[] { new Color(0.92f, 0.18f, 0.18f), new Color(0.20f, 0.85f, 0.30f), new Color(0.25f, 0.45f, 0.95f) };
+            for (int i = 0; i < 3; i++)
+            {
+                var b = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1.1f, 2.0f, 1.1f) } };
+                b.MaterialOverride = new StandardMaterial3D { AlbedoColor = cols[i] };
+                b.Position = subject + new Vector3((i - 1) * 1.6f, 0f, 0f);
+                AddChild(b);
+            }
+
+            // THE CAMERA: the housing half of the split prop, aimed at the blocks.
+            var camMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Camera_0.obj"));
+            var (camBody, camArm) = ObjMesh.SplitCameraArm(camMesh);
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.70f, 0.70f, 0.70f), CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var housing = new MeshInstance3D { Name = "CameraBody", Mesh = camBody ?? camMesh, MaterialOverride = mat };
+            AddChild(housing);
+            housing.GlobalPosition = new Vector3(0f, 3.0f, -2.5f);
+            // ⚠ AIM THE LENS, NOT THE MODEL'S -Z. SecurityCamera films along the measured lens normal now, which
+            // is not the housing's forward -- so a plain LookAt (which points -Z at the target) aims the prop at
+            // the subject and the CAMERA somewhere else entirely. Rotate whatever direction the lens faces onto
+            // the direction we want it to face.
+            {
+                Vector3 want = (subject - housing.GlobalPosition).Normalized();
+                Vector3 have = SecurityCamera.LensNormalLocal;
+                float d = Mathf.Clamp(have.Dot(want), -1f, 1f);
+                housing.Basis = d > 0.9999f ? Basis.Identity
+                              : d < -0.9999f ? new Basis(have.Cross(Vector3.Up).Normalized(), Mathf.Pi)
+                              : new Basis(have.Cross(want).Normalized(), Mathf.Acos(d));
+            }
+            if (camArm != null)
+            {
+                var armMi = new MeshInstance3D { Name = "CameraArm", Mesh = camArm, MaterialOverride = mat };
+                AddChild(armMi);
+                armMi.GlobalTransform = housing.GlobalTransform;
+            }
+            var cctv = SecurityCamera.Make(housing, (camBody ?? camMesh).GetAabb());
+            AddChild(cctv);
+
+            // THE SCREEN: a real TV prop, facing the main camera.
+            var tvMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Television_0.obj"));
+            MeshInstance3D tvBody = null; TVDevice tv = null;
+            if (tvMesh != null)
+            {
+                tvBody = new MeshInstance3D { Name = "TVBody", Mesh = tvMesh,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.58f), CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                AddChild(tvBody);
+                // ⚠ STAND IT UP. Television_0's own AABB is 3.75 x 0.23 x 2 -- it is authored FLAT, lying on its
+                // back, like every other prop the world builder stands up at placement time. Left as authored,
+                // the "screen" faces the sky and the framing camera lands inside the cabinet, which is exactly
+                // what the first render showed. Measured from the mesh rather than assumed: the thin axis is Y.
+                tvBody.RotationDegrees = new Vector3(-90f, 180f, 0f);   // ...and turned to FACE the framing camera; -90 alone stood it up with its back to us
+                tvBody.GlobalPosition = new Vector3(0f, 1.0f, 3.0f);
+                tv = TVDevice.Make(tvBody, "Television_0");
+                if (tv != null) AddChild(tv);
+            }
+            if (tv == null) { Log.Err("[cctvtest] no TV prop -- cannot show a feed"); }
+
+            // POWER + WIRES. One generator feeds both; the camera's data out feeds the TV's aerial.
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(5f, 0f, 0f), 0f);
+            var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+            void Link(ConnectionPort a, ConnectionPort b)
+            {
+                if (a == null || b == null) { Log.Err("[cctvtest] a wire end is missing"); return; }
+                var w = new Wire(); AddChild(w); w.Source = a; w.Consumer = b; w.AddToGroup("wires");
+                w.SetPoints(new System.Collections.Generic.List<Vector3> { a.GlobalPosition, b.GlobalPosition }, valid: true);
+            }
+            var camPlug = cctv?.PowerPorts.Count > 0 ? cctv.PowerPorts[0] : null;
+            Link(genOut, camPlug);
+            Link(genOut, tv?.PowerPorts.Count > 0 ? tv.PowerPorts[0] : null);
+            // UG_CCTVRADIO=1 : put a wireless pair in the middle -- camera ~wire~ transmitter ~~air~~ receiver
+            // ~wire~ TV -- instead of running the aerial straight across. UG_CCTVRXCODE sets the RECEIVER's
+            // channel so a deliberate mismatch can be photographed; the transmitter stays on 0000.
+            if (System.Environment.GetEnvironmentVariable("UG_CCTVRADIO") == "1")
+            {
+                var tx = Deployable.Spawn(this, DeployableDef.DataTransmitter, new Vector3(3.2f, 0f, 0.4f), 0f);
+                var rx = Deployable.Spawn(this, DeployableDef.DataReceiver, new Vector3(-3.2f, 0f, 0.4f), 0f);
+                ConnectionPort P(Deployable d, DeployableDef.PortKind k) => d?.Ports.Find(pp => pp.Kind == k);
+                Link(genOut, P(tx, DeployableDef.PortKind.Consumer));
+                Link(genOut, P(rx, DeployableDef.PortKind.Consumer));
+                Link(cctv?.DataOut, P(tx, DeployableDef.PortKind.DataIn));
+                Link(P(rx, DeployableDef.PortKind.DataOut), tv?.DataInPort);
+                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_CCTVRXCODE"), out int rc) && rx != null)
+                    rx.DataCode = rc;
+                Log.Print($"[cctvtest] radio pair: tx ch {tx?.DataCode:0000} rx ch {rx?.DataCode:0000}");
+            }
+            else if (System.Environment.GetEnvironmentVariable("UG_CCTVCUT") != "1")
+                Link(cctv?.DataOut, tv?.DataInPort);   // the aerial -- omitted for the control shot
+            gen.TogglePower();
+            PowerNet.Recompute(GetTree());
+
+            // The main camera frames the SCREEN, because the screen is the claim -- and it frames it off the
+            // prop's REAL bounds rather than numbers I guessed. The first cut of this put the eye at a
+            // hand-picked (0,1.6,5.6) and landed INSIDE the cabinet: Television_0 is not the size I assumed,
+            // and a harness that has the mesh in hand has no business guessing at its scale.
+            var cam = new Camera3D { Fov = 45f, Current = true };
+            AddChild(cam);
+            if (tvBody != null)
+            {
+                var tab = tvBody.GetAabb();
+                Vector3 centre = tvBody.GlobalTransform * tab.GetCenter();   // through the basis: the prop is rotated
+                float span = Mathf.Max(tab.Size.X, Mathf.Max(tab.Size.Y, tab.Size.Z));
+                cam.GlobalPosition = centre + new Vector3(0f, span * 0.25f, span * 2.2f);   // back off by the prop's own size
+                cam.LookAt(centre, Vector3.Up);
+                Log.Print($"[cctvtest] tv aabb size={tab.Size} centre={centre} eye={cam.GlobalPosition}");
+            }
+            else { cam.GlobalPosition = new Vector3(0f, 1.6f, 5.6f); cam.LookAt(Vector3.Up, Vector3.Up); }
+            Log.Print($"[cctvtest] camera={(cctv != null)} tv={(tv != null)} gen={gen != null} cut={System.Environment.GetEnvironmentVariable("UG_CCTVCUT")}");
+            // Walk the whole chain out loud a moment after everything has settled. Every link can fail silently
+            // -- an unpowered camera, a port nothing wired, a viewport that has not rendered yet -- and each one
+            // looks identical from the outside: a TV showing its own test card.
+            GetTree().CreateTimer(2.4).Timeout += () =>
+            {
+                if (!IsInstanceValid(cctv) || tv == null || !IsInstanceValid(tv)) { Log.Print("[cctvdbg] a node went away"); return; }
+                var src = tv.FeedSource();
+                Log.Print($"[cctvdbg] camPlug.Powered={(camPlug != null && camPlug.Powered)} "
+                        + $"dataOut.Live={cctv.DataOut?.DataLive} dataOut.Occupied={cctv.DataOut?.Occupied} "
+                        + $"filming={cctv.Filming} tex={(cctv.FeedTexture != null)} "
+                        + $"| tv.HasFeed={tv.HasFeed} tv.dataIn.Live={tv.DataInPort?.DataLive} "
+                        + $"tv.HasVideoFeed={tv.HasVideoFeed} feedSource={(src != null)}");
+            };
         }
 
         void BuildLampTest()
@@ -8865,6 +9284,19 @@ namespace UnturnedGodot
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
         public void HubProcess(double delta)
         {
+            // UG_PERFPROBE=1: frame cost, once a second. The A/B instrument -- master 2026-09-11 asked for
+            // before/after numbers, and an average over a second is the only honest way to compare two builds
+            // when a single frame varies by more than the thing being measured.
+            if (_perfProbeMain)
+            {
+                _fpsElapsed += delta; _fpsFrames++;
+                if (_fpsElapsed >= 1.0)
+                {
+                    double ms = _fpsElapsed * 1000.0 / _fpsFrames;
+                    Log.Print($"[perf] {_fpsFrames / _fpsElapsed:0.0} fps  {ms:0.000} ms/frame");
+                    _fpsElapsed = 0.0; _fpsFrames = 0;
+                }
+            }
             if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { Log.Print("[bakehulls] done"); GetTree().Quit(); return; }
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
@@ -8986,14 +9418,73 @@ namespace UnturnedGodot
                 }
                 else if (ph == 3) { Log.Print("[terrperf] done"); _tpFrame++; }
             }
+            // UG_RES has to be RE-ASSERTED. The project opens Maximized (display/window/size/mode=2) and the
+            // platform applies that AFTER _Ready, so the size ApplyResolution set during boot is silently undone --
+            // the window comes up at panel size and the run reports a resolution nobody asked for. Re-apply for the
+            // first few seconds, only while it actually disagrees, and only when the override is in play.
+            // UG_RES=WxH: render EXACTLY that many pixels, so a benchmark's label and its workload are one fact.
+            //
+            // Setting the window alone does not do it. The render target comes out at window^2 / ContentScaleSize,
+            // and ContentScaleSize is 2560x1440 from project.godot -- measured at two very different window sizes:
+            // 2880 wide rendered 3240 (2880^2/2560 = 3240) and 1024 wide rendered 410 (1024^2/2560 = 409.6). So the
+            // stretch base has to move with the window, which is the same trick UG_VM_NATIVE_SIZE uses at line ~833.
+            //
+            // Re-asserted for a few seconds because the project opens Maximized (display/window/size/mode=2) and the
+            // platform applies that AFTER _Ready, silently undoing a size set during boot.
+            if (_resFixT < 8f && System.Environment.GetEnvironmentVariable("UG_RES") is string _ugr && _ugr.Contains('x'))
+            {
+                _resFixT += (float)delta;
+                var _want = _ugr.Split('x');
+                if (_want.Length == 2 && int.TryParse(_want[0], out int _ww) && int.TryParse(_want[1], out int _wh) && _ww > 0 && _wh > 0)
+                {
+                    var _tgt = new Vector2I(_ww, _wh);
+                    if (DisplayServer.WindowGetSize() != _tgt || DisplayServer.WindowGetMode() != DisplayServer.WindowMode.Windowed)
+                    {
+                        DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
+                        DisplayServer.WindowSetSize(_tgt);
+                    }
+                    var _w = GetWindow();
+                    if (_w != null && _w.ContentScaleSize != _tgt) _w.ContentScaleSize = _tgt;
+                }
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && _frameMs.Count < 512) _frameMs.Add(delta * 1000.0);
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;
+                // One shot, and only once the world is actually built -- a dump taken during load would rank the
+                // loading screen. Gated on its own env var so a normal perf run is byte-identical to before.
+                if (!_drawSrcDone && System.Environment.GetEnvironmentVariable("UG_DRAWSRC") == "1" && Time.GetTicksMsec() > 45000)
+                {
+                    _drawSrcDone = true;
+                    DumpDrawSources(GetTree().Root);
+                }
                 double physMs = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
                 double procMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
-                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
+                // The RESOLUTION and VRAM ride along with every fps number on purpose. A laptop panel at 2880x1800
+                // with Windows scaling can hand a "1920x1080" window a framebuffer that is nothing of the sort,
+                // and an fps quoted without the pixel count it was measured at is a number about the wrong object.
+                var _rt = GetViewport().GetTexture();
+                double _vram = Performance.GetMonitor(Performance.Monitor.RenderVideoMemUsed) / (1024.0 * 1024.0);
+                // ACTIVE BODIES, beside the draw count. A camera proved identical is not a scene proved
+                // identical: colliders stream on the render cull distance, so a run with more draws has more
+                // physics resident, and a physics-ms gap between two GPUs can be nothing but that. Without
+                // this the difference reads as a hardware story, which is the more interesting answer and
+                // therefore the one to distrust.
+                long _act = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.ActiveObjects);
+                long _pairs = (long)PhysicsServer3D.GetProcessInfo(PhysicsServer3D.ProcessInfo.CollisionPairs);
+                // PHYSICS TICKS ACTUALLY EXECUTED in the last second, next to the configured rate. Without
+                // this, physicsMs has no unit you can check: 25.8 ms of "physics" does not fit inside a
+                // 10.5 ms frame at 95 fps, so it is either per-TICK (and then it is over a 16.67 ms budget
+                // and Godot is clamping steps, which shows up as time dilation rather than as lost fps) or
+                // it is some other window entirely. Configured-vs-actual settles which, by counting.
+                ulong _pf = Engine.GetPhysicsFrames();
+                long _ptick = (long)(_pf - _lastPhysFrames); _lastPhysFrames = _pf;
+                Log.Print($"[perf] fps={Engine.GetFramesPerSecond()} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} objs={Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame)} bodies={_act} pairs={_pairs} ptick={_ptick}/{Engine.PhysicsTicksPerSecond}{FrameTail()} res={(_rt != null ? $"{_rt.GetSize().X}x{_rt.GetSize().Y}" : "?")} win={DisplayServer.WindowGetSize().X}x{DisplayServer.WindowGetSize().Y} vis={GetViewport().GetVisibleRect().Size.X:0}x{GetViewport().GetVisibleRect().Size.Y:0} scr={DisplayServer.ScreenGetSize().X}x{DisplayServer.ScreenGetSize().Y} mode={DisplayServer.WindowGetMode()} s3d={GetViewport().Scaling3DScale:0.00} render3d={(_rt != null ? $"{Mathf.RoundToInt(_rt.GetSize().X * GetViewport().Scaling3DScale)}x{Mathf.RoundToInt(_rt.GetSize().Y * GetViewport().Scaling3DScale)}" : "?")} vramMB={_vram:0}{(_pdPlayer != null && IsInstanceValid(_pdPlayer) ? $" eye={_pdPlayer.GlobalPosition.X:0.0},{_pdPlayer.GlobalPosition.Y:0.0},{_pdPlayer.GlobalPosition.Z:0.0}" : "")}");
             }
-            if (_fireTest && _ftPlayer != null) { _ftFrame++; if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
+            if (_fireTest && _ftPlayer != null) { _ftFrame++;
+                // the laser switch, retried until it takes (see the UG_LASER block), then the gesture on top of it
+                if (_ftWantLaser && !_ftPlayer.TacticalOn && _ftFrame >= 30) _ftPlayer.ToggleTactical();
+                if (_ftWantInspect && _ftPlayer.TacticalOn && !_ftInspected && _ftFrame >= 45) { _ftInspected = true; _ftPlayer.DebugPlayInspect(); } if (System.Environment.GetEnvironmentVariable("UG_LEAN") is string _ln && _ln.Length > 0 && _ftFrame >= 8) _ftPlayer.ScriptedLean = int.Parse(_ln);   /* UG_LEAN=1 lean left / -1 right: verify the 1P viewmodel rolls with the lean */ if (System.Environment.GetEnvironmentVariable("UG_MOVE") == "1" && _ftFrame >= 8) _ftPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   /* UG_MOVE=1: walk forward -> verify the viewmodel movement-sway tilt */ if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame >= 40) _ftPlayer.ForceAim(true); } else if (System.Environment.GetEnvironmentVariable("UG_TRACERANGLE") == "1") { if (_ftFrame >= 45 && _ftFrame % 10 == 0) _ftPlayer.DebugFireAngled(-28f); } else if (System.Environment.GetEnvironmentVariable("UG_NOFIRE") == "1") { /* hold fire: a GESTURE (inspect) is being photographed, and firing cancels one -- without this the rig shoots the pose away before the capture */ } else if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter; UG_ADS: hold ADS; UG_TRACERANGLE: fire tracers 38deg across the view so the stretched streak is seen side-on
             if (_paActive && _paRig != null && IsInstanceValid(_paRig))
             {
                 _paT += (float)delta;
@@ -9057,6 +9548,43 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && (_peiFrame % 12 == 0 || _peiFrame >= 156)) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward; sustained burst 156+ so a muzzle FLASH lands on the frame-160 capture (glow showcase)
                 else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { if (System.Environment.GetEnvironmentVariable("UG_EAT") is string _eatAt && _eatAt.Length > 0 && _peiFrame == (int.TryParse(_eatAt, out var _ef) ? _ef : 100)) _peiPlayer.StartConsume(); if (System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" && _peiFrame == 30) { var _gcit = new SDG.Unturned.Item(28); _peiPlayer.EquipHeldFuelCan(_gcit.GetAsset(), _gcit); } }   // UG_FP: on foot for the FP viewmodel; UG_EAT=<startFrame> click-eat; UG_FUELCAN=1 equips the gas can (verify the real two-handed hold in the game FP camera)
                 else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
+            }
+            // UG_PARTTEST=1: a GPU emitter and a CPU emitter side by side, 3 m in front of the player.
+            // THE QUESTION THIS DECIDES: RainSystem3D.cs:8 says GPU particles do not render in Godot's
+            // movie-maker/offline pipeline, which is why 16 files use CpuParticles3D on the main thread. That
+            // note is from 2026-08-29 and predates the engine bumps. Every L2 golden runs with --write-movie,
+            // so if the limitation is gone the constraint evaporates; if it is not, the CPU cost is the price of
+            // being able to see particles in any capture at all. Render this with and without --write-movie and
+            // look at which halves survive. RED = GPU, BLUE = CPU.
+            if (_peiPlayable && _pdPlayer != null && _worldReady && !_partTestDone && System.Environment.GetEnvironmentVariable("UG_PARTTEST") == "1")
+            {
+                _partTestDone = true;
+                var fwd = -_pdPlayer.GlobalTransform.Basis.Z;
+                var at = _pdPlayer.GlobalPosition + new Vector3(fwd.X, 0f, fwd.Z).Normalized() * 3f + Vector3.Up * 1.2f;
+                int partN = int.TryParse(System.Environment.GetEnvironmentVariable("UG_PARTN"), out var _pn) ? _pn : 200;
+                string partMode = (System.Environment.GetEnvironmentVariable("UG_PARTMODE") ?? "both").ToLowerInvariant();
+                var gpu = new GpuParticles3D
+                {
+                    // ⚠ EXPLICIT, not `!= "cpu"`. That reads fine and makes mode=none emit BOTH -- which is
+                    // exactly what it did, so the "no particles" control was the both-emitters case and every
+                    // comparison against it was nonsense. Caught by logging the flags and reading them.
+                    Amount = partN, Lifetime = 6f, Explosiveness = 0f, Emitting = partMode == "gpu" || partMode == "both",
+                    Position = at + new Vector3(-0.7f, 0f, 0f),
+                    ProcessMaterial = new ParticleProcessMaterial { Gravity = Vector3.Zero, InitialVelocityMin = 0.4f, InitialVelocityMax = 0.7f, Color = new Color(1f, 0.1f, 0.1f) },
+                    DrawPass1 = new QuadMesh { Size = new Vector2(0.09f, 0.09f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles },
+                };
+                AddChild(gpu);
+                var cpu = new CpuParticles3D
+                {
+                    Amount = partN, Lifetime = 6f, Explosiveness = 0f, Emitting = partMode == "cpu" || partMode == "both",
+                    Position = at + new Vector3(0.7f, 0f, 0f),
+                    Gravity = Vector3.Zero, InitialVelocityMin = 0.4f, InitialVelocityMax = 0.7f,
+                    Mesh = new QuadMesh { Size = new Vector2(0.09f, 0.09f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.1f, 0.4f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles },
+                };
+                AddChild(cpu);
+                Log.Print($"[parttest] mode={partMode} n={partN}  gpuEmitting={gpu.Emitting} cpuEmitting={cpu.Emitting}");
             }
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_holdItemDone)   // UG_HOLDITEM=<id>: put a catalog item in the player's hands once the world is up (a render of a held binocular/tool)
             {
@@ -9891,7 +10419,7 @@ namespace UnturnedGodot
             else if (_peiPlay) { if (_peiFrame < 160) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+)
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
-            else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
+            else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (System.Environment.GetEnvironmentVariable("UG_NOFIRE") == "1") { if (_ftFrame < 75) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
             else if (_worldBuild) { if (!_worldReady || ++_frame < ShotSettleFrames) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground

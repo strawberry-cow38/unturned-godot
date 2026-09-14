@@ -83,6 +83,26 @@ def renderer_tex(go_tt):
                             to = by_id.get(tp)
                             if to and to.type.name == "Texture2D": return to
     return None
+def renderer_color(go_tt):
+    """The material's flat _Color, for a part that has no _MainTex at all.
+
+    The berries are UNTEXTURED: their material (literally named "Mauve", "Jade", ...) carries no texture and
+    only a _Color -- which is why every bush's LEAF texture decodes to the same flat green and why Mauve, Jade
+    and Teal shipped byte-identical images. All of a bush's colour lives here. Returned so the bake can write a
+    solid swatch and leave the loader untouched: a part is still <name>_<i>.obj + <name>_<i>_tex.png, and the
+    game does not need to learn about colour-only materials."""
+    for pid in comp_pids(go_tt):
+        o = by_id.get(pid)
+        if o and o.type.name == "MeshRenderer":
+            for mt in tt(o).get("m_Materials", []):
+                mo = by_id.get(mt.get("m_PathID"))
+                if mo and mo.type.name == "Material":
+                    for e in tt(mo).get("m_SavedProperties", {}).get("m_Colors", []):
+                        nm = e[0] if isinstance(e, (list, tuple)) else e.get("first")
+                        cv = e[1] if isinstance(e, (list, tuple)) else e.get("second")
+                        if nm == "_Color" and cv:
+                            return (cv.get("r", 1.0), cv.get("g", 1.0), cv.get("b", 1.0), cv.get("a", 1.0))
+    return None
 def collect(tr, M, out):
     trtt = tt(tr); Ml = M @ trs(trtt); go = go_of(trtt); gott = tt(go)
     for pid in comp_pids(gott):
@@ -90,7 +110,7 @@ def collect(tr, M, out):
         if o and o.type.name == "MeshFilter":
             mo = by_id.get(tt(o).get("m_Mesh", {}).get("m_PathID"))
             if mo and mo.type.name == "Mesh":
-                out.append((mo, Ml, renderer_tex(gott)))
+                out.append((mo, Ml, renderer_tex(gott) or renderer_color(gott)))
     for c in trtt.get("m_Children", []):
         ch = by_id.get(c["m_PathID"])
         if ch: collect(ch, Ml, out)
@@ -148,10 +168,47 @@ for name in buckets:
         for c in tt(root).get("m_Children", []):
             ch = by_id.get(c["m_PathID"])
             if ch: collect(ch, np.eye(4), parts)
+    # THE BERRIES LIVE ON THE `Forage` CHILD, NOT ON Model_0.
+    #
+    # A forageable bush splits its geometry: Model_0/1/2 are the LEAVES (all three share one material) and the
+    # pickable fruit is a SEPARATE mesh with its own material, hung on the same `Forage` child that carries the
+    # interaction trigger -- which is how retail makes the berries vanish on a pick while the shrub stays.
+    # Walking Model_0 alone therefore baked a plain green shrub with no berries on it, and it looked like a
+    # working extraction: the bush rendered, it was the right shape, it was the right shade of green. The tell
+    # was that Bush_Mauve, Bush_Jade and Bush_Teal came out with BYTE-IDENTICAL textures -- three differently
+    # coloured berry bushes cannot share one image. All the colour was on the material we were not reading.
+    #
+    # ⚠ ONLY IN THE BUSH LAYOUT (Model_0 a direct child of Resource). The two layouts are NOT the same shape:
+    #
+    #   bush:      Resource -> Model_0, Model_1, Model_2, Forage(mesh + trigger)
+    #   mushroom:  Resource -> Forage -> Model_0        , Effect
+    #
+    # A mushroom hangs its cap UNDER Forage, so find_child(root,"Model_0") misses it, the else-branch above walks
+    # every child of the root, and the cap is already collected by the time we get here. Walking Forage again then
+    # baked the SAME cap a second time -- the part count went 1 -> 2 and the mushroom would have rendered twice,
+    # z-fighting with itself. Caught because mushrooms reported "2 parts" from a change that was supposed to touch
+    # only bushes; a part count that moves where you did not expect it is the cheapest bug detector here.
+    #
+    # The `if m0` guard keys off the layout that actually needs it. The PathID set is a second belt: any future
+    # prefab that reaches the same mesh by two routes still bakes it once.
+    if m0:
+        seen = {id(m) for m, _, _ in parts}
+        fg = find_child(tt(root), "Forage")
+        if fg:
+            extra = []
+            collect(fg, np.eye(4), extra)
+            parts += [e for e in extra if id(e[0]) not in seen]
     np_ = 0
     for i, (mesh, M, tex) in enumerate(parts):
         bake_one(mesh, M, os.path.join(OUT, f"{name}_{i}.obj"))
-        if tex is not None:
+        if isinstance(tex, tuple):
+            # A colour-only material -> write the swatch the loader will read as this part's texture. Raw, not
+            # gamma-converted: the same convention the gun-sight _Color extraction already ships on.
+            from PIL import Image
+            rgba = tuple(max(0, min(255, int(round(c * 255)))) for c in tex)
+            Image.new("RGBA", (4, 4), rgba).save(os.path.join(OUT, f"{name}_{i}_tex.png"))
+            print(f"   {name}_{i}: colour-only material -> swatch {rgba}")
+        elif tex is not None:
             try: tex.read().image.save(os.path.join(OUT, f"{name}_{i}_tex.png"))
             except Exception as e: print(f"   {name}_{i} tex err {e}")
         np_ += 1
@@ -167,7 +224,11 @@ for name in buckets:
         kparts = []; collect(km0 if km0 else kroot, np.eye(4), kparts)
         for j, (mesh, M, tex) in enumerate(kparts):
             bake_one(mesh, M, os.path.join(OUT, f"{name}_{kind}_{j}.obj"))
-            if tex is not None:
+            if isinstance(tex, tuple):   # colour-only material here too -- same swatch treatment as a part
+                from PIL import Image
+                Image.new("RGBA", (4, 4), tuple(max(0, min(255, int(round(c * 255)))) for c in tex)) \
+                     .save(os.path.join(OUT, f"{name}_{kind}_{j}_tex.png"))
+            elif tex is not None:
                 try: tex.read().image.save(os.path.join(OUT, f"{name}_{kind}_{j}_tex.png"))
                 except Exception as e: print(f"   {name}_{kind}_{j} tex err {e}")
         if kparts: print(f"   {name} {kind}: {len(kparts)} part(s) (Model_0)")

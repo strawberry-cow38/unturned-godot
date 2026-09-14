@@ -21,6 +21,14 @@ namespace UnturnedGodot
         public NetWorldClient Client;
 
         readonly Dictionary<uint, Node3D> _nodes = new();
+        // REUSED, not reallocated. `new HashSet<uint>()` here was 72% of the entire game's allocations:
+        // 398 MB of Entry[UInt32][] plus 122 MB of Int32[] in 43 s, because a fresh set is built and then
+        // grown one item at a time EVERY physics tick (50/s), reallocating its buckets at each doubling.
+        // Both are internals of this one set. Clearing is semantically identical -- `seen` is a private
+        // membership check for finding retired nodes, it never reaches the wire and nothing outside
+        // this method observes it -- so there is no ordering or protocol consequence to reusing it.
+        readonly HashSet<uint> _seen = new();
+        readonly List<uint> _gone = new();
         bool _catalogReady;
 
         public int NodeCount => _nodes.Count;
@@ -39,10 +47,10 @@ namespace UnturnedGodot
                 if (!_catalogReady) return;
             }
 
-            var seen = new HashSet<uint>();
+            _seen.Clear();
             foreach (var e in Client.WorldItems.All)
             {
-                seen.Add(e.NetIdValue);
+                _seen.Add(e.NetIdValue);
                 var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
@@ -56,15 +64,14 @@ namespace UnturnedGodot
                 if (node.GlobalPosition != target) node.GlobalPosition = target;   // the settle event moves it once; snapshots correct it
             }
 
-            List<uint> gone = null;   // server retired an entity (pickup/despawn) -> the visual leaves too
+            _gone.Clear();   // server retired an entity (pickup/despawn) -> the visual leaves too
             foreach (var kv in _nodes)
-                if (!seen.Contains(kv.Key)) (gone ??= new List<uint>()).Add(kv.Key);
-            if (gone != null)
-                foreach (uint id in gone)
-                {
-                    if (IsInstanceValid(_nodes[id])) _nodes[id].QueueFree();
-                    _nodes.Remove(id);
-                }
+                if (!_seen.Contains(kv.Key)) _gone.Add(kv.Key);
+            foreach (uint id in _gone)
+            {
+                if (IsInstanceValid(_nodes[id])) _nodes[id].QueueFree();
+                _nodes.Remove(id);
+            }
         }
 
         static Node3D BuildReplica(WorldItemReplication.WorldItemEntity e)

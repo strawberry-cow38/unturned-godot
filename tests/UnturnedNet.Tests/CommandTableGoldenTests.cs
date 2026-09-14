@@ -103,7 +103,8 @@ namespace UnturnedNet.Tests
             [58] = "CommandNpcChoose",
             [59] = "CommandNpcClose",
             [60] = "CommandNpcTrade",
-            [61] = "CommandChatSend",   // v49 global chat
+            [61] = "CommandSplitItem",  // v48 stack split -- already on main, so it keeps the byte
+            [62] = "CommandChatSend",   // v49 global chat, MOVED off 61 in the v50 merge (both branches had appended to 61)
         };
 
         static Dictionary<byte, string> Actual() =>

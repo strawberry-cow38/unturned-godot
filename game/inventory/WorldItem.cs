@@ -85,6 +85,16 @@ namespace UnturnedGodot
         /// the default only once an A/B render shows no pixels move on items.</summary>
         static readonly int LosScanPoints =
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_LOSPTS"), out int v) && v == 3 ? 3 : 9;
+        // TWO radii, because one number was doing two jobs. The old single 200 m test decided BOTH "is this item
+        // drawn" AND "is it worth a ray", so the occlusion rays ran the full 200 m -- up to nine of them, 4x a
+        // second, per item, at something under a pixel across. ETW put the scan at 3,118 ms and 27% of every
+        // allocation in the game. Drawing still reaches 200 m so nothing pops out of the world; only the OCCLUSION
+        // test is close-range, where a wall between you and an item is something you can actually see. Beyond it an
+        // in-cone item is simply shown -- a distant item can now draw through a wall, at a range where it is a
+        // speck. That is the trade, stated rather than hidden.
+        const float DrawDist2 = 40000f;   // 200 m, unchanged: what you can SEE
+        static readonly float RayDist2 =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_ITEMRAY"), out float _ir) && _ir > 0f ? _ir * _ir : 60f * 60f;
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
@@ -209,6 +219,39 @@ namespace UnturnedGodot
         /// <summary>The mesh a dropped stack of this id and amount should draw. The full mesh for every
         /// ordinary item; a triangle PREFIX for a bundle, which drops the top round(s) and leaves the rest
         /// resting on the ground (the installers assert that ordering, since a wrong one floats a round).</summary>
+        /// <summary>Show a dropped gun's fitted attachments (strawberry 2026-09-13: "make sure attachments are
+        /// shown on dropped gun models"). A gun on the ground carried its scope and magazine the whole time --
+        /// the ids live on the Item, which is exactly what makes them survive the drop -- it simply rendered the
+        /// bare body, so a scoped rifle you threw down looked like a different weapon to the one you pick back up.
+        ///
+        /// Parented to _mesh, not to the body, so the attachments inherit the dropped model's own transform for
+        /// free -- including the +90 X a dropped item is laid down with. That works because the dropped mesh IS
+        /// the viewmodel mesh: content/items/4.txt and content/eaglefire_gun.txt are the same 430 verts with the
+        /// same bounds on all three axes, so the hook positions transfer without a second frame to reason about.
+        /// CHECKED rather than assumed -- the dropped models come from their own rip through items_manifest.json,
+        /// and if that rip had been reoriented these hooks would have hung a scope in mid-air.
+        ///
+        /// Reads AttachmentFit.PartsFor, the same list the 3P body and the inventory paperdoll mount from. The
+        /// factory fallback inside it means a gun nobody has modified still shows its irons, which is why an
+        /// untouched dropped rifle also stops rendering sightless.</summary>
+        void MountDroppedAttachments(int id)
+        {
+            if (Item == null || _mesh == null || id <= 0) return;
+            if (Assets.find((ushort)id) is not { } a || string.IsNullOrEmpty(a.gunName)) return;
+            foreach (var (slot, mesh, pos, tint, tex) in AttachmentFit.PartsFor(a.gunName,
+                         AttachmentFit.InstalledId(Item, "Sight"),
+                         AttachmentFit.InstalledId(Item, "Magazine"),
+                         AttachmentFit.InstalledId(Item, "Barrel"),
+                         AttachmentFit.InstalledId(Item, "Tactical")))
+                _mesh.AddChild(new MeshInstance3D
+                {
+                    Name = "Attach_" + slot,
+                    Mesh = mesh,
+                    Position = pos,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = tint, AlbedoTexture = tex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.6f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                });
+        }
+
         static ArrayMesh MeshForAmount(Model m, int itemId, int amount)
         {
             if (m?.Rounds == null || m.Rounds.Length <= 1 || amount <= 0) return m?.Mesh;
@@ -274,7 +317,7 @@ namespace UnturnedGodot
         /// <param name="amount">Stack size of the drop, so a bundle shows the right number of rounds.
         /// 0 (the default) means "not a stack" and draws the full mesh -- the Grenade/StoreShelf callers,
         /// which show a single object rather than a pile.</param>
-        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity, byte amount = 0)
+        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity, ushort amount = 0)
         {
             var model = itemId > 0 ? GetModel(itemId) : null;
             if (model != null && model.Ok)
@@ -295,7 +338,7 @@ namespace UnturnedGodot
         /// Mirrors the real WorldItem's look-at highlight so the joined client can see + aim at replicated drops --
         /// a bare replica node (WorldItemReplicaView's old shape) is invisible to the look-ray. Bit 7 + mask 0 ->
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
-        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name, byte amount = 0)
+        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name, ushort amount = 0)
         {
             var p = new WorldItemPuppet { ItemId = itemId };
             var visual = BuildReplicaVisual(itemId, rarity, amount);
@@ -382,6 +425,7 @@ namespace UnturnedGodot
             col.Shape = new BoxShape3D { Size = boxSize };
             col.Position = boxCenter;                   // mesh sits in model space; the best-fit box is offset to wrap it
             AddChild(_mesh);
+            MountDroppedAttachments(id);
             AddChild(col);
             _boxCtr = boxCenter;
             var hh = boxSize * 0.5f;                     // hitbox samples: centre + 8 corners (local) -> full-hitbox LOS cull
@@ -441,6 +485,39 @@ namespace UnturnedGodot
             // copy enlists -- a --spconsume-suppressed node hands that off to its WorldItemReplicaView puppet, so the
             // same item isn't counted twice at one spot.
             if (!_suppressed) GrassDisplacers.Register(this, GrassDisplacers.ItemRadius);
+            // Off the engine's per-node callback and onto the hub (see the _live block below). Last, so nothing
+            // above can be skipped by an early return, and _tickReady is only set once _Ready has fully built the
+            // state the body reads.
+            SetProcess(false);
+            _tickReady = true;
+        }
+
+        // PERF (ETW 2026-09-12): a `_Process` OVERRIDE costs a native->managed transition plus a StringName walk of the
+        // whole class chain -- WorldItem -> RigidBody3D -> PhysicsBody3D -> CollisionObject3D -> Node3D -> Node, comparing
+        // method names one at a time -- before the body runs at all. Measured on the pinned PEI spot: the dispatch was
+        // 2,385 ms against 3,587 ms of actual work, and on ~all but 4 frames a second the body it finally reached was a
+        // timer decrement. The same trace priced the mechanism directly: TickHub, which is ONE node doing a comparable
+        // amount of work, paid 52 ms of dispatch for 6,418 ms of work. The tax is per-NODE, not per-unit-of-work.
+        //
+        // Items register here and are ticked from that one hub callback instead -- the StorageCrate pattern (containers
+        // were ~19% of the main thread) and Vehicle's. The override stays as the body, so a direct caller still works;
+        // SetProcess(false) only stops the ENGINE reaching it by name.
+        static readonly System.Collections.Generic.List<WorldItem> _live = new();
+        bool _tickReady;   // _EnterTree registers, but the body reads state _Ready builds -- never tick before then
+        public static int LiveCount => _live.Count;   // wiring probe for tests
+        public override void _EnterTree() { _live.Add(this); TickHub.Ensure(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+        public static void TickAll(double delta)
+        {
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var it = _live[i];
+                if (!GodotObject.IsInstanceValid(it)) { _live.RemoveAt(i); continue; }
+                // Pause / ProcessMode honoured exactly as the per-node callback did: CanProcess() is independent of
+                // SetProcess(false), which is why turning the engine's callback off does not change pause behaviour.
+                if (!it._tickReady || !it.IsInsideTree() || !it.CanProcess()) continue;
+                it._Process(delta);
+            }
         }
 
         // look-at focus (PlayerController drives this): rarity glow outline + name billboard on the item you're aiming at
@@ -542,8 +619,9 @@ namespace UnturnedGodot
                     // ~60deg half-cone (a touch wider than the FOV so items don't pop right at the screen edge).
                     Vector3 toItem = GlobalPosition - cam.GlobalPosition;
                     float d2 = toItem.LengthSquared();
-                    show = d2 < 40000f && d2 > 1e-4f && toItem.Normalized().Dot(-cam.GlobalTransform.Basis.Z) > 0.5f;
-                    if (show && _hitPts != null)   // in the cone -> only NOW cast a ray (or a few for occluded) to check for a hard wall between
+                    show = d2 < DrawDist2 && d2 > 1e-4f && toItem.Normalized().Dot(-cam.GlobalTransform.Basis.Z) > 0.5f;
+                    // ...and only now, and only CLOSE, cast a ray (or a few for occluded) for a hard wall between.
+                    if (show && d2 < RayDist2 && _hitPts != null)
                     {
                         // full-hitbox LOS (master): if ANY hitbox sample point (centre + corners) has clear LOS, keep it visible.
                         // Breaks on the first clear point, so a visible item usually costs ONE ray; only occluded items check all.
@@ -570,7 +648,13 @@ namespace UnturnedGodot
                             {
                                 _losQuery.To = gt * _hitPts[order != null ? order[i] : i];
                                 _rays++;
-                                if (space.IntersectRay(_losQuery).Count == 0) return true;
+                                // DISPOSED, not dropped. IntersectRay returns a Godot.Collections.Dictionary --
+                                // a native handle -- and every one that is merely abandoned is registered in
+                                // Godot's disposables tracker and left for the finalizer. Those tracker nodes
+                                // were 11.5% of the game's allocations and kept the finalizer thread at ~1.2 s
+                                // per 40 s capture. We only ever read Count, so the handle can die here.
+                                using var hit = space.IntersectRay(_losQuery);
+                                if (hit.Count == 0) return true;
                             }
                             return false;
                         }

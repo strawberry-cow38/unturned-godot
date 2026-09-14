@@ -95,6 +95,8 @@ namespace UnturnedGodot
         {
             var devices = new System.Collections.Generic.List<PowerDevice>();
             var portMap = new System.Collections.Generic.Dictionary<ConnectionPort, PowerPort>();
+            var dataOwner = new System.Collections.Generic.Dictionary<ConnectionPort, PowerDevice>();
+            var dataWires = new System.Collections.Generic.List<(ConnectionPort From, ConnectionPort To)>();
             foreach (var n in tree.GetNodesInGroup("deployables"))
                 if (n is IPowerDevice d)   // a Deployable OR a powered world fixture (gas pump)
                 {
@@ -103,6 +105,12 @@ namespace UnturnedGodot
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
                         p.Occupied = false;   // reset; the wire loop below re-marks the wired ports
+                        // ⚠ DATA PORTS NEVER REACH THE SOLVER. They carry signal, not watts, so they get no
+                        // PowerPort at all -- which is what guarantees that wiring a camera to a TV cannot
+                        // change either device's load or brown out the circuit they sit on. Their owning device
+                        // is remembered instead, because a data OUTPUT is live only while its own device has
+                        // power, and that answer only exists after the power solve below.
+                        if (DeployableDef.IsDataPort(p.Kind)) { dataOwner[p] = dev; continue; }
                         float watts = p.Kind == DeployableDef.PortKind.Output ? p.Watts * d.PowerScale : p.Watts;   // a generator's output CAP ramps with its spin-up/cooldown (master); consumer/passthrough unscaled
                         portMap[p] = dev.AddPort(Kind(p.Kind), watts);
                     }
@@ -114,7 +122,9 @@ namespace UnturnedGodot
                 if (n is Wire w && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer))
                 {
                     w.Source.Occupied = true; w.Consumer.Occupied = true;   // a wired port shades darker
-                    if (portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
+                    if (DeployableDef.IsDataPort(w.Source.Kind) || DeployableDef.IsDataPort(w.Consumer.Kind))
+                        dataWires.Add((w.Source, w.Consumer));   // signal, resolved after the power solve
+                    else if (portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
                         wires.Add(new PowerWire(src, cons));
                 }
 
@@ -127,6 +137,115 @@ namespace UnturnedGodot
                 kv.Key.Draw = kv.Value.Draw;
                 kv.Key.UpdateCubeColor();   // reflect the new occupancy shade
             }
+
+            SolveData(dataOwner, dataWires);
+        }
+
+        /// <summary>Longest chain the signal is propagated along, and therefore the loop bound. A wired hop and a
+        /// wireless hop each cost one, so camera -&gt; transmitter ~~&gt; receiver -&gt; TV is three, and this leaves room
+        /// for a couple of relays past that. A CAP rather than a convergence-only loop because two radios sharing
+        /// a code can be wired into a ring, and a ring with no bound is a hang.</summary>
+        const int MaxDataHops = 8;
+
+        /// <summary>The SIGNAL pass, run after the power solve because it depends on its answer.
+        ///
+        /// THE RULE: a data OUTPUT is live while its own device has power (an unpowered camera films nothing); a
+        /// data INPUT is live while wired to a live output; and a powered TRANSMITTER with a live input puts its
+        /// stream on the air, where any powered RECEIVER sharing its 4-digit code picks it up (strawberry
+        /// 2026-09-14). Signal still does not pass through a device the way power passes through a splitter --
+        /// the radios relay it because relaying is what they ARE, not because data flows through hardware.
+        ///
+        /// ⚠ IT PROPAGATES, RATHER THAN BEING EVALUATED ONCE. It used to be one hop resolved in a single pass,
+        /// which was right when a wire was the only link. A wireless pair makes the chain camera -&gt; wire -&gt;
+        /// transmitter ~~&gt; receiver -&gt; wire -&gt; TV, so a single pass in the wrong order leaves the last link dark
+        /// and every port reporting exactly what it was told. Iterating to a fixed point removes the ordering
+        /// question entirely: it does not matter which wire or radio is visited first.
+        ///
+        /// WHAT IS CARRIED IS THE ORIGIN, not a flag. The screen at the end asks "what am I showing", and
+        /// answering that by walking back down the chain would have to know about every kind of link there is --
+        /// so the camera stamps itself on its own output and every hop passes it along unchanged.</summary>
+        static void SolveData(System.Collections.Generic.Dictionary<ConnectionPort, PowerDevice> dataOwner,
+                              System.Collections.Generic.List<(ConnectionPort From, ConnectionPort To)> dataWires)
+        {
+            // Seed: an output is live iff its own device has power, and a device that ORIGINATES a stream (a
+            // camera) stamps itself. A receiver's output is an origin of nothing -- it waits for the air.
+            foreach (var kv in dataOwner)
+            {
+                var port = kv.Key;
+                bool powered = DevicePowered(kv.Value);
+                bool origin = port.Kind == DeployableDef.PortKind.DataOut && powered && !IsRadio(port, out _);
+                port.DataLive = origin;
+                port.DataSource = origin ? port.Owner as GodotObject : null;
+            }
+
+            for (int hop = 0; hop < MaxDataHops; hop++)
+            {
+                bool changed = false;
+
+                // WIRES. Direction is not taken from the wire's own source/consumer roles: the tool records
+                // which end was clicked FIRST, and either end of a data link is a legitimate place to start.
+                foreach (var (from, to) in dataWires)
+                {
+                    var outp = from.Kind == DeployableDef.PortKind.DataOut ? from
+                             : to.Kind == DeployableDef.PortKind.DataOut ? to : null;
+                    var inp = from.Kind == DeployableDef.PortKind.DataIn ? from
+                            : to.Kind == DeployableDef.PortKind.DataIn ? to : null;
+                    if (outp == null || inp == null) continue;   // data<->power is refused at the tool
+                    if (outp.DataLive && !inp.DataLive)
+                    {
+                        inp.DataLive = true; inp.DataSource = outp.DataSource; changed = true;
+                    }
+                }
+
+                // THE AIR. Powered transmitters with a live input publish on their code; powered receivers
+                // sharing that code light their output. Last writer wins on a contested code, which is what two
+                // cameras on one channel should do -- it is a channel, not a bus.
+                var air = new System.Collections.Generic.Dictionary<int, GodotObject>();
+                foreach (var kv in dataOwner)
+                {
+                    var port = kv.Key;
+                    if (port.Kind != DeployableDef.PortKind.DataIn || !port.DataLive) continue;
+                    if (!IsRadio(port, out var dep) || !dep.Def.IsDataTransmitter) continue;
+                    if (!DevicePowered(kv.Value)) continue;
+                    air[dep.DataCode] = port.DataSource;
+                }
+                foreach (var kv in dataOwner)
+                {
+                    var port = kv.Key;
+                    if (port.Kind != DeployableDef.PortKind.DataOut || port.DataLive) continue;
+                    if (!IsRadio(port, out var dep) || !dep.Def.IsDataReceiver) continue;
+                    if (!DevicePowered(kv.Value)) continue;
+                    if (!air.TryGetValue(dep.DataCode, out var src)) continue;
+                    port.DataLive = true; port.DataSource = src; changed = true;
+                }
+
+                if (!changed) break;
+            }
+
+            foreach (var kv in dataOwner) kv.Key.UpdateCubeColor();
+        }
+
+        /// <summary>Is this port on a wireless link, and which one?</summary>
+        static bool IsRadio(ConnectionPort p, out Deployable dep)
+        {
+            dep = p.Owner as Deployable;
+            return dep != null && GodotObject.IsInstanceValid(dep) && dep.Def != null && dep.Def.IsDataRadio;
+        }
+
+        /// <summary>Is this device actually drawing power right now? A device with no consumer port at all (a
+        /// bare generator) counts as powered -- it is running under its own steam, and a camera bolted to one
+        /// should film.</summary>
+        static bool DevicePowered(PowerDevice dev)
+        {
+            bool sawConsumer = false;
+            foreach (var p in dev.Ports)
+            {
+                if (p.Kind == SDG.Unturned.PowerPortKind.Output && dev.Producing) return true;
+                if (p.Kind != SDG.Unturned.PowerPortKind.Consumer) continue;
+                sawConsumer = true;
+                if (p.Powered) return true;
+            }
+            return !sawConsumer;
         }
 
         // Pre-warm helper: flash every wire-tool port arrow visible (show) or hide, so their shared spatial-shader

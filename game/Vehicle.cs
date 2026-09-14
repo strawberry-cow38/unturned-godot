@@ -8942,8 +8942,15 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // always wrong for: the ghost latched onto whichever sorted first, so the one you were actually backing
             // under stayed SOLID, your bumper hit its drawbar and shoved it away, and it read as unhitchable.
             // (strawberry 2026-09-10: "the trailers are IMPOSSIBLE to tow.")
-            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null)
+            // _live, NOT GetNodesInGroup. This runs per tow-capable vehicle per PHYSICS TICK (50/s), and the
+            // group lookup marshalled an Array of every vehicle in the world across the C#/engine boundary each
+            // time -- 16% of the game's total allocations in an ETW capture, as a Godot.Collections.Array plus a
+            // StringName plus a Node enumerator, purely to find trailers that are almost always exactly where
+            // they were last tick. _live holds the same set with no boundary crossing at all; PlayerController's
+            // look scan was already moved onto it for this reason and this call site was simply missed.
+            // IsInstanceValid because a freed vehicle stays in _live until its _ExitTree runs.
+            foreach (var v in _live)
+                if (v != this && GodotObject.IsInstanceValid(v) && v.IsTrailer && v.CoupledCab == null)
                 {
                     float d = fw.DistanceSquaredTo(v.KingpinWorld);
                     if (d < best) { best = d; near = v; }

@@ -86,8 +86,38 @@ namespace UnturnedGodot
             _vp.RenderTargetUpdateMode = on ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
         }
 
-        public void SetName(string text, Color color) { if (_name != null) { _name.Text = text; _name.Modulate = color; } }
-        public void SetPrompt(string text, Color color) { if (_prompt != null) { _prompt.Text = text ?? ""; _prompt.Modulate = color; } }
+        public void SetName(string text, Color color)
+        {
+            if (_name == null) return;
+            _name.Text = text ?? ""; _name.Modulate = color;
+            FitLabel(_name, NameFontSize);
+        }
+
+        public void SetPrompt(string text, Color color)
+        {
+            if (_prompt == null) return;
+            _prompt.Text = text ?? ""; _prompt.Modulate = color;
+            FitLabel(_prompt, PromptFontSize);
+        }
+
+        const int NameFontSize = 30, PromptFontSize = 26, MinFontSize = 15;
+
+        /// <summary>Shrink the face until the text fits the billboard, instead of letting it run off the edge.
+        ///
+        /// A Label that overflows does not announce it -- "Red Spotted Mushroom" rendered as "Red Spotted
+        /// Mushroor", which does not read as a truncation, it reads as a different word. Every caller here shows
+        /// a name it does not control (an item name, a vehicle name), so no call site can be responsible for
+        /// keeping its own string short. Measured against the label's real font rather than a character count,
+        /// because the same 20 characters are wide in one string and narrow in another.</summary>
+        static void FitLabel(Label l, int baseSize)
+        {
+            var font = l.GetThemeFont("font");
+            int size = baseSize;
+            if (font != null && !string.IsNullOrEmpty(l.Text))
+                while (size > MinFontSize && font.GetStringSize(l.Text, HorizontalAlignment.Center, -1f, size).X > l.Size.X - 8f)
+                    size -= 1;
+            l.AddThemeFontSizeOverride("font_size", size);
+        }
 
         // index 0=health, 1=fuel, 2=battery, 3=main rotor, 4=tail rotor. value 0..1. visible=false hides the row.
         public void SetBar(int i, float value, Color color, bool visible = true)

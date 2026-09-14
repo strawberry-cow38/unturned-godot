@@ -129,7 +129,7 @@ namespace UnturnedGodot.Net
         public sealed class WorldItemSave
         {
             public ushort ItemId { get; set; }
-            public byte Amount { get; set; }
+            public ushort Amount { get; set; }   // ushort since Item.amount widened for the $500 wallet; JSON, so old saves still load
             public byte Quality { get; set; }
             public float X { get; set; }
             public float Y { get; set; }
@@ -272,7 +272,7 @@ namespace UnturnedGodot.Net
             public byte Y { get; set; }
             public byte Rot { get; set; }
             public ushort Id { get; set; }
-            public byte Amount { get; set; }
+            public ushort Amount { get; set; }   // ushort since Item.amount widened for the $500 wallet; JSON, so old saves still load
             public byte Quality { get; set; }
             public short GunAmmo { get; set; } = -1;
             public sbyte GunFiremode { get; set; } = -1;
@@ -458,7 +458,23 @@ namespace UnturnedGodot.Net
             // catalogue was missing its Width/Height (which was true of 193 of the 195 garments with pockets)
             // carries 0x0, and forcing that back over a correctly-sized page would re-break every existing save
             // the moment the catalogue is fixed. A zero here means "the save does not know", not "it is empty".
+            // CLEAR FIRST. The save is authoritative for a container it has an entry for, and the page it is
+            // restoring into is NOT empty: the world has already spawned this crate's loot by the time a save
+            // is applied. Without this, every load ADDED the saved contents on top of freshly-rolled loot, so
+            // containers filled up a little more each session -- measured at 15.8 items per container on a
+            // fresh world and 44.0 after eight loads, against a 48-slot grid. That is what grew one save to
+            // 41.5 MB and, because WorldSaveDriver serialises on the main thread every 60 s, what eventually
+            // pinned the game at ~1 fps. Duplicated loot was the gameplay half of the same bug.
+            //
+            // loadSize does not clear: it rebuilds its list from the items already present and re-marks their
+            // slots. And when the save does not know its own size (0x0 -- true of 193 of 195 garments before
+            // the catalogue was fixed, hence the guard below) it is skipped entirely, which after a clear()
+            // would leave the SLOT GRID still marked occupied while items was empty, and every addItem below
+            // would then silently find its slot taken. So the else-branch re-runs loadSize at the page's
+            // existing size purely to reset that grid.
+            page.clear();
             if (ps.Width > 0 && ps.Height > 0) page.loadSize(ps.Width, ps.Height);
+            else page.loadSize(page.width, page.height);
             foreach (var j in ps.Items)
                 if (j != null && j.Id != 0) page.addItem(j.X, j.Y, j.Rot, ToItem(j));
         }
@@ -838,11 +854,46 @@ namespace UnturnedGodot.Net
 
         // ---------------------------------------------------------------- file format
 
+        // A 41.5 MB save on a real PEI world, of which 38.6 MB was Containers, is what forced this. The autosave
+        // (WorldSaveDriver.AutosaveSeconds = 60) serialises the whole file on the MAIN THREAD; once that write
+        // takes longer than 60 s the next autosave is already due and the game never catches up -- measured at a
+        // permanent ~1 fps with the GPU idle at 0% and one core pegged on JSON. Two causes, both fixed here.
+        //
+        // 1. Every JarSave wrote its ten gun fields even on a tomato: -1/-1/-1/-1/-1/-1/-1/-1/false/false, ten
+        //    lines out of eighteen per item, on every item in all 696 containers. ShouldSerialize drops them when
+        //    they hold the "not a gun" sentinel. Reading is UNAFFECTED and old saves still load: the properties
+        //    carry `= -1` initialisers, so a field that is absent from the JSON lands on exactly the value that
+        //    was omitted. WhenWritingDefault could not do this -- default(short) is 0, and the sentinel is -1.
+        // 2. WriteIndented. The original note -- "a save you can open and read is a save you can debug" -- is
+        //    right, so it is kept as an opt-in rather than deleted: UG_SAVE_PRETTY=1 restores it for debugging.
         static readonly JsonSerializerOptions Json = new JsonSerializerOptions
         {
-            WriteIndented = true,   // a save you can open and read is a save you can debug
+            WriteIndented = System.Environment.GetEnvironmentVariable("UG_SAVE_PRETTY") == "1",
             DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver
+            {
+                Modifiers = { OmitUnsetGunFields },
+            },
         };
+
+        /// <summary>Drop a JarSave's gun fields when they hold the "not a gun" sentinel. Scoped to JarSave by
+        /// type so nothing else in the save is affected by a property happening to start with "Gun".</summary>
+        static void OmitUnsetGunFields(System.Text.Json.Serialization.Metadata.JsonTypeInfo ti)
+        {
+            if (ti.Type != typeof(JarSave)) return;
+            foreach (var prop in ti.Properties)
+            {
+                if (!prop.Name.StartsWith("Gun")) continue;
+                prop.ShouldSerialize = static (_, v) => v switch
+                {
+                    short sh => sh != -1,
+                    sbyte sb => sb != -1,
+                    int i => i != -1,
+                    bool b => b,
+                    _ => true,
+                };
+            }
+        }
 
         public string ToJson() => JsonSerializer.Serialize(this, Json);
 

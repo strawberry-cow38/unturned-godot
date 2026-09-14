@@ -29,16 +29,16 @@ namespace UnturnedSim.Tests
             Idle(v, 80f);
 
             Assert.That(v.Radiation, Is.EqualTo(0f), "a full dose should wash out in ~66 s of being outside");
-            // 0.8 sits ABOVE InfectionSelfClearBelow, so the virus holds -- which is the point. If this ever
-            // reads clean, radiation has started un-infecting people and the two stats have collapsed back
-            // into one.
+            // 0.8 sits ABOVE InfectionSickAbove, so the virus is costing health and refuses to self-clear --
+            // which is the point. If this ever reads clean, radiation has started un-infecting people and
+            // the two stats have collapsed back into one.
             Assert.That(v.Infection, Is.EqualTo(0.8f).Within(0.001f), "the scar must outlive the dose");
         }
 
         [Test]
         public void The_Dose_Decays_From_Any_Level_Unlike_Infection()
         {
-            // Infection holds above 0.5; radiation deliberately has no such threshold, so a dose taken deep
+            // Infection holds once it is costing health; radiation deliberately has no such gate, so a dose deep
             // in a zone is still survivable if you walk out.
             var high = new PlayerVitalsSim { Radiation = 0.9f };
             var low = new PlayerVitalsSim { Radiation = 0.2f };
@@ -259,14 +259,24 @@ namespace UnturnedSim.Tests
             var box = Box();
             var brief = Stand(box, new Vector3(0f, 0f, 0f), new RadiationGear(), 20f);
             var lengthy = Stand(box, new Vector3(0f, 0f, 0f), new RadiationGear(), 45f);
-            Idle(brief, 200f);
-            Idle(lengthy, 200f);
+
+            // ⚠ THE WASHOUT WINDOW IS DERIVED, not the flat 200 s this used to idle. 200 was ~4x what the old
+            // 0.01/s self-clear needed and is ~0.75x what a full game day needs, so the promise ("a short trip
+            // costs nothing lasting") started reading as a failure the moment the heal rate moved -- while the
+            // promise itself stayed true. A brief trip now leaves 0.18 and sheds it in ~266 s; ask the constant.
+            float washout = brief.Infection / PlayerVitalsSim.InfectionClearPerSecond + 30f;
+            Idle(brief, washout);
+            Idle(lengthy, washout);
 
             Assert.That(brief.Radiation, Is.EqualTo(0f), "the dose always washes out");
             Assert.That(lengthy.Radiation, Is.EqualTo(0f));
             Assert.That(brief.Infection, Is.EqualTo(0f).Within(0.001f), "a 20 s trip costs nothing lasting");
-            Assert.That(lengthy.Infection, Is.GreaterThan(0.5f),
-                "a 45 s trip leaves infection that is past the self-clear line and never comes off");
+            // ⚠ TIGHTENED to the line that is actually live. This read `> 0.5`, the OLD self-clear threshold,
+            // which stopped being a threshold at all when the gate moved to "not taking infection damage"
+            // (InfectionSickAbove, 0.75). Asserting the number a rule USED to use is how a test keeps passing
+            // while meaning nothing -- a 0.6 infection would satisfy the old line and now self-clear away.
+            Assert.That(lengthy.Infection, Is.GreaterThan(PlayerVitalsSim.InfectionSickAbove),
+                "a 45 s trip leaves infection past the line where the virus holds, and it never comes off");
         }
 
         [Test]

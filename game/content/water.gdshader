@@ -15,8 +15,8 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
 // the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
 // body of water look blue instead of merely darker.
-uniform vec4 water_deep : source_color = vec4(0.025, 0.10, 0.28, 0.82);    // navy, bluer + more opaque (master 2026-09-08)
-uniform vec4 water_shallow : source_color = vec4(0.06, 0.26, 0.48, 0.36);  // shallows keep their transparency, shifted blue
+uniform vec4 water_deep : source_color = vec4(0.012, 0.072, 0.30, 0.94);   // master 2026-09-12 "more blue, less transparent, more foggy": deeper navy, near-opaque
+uniform vec4 water_shallow : source_color = vec4(0.045, 0.22, 0.52, 0.58); // shallows still read as shallow, but bluer and much less see-through
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -43,6 +43,16 @@ global uniform float rain_intensity;
 uniform float rain_ring_distance = 70.0;
 uniform float rain_ring_strength : hint_range(0.0, 2.0) = 0.9;
 uniform float ring_normal_gain = 2.5;   // how hard a ring tilts the surface (see the NORMAL tweak at the end of fragment)
+
+// WEATHER DRIVES THE SEA (master 2026-09-12 "have weather affect the water"). All four ride the SAME
+// `rain_intensity` global the rain rings already read -- one weather signal, not a second one invented here that
+// could drift out of step with the sky, the streaks and the wetness. At intensity 0 every term below is exactly
+// 1.0/unchanged, so fair weather is byte-identical to before.
+uniform float storm_chop = 2.1;        // ripple-detail multiplier at full rain: wind-driven chop
+uniform float storm_foam = 0.55;       // crest_foam THRESHOLD multiplier: lower bar -> whitecaps appear sooner
+uniform float storm_mirror = 0.42;     // reflectivity multiplier: a broken surface scatters instead of mirroring
+uniform vec3 storm_tint : source_color = vec3(0.10, 0.14, 0.17);   // overcast grey-green the body colour shifts toward
+uniform float storm_tint_amt = 0.40;   // how far toward storm_tint at full rain
 float wr_h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
 // Voronoi-ish scatter of expanding rings, the same shape wet_surface uses so water and wet road ring alike.
 float wr_rings(vec2 wxz, float t, float amt){
@@ -72,7 +82,7 @@ float wr_rings(vec2 wxz, float t, float amt){
 void vertex() {
     vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
     float tphase = swell_phase(TIME);
-    VERTEX.y += swell_at(wp, tphase) * SWELL_AMP;
+    VERTEX.y += swell_at(wp, tphase) * swell_amp();   // weather-scaled, see swell.gdshaderinc
     v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // normal is computed PER-PIXEL in the fragment (below)
 }
 
@@ -84,7 +94,8 @@ void fragment() {
     float sh  = swell_at(v_wpos.xz, tp);
     float shx = swell_at(v_wpos.xz + vec2(se, 0.0), tp);
     float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
-    vec3 swell_n = vec3((sh - shx) * SWELL_AMP / se, 1.0, (sh - shz) * SWELL_AMP / se);
+    float _sa = swell_amp();
+    vec3 swell_n = vec3((sh - shx) * _sa / se, 1.0, (sh - shz) * _sa / se);
     // DISTANCE LOD: fade the high-freq ripple detail out with distance. At a LOW/grazing angle (standing on the
     // shore) far water crushes many wavelengths into each pixel -> the normals alias into a BUSY shimmer, and the
     // Fresnel (below) turns that into a wall of glitter. Fading detail with distance keeps far/grazing water calm;
@@ -92,11 +103,19 @@ void fragment() {
     float vdist = length(VERTEX);   // fragment distance from camera (view space)
     float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);   // 1 near (<25m) -> 0 far (>165m)
     // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space), LOD-faded with distance
-    vec2 np = v_wpos.xz * 0.10 + vec2(TIME * 0.03, TIME * -0.02);   // fine reflection ripples SCALED UP bigger (master)
+    // 0.10 -> 0.055: the ripple CREASES roughly double in size (strawberry 2026-09-12 "up the size of the ripple
+    // creases"; second time this has been scaled up, hence the note). The finite-difference epsilon below stays at
+    // 0.06 ON PURPOSE -- it is in NOISE space, not world space, so it tracks the pattern automatically and the
+    // creases keep their sharpness instead of flattening as they grow. Scaling it with the frequency would widen
+    // the gradient stencil and soften exactly what was asked to be made bigger.
+    vec2 np = v_wpos.xz * 0.055 + vec2(TIME * 0.03, TIME * -0.02);
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
-    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0 * lod;
+    float storm = clamp(rain_intensity, 0.0, 1.0);
+    // CHOP. The same fbm that makes the calm-water creases, pushed harder -- so a storm roughens the surface
+    // the sea already has rather than layering a separate "storm pattern" over it.
+    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0 * lod * mix(1.0, storm_chop, storm);
     vec3 wn = normalize(swell_n + detail);
     NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 
@@ -121,12 +140,18 @@ void fragment() {
     // planar XZ across a triangle is exact. Same input, same function, finer sampling.
     float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
     float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
-    float crest = smoothstep(crest_foam, crest_foam + 0.20, sh) * gate;
+    // WHITECAPS. Lower the swell-height BAR in a storm rather than adding foam directly: the caps still appear
+    // on real crests, there are just more of them, so they stay tied to the wave field instead of floating on it.
+    float crest_bar = crest_foam * mix(1.0, storm_foam, storm);
+    float crest = smoothstep(crest_bar, crest_bar + 0.20, sh) * gate;
 
     float foam = clamp(max(crest, shore) * 0.8 * foam_amount, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
 
     // SEE-THROUGH depth-tinted water
-    float dt = smoothstep(0.0, shore_depth * 4.0, depth_v);
+    // FOGGIER: reach the deep colour in roughly half the water depth it used to take, so the seabed is swallowed
+    // sooner instead of staying legible well out from shore (master 2026-09-12 "more foggy"). shore_depth still
+    // owns the FOAM band -- this is only the colour/opacity ramp, which is why it gets its own multiplier.
+    float dt = smoothstep(0.0, shore_depth * 2.0, depth_v);
     vec3 base = mix(water_shallow.rgb, water_deep.rgb, dt);
     float a = mix(water_shallow.a, water_deep.a, dt);
 
@@ -147,8 +172,15 @@ void fragment() {
         float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
         refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
     }
-    vec3 water_col = mix(base, refl_src, clamp(fres * reflectivity * reflection_strength, 0.0, 1.0));
-    a = mix(a, 1.0, fres * reflectivity * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
+    // OVERCAST BODY COLOUR: a storm sky lights the water greyer, and this is also the only one of the four that
+    // shows from straight down, where Fresnel contributes nothing.
+    base = mix(base, storm_tint, storm * storm_tint_amt);
+    // BROKEN SURFACE SCATTERS. Chop destroys the mirror, so the sky reflection has to fall off with weather --
+    // otherwise a storm reads as a ROUGHER surface that is somehow still glassy, which looks wrong at the exact
+    // grazing angles a player on a shore actually stands at.
+    float refl_w = reflectivity * mix(1.0, storm_mirror, storm);
+    vec3 water_col = mix(base, refl_src, clamp(fres * refl_w * reflection_strength, 0.0, 1.0));
+    a = mix(a, 1.0, fres * refl_w * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
 
     // rain rings: a bright dimple where each drop lands, and a rougher patch around it so the reflection breaks up
     float rint_w = clamp(rain_intensity, 0.0, 1.0);

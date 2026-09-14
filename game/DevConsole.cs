@@ -69,7 +69,7 @@ namespace UnturnedGodot
         // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
         // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
         // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
-        static readonly string[] NoArgVerbs = { "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] NoArgVerbs = { "heal", "datacode", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -79,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -263,6 +263,41 @@ namespace UnturnedGodot
             // the actual authority, so the next echo reflects reality instead of fighting a local write it
             // knows nothing about. Caught by comparing a render against the console's OWN reported value, which
             // was correct on read and had already been quietly overwritten by the time the shot was taken.
+            // heal -- full HP, full food/water/stamina/breath, no infection, no dose, every condition cleared.
+            // Routed through DebugHealFully, which writes locally AND tells the authority; see the sethp note
+            // below for why a purely local write reverts one tick later under the loopback.
+            // datacode <0000-9999> -- set the 4-digit channel on the wireless link you are nearest to. A pair
+            // only talks when their codes MATCH, and the code is invisible on the model, so without this the
+            // feature is unusable past the default channel.
+            if (verb == "datacode")
+            {
+                var world = Player?.GetParent() ?? GetTree().Root;
+                Deployable near = null; float best = float.MaxValue;
+                foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                    if (n is Deployable d && IsInstanceValid(d) && d.Def != null && d.Def.IsDataRadio && Player != null)
+                    {
+                        float dd = d.GlobalPosition.DistanceSquaredTo(Player.GlobalPosition);
+                        if (dd < best) { best = dd; near = d; }
+                    }
+                if (near == null) { Echo("datacode: no transmitter or receiver placed"); return; }
+                if (arg.Length == 0) { Echo($"datacode: nearest {near.Def.Name} is on channel {near.DataCode:0000} (give a number 0-9999 to change it)"); return; }
+                if (!int.TryParse(arg, out int code)) { Echo("datacode: not a number"); return; }
+                near.DataCode = code;
+                PowerNet.MarkDirty();   // the channel IS the link -- re-solve so a matching pair connects at once
+                Echo($"datacode: {near.Def.Name} -> channel {near.DataCode:0000}");
+                return;
+            }
+
+            if (verb == "heal")
+            {
+                if (Player == null) { Echo("heal: no player"); return; }
+                Player.DebugHealFully();
+                Echo($"heal: hp {Player.Health:0}/{Player.MaxHealth:0}, food {Player.Food * 100f:0}%, "
+                   + $"water {Player.Water * 100f:0}%, stamina {Player.Stamina * 100f:0}%, "
+                   + $"infection {Player.Infection * 100f:0}%, bleeding {Player.Bleeding}, broken {Player.Broken}");
+                return;
+            }
+
             if (verb == "sethp" && arg.Length > 0)
             {
                 if (Player == null) { Echo("sethp: no player"); return; }
@@ -732,7 +767,8 @@ namespace UnturnedGodot
                         case "clean": quality = WaterQuality.Clean; break;
                         case "tainted": quality = WaterQuality.Tainted; break;
                         case "dirty": quality = WaterQuality.Dirty; break;
-                        default: Echo($"unknown flag '{fq[1]}' (clean, tainted, dirty)"); return;
+                        case "salty": case "salt": case "sea": quality = WaterQuality.Salty; break;
+                        default: Echo($"unknown flag '{fq[1]}' (clean, tainted, dirty, salty)"); return;
                     }
                 }
                 float ml = -1f;   // no amount -> fill to capacity
@@ -837,7 +873,7 @@ namespace UnturnedGodot
                 {
                     int take = Mathf.Min(left, cap);
                     var it = SDG.Unturned.Assets.makeLoot(asset.id);   // keeps food quality / fluid / mag fill
-                    if (!asset.IsMagazine) it.amount = (byte)take;     // a magazine's amount IS its loaded rounds -- leave it
+                    if (!asset.IsMagazine) it.amount = (ushort)take;     // a magazine's amount IS its loaded rounds -- leave it
                     int units = asset.IsMagazine ? 1 : take;
                     if (Player?.Inventory != null && Player.Inventory.tryAddItem(it)) bagged += units;
                     else { Player?.DropWorldItem(it, at + Vector3.Up * 2f); dropped += units; }
@@ -1453,7 +1489,7 @@ namespace UnturnedGodot
             }
             else if (verb == "survival" || verb == "hunger")
             {
-                // survival [on|off]  -- toggle hunger/thirst drain (OFF by default). Bare `survival` flips it.
+                // survival [on|off]  -- toggle hunger/thirst drain (ON by default). Bare `survival` flips it.
                 string a = arg.Trim().ToLowerInvariant();
                 PlayerController.SurvivalDrain = a == "on" || a == "1" || a == "true" ? true
                                                : a == "off" || a == "0" || a == "false" ? false

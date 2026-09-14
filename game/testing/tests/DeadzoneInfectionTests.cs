@@ -117,10 +117,16 @@ namespace UnturnedGodot.Testing
             T.Check("...and InDeadzone is false again, dropping the HUD icon", !player.InDeadzone);
 
             // NO MORE DOSE, asserted as "does not RISE" rather than "is unchanged" -- deliberately. Infection
-            // below 0.5 drains on its own in PlayerVitalsSim, so the honest expectation outside a zone is that
-            // it falls. The first version of this check demanded exact equality and failed at 0.124, catching
-            // the self-clear doing precisely its job; equality here would have been a test asserting that a
-            // feature I wrote earlier tonight is broken.
+            // self-clears in PlayerVitalsSim, so the honest expectation outside a zone is that it falls. The
+            // first version of this check demanded exact equality and failed at 0.124, catching the self-clear
+            // doing precisely its job; equality here would have been a test asserting that a feature I wrote
+            // earlier that night is broken.
+            //
+            // ⚠ The rule this used to name -- "infection below 0.5 drains on its own" -- IS GONE (2026-09-13).
+            // The gate is no longer a level, it is `not currently sick`: anything at or under
+            // PlayerVitalsSim.InfectionSickAbove clears, at InfectionClearPerSecond. Deliberately NOT restated
+            // as a new number here -- an inequality is the whole point of this assertion, and writing the rate
+            // down in a test is exactly what made unify.fine_vitals_starve go stale.
             float infAfterLeaving = player.Infection;
             field.Apply(player, 5f);
             yield return Ticks(2);

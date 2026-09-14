@@ -311,9 +311,25 @@ namespace UnturnedGodot
         public static AudioStream SmokeVent(ushort id)
             => ThrowableStem(id) is string st && st.StartsWith("smoke") ? Clip("items", $"throwables_{st}_smoke") : null;
 
-        /// <summary>A thrown thing hitting something. One clip for every throwable, as retail has it -- the
-        /// file is named for the grenade because that is the bundle it lives in, not because it is frag-only.</summary>
-        public static AudioStream ThrowableBounce() => Clip("items", "throwables_grenade_bounce_use");
+        /// <summary>A thrown thing hitting something.
+        ///
+        /// ⚠ NOT throwables_grenade_bounce_use, WHICH IS NOT A BOUNCE. Read the name the way the folder names
+        /// everything else -- `throwables_&lt;item&gt;_&lt;action&gt;` -- and it is the BOUNCE GRENADE (item 1838, the
+        /// bounce-then-launch mechanic listed as unshipped in ThrowableDef) being ACTIVATED. Its pin-pull, not
+        /// anything's landing. The bytes agree: it is identical to throwables_grenade_use, and to every smoke's
+        /// and flashbang's _use clip -- 30 files in this folder are 6 recordings. So every bounce replayed the pin
+        /// being pulled (strawberry 2026-09-13: "when they bounce, they are playing the throw sound for some
+        /// reason"). Not a routing mistake; the filename was read as a description and it is an item name.
+        ///
+        /// Retail ships no throwable bounce clip at all: the throwable bundles contain Use.ogg (and Smoke.ogg for
+        /// smokes) and nothing else, UseableThrowable adds only Grenade/Flashbang/Distraction to the thrown
+        /// prefab, and nothing in the source mentions a bounce. So there is no per-item clip to play.
+        ///
+        /// What retail DOES have is the physics-impact bank -- effects/physics/impacts/&lt;material&gt;_static, the
+        /// sound of a thing striking that surface -- which is what a grenade landing on concrete IS. That makes
+        /// the bounce a SURFACE question rather than an item one, so it takes the struck surface rather than the
+        /// throwable's id, and a canister on gravel and one on metal stop sounding alike.</summary>
+        public static AudioStream ThrowableBounce(PlayerController.Surf surf) => Impact(surf);
 
         /// <summary>Fuel moving between a can and a tank -- pouring in, siphoning out, filling at a pump.
         /// Retail ships one clip per CONTAINER (UseableFuel's own bundle), and the port has all five of the
@@ -337,7 +353,16 @@ namespace UnturnedGodot
         // GetAudioDef is keyed by the material NAME, so the suffix picks the clip without any caller ever
         // spelling it. Static is world geometry, dynamic is a thing that moves, which is exactly "what was
         // struck". Found while extracting per-prop surfaces (tools/extract_prop_surfaces.py).
-        public static AudioStream Impact(PlayerController.Surf s) => Pick("impacts", (s switch
+        //
+        // ⚠⚠ AND IT USED Pick, WHICH COULD NEVER HAVE MATCHED A FILE. Pick globs `prefix_*`, which wants the
+        // numbered-variant shape (`concrete_walk_03.wav`); THIS folder is one clip per material,
+        // `concrete_static.wav`, with nothing after the material at all. So `concrete_static_*` matched zero
+        // files for all seven surfaces and Impact returned null every time it was ever called -- the dropped-item
+        // thud in WorldItem has been silent since it was written, and nothing noticed, because a null stream is
+        // the one failure PlayAt handles politely. Caught 2026-09-13 only because the throwable bounce became the
+        // second caller and its test asked whether the clip existed. `Clip` is the exact-file accessor and is
+        // what this always wanted -- the note on Clip itself says so.
+        public static AudioStream Impact(PlayerController.Surf s) => Clip("impacts", (s switch
         {
             PlayerController.Surf.Metal => "metal",
             PlayerController.Surf.Wood => "wood",

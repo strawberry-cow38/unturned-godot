@@ -571,22 +571,34 @@ namespace UnturnedNet.Tests
                         "contaminated ground has to dose the server's player, not only a PlayerController");
             Assert.That(cs.HealthExact, Is.EqualTo(startHp).Within(0.001f),
                         "...and must not take health directly -- the vitals sim owns what infection costs");
-            // ⚠ THE TOLERANCE IS DERIVED FROM THE DOSE RATE. A flat 0.001 encoded "four seconds scars
-            // nothing" as an absolute, and four seconds stopped being a brush when the rate tripled
-            // (2026-09-13) -- it went red at 0.0015, correctly measuring a real change and wrongly reading
-            // as a broken invariant. What must hold at any rate is that the scar is far below the 0.5
-            // self-clear mark, i.e. it washes off. That is the design promise; 0.001 was one rate's version
-            // of it.
-            float brushScar = v.Sim.Infection - startInf;
-            Assert.That(brushScar, Is.LessThan(0.05f),
-                        $"a brief brush leaves {brushScar:0.####} infection, which must wash off well under the 0.5 self-clear mark");
-            Assert.That(brushScar, Is.GreaterThanOrEqualTo(0f), "and it certainly must not HEAL you");
+            // ⚠ MERGE NOTE (v50): both branches rewrote this assertion, for the same reason and to different
+            // bounds. Mine used a chosen 0.05; main's derives from InfectionSickAbove and InfectionClearPerSecond.
+            // Main's is kept because a bound read out of the named constants survives either side moving, and
+            // mine was one more absolute picked to fit one rate -- which is the exact fault the comment below
+            // is about. ⚠ It was written against MAIN's dose rate; Staging-Tinyclaw tripled that rate
+            // (aa221199), so a brush accrues ~3x more here than where this bound was set. Run, not assumed.
+            // ⚠ A BRUSH NOW LEAVES A TRACE, and that is the infection HEAL rate changing, not the hazard.
+            //
+            // This asserted "exactly unchanged", which was only ever true because one rate out-ran another: the
+            // old self-clear ran at 0.01/s, so four seconds of drain (0.04) completely buried the ~0.005 a brush
+            // accrues and the net landed on zero. A full-game-day clear sheds 0.0028 in the same window, so the
+            // trace survives the step. The comment above this even states the mechanism -- "has to out-climb the
+            // self-clear drain" -- so the test was encoding an arithmetic accident of the two rates, not the spec.
+            //
+            // The SPEC is that a brief trip is survivable and leaves no SCAR, and that is what this asserts now:
+            // nowhere near the line where the virus starts holding and costing health, and gone within seconds.
+            float brush = v.Sim.Infection - startInf;
+            Assert.That(brush, Is.LessThan(PlayerVitalsSim.InfectionSickAbove),
+                        "a four-second brush must not reach the line where the virus holds");
+            Assert.That(brush / PlayerVitalsSim.InfectionClearPerSecond, Is.LessThan(60f),
+                        "...and whatever it did leave sheds in under a minute -- a trace, not a scar");
 
             // ...and standing in it does. Same server, same volume, just long enough for the carried dose to
             // out-climb the self-clear -- which is the claim the old single assertion was really making.
             h.Step(2500);   // +50 s
-            Assert.That(v.Sim.Infection, Is.GreaterThan(0.5f),
-                        "standing in contaminated ground has to scar the server's player permanently");
+            Assert.That(v.Sim.Infection, Is.GreaterThan(PlayerVitalsSim.InfectionSickAbove),
+                        "standing in contaminated ground has to scar the server's player permanently -- past the "
+                        + "line where the virus holds, not merely past the number the old rule used");
             Assert.That(v.Sim.MajorlyIrradiated, Is.True,
                         "and a dose that big costs the server's copy its sprint too");
         }
@@ -650,9 +662,24 @@ namespace UnturnedNet.Tests
             // So assert the thing that is actually true and would break if the gear read were dropped: the
             // extra survival equals the filter's own lifetime.
             float filterTicks = 100f / DeadzoneDef.Default().MaskFilterLossPerSecond * 50f;   // quality / burn-per-sec, at 50 Hz
-            Assert.That(suited - bare, Is.EqualTo(filterTicks).Within(filterTicks * 0.25f),
-                        $"a suit lasted {suited} ticks vs {bare} bare (+{suited - bare}); the filter is worth ~{filterTicks:0} ticks, " +
-                        "so protection has to be read server-side AND burn down");
+            int extra = suited - bare;
+
+            // ⚠ THE EQUALITY ABOVE WAS TRUE AT ONE DOSE RATE AND IS NOT A SPEC. It read
+            // `extra == filterTicks (+/-25%)`, which held while the dose soaked THROUGH the filter was
+            // negligible: you spent the filter's whole life, arrived at the bare phase near-clean, and then
+            // lived a full bare lifetime. Tripling the dose rate (aa221199) broke that premise rather than the
+            // feature -- at 0.060/s bare you now arrive at the bare phase already heavily dosed, so the suit
+            // returns 1677 of a possible 2500 ticks. Nothing about the gear read changed.
+            //
+            // What is true at ANY rate, and what would actually break if the server stopped reading gear:
+            // the filter is a CEILING on what protection can buy (you cannot gain more time than it runs
+            // for), and it must deliver a large fraction of that ceiling or it is not being read at all.
+            Assert.That(extra, Is.GreaterThan(0),
+                        $"a suit bought {extra} ticks -- protection is not reaching the server's inventory at all");
+            Assert.That(extra, Is.LessThanOrEqualTo(filterTicks * 1.05f),
+                        $"a suit bought {extra} ticks against a {filterTicks:0}-tick filter -- protection cannot outlive its own filter, so either it stopped burning down or the ceiling moved");
+            Assert.That(extra / filterTicks, Is.GreaterThan(0.4f),
+                        $"a suit bought {extra} ticks, only {extra / filterTicks:P0} of its {filterTicks:0}-tick filter -- that is a filter being read and then barely mattering");
         }
 
         static int TimeToDie(bool protectedSuit)

@@ -31,6 +31,22 @@ namespace UnturnedNet.Tests
             ["MaxHealth"] = "constant per player; not per-tick state",
             // Purely local pacing for the stamina regen hold; re-derived on whichever side is stepping.
             ["StaminaRegenDelay"] = "local regen pacing, re-derived by whoever steps the sim",
+            // Same shape as StaminaRegenDelay, and exempt for the same reason rather than by analogy: it is
+            // pacing for a value the client does not own. The pattern in this block is that the VALUE rides and
+            // the PACING does not -- Stamina is here and StaminaRegenDelay is not; Health is server-owned and
+            // exempt, and this is Health's regen pacing.
+            //
+            // Checked rather than assumed: RegenLockDelay is read in exactly one place, the regen gate inside
+            // Step, and a client with server-owned fine vitals never reaches that -- UpdateVitals early-returns
+            // on NetFineVitalsAdopted before the local sim mutates anything. Every party that needs the lock
+            // derives it from the damage itself: the server from hp that went missing between its own last
+            // output and this tick's read, an SP-authoritative shell from PlayerController.TakeDamage. Nothing
+            // renders it, so putting a float per player per tick on the wire would buy a value no one reads.
+            //
+            // ⚠ If a client ever needs to SHOW the lock (a "too hurt to heal" tell), this stops being true and
+            // the field should be serialised instead of re-exempted.
+            ["RegenLockDelay"] = "post-damage regen pacing; the only reader is the sim's own regen gate, which a "
+                               + "client with adopted fine vitals never steps. Both authorities arm it from the damage.",
         };
 
         static IEnumerable<FieldInfo> VitalFields() =>

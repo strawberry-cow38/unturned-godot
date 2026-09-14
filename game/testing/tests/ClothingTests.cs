@@ -215,4 +215,54 @@ namespace UnturnedGodot.Testing
                     shaderMat != null && shaderMat.GetShaderParameter("has_shirt_albedo").AsBool());
         }
     }
+
+    // WEARING SOMETHING MUST MOVE THE DASHBOARD'S CHANGE-POLL, even when no grid cell moved.
+    //
+    // strawberry 2026-09-13: hats and face coverings "arent being applied onto the player until the inventory is
+    // updated by moving something". InventoryUI repaints the paperdoll and the worn tiles from Refresh(), and the
+    // only thing that calls Refresh in the background is a poll on InventorySignature() -- which hashed the GRID
+    // PAGES and nothing else. A garment worn out of the grid repainted by luck, because it left a page. A garment
+    // AUTO-WORN ON PICKUP never touches a page, so the outfit changed, the hash did not, and the dashboard kept
+    // drawing the old head until an unrelated move.
+    //
+    // ⚠ The assertion is deliberately about the case with NO GRID CHANGE. Wearing from the grid would pass on the
+    // broken code too -- the page emptied -- so a test written that way is satisfied by the bug. Here the item is
+    // put straight into the worn slot, which is what a pickup does.
+    public class ClothingSignatureWatchesWornSlots : GameTest
+    {
+        public override string Name => "clothing.signature_watches_worn";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            yield return Ticks(2);
+
+            long bare = ui.DebugInventorySignature();
+            T.Check("a bare inventory hashes to something", bare != 0);
+
+            // AUTO-WORN: straight into the slot, no page touched -- exactly what a pickup that dresses you does.
+            inv.wearHat(new Item(27));
+            long hatted = ui.DebugInventorySignature();
+            T.Check($"wearing a HAT moves the poll with no grid change ({bare:X} -> {hatted:X})", hatted != bare);
+
+            // ...and every other worn slot, since the report named two of them and the cause covers all seven.
+            inv.wearMask(new Item(191));
+            long masked = ui.DebugInventorySignature();
+            T.Check($"wearing a MASK moves it again ({hatted:X} -> {masked:X})", masked != hatted);
+
+            // TAKING IT OFF has to move it too, or a strip leaves the old outfit drawn.
+            inv.wearHat(null);
+            T.Check("removing the hat moves it back", ui.DebugInventorySignature() != masked);
+
+            // CONTROL: the hash must be STABLE when nothing moved, or "it changed" means nothing and the
+            // dashboard would rebuild every frame.
+            long a = ui.DebugInventorySignature(), b = ui.DebugInventorySignature();
+            T.Check("an unchanged inventory hashes the same twice", a == b);
+
+            ui.QueueFree();
+            yield break;
+        }
+    }
 }

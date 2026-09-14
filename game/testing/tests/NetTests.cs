@@ -412,7 +412,14 @@ namespace UnturnedGodot.Testing
             yield return Until(() => rejoin.State == NetSessionState.Connected && rejoin.JoinSnapshotsApplied >= 1, 5);
             T.Check("rejoin under a reused name lands clean (reliable join snapshot)",
                     rejoin.State == NetSessionState.Connected && rejoin.JoinSnapshotsApplied >= 1);
-            yield return Ticks(30);
+            // ⚠ CONVERGE, don't count ticks -- the same argument as the observer check above, which is the only
+            // thing that differed between them. A literal Ticks(30) is a wait calibrated against however big the
+            // join snapshot happened to be when it was written, and it goes stale the moment the world carries
+            // more to send (this branch adds deployable defs, the CCTV camera and the data ports). Waiting for
+            // parity is not weaker: it is still exact equality, and replication that is genuinely broken never
+            // converges, so this times out and fails exactly as before.
+            yield return Until(() => rejoin.Players.StateHash() == ded.Server.Players.StateHash()
+                                     && rejoin.Vehicles.StateHash() == ded.Server.Vehicles.StateHash(), 5);
             T.Check("rejoiner players replica == server", rejoin.Players.StateHash() == ded.Server.Players.StateHash());
             T.Check("rejoiner vehicles replica == server", rejoin.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
             T.Check("server tracks observer + rejoiner", ded.Server.Session.Peers.Count == 2);

@@ -19,8 +19,8 @@ namespace UnturnedGodot.Net
     /// starvation LOSS through the queued <see cref="DamageSink"/> (ServerCombat.DamagePlayerExternal, env
     /// attacker 0, death-capable, landing in THIS tick's Combat.Step), regen through the direct
     /// <see cref="RegenSink"/> HealthExact raise. Death/respawn stay owned by ServerCombat. The HP-delta
-    /// routing runs only while <see cref="SurvivalDrain"/> is on: OFF (the strawberry default) leaves the
-    /// coarse-HP path byte-identical -- no passive regen, no starvation -- while stamina/infection still
+    /// routing runs only while <see cref="SurvivalDrain"/> is on (ON by default since 2026-09-13); OFF leaves
+    /// the coarse-HP path byte-identical -- no passive regen, no starvation -- while stamina/infection still
     /// step + replicate. Stamina is server-owned but sprint stays client-auth: the server derives
     /// `sprinting` from the ADOPTED stance (<see cref="SprintingOf"/>), no second body.
     ///
@@ -39,6 +39,13 @@ namespace UnturnedGodot.Net
             public ushort OwnerPlayerId;
             public PlayerVitalsSim Sim = new PlayerVitalsSim();   // server: stepped; client: value-holder written by ReadSnapshot
             public bool Bleeding, Broken;                          // status bits carried on the wire (server has no source yet -> false)
+
+            /// <summary>Sim.Health as this entry left it last tick, or NaN before the first. ServerStep compares
+            /// the authority's CURRENT hp against it to spot health the vitals sim did not itself remove -- i.e.
+            /// combat -- and arm the post-damage regen lock. Comparing against the sim's own last value rather
+            /// than against the previous raw reading is what keeps the sim's OWN routed starve/bleed loss from
+            /// reading as an incoming hit and re-arming the lock forever.</summary>
+            public float LastStepHealth = float.NaN;
             public long LastChangedTick;
 
             // dirty-detection cache: the last QUANTIZED wire values, so an idle/unchanged block costs no
@@ -94,6 +101,34 @@ namespace UnturnedGodot.Net
 
         public void ServerRemove(ushort ownerPlayerId) => _byOwner.Remove(ownerPlayerId);
 
+        /// <summary>Fresh vitals for a respawned player (strawberry 2026-09-13: "fix vitals not being reset on
+        /// death").
+        ///
+        /// ⚠ THE GAME LAYER ALREADY DID THIS AND IT NEVER SURVIVED A TICK. PlayerController.Respawn carries
+        /// `Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;` under the comment
+        /// "fresh vitals on respawn" -- correct, and completely overwritten, because the fine vitals are
+        /// SERVER-OWNED and AdoptReplicatedFineVitals is their sole writer on an adopting client. The local
+        /// reset landed and the next owner echo put the dead player's hunger, thirst and infection straight
+        /// back. The same shape as the throwable spend: the client mutated, the authority disagreed, the echo
+        /// won. A reset has to happen where the value lives.
+        ///
+        /// Called from the host's PlayerRespawned subscription rather than from either game-layer host, so a
+        /// third one cannot be written without it -- and at RESPAWN rather than at death, matching the game
+        /// layer's own line: a corpse's vitals are never read, a new life's are.</summary>
+        public void ServerResetForNewLife(ushort ownerPlayerId, long tick)
+        {
+            if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return;
+            e.Sim.ResetForNewLife();
+            e.Bleeding = false;
+            e.Broken = false;
+            // A NEW BODY HAS NO HISTORY TO MEASURE AGAINST. LastStepHealth is the previous tick's HP, and the
+            // respawn raises HP from 0 to 100 -- a RISE, so it cannot arm the damage lock. But the corpse's
+            // value is still the dead body's, and leaving it would make the first live tick compare the new
+            // life's health against it. NaN is what the entry starts life with and is what this is.
+            e.LastStepHealth = float.NaN;
+            e.StampIfChanged(tick);
+        }
+
         /// <summary>One 50 Hz vitals step for every living server-owned player -- stepped BETWEEN
         /// VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's Combat.Step.
         /// HP is re-seeded from the single authority, the sim steps, and the delta is routed OUT (never a
@@ -125,6 +160,11 @@ namespace UnturnedGodot.Net
 
                 // HP is NEVER owned by the vitals sim: re-seed from the single authority, step, route the delta.
                 float hpBefore = HealthOf != null ? HealthOf(pid) : e.Sim.Health;
+                // EXTERNAL DAMAGE ARMS THE REGEN LOCK (strawberry 2026-09-13: "never when taking damage").
+                // The server has no hook on the way in -- combat writes HealthExact directly and the vitals sim
+                // only ever sees the result -- so the hit is detected as hp that went missing between the sim's
+                // last output and this tick's authority read. 0.01 of slack keeps float noise from arming it.
+                if (!float.IsNaN(e.LastStepHealth) && hpBefore < e.LastStepHealth - 0.01f) e.Sim.NotifyDamaged();
                 e.Sim.Health = hpBefore;
                 bool sprinting = SprintingOf != null && SprintingOf(pid);
                 var m = MultipliersOf != null ? MultipliersOf(pid) : PlayerVitalsSim.Multipliers.None;
@@ -136,10 +176,10 @@ namespace UnturnedGodot.Net
                 if (!_steady.TryGetValue(pid, out var steady)) _steady[pid] = steady = new ScopeSteadySim();
                 m.HoldingBreath = wantsSteady && steady.Lockout <= 0f && e.Sim.Oxygen > ScopeSteadySim.SteadyFloor;
 
-                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, dt, m);
+                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, e.Broken, dt, m);
                 float ox = e.Sim.Oxygen;
                 steady.Step(wantsSteady, ref ox, dt);
-                e.Sim.Oxygen = ox;   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed bit is the SERVER's copy -- it owns the HP this costs.
+                e.Sim.Oxygen = ox;   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed/broken bits are the SERVER's copies -- it owns the HP they cost and gate.
                 float delta = e.Sim.Health - hpBefore;
                 // the HP-delta routing (starvation damage + passive regen) is the survival mechanic itself:
                 // OFF => the coarse-HP path is byte-untouched (det. point 6). The un-routed Sim.Health mutation
@@ -156,11 +196,12 @@ namespace UnturnedGodot.Net
                 //
                 // Found by deadzones losing their kill entirely (strawberry 2026-09-11 moved them onto
                 // infection). Contaminated ground used to kill through its own DamageSink; with that removed
-                // the death depended on this gate, which is OFF by default, so on the default server a player
+                // the death depended on this gate, which was OFF by default at the time, so on the default server a player
                 // sat at 100% infection indefinitely -- the probe showed infection pinned at 1.0 for 5000
                 // ticks with alive=True. Nothing else in the suite covered it because nothing else could
                 // reach 100% virus on its own.
                 else if (diedThisStep && delta < 0f) DamageSink?.Invoke(pid, -delta);
+                e.LastStepHealth = e.Sim.Health;   // the baseline next tick measures incoming damage against
                 e.StampIfChanged(tick);
             }
         }

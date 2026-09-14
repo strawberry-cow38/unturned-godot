@@ -52,6 +52,21 @@ namespace UnturnedGodot
         /// DebugTrunk so a test can check the thing you SEE and the thing you WALK INTO agree.</summary>
         public Transform3D DebugInstanceXf(int index) => index >= 0 && index < _instances.Count ? _instances[index].Xf : default;
 
+        /// <summary>The part MESHES one placed instance draws, in part order. A bush or a mushroom has no node of
+        /// its own -- it is a slot in a shared MultiMesh -- so this is the only way to get at the geometry that is
+        /// actually on screen in order to build a look-at silhouette from it.
+        ///
+        /// Read off the SLOTS rather than re-loading the .obj, so the outline can never drift from what is drawn:
+        /// same Mesh object, same part count, whatever the loader decided.</summary>
+        public List<Mesh> InstanceMeshes(int index)
+        {
+            var outp = new List<Mesh>();
+            if (index < 0 || index >= _instances.Count) return outp;
+            foreach (var (mm, _) in _instances[index].Slots)
+                if (mm != null && mm.Mesh != null) outp.Add(mm.Mesh);
+            return outp;
+        }
+
         /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
         /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
         /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>
@@ -129,7 +144,21 @@ namespace UnturnedGodot
             if (r.Alive == alive) return;
             r.Alive = alive;
             var hidden = new Transform3D(new Basis(Vector3.Zero, Vector3.Zero, Vector3.Zero), new Vector3(0f, -10000f, 0f));
-            foreach (var (mm, slot) in r.Slots) mm.SetInstanceTransform(slot, alive ? r.Xf : hidden);
+            // PICKING A BERRY BUSH TAKES THE BERRIES, NOT THE BUSH (strawberry 2026-09-13: "keep the bush but
+            // get rid of the berries"). Retail disables the prefab's `Forage` child -- the fruit and its trigger
+            // -- and leaves Model_0's leaves standing, so a picked bush reads as one you have already been to
+            // rather than as a hole in the hedgerow.
+            //
+            // The berries are the LAST slot, the same contract the look-at outline uses: resource_extract.py
+            // appends the Forage part after Model_0's leaves. A MUSHROOM has one part and it IS the cap, so
+            // "hide the last slot" hides the whole thing -- correct, there is nothing left to leave standing.
+            // A tree or a rock is not a ForagePlant and keeps the old all-or-nothing behaviour.
+            int keepBelow = r.Trunk is ForagePlant && r.Slots.Count > 1 ? r.Slots.Count - 1 : 0;
+            for (int i = 0; i < r.Slots.Count; i++)
+            {
+                var (mm, slot) = r.Slots[i];
+                mm.SetInstanceTransform(slot, alive || i < keepBelow ? r.Xf : hidden);
+            }
             if (r.Trunk != null) r.Trunk.CollisionLayer = alive ? r.TrunkLayer : 0;
             // A PICKED BUSH RUSTLES, on everyone's screen. Retail fires the resource's Explosion effect inside
             // ReceiveForageRequest and replicates it; here the sound hangs off the alive bit going false, which
@@ -290,12 +319,29 @@ namespace UnturnedGodot
                     // undergrowth into cover. Retail is the same shape: InteractableForage rides a trigger on a
                     // `Forage` child, not the resource's collision.
                     //
-                    // Sized off the instance rather than the mesh: a bush reads ~1.4 m across and knee-to-waist
-                    // high, a mushroom is a hand's width. Both are generous vertically so aiming at the ground
-                    // in front of one still finds it -- you are pointing at a plant, not threading a needle.
+                    // ⚠ YOU AIM AT THE BERRIES, NOT AT THE SHRUB, and every number here is measured rather than
+                    // guessed. This once read "a bush reads ~1.4 m across and knee-to-waist high" -- an eyeball, and
+                    // wrong twice over. Bush_Mauve_0.obj (the LEAVES) is 5.35 x 4.67 x 5.63 m, a wide scatter of leaf
+                    // cards; the pickable fruit is a separate mesh on the prefab's `Forage` child measuring
+                    // 2.28 x 1.47 x 2.30 m, centred at (-0.114, 1.141, 0.064) and identical across all eight bushes.
+                    //
+                    // Retail agrees: the BoxCollider on that same `Forage` child is 2.117 x 2.051 x 2.175. Two
+                    // independent sources within 8% on the footprint is the corroboration that makes this a
+                    // measurement instead of another guess.
+                    //
+                    // ⚠ Retail's box CENTRE is NOT imported. It reads (0.023, -0.089, 0.507) in Unity's frame, and
+                    // the bake's transform chain puts the berries at y +1.141 -- so dropping that centre in would
+                    // bury the trigger a metre under the fruit. The horizontal extent transfers cleanly and the
+                    // centre does not, so the centre comes off the baked mesh, which is the thing actually on
+                    // screen. The vertical extent takes retail's more generous 2.05 over the mesh's 1.47, keeping
+                    // this code's original intent that aiming a little high or low still finds the plant.
+                    //
+                    // The mushroom needs no such care: its layout has no offset, and retail's box (0.8, 0.6, 0.8)
+                    // at (0, 0.11, 0) lands on a mesh measuring (1.01, 0.58, 0.96) centred at (-0.008, 0.098, 0).
                     int baseIdx = _instances.Count - xf.Count;
                     bool mushroom = name.StartsWith("Mushroom");
-                    float bw = mushroom ? 0.45f : 1.4f, bh = mushroom ? 0.35f : 1.1f;
+                    Vector3 boxSize   = mushroom ? new Vector3(0.80f, 0.60f, 0.80f) : new Vector3(2.28f, 2.05f, 2.30f);
+                    Vector3 boxCentre = mushroom ? new Vector3(0f, 0.11f, 0f)       : new Vector3(-0.114f, 1.141f, 0.064f);
                     ushort reward = ForageReward(name);
                     for (int k = 0; k < xf.Count; k++)
                     {
@@ -303,11 +349,15 @@ namespace UnturnedGodot
                         Vector3 sc = t.Basis.Scale;
                         float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
                         var body = new ForagePlant { Field = this, Index = baseIdx + k, ResourceName = name, Reward = reward,
-                                                     WorldPos = t.Origin, CollisionLayer = ForagePlant.HitLayer,
+                                                     WorldPos = t.Origin, PlacedXf = t, CollisionLayer = ForagePlant.HitLayer,
+                                                     PromptHeight = (boxCentre.Y + boxSize.Y * 0.5f) * sh + (mushroom ? 0.30f : 0.45f),
                                                      Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(ForagePlant.HitMeta, body);
-                        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(bw * sr, bh * sh, bw * sr) },
-                                                            Position = new Vector3(0f, bh * sh * 0.5f, 0f) });
+                        body.AddChild(new CollisionShape3D
+                        {
+                            Shape = new BoxShape3D { Size = new Vector3(boxSize.X * sr, boxSize.Y * sh, boxSize.Z * sr) },
+                            Position = new Vector3(boxCentre.X * sr, boxCentre.Y * sh, boxCentre.Z * sr),
+                        });
                         AddChild(body);
                         body.AddToGroup(ColliderBudget.Group);   // stream it like the trunks + ore, or every bush on the map is a body
                         {
@@ -344,7 +394,13 @@ namespace UnturnedGodot
                 {
                     // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
                     // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
-                    const float Cell = 64f;
+                    // SWEEP KNOB (UG_CELL, metres). The draw count scales with the number of CELLS IN VIEW, not
+                    // with the number of trees: this makes one MultiMeshInstance3D per cell PER SPECIES PER PART,
+                    // so a ~320 m cull range at 64 m cells puts ~100 cells x species x parts on the submit list.
+                    // Bigger cells = fewer draw calls but coarser culling, so more off-screen geometry is submitted.
+                    // Which way that trades is empirical, so it is a knob rather than a new hardcoded guess.
+                    float Cell = 64f;
+                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_CELL"), out float _cellOv) && _cellOv > 0f) Cell = _cellOv;
                     // Retail draw distance for this asset: LayerMasks.RESOURCE gets the full defaultCullDistance
                     // (512m at the default draw-distance setting), tightened by the asset's own LODGroup. Trees
                     // compute to ~3000m so the layer stops them; small bushes/rocks bite well inside it. The old
@@ -362,6 +418,54 @@ namespace UnturnedGodot
                         var key = ((int)Mathf.Floor(xf[k].Origin.X / Cell), (int)Mathf.Floor(xf[k].Origin.Z / Cell));
                         if (!byCell.TryGetValue(key, out var cl)) { cl = new List<int>(); byCell[key] = cl; }
                         cl.Add(k);
+                    }
+                    // ⚠⚠ MERGING THESE BATCHES BREAKS THE IMPOSTOR HANDOFF. REVERTED, DEFAULT OFF (2026-09-12).
+                    //
+                    // The merge below collapsed a sparse species into ONE map-wide MultiMesh. It did exactly what
+                    // it promised -- 3,126 batches became 37, draw calls fell, fps rose ~6% -- and it broke every
+                    // tree on the map. A MultiMesh culls as a SINGLE UNIT on the distance to its bounding box, and
+                    // a map-wide box is centred on the middle of PEI. So from anywhere a player actually stands the
+                    // REAL tree meshes were past VisibilityRangeEnd and culled, while the IMPOSTORS (which share
+                    // this same cell grouping, and whose VisibilityRangeBegin is the same cull distance) switched
+                    // on. Result: every tree in the world drawn as its billboard. strawberry found it in five
+                    // minutes of play; fps and draws both IMPROVED, so no benchmark I ran could ever have seen it.
+                    //
+                    // ⭐ "3,126 -> 37 batches" was the tell and I reported it as a win. 37 batches for ~40 species
+                    // x 2-3 parts means essentially everything collapsed map-wide -- the number said what had
+                    // happened and I did not ask what it meant. A cull-bounded batch is the POINT of the cells
+                    // here, not an inefficiency in them.
+                    //
+                    // Off unless UG_PMERGE=1 asks for it, so the shipped path is byte-identical to before. Any
+                    // future attempt must keep every batch's AABB local (and prove it with a RENDER, not an fps).
+                    if (System.Environment.GetEnvironmentVariable("UG_PMERGE") == "1")
+                    {
+                        int singleMax = 512, minPerBatch = 64, coarseMul = 4;
+                        int.TryParse(System.Environment.GetEnvironmentVariable("UG_SINGLEMAX"), out singleMax);
+                        int.TryParse(System.Environment.GetEnvironmentVariable("UG_MINBATCH"), out minPerBatch);
+                        if (singleMax <= 0) singleMax = 512;
+                        if (minPerBatch <= 0) minPerBatch = 64;
+                        if (byCell.Count > 1 && xf.Count <= singleMax)
+                        {
+                            var all = new List<int>(xf.Count);
+                            for (int k = 0; k < xf.Count; k++) all.Add(k);
+                            byCell.Clear();
+                            byCell[(0, 0)] = all;
+                        }
+                        else if (byCell.Count > 1)
+                        {
+                            var merged = new Dictionary<(int, int), List<int>>();
+                            var coarse = new Dictionary<(int, int), List<int>>();
+                            foreach (var kv in byCell)
+                            {
+                                if (kv.Value.Count >= minPerBatch) { merged[kv.Key] = kv.Value; continue; }
+                                var ck = (1 << 20) + (int)Mathf.Floor(kv.Key.Item1 / (float)coarseMul);
+                                var ck2 = (int)Mathf.Floor(kv.Key.Item2 / (float)coarseMul);
+                                if (!coarse.TryGetValue((ck, ck2), out var cl)) { cl = new List<int>(); coarse[(ck, ck2)] = cl; }
+                                cl.AddRange(kv.Value);
+                            }
+                            foreach (var kv in coarse) merged[kv.Key] = kv.Value;
+                            byCell = merged;
+                        }
                     }
                     for (int i = 0; i < parts; i++)
                     {
@@ -385,7 +489,23 @@ namespace UnturnedGodot
                                 if (sways && i == 0) recs[lst[k]].Canopy = (mm, k);   // part 0 is the leaf mesh
                             }
                             var mmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
-                                CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
+                                // EVERY RESOURCE CASTS, not just trees (strawberry 2026-09-13: bushes "are oddly
+                                // super lit all the time. they also arent casting shadows"). This read
+                                // `isTree ? On : Off`, and isTree is a Birch/Maple/Pine PREFIX test -- so every
+                                // bush, mushroom, ore rock and clay deposit on the map was explicitly shadow-off.
+                                //
+                                // The two halves of that report are one bug. A bush's leaf cards are authored with
+                                // UP normals (Bush_Mauve_0 mean normal Y +0.87, against +0.01 for a maple's real
+                                // geometry) -- the usual foliage trick to stop leaves going black. Under an overhead
+                                // sun an up-normal sits at full lambert, so with nothing casting onto it and nothing
+                                // self-shadowing, every card on every bush renders at maximum brightness at once.
+                                // That is the "super lit": not an over-bright material, an absence of anything dark.
+                                // UG_RESSHADOW=0 turns them back off -- the A/B control for what this costs, in the
+                                // same spirit as UG_CELL above: shadow casters are a draw-call trade and which way it
+                                // goes is empirical, so it stays measurable rather than becoming folklore.
+                                CastShadow = System.Environment.GetEnvironmentVariable("UG_RESSHADOW") == "0"
+                                             ? GeometryInstance3D.ShadowCastingSetting.Off
+                                             : GeometryInstance3D.ShadowCastingSetting.On,
                                 VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                             mmi.AddToGroup(NearestFilter.KeepFilterGroup);   // keep the bilinear MakeMat set; the scene-wide sweep would stamp it back to Nearest
                             AddChild(mmi);
@@ -1199,7 +1319,67 @@ namespace UnturnedGodot
                                        // this, and reading it off GlobalTransform would depend on when the sync is
                                        // constructed relative to the node entering the tree
 
+        /// <summary>The FULL placed transform, scale included -- what the MultiMesh slot was given. The body's own
+        /// Transform orthonormalises the basis (a collider wants no scale), so it is the wrong thing to hang a
+        /// silhouette on: the outline would be the right shape at the wrong size on every non-unit instance.</summary>
+        public Transform3D PlacedXf;
+
+        /// <summary>How high above WorldPos the prompt billboard floats -- the body's own height plus clearance, so
+        /// a knee-high bush and a hand-sized mushroom each get a label just over the plant instead of one buried in
+        /// the leaves and one hanging in the air.</summary>
+        public float PromptHeight = 1.0f;
+
         public bool Alive => Field == null || Field.IsAlive(Index);
+
+        /// <summary>What foraging this actually hands you, e.g. "Raw Jazzberries". Worth showing, because the bush
+        /// COLOUR does not name its berry -- Amber gives Jazzberries and Ameberries come off Mauve -- so "a bush"
+        /// is not something a player can otherwise tell apart. Falls back to the resource name if the item catalog
+        /// has not been registered (offline harnesses), rather than drawing an empty label.</summary>
+        public string DisplayName =>
+            SDG.Unturned.Assets.find(Reward) is { } a && !string.IsNullOrEmpty(a.itemName) ? a.itemName
+            : (ResourceName ?? "").Replace("_Snow", "").Replace("_0", "").Replace("Bush_", "") + " Bush";
+
+        // ---- LOOK-AT SILHOUETTE -------------------------------------------------------------------------------
+        // Built LAZILY, on the first focus, and then kept. Eagerly building one per plant would mean ~141 hidden
+        // MeshInstance3D on PEI for the handful you ever look at; rebuilding on every focus gain would churn as the
+        // ray flickers between two bushes in a patch. Keeping it bounds the cost at "plants this player has looked
+        // at", which is the number that matters.
+        MeshInstance3D[] _outline;
+
+        public void SetLookFocused(bool on)
+        {
+            if (on && _outline == null) BuildOutline();
+            if (_outline == null) return;
+            // One colour claim for the whole plant, then the rest toggled: ShowOutline claims WorldItem.FocusColor
+            // on every call, and a bush is one thing even when its mesh arrives in several parts.
+            OutlineOverlay.ShowOutline(on, Colors.White, _outline[0]);
+            for (int i = 1; i < _outline.Length; i++)
+                if (GodotObject.IsInstanceValid(_outline[i])) _outline[i].Visible = on;
+        }
+
+        void BuildOutline()
+        {
+            var meshes = Field?.InstanceMeshes(Index);
+            if (meshes == null || meshes.Count == 0) { _outline = System.Array.Empty<MeshInstance3D>(); return; }
+            // OUTLINE THE BERRIES, NOT THE SHRUB (strawberry 2026-09-13: "outline just the berries, not the bush
+            // itself"). The fruit is the LAST part, by contract with tools/resource_extract.py, which appends the
+            // prefab's `Forage` child after Model_0's leaves. It is also the right answer visually: the leaf mesh
+            // is a 5.35 m scatter, so outlining it drew a polygon whose corners ran off both edges of the screen,
+            // while the berry cluster is 2.28 m and hugs the thing you are actually picking. A mushroom has one
+            // part and it IS the cap, so the same rule needs no special case.
+            var mesh = meshes[meshes.Count - 1];
+            meshes = new List<Mesh> { mesh };
+            var made = new MeshInstance3D[meshes.Count];
+            for (int i = 0; i < meshes.Count; i++)
+            {
+                // Parented to the FIELD, not to this body: MultiMesh instance transforms are relative to the
+                // MultiMeshInstance3D, which is a plain child of the field at identity, so PlacedXf read straight
+                // into field space puts the silhouette exactly where the instance is drawn.
+                made[i] = OutlineOverlay.MakeOutline(meshes[i], PlacedXf);
+                Field.AddChild(made[i]);
+            }
+            _outline = made;
+        }
     }
 
     public partial class OreRock : StaticBody3D

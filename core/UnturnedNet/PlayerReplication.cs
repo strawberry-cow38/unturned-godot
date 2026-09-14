@@ -206,7 +206,15 @@ namespace UnturnedGodot.Net
         public const byte CommandNpcChoose = 58;
         public const byte CommandNpcClose = 59;
         public const byte CommandNpcTrade = 60;
-        public const byte CommandChatSend = 61;   // v49: a player says something in global chat. Text only -- who said it is the SENDING peer, never a field, or anyone can speak as anyone.
+        public const byte CommandSplitItem = 61;   // v48: take N off a stack into a new one. Server-owned like every
+                                                   // other grid change -- a client-side split reads back correct for
+                                                   // one tick and is then overwritten by the inventory echo.
+        // ⚠ MOVED 61 -> 62 IN THE v50 MERGE, and this is the one conflict in it that would not have compiled
+        // its way to safety. Staging-Tinyclaw shipped chat on 61 and main shipped the stack split on 61; both
+        // sides were internally consistent and the merge took one file's line, which is a wire that routes a
+        // split request into the chat handler with nothing to notice. The split keeps 61 because it is the one
+        // already on main; chat had not left the branch yet, so moving it costs nobody a compatible peer.
+        public const byte CommandChatSend = 62;   // v49: a player says something in global chat. Text only -- who said it is the SENDING peer, never a field, or anyone can speak as anyone.
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
@@ -803,12 +811,8 @@ namespace UnturnedGodot.Net
             if (stale != null) foreach (uint id in stale) _removedAtTick.Remove(id);
         }
 
-        List<uint> SortedIds()
-        {
-            var ids = new List<uint>();
-            foreach (var id in _players.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        /// <summary>Ascending ids -- THE WIRE ORDER. Cached in the registry, which invalidates on
+        /// every Add/Remove/Clear, so this cannot go stale. The list is SHARED: do not mutate it.</summary>
+        List<uint> SortedIds() => _players.SortedIdValues();
     }
 }

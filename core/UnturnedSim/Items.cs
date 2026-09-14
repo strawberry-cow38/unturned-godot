@@ -79,15 +79,46 @@ namespace SDG.Unturned
         public bool tryAddItem(Item item)
         {
             if (getItemCount() >= 200) return false;
+            // MONEY COLLAPSES ON THE WAY IN. Any denomination becomes the $1 carrier at its own value, so a
+            // $100 note and a loonie land in the same stack and the stack's amount reads as dollars. Done HERE,
+            // at the single point every pickup/grant/loot path already funnels through, rather than at each of
+            // those call sites -- a conversion that has to be remembered is one that gets forgotten by the next
+            // path someone adds, and then a $50 note sits in its own slot looking like a bug.
+            if (Currency.IsCurrency(item.id))
+            {
+                int dollars = Currency.ValueOf(item.id) * System.Math.Max(1, (int)item.amount);
+                item.id = Currency.StackId;
+                item.amount = (ushort)System.Math.Min(dollars, Currency.MaxPerStack);
+                int rest = dollars - item.amount;
+                if (!AddCore(item)) return false;
+                // ...and the excess spills into further stacks, the same way any oversized pickup does. amount
+                // is a byte, so $300 is two stacks; that ceiling is the wire's, not a choice made here.
+                while (rest > 0)
+                {
+                    int chunk = System.Math.Min(rest, Currency.MaxPerStack);
+                    if (!AddCore(new Item(Currency.StackId) { amount = (ushort)chunk, quality = item.quality })) return true;   // bag full: keep what fitted
+                    rest -= chunk;
+                }
+                return true;
+            }
+            return AddCore(item);
+        }
+
+        bool AddCore(Item item)
+        {
+            if (getItemCount() >= 200) return false;
             // Per-item stacking: ammo (shotgun shells) stack up to their asset stackSize; most Unturned items = 1 (never stack).
             // The old global StackingEnabled option is subsumed -> it just makes the cap effectively unlimited.
-            int cap = StackingEnabled ? byte.MaxValue : System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
+            // A declared stackSize always wins, even under StackingEnabled: money declares 500 and must not be
+            // clipped back to the old byte ceiling by an option that is meant to make stacking MORE permissive.
+            int cap = System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
+            if (StackingEnabled) cap = System.Math.Max(cap, byte.MaxValue);
             if (cap > 1)
                 foreach (var j in items)
                     if (j.item != null && j.item.id == item.id && j.item.amount < cap)
                     {
                         int add = System.Math.Min(cap - j.item.amount, item.amount);
-                        j.item.amount = (byte)(j.item.amount + add); item.amount = (byte)(item.amount - add);
+                        j.item.amount = (ushort)(j.item.amount + add); item.amount = (ushort)(item.amount - add);
                         if (item.amount == 0) { onStateUpdated?.Invoke(); return true; }   // fully merged; else the remainder overflows to a new slot
                     }
             ItemJar itemJar = new ItemJar(item);
@@ -98,6 +129,48 @@ namespace SDG.Unturned
             onItemAdded?.Invoke(page, (byte)(items.Count - 1), itemJar);
             onStateUpdated?.Invoke();
             return true;
+        }
+
+        /// <summary>Take `amount` off the stack at `index` into a NEW stack in this page's free space.
+        /// Returns the new jar, or null if the split is illegal or there is nowhere to put it.
+        ///
+        /// Splitting off the WHOLE stack is refused on purpose: that is a move, and letting it through here
+        /// would leave a zero-amount jar sitting in the grid, which every "is there an item in this cell" check
+        /// in the game would answer yes to.
+        ///
+        /// ⚠ Deliberately NOT tryAddItem: that merges same-id stacks, so it would put the split straight back
+        /// into the stack it came out of and the operation would look like it silently did nothing.</summary>
+        public ItemJar splitItem(byte index, int amount)
+        {
+            var src = getItem(index);
+            if (src?.item == null) return null;
+            if (amount < 1 || amount >= src.item.amount) return null;
+            var probe = new ItemJar(src.item);
+            if (!tryFindSpace(probe.size_x, probe.size_y, out var x, out var y, out var rot)) return null;
+            var made = takeFrom(index, amount);
+            if (made == null) return null;
+            var jar = new ItemJar(x, y, rot, made);
+            fillSlot(jar, isOccupied: true);
+            items.Add(jar);
+            onStateUpdated?.Invoke();
+            return jar;
+        }
+
+        /// <summary>DETACH `amount` from the stack at `index` and hand it back, unplaced. The caller decides where
+        /// it goes -- free space, a chosen cell, another page.
+        ///
+        /// ⚠ Callers must know where they are putting it BEFORE calling: this reduces the source, so a caller that
+        /// takes first and then finds it has nowhere to put it has destroyed the items.</summary>
+        public Item takeFrom(byte index, int amount)
+        {
+            var src = getItem(index);
+            if (src?.item == null) return null;
+            if (amount < 1 || amount >= src.item.amount) return null;   // the whole stack is a MOVE, not a split
+            var made = src.item.Clone();
+            made.amount = (ushort)amount;
+            src.item.amount = (ushort)(src.item.amount - amount);
+            onStateUpdated?.Invoke();
+            return made;
         }
 
         public void removeItem(byte index)

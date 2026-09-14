@@ -108,7 +108,9 @@ namespace UnturnedGodot
         // audio system rather than in the thing that picked the picture.
         //
         // So one enum decides both, and Sound() is derived from it rather than stored alongside it.
-        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph, StaticMono }
+        // ⚠ APPEND-ONLY: the shader switches on this as a raw int (screen.gdshader `program`), so CameraFeed
+        // must stay 8 and nothing may be inserted above it.
+        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph, StaticMono, CameraFeed }
 
         public enum ScreenSound { None, Tone, Noise }
 
@@ -534,6 +536,7 @@ namespace UnturnedGodot
         };
 
         readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
+        ConnectionPort _dataIn;   // the aerial: signal in, no watts either way
         ConnectionPort _plug;
         Aabb _bodyAabbLocal;      // the cabinet's own bounds, kept so a rubble reset can rebuild the plug where it was
         bool _plugWasPowered;     // last polled FEED state, so a supply going live or dead re-derives the set
@@ -878,13 +881,51 @@ namespace UnturnedGodot
             }, LabelFor(_kind));
             AddChild(_plug);
             _ports.Add(_plug);
+
+            // THE AERIAL SOCKET (strawberry 2026-09-13: "a tv has a data input, when populated, and the TV
+            // powered, it can recieve a signal and display something on screen"). Offset from the plug so the
+            // two sockets never overlap and which is which is readable without the HUD label -- they are
+            // different colours too (power grey vs data cyan), because the wire tool refuses to pair them and a
+            // refusal you cannot see coming reads as a bug.
+            _dataIn = ConnectionPort.Create(this, new DeployableDef.Port
+            {
+                Kind = DeployableDef.PortKind.DataIn,
+                Pos = PlugLocal(bodyLocal, _screenNormalLocal, _localUp) + _localUp * 0.12f,
+                Watts = 0f,
+            }, LabelFor(_kind));
+            AddChild(_dataIn);
+            _ports.Add(_dataIn);
             PowerNet.MarkDirty();
+        }
+
+        /// <summary>Is a live stream arriving? POWER AND SIGNAL BOTH -- a fed set that is unplugged shows
+        /// nothing, and a powered set with a dark aerial shows its own programming, which is what makes the
+        /// data port worth having rather than just a second switch.</summary>
+        /// <summary>The aerial socket, for a harness or a test that wires one by hand.</summary>
+        public ConnectionPort DataInPort => _dataIn;
+
+        public bool HasVideoFeed => HasFeed && _dataIn != null && IsInstanceValid(_dataIn) && _dataIn.DataLive;
+
+        /// <summary>The camera on the other end of the aerial wire, or null. Resolved through the wire rather
+        /// than cached at connect time: wires are made and cut by the player, and a stale reference here is a
+        /// screen showing a camera that has been unplugged.</summary>
+        public SecurityCamera FeedSource()
+        {
+            // ⚠ ONE QUESTION, WHATEVER THE CHAIN. This used to walk the aerial's own wire and take whatever was
+            // on the other end -- correct while a wire was the only kind of link, and wrong the instant a
+            // wireless pair sits in the middle: camera -> wire -> transmitter ~~> receiver -> wire -> TV finds
+            // the RECEIVER and stops, and the screen shows nothing while every port reports healthy.
+            // PowerNet.SolveData carries the ORIGIN along the whole chain instead, so this reads it and does not
+            // care how many hops or what kinds they were.
+            if (_dataIn == null || !IsInstanceValid(_dataIn)) return null;
+            return _dataIn.DataSource is SecurityCamera cam && IsInstanceValid(cam) ? cam : null;
         }
 
         void FreePlug()
         {
             if (_plug == null) return;
             _ports.Remove(_plug); _plug.QueueFree(); _plug = null;
+            if (_dataIn != null) { _ports.Remove(_dataIn); _dataIn.QueueFree(); _dataIn = null; }   // the aerial goes with the plug -- both are the cabinet's sockets
             _plugWasPowered = false;
             PowerNet.MarkDirty();
         }
@@ -1580,6 +1621,45 @@ namespace UnturnedGodot
             ApplyLevels();
         }
 
+        ScreenProgram _preFeedProgram;   // what was showing before an aerial went live, so cutting the wire returns to it
+        bool _onFeed;
+
+        /// <summary>Show the wired camera while one is streaming, and go back to the set's own programming when
+        /// it stops (strawberry 2026-09-13: "when populated, and the TV powered, it can recieve a signal and
+        /// display something on screen").
+        ///
+        /// ⚠ ON CHANGE, NOT PER TICK. The texture handle and the program only move when the feed STARTS or STOPS
+        /// -- the picture itself updates because the camera re-renders its viewport, not because anything is
+        /// re-assigned here. Re-binding a ViewportTexture every tick would be a uniform write per set per frame
+        /// for a value that never changes.
+        ///
+        /// It also remembers what was on before, so pulling the aerial out returns the set to its own channel
+        /// rather than leaving it on a dead feed program showing the last frame the camera ever sent.</summary>
+        void SyncVideoFeed()
+        {
+            bool feed = HasVideoFeed;
+            if (System.Environment.GetEnvironmentVariable("UG_CCTVDBG") == "1" && feed != _onFeed)
+                Log.Print($"[tvfeed] flip -> {feed}, mat={_screenMat != null}, src={(FeedSource() != null)}");
+            if (feed == _onFeed) return;
+            _onFeed = feed;
+            if (feed)
+            {
+                var cam = FeedSource();
+                var tex = cam?.FeedTexture;
+                if (tex == null) { _onFeed = false; return; }   // wired to something that is not a camera, or not filming yet
+                _preFeedProgram = _program;
+                _screenMat?.SetShaderParameter("feed_tex", tex);
+                _program = ScreenProgram.CameraFeed;
+                _screenMat?.SetShaderParameter("program", (int)ScreenProgram.CameraFeed);
+            }
+            else
+            {
+                _program = _preFeedProgram;
+                _screenMat?.SetShaderParameter("program", (int)_program);
+            }
+            BuildLoopSound();   // a feed is silent where a test card hums -- the sound follows the program
+        }
+
         /// <summary>Brightness modulation, CRT only. A cosine BETWEEN TWO LIT LEVELS -- full and (1 - depth) -- never
         /// off (master: "when i say flicker i mean switch between a dimmer and brighter light state, not on/off").
         /// That is why it is 1 - depth*0.5*(1-cos) rather than anything that reaches zero: the floor is a real
@@ -1616,6 +1696,7 @@ namespace UnturnedGodot
 
         public void HubTick(double delta)   // PERF: hub-ticked at 30 Hz (was a per-frame engine callback; see TickHub)
         {
+            SyncVideoFeed();   // a wired camera going live/dark swaps the programme (see SyncVideoFeed)
             // The WHOLE feed, not just the plug half. This used to poll PlugPowered alone and rely on the mains
             // arriving as a push -- DayNightCycle sweeps the "tvdevices" group on a grid change. That works for the
             // scheduled blackout and for nothing else: `toggleGlobalPower` from the console, or any other caller of

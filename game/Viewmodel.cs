@@ -171,6 +171,14 @@ namespace UnturnedGodot
         float _flashRoll;           // ACCUMULATED flash roll -- each shot rolls it L/R by an amount, remembering the last (master)
         AudioStreamPlayer _shootSnd, _reloadSnd, _hammerSnd, _drySnd;   // real per-gun Shoot / Reload / Hammer(rack) sounds; dry-fire = its own click (none shipped yet)
         AudioStream _shootStream; AudioStreamPlaybackPolyphonic _shootPoly;   // shoot = overlapping polyphonic voices so full-auto shots ring out fully (no restart-cut)
+        AudioStream _gunShootStream;   // the GUN's OWN clip, kept so taking the barrel off restores it
+        float _shootVolDb;             // the installed barrel's Volume, in dB (0 = the gun's own loudness)
+
+        /// <summary>Does the installed barrel SILENCE the shot? Not "is a barrel attached" -- a Military Barrel and
+        /// a muzzle brake are Barrel-slot attachments that make a gun no quieter at all, and the retail .dat says
+        /// which is which with a bare `Silenced` key. Drives the muzzle flash here and the tracer/zombie-alert
+        /// gating in PlayerController.</summary>
+        public bool BarrelSilenced { get; private set; }
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
@@ -739,6 +747,7 @@ namespace UnturnedGodot
                     {
                         mat.EmissionEnabled = true;
                         mat.EmissionTexture = bulb;
+                        mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see RiggedCharacter.AttachGear: the ADD default glows the whole model
                         mat.Emission = new Color(1f, 1f, 1f);
                         mat.EmissionEnergyMultiplier = 0f;
                     }
@@ -891,6 +900,21 @@ namespace UnturnedGodot
                     var barrelMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.05f, 0.05f, 0.055f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f };   // dark matte, like the gun body
                     mi.AddChild(new MeshInstance3D { Name = "Barrel", Mesh = ContentProvider.ParseObj("res://content/suppressor.txt"), MaterialOverride = barrelMat, Position = new Vector3(0f, 0.7307f, -0.0818f), Visible = false });
 
+                    // TACTICAL slot (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments").
+                    // Empty and hidden until something is installed -- unlike Sight and Magazine, NO gun ships with a
+                    // laser or a light, so there is no factory mesh to seed it with. SetSlotMesh fills it.
+                    //
+                    // ⚠ The node has to EXIST even while empty. SlotHasModel and SetSlotMesh both resolve the slot by
+                    // GetNodeOrNull, so a slot with no node is not "an empty slot", it is a slot that silently refuses
+                    // every attachment: the T menu would list the laser, take it out of your bag, record it installed
+                    // on the item, and render nothing. Hidden-but-present is the difference.
+                    mi.AddChild(new MeshInstance3D
+                    {
+                        Name = "Tactical", Visible = false,
+                        Position = new Vector3(-0.0601f, 0.3815f, -0.0851f),   // the slot's own hook, same value _hookLocal publishes
+                        MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.065f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f },
+                    });
+
                     // ADS anchor marker at the sight's real Aim hook (gv.AimHook, per-gun) — ADS slides the arms so this
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
@@ -923,7 +947,7 @@ namespace UnturnedGodot
                     // Full-auto: each shot must ring out FULLY, not restart-cut the previous (master). A lone
                     // AudioStreamPlayer restarts on Play(); an AudioStreamPolyphonic mixes each shot as its OWN
                     // voice so they overlap like real gunfire. Play() arms it once; PlayShoot() adds a voice per shot. Polyphony 32 = headroom past the worst full-auto (zubeknakov ~18 voices = 1.78s x 600rpm); 16 exhausted + PlayStream silently dropped the shot -> cut out on sustained fire (master).
-                    _shootStream = LoadOgg($"res://content/{gv.Shoot}");
+                    _shootStream = _gunShootStream = LoadOgg($"res://content/{gv.Shoot}");
                     _shootSnd = new AudioStreamPlayer { Stream = new AudioStreamPolyphonic { Polyphony = 32 }, VolumeDb = -3f };
                     mi.AddChild(_shootSnd);
                     _shootSnd.Play();
@@ -1083,13 +1107,37 @@ namespace UnturnedGodot
         /// clock leaves the sight exactly where it drifted to and stops it going anywhere else.</summary>
         public float SteadyRateScale = 1f;
 
+        /// <summary>Install the barrel's SHOT AUDIO, exactly as retail UseableGun.playGunshot does it:
+        ///
+        ///     AudioClip clip = equippedGunAsset.shoot;
+        ///     if (barrelAsset != null &amp;&amp; state[16] > 0) {
+        ///         if (barrelAsset.shoot != null) clip = barrelAsset.shoot;   // the BARREL's own clip wins
+        ///         volume *= barrelAsset.volume;
+        ///         maxDistance *= barrelAsset.gunshotRolloffDistanceMultiplier;   // silenced => 0.5
+        ///     }
+        ///
+        /// A suppressor is not a filter applied to the gunshot -- it is a DIFFERENT RECORDING, shipped in the
+        /// barrel's own bundle, which is why turning the gun's own clip down would never have sounded right.
+        /// Every silenced barrel in the game ships one and no unsilenced barrel does, so the presence of a clip
+        /// and the `Silenced` key agree; both are read rather than one inferred from the other.
+        ///
+        /// id 0 / an unknown barrel = back to the gun's own clip at its own loudness.</summary>
+        public void SetBarrelAudio(int barrelItemId)
+        {
+            var def = AttachmentFit.BarrelFor(barrelItemId);
+            BarrelSilenced = def.Silenced;
+            _shootVolDb = Mathf.IsEqualApprox(def.Volume, 1f) ? 0f : Mathf.LinearToDb(Mathf.Max(def.Volume, 0.0001f));
+            var clip = string.IsNullOrEmpty(def.ShootClip) ? null : LoadOgg($"res://content/{def.ShootClip}");
+            _shootStream = clip ?? _gunShootStream;
+        }
+
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
         void PlayShoot()   // one OVERLAPPING polyphonic voice per shot so full-auto shots don't restart-cut each other (master)
         {
             if (_shootStream == null) return;
             _shootPoly ??= _shootSnd?.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;   // (re)fetch lazily in case Play() armed it a frame late
-            _shootPoly?.PlayStream(_shootStream);
+            _shootPoly?.PlayStream(_shootStream, 0f, _shootVolDb);   // the barrel's Volume rides here, not on the player (which every other voice shares)
         }
 
         public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
@@ -1150,7 +1198,24 @@ namespace UnturnedGodot
             if (_arms.ClipLength(_meleeCap + "_Stop_Swing") > 0f) _arms.Play(_meleeCap + "_Stop_Swing");
             else _arms.Play(_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip");   // no stop clip: settle back to the ready hold
         }
-        public void PlayMeleeInspect() { if (_meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Inspect") > 0f) _arms.Play(_meleeCap + "_Inspect"); }
+        /// <summary>A melee's own Inspect. Now records _inspecting like the gun path does -- it did not, so
+        /// IsInspecting read false while a knife was plainly mid-inspect and CancelInspect could not stop it.
+        /// That asymmetry did not matter until something needed to INTERRUPT an inspect (strawberry 2026-09-13:
+        /// a sprint cancels one in flight), at which point "guns only" would have been an invisible half-fix.
+        /// _inspectCapture stays off: that flag is the gun's hand-bone tilt and means nothing for a blade.</summary>
+        public void PlayMeleeInspect()
+        {
+            if (_meleeCap == null || _arms == null || SprintingNow || _inspecting || _attachView) return;
+            float len = _arms.ClipLength(_meleeCap + "_Inspect");
+            if (len <= 0f) return;
+            _arms.Play(_meleeCap + "_Inspect");
+            _inspecting = true; _inspectTimer = len;
+        }
+
+        /// <summary>Actually RUNNING, not merely holding the un-shouldered pose. _wantSprint also fires on `_safe`
+        /// (weapon lowered), and lowering your weapon is not a reason to refuse an inspect -- it is nearly the
+        /// opposite. So the inspect rules key off this and the sprint POSE keeps its own wider condition.</summary>
+        bool SprintingNow => _stance == EPlayerStance.SPRINT && _moving;
 
         CpuParticles3D _torchSparks;   // blowtorch: the REAL "Hit" ParticleSystem from item.prefab -- the game's own blue spark sprite, emitted from the nozzle while the torch is used (source UseableMelee.firstEmitter)
         public void SetTorchSparks(bool on)
@@ -1306,7 +1371,10 @@ namespace UnturnedGodot
         // PlayerEquipment.canInspect gating on animator.checkExists("Inspect"). Blocked mid-reload.
         public void PlayInspect()
         {
-            if (_inspectClip == null || _reloading || _inspecting) return;
+            // NO INSPECTING AT A RUN (strawberry 2026-09-13). Gated HERE rather than at the F-chain in
+            // PlayerController so both entry points are covered by one rule and the rest of that chain -- open a
+            // crate, sit down, harvest -- keeps working while sprinting, since none of those were asked about.
+            if (_inspectClip == null || _reloading || _inspecting || SprintingNow || _attachView) return;
             _aiming = false; _arms?.Play(_inspectClip);
             _inspecting = true; _inspectCapture = true;
             _inspectTimer = _arms != null && _arms.ClipLength(_inspectClip) > 0f ? _arms.ClipLength(_inspectClip) : 3.3f;
@@ -1327,7 +1395,17 @@ namespace UnturnedGodot
         // the pose while the menu is open (like inspect, but not timed). Exit snaps back to the ready hold.
         public void EnterAttachView()
         {
-            if (_attachView || _reloading || _inspecting) return;
+            if (_attachView || _reloading) return;
+            // T OVERRIDES F (strawberry 2026-09-13: "have the T inspect state override the F inspect state").
+            //
+            // ⚠ THIS USED TO REFUSE, AND THE REFUSAL DESYNCED THE UI. AttachmentMenu.Open sets Visible = true and
+            // THEN calls this, so `_inspecting` in the guard did not mean "pressing T does nothing" -- it meant the
+            // MENU opened while the gun stayed in the inspect pose, with the slot icons projected onto a weapon
+            // that is not where they think it is. A half-open state is worse than either whole one.
+            //
+            // Cancelling rather than refusing also matches every other interruption here: firing cancels an
+            // inspect, ADS cancels an inspect. The attach view is simply another thing that outranks it.
+            if (_inspecting) CancelInspect();
             _aiming = false;
             if (_attachStartClip != null) _arms?.Play(_attachStartClip);
             _attachView = true; _attachCapture = true;
@@ -1344,7 +1422,21 @@ namespace UnturnedGodot
         // only Sight (iron sights) + Magazine ship a model, so detach/attach = toggling that model's visibility. The
         // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
         static readonly System.Collections.Generic.Dictionary<string, string> _attachMesh =
-            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" } };
+            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" }, { "Tactical", "Tactical" } };
+        /// <summary>Emission energy for a lit rail attachment. Shaded material, so it reaches HDR and blooms --
+        /// the same reason StreetLight.LensEmission is 3 rather than 1.</summary>
+        public const float TacticalLensEmission = 3.0f;
+
+        /// <summary>The rail attachment's own emitter follows the switch (retail: lightHook.SetActive(interact)).
+        /// A float write on the mask bound at mount; a no-op on a gun with nothing on the rail, or with an
+        /// attachment whose albedo has no distinct bright cell.</summary>
+        public void SetTacticalLit(bool on)
+        {
+            if (!_attachMesh.TryGetValue("Tactical", out var n)) return;
+            if (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.MaterialOverride is StandardMaterial3D sm && sm.EmissionEnabled)
+                sm.EmissionEnergyMultiplier = on ? TacticalLensEmission : 0f;
+        }
+
         public bool SlotHasModel(string slot) => _attachMesh.TryGetValue(slot, out var n) && _gun?.GetNodeOrNull<MeshInstance3D>(n) != null;
         public bool SlotAttached(string slot) => _attachMesh.TryGetValue(slot, out var n) && (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.Visible ?? false);
         public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
@@ -1389,6 +1481,16 @@ namespace UnturnedGodot
         public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
+        /// <summary>The tactical item whose mesh this is. SetSlotMesh is handed a MESH NAME, not an id, so the
+        /// albedo has to be found back from it -- two entries, kept next to the branch that uses them rather than
+        /// threading an id through a signature every other slot would ignore.</summary>
+        static ushort TacticalIdFor(string txtName) => txtName switch
+        {
+            "tactical_laser.txt" => 151,
+            "tactical_light.txt" => 152,
+            _ => 0,
+        };
+
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to
         // the same child-node position as the default, so swapping just the mesh mounts the new part on the same hook.
         public void SetSlotMesh(string slot, string txtName)
@@ -1400,6 +1502,37 @@ namespace UnturnedGodot
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
             m.Visible = true;   // the node may have been hidden by a detach -- a freshly mounted mesh must show (was: new scope stayed invisible after detaching the old one)
+            if (slot == "Tactical")
+            {
+                // The tactical pair are the only attachments whose colour is a TEXTURE rather than a flat tint --
+                // a 32x32 palette, dark grey body with one emitter cell (the laser's is pure red, the light's a
+                // warm bulb). Bound white so the palette is not muted, NEAREST so a 32px cell stays a hard edge.
+                // Without this they mount correctly and render as two identical dark boxes.
+                var _tacTex = AttachmentFit.TexFor(TacticalIdFor(txtName));
+                var _tacMat = new StandardMaterial3D
+                {
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    AlbedoColor = _tacTex != null ? Colors.White : new Color(0.06f, 0.06f, 0.065f),
+                    AlbedoTexture = _tacTex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
+                };
+                // THE EMITTER CELL LIGHTS UP WITH THE SWITCH -- retail's
+                // `firstAttachments.lightHook.gameObject.SetActive(interact)`. The port has no separate hook
+                // object because the emitter is not one: it is a CELL of the 32x32 palette (the laser's pure
+                // red, the light's warm bulb). So it is the same derived lens mask the torch, the goggles and
+                // the headlamp already use, bound at ZERO energy so SetTacticalLit is a float write rather than
+                // a material rebuild on every keypress.
+                if (AttachmentFit.TexPathFor(TacticalIdFor(txtName)) is string _tacRel
+                    && ClothingContent.EmissionMaskFrom(_tacRel, _tacRel) is Texture2D _tacLens)
+                {
+                    _tacMat.EmissionEnabled = true;
+                    _tacMat.EmissionTexture = _tacLens;
+                    _tacMat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see RiggedCharacter.AttachGear: the ADD default glows the whole model
+                    _tacMat.Emission = Colors.White;
+                    _tacMat.EmissionEnergyMultiplier = 0f;
+                }
+                m.MaterialOverride = _tacMat;
+            }
             if (slot == "Sight")   // scopes/optics: each scope's REAL body colour from source (7x gray, most near-black); satin metal
             {
                 bool _isSc = ScopeCal.TryGetValue(txtName, out var _sc);
@@ -1672,6 +1805,31 @@ namespace UnturnedGodot
         /// the main camera's axes -- which makes this directly composable: mainCam.GlobalTransform * this pose
         /// puts the held object where it appears to be in the real world. Exposed for the binocular PiP, which
         /// has to point its camera down the barrels rather than down the player's eyeline.</summary>
+        /// <summary>The fitted TACTICAL attachment's pose, expressed RELATIVE TO THE VIEWMODEL CAMERA. Null when
+        /// nothing is on the rail.
+        ///
+        /// ⚠ IT HAS TO BE CAMERA-RELATIVE, and that is the whole reason this accessor exists rather than a
+        /// GlobalTransform. The gun and arms live in an ISOLATED SubViewport with their own world and their own
+        /// camera, so the node's global transform is in a space the main scene knows nothing about -- handing it
+        /// out directly would put the laser somewhere near the world origin. Divided by this world's camera it
+        /// becomes "where the laser sits relative to the eye", which is exactly what the main camera can
+        /// re-apply.
+        ///
+        /// Reading the LIVE node is the point: sway, bob, recoil, the ADS slide and the inspect animation all
+        /// move it, and all of them should move the beam. A camera-relative CONSTANT (which is what the laser
+        /// used before) is stationary by construction -- the gun drifts and the beam does not follow.</summary>
+        public Transform3D? TacticalViewLocal
+        {
+            get
+            {
+                if (_cam == null || !Godot.GodotObject.IsInstanceValid(_cam)) return null;
+                if (!_attachMesh.TryGetValue("Tactical", out var n)) return null;
+                var m = _gun?.GetNodeOrNull<MeshInstance3D>(n);
+                if (m == null || !Godot.GodotObject.IsInstanceValid(m) || !m.Visible) return null;
+                return _cam.GlobalTransform.AffineInverse() * m.GlobalTransform;
+            }
+        }
+
         public Transform3D? HeldModelViewPose => _gun != null && Godot.GodotObject.IsInstanceValid(_gun) ? _gun.GlobalTransform : null;
 
         public bool AddHeldLens(Material mat, Vector3 localPos, Vector3 localRotDeg, float radius)
@@ -1766,7 +1924,10 @@ namespace UnturnedGodot
             _equipElapsed += (float)delta;
             _flash = Mathf.Max(0f, _flash - (float)delta);
             if (System.Environment.GetEnvironmentVariable("UG_FLASHHOLD") == "1") _flash = 0.05f;   // render-harness: hold the flash so a single-frame --shot captures its bloom
-            if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f;
+            // NO FLASH ON A SILENCED SHOT (strawberry 2026-09-13). The flash is a light AND a billboard, so leaving
+            // it on would keep lighting the room from a gun that is meant to be hiding you -- the tell that matters
+            // most at night, and the one the tracer/zombie-alert gating already removes on the other axes.
+            if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f && !BarrelSilenced;
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);
@@ -1980,6 +2141,12 @@ namespace UnturnedGodot
             //      Sprint is the LOWEST-tier pose (master): aim, fire, reload, rack, inspect, attach ALL override it,
             //      and it must ALWAYS hand the base back or the un-shouldered clip lingers.
             if (_shootHold > 0f) _shootHold -= (float)delta;   // a shot suppresses sprint for its burst (source: Sprint_Start needs !isShooting)
+            // BREAKING INTO A RUN CANCELS AN INSPECT (strawberry 2026-09-13: "when starting a sprint, cancel any
+            // inspect in flight"). Before _wantSprint is computed, deliberately: that condition EXCLUDES
+            // _inspecting, so an inspect used to win and the sprint pose simply never engaged -- you ran with the
+            // gun still held up being examined. Dropping the inspect first lets the sprint take over on the same
+            // frame instead of a frame later, so there is no gap where the arms are in neither pose.
+            if (SprintingNow && _inspecting) CancelInspect();
             bool _wantSprint = IsGunViewmodel && EquipDone && !_reloading && !_hammering && !_inspecting && !_attachView && !_aiming
                                && _shootHold <= 0f && ((_stance == EPlayerStance.SPRINT && _moving) || _safe);   // GUNS ONLY: the un-shoulder/safety pose is a gun thing. melee/consumable/deployable/fists never enter it -> they just keep their hold + bob (master: melee sprint-END animated buggily because it flipped _sprinting with null clips then hit the exit snap)
             if (_wantSprint && !_sprinting)

@@ -611,6 +611,7 @@ namespace UnturnedGodot
             shell.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
             shell.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
             shell.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+            shell.NetSplitItem = (page, x, y, amt, tp, tx, ty, tr) => Client.SendSplitItem(page, x, y, amt, tp, tx, ty, tr);
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
             shell.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);

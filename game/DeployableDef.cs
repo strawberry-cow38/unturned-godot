@@ -85,6 +85,10 @@ namespace UnturnedGodot
         public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
         public bool FluidInfinite, FluidNoHead;      // submersible INLET: an infinite source with no head pressure (pump-only draw)
         public WaterQuality FluidQuality = WaterQuality.Clean;   // water this source spawns with (natural = tainted; a filled reservoir = tainted; bottled = clean)
+        /// <summary>This source draws from the WORLD'S water body, so its quality is decided by the map
+        /// (FluidDef.NaturalWater) rather than baked into the def -- a static readonly def is built once at class
+        /// init, long before a map is loaded, so it cannot know whether it is standing in the sea or a river.</summary>
+        public bool FluidFromWorldWater;
         public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
         public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
         public bool FluidPumpsCrude;                 // a POWERED SOURCE that lifts crude oil out of the ground (the pump jack) -> FluidDeploy spawns a PumpJack; dead without power
@@ -99,7 +103,28 @@ namespace UnturnedGodot
 
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
-        public enum PortKind { Output, Consumer, Passthrough }
+        /// <summary>What a wire socket DOES.
+        ///
+        /// Output/Consumer/Passthrough are POWER and go to the solver. DataOut/DataIn are SIGNAL
+        /// (strawberry 2026-09-13: "a new type of power io: data io. doesnt give power. doesnt recieve power.
+        /// but a context sensitive way to connect multiple props") -- they carry no watts in either direction
+        /// and are deliberately invisible to PowerSolver, so wiring a camera to a TV can never change what
+        /// either draws or brown out a circuit.
+        ///
+        /// ⚠ APPEND-ONLY. The value crosses the wire as a byte in DeployablePortSpec and is written into saves,
+        /// so inserting a kind in the middle silently reassigns every port on every placed deployable in every
+        /// existing world.</summary>
+        public enum PortKind { Output, Consumer, Passthrough, DataOut, DataIn }
+
+        /// <summary>Signal rather than power: never enters the power solve.</summary>
+        public static bool IsDataPort(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIn;
+
+        /// <summary>Does this def relay a data stream over the air rather than down a wire? The transmitter takes
+        /// a signal in and broadcasts it on its code; the receiver picks up whatever is broadcast on the same
+        /// code and puts it out. Both need POWER -- an unpowered radio is a box (strawberry 2026-09-14).</summary>
+        public bool IsDataTransmitter => Id == 9213;
+        public bool IsDataReceiver => Id == 9214;
+        public bool IsDataRadio => IsDataTransmitter || IsDataReceiver;
         public enum SwitchRole { None, TurnOn, TurnOff }   // a SWITCH's side trigger inputs: fed >=1w -> set the switch state on / off (they draw 0w)
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
@@ -123,6 +148,55 @@ namespace UnturnedGodot
         static readonly Vector3 SpotBeamDir = new Vector3(0f, -0.966f, 0.259f);
 
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
+        // ---- WIRELESS DATA LINK (strawberry 2026-09-14: "add a wireless data transmitter and data reciever.
+        //      both transmitter and reciever need to be powered. each has a 4 digit code. matching codes connect
+        //      wirelessly and transmit data anywhere. so camera -> transmitter ~~> reciever -> tv")
+        //
+        // TWO DEFS RATHER THAN ONE WITH A MODE, and two different models, because they do opposite things and
+        // you place them in different rooms: a pair that looked identical would have you walking back to read a
+        // label to find out which end you just put down. The ports say it too -- the transmitter has a data IN
+        // and the receiver a data OUT, so the sockets alone tell you which way the signal runs.
+        //
+        // 9213/9214: the 9xxx block is ours (retail ids are low), continuing after the ceiling lamps at 9210-12.
+        public static readonly DeployableDef DataTransmitter = new()
+        {
+            Id = 9213, Name = "Data Transmitter", Model = "Radio_0", PlaceSound = "metalplacement",
+            Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            MeshEuler = new Vector3(180f, 0f, 0f),   // see below
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
+                new Port { Kind = PortKind.DataIn,   Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },
+            },
+        };
+        public static readonly DeployableDef DataReceiver = new()
+        {
+            Id = 9214, Name = "Data Receiver", Model = "Radio_1", PlaceSound = "metalplacement",
+            Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            // ⚠ 180 ABOUT X, SAME AS THE LAMPS, AND WITHOUT IT BOTH RADIOS PLACE ON THEIR HEADS. Radio_0 is
+            // z[0.000, 1.069] and Radio_1 z[0.000, 0.690] -- OBJECT props authored +Z UP with the base at z=0,
+            // exactly like Lamp_0 (z[0, 0.882]) and Lamp_1 (z[0, 2.300]), both of which carry this same flip for
+            // this same reason. Barricade meshes are authored +Z DOWN, and StandBasis's +90 about X assumes
+            // that; 180 + 90 = the 270 the prop convention actually wants.
+            //
+            // I shipped both defs without it. Caught by tinyclaw reading them to build models against -- and it
+            // is the mirror of the bug that put their ceiling pendants through the ceiling the day before,
+            // which is a good argument for whoever is about to depend on a def being the one to read it.
+            //
+            // ⚠⚠ THIS FLIP BELONGS TO *THESE TWO MESHES*, NOT TO THESE TWO DEFS. It exists only because Radio_0
+            // and Radio_1 extend into POSITIVE z. Purpose-built replacements are being authored the house way --
+            // base at z=0, body into NEGATIVE z -- and those need NO MeshEuler at all: keeping this line while
+            // swapping the Model would flip them straight back over and trade one upside-down radio for another.
+            //
+            // SO: CHANGING `Model` ON THESE DEFS MEANS RE-DECIDING THIS LINE IN THE SAME COMMIT. Measure the new
+            // mesh's z extents first -- base at z=0 going +Z keeps the flip, going -Z drops it. (tinyclaw, who
+            // is building those replacements, raised this before either of us could walk into it.)
+            MeshEuler = new Vector3(180f, 0f, 0f),
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
+                new Port { Kind = PortKind.DataOut,  Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },
+            },
+        };
+
         public static readonly DeployableDef Generator = new()
         {
             Id = 458, Name = "Generator", Model = "Generator_0",
@@ -382,7 +456,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
         // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
-        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
+        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.FluidFromWorldWater = true; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // drawn from the map's own water body: PEI = SALT, Washington = tainted (FluidDef.NaturalWater)
         public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
 
         // A powered storage container (strawberry): places like any power deployable (an IPowerDevice, NOT a Fluid
@@ -733,6 +807,8 @@ namespace UnturnedGodot
             1923 => Loom,
             1924 => SewingTable,
             1927 => Kiln,
+            9213 => DataTransmitter,
+            9214 => DataReceiver,
             9169 => DoorMetal,
             9170 => GateMetal,
             9171 => HatchMetal,

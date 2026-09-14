@@ -163,6 +163,26 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and it is still producing smoke well before its {c.Duration}s is up", c.Emitting);
             }
 
+            // ---- 4b. THE CANISTER OUTLIVES ITS FUSE, and dies with the cloud.
+            // It used to QueueFree the instant the cloud spawned -- the thing making the smoke vanished at the
+            // exact moment it started making it (strawberry 2026-09-13: "make the smoke grenade stay after smoke
+            // starts emitting, and despawn with the smoke"). Driven directly rather than thrown, with a def whose
+            // effect is half a second, so the whole life fits in a test instead of 22 s of real cloud.
+            var shortSmoke = new ThrowableDef { Id = 261, Name = "Test Smoke", Kind = EThrowableKind.Smoke,
+                                                Radius = 2f, EffectSeconds = 0.5f };
+            var can = new Grenade { Thrower = p, Vel = Vector3.Zero, Def = shortSmoke, ItemId = 261, Fuse = 0.04f };
+            World.AddChild(can);
+            can.GlobalPosition = new Vector3(-40f, 1f, 0f);   // away from everything else in the sandbox
+            yield return Until(() => !GodotObject.IsInstanceValid(can) || can.Vented, 2);
+            T.Check("a vented smoke canister is STILL THERE while the cloud pours out of it",
+                    GodotObject.IsInstanceValid(can) && can.Vented);
+            yield return Ticks(6);
+            T.Check("...still there a moment later, not freed on the next tick",
+                    GodotObject.IsInstanceValid(can));
+            yield return Until(() => !GodotObject.IsInstanceValid(can), 3);
+            T.Check("...and it goes when its 0.5 s cloud does, rather than lying there forever",
+                    !GodotObject.IsInstanceValid(can));
+
             // ---- 5. THE GROUND IS NOT AT y=0. The teeth check. ----
             // A platform up at y=6. The old code bounced off a hard plane at y=0.11 and would sink straight
             // through this; every earlier grenade check ran on flat ground at y=0 where both behave the same.

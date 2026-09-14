@@ -197,6 +197,14 @@ namespace UnturnedGodot.Net
 
             ForageHost = new ServerForage(Resources);
             Transactions.Forage = ForageHost;   // OnForageResource validates through it; see ServerTransactions.Forage
+            // The throw pays for itself: the handler that accepts a grenade is the one that takes it out of the
+            // bag. Wired here because Combat is built before Transactions exists.
+            Combat.SpendThrowable = (sender, itemId) => Transactions.SpendThrowable(sender, itemId);
+            // A new life gets new vitals. Subscribed HERE rather than in either host's own PlayerRespawned
+            // handler (MpLoopback and DedicatedServer both have one) so that a third host cannot be written
+            // without it -- the reset belongs to the authority that owns the values, not to whoever happens to
+            // be listening for the event.
+            Combat.PlayerRespawned += (pid, tick) => Vitals.ServerResetForNewLife(pid, tick);
             Transactions.Cooking = Cooking;   // the on/off command handler needs it; see ServerTransactions.Cooking
             Transactions.Crafting_ = CraftQueue;
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot
@@ -1235,6 +1243,11 @@ namespace UnturnedGodot.Net
         public bool SendDropItem(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandDropItem, new DropItemCommand { Page = page, X = x, Y = y }.Write);
 
+        public bool SendSplitItem(byte page, byte x, byte y, ushort amount,
+                                  byte toPage = SplitItemCommand.Anywhere, byte toX = 0, byte toY = 0, byte toRot = 0)
+            => SendCommand(ReplicationIds.CommandSplitItem, new SplitItemCommand {
+                   Page = page, X = x, Y = y, Amount = amount, ToPage = toPage, ToX = toX, ToY = toY, ToRot = toRot }.Write);
+
         public bool SendPickupItem(uint netId)
             => SendCommand(ReplicationIds.CommandPickupItem, new PickupItemCommand { NetId = netId }.Write);
 
@@ -1321,7 +1334,7 @@ namespace UnturnedGodot.Net
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
 
-        public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, byte spentAmount)
+        public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, ushort spentAmount)
             => SendCommand(ReplicationIds.CommandReloadSwap, new ReloadSwapCommand { Page = page, X = x, Y = y, SpentId = spentId, SpentAmount = spentAmount }.Write);
 
         public bool SendGunUnload(byte page, byte x, byte y, ushort roundId, byte count)

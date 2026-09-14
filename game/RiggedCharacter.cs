@@ -132,7 +132,14 @@ namespace UnturnedGodot
             var etex = System.IO.File.Exists(ProjectSettings.GlobalizePath(em)) ? LoadTexCached(em) : null;
             m.EmissionEnabled = etex != null;
             m.EmissionTexture = etex;
-            if (etex != null) { m.Emission = Colors.White; m.EmissionEnergyMultiplier = 1.5f; }
+            // Same ADD-default trap as AttachGear, and LIVE rather than latent: face_14 ships an emission map, so
+            // that face has been glowing edge to edge at 1.5 rather than at whatever the map marks.
+            if (etex != null)
+            {
+                m.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;
+                m.Emission = Colors.White;
+                m.EmissionEnergyMultiplier = 1.5f;
+            }
             Face = face;
         }
 
@@ -155,6 +162,21 @@ namespace UnturnedGodot
             {
                 mat.EmissionEnabled = true;
                 mat.EmissionTexture = emission;
+                // ⚠⚠ MULTIPLY, AND THE DEFAULT IS NOT. This one line is why the headlamp and both nightvisions
+                // glowed over their WHOLE MODEL instead of at the lens (strawberry 2026-09-13).
+                //
+                // Godot's default emission operator is ADD, and the shader is
+                //     EMISSION = (emission_color + emission_texture) * emission_energy
+                // so with a WHITE emission colour every texel of the mask -- including the black ones that ARE
+                // the mask -- emits at (1,1,1) * energy. The mask stopped being a mask and became "the lens is
+                // brighter than the rest of the glowing model".
+                //
+                // Nothing upstream was wrong, which is why this took three passes to find: the masks are
+                // correct (measured -- 1 of 4 texels on all three goggles, 812/16384 on the torch), the UVs are
+                // correct (the lens is 0.8-1.7% of each model's SURFACE AREA), the binding is correct and the
+                // energy write is correct. The value was computed perfectly and then combined with the wrong
+                // operator.
+                mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;
                 mat.Emission = new Color(1f, 1f, 1f);
                 mat.EmissionEnergyMultiplier = 0f;
             }
@@ -203,13 +225,23 @@ namespace UnturnedGodot
 
         /// <summary>Light the worn glasses' lens, or put it out. A no-op on gear with no emission bound, so it is
         /// safe to call every frame from whatever owns the device's on/off state.</summary>
-        public void SetGlassesGlow(bool on, float energy = 3.2f)
+        public void SetGlassesGlow(bool on, float energy = ClothingContent.DefaultLensEnergy)
         {
             var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
                 ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;
             if (mi?.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled)
                 m.EmissionEnergyMultiplier = on ? energy : 0f;
         }
+        /// <summary>Test seam: the glasses' live MATERIAL, not just its energy. Exposed because the bug that
+        /// made every lens item glow edge-to-edge was not in the mask, the UVs, the binding or the energy --
+        /// it was the material's emission OPERATOR, and none of those four could see it.</summary>
+        public StandardMaterial3D DebugGlassesMaterial()
+        {
+            var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
+                ? _glassesAtt.GetNodeOrNull<MeshInstance3D>("Glasses") : null;
+            return mi?.MaterialOverride as StandardMaterial3D;
+        }
+
         public float DebugGlassesGlow()
         {
             var mi = _glassesAtt != null && GodotObject.IsInstanceValid(_glassesAtt)
@@ -378,10 +410,26 @@ namespace UnturnedGodot
 
         // Force a clip's loop mode (the extractor marks non-Attack/Startle/Jump clips as looping; the Equip
         // pull-out must play ONCE and hold its end pose = the two-handed ready hold).
+        // WHICH CLIP'S LoopMode WE LAST WROTE. LoopMode lives on the Animation RESOURCE and persists, so it
+        // only needs setting when the clip changes -- but PlayLoop and SetGunOverlay both wrote it on EVERY
+        // call, above their own "no-op if already current" checks. Both are called every frame per character,
+        // and each write is three engine round-trips (HasAnimation, GetAnimation, set_loop_mode). ETW put
+        // Animation.SetLoopMode at 2,044 ms of a 38 s trace -- 99.7% of the busiest C#/engine call stub in the
+        // whole game, for a flag that had not changed.
+        //
+        // These remember what was written rather than skipping on "is the clip already playing", because the
+        // explicit setters below can change the mode of a clip that IS current; keying on the write means they
+        // still win. Any setter that writes a mode updates or clears these.
+        string _loopSetLoco;
+        string _loopSetGun; bool _loopSetGunValue;
+
         public void SetClipLoop(string name, bool loop)
         {
             if (_ap != null && _ap.HasAnimation(name))
+            {
                 _ap.GetAnimation(name).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+                _loopSetLoco = loop ? name : null;   // an explicit non-loop must not be undone by a cached "already Linear"
+            }
         }
 
         // Locomotion clip names (players use the human set; zombies swap in their Move_N/Idle_N shamble).
@@ -419,7 +467,7 @@ namespace UnturnedGodot
         public void PlayLoop(string name)
         {
             if (_ap == null || _oneShot > 0 || !_ap.HasAnimation(name)) return;
-            _ap.GetAnimation(name).LoopMode = Animation.LoopModeEnum.Linear;
+            if (_loopSetLoco != name) { _ap.GetAnimation(name).LoopMode = Animation.LoopModeEnum.Linear; _loopSetLoco = name; }
             if (name != _loco || _ap.CurrentAnimation != name) { _loco = name; _ap.Play(name); }
         }
 
@@ -497,6 +545,7 @@ namespace UnturnedGodot
             {
                 mat.EmissionEnabled = true;
                 mat.EmissionTexture = lensMask;
+                mat.EmissionOperator = BaseMaterial3D.EmissionOperatorEnum.Multiply;   // see AttachGear: the ADD default glows the whole model
                 mat.Emission = new Color(1f, 1f, 1f);
                 mat.EmissionEnergyMultiplier = 0f;
             }
@@ -540,11 +589,16 @@ namespace UnturnedGodot
                 if (ch is Node n && n.Name.ToString().StartsWith("A_")) n.QueueFree();
         }
 
-        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color)
+        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color) => MountGunAttachment(name, mesh, pos, color, null);
+
+        /// <summary>...with an optional albedo, for the few attachments whose colour is a palette rather than one
+        /// tint (the tactical laser's red emitter, the light's warm bulb). Nearest filtering is already set, which
+        /// is what these 32x32 palettes need.</summary>
+        public void MountGunAttachment(string name, Mesh mesh, Vector3 pos, Color color, Texture2D tex)
         {
             var gm = HeldGunMesh;
             if (gm == null || mesh == null) return;
-            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = color, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = color, AlbedoTexture = tex, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
             gm.AddChild(new MeshInstance3D { Name = "A_" + name, Mesh = mesh, MaterialOverride = mat, Position = pos });
         }
 
@@ -936,7 +990,11 @@ namespace UnturnedGodot
         public void SetGunOverlay(string clip, float speed = 1f, bool loop = true)
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
-            _gunAp.GetAnimation(clip).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+            if (_loopSetGun != clip || _loopSetGunValue != loop)
+            {
+                _gunAp.GetAnimation(clip).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+                _loopSetGun = clip; _loopSetGunValue = loop;
+            }
             if (_gunAp.CurrentAnimation != clip) _gunAp.Play(clip, -1, speed);
         }
 
@@ -946,6 +1004,7 @@ namespace UnturnedGodot
         {
             if (_gunAp == null || string.IsNullOrEmpty(clip) || !_gunAp.HasAnimation(clip)) return;
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
+            _loopSetGun = clip; _loopSetGunValue = false;   // keep the cache honest about what was just written
             string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
             if (h != null) { _gunAp.Play(h); return; }
             _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);

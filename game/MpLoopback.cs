@@ -275,8 +275,18 @@ namespace UnturnedGodot
                 Player.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
                 Player.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
                 Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+                Player.NetSplitItem = (page, x, y, amt, tp, tx, ty, tr) => Client.SendSplitItem(page, x, y, amt, tp, tx, ty, tr);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
                 Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+                // ⚠ THE THROWABLE SPEND IS A DIRECT CALL, not a wire command, and it is the one seam here that
+                // does NOT hand its action to the server. Routing the THROW over the wire (Player.NetGrenade)
+                // would make the server fly it -- and this host has no ProjectileReplicaView, so every grenade,
+                // smoke and flare would go invisible. So the flight stays local and only the BAG goes to the
+                // authority, which is all that was ever wrong: without this seam ReleaseThrow took the offline
+                // branch, removed the item locally, and the next owner echo adopted the server's still-stocked
+                // grid straight back over it (master 2026-09-13: "grenades are getting consumed, but the server
+                // disagrees, when i update my inv, they come back").
+                Player.NetSpendThrowable = itemId => Server.Transactions.SpendThrowable(Client.PlayerId, itemId);
                 Player.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
                 Player.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                     (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
@@ -326,6 +336,14 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // the first AdoptReplicatedVitals. Client.PlayerId is read at hit time (connected by then).
                 Player.ExpectServerVitals();
                 Player.NetDamageSink = amount => Server.Combat.DamagePlayerExternal(Client.PlayerId, amount);
+                // ...and the console's `heal`, the same way round: the fine vitals through the reset a respawn
+                // uses, and HP through the RegenSink the passive regen already raises it with (clamped to 100
+                // inside). Both on the authority, so the next owner echo confirms the heal instead of undoing it.
+                Player.NetHealSelf = () =>
+                {
+                    Server.Vitals.ServerResetForNewLife(Client.PlayerId, Server.Session.CurrentTick);
+                    Server.Vitals.RegenSink?.Invoke(Client.PlayerId, 1000f);
+                };
 
                 // (d) P2 -- world-item (dropped/loot) consume, over the wire. Same shape as the deployable
                 //     view in (a): the SAME diff-materializer the MP client uses (ClientWorldSession:144-145)

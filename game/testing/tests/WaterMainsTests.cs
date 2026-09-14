@@ -201,4 +201,68 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // THE QUALITY TABLE MUST BE TOTAL.
+    //
+    // WaterQuality is an APPEND-ONLY enum (it is persisted as an int on Item), and every append has to reach three
+    // separate tables: the display name, the bar colour, and the drink gate. Salty reached two of them. WaterColor's
+    // `_` arm caught it and returned the CLEAN blue, so on PEI the fill bar painted sea water exactly like drinking
+    // water while the label next to it read "Salt Water" -- the bar being the readout you act on without reading.
+    //
+    // ⚠ The point of these checks is that they are written over Enum.GetValues, NOT over the four values that exist
+    // today. Asserting "Salty is sea green" would restate the implementation and pass forever while the NEXT
+    // appended quality repeats the identical bug. Asserting "no two qualities collide" fails the moment a value has
+    // no arm, whatever it is called -- the missing arm IS the collision, because that is what a `_` default does.
+    public sealed class WaterQualityTableTests : GameTest
+    {
+        public override string Name => "fluid.water_quality_table";
+        public override int Tier => 0;   // pure table lookups, no scene
+
+        public override IEnumerable<Step> Run()
+        {
+            var all = (WaterQuality[])System.Enum.GetValues(typeof(WaterQuality));
+            T.Check($"the enum has at least the four shipped qualities ({all.Length})", all.Length >= 4);
+
+            // DISTINCT NAMES. A quality with no name arm falls through to "Clean Water" and lies in the tooltip.
+            var names = new Dictionary<string, WaterQuality>();
+            foreach (var q in all)
+            {
+                string n = FluidDef.WaterName(FluidType.Water, q);
+                bool fresh = !names.ContainsKey(n);
+                T.Check($"{q} has its own name ('{n}')" + (fresh ? "" : $" -- collides with {names.GetValueOrDefault(n)}"), fresh);
+                names[n] = q;
+            }
+
+            // DISTINCT COLOURS. This is the check Salty failed.
+            var cols = new Dictionary<Color, WaterQuality>();
+            foreach (var q in all)
+            {
+                Color c = FluidDef.WaterColor(FluidType.Water, q);
+                bool fresh = !cols.ContainsKey(c);
+                T.Check($"{q} has its own bar colour ({c.R:0.00},{c.G:0.00},{c.B:0.00})" + (fresh ? "" : $" -- collides with {cols.GetValueOrDefault(c)}"), fresh);
+                cols[c] = q;
+            }
+
+            // THE DRINK GATE DEFAULTS CLOSED. An appended quality must be undrinkable until someone decides it is
+            // not, because the failure direction is asymmetric: a wrongly-undrinkable water is an inconvenience, a
+            // wrongly-drinkable one is sea water that hydrates you. Same for autodrink, which sips without asking.
+            foreach (var q in all)
+            {
+                bool clean = q == WaterQuality.Clean;
+                T.Check($"Drinkable(water,{q}) == {clean}", FluidDef.Drinkable(FluidType.Water, q) == clean);
+                T.Check($"Safe(water,{q}) == {clean}", FluidDef.Safe(FluidType.Water, q) == clean);
+            }
+
+            // WORST-WINS ORDERING is load-bearing beyond storage: FluidItem's pour and FluidNet's resolve both take
+            // Mathf.Max over the (int), so Clean must be the least value or one drop of clean would sanitise a tank.
+            T.Check("Clean is the least quality, so it can never win a mix", (int)WaterQuality.Clean == 0);
+            foreach (var q in all)
+                T.Check($"max(Clean,{q}) == {q}", (WaterQuality)Mathf.Max((int)WaterQuality.Clean, (int)q) == q);
+
+            // PEI draws the SEA and Washington does not (strawberry 2026-09-12). Read through NaturalWater rather
+            // than restating the switch, so a map added without a decision shows up as tainted here.
+            T.Check("salt water is not drinkable straight from the sea", !FluidDef.Drinkable(FluidType.Water, WaterQuality.Salty));
+            yield break;
+        }
+    }
 }

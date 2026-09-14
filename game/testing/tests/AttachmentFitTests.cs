@@ -22,7 +22,7 @@ namespace UnturnedGodot.Testing
             // ---- The type layer. Before SIGHT/BARREL/GRIP/TACTICAL existed in EItemType these all parsed to GENERIC,
             // so no filter could tell a scope from a rock. Asserted on the real catalog rows, not on hand-built assets.
             T.Check($"Eaglefire Iron Sights (5) is a SIGHT ({Assets.find(5)?.type})", Assets.find(5)?.type == EItemType.SIGHT);
-            T.Check($"Military Suppressor (7) is a BARREL ({Assets.find(7)?.type})", Assets.find(7)?.type == EItemType.BARREL);
+            T.Check($"5.56 Silencer (7) is a BARREL ({Assets.find(7)?.type})", Assets.find(7)?.type == EItemType.BARREL);
             T.Check($"Vertical Grip (8) is a GRIP ({Assets.find(8)?.type})", Assets.find(8)?.type == EItemType.GRIP);
             T.Check($"Military Magazine (6) is a MAGAZINE ({Assets.find(6)?.type})", Assets.find(6)?.type == EItemType.MAGAZINE);
 
@@ -38,8 +38,14 @@ namespace UnturnedGodot.Testing
 
             T.Check("a sight fits the Sight slot", AttachmentFit.Fits(Assets.find(5), "Sight", gun.Caliber));
             T.Check("...and NOT the Barrel slot", !AttachmentFit.Fits(Assets.find(5), "Barrel", gun.Caliber));
-            T.Check("a suppressor fits Barrel", AttachmentFit.Fits(Assets.find(7), "Barrel", gun.Caliber));
-            T.Check("...and not Sight", !AttachmentFit.Fits(Assets.find(7), "Sight", gun.Caliber));
+            // ⚠ THE SILENCER NOW NEEDS THE CARTRIDGE, not just the magazine group. The 3-arg overload cannot supply
+            // one, and a cartridge-restricted attachment refuses an unknown gun rather than fitting it -- a caller
+            // that does not know what the gun chambers has not earned a yes. So this call passes CaliberName, and
+            // the line below pins that the ignorant overload really does refuse.
+            T.Check("the 5.56 silencer fits the eaglefire's Barrel", AttachmentFit.Fits(Assets.find(7), "Barrel", gun.Caliber, gun.CaliberName));
+            T.Check("...and not Sight", !AttachmentFit.Fits(Assets.find(7), "Sight", gun.Caliber, gun.CaliberName));
+            T.Check("...and a caller that does not name the cartridge gets a NO, not a yes",
+                !AttachmentFit.Fits(Assets.find(7), "Barrel", gun.Caliber));
             T.Check("a grip fits Grip", AttachmentFit.Fits(Assets.find(8), "Grip", gun.Caliber));
             T.Check("a gun is not an attachment", !AttachmentFit.Fits(eagle, "Sight", gun.Caliber));
             T.Check("neither is a can of beans", !AttachmentFit.Fits(Assets.find(13), "Sight", gun.Caliber));
@@ -62,6 +68,89 @@ namespace UnturnedGodot.Testing
             T.Check("...and still fits caliber 1", AttachmentFit.Fits(Assets.find(5), "Sight", 1));
             AttachmentFit.Calibers.Remove(5);
 
+            // ---- 5.56 ONLY (strawberry 2026-09-13: the silencer "only fits 5.56 guns, rename it to 5.56 silencer").
+            //
+            // ⚠ THE HONEYBADGER IS THE WHOLE TEST. It is caliber group 1, the SAME group as the eaglefire, and it
+            // fires .300 AAC Blackout -- so an implementation that restricted by magazine group would fit the
+            // silencer to it while passing every other check here. And the ten 5.56 rifles span FIVE groups (1, 12,
+            // 201, 202, 204), so that same implementation would refuse four fifths of the guns it is meant for.
+            // Group answers "what magazine feeds it"; this question is "what leaves the barrel".
+            GunDef Dat(string n) => GunDef.FromDatText(System.IO.File.ReadAllText(
+                ProjectSettings.GlobalizePath($"res://content/{n}.dat")));
+            var honey = Dat("honeybadger");
+            T.Check($"honeybadger shares the eaglefire's group ({honey.Caliber}) but not its cartridge ({honey.CaliberName})",
+                honey.Caliber == gun.Caliber && honey.CaliberName != gun.CaliberName);
+            T.Check("the 5.56 silencer REFUSES the .300 BLK honeybadger, despite the shared group",
+                !AttachmentFit.Fits(Assets.find(7), "Barrel", honey.Caliber, honey.CaliberName));
+            foreach (var n in new[] { "augewehr", "nightraider", "fusilaut", "dragonfang", "swissgewehr" })
+            {
+                var g = Dat(n);
+                T.Check($"...and fits {n} (group {g.Caliber}, {g.CaliberName})",
+                    AttachmentFit.Fits(Assets.find(7), "Barrel", g.Caliber, g.CaliberName));
+            }
+            // The CONTROL for the whole mechanism: an attachment with no cartridge list is still universal, so this
+            // is a restriction on one item and not a new rule that quietly narrows everything.
+            T.Check("an unrestricted barrel attachment still fits the honeybadger",
+                AttachmentFit.Fits(Assets.find(149), "Barrel", honey.Caliber, honey.CaliberName));
+
+            // ---- TACTICAL: the laser and the light (strawberry 2026-09-13: "wire the tactical laser, flashlight").
+            T.Check($"Tactical Laser (151) is a TACTICAL ({Assets.find(151)?.type})", Assets.find(151)?.type == EItemType.TACTICAL);
+            T.Check($"Tactical Light (152) is a TACTICAL ({Assets.find(152)?.type})", Assets.find(152)?.type == EItemType.TACTICAL);
+            T.Check("the laser fits the Tactical slot", AttachmentFit.Fits(Assets.find(151), "Tactical", gun.Caliber, gun.CaliberName));
+            T.Check("the light fits it too", AttachmentFit.Fits(Assets.find(152), "Tactical", gun.Caliber, gun.CaliberName));
+            T.Check("...and neither fits Barrel", !AttachmentFit.Fits(Assets.find(151), "Barrel", gun.Caliber, gun.CaliberName)
+                                               && !AttachmentFit.Fits(Assets.find(152), "Barrel", gun.Caliber, gun.CaliberName));
+            // ⚠ A MESH, not just a rule. Fitting an attachment the renderer cannot draw is the failure this whole
+            // file exists to catch: the menu offers it, the item leaves your bag, the slot records it, and the gun
+            // looks untouched. MeshFor returning a name is not enough either -- the file has to parse.
+            foreach (var (id, nm) in new[] { (151, "laser"), (152, "light") })
+            {
+                string mesh = AttachmentFit.MeshFor((ushort)id);
+                T.Check($"the {nm} names a mesh ({mesh ?? "null"})", !string.IsNullOrEmpty(mesh));
+                T.Check($"...and it actually parses", mesh != null && ContentProvider.ParseObj($"res://content/{mesh}") != null);
+            }
+            T.Check("PartsFor mounts the tactical when one is installed",
+                AttachmentFit.PartsFor("eaglefire", 0, 0, 0, 151).Exists(p2 => p2.Slot == "Tactical"));
+            T.Check("...and mounts nothing there when none is", 
+                !AttachmentFit.PartsFor("eaglefire", 0, 0, 0, 0).Exists(p2 => p2.Slot == "Tactical"));
+
+            // ---- SILENCING (strawberry 2026-09-13: "make the silencer actually suppress the sound of shooting").
+            //
+            // ⚠ THE MUZZLE BRAKE IS THE CONTROL, and it is the whole point. IsSuppressed used to read
+            // `SlotAttached("Barrel")` under the comment "the only Barrel attachment is the silenced suppressor",
+            // so ANY barrel part silenced the gun -- and Military Muzzle is a BRAKE, which makes a rifle louder if
+            // anything. A test that only checked "the suppressor silences" would have passed on that code.
+            T.Check("the 5.56 Silencer silences", AttachmentFit.IsSilencer(7));
+            T.Check("the Makeshift Muffler does too", AttachmentFit.IsSilencer(477));
+            T.Check("...but a Military BARREL does NOT (accuracy part)", !AttachmentFit.IsSilencer(149));
+            T.Check("...nor a Military MUZZLE (a brake)", !AttachmentFit.IsSilencer(150));
+            T.Check("...nor a Ranger Barrel/Muzzle", !AttachmentFit.IsSilencer(1191) && !AttachmentFit.IsSilencer(1190));
+            T.Check("...and no barrel at all is not silenced", !AttachmentFit.IsSilencer(0));
+
+            // The retail Volume per barrel -- the suppressor is the quietest thing in the game at 0.30.
+            T.Check($"the 5.56 Silencer carries its real Volume ({AttachmentFit.BarrelFor(7).Volume:0.00})",
+                Mathf.Abs(AttachmentFit.BarrelFor(7).Volume - 0.30f) < 0.001f);
+            T.Check($"...and the Makeshift Muffler is louder ({AttachmentFit.BarrelFor(477).Volume:0.00})",
+                AttachmentFit.BarrelFor(477).Volume > AttachmentFit.BarrelFor(7).Volume);
+
+            // ⚠ A SILENCED SHOT IS A DIFFERENT RECORDING, not the gun's clip turned down -- so every silencing
+            // barrel must NAME a clip and that clip must EXIST on disk. A missing file is silent, and "silent"
+            // is indistinguishable from "working" for a suppressor, which is the worst possible failure here.
+            foreach (var id in new[] { 7, 144, 477, 1444, 117, 1002, 1167, 1338, 350, 354 })
+            {
+                var d = AttachmentFit.BarrelFor(id);
+                T.Check($"barrel {id} names a shot clip ({d.ShootClip ?? "null"})", !string.IsNullOrEmpty(d.ShootClip));
+                T.Check($"...and {d.ShootClip} is on disk",
+                    d.ShootClip != null && System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{d.ShootClip}")));
+            }
+            // ...and the four that do NOT silence must name none, or they would swap the gun's own shot sound for
+            // nothing at all.
+            foreach (var id in new[] { 149, 150, 1191, 1190 })
+                T.Check($"barrel {id} names no clip (keeps the gun's own shot)", string.IsNullOrEmpty(AttachmentFit.BarrelFor(id).ShootClip));
+
+            T.Check($"a silenced shot leaves slower ({AttachmentFit.SilencedVelocityMultiplier:0.00}x)",
+                AttachmentFit.SilencedVelocityMultiplier > 0f && AttachmentFit.SilencedVelocityMultiplier < 1f);
+
             // ---- The bag scan: what the menu actually shows.
             var inv = new PlayerInventory();
             inv.wearBackpack(new Item(253));
@@ -73,10 +162,24 @@ namespace UnturnedGodot.Testing
             bag.tryAddItem(new Item(6, 12));
             bag.tryAddItem(new Item(13));   // canned beans -- must never appear
 
-            var forSight = AttachmentFit.InBag(inv, "Sight", 1);
-            var forBarrel = AttachmentFit.InBag(inv, "Barrel", 1);
-            var forMag = AttachmentFit.InBag(inv, "Magazine", 1);
-            var forGrip = AttachmentFit.InBag(inv, "Grip", 1);
+            // ⚠ ASK THE WAY THE MENU ASKS -- caliber AND cartridge. These four passed the group alone, which
+            // Fits reads as "the cartridge is unknown" and therefore refuses every restricted attachment: the
+            // 5.56 Silencer vanished from its own slot and this read as a regression in the restriction rather
+            // than as a stale call. AttachmentMenu has always passed both (AttachmentMenu.cs:103), and this file
+            // passes both in every other check in it -- these four were simply written before the cartridge
+            // axis existed and never revisited.
+            var forSight = AttachmentFit.InBag(inv, "Sight", gun.Caliber, gun.CaliberName);
+            var forBarrel = AttachmentFit.InBag(inv, "Barrel", gun.Caliber, gun.CaliberName);
+            var forMag = AttachmentFit.InBag(inv, "Magazine", gun.Caliber, gun.CaliberName);
+            var forGrip = AttachmentFit.InBag(inv, "Grip", gun.Caliber, gun.CaliberName);
+
+            // ...and the CONTROL for that rule, so "pass the cartridge" cannot quietly become "the cartridge is
+            // ignored": the same bag, asked with the cartridge UNKNOWN, must still refuse the restricted barrel
+            // while the universal sight is unaffected.
+            T.Check($"an unknown cartridge refuses the restricted barrel ({AttachmentFit.InBag(inv, "Barrel", gun.Caliber).Count})",
+                    AttachmentFit.InBag(inv, "Barrel", gun.Caliber).Count == 0);
+            T.Check($"...and does not touch an unrestricted slot ({AttachmentFit.InBag(inv, "Sight", gun.Caliber).Count})",
+                    AttachmentFit.InBag(inv, "Sight", gun.Caliber).Count == 1);
 
             T.Check($"the Sight slot offers exactly the one sight carried ({forSight.Count})", forSight.Count == 1 && forSight[0].Asset.id == 5);
             T.Check($"the Barrel slot offers the suppressor ({forBarrel.Count})", forBarrel.Count == 1 && forBarrel[0].Asset.id == 7);

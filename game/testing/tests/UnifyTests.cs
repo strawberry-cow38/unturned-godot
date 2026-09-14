@@ -2114,7 +2114,10 @@ namespace UnturnedGodot.Testing
     public class UnifyFineVitalsStarve : GameTest
     {
         public override string Name => "unify.fine_vitals_starve";
-        public override double TimeoutSimSeconds => 90;
+        // 90 was sized for a 2 HP/s regen and no damage lock. The shipped rates are a full heal over a quarter
+        // game day plus a 10 s post-hit lock, so phase B alone now costs ~35 sim-seconds of WAITING -- not of
+        // work. Raised rather than trimmed: the waits ARE the assertions here.
+        public override double TimeoutSimSeconds => 150;
 
         static bool FindCell(PlayerInventory inv, ushort id, out byte page, out byte x, out byte y)
         {
@@ -2165,8 +2168,16 @@ namespace UnturnedGodot.Testing
             ve.Sim.Food = 0f;                     // no food -> starvation
             ce.HealthExact = 5f; ce.Health = 5;   // seed HP low so death lands inside the budget
 
-            yield return Until(() => sess.Shell.Food <= 0.02f, 5);
-            T.Check($"(A) the shell adopted the server's starving Food ({sess.Shell.Food:0.00}), not its own local sim", sess.Shell.Food <= 0.02f);
+            // LATCHED, and bounded by the death that follows rather than by a bare 5 s. Two reasons, both learned
+            // the hard way on 2026-09-13: an `Until` that times out aborts the whole test with "condition never
+            // held" and NO VALUE, so a reader has to map the failure back to a line by counting -- this one got
+            // mis-located from that message alone. And a starving player is on a 3.4 s clock to death plus a
+            // respawn that REFILLS food, so a wait long enough to be safe is long enough to erase the thing it
+            // is waiting for. Latching records the value ARRIVING even if the respawn immediately overwrites it.
+            bool sawStarvingFood = false;
+            yield return Until(() => (sawStarvingFood |= sess.Shell.Food <= 0.02f) || sess.Shell.IsDead, 12);
+            T.Check($"(A) the shell adopted the server's starving Food (saw it: {sawStarvingFood}; Food now {sess.Shell.Food:0.00}), not its own local sim",
+                    sawStarvingFood);
 
             yield return Until(() => sess.Shell.IsDead, 12);
             T.Check("(A) the shell STARVED TO DEATH server-owned (IsDead)", sess.Shell.IsDead);
@@ -2192,13 +2203,44 @@ namespace UnturnedGodot.Testing
             bool seeded = sInv.Inventory.items[2].tryAddItem(new Item(13));
             T.Check("seeded a Canned Beans into the SERVER grid", seeded);
 
-            // damage HP to 60 and drop food BELOW the 0.30 regen gate so pre-consume there is NO regen
+            // damage HP to 60. ⚠ TWO DIFFERENT THINGS HOLD HP DOWN HERE NOW, and this test used to conflate them.
+            // The one it was written for is the FOOD gate. The other is the post-damage regen lock (strawberry
+            // 2026-09-13: "health regens ... never when taking damage"): a hit arms RegenDamageLockSeconds of no
+            // regen at all. So the original shape -- hit, drop food under 0.30, wait 0.6 s, "HP held" -- would
+            // pass on a tree where the food gate did nothing whatsoever, because the lock was doing the holding.
+            // The two are separated below and each is proved with the other neutralised.
             ded.Server.Combat.QueueDebugPlayerDamage(sess.Client.PlayerId, 40f, 0);
             yield return Until(() => sess.Shell.Health <= 61f, 5);
             ded.Server.Vitals.TryGet(sess.Client.PlayerId, out ve);
+            double regenSec = 1.0 / ve.Sim.HealthRegenPerSecond;   // sim-seconds for ONE coarse HP point at the shipped rate
+
+            // (B0) THE DAMAGE LOCK ON ITS OWN. Fed and hydrated, so the fed-gate is wide OPEN and the only thing
+            // that can be holding HP down is the lock the hit just armed.
+            ve.Sim.Food = 1f; ve.Sim.Water = 1f;
+            float hpHit = sess.Shell.Health;
+            // 7 s at 50 Hz: long enough for regen to have banked ~2 HP points if it were running at all, and
+            // still ~3 s short of the 10 s lock. Both halves matter -- a wait shorter than one HP point would
+            // prove nothing, and one longer than the lock would prove the opposite of what it says.
+            yield return Ticks(350);
+            T.Check($"(B) a hit blocks regen even while fed and hydrated ({sess.Shell.Health:0} still ~ {hpHit:0}; lock {PlayerVitalsSim.RegenDamageLockSeconds:0}s, one HP point {regenSec:0.0}s)",
+                    sess.Shell.Health <= hpHit + 0.5f);
+
+            // ...and it is a TIMER, not a permanent block: left alone, regen comes back by itself. The budget is
+            // DERIVED from the shipped lock + the real cost of one HP point, so retuning HealthHealDays or
+            // RegenDamageLockSeconds cannot quietly turn this into a flake -- it was a literal 5 s before, which
+            // is what made the balance pass break this test rather than this test catch the balance pass.
+            yield return Until(() => sess.Shell.Health > hpHit + 0.5f,
+                               PlayerVitalsSim.RegenDamageLockSeconds + regenSec * 2.0 + 4.0);
+            T.Check($"(B) ...and regen resumes on its own once the lock expires ({sess.Shell.Health:0} > {hpHit:0})",
+                    sess.Shell.Health > hpHit + 0.5f);
+
+            // (B1) NOW the FOOD gate, with the lock long expired so it is the only thing left in play.
+            ded.Server.Vitals.TryGet(sess.Client.PlayerId, out ve);
             ve.Sim.Food = 0.20f;   // < 0.30 -> the fed-gate is closed, HP holds
-            yield return Ticks(30);
-            T.Check($"(B) HP HOLDS while under-fed -- no regen ({sess.Shell.Health:0} ~ 60)", sess.Shell.Health <= 62f);
+            float hpUnderfed = sess.Shell.Health;
+            yield return Ticks(250);   // 5 s -- LONGER than one HP point takes, so a running regen would show
+            T.Check($"(B) HP HOLDS while under-fed -- no regen ({sess.Shell.Health:0} ~ {hpUnderfed:0})",
+                    sess.Shell.Health <= hpUnderfed + 0.5f);
 
             yield return Until(() => sess.Shell.Inventory.getItemCount(13) >= 1, 5);
             T.Check("the shell adopted the seeded beans", sess.Shell.Inventory.getItemCount(13) >= 1);
@@ -2212,12 +2254,14 @@ namespace UnturnedGodot.Testing
             ded.Server.Vitals.TryGet(sess.Client.PlayerId, out ve);
             T.Check($"(B) the consumed FOOD raised server Food ({ve.Sim.Food:0.00} > 0.5, +0.55)", ve.Sim.Food > 0.5f);
 
-            // the +10 useHealth bump lands first (60->70); the CONTINUED rise past it is passive regen (post-fix
-            // only -- pre-fix the food was never raised, so the fed-gate stays closed and HP stays flat at 70).
-            yield return Until(() => sess.Shell.Health >= 69f, 5);
+            // the +10 useHealth bump lands first; the CONTINUED rise past it is passive regen (post-fix only --
+            // pre-fix the food was never raised, so the fed-gate stays closed and HP stays flat where the bump
+            // left it). `hpFed` is sampled AFTER the bump, so what this waits for can only be regen.
+            float hpPreBump = sess.Shell.Health;
+            yield return Until(() => sess.Shell.Health >= hpPreBump + 9f, 5);   // the +10 useHealth, not a regen tick
             float hpFed = sess.Shell.Health;
-            yield return Until(() => sess.Shell.Health > hpFed + 1f, 5);
-            T.Check($"(B) HP REGENS while fed ({sess.Shell.Health:0} rose past the just-fed {hpFed:0})", sess.Shell.Health > hpFed + 1f);
+            yield return Until(() => sess.Shell.Health > hpFed + 0.5f, regenSec * 2.0 + 4.0);
+            T.Check($"(B) HP REGENS while fed ({sess.Shell.Health:0} rose past the just-fed {hpFed:0})", sess.Shell.Health > hpFed + 0.5f);
             T.Check($"DESYNC-QUIET across starve + respawn + feed ({desyncs} fired)", desyncs == 0);
 
             world.Sim.Sim.Remove(pump);

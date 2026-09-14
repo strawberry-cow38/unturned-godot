@@ -136,7 +136,12 @@ namespace SDG.Unturned
     public class Item
     {
         public ushort id;
-        public byte amount = 1;
+        // ⚠ USHORT, NOT BYTE. A wallet stacks to $500 (Currency.MaxPerStack) and `amount` IS the dollar figure,
+        // so a byte cannot hold one. Integer on purpose -- money is whole dollars and there are no pennies here,
+        // so nothing about a stack count ever wants a float. ushort rather than int because 65535 is headroom
+        // enough for any stack and it costs the wire 2 bytes per item instead of 4.
+        // Crosses the wire as UInt16 and saves as a JSON number, so old saves (values <= 255) still load.
+        public ushort amount = 1;
         public byte quality = 100;
         // Gun state carried by the item so a gun REMEMBERS it through hands<->inventory<->drop (source: player.equipment.state).
         // -1 = unset (a fresh gun uses its defaults). Attachments are persisted separately by the attachment system (TODO).
@@ -203,7 +208,13 @@ namespace SDG.Unturned
         /// need two fields, the same argument that gave `cooked` its own.</summary>
         public byte frozen;
 
-        public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
+        /// <summary>A field-for-field copy. Used when a stack SPLITS: the new stack is the same item in every
+        /// respect except how many of it there are. Memberwise rather than an explicit field list because there
+        /// are a dozen of them (gunAmmo, cooked, frozen, fluid, attachments...) and a hand-written copy silently
+        /// drops whichever one is added next -- the split would keep working and quietly lose the state.</summary>
+        public Item Clone() => (Item)MemberwiseClone();
+
+        public Item(ushort newID, ushort newAmount = 1, byte newQuality = 100)
         {
             id = newID;
             amount = newAmount;

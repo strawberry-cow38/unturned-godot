@@ -106,6 +106,45 @@ namespace UnturnedGodot
             Engine.MaxFps = TargetFps;
         }
         public static void ApplyUiScale(Node ctx) { var root = ctx?.GetTree()?.Root; if (root != null) root.ContentScaleFactor = UiScale; }
+
+        /// <summary>Render the 3D at the window's ACTUAL pixel count.
+        ///
+        /// The bug: Godot sizes the root viewport from the stretch base, so the 3D buffer came out at
+        /// window^2 / ContentScaleSize. Measured at two very different sizes -- a 2880-wide window rendered
+        /// 3240 (2880^2/2560) and a 1024-wide one rendered 410. Only a 2560-wide window was ever correct:
+        /// below it the world renders SMALLER than the screen and is upscaled (a 1080p monitor was getting
+        /// 1440x810 and looking soft), above it we render MORE pixels than the display has and throw them away
+        /// (2880 panel: 3240 wide, ~27% wasted).
+        ///
+        /// The fix is NOT to make the stretch base follow the window. That base is what scales the HUD per
+        /// monitor; collapsing it to 1:1 would fix the world and break the interface in the same commit, and
+        /// the broken half still looks right in a screenshot (tinyclaw). So the canvas keeps its 2560 base and
+        /// only the 3D buffer is corrected, via Scaling3DScale -- the one knob that separates them.
+        ///
+        /// scale = base / window, because render = viewport * scale and viewport = window^2 / base.
+        /// Godot clamps the scale to [0.25, 2], so a window under 1280 wide cannot reach native and keeps some
+        /// upscale; that is a far smaller error than the one being fixed, and it fails soft.
+        /// UG_NO3DSCALE=1 restores the old behaviour for an A/B in one binary.
+        public static void Apply3DScale(Node ctx)
+        {
+            var root = ctx?.GetTree()?.Root;
+            if (root == null || System.Environment.GetEnvironmentVariable("UG_NO3DSCALE") == "1") return;
+            var win = DisplayServer.WindowGetSize();
+            var basis = root.ContentScaleSize;
+            if (win.X <= 0 || basis.X <= 0) return;
+            // UG_3DSCALE SUBSTITUTES THE SETTING, it does not bypass the maths. An instrument that takes a
+            // different code path than the shipped one measures the instrument: the earlier version returned
+            // early with its own Clamp, so every number I quoted for render scaling came from an expression the
+            // player never runs. Same arithmetic now, only the value differs.
+            float scale = RenderScale;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_3DSCALE"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float forced) && forced > 0f) scale = forced;
+            // The basis/window term corrects the 3D buffer for a window that differs from ContentScaleSize (the
+            // resolution bug, 6775081e). The scale multiplies it, so the player's setting composes with that
+            // correction instead of overwriting it -- at Native this is byte-identical to before.
+            root.Scaling3DScale = Mathf.Clamp((float)basis.X / win.X * scale, 0.25f, 2f);
+        }
         /// <summary>The world's environment (WorldEnvironment nodes in group "world_env"): AO, bloom, SSR, sun shafts.</summary>
         public static void ApplyEnvironment(Node ctx)
         {
@@ -115,10 +154,17 @@ namespace UnturnedGodot
         public static void ApplyEnvironment(Godot.Environment env)
         {
             if (env == null) return;
+            // BENCHMARK-ONLY ABLATIONS. The saved settings live in `user://`, which Godot keys by project NAME --
+            // the same file master's own clone reads -- so pricing an effect by writing the setting would change
+            // their game. These env flags ablate without persisting anything, and unset changes nothing.
+            // Needed because the frame is GPU-bound at 99% while draw calls and shadow distance both measured as
+            // no-ops, so the cost is in per-pixel work, and the only way to find out which is to remove one.
+            bool noBloom = System.Environment.GetEnvironmentVariable("UG_NOBLOOM") == "1";
+            bool noFog = System.Environment.GetEnvironmentVariable("UG_NOFOG") == "1";
             env.SsaoEnabled = AmbientOcclusion;
-            env.GlowEnabled = Bloom;
+            env.GlowEnabled = Bloom && !noBloom;
             env.SsrEnabled = ScreenSpaceReflections;
-            env.VolumetricFogEnabled = SunShafts;
+            env.VolumetricFogEnabled = SunShafts && !noFog;
             // density: Godot's default 0.05 is the night key; DayNightCycle drives it by sun elevation (night 0.05, horizon 0.010, noon 0.003)
         }
         public static void ApplyEffects() { ParticleFx.QualityMul = EffectMul; }
@@ -129,13 +175,41 @@ namespace UnturnedGodot
             UnturnedGodot.ChromaticAberration.Intensity = ChromaticAmount;
             UnturnedGodot.ChromaticAberration.Current?.Apply();   // null before a world exists; the statics above still stick
         }
-        public static void ApplyWater() { WaterReflection.Enabled = PlanarReflection != GfxQuality.Off; WaterReflection.EveryFrames = PlanarEvery; }
+        public static void ApplyWater()
+        {
+            // UG_NOREFLECT ablates the planar water mirror, which renders the scene a SECOND time into a
+            // SubViewport (master's config has it at Medium = every 2nd frame). Benchmark only; see above.
+            WaterReflection.Enabled = PlanarReflection != GfxQuality.Off
+                                      && System.Environment.GetEnvironmentVariable("UG_NOREFLECT") != "1";
+            WaterReflection.EveryFrames = PlanarEvery;
+        }
         public static readonly float[] ShadowDistOrder = { 40f, 80f, 120f, 200f, 300f };
         public static string ShadowDistLabel(float d) => $"{d:0} m";
+
+        /// <summary>RENDER SCALE: the 3D buffer renders at this fraction of the window, the UI stays native.
+        ///
+        /// Measured on the RTX 3050 laptop at 1080p, interleaved against a repeating control (2dacc358):
+        /// 0.85 = +9.4%, 0.70 = +17.2%, against a control that agreed with itself to 1.5%. It is the ONLY knob
+        /// that moved this frame -- draw calls, shadow distance, volumetric fog, the planar water reflection and
+        /// bloom were each measured and each was null, because the frame is GPU-bound on per-pixel work.
+        ///
+        /// It is the cheapest quality trade in the game precisely because it does NOT touch the UI: text, the
+        /// HUD and the inventory grid stay pixel-native while only the world softens.</summary>
+        public static float RenderScale = 1f;
+        public static readonly float[] RenderScaleOrder = { 1f, 0.9f, 0.85f, 0.75f, 0.7f, 0.5f };
+        public static string RenderScaleLabel(float v) => v >= 0.999f ? "Native" : $"{v * 100f:0}%";
         public static void ApplyShadowDistance(Node ctx)
         {
             var tree = ctx?.GetTree(); if (tree == null) return;
-            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = ShadowDistance;
+            // BENCHMARK OVERRIDE (UG_SHADOWDIST, metres). The saved settings live in `user://`, which Godot keys
+            // by project NAME -- so the config this reads is the SAME FILE master's own clone reads, and sweeping
+            // the setting by writing it would silently change their game. An env override measures the curve
+            // without touching their file. Diagnostic only: it never persists, and unset changes nothing.
+            float dist = ShadowDistance;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHADOWDIST"),
+                               System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                               out float ov) && ov > 0f) dist = ov;
+            foreach (var n in tree.GetNodesInGroup("sun")) if (n is DirectionalLight3D d) d.DirectionalShadowMaxDistance = dist;
         }
         public static Vector2I Resolution = Vector2I.Zero;   // (0,0) = leave the window alone / native
 
@@ -320,7 +394,7 @@ namespace UnturnedGodot
                 cfg.SetValue("graphics", "shadows", (int)Shadows);
                 cfg.SetValue("graphics", "aniso", Aniso);
                 cfg.SetValue("graphics", "draw_distance", DrawDistance);
-                cfg.SetValue("graphics", "shadow_distance", ShadowDistance);
+                cfg.SetValue("graphics", "shadow_distance", ShadowDistance); cfg.SetValue("graphics", "render_scale", RenderScale);
                 cfg.SetValue("graphics", "resolution_x", Resolution.X);
                 cfg.SetValue("graphics", "resolution_y", Resolution.Y);
                 cfg.SetValue("graphics", "fullscreen", (int)Fullscreen); cfg.SetValue("graphics", "ui_scale", UiScale); cfg.SetValue("graphics", "target_fps", TargetFps); cfg.SetValue("graphics", "vsync", VSync);
@@ -349,6 +423,7 @@ namespace UnturnedGodot
                 Aniso = (int)cfg.GetValue("graphics", "aniso", Aniso);
                 DrawDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "draw_distance", DrawDistance), 0.25f, 1f);
                 ShadowDistance = Mathf.Clamp((float)cfg.GetValue("graphics", "shadow_distance", ShadowDistance), 40f, 300f);
+                RenderScale = Mathf.Clamp((float)cfg.GetValue("graphics", "render_scale", RenderScale), 0.25f, 1f);
                 Resolution = new Vector2I((int)cfg.GetValue("graphics", "resolution_x", Resolution.X), (int)cfg.GetValue("graphics", "resolution_y", Resolution.Y));
                 Fullscreen = (FullscreenMode)Mathf.Clamp((int)cfg.GetValue("graphics", "fullscreen", (int)Fullscreen), 0, 2);
                 UiScale = Mathf.Clamp((float)cfg.GetValue("graphics", "ui_scale", UiScale), 0.5f, 2f);
@@ -375,7 +450,7 @@ namespace UnturnedGodot
             ApplyAA(ctx);
             ApplyShadows();
             ApplyShadowDistance(ctx);
-            ApplyWindow(); ApplyUiScale(ctx); ApplyEnvironment(ctx); ApplyEffects(); ApplyWater();
+            ApplyWindow(); ApplyUiScale(ctx); Apply3DScale(ctx); ApplyEnvironment(ctx); ApplyEffects(); ApplyWater();
             ApplyAniso();
             ApplyResolution();
             ApplyRenderDistance(ctx?.GetTree()?.Root);
@@ -425,6 +500,20 @@ namespace UnturnedGodot
 
         public static void ApplyResolution()
         {
+            // UG_RES=1920x1080 forces an EXACT window size for benchmarking, over the saved setting and over the
+            // project's maximized default. A benchmark that cannot state the pixel count it measured is not a
+            // benchmark: an SSH session hands Godot a 1024x768 virtual desktop and the run will happily report
+            // "1080p" fps for a 410x299 image. This makes the label and the pixels the same fact.
+            if (System.Environment.GetEnvironmentVariable("UG_RES") is string ugr && ugr.Contains('x'))
+            {
+                var rp = ugr.Split('x');
+                if (rp.Length == 2 && int.TryParse(rp[0], out int rw) && int.TryParse(rp[1], out int rh) && rw > 0 && rh > 0)
+                {
+                    DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);   // maximized ignores a size request
+                    DisplayServer.WindowSetSize(new Vector2I(rw, rh));
+                    return;
+                }
+            }
             if (Resolution == Vector2I.Zero) return;   // Native: leave the window as the user sized it
             if (DisplayServer.WindowGetMode() == DisplayServer.WindowMode.Fullscreen) return;   // resizing a fullscreen window fights the compositor
             DisplayServer.WindowSetSize(Resolution);

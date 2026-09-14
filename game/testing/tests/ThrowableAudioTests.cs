@@ -14,7 +14,14 @@ namespace UnturnedGodot.Testing
     /// So the checks are aimed at the two ways this stays wrong: a clip that silently is not on disk (the
     /// fallback would quietly restore the casing), and the per-COLOUR clips collapsing onto one another --
     /// which is exactly what Pick would do here, since its `prefix_*` glob cannot separate
-    /// throwables_smoke_red_use from throwables_smoke_red_smoke.</summary>
+    /// throwables_smoke_red_use from throwables_smoke_red_smoke.
+    ///
+    /// ⚠ THIRTY FILES, SIX RECORDINGS. Measured 2026-09-13: every _use clip in the folder except the snowball,
+    /// the C4/impact pair and the flashbang bang is the SAME bytes, and all eight smoke _smoke clips are one
+    /// recording too. The id map below therefore proves the port asks for the right FILE per item -- it cannot
+    /// prove two colours sound different, because in the rip they do not. That is retail's doing, not ours, and
+    /// it is why throwables_grenade_bounce_use was never a bounce: it is the Grenade_Bounce ITEM's pin-pull,
+    /// byte-identical to the frag's, and playing it at a bounce replayed the throw.</summary>
     public sealed class ThrowableAudioTests : GameTest
     {
         public override string Name => "audio.throwables";
@@ -58,11 +65,50 @@ namespace UnturnedGodot.Testing
             T.Check("a frag does not vent", GameAudio.SmokeVent(254) == null);
             T.Check("a flare does not vent", GameAudio.SmokeVent(259) == null);
 
-            // ---- THE BOUNCE IS A REAL CLIP, not the brass casing it used to borrow.
-            var bounce = GameAudio.ThrowableBounce();
-            T.Check("the bounce clip is on disk", bounce != null);
-            T.Check("...and is not a cartridge casing",
-                    bounce != null && !ReferenceEquals(bounce, GameAudio.Pick("casings", "general")));
+            // ---- THE BOUNCE IS THE SURFACE, NOT THE ITEM.
+            // First the premise, in bytes, because the whole fix rests on it: the file called "bounce" is the
+            // throw. If a later rip ever yields a genuinely different recording, THIS is the check that fails
+            // and says so, instead of the wiring quietly staying wrong forever.
+            byte[] bounceWav = null, useWav = null;
+            try
+            {
+                string dir = ProjectSettings.GlobalizePath("res://content/audio/items");   // the path GameAudio.Clip itself resolves
+                bounceWav = System.IO.File.ReadAllBytes(System.IO.Path.Combine(dir, "throwables_grenade_bounce_use.wav"));
+                useWav    = System.IO.File.ReadAllBytes(System.IO.Path.Combine(dir, "throwables_grenade_use.wav"));
+            }
+            catch (System.Exception e) { T.Check($"reading both throwable clips ({e.Message})", false); }
+            T.Check("both throwable clips are readable", bounceWav != null && bounceWav.Length > 0
+                                                      && useWav != null && useWav.Length > 0);
+            bool identical = bounceWav != null && useWav != null && bounceWav.Length == useWav.Length;
+            if (identical)
+                for (int i = 0; i < bounceWav.Length; i++) if (bounceWav[i] != useWav[i]) { identical = false; break; }
+            T.Check("throwables_grenade_bounce_use IS throwables_grenade_use -- it is the BOUNCE GRENADE's "
+                  + "pin-pull (item 1838), not a landing, and there is no bounce clip in the rip", identical);
+
+            // So the bounce comes off the physics-impact bank, keyed by what was struck.
+            //
+            // ⚠ EVERY Surf VALUE, not a spot check, and this is the one that earned its keep: GameAudio.Impact
+            // reached the folder through `Pick`, whose glob is `prefix_*` -- the numbered-variant shape. This
+            // folder is one clip per material with NOTHING after it (`concrete_static.wav`), so the glob matched
+            // zero files for all seven surfaces and Impact had returned null to every caller it ever had. A null
+            // stream is the failure PlayAt handles politely, so the dropped-item thud in WorldItem had simply
+            // never made a sound. A two-surface spot check would have caught it; a loop says WHICH surfaces, and
+            // keeps saying it when the Surf enum grows (it has, twice).
+            var missing = new List<string>();
+            var byName = new Dictionary<PlayerController.Surf, AudioStream>();
+            foreach (PlayerController.Surf sv in System.Enum.GetValues(typeof(PlayerController.Surf)))
+            {
+                var clip = GameAudio.ThrowableBounce(sv);
+                byName[sv] = clip;
+                if (clip == null) missing.Add(sv.ToString());
+            }
+            T.Check($"every surface has a bounce clip (missing: {(missing.Count == 0 ? "none" : string.Join(", ", missing))})",
+                    missing.Count == 0);
+            T.Check("...and concrete and metal are not the same clip",
+                    !ReferenceEquals(byName[PlayerController.Surf.Concrete], byName[PlayerController.Surf.Metal]));
+            T.Check("a bounce is never a throwable's pin-pull",
+                    !ReferenceEquals(byName[PlayerController.Surf.Concrete], GameAudio.ThrowableUse(254))
+                 && !ReferenceEquals(byName[PlayerController.Surf.Metal], GameAudio.ThrowableUse(254)));
 
             // ---- AN ITEM THAT IS NOT A THROWABLE ASKS FOR NOTHING.
             T.Check("a non-throwable id has no stem", GameAudio.ThrowableStem(13) == null);
@@ -84,7 +130,8 @@ namespace UnturnedGodot.Testing
                 T.Check("Grenade.cs no longer claims the rip has no bounce clip", !src.Contains("no dedicated bounce clip"));
                 T.Check("...nor that the canister has none", !src.Contains("no dedicated retail clip in the rip"));
                 T.Check("the smoke vent is wired at the smoke branch", src.Contains("GameAudio.SmokeVent(ItemId)"));
-                T.Check("the bounce is wired at the bounce", src.Contains("GameAudio.ThrowableBounce()"));
+                T.Check("the bounce is wired at the bounce, and takes the surface it struck",
+                        src.Contains("GameAudio.ThrowableBounce(sf)"));
             }
         }
     }

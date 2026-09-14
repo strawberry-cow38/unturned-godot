@@ -532,21 +532,36 @@ namespace UnturnedGodot
         // STABLE display: each grid cell maps to a FIXED shelf slot, so taking items never re-organizes the rest (master).
         // Diffs Storage vs what's shown -- despawns taken items, spawns added ones, leaves the rest put. Called on spawn +
         // polled ~2x/s (the crate close-out writes the edited grid back).
+        // SCRATCH, REUSED. Tick polls this at 2.5 Hz per shelf, and PEI has hundreds of them -- so the two
+        // collections below were allocated thousands of times a second to describe a grid that had not changed
+        // since the last poll. ETW put SyncDisplay at ~14% of the game's allocations. Fields rather than locals,
+        // cleared per call; the same fix as WorldItemReplicaView's _seen/_gone (1f7efa26).
+        //
+        // Safe as instance state because SyncDisplay only READS `src` -- it cannot re-enter itself through the
+        // onStateUpdated hook it is subscribed to -- and the tick is single-threaded.
+        readonly Dictionary<int, (ushort id, ItemAsset a, int w, int h)> _syncCurrent = new();
+        readonly List<int> _syncGone = new();
+
         void SyncDisplay()
         {
             var src = _livePage ?? Storage;   // while OPEN, mirror the live grid in the player's STORAGE page; else our own grid
-            var current = new Dictionary<int, (ushort id, ItemAsset a, int w, int h)>();
+            _syncCurrent.Clear();
             for (byte i = 0; i < src.getItemCount(); i++)
             {
                 var j = src.getItem(i);
                 if (j?.item == null) continue;
                 int w = j.rot % 2 == 1 ? j.size_y : j.size_x;   // rotation-adjusted footprint (matches the grid packing)
                 int h = j.rot % 2 == 1 ? j.size_x : j.size_y;
-                current[(j.x << 8) | j.y] = (j.item.id, Assets.find(j.item.id) as ItemAsset, System.Math.Max(1, w), System.Math.Max(1, h));
+                _syncCurrent[(j.x << 8) | j.y] = (j.item.id, Assets.find(j.item.id) as ItemAsset, System.Math.Max(1, w), System.Math.Max(1, h));
             }
-            foreach (var key in new List<int>(_display.Keys))   // taken -> despawn its model, leave the rest in place
-                if (!current.ContainsKey(key)) { if (IsInstanceValid(_display[key])) _display[key].QueueFree(); _display.Remove(key); }
-            foreach (var kv in current)                         // added -> place at its fixed slot
+            // Collect first, mutate after: _display cannot be modified while it is being enumerated, which is the
+            // reason the original copied its keys. Clearing a kept list does the same job without the allocation.
+            _syncGone.Clear();
+            foreach (var key in _display.Keys)
+                if (!_syncCurrent.ContainsKey(key)) _syncGone.Add(key);
+            foreach (var key in _syncGone)                      // taken -> despawn its model, leave the rest in place
+            { if (IsInstanceValid(_display[key])) _display[key].QueueFree(); _display.Remove(key); }
+            foreach (var kv in _syncCurrent)                    // added -> place at its fixed slot
                 if (!_display.ContainsKey(kv.Key)) PlaceItem(kv.Key, kv.Value.id, kv.Value.a, kv.Value.w, kv.Value.h);
         }
 
