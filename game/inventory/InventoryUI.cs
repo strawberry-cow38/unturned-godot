@@ -2648,13 +2648,15 @@ void fragment() {
         // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
         // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
         // pattern, and a lil more separate, scaled up a bit too").
-        const float FanArcDeg   = 38f;    // total splay: the outermost notes sit +/- this much from upright
-        const float FanPivotArm = 1.90f;  // hinge distance below a note's TOP edge, in note-HEIGHTS. >1 puts the
-                                          // hinge below the note itself, which is the "a lil more separate" half
-                                          // of the ask -- angle alone only ever rotates the notes about each other.
+        const float FanArcDeg   = 38f;    // total splay: the outermost notes sit +/- this much from level
+        const float FanHingeOut = 0.12f;  // how far PAST a note's short edge the hinge sits, in note-widths.
+                                          // 0 pins every note end to one pixel; a little slack is what stops the
+                                          // narrow ends collapsing into each other ("a lil more separate").
         const float CoinScale   = 0.24f;  // a coin's width as a fraction of a NOTE's -- "scale the coins down a bit"
         const float CoinGap     = 0.80f;  // coin centre-to-centre spacing, in coin-widths (<1 = they overlap)
-        const float CoinDrop    = 0.22f;  // how far above the hinge the coins sit, in note-widths
+        const float CoinShiftX  = 0.10f;  // coins sit this far along the fan from the hinge, in note-widths...
+        const float CoinDrop    = 0.62f;  // ...and this far below it: the corner under the hinge is the one part
+                                          // of the cell the spread never reaches, so the coins cost no room at all
         const float FanFill     = 0.98f;  // fraction of the cell the finished fan is scaled to fill
 
         /// <summary>The icon with the art's OWN baked-in tilt taken back out, cropped tight to the art.
@@ -2750,8 +2752,13 @@ void fragment() {
             return result;
         }
 
-        /// <summary>Lay a wallet out as the notes and coins it would pay: NOTES fanned on an arc from a shared
-        /// hinge (a hand of cards), COINS upright and small in front of them.
+        /// <summary>Lay a wallet out as the notes and coins it would pay: NOTES fanned from a hinge just past
+        /// their SHORT EDGE -- a hand of cards, splayed from one end -- with COINS upright and small in front.
+        ///
+        /// ⚠ The hinge belongs on the short side (strawberry 2026-09-14: "i want it as a fan on the short sides,
+        /// this is more like a rainbow"). Hinging under a note's long edge instead sweeps the whole body of each
+        /// note through the arc, so the notes arch OVER each other and the result reads as a rainbow rather than
+        /// as a fan. On the short edge only the far ends spread, which is what a fanned wad actually does.
         ///
         /// The two are treated differently on purpose -- a note is a rectangle that fans and a coin is a disc
         /// that does not, so tilting a loonie along the arc reads as a mistake rather than as a fan. Coins
@@ -2784,7 +2791,7 @@ void fragment() {
                 if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
                 var size = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
                 float f = notes.Count == 1 ? 0.5f : i / (float)(notes.Count - 1);
-                pieces.Add((notes[i], t, size, new Vector2(0.5f, size.Y * FanPivotArm),
+                pieces.Add((notes[i], t, size, new Vector2(-FanHingeOut, size.Y * 0.5f),
                             Mathf.Lerp(-FanArcDeg, FanArcDeg, f)));
             }
             for (int i = 0; i < coins.Count; i++)
@@ -2796,7 +2803,7 @@ void fragment() {
                 float spread = coins.Count == 1 ? 0f
                              : (i / (float)(coins.Count - 1) - 0.5f) * CoinScale * CoinGap * coins.Count;
                 // Pivot at the disc's CENTRE, offset by the spread, so every coin still hangs off the one hinge.
-                pieces.Add((coins[i], t, size, new Vector2(size.X * 0.5f - spread, size.Y * 0.5f + CoinDrop), 0f));
+                pieces.Add((coins[i], t, size, new Vector2(size.X * 0.5f - spread - CoinShiftX, size.Y * 0.5f - CoinDrop), 0f));
             }
             if (pieces.Count == 0) return;
 
