@@ -162,6 +162,7 @@ namespace UnturnedGodot
         {
             Id = 9213, Name = "Data Transmitter", Model = "Radio_0", PlaceSound = "metalplacement",
             Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            MeshEuler = new Vector3(180f, 0f, 0f),   // see below
             Ports = new[] {
                 new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
                 new Port { Kind = PortKind.DataIn,   Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },
@@ -171,6 +172,16 @@ namespace UnturnedGodot
         {
             Id = 9214, Name = "Data Receiver", Model = "Radio_1", PlaceSound = "metalplacement",
             Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            // ⚠ 180 ABOUT X, SAME AS THE LAMPS, AND WITHOUT IT BOTH RADIOS PLACE ON THEIR HEADS. Radio_0 is
+            // z[0.000, 1.069] and Radio_1 z[0.000, 0.690] -- OBJECT props authored +Z UP with the base at z=0,
+            // exactly like Lamp_0 (z[0, 0.882]) and Lamp_1 (z[0, 2.300]), both of which carry this same flip for
+            // this same reason. Barricade meshes are authored +Z DOWN, and StandBasis's +90 about X assumes
+            // that; 180 + 90 = the 270 the prop convention actually wants.
+            //
+            // I shipped both defs without it. Caught by tinyclaw reading them to build models against -- and it
+            // is the mirror of the bug that put their ceiling pendants through the ceiling the day before,
+            // which is a good argument for whoever is about to depend on a def being the one to read it.
+            MeshEuler = new Vector3(180f, 0f, 0f),
             Ports = new[] {
                 new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
                 new Port { Kind = PortKind.DataOut,  Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },

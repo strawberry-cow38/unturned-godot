@@ -7497,6 +7497,26 @@ namespace UnturnedGodot
                     GetTree().CreateTimer(1.5).Timeout += () => { if (IsInstanceValid(player) && !player.HeldLightOn) player.ToggleHeldLight(); };
                 }
             }
+            // UG_MONEY=1 : stock a spread of wallets so the $value label and the value-driven icon can be seen
+            // side by side -- one per denomination boundary, plus an over-ceiling pickup that has to SPLIT.
+            if (System.Environment.GetEnvironmentVariable("UG_MONEY") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                // Each of these lands as ONE wallet at that value, and should draw the matching coin/note.
+                foreach (var (id, n) in new (ushort, byte)[] {
+                    (1056, 1),    // $1   loonie
+                    (1057, 1),    // $2   toonie
+                    (1051, 1),    // $5
+                    (1052, 1),    // $10
+                    (1053, 1),    // $20
+                    (1054, 1),    // $50
+                    (1055, 1),    // $100
+                    (1053, 3),    // $60  -> still the $50 note: the icon is the biggest thing that FITS
+                })
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(id) { amount = n });
+                // ...and the one that proves nothing is lost to the byte: $300 must become $255 + $45.
+                player.Inventory.tryAddItem(new SDG.Unturned.Item(1055) { amount = 3 });
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
