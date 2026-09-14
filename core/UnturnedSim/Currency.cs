@@ -48,6 +48,31 @@ namespace SDG.Unturned
             return StackId;   // $0: an empty wallet still has to draw as something
         }
 
+        /// <summary>How a stack would actually be PAID OUT: the denominations it breaks into, largest first,
+        /// each listed once however many of it there are (strawberry 2026-09-14: "stacks of notes fanned out
+        /// smallest at the front").
+        ///
+        /// ⭐ GREEDY IS GENUINELY OPTIMAL HERE, checked rather than assumed: {1,2,5,10,20,50,100} is a canonical
+        /// system, and every value 1..255 was compared against a full dynamic-programming minimum -- no value
+        /// has a shorter breakdown than the one this returns. So the fan is never lying about the change.
+        ///
+        /// ⭐ AND IT REACHES EVERY SUBSET. Across $1..$255 these come out as exactly 127 distinct sets, which is
+        /// 2^7 - 1: every non-empty combination of the seven notes, none unreachable and none wasted. That is
+        /// the number of DISTINCT FANS there are -- and the reason none of them needs authoring, since each is
+        /// just the notes it names, layered.</summary>
+        public static System.Collections.Generic.List<ushort> Breakdown(int dollars)
+        {
+            var outp = new System.Collections.Generic.List<ushort>();
+            foreach (var id in Denominations)
+            {
+                int v = ValueOf(id);
+                if (dollars < v) continue;
+                outp.Add(id);
+                dollars %= v;
+            }
+            return outp;
+        }
+
         /// <summary>⚠ A STACK CANNOT HOLD MORE THAN THIS, because `Item.amount` is a BYTE -- the same ceiling
         /// every other stack in the game has. Money overflows into a second stack exactly like ammo does. It is
         /// a real limit rather than a chosen one: raising it means widening amount on the wire and in saves,

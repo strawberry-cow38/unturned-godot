@@ -2633,6 +2633,61 @@ void fragment() {
             return t;
         }
 
+        // ---- MONEY FANS ---------------------------------------------------------------------------------------
+        //
+        // A wallet draws as the notes it would actually pay out, fanned, smallest at the front (strawberry
+        // 2026-09-14). ⭐ NOTHING IS AUTHORED: a fan is the SEVEN ICONS THAT ALREADY EXIST, layered with an
+        // offset. Across $1..$255 the greedy breakdown reaches exactly 127 distinct fans -- 2^7-1, every
+        // non-empty combination of the notes -- so drawing them instead of drawing them ONCE EACH is the
+        // difference between one routine and 127 pieces of art that still would not cover duplicate notes.
+        //
+        // Cached by the COMBINATION rather than by the value, because $137 and $138 are the same five notes and
+        // there is no reason to hold two identical textures. 127 entries is the hard ceiling on this cache.
+        static readonly System.Collections.Generic.Dictionary<string, ImageTexture> _fanCache = new();
+        const int FanStepX = 13, FanStepY = 5;   // how far each note sits in front of the one behind it
+
+        static Texture2D MoneyFan(int dollars)
+        {
+            var notes = SDG.Unturned.Currency.Breakdown(dollars);
+            if (notes.Count == 0) return Icon(SDG.Unturned.Currency.StackId);
+            if (notes.Count == 1) return Icon(notes[0]);   // a single note is not a fan
+
+            string key = string.Join(",", notes);
+            if (_fanCache.TryGetValue(key, out var hit)) return hit;
+
+            // Every note's own icon, at its own size. A missing one is SKIPPED rather than substituted: a fan
+            // with a hole in it is honest about which art is absent, where a placeholder would quietly claim
+            // the wallet contains something it does not.
+            var imgs = new System.Collections.Generic.List<Image>();
+            foreach (var id in notes)
+            {
+                var t = Icon(id);
+                var im = t?.GetImage();
+                if (im != null) imgs.Add(im);
+            }
+            if (imgs.Count == 0) { _fanCache[key] = null; return null; }
+
+            int iw = 0, ih = 0;
+            foreach (var im in imgs) { iw = Mathf.Max(iw, im.GetWidth()); ih = Mathf.Max(ih, im.GetHeight()); }
+            int n = imgs.Count;
+            var canvas = Image.CreateEmpty(iw + (n - 1) * FanStepX, ih + (n - 1) * FanStepY, false, Image.Format.Rgba8);
+            canvas.Fill(new Color(0f, 0f, 0f, 0f));
+
+            // BACK TO FRONT: Breakdown is largest-first, and the largest is the one BEHIND -- so the list is
+            // drawn in order and the smallest, drawn last, ends up on top. "Smallest at the front" is therefore
+            // the loop's natural direction rather than something arranged afterwards.
+            for (int i = 0; i < n; i++)
+            {
+                var im = imgs[i];
+                if (im.GetFormat() != Image.Format.Rgba8) im.Convert(Image.Format.Rgba8);
+                canvas.BlendRect(im, new Rect2I(0, 0, im.GetWidth(), im.GetHeight()),
+                                 new Vector2I(i * FanStepX, i * FanStepY));
+            }
+            var tex = ImageTexture.CreateFromImage(canvas);
+            _fanCache[key] = tex;
+            return tex;
+        }
+
         // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
         // A 6-arm snowflake drawn CENTERED into a small texture -- so the "cold" badge never depends on a font glyph's
         // off-centre metrics (U+2744 seats crooked in its line box; no offset nudge centres it cleanly). One-time build.
@@ -2689,9 +2744,8 @@ void fragment() {
             // stack's id is always the $1 loonie -- that is what makes `amount` mean dollars -- so asking the
             // ASSET for its icon would draw a coin on a $100 wad. The icon comes off the VALUE instead: the
             // largest denomination the stack could actually pay out.
-            int moneyIcon = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id)
-                ? SDG.Unturned.Currency.IconIdFor(jar.item.amount) : 0;
-            var tex = moneyIcon > 0 ? Icon(moneyIcon)
+            bool moneyTile = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
+            var tex = moneyTile ? MoneyFan(jar.item.amount)
                     : magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true)
                     : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)

@@ -7517,6 +7517,14 @@ namespace UnturnedGodot
                 // ...and the one that proves nothing is lost to the byte: $300 must become $255 + $45.
                 player.Inventory.tryAddItem(new SDG.Unturned.Item(1055) { amount = 3 });
             }
+            // UG_MONEYFAN=1 : ONE wallet at $188 -- the only value that breaks into all seven denominations, so
+            // it is the biggest fan there is (strawberry 2026-09-14: "just show me the biggest fan for now").
+            if (System.Environment.GetEnvironmentVariable("UG_MONEYFAN") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                foreach (ushort id in new ushort[] { 1055, 1054, 1053, 1052, 1051, 1057, 1056 })
+                    player.Inventory.tryAddItem(new SDG.Unturned.Item(id));   // 100+50+20+10+5+2+1 = $188
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
