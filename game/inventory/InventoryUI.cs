@@ -2648,7 +2648,11 @@ void fragment() {
         // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
         // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
         // pattern, and a lil more separate, scaled up a bit too").
-        const float FanArcDeg   = 38f;    // total splay: the outermost notes sit +/- this much from level
+        const float FanStepDeg  = 19f;    // angle between ADJACENT notes. The fan's total splay is this times
+                                          // the gaps between notes, so it grows with the wad instead of flinging
+                                          // two notes as wide as seven (strawberry: "make the fan scale with
+                                          // number of notes"). At the 5-note maximum this is the +/-38 already
+                                          // signed off, so the biggest fan is unchanged.
         const float FanHingeOut = 0.12f;  // how far PAST a note's short edge the hinge sits, in note-widths.
                                           // 0 pins every note end to one pixel; a little slack is what stops the
                                           // narrow ends collapsing into each other ("a lil more separate").
@@ -2791,8 +2795,9 @@ void fragment() {
                 if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
                 var size = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
                 float f = notes.Count == 1 ? 0.5f : i / (float)(notes.Count - 1);
+                float arc = FanStepDeg * (notes.Count - 1) * 0.5f;   // one note => 0 => it sits level
                 pieces.Add((notes[i], t, size, new Vector2(-FanHingeOut, size.Y * 0.5f),
-                            Mathf.Lerp(-FanArcDeg, FanArcDeg, f)));
+                            Mathf.Lerp(-arc, arc, f)));
             }
             for (int i = 0; i < coins.Count; i++)
             {

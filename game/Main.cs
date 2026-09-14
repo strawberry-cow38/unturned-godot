@@ -7525,6 +7525,19 @@ namespace UnturnedGodot
                 foreach (ushort id in new ushort[] { 1055, 1054, 1053, 1052, 1051, 1057, 1056 })
                     player.Inventory.tryAddItem(new SDG.Unturned.Item(id));   // 100+50+20+10+5+2+1 = $188
             }
+            // UG_FANSIZES=1 : several wallets SIDE BY SIDE so the arc-vs-note-count rule can be judged at a
+            // glance (strawberry 2026-09-14: "make the fan scale with number of notes. show me this one and one
+            // w only a couple"). These go in through addItem rather than tryAddItem on purpose -- currency
+            // COLLAPSES into one stack, which is the whole point of the carrier design, so the normal pickup
+            // path physically cannot produce two wallets to compare.
+            if (System.Environment.GetEnvironmentVariable("UG_FANSIZES") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                byte slot = 0;
+                foreach (int dollars in new int[] { 188, 85, 35, 15, 7 })   // 5, 4, 3, 2 and 1 note(s); page 2 = the 5x3 pockets
+                    player.Inventory.items[2].addItem(slot++, 0, 0,
+                        new SDG.Unturned.Item(SDG.Unturned.Currency.StackId) { amount = (byte)dollars });
+            }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {
                 SDG.Unturned.ItemCatalog.RegisterAll();
