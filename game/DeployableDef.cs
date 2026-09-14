@@ -118,6 +118,13 @@ namespace UnturnedGodot
 
         /// <summary>Signal rather than power: never enters the power solve.</summary>
         public static bool IsDataPort(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIn;
+
+        /// <summary>Does this def relay a data stream over the air rather than down a wire? The transmitter takes
+        /// a signal in and broadcasts it on its code; the receiver picks up whatever is broadcast on the same
+        /// code and puts it out. Both need POWER -- an unpowered radio is a box (strawberry 2026-09-14).</summary>
+        public bool IsDataTransmitter => Id == 9213;
+        public bool IsDataReceiver => Id == 9214;
+        public bool IsDataRadio => IsDataTransmitter || IsDataReceiver;
         public enum SwitchRole { None, TurnOn, TurnOff }   // a SWITCH's side trigger inputs: fed >=1w -> set the switch state on / off (they draw 0w)
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
@@ -141,6 +148,35 @@ namespace UnturnedGodot
         static readonly Vector3 SpotBeamDir = new Vector3(0f, -0.966f, 0.259f);
 
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
+        // ---- WIRELESS DATA LINK (strawberry 2026-09-14: "add a wireless data transmitter and data reciever.
+        //      both transmitter and reciever need to be powered. each has a 4 digit code. matching codes connect
+        //      wirelessly and transmit data anywhere. so camera -> transmitter ~~> reciever -> tv")
+        //
+        // TWO DEFS RATHER THAN ONE WITH A MODE, and two different models, because they do opposite things and
+        // you place them in different rooms: a pair that looked identical would have you walking back to read a
+        // label to find out which end you just put down. The ports say it too -- the transmitter has a data IN
+        // and the receiver a data OUT, so the sockets alone tell you which way the signal runs.
+        //
+        // 9213/9214: the 9xxx block is ours (retail ids are low), continuing after the ceiling lamps at 9210-12.
+        public static readonly DeployableDef DataTransmitter = new()
+        {
+            Id = 9213, Name = "Data Transmitter", Model = "Radio_0", PlaceSound = "metalplacement",
+            Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
+                new Port { Kind = PortKind.DataIn,   Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },
+            },
+        };
+        public static readonly DeployableDef DataReceiver = new()
+        {
+            Id = 9214, Name = "Data Receiver", Model = "Radio_1", PlaceSound = "metalplacement",
+            Size = new Vector3(1.0f, 0.54f, 1.07f), Offset = 0.3f, Radius = 0.45f, Range = 3f, Health = 180f,
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.35f, 0.25f, 0f), Watts = 20f },
+                new Port { Kind = PortKind.DataOut,  Pos = new Vector3( 0.35f, 0.25f, 0f), Watts = 0f },
+            },
+        };
+
         public static readonly DeployableDef Generator = new()
         {
             Id = 458, Name = "Generator", Model = "Generator_0",
@@ -687,6 +723,8 @@ namespace UnturnedGodot
             1923 => Loom,
             1924 => SewingTable,
             1927 => Kiln,
+            9213 => DataTransmitter,
+            9214 => DataReceiver,
             9169 => DoorMetal,
             9170 => GateMetal,
             9171 => HatchMetal,

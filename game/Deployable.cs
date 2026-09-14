@@ -37,6 +37,15 @@ namespace UnturnedGodot
         //     AudioSource) -- the small shake here is a non-source touch (strawberry asked for it). ---
         bool _powered;             // target state (F toggles it)
         bool _switchOn = true;     // a Power Switch's remembered on/off state (F toggles it); defaults ON = passes power
+
+        /// <summary>A wireless link's 4-digit channel. Transmitter and receiver pair when these MATCH.
+        ///
+        /// Defaults to 0000 on purpose rather than to something random: two freshly placed radios should work
+        /// together out of the box, because "place both, it works" is the thing a player tries first. Randomising
+        /// would make the feature look broken until you found the setting. Changed with the `datacode` console
+        /// command; clamped to 0..9999 wherever it is written.</summary>
+        public int DataCode { get => _dataCode; set => _dataCode = Mathf.Clamp(value, 0, 9999); }
+        int _dataCode;
         public bool SwitchOn => _switchOn;   // for the state light + the [F] prompt
         float _powerLevel;         // 0 = off .. 1 = running; ramps up over WarmupTime / down over CooldownTime -- the shake + engine spin-up follow it
         float _windFactor;         // wind turbine: 0..2 current wind strength x height bonus (drives the output cap + blade spin)

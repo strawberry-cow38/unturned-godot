@@ -69,7 +69,7 @@ namespace UnturnedGodot
         // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
         // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
         // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
-        static readonly string[] NoArgVerbs = { "heal", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] NoArgVerbs = { "heal", "datacode", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -79,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -266,6 +266,28 @@ namespace UnturnedGodot
             // heal -- full HP, full food/water/stamina/breath, no infection, no dose, every condition cleared.
             // Routed through DebugHealFully, which writes locally AND tells the authority; see the sethp note
             // below for why a purely local write reverts one tick later under the loopback.
+            // datacode <0000-9999> -- set the 4-digit channel on the wireless link you are nearest to. A pair
+            // only talks when their codes MATCH, and the code is invisible on the model, so without this the
+            // feature is unusable past the default channel.
+            if (verb == "datacode")
+            {
+                var world = Player?.GetParent() ?? GetTree().Root;
+                Deployable near = null; float best = float.MaxValue;
+                foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                    if (n is Deployable d && IsInstanceValid(d) && d.Def != null && d.Def.IsDataRadio && Player != null)
+                    {
+                        float dd = d.GlobalPosition.DistanceSquaredTo(Player.GlobalPosition);
+                        if (dd < best) { best = dd; near = d; }
+                    }
+                if (near == null) { Echo("datacode: no transmitter or receiver placed"); return; }
+                if (arg.Length == 0) { Echo($"datacode: nearest {near.Def.Name} is on channel {near.DataCode:0000} (give a number 0-9999 to change it)"); return; }
+                if (!int.TryParse(arg, out int code)) { Echo("datacode: not a number"); return; }
+                near.DataCode = code;
+                PowerNet.MarkDirty();   // the channel IS the link -- re-solve so a matching pair connects at once
+                Echo($"datacode: {near.Def.Name} -> channel {near.DataCode:0000}");
+                return;
+            }
+
             if (verb == "heal")
             {
                 if (Player == null) { Echo("heal: no player"); return; }

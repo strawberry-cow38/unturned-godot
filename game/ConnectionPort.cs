@@ -192,10 +192,27 @@ namespace UnturnedGodot
         /// power; an INPUT is live while wired to a live output. Written by PowerNet.SolveData.</summary>
         public bool DataLive;
 
+        /// <summary>WHAT is being streamed here -- the device the signal ultimately came from, carried along
+        /// the whole chain rather than re-derived at the end.
+        ///
+        /// ⚠ THIS IS WHY A REPEATER WORKS AT ALL. Before wireless links existed, a screen could find its camera
+        /// by walking one wire, because there was only ever one hop. The moment a transmitter/receiver pair sits
+        /// in the middle -- camera -&gt; wire -&gt; transmitter ~~&gt; receiver -&gt; wire -&gt; TV -- that walk finds the
+        /// RECEIVER and stops, and the screen shows nothing while every link reports healthy. Propagating the
+        /// origin makes the number of hops irrelevant: whatever is on the end of the chain asks one question.</summary>
+        public GodotObject DataSource;
+
+        /// <summary>" [ch 0421]" for a wireless link, empty for anything else.</summary>
+        string RadioChannel()
+            => Owner is Deployable d && GodotObject.IsInstanceValid(d) && d.Def != null && d.Def.IsDataRadio
+               ? $" [ch {d.DataCode:0000}]" : "";
+
         public string InfoLine() => Kind switch
         {
-            DeployableDef.PortKind.DataOut => $"{ProviderName} — data out ({(DataLive ? "streaming" : "no signal — needs power")})",
-            DeployableDef.PortKind.DataIn => $"{ProviderName} — data in ({(DataLive ? "receiving" : Occupied ? "wired, no signal" : "not connected")})",
+            // A radio names its CHANNEL here: the code is the only thing that decides whether a pair works, and
+            // it is invisible on the model, so the one place a player already looks at a port is where it goes.
+            DeployableDef.PortKind.DataOut => $"{ProviderName}{RadioChannel()} — data out ({(DataLive ? "streaming" : "no signal — needs power")})",
+            DeployableDef.PortKind.DataIn => $"{ProviderName}{RadioChannel()} — data in ({(DataLive ? "receiving" : Occupied ? "wired, no signal" : "not connected")})",
             DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output · {Draw:0}w drawn",
             DeployableDef.PortKind.Consumer => Watts > 0f
                 ? $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})"

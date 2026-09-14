@@ -911,15 +911,14 @@ namespace UnturnedGodot
         /// screen showing a camera that has been unplugged.</summary>
         public SecurityCamera FeedSource()
         {
-            if (_dataIn == null || !IsInstanceValid(_dataIn) || !IsInsideTree()) return null;
-            foreach (var n in GetTree().GetNodesInGroup("wires"))
-            {
-                if (n is not Wire w || !IsInstanceValid(w)) continue;
-                ConnectionPort other = w.Source == _dataIn ? w.Consumer : w.Consumer == _dataIn ? w.Source : null;
-                if (other != null && IsInstanceValid(other) && other.Owner is SecurityCamera cam && IsInstanceValid(cam))
-                    return cam;
-            }
-            return null;
+            // ⚠ ONE QUESTION, WHATEVER THE CHAIN. This used to walk the aerial's own wire and take whatever was
+            // on the other end -- correct while a wire was the only kind of link, and wrong the instant a
+            // wireless pair sits in the middle: camera -> wire -> transmitter ~~> receiver -> wire -> TV finds
+            // the RECEIVER and stops, and the screen shows nothing while every port reports healthy.
+            // PowerNet.SolveData carries the ORIGIN along the whole chain instead, so this reads it and does not
+            // care how many hops or what kinds they were.
+            if (_dataIn == null || !IsInstanceValid(_dataIn)) return null;
+            return _dataIn.DataSource is SecurityCamera cam && IsInstanceValid(cam) ? cam : null;
         }
 
         void FreePlug()
