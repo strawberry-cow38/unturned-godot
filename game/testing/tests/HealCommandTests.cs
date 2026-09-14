@@ -31,7 +31,12 @@ namespace UnturnedGodot.Testing
 
             bool prevDrain = PlayerController.SurvivalDrain;
             PlayerController.SurvivalDrain = true;
-            var loop = new MpLoopback { Player = player, Driver = driver };
+            // ⚠ ConsumeDeployables MATTERS HERE, it is not boilerplate. The server-owned seams -- NetHealSelf,
+            // NetDamageSink, NetRequestRespawn -- are all wired inside `if (ConsumeDeployables)`, because that is
+            // the mode where the SERVER owns the local player's vitals. Without it the player owns them directly
+            // and a local heal is the correct behaviour, so there is no seam to find and this test was asserting
+            // against a mode it had not asked for. Every other test that reaches for server vitals sets it too.
+            var loop = new MpLoopback { Player = player, Driver = driver, ConsumeDeployables = true };
             World.AddChild(loop);
             yield return Until(() => loop.Client.State == NetSessionState.Connected
                                      && loop.Server.Vitals.TryGet(loop.Client.PlayerId, out _), 15);

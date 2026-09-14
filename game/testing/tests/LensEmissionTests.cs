@@ -73,7 +73,12 @@ namespace UnturnedGodot.Testing
             //
             // So this builds the real material through the real call and asserts the thing that was wrong. A
             // check on the mask can never reject this bug; only a check on the material can.
-            var rig = new RiggedCharacter();
+            // ⚠ A BARE `new RiggedCharacter()` HAS NO SKELETON, and AttachGear returns immediately without one --
+            // so the glasses never attach and DebugGlassesMaterial is null before a single mask check runs.
+            // Skeleton is only ever set by BuildFrom, which is what Build() ends at. Same call the real clothing
+            // path uses (ClothingTests builds its body this way too).
+            var rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
+            if (rig == null) { T.Fail("the player rig loads"); yield break; }
             World.AddChild(rig);
             yield return Ticks(2);
             var lensTex = ClothingContent.LensMask(1199);   // the headlamp, which master saw glowing whole

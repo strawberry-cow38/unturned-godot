@@ -99,6 +99,7 @@ namespace UnturnedGodot.Testing
             Vector3 eye = p.Camera.GlobalPosition;
             Vector3 aim = -p.Camera.GlobalTransform.Basis.Z;
             const float WallDist = 6f;
+            const float HalfThick = 0.2f;   // the slab is 0.4 m and LookAt lays that thickness along the aim
             var wall = new StaticBody3D { CollisionLayer = 1u << 0 };
             wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(14f, 14f, 0.4f) } });
             World.AddChild(wall);
@@ -123,7 +124,7 @@ namespace UnturnedGodot.Testing
                 // ⭐ THE CLAIM, asserted against the WALL rather than against a number remembered from before it
                 // was placed: the dot lies on the slab's own near face. Distance from that plane is the honest
                 // measure of "it landed on the wall" and it cannot drift when the player or the camera moves.
-                float halfThick = 0.2f;   // the 0.4 m slab, and LookAt put that thickness along the aim
+                const float halfThick = HalfThick;   // the 0.4 m slab, and LookAt put that thickness along the aim
                 float faceDist = (las.DotWorld - wall.GlobalPosition).Length();
                 T.Check($"the dot lies ON the wall's surface ({faceDist:0.00} m from its centre, half-thickness {halfThick})",
                         faceDist > halfThick - 0.1f && faceDist < halfThick + 0.15f);
@@ -142,13 +143,23 @@ namespace UnturnedGodot.Testing
             // a beam of the right fixed length that never raycasts at all -- it would land on the wall's face
             // for exactly as long as the wall stays where it was put. Pulling the wall in by 2 m is the one
             // thing a fixed-length beam cannot follow, and it needs no absolute distance to be true.
+            //
+            // ⚠ Measured against the WALL, not as a difference of two eye-relative distances. The wall was first
+            // placed off an eye captured before the rig settled, so `before` is ~6.29 against a slab whose centre
+            // is 6 m from a DIFFERENT origin -- while `after` is clean. Subtracting the two mixes frames and the
+            // 2 m move reads as 2.54, failing a 2.5 bound on a feature that is working. The dot landing on the
+            // wall's NEW face is the same claim and has no frame to drift: a fixed-length beam still cannot do it.
             float before = las != null ? (las.DotWorld - eye).Dot(aim) : -1f;
             wall.GlobalPosition = eye + aim * (WallDist - 2f);
             wall.LookAt(eye, Vector3.Up);
             yield return Ticks(3);
-            float after = p.DebugLaser != null ? (p.DebugLaser.DotWorld - eye).Dot(aim) : -1f;
-            T.Check($"pulling the wall 2 m closer pulls the dot with it ({before:0.00} -> {after:0.00} m)",
-                    before > 0f && after > 0f && before - after > 1.5f && before - after < 2.5f);
+            var moved = p.DebugLaser;
+            float faceAfter = moved != null ? (moved.DotWorld - wall.GlobalPosition).Length() : -1f;
+            T.Check($"pulling the wall 2 m closer puts the dot on its NEW face ({faceAfter:0.00} m from the new centre, half-thickness {HalfThick})",
+                    moved != null && faceAfter > HalfThick - 0.1f && faceAfter < HalfThick + 0.15f);
+            float after = moved != null ? (moved.DotWorld - eye).Dot(aim) : -1f;
+            T.Check($"...so the dot really came toward the player ({before:0.00} -> {after:0.00} m)",
+                    before > 0f && after > 0f && after < before - 1f);
 
             // ---- 3. PUTTING THE GUN AWAY KILLS IT --------------------------------------------------------------
             // TacticalOn is `switch AND attachment`, the same shape as HeadlampOn, so this needs no clear call at
