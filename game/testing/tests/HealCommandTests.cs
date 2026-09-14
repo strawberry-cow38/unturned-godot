@@ -85,7 +85,16 @@ namespace UnturnedGodot.Testing
             loop.Server.Vitals.TryGet(loop.Client.PlayerId, out ve);
             T.Check($"(server) still healed 40 ticks later, not reverted by the echo ({ve.Sim.Food:0.00})",
                     ve.Sim.Food > 0.9f && ve.Sim.Infection < 0.05f);
-            T.Check($"(shell) the owner echo carried it back (hp {player.Health:0}, food {player.Food:0.00})",
+            // ⚠ INSTRUMENTED ON PURPOSE. Fine vitals come back and HP does not, and the three candidates are
+            // indistinguishable from the shell's number alone: the server's coarse byte never moved, the byte
+            // moved but never replicated, or it replicated and the shell is not adopting it. HP and food travel
+            // by DIFFERENT blocks (CombatState vs Vitals), so "the echo works" is not one fact. Printing the
+            // whole chain in the message means the next run says WHICH link, instead of costing another sweep.
+            loop.Server.CombatState.TryGet(loop.Client.PlayerId, out var sce);
+            bool hasClientHp = loop.Client.CombatState.TryGet(loop.Client.PlayerId, out var cce);
+            T.Check($"(shell) the owner echo carried it back (hp {player.Health:0}, food {player.Food:0.00}; "
+                  + $"server exact {sce?.HealthExact ?? -1f:0} coarse {sce?.Health ?? 0}; "
+                  + $"client replica {(hasClientHp ? cce.Health.ToString() : "MISSING")}; adopted {player.NetVitalsAdopted})",
                     player.Health > 99f && player.Food > 0.9f);
             T.Check("(shell) conditions cleared locally too", !player.Bleeding && !player.Broken);
 
