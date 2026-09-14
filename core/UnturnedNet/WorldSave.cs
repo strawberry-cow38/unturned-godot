@@ -129,7 +129,7 @@ namespace UnturnedGodot.Net
         public sealed class WorldItemSave
         {
             public ushort ItemId { get; set; }
-            public byte Amount { get; set; }
+            public ushort Amount { get; set; }   // ushort since Item.amount widened for the $500 wallet; JSON, so old saves still load
             public byte Quality { get; set; }
             public float X { get; set; }
             public float Y { get; set; }
@@ -272,7 +272,7 @@ namespace UnturnedGodot.Net
             public byte Y { get; set; }
             public byte Rot { get; set; }
             public ushort Id { get; set; }
-            public byte Amount { get; set; }
+            public ushort Amount { get; set; }   // ushort since Item.amount widened for the $500 wallet; JSON, so old saves still load
             public byte Quality { get; set; }
             public short GunAmmo { get; set; } = -1;
             public sbyte GunFiremode { get; set; } = -1;

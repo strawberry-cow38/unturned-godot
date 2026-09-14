@@ -873,7 +873,7 @@ namespace UnturnedGodot
                 {
                     int take = Mathf.Min(left, cap);
                     var it = SDG.Unturned.Assets.makeLoot(asset.id);   // keeps food quality / fluid / mag fill
-                    if (!asset.IsMagazine) it.amount = (byte)take;     // a magazine's amount IS its loaded rounds -- leave it
+                    if (!asset.IsMagazine) it.amount = (ushort)take;     // a magazine's amount IS its loaded rounds -- leave it
                     int units = asset.IsMagazine ? 1 : take;
                     if (Player?.Inventory != null && Player.Inventory.tryAddItem(it)) bagged += units;
                     else { Player?.DropWorldItem(it, at + Vector3.Up * 2f); dropped += units; }

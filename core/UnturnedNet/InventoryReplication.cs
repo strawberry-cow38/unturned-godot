@@ -189,13 +189,15 @@ namespace UnturnedGodot.Net
     {
         public byte Page, X, Y;      // the fresh magazine being loaded
         public ushort SpentId;       // the magazine coming out (0 = none)
-        public byte SpentAmount;     // rounds left in it
-        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(SpentId); w.WriteUInt8(SpentAmount); }
+        public ushort SpentAmount;   // rounds left in it -- ushort to match Item.amount; a magazine never fills
+                                     // a byte, but a quantity that silently truncates on the wire is not worth
+                                     // the one byte saved
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt16(SpentId); w.WriteUInt16(SpentAmount); }
         public static bool TryRead(NetPakReader r, out ReloadSwapCommand cmd)
         {
             cmd = default;
             if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
-                || !r.ReadUInt16(out ushort sid) || !r.ReadUInt8(out byte samt)) return false;
+                || !r.ReadUInt16(out ushort sid) || !r.ReadUInt16(out ushort samt)) return false;
             cmd = new ReloadSwapCommand { Page = p, X = x, Y = y, SpentId = sid, SpentAmount = samt };
             return true;
         }
@@ -1042,7 +1044,7 @@ namespace UnturnedGodot.Net
         {
             w.WriteUInt8(j.x); w.WriteUInt8(j.y); w.WriteUInt8(j.rot);
             w.WriteUInt16(j.item?.id ?? 0);
-            w.WriteUInt8(j.item?.amount ?? 0);
+            w.WriteUInt16(j.item?.amount ?? 0);
             w.WriteUInt8(j.item?.quality ?? 0);
             // gun state travels so a dropped-in-grid gun keeps its mag/firemode on the replica (Item fields)
             w.WriteInt16((short)(j.item?.gunAmmo ?? -1));
@@ -1120,7 +1122,7 @@ namespace UnturnedGodot.Net
             x = y = rot = 0;
             if (!r.ReadUInt8(out x) || !r.ReadUInt8(out y) || !r.ReadUInt8(out rot)) return false;
             if (!r.ReadUInt16(out ushort id)) return false;
-            if (!r.ReadUInt8(out byte amount)) return false;
+            if (!r.ReadUInt16(out ushort amount)) return false;
             if (!r.ReadUInt8(out byte quality)) return false;
             if (!r.ReadInt16(out short gunAmmo)) return false;
             if (!r.ReadInt8(out sbyte gunFiremode)) return false;
@@ -1170,7 +1172,7 @@ namespace UnturnedGodot.Net
             w.WriteBit(item != null);
             if (item == null) return;
             w.WriteUInt16(item.id);
-            w.WriteUInt8(item.amount);
+            w.WriteUInt16(item.amount);
             w.WriteUInt8(item.quality);
         }
 
@@ -1180,7 +1182,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadBit(out bool has)) return false;
             if (!has) return true;
             if (!r.ReadUInt16(out ushort id)) return false;
-            if (!r.ReadUInt8(out byte amount)) return false;
+            if (!r.ReadUInt16(out ushort amount)) return false;
             if (!r.ReadUInt8(out byte quality)) return false;
             item = new Item(id, amount, quality);
             return true;
@@ -1217,7 +1219,7 @@ namespace UnturnedGodot.Net
                     var j = page.getItem(i);
                     h = NetHash.MixByte(h, j.x); h = NetHash.MixByte(h, j.y); h = NetHash.MixByte(h, j.rot);
                     h = NetHash.MixUInt32(h, j.item?.id ?? 0u);
-                    h = NetHash.MixByte(h, j.item?.amount ?? (byte)0);
+                    h = NetHash.MixUInt32(h, j.item?.amount ?? (ushort)0);
                     h = NetHash.MixByte(h, j.item?.quality ?? (byte)0);
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunAmmo ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunFiremode ?? -1));
@@ -1237,7 +1239,7 @@ namespace UnturnedGodot.Net
                 if (worn != null)
                 {
                     h = NetHash.MixUInt32(h, worn.id);
-                    h = NetHash.MixByte(h, worn.amount);
+                    h = NetHash.MixUInt32(h, worn.amount);
                     h = NetHash.MixByte(h, worn.quality);
                 }
             }

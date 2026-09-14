@@ -1086,7 +1086,7 @@ void fragment() {
                 if (op.mag.amount <= 0) return false;
                 int bid = BulletIdForRound(MagEffRound(op.mag, mA) ?? mA.magRound);
                 if (bid <= 0 || Inv == null || !Inv.tryAddItem(new SDG.Unturned.Item((ushort)bid, 1))) return false;
-                op.mag.amount = (byte)(op.mag.amount - 1);
+                op.mag.amount = (ushort)(op.mag.amount - 1);
                 if (op.mag.amount <= 0) op.mag.magLoadedRound = null;   // emptied -> unlock the cartridge
                 // TELL THE SERVER. Without this the mutation above is local-only: the authoritative
                 // inventory still holds a full magazine, and the next move of ANY item echoes it back and
@@ -1104,12 +1104,12 @@ void fragment() {
             var (jar, page, pageIdx) = FindStack((ushort)op.bulletId);
             if (jar == null) return false;   // out of that round
             if (op.mag.amount <= 0) op.mag.magLoadedRound = bA.magRound;   // empty -> LOCK to this cartridge
-            op.mag.amount = (byte)(op.mag.amount + 1);
+            op.mag.amount = (ushort)(op.mag.amount + 1);
             // Sent BEFORE the stack is decremented, while jar still names the slot the round came from --
             // the server addresses the source by grid position, and removeItem below can free it.
             Player?.NetMagLoad?.Invoke(op.page, op.x, op.y, op.mag.id,
                                        pageIdx, jar.x, jar.y, (ushort)op.bulletId, false);
-            jar.item.amount = (byte)(jar.item.amount - 1);
+            jar.item.amount = (ushort)(jar.item.amount - 1);
             if (jar.item.amount <= 0) { byte ri = page.getIndex(jar.x, jar.y); if (ri != byte.MaxValue) page.removeItem(ri); }
             op.done++;
             MagRoundSound(mA);

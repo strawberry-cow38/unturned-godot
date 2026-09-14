@@ -5847,7 +5847,7 @@ namespace UnturnedGodot
         /// and "fire it, then drag it anywhere" handed back a full magazine.</summary>
         public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
         public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
-        public System.Action<byte, byte, byte, ushort, byte> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
+        public System.Action<byte, byte, byte, ushort, ushort> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)
         public System.Action<byte, byte, byte, byte> NetUnwearClothing;   // (slot, page, x, y) -> Client.SendUnwearClothing; page 255 = "anywhere", the pre-drag behaviour
@@ -6687,10 +6687,10 @@ namespace UnturnedGodot
                     // Expressed with the existing reload intent -- spend this stack, take back what is left --
                     // rather than a new message, so there is no wire format change and no version bump.
                     if (InventoryIsServerOwned && NetReloadSwap != null)
-                        NetReloadSwap(b, jar.x, jar.y, jar.item.id, (byte)System.Math.Max(0, jar.item.amount - t));
+                        NetReloadSwap(b, jar.x, jar.y, jar.item.id, (ushort)System.Math.Max(0, jar.item.amount - t));
                     else
                     {
-                        jar.item.amount = (byte)(jar.item.amount - t);
+                        jar.item.amount = (ushort)(jar.item.amount - t);
                         if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
                     }
                     taken += t;

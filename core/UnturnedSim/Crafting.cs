@@ -111,7 +111,7 @@ namespace UnturnedGodot
             public void Remove(ushort id, int amount) => _inv.removeItemAmount(id, amount);
             public void Add(ushort id, int amount)
             {
-                while (amount > 0) { int take = System.Math.Min(amount, 255); _inv.tryAddItem(new Item(id, (byte)take)); amount -= take; }
+                while (amount > 0) { int take = System.Math.Min(amount, ushort.MaxValue); _inv.tryAddItem(new Item(id, (ushort)take)); amount -= take; }
             }
         }
     }

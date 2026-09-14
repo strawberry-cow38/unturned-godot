@@ -43,7 +43,7 @@ namespace UnturnedNet.Tests
             var mag = Find(h.Server, a.PlayerId, TransactionalFixtures.StanagId);
             var rounds = Find(h.Server, a.PlayerId, TransactionalFixtures.Round556Id);
             Assert.That(mag, Is.Not.Null); Assert.That(rounds, Is.Not.Null);
-            byte before = rounds.item.amount;
+            ushort before = rounds.item.amount;
 
             a.SendMagLoad(2, mag.x, mag.y, TransactionalFixtures.StanagId,
                           2, rounds.x, rounds.y, TransactionalFixtures.Round556Id, false);

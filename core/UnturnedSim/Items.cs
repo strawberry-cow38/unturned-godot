@@ -88,7 +88,7 @@ namespace SDG.Unturned
             {
                 int dollars = Currency.ValueOf(item.id) * System.Math.Max(1, (int)item.amount);
                 item.id = Currency.StackId;
-                item.amount = (byte)System.Math.Min(dollars, Currency.MaxPerStack);
+                item.amount = (ushort)System.Math.Min(dollars, Currency.MaxPerStack);
                 int rest = dollars - item.amount;
                 if (!AddCore(item)) return false;
                 // ...and the excess spills into further stacks, the same way any oversized pickup does. amount
@@ -96,7 +96,7 @@ namespace SDG.Unturned
                 while (rest > 0)
                 {
                     int chunk = System.Math.Min(rest, Currency.MaxPerStack);
-                    if (!AddCore(new Item(Currency.StackId) { amount = (byte)chunk, quality = item.quality })) return true;   // bag full: keep what fitted
+                    if (!AddCore(new Item(Currency.StackId) { amount = (ushort)chunk, quality = item.quality })) return true;   // bag full: keep what fitted
                     rest -= chunk;
                 }
                 return true;
@@ -109,13 +109,16 @@ namespace SDG.Unturned
             if (getItemCount() >= 200) return false;
             // Per-item stacking: ammo (shotgun shells) stack up to their asset stackSize; most Unturned items = 1 (never stack).
             // The old global StackingEnabled option is subsumed -> it just makes the cap effectively unlimited.
-            int cap = StackingEnabled ? byte.MaxValue : System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
+            // A declared stackSize always wins, even under StackingEnabled: money declares 500 and must not be
+            // clipped back to the old byte ceiling by an option that is meant to make stacking MORE permissive.
+            int cap = System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
+            if (StackingEnabled) cap = System.Math.Max(cap, byte.MaxValue);
             if (cap > 1)
                 foreach (var j in items)
                     if (j.item != null && j.item.id == item.id && j.item.amount < cap)
                     {
                         int add = System.Math.Min(cap - j.item.amount, item.amount);
-                        j.item.amount = (byte)(j.item.amount + add); item.amount = (byte)(item.amount - add);
+                        j.item.amount = (ushort)(j.item.amount + add); item.amount = (ushort)(item.amount - add);
                         if (item.amount == 0) { onStateUpdated?.Invoke(); return true; }   // fully merged; else the remainder overflows to a new slot
                     }
             ItemJar itemJar = new ItemJar(item);

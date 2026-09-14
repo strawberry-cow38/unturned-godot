@@ -1242,7 +1242,7 @@ namespace UnturnedGodot.Net
                         : 0;
                 if (cap > 0)
                 {
-                    byte amt = (byte)System.Math.Min(cmd.SpentAmount, cap);
+                    ushort amt = (ushort)System.Math.Min(cmd.SpentAmount, cap);
                     if (amt > 0) inv.tryAddItem(new Item(cmd.SpentId, amt, 100));
                 }
             }

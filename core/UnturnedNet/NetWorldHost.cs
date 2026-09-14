@@ -1242,7 +1242,7 @@ namespace UnturnedGodot.Net
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
 
-        public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, byte spentAmount)
+        public bool SendReloadSwap(byte page, byte x, byte y, ushort spentId, ushort spentAmount)
             => SendCommand(ReplicationIds.CommandReloadSwap, new ReloadSwapCommand { Page = page, X = x, Y = y, SpentId = spentId, SpentAmount = spentAmount }.Write);
 
         public bool SendGunUnload(byte page, byte x, byte y, ushort roundId, byte count)

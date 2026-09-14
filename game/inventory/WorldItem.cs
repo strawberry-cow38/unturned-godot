@@ -317,7 +317,7 @@ namespace UnturnedGodot
         /// <param name="amount">Stack size of the drop, so a bundle shows the right number of rounds.
         /// 0 (the default) means "not a stack" and draws the full mesh -- the Grenade/StoreShelf callers,
         /// which show a single object rather than a pile.</param>
-        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity, byte amount = 0)
+        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity, ushort amount = 0)
         {
             var model = itemId > 0 ? GetModel(itemId) : null;
             if (model != null && model.Ok)
@@ -338,7 +338,7 @@ namespace UnturnedGodot
         /// Mirrors the real WorldItem's look-at highlight so the joined client can see + aim at replicated drops --
         /// a bare replica node (WorldItemReplicaView's old shape) is invisible to the look-ray. Bit 7 + mask 0 ->
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
-        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name, byte amount = 0)
+        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name, ushort amount = 0)
         {
             var p = new WorldItemPuppet { ItemId = itemId };
             var visual = BuildReplicaVisual(itemId, rarity, amount);

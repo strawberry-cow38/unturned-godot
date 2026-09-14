@@ -74,6 +74,6 @@ namespace SDG.Unturned
         /// every other stack in the game has. Money overflows into a second stack exactly like ammo does. It is
         /// a real limit rather than a chosen one: raising it means widening amount on the wire and in saves,
         /// which is a protocol change and not a balance tweak.</summary>
-        public const int MaxPerStack = byte.MaxValue;
+        public const int MaxPerStack = 500;
     }
 }

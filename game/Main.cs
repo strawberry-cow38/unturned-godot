@@ -7536,7 +7536,7 @@ namespace UnturnedGodot
                 byte slot = 0;
                 foreach (int dollars in new int[] { 188, 85, 35, 15, 7 })   // 5, 4, 3, 2 and 1 note(s); page 2 = the 5x3 pockets
                     player.Inventory.items[2].addItem(slot++, 0, 0,
-                        new SDG.Unturned.Item(SDG.Unturned.Currency.StackId) { amount = (byte)dollars });
+                        new SDG.Unturned.Item(SDG.Unturned.Currency.StackId) { amount = (ushort)dollars });
             }
             if (System.Environment.GetEnvironmentVariable("UG_QUICKCRAFT") == "1")   // stock craftable mats + load blueprints so the quick-craft bar shows
             {

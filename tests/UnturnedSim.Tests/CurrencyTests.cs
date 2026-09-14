@@ -83,12 +83,17 @@ namespace UnturnedSim.Tests
         public void MoneyPastTheStackCeilingSpillsRatherThanVanishing()
         {
             var p = Page8x6();
-            p.tryAddItem(new Item(1055) { amount = 3 });   // $300, past the 255 ceiling
+            // DERIVED from the ceiling, never written against it. This test exists precisely BECAUSE the ceiling
+            // moves -- it was 255 and is now 500 -- and a literal $300 would have quietly stopped testing any
+            // overflow at all the moment it did, while still passing.
+            int notes = Currency.MaxPerStack / 100 + 1;   // enough $100 notes to overspill whatever it is
+            int total = notes * 100;
+            p.tryAddItem(new Item(1055) { amount = (ushort)notes });
 
-            Assert.That(TotalDollars(p), Is.EqualTo(300), "not a cent lost to the byte");
+            Assert.That(TotalDollars(p), Is.EqualTo(total), "not a dollar lost to the ceiling");
             Assert.That(p.getItemCount(), Is.EqualTo(2), "...it needed a second stack to hold it");
             Assert.That(p.getItem(0).item.amount, Is.EqualTo(Currency.MaxPerStack), "the first fills to the ceiling");
-            Assert.That(p.getItem(1).item.amount, Is.EqualTo(300 - Currency.MaxPerStack), "the rest follows");
+            Assert.That(p.getItem(1).item.amount, Is.EqualTo(total - Currency.MaxPerStack), "the rest follows");
         }
 
         [Test]
@@ -120,6 +125,7 @@ namespace UnturnedSim.Tests
         [TestCase(100, 1055)]
         [TestCase(137, 1055)]
         [TestCase(255, 1055)]
+        [TestCase(500, 1055)]
         public void TheIconIsTheLargestDenominationTheStackCouldPayOut(int dollars, int expectedIcon)
             => Assert.That(Currency.IconIdFor(dollars), Is.EqualTo((ushort)expectedIcon), $"${dollars}");
 
@@ -147,7 +153,7 @@ namespace UnturnedSim.Tests
         // eight notes or thirteen), so this is not what stops the icon overflowing -- it is what says the
         // clamp never has to engage at the CURRENT ceiling, i.e. that today's icons are drawn uncompressed.
         [Test]
-        public void NoWalletNeedsMoreThanFiveNotesDrawn()
+        public void TheWidestFanIsEightNotes()
         {
             int worst = 0, most = 0;
             for (int d = 1; d <= Currency.MaxPerStack; d++)
@@ -157,7 +163,12 @@ namespace UnturnedSim.Tests
                     if (Currency.ValueOf(id) >= 5) notes++;
                 if (notes > most) { most = notes; worst = d; }
             }
-            Assert.That(most, Is.EqualTo(5), $"widest fan is ${worst} at {most} notes");
+            // ⚠ DELIBERATE TRIPWIRE. This number is not a law, it is the current consequence of the ceiling, and
+            // the fan's LAYOUT is built around it (InventoryUI.FanMaxNotes measures the note scale off a
+            // five-note box, and the arc clamp compresses anything wider to fit). Moving MaxPerStack SHOULD
+            // break this test: that is the prompt to re-look at the icon, not a number to quietly bump.
+            Assert.That(most, Is.EqualTo(8), $"widest fan at the ${Currency.MaxPerStack} ceiling is ${worst} " +
+                                             $"at {most} notes -- if this changed, re-check the fan layout");
         }
     }
 }

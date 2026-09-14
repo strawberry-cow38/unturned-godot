@@ -349,7 +349,7 @@ namespace SDG.Unturned
                     if (jar?.item != null && jar.item.id == id)
                     {
                         int take = Math.Min(amount, jar.item.amount);
-                        jar.item.amount -= (byte)take;
+                        jar.item.amount -= (ushort)take;
                         amount -= take;
                         if (jar.item.amount == 0) { page.removeItem(i); continue; }   // jar removed -> list shifted, don't advance i
                     }

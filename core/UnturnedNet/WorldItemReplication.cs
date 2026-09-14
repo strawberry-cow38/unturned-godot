@@ -17,7 +17,7 @@ namespace UnturnedGodot.Net
     {
         public uint NetId;
         public ushort ItemId;
-        public byte Amount;
+        public ushort Amount;
         public byte Quality;
         public Vector3 Pos;
         public Vector3 Vel;   // initial throw velocity -- cosmetic tumble seed, ±64 m/s clamp
@@ -26,7 +26,7 @@ namespace UnturnedGodot.Net
         {
             w.WriteUInt32(NetId);
             w.WriteUInt16(ItemId);
-            w.WriteUInt8(Amount);
+            w.WriteUInt16(Amount);
             w.WriteUInt8(Quality);
             NetWire.WritePos(w, Pos);
             NetWire.WriteVel(w, Vel);
@@ -37,7 +37,7 @@ namespace UnturnedGodot.Net
             evt = default;
             if (!r.ReadUInt32(out uint id)) return false;
             if (!r.ReadUInt16(out ushort itemId)) return false;
-            if (!r.ReadUInt8(out byte amount)) return false;
+            if (!r.ReadUInt16(out ushort amount)) return false;
             if (!r.ReadUInt8(out byte quality)) return false;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
@@ -100,7 +100,7 @@ namespace UnturnedGodot.Net
         {
             public uint NetIdValue;
             public ushort ItemId;
-            public byte Amount;
+            public ushort Amount;
             public byte Quality;
             public Vector3 Pos;
             public bool Settled;
@@ -290,7 +290,7 @@ namespace UnturnedGodot.Net
             {
                 h = NetHash.MixUInt32(h, e.NetIdValue);
                 h = NetHash.MixUInt32(h, e.ItemId);
-                h = NetHash.MixByte(h, e.Amount);
+                h = NetHash.MixUInt32(h, e.Amount);
                 h = NetHash.MixByte(h, e.Quality);
                 h = NetHash.MixFloat(h, e.Pos.x); h = NetHash.MixFloat(h, e.Pos.y); h = NetHash.MixFloat(h, e.Pos.z);
                 h = NetHash.MixByte(h, e.Settled ? (byte)1 : (byte)0);
@@ -302,7 +302,7 @@ namespace UnturnedGodot.Net
         {
             w.WriteUInt32(e.NetIdValue);
             w.WriteUInt16(e.ItemId);
-            w.WriteUInt8(e.Amount);
+            w.WriteUInt16(e.Amount);
             w.WriteUInt8(e.Quality);
             NetWire.WritePos(w, e.Pos);
             w.WriteBit(e.Settled);
@@ -313,7 +313,7 @@ namespace UnturnedGodot.Net
             e = null;
             if (!r.ReadUInt32(out uint id)) return false;
             if (!r.ReadUInt16(out ushort itemId)) return false;
-            if (!r.ReadUInt8(out byte amount)) return false;
+            if (!r.ReadUInt16(out ushort amount)) return false;
             if (!r.ReadUInt8(out byte quality)) return false;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadBit(out bool settled)) return false;

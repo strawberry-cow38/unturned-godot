@@ -175,18 +175,26 @@ namespace SDG.Unturned
         /// off a stack (`amount--`, removing the jar only at the last one) and burns it for a single item's time,
         /// so the progress bar counts down one log and the next one lights when it is spent -- which is what the
         /// request describes. There is a test pinning it.</summary>
+        public const int ThrowableStackSize = 5;   // every throwable, one number -- see WireStackableWood
+
         static void WireStackableWood()
         {
             void Wood(ushort id, int cap) { var a = Assets.find(id); if (a != null) a.stackSize = cap; }
 
             // CURRENCY: one stack, named for the currency rather than for the coin carrying it, and stacking to
-            // the byte ceiling so a wallet is a wallet. The other six denominations keep their catalog rows --
+            // Currency.MaxPerStack so a wallet is a wallet. The other six denominations keep their catalog rows --
             // they still exist as loot and as the thing you pick up -- but Items.tryAddItem converts every one
             // of them into this id at its own value, so none of them is ever what you END UP holding.
             {
                 var money = Assets.find(SDG.Unturned.Currency.StackId);
                 if (money != null) { money.itemName = SDG.Unturned.Currency.DisplayName; money.stackSize = SDG.Unturned.Currency.MaxPerStack; }
             }
+            // THROWABLES stack to 5 (strawberry 2026-09-14: "make frag grenades, smokes, flares stack to 5").
+            // Driven off the throwable TABLE rather than a hand-written id list: the table already knows which
+            // ids are throwables -- both grenades, flares 255-260, smoke 261-268 -- so a throwable added later
+            // stacks without anyone remembering to come back here, and no id can be in one list but not the other.
+            foreach (var t in SDG.Unturned.Throwables.All) Wood(t.Id, ThrowableStackSize);
+
             foreach (ushort log in new ushort[] { 37, 39, 41 }) Wood(log, 4);      // Birch/Maple/Pine Log   (2x1)
             foreach (ushort plank in new ushort[] { 61, 62, 63 }) Wood(plank, 6);  // Maple/Birch/Pine Plank (1x2)
             foreach (ushort stick in new ushort[] { 38, 40, 42 }) Wood(stick, 8);  // Birch/Maple/Pine Stick (1x1)
