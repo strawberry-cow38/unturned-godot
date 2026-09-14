@@ -8218,7 +8218,23 @@ namespace UnturnedGodot
             var camPlug = cctv?.PowerPorts.Count > 0 ? cctv.PowerPorts[0] : null;
             Link(genOut, camPlug);
             Link(genOut, tv?.PowerPorts.Count > 0 ? tv.PowerPorts[0] : null);
-            if (System.Environment.GetEnvironmentVariable("UG_CCTVCUT") != "1")
+            // UG_CCTVRADIO=1 : put a wireless pair in the middle -- camera ~wire~ transmitter ~~air~~ receiver
+            // ~wire~ TV -- instead of running the aerial straight across. UG_CCTVRXCODE sets the RECEIVER's
+            // channel so a deliberate mismatch can be photographed; the transmitter stays on 0000.
+            if (System.Environment.GetEnvironmentVariable("UG_CCTVRADIO") == "1")
+            {
+                var tx = Deployable.Spawn(this, DeployableDef.DataTransmitter, new Vector3(3.2f, 0f, 0.4f), 0f);
+                var rx = Deployable.Spawn(this, DeployableDef.DataReceiver, new Vector3(-3.2f, 0f, 0.4f), 0f);
+                ConnectionPort P(Deployable d, DeployableDef.PortKind k) => d?.Ports.Find(pp => pp.Kind == k);
+                Link(genOut, P(tx, DeployableDef.PortKind.Consumer));
+                Link(genOut, P(rx, DeployableDef.PortKind.Consumer));
+                Link(cctv?.DataOut, P(tx, DeployableDef.PortKind.DataIn));
+                Link(P(rx, DeployableDef.PortKind.DataOut), tv?.DataInPort);
+                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_CCTVRXCODE"), out int rc) && rx != null)
+                    rx.DataCode = rc;
+                Log.Print($"[cctvtest] radio pair: tx ch {tx?.DataCode:0000} rx ch {rx?.DataCode:0000}");
+            }
+            else if (System.Environment.GetEnvironmentVariable("UG_CCTVCUT") != "1")
                 Link(cctv?.DataOut, tv?.DataInPort);   // the aerial -- omitted for the control shot
             gen.TogglePower();
             PowerNet.Recompute(GetTree());
