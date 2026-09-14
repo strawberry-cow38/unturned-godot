@@ -595,10 +595,21 @@ namespace UnturnedNet.Tests
 
             // ...and standing in it does. Same server, same volume, just long enough for the carried dose to
             // out-climb the self-clear -- which is the claim the old single assertion was really making.
-            h.Step(2500);   // +50 s
-            Assert.That(v.Sim.Infection, Is.GreaterThan(PlayerVitalsSim.InfectionSickAbove),
-                        "standing in contaminated ground has to scar the server's player permanently -- past the "
-                        + "line where the virus holds, not merely past the number the old rule used");
+            // ⚠ INFECTION IS NOT MONOTONIC HERE, AND READING THE ENDPOINT SAMPLED A PHASE. This stepped 2500
+            // ticks and asserted the final value, which assumes the dose only ever climbs. It does not: an
+            // unprotected body dies in this very zone at ~1441 ticks (A_Sealed_Suit_Buys_Time_In_The_Same_Zone
+            // measures it), death resets vitals, and the respawn puts you back in the zone to start again. So
+            // the quantity is a SAWTOOTH and a fixed window lands wherever it lands -- probed at 50 s intervals
+            // it reads 0.64, 0.07, 0.81, 0.15, 0.98, 1.00, 0.42, 0.008. The endpoint was never evidence about
+            // the hazard; it was evidence about where the sample fell in the death cycle, which is why this was
+            // red on main at one dose rate and would have gone green at another for no reason anyone chose.
+            //
+            // The claim worth making survives the resets: standing in contaminated ground drives a NETWORKED
+            // player's infection past the line where the virus holds. Take the PEAK across the window.
+            float peakInfection = v.Sim.Infection;
+            for (int i = 0; i < 50; i++) { h.Step(50); peakInfection = System.Math.Max(peakInfection, v.Sim.Infection); }
+            Assert.That(peakInfection, Is.GreaterThan(PlayerVitalsSim.InfectionSickAbove),
+                        $"50 s in contaminated ground peaked at {peakInfection:0.000} infection, never reaching the {PlayerVitalsSim.InfectionSickAbove} sick line -- the dose is not reaching the server's authoritative vitals");
             Assert.That(v.Sim.MajorlyIrradiated, Is.True,
                         "and a dose that big costs the server's copy its sprint too");
         }
