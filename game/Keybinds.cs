@@ -38,7 +38,9 @@ namespace UnturnedGodot
     /// PlayerController._PhysicsProcess (on-foot polls are skipped while seated). Tagging a future pair
     /// OnFoot/Driving does NOT create that exclusivity; the frame-exclusive structure must already exist, or the
     /// conflict check will admit a bind that really can double-fire.</summary>
-    public enum BindContext { OnFoot, Driving, Anywhere }
+    /// <summary>When an action can fire. OnFoot/Driving are mutually exclusive with each other and with
+    /// nothing else. BagOpen is MODAL and stronger: see ConflictWith.</summary>
+    public enum BindContext { OnFoot, Driving, Anywhere, BagOpen }
 
     /// <summary>One physical control: a keyboard key OR a mouse button.
     ///
@@ -202,6 +204,10 @@ namespace UnturnedGodot
             [GameAction.Crouch] = BindContext.OnFoot, [GameAction.CrouchToggle] = BindContext.OnFoot,
             [GameAction.Prone] = BindContext.OnFoot, [GameAction.LeanLeft] = BindContext.OnFoot,
             [GameAction.LeanRight] = BindContext.OnFoot,
+            // QuickTransfer only exists with a container open, and while one is open the world gets no input
+            // at all -- see BagOpenExclusive. Tagged so the REBIND UI knows what the input layer already
+            // enforces; without it the shipped H default is a pairing the UI itself would refuse.
+            [GameAction.QuickTransfer] = BindContext.BagOpen,
             [GameAction.VehicleHandbrake] = BindContext.Driving,
             [GameAction.VehicleDoor] = BindContext.Driving,
         };
@@ -274,10 +280,33 @@ namespace UnturnedGodot
                 // the same frame, so sharing a control is not a conflict. Anywhere on either side means it might.
                 var aCtx = Context(a);
                 if (aCtx != BindContext.Anywhere && ignCtx != BindContext.Anywhere && aCtx != ignCtx) continue;
+                if (BagOpenExclusive(a, ignoring)) continue;
                 var cur = Get(a);
                 if (cur.Key == b.Key && cur.Mouse == b.Mouse) return a;
             }
             return null;
+        }
+
+        /// <summary>True if one of these two only fires with the bag OPEN and the other only fires with it
+        /// SHUT, so they can never both see the same keystroke.
+        ///
+        /// ⚠ THIS IS STRONGER THAN THE OnFoot/Driving RULE ABOVE, and deliberately so. Those two only exclude
+        /// each other, and an Anywhere action still clashes with both. Bag-open is MODAL: PlayerController's
+        /// _UnhandledInput returns early on EVERY event while the inventory is up except Inventory, Interact,
+        /// physical Tab and Escape. So a BagOpen action cannot collide with a world action whatever the world
+        /// action's own context is, Anywhere included -- and the two survivors of that filter are the exception,
+        /// which is why they are named here rather than waved through.
+        ///
+        /// ⚠ THE TAG DOES NOT CREATE THE EXCLUSIVITY -- the input filter does, and this only reports it. That
+        /// distinction is the whole reason the shipped H default is legitimate rather than a double-booking:
+        /// QuickTransfer needs a container open, ToggleFirstPerson cannot be reached while one is. If that early
+        /// return ever moves, this goes with it. (Found by the nightly: keybind.defaults_complete, 2026-09-14.)</summary>
+        static bool BagOpenExclusive(GameAction x, GameAction y)
+        {
+            bool bx = Context(x) == BindContext.BagOpen, by = Context(y) == BindContext.BagOpen;
+            if (bx == by) return false;                       // both modal, or neither -> ordinary rules apply
+            var world = bx ? y : x;                           // the one that lives outside the bag
+            return world != GameAction.Inventory && world != GameAction.Interact;
         }
 
         public static void Set(GameAction a, Bind b)

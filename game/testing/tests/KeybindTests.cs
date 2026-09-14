@@ -234,6 +234,20 @@ namespace UnturnedGodot.Testing.Tests
                     Keybinds.ConflictWith(default, GameAction.Jump) == null);
             T.Check("a mouse bind does not collide with a keyboard bind of the same numeric value",
                     Keybinds.ConflictWith(new Bind(MouseButton.Xbutton2), GameAction.Jump) == null);
+
+            // BAG-OPEN MODALITY, BOTH DIRECTIONS. QuickTransfer only fires with a container open and the world
+            // gets no input while one is, so it may share H with ToggleFirstPerson -- that is the shipped
+            // default and the reason this exemption exists at all.
+            T.Check("a bag-open action may share a control with a world action",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.ToggleFirstPerson), GameAction.QuickTransfer) == null);
+            // ...but the exemption is NOT "bag-open collides with nothing". Inventory and Interact are the two
+            // actions PlayerController._UnhandledInput lets THROUGH while the bag is open, so they genuinely do
+            // still clash. Without this check, simplifying BagOpenExclusive to `return true` passes everything
+            // above and silently lets QuickTransfer be bound over the key that closes the bag.
+            T.Check("...but NOT with Interact, which still fires while the bag is open",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.Interact), GameAction.QuickTransfer) == GameAction.Interact);
+            T.Check("...nor with Inventory, for the same reason",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.Inventory), GameAction.QuickTransfer) == GameAction.Inventory);
             yield break;
         }
     }
