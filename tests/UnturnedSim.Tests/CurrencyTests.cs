@@ -141,9 +141,11 @@ namespace UnturnedSim.Tests
             Assert.That(worstShort, Is.EqualTo(0), $"${worst} breaks into ${worst - worstShort}, short by ${worstShort}");
         }
 
-        // The fan's worst case is a LAYOUT budget, not trivia: five notes is what the icon is drawn to hold, and
-        // $185 is the cheapest wallet that needs all five. If a denomination is ever added or the ceiling moves,
-        // this is the number that has to be re-checked against InventoryUI.FanMaxNotes.
+        // The fan's worst case is a LAYOUT budget, not trivia: five notes is what the icon is drawn to hold and
+        // $185 is the cheapest wallet needing all five, which is the box InventoryUI.FanMaxNotes measures its
+        // scale against. The fan's own arc clamp keeps a WIDER wad inside that box (a raised ceiling can need
+        // eight notes or thirteen), so this is not what stops the icon overflowing -- it is what says the
+        // clamp never has to engage at the CURRENT ceiling, i.e. that today's icons are drawn uncompressed.
         [Test]
         public void NoWalletNeedsMoreThanFiveNotesDrawn()
         {

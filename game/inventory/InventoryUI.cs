@@ -2656,7 +2656,13 @@ void fragment() {
         // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
         // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
         // pattern, and a lil more separate, scaled up a bit too").
-        const float FanStepDeg  = 17f;    // angle between ADJACENT notes. The fan's total splay is this times
+        const float FanStepSame = 5f;     // angle between two notes of the SAME denomination. Much tighter than
+                                          // FanStepDeg on purpose (strawberry 2026-09-14: "collapse similar
+                                          // notes into a much tighter angle"): identical notes have no edge
+                                          // between them, so spreading a run of $100s wide just makes a bigger
+                                          // featureless blob. Bunched, they read as ONE THICK WAD of hundreds,
+                                          // which is what four $100 notes actually look like.
+        const float FanStepDeg  = 17f;    // angle between adjacent notes of DIFFERENT denominations. The fan's total splay is this times
                                           // the gaps between notes, so it grows with the wad instead of flinging
                                           // two notes as wide as seven (strawberry: "make the fan scale with
                                           // number of notes"). At the 5-note maximum this is the +/-38 already
@@ -2797,35 +2803,34 @@ void fragment() {
             if (all.Count == 0) return;
             var notes = new System.Collections.Generic.List<ushort>();
             var coins = new System.Collections.Generic.List<ushort>();
-            // ⭐ ONE OF EACH DENOMINATION PRESENT -- the fan is a SUMMARY, the $N label is the amount.
-            // Breakdown is a true payout and so repeats ($485 is four $100s), but identical notes drawn
-            // overlapping have no edge between them: four hundreds render as one featureless gold blob, not as
-            // four notes. Drawing the SET instead says "hundreds, fifties, twenties, tens and fives" honestly,
-            // caps the fan at five notes so the layout's five-note scale reference stays valid at ANY ceiling,
-            // and leaves the exact figure to the label, which is the part that can actually carry a number.
-            // ⚠ This is needed at the CURRENT $255 cap, not just a raised one: every wallet from $200 up holds
-            // two $100 notes.
-            ushort prev = 0;
-            foreach (var id in all)
-            {
-                if (id == prev) continue;   // Breakdown is largest-first, so repeats are always adjacent
-                prev = id;
-                (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
-            }
+            foreach (var id in all) (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
 
             // Back to front. Breakdown is largest-first and the largest belongs BEHIND, so building in order
             // leaves the smallest note on top -- "smallest at the front" is the loop's own direction.
             var pieces = new System.Collections.Generic.List<(ushort Id, Texture2D Tex, Vector2 Size, Vector2 Pivot, float Rot)>();
             Vector2 noteSize = new Vector2(1f, 0.5f);   // overwritten by the first real note; only a fallback
+            // Angles first: walk the run and open the fan by a FULL step at each change of denomination, a
+            // tight one between repeats. Breakdown is largest-first, so a run of identical notes is contiguous.
+            var angle = new float[notes.Count];
+            float spread = 0f;
+            for (int i = 1; i < notes.Count; i++)
+            {
+                spread += notes[i] == notes[i - 1] ? FanStepSame : FanStepDeg;
+                angle[i] = spread;
+            }
+            // ⚠ CLAMP to the reference arc. The scale is measured off a five-different-note fan, so a wad that
+            // opens wider than that would hang outside the box its own size was chosen from and spill over the
+            // frame -- which is exactly what raw $485 did (eight notes, 83 degrees against a 68 degree box).
+            // Compressing keeps the guarantee true at ANY ceiling instead of only up to $255.
+            float maxSpread = FanStepDeg * (FanMaxNotes - 1);
+            float squeeze = spread > maxSpread ? maxSpread / spread : 1f;
             for (int i = 0; i < notes.Count; i++)
             {
                 var t = UprightIcon(notes[i]);
                 if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
                 noteSize = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
-                float f = notes.Count == 1 ? 0.5f : i / (float)(notes.Count - 1);
-                float arc = FanStepDeg * (notes.Count - 1) * 0.5f;   // one note => 0 => it sits level
                 pieces.Add((notes[i], t, noteSize, new Vector2(-FanHingeOut, noteSize.Y * 0.5f),
-                            FanBaseDeg + Mathf.Lerp(-arc, arc, f)));
+                            FanBaseDeg + (angle[i] - spread * 0.5f) * squeeze));   // centred on the hinge
             }
 
             // A Control rotates about PivotOffset, so a corner sits at hinge + Rot(theta) * (corner - pivot) --
