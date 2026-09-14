@@ -2643,49 +2643,204 @@ void fragment() {
         //
         // Cached by the COMBINATION rather than by the value, because $137 and $138 are the same five notes and
         // there is no reason to hold two identical textures. 127 entries is the hard ceiling on this cache.
-        static readonly System.Collections.Generic.Dictionary<string, ImageTexture> _fanCache = new();
-        const int FanStepX = 13, FanStepY = 5;   // how far each note sits in front of the one behind it
+        // ⚠ PER-NOTE CONTROLS, NOT ONE FLATTENED TEXTURE. The first cut composited the fan into a single image
+        // with Image.BlendRect, which cannot ROTATE -- so the notes could only be offset in a straight line and
+        // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
+        // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
+        // pattern, and a lil more separate, scaled up a bit too").
+        const float FanArcDeg   = 38f;    // total splay: the outermost notes sit +/- this much from upright
+        const float FanPivotArm = 1.90f;  // hinge distance below a note's TOP edge, in note-HEIGHTS. >1 puts the
+                                          // hinge below the note itself, which is the "a lil more separate" half
+                                          // of the ask -- angle alone only ever rotates the notes about each other.
+        const float CoinScale   = 0.24f;  // a coin's width as a fraction of a NOTE's -- "scale the coins down a bit"
+        const float CoinGap     = 0.80f;  // coin centre-to-centre spacing, in coin-widths (<1 = they overlap)
+        const float CoinDrop    = 0.22f;  // how far above the hinge the coins sit, in note-widths
+        const float FanFill     = 0.98f;  // fraction of the cell the finished fan is scaled to fill
 
-        static Texture2D MoneyFan(int dollars)
+        /// <summary>The icon with the art's OWN baked-in tilt taken back out, cropped tight to the art.
+        ///
+        /// ⭐ Every money icon is pre-rendered at ~45 degrees: each note is a diagonal strip and the loonie is a
+        /// DIAMOND, not a square. That is why fanning the raw icons never looked like a fan -- the middle note was
+        /// already tilted 45 degrees before my arc touched it, and it is why the coins read as diamonds
+        /// (strawberry 2026-09-14: "have them sit vertical"). It also wrecks any attempt to size them: a tilted
+        /// rectangle's bounding box is up to sqrt(2) bigger than the rectangle, and squarer, so the art lands
+        /// small and the leftover margin is unpredictable per denomination.
+        ///
+        /// So measure the tilt off the art and undo it once, at load, into a tight upright texture. After this
+        /// the control IS the note: its aspect is the note's real aspect, rotation 0 means upright, and the fan
+        /// arithmetic downstream describes what you actually see.
+        ///
+        /// The tilt comes from the art quad's CORNERS (the extreme opaque pixels), not from second moments --
+        /// a square's moment matrix is isotropic, so moments recover no angle at all for the coins, which are
+        /// exactly the pieces that needed straightening.</summary>
+        static readonly System.Collections.Generic.Dictionary<ushort, Texture2D> _uprightIcon = new System.Collections.Generic.Dictionary<ushort, Texture2D>();
+        static Texture2D UprightIcon(ushort id)
         {
-            var notes = SDG.Unturned.Currency.Breakdown(dollars);
-            if (notes.Count == 0) return Icon(SDG.Unturned.Currency.StackId);
-            if (notes.Count == 1) return Icon(notes[0]);   // a single note is not a fan
-
-            string key = string.Join(",", notes);
-            if (_fanCache.TryGetValue(key, out var hit)) return hit;
-
-            // Every note's own icon, at its own size. A missing one is SKIPPED rather than substituted: a fan
-            // with a hole in it is honest about which art is absent, where a placeholder would quietly claim
-            // the wallet contains something it does not.
-            var imgs = new System.Collections.Generic.List<Image>();
-            foreach (var id in notes)
+            if (_uprightIcon.TryGetValue(id, out var cached)) return cached;
+            Texture2D result = Icon(id);   // fall back to the raw icon rather than drawing nothing
+            var img = result?.GetImage();
+            if (img != null)
             {
-                var t = Icon(id);
-                var im = t?.GetImage();
-                if (im != null) imgs.Add(im);
+                if (img.IsCompressed()) img.Decompress();
+                if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+                int W = img.GetWidth(), H = img.GetHeight();
+                // Whole buffer once, then plain indexing. Two 256x256 GetPixel sweeps per icon is ~130k
+                // marshalled calls each, and the first money tile you ever draw pays for all seven at once --
+                // a visible hitch on opening the inventory, for a result that is then cached forever.
+                byte[] src = img.GetData();
+
+                // Extreme opaque pixels. Scanning top-to-bottom then left-to-right, the FIRST pixel seen is the
+                // topmost; first at each new minimum/maximum x is the leftmost/rightmost. For a convex quad those
+                // are three of its four corners.
+                Vector2 pTop = Vector2.Zero, pLeft = Vector2.Zero, pRight = Vector2.Zero;
+                bool any = false;
+                int bestLeft = int.MaxValue, bestRight = int.MinValue;
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        if (src[((y * W) + x) * 4 + 3] <= 5) continue;
+                        if (!any) { pTop = new Vector2(x, y); any = true; }
+                        if (x < bestLeft)  { bestLeft = x;  pLeft  = new Vector2(x, y); }
+                        if (x > bestRight) { bestRight = x; pRight = new Vector2(x, y); }
+                    }
+
+                if (any)
+                {
+                    // The two quad edges meeting at the top corner. The LONGER is the note's length; for a coin
+                    // they are equal and either one squares it up, which is the whole point of using edges here.
+                    var ea = pTop - pLeft;
+                    var eb = pRight - pTop;
+                    var axis = ea.LengthSquared() >= eb.LengthSquared() ? ea : eb;
+                    if (axis.LengthSquared() < 1f) axis = new Vector2(1f, 0f);
+                    if (axis.X < 0f) axis = -axis;   // keep the note reading left-to-right, never mirrored
+                    axis = axis.Normalized();
+                    var e1 = axis;                                  // along the art's length
+                    var e2 = new Vector2(-axis.Y, axis.X);          // across it
+                    var c = new Vector2(W * 0.5f, H * 0.5f);
+
+                    // Tight bounds in the art's OWN frame.
+                    float uMin = float.MaxValue, uMax = float.MinValue, vMin = float.MaxValue, vMax = float.MinValue;
+                    for (int y = 0; y < H; y++)
+                        for (int x = 0; x < W; x++)
+                        {
+                            if (src[((y * W) + x) * 4 + 3] <= 5) continue;
+                            var d = new Vector2(x, y) - c;
+                            float u = d.Dot(e1), v = d.Dot(e2);
+                            uMin = Mathf.Min(uMin, u); uMax = Mathf.Max(uMax, u);
+                            vMin = Mathf.Min(vMin, v); vMax = Mathf.Max(vMax, v);
+                        }
+
+                    int tw = Mathf.Clamp(Mathf.RoundToInt(uMax - uMin) + 1, 1, 1024);
+                    int th = Mathf.Clamp(Mathf.RoundToInt(vMax - vMin) + 1, 1, 1024);
+                    var outp = new byte[tw * th * 4];
+                    for (int j = 0; j < th; j++)
+                        for (int i = 0; i < tw; i++)
+                        {
+                            var q = c + e1 * (uMin + i) + e2 * (vMin + j);
+                            int sx = Mathf.RoundToInt(q.X), sy = Mathf.RoundToInt(q.Y);
+                            if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;   // stays transparent
+                            // NEAREST on purpose: the source is chunky low-res pixel art and bilinear here just
+                            // smears the note's printed detail into mush before the UI ever scales it.
+                            System.Array.Copy(src, ((sy * W) + sx) * 4, outp, ((j * tw) + i) * 4, 4);
+                        }
+                    result = ImageTexture.CreateFromImage(Image.CreateFromData(tw, th, false, Image.Format.Rgba8, outp));
+                }
             }
-            if (imgs.Count == 0) { _fanCache[key] = null; return null; }
+            _uprightIcon[id] = result;
+            return result;
+        }
 
-            int iw = 0, ih = 0;
-            foreach (var im in imgs) { iw = Mathf.Max(iw, im.GetWidth()); ih = Mathf.Max(ih, im.GetHeight()); }
-            int n = imgs.Count;
-            var canvas = Image.CreateEmpty(iw + (n - 1) * FanStepX, ih + (n - 1) * FanStepY, false, Image.Format.Rgba8);
-            canvas.Fill(new Color(0f, 0f, 0f, 0f));
+        /// <summary>Lay a wallet out as the notes and coins it would pay: NOTES fanned on an arc from a shared
+        /// hinge (a hand of cards), COINS upright and small in front of them.
+        ///
+        /// The two are treated differently on purpose -- a note is a rectangle that fans and a coin is a disc
+        /// that does not, so tilting a loonie along the arc reads as a mistake rather than as a fan. Coins
+        /// therefore sit VERTICAL whatever the notes are doing.
+        ///
+        /// The layout is built in UNIT space (note width = 1) around the hinge, MEASURED, and only then scaled
+        /// to the cell. Picking a size up front and hoping is what left the last one clipped down one side with
+        /// dead space down the other: the extent depends on the per-denomination art margins above, so it is
+        /// not knowable before the pieces exist. Measure, then scale -- that also means the fan is automatically
+        /// as big as the cell allows at whatever arc it is given, which is the "use the real estate" half.</summary>
+        static void BuildMoneyFan(Control tile, int dollars, float w, float h)
+        {
+            var all = SDG.Unturned.Currency.Breakdown(dollars);
+            bool dbg = System.Environment.GetEnvironmentVariable("UG_FANDBG") == "1";
+            if (dbg)
+                Log.Print($"[fan] ${dollars} -> {all.Count} denoms, cell {w}x{h}, icons=[" +
+                          string.Join(",", all.ConvertAll(i => $"{i}:{(Icon(i) != null)}")) + "]");
+            if (all.Count == 0) return;
+            var notes = new System.Collections.Generic.List<ushort>();
+            var coins = new System.Collections.Generic.List<ushort>();
+            foreach (var id in all) (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
 
-            // BACK TO FRONT: Breakdown is largest-first, and the largest is the one BEHIND -- so the list is
-            // drawn in order and the smallest, drawn last, ends up on top. "Smallest at the front" is therefore
-            // the loop's natural direction rather than something arranged afterwards.
-            for (int i = 0; i < n; i++)
+            // Back to front. Breakdown is largest-first and the largest belongs BEHIND, so building in order
+            // leaves the smallest note on top -- "smallest at the front" is the loop's own direction. Coins go
+            // last of all so they sit in front of everything.
+            var pieces = new System.Collections.Generic.List<(ushort Id, Texture2D Tex, Vector2 Size, Vector2 Pivot, float Rot)>();
+            for (int i = 0; i < notes.Count; i++)
             {
-                var im = imgs[i];
-                if (im.GetFormat() != Image.Format.Rgba8) im.Convert(Image.Format.Rgba8);
-                canvas.BlendRect(im, new Rect2I(0, 0, im.GetWidth(), im.GetHeight()),
-                                 new Vector2I(i * FanStepX, i * FanStepY));
+                var t = UprightIcon(notes[i]);
+                if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
+                var size = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                float f = notes.Count == 1 ? 0.5f : i / (float)(notes.Count - 1);
+                pieces.Add((notes[i], t, size, new Vector2(0.5f, size.Y * FanPivotArm),
+                            Mathf.Lerp(-FanArcDeg, FanArcDeg, f)));
             }
-            var tex = ImageTexture.CreateFromImage(canvas);
-            _fanCache[key] = tex;
-            return tex;
+            for (int i = 0; i < coins.Count; i++)
+            {
+                var t = UprightIcon(coins[i]);
+                if (t == null) continue;
+                var size = new Vector2(CoinScale, CoinScale * t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                // Spread side by side so two of them read as two coins; a single coin sits centred.
+                float spread = coins.Count == 1 ? 0f
+                             : (i / (float)(coins.Count - 1) - 0.5f) * CoinScale * CoinGap * coins.Count;
+                // Pivot at the disc's CENTRE, offset by the spread, so every coin still hangs off the one hinge.
+                pieces.Add((coins[i], t, size, new Vector2(size.X * 0.5f - spread, size.Y * 0.5f + CoinDrop), 0f));
+            }
+            if (pieces.Count == 0) return;
+
+            // Union AABB of every rotated piece, measured from the hinge. A Control rotates about PivotOffset,
+            // so a corner sits at hinge + Rot(theta) * (corner - pivot) -- independent of where the hinge lands,
+            // which is exactly why the box can be measured before the hinge is chosen.
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var it in pieces)
+            {
+                float c = Mathf.Cos(Mathf.DegToRad(it.Rot)), s = Mathf.Sin(Mathf.DegToRad(it.Rot));
+                for (int k = 0; k < 4; k++)
+                {
+                    var l = new Vector2((k & 1) == 0 ? 0f : it.Size.X, (k & 2) == 0 ? 0f : it.Size.Y) - it.Pivot;
+                    var q = new Vector2(l.X * c - l.Y * s, l.X * s + l.Y * c);
+                    minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X);
+                    minY = Mathf.Min(minY, q.Y); maxY = Mathf.Max(maxY, q.Y);
+                }
+            }
+            float scale = Mathf.Min(w / Mathf.Max(maxX - minX, 0.001f), h / Mathf.Max(maxY - minY, 0.001f)) * FanFill;
+            // Centre the MEASURED box in the cell; the hinge ends up wherever that puts it.
+            var hinge = new Vector2(w * 0.5f - (minX + maxX) * 0.5f * scale,
+                                    h * 0.5f - (minY + maxY) * 0.5f * scale);
+            if (dbg) Log.Print($"[fan]   box ({minX:0.00},{minY:0.00})..({maxX:0.00},{maxY:0.00}) scale={scale:0.0} hinge={hinge}");
+
+            foreach (var it in pieces)
+            {
+                // Build, PARENT, and only THEN size. A TextureRect's minimum size is its texture until ExpandMode
+                // says otherwise, and entering the tree runs a layout pass that snaps Size back up to that minimum
+                // -- so a Size written in the object initializer is silently replaced by the full 256px icon.
+                var r = new TextureRect
+                {
+                    Texture = it.Tex,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.Scale,   // the control IS the art now: no letterboxing
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                };
+                tile.AddChild(r);
+                r.CustomMinimumSize = Vector2.Zero;
+                r.Size = it.Size * scale;
+                r.PivotOffset = it.Pivot * scale;
+                r.Position = hinge - r.PivotOffset;
+                r.RotationDegrees = it.Rot;
+                if (dbg) Log.Print($"[fan]   {it.Id} tex={it.Tex.GetSize()} size={r.Size} pos={r.Position} rot={it.Rot:0}");
+            }
         }
 
         // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
@@ -2745,7 +2900,8 @@ void fragment() {
             // ASSET for its icon would draw a coin on a $100 wad. The icon comes off the VALUE instead: the
             // largest denomination the stack could actually pay out.
             bool moneyTile = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
-            var tex = moneyTile ? MoneyFan(jar.item.amount)
+            if (moneyTile) BuildMoneyFan(tile, jar.item.amount, w, h);
+            var tex = moneyTile ? null
                     : magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true)
                     : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
@@ -2768,8 +2924,8 @@ void fragment() {
                 }
                 tile.AddChild(ic);
             }
-            else   // no icon on disk -> the old rarity-tinted name label
-            {
+            else if (!moneyTile)   // no icon on disk -> the old rarity-tinted name label. MONEY draws its own fan
+            {                      // above and must not also print its name over the top of it.
                 var lbl = new Label { Text = asset?.itemName ?? "?" };
                 lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 lbl.HorizontalAlignment = HorizontalAlignment.Center;
