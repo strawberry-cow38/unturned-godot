@@ -2684,7 +2684,16 @@ void fragment() {
             // mirrored, and a mag is symmetric enough that the reflection reads as fine by eye (tinyclaw). Reuse the
             // transform, don't copy it (same as CheckLoad -> MagRules).
             bool magStandUp = rotated && asset != null && asset.IsMagazine;
-            var tex = magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true) : (asset != null ? Icon(asset.id) : null);
+            // ⭐ MONEY DRAWS AS WHAT IT IS WORTH, not as the coin that carries it (strawberry 2026-09-14: "the
+            // inventory icon changes depending on the value of the stack -> to the respective coin/note"). The
+            // stack's id is always the $1 loonie -- that is what makes `amount` mean dollars -- so asking the
+            // ASSET for its icon would draw a coin on a $100 wad. The icon comes off the VALUE instead: the
+            // largest denomination the stack could actually pay out.
+            int moneyIcon = jar?.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id)
+                ? SDG.Unturned.Currency.IconIdFor(jar.item.amount) : 0;
+            var tex = moneyIcon > 0 ? Icon(moneyIcon)
+                    : magStandUp ? AttachmentMenu.LoadItemIcon(asset.id, standUp: true)
+                    : (asset != null ? Icon(asset.id) : null);
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
@@ -2718,9 +2727,13 @@ void fragment() {
                 tile.AddChild(lbl);
             }
 
-            if (jar.item != null && (jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
+            // MONEY READS AS MONEY: "$137", not "x137" (strawberry 2026-09-14). And it shows at any value
+            // including $1, where an ordinary stack would hide its count -- the number IS the item here, so a
+            // coin with no label on it would be the one thing you cannot identify.
+            bool isMoney = jar.item != null && SDG.Unturned.Currency.IsCurrency(jar.item.id);
+            if (jar.item != null && (isMoney || jar.item.amount > 1 || asset?.IsMagazine == true) && !_magOps.Exists(o => o.mag == jar.item))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master) -- but not while its fill WHEEL is up (the wheel shows N/cap)
             {
-                var amt = new Label { Text = "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
+                var amt = new Label { Text = isMoney ? "$" + jar.item.amount : "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
                 amt.HorizontalAlignment = HorizontalAlignment.Right;
                 amt.AddThemeColorOverride("font_color", Colors.White);
                 amt.AddThemeColorOverride("font_outline_color", Colors.Black);

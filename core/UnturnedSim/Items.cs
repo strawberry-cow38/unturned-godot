@@ -79,6 +79,34 @@ namespace SDG.Unturned
         public bool tryAddItem(Item item)
         {
             if (getItemCount() >= 200) return false;
+            // MONEY COLLAPSES ON THE WAY IN. Any denomination becomes the $1 carrier at its own value, so a
+            // $100 note and a loonie land in the same stack and the stack's amount reads as dollars. Done HERE,
+            // at the single point every pickup/grant/loot path already funnels through, rather than at each of
+            // those call sites -- a conversion that has to be remembered is one that gets forgotten by the next
+            // path someone adds, and then a $50 note sits in its own slot looking like a bug.
+            if (Currency.IsCurrency(item.id))
+            {
+                int dollars = Currency.ValueOf(item.id) * System.Math.Max(1, (int)item.amount);
+                item.id = Currency.StackId;
+                item.amount = (byte)System.Math.Min(dollars, Currency.MaxPerStack);
+                int rest = dollars - item.amount;
+                if (!AddCore(item)) return false;
+                // ...and the excess spills into further stacks, the same way any oversized pickup does. amount
+                // is a byte, so $300 is two stacks; that ceiling is the wire's, not a choice made here.
+                while (rest > 0)
+                {
+                    int chunk = System.Math.Min(rest, Currency.MaxPerStack);
+                    if (!AddCore(new Item(Currency.StackId) { amount = (byte)chunk, quality = item.quality })) return true;   // bag full: keep what fitted
+                    rest -= chunk;
+                }
+                return true;
+            }
+            return AddCore(item);
+        }
+
+        bool AddCore(Item item)
+        {
+            if (getItemCount() >= 200) return false;
             // Per-item stacking: ammo (shotgun shells) stack up to their asset stackSize; most Unturned items = 1 (never stack).
             // The old global StackingEnabled option is subsumed -> it just makes the cap effectively unlimited.
             int cap = StackingEnabled ? byte.MaxValue : System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
