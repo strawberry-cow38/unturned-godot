@@ -2648,7 +2648,7 @@ void fragment() {
         // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
         // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
         // pattern, and a lil more separate, scaled up a bit too").
-        const float FanStepDeg  = 19f;    // angle between ADJACENT notes. The fan's total splay is this times
+        const float FanStepDeg  = 17f;    // angle between ADJACENT notes. The fan's total splay is this times
                                           // the gaps between notes, so it grows with the wad instead of flinging
                                           // two notes as wide as seven (strawberry: "make the fan scale with
                                           // number of notes"). At the 5-note maximum this is the +/-38 already
@@ -2660,11 +2660,14 @@ void fragment() {
                                           // hinge at the bottom instead of lying out from one at the side.
         const int   FanMaxNotes = 5;      // there are only five NOTE denominations ($5..$100), so a five-note fan
                                           // is the widest one that can ever exist -- see the reference box below.
-        const float CoinCell    = 0.24f;  // a coin's width as a fraction of the CELL's short side...
+        const float CoinCell    = 0.20f;  // a coin's width as a fraction of the CELL's short side...
         const float CoinCellX   = 0.17f;  // ...and the first coin's centre, as a fraction of the cell...
         const float CoinCellY   = 0.82f;
         const float CoinGap     = 1.05f;  // coin centre-to-centre spacing, in coin-widths
-        const float FanFill     = 0.98f;  // fraction of the cell the REFERENCE fan is scaled to fill
+        const float FanFill     = 0.88f;  // fraction of the cell the REFERENCE fan is scaled to fill.
+                                          // ⚠ THIS is the knob that keeps the fan off the frame, not the arc:
+                                          // narrowing the arc shrinks the measured box, and fit-to-cell then
+                                          // scales the notes straight back up into the border it just left.
 
         /// <summary>The icon with the art's OWN baked-in tilt taken back out, cropped tight to the art.
         ///
