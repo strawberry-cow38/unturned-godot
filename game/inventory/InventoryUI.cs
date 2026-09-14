@@ -2656,12 +2656,12 @@ void fragment() {
         // the result read as a wad rather than a fan. A TextureRect each can carry its own rotation, scale and
         // pivot, which is what an arc actually needs (strawberry 2026-09-14: "spread notes more in an arc
         // pattern, and a lil more separate, scaled up a bit too").
-        const float FanStepSame = 5f;     // angle between two notes of the SAME denomination. Much tighter than
-                                          // FanStepDeg on purpose (strawberry 2026-09-14: "collapse similar
-                                          // notes into a much tighter angle"): identical notes have no edge
-                                          // between them, so spreading a run of $100s wide just makes a bigger
-                                          // featureless blob. Bunched, they read as ONE THICK WAD of hundreds,
-                                          // which is what four $100 notes actually look like.
+        const float FanStepSame = 5f;     // the FLOOR a same-denomination gap collapses to when the fan runs out
+                                          // of room -- NOT the normal step. Identical notes have no edge between
+                                          // them, so they are the gap that can afford to give way first; but
+                                          // they only give way under pressure (strawberry 2026-09-14: "ONLY
+                                          // collapse similar when limited by space. 188 dollars/7 notes is the
+                                          // golden standard").
         const float FanStepDeg  = 17f;    // angle between adjacent notes of DIFFERENT denominations. The fan's total splay is this times
                                           // the gaps between notes, so it grows with the wad instead of flinging
                                           // two notes as wide as seven (strawberry: "make the fan scale with
@@ -2809,20 +2809,30 @@ void fragment() {
             // leaves the smallest note on top -- "smallest at the front" is the loop's own direction.
             var pieces = new System.Collections.Generic.List<(ushort Id, Texture2D Tex, Vector2 Size, Vector2 Pivot, float Rot)>();
             Vector2 noteSize = new Vector2(1f, 0.5f);   // overwritten by the first real note; only a fallback
-            // Angles first: walk the run and open the fan by a FULL step at each change of denomination, a
-            // tight one between repeats. Breakdown is largest-first, so a run of identical notes is contiguous.
+            // ⭐ EVERY GAP GETS THE FULL STEP WHILE THERE IS ROOM -- $188's five notes at 17 degrees apart is the
+            // look being matched, and a repeat is no different from any other note until space says otherwise.
+            // Collapsing is a RESPONSE TO PRESSURE: only when a full-step fan would not fit does the gap between
+            // two notes of ONE denomination tighten, because identical notes have no edge between them and so
+            // are the gap that costs least to give up. Breakdown is largest-first, so repeats are contiguous.
+            int diffGaps = 0, sameGaps = 0;
+            for (int i = 1; i < notes.Count; i++)
+                if (notes[i] == notes[i - 1]) sameGaps++; else diffGaps++;
+            float maxSpread = FanStepDeg * (FanMaxNotes - 1);
+            float sameStep = FanStepDeg;
+            if ((diffGaps + sameGaps) * FanStepDeg > maxSpread && sameGaps > 0)
+                sameStep = Mathf.Clamp((maxSpread - diffGaps * FanStepDeg) / sameGaps, FanStepSame, FanStepDeg);
+
             var angle = new float[notes.Count];
             float spread = 0f;
             for (int i = 1; i < notes.Count; i++)
             {
-                spread += notes[i] == notes[i - 1] ? FanStepSame : FanStepDeg;
+                spread += notes[i] == notes[i - 1] ? sameStep : FanStepDeg;
                 angle[i] = spread;
             }
             // ⚠ CLAMP to the reference arc. The scale is measured off a five-different-note fan, so a wad that
             // opens wider than that would hang outside the box its own size was chosen from and spill over the
             // frame -- which is exactly what raw $485 did (eight notes, 83 degrees against a 68 degree box).
             // Compressing keeps the guarantee true at ANY ceiling instead of only up to $255.
-            float maxSpread = FanStepDeg * (FanMaxNotes - 1);
             float squeeze = spread > maxSpread ? maxSpread / spread : 1f;
             for (int i = 0; i < notes.Count; i++)
             {
