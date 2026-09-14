@@ -2656,12 +2656,15 @@ void fragment() {
         const float FanHingeOut = 0.12f;  // how far PAST a note's short edge the hinge sits, in note-widths.
                                           // 0 pins every note end to one pixel; a little slack is what stops the
                                           // narrow ends collapsing into each other ("a lil more separate").
-        const float CoinScale   = 0.24f;  // a coin's width as a fraction of a NOTE's -- "scale the coins down a bit"
-        const float CoinGap     = 0.80f;  // coin centre-to-centre spacing, in coin-widths (<1 = they overlap)
-        const float CoinShiftX  = 0.10f;  // coins sit this far along the fan from the hinge, in note-widths...
-        const float CoinDrop    = 0.62f;  // ...and this far below it: the corner under the hinge is the one part
-                                          // of the cell the spread never reaches, so the coins cost no room at all
-        const float FanFill     = 0.98f;  // fraction of the cell the finished fan is scaled to fill
+        const float FanBaseDeg  = -90f;   // the whole fan turned a quarter-turn LEFT: the notes stand UP off a
+                                          // hinge at the bottom instead of lying out from one at the side.
+        const int   FanMaxNotes = 5;      // there are only five NOTE denominations ($5..$100), so a five-note fan
+                                          // is the widest one that can ever exist -- see the reference box below.
+        const float CoinCell    = 0.24f;  // a coin's width as a fraction of the CELL's short side...
+        const float CoinCellX   = 0.17f;  // ...and the first coin's centre, as a fraction of the cell...
+        const float CoinCellY   = 0.82f;
+        const float CoinGap     = 1.05f;  // coin centre-to-centre spacing, in coin-widths
+        const float FanFill     = 0.98f;  // fraction of the cell the REFERENCE fan is scaled to fill
 
         /// <summary>The icon with the art's OWN baked-in tilt taken back out, cropped tight to the art.
         ///
@@ -2786,72 +2789,91 @@ void fragment() {
             foreach (var id in all) (SDG.Unturned.Currency.ValueOf(id) >= 5 ? notes : coins).Add(id);
 
             // Back to front. Breakdown is largest-first and the largest belongs BEHIND, so building in order
-            // leaves the smallest note on top -- "smallest at the front" is the loop's own direction. Coins go
-            // last of all so they sit in front of everything.
+            // leaves the smallest note on top -- "smallest at the front" is the loop's own direction.
             var pieces = new System.Collections.Generic.List<(ushort Id, Texture2D Tex, Vector2 Size, Vector2 Pivot, float Rot)>();
+            Vector2 noteSize = new Vector2(1f, 0.5f);   // overwritten by the first real note; only a fallback
             for (int i = 0; i < notes.Count; i++)
             {
                 var t = UprightIcon(notes[i]);
                 if (t == null) continue;   // absent art is SKIPPED, never substituted -- a gap is honest
-                var size = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                noteSize = new Vector2(1f, t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
                 float f = notes.Count == 1 ? 0.5f : i / (float)(notes.Count - 1);
                 float arc = FanStepDeg * (notes.Count - 1) * 0.5f;   // one note => 0 => it sits level
-                pieces.Add((notes[i], t, size, new Vector2(-FanHingeOut, size.Y * 0.5f),
-                            Mathf.Lerp(-arc, arc, f)));
+                pieces.Add((notes[i], t, noteSize, new Vector2(-FanHingeOut, noteSize.Y * 0.5f),
+                            FanBaseDeg + Mathf.Lerp(-arc, arc, f)));
             }
-            for (int i = 0; i < coins.Count; i++)
-            {
-                var t = UprightIcon(coins[i]);
-                if (t == null) continue;
-                var size = new Vector2(CoinScale, CoinScale * t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
-                // Spread side by side so two of them read as two coins; a single coin sits centred.
-                float spread = coins.Count == 1 ? 0f
-                             : (i / (float)(coins.Count - 1) - 0.5f) * CoinScale * CoinGap * coins.Count;
-                // Pivot at the disc's CENTRE, offset by the spread, so every coin still hangs off the one hinge.
-                pieces.Add((coins[i], t, size, new Vector2(size.X * 0.5f - spread - CoinShiftX, size.Y * 0.5f - CoinDrop), 0f));
-            }
-            if (pieces.Count == 0) return;
 
-            // Union AABB of every rotated piece, measured from the hinge. A Control rotates about PivotOffset,
-            // so a corner sits at hinge + Rot(theta) * (corner - pivot) -- independent of where the hinge lands,
-            // which is exactly why the box can be measured before the hinge is chosen.
-            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-            foreach (var it in pieces)
+            // A Control rotates about PivotOffset, so a corner sits at hinge + Rot(theta) * (corner - pivot) --
+            // independent of where the hinge lands, which is why a box can be measured before a hinge is chosen.
+            void Accumulate(Vector2 size, Vector2 pivot, float rot,
+                            ref float minX, ref float minY, ref float maxX, ref float maxY)
             {
-                float c = Mathf.Cos(Mathf.DegToRad(it.Rot)), s = Mathf.Sin(Mathf.DegToRad(it.Rot));
+                float c = Mathf.Cos(Mathf.DegToRad(rot)), sn = Mathf.Sin(Mathf.DegToRad(rot));
                 for (int k = 0; k < 4; k++)
                 {
-                    var l = new Vector2((k & 1) == 0 ? 0f : it.Size.X, (k & 2) == 0 ? 0f : it.Size.Y) - it.Pivot;
-                    var q = new Vector2(l.X * c - l.Y * s, l.X * s + l.Y * c);
+                    var l = new Vector2((k & 1) == 0 ? 0f : size.X, (k & 2) == 0 ? 0f : size.Y) - pivot;
+                    var q = new Vector2(l.X * c - l.Y * sn, l.X * sn + l.Y * c);
                     minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X);
                     minY = Mathf.Min(minY, q.Y); maxY = Mathf.Max(maxY, q.Y);
                 }
             }
-            float scale = Mathf.Min(w / Mathf.Max(maxX - minX, 0.001f), h / Mathf.Max(maxY - minY, 0.001f)) * FanFill;
-            // Centre the MEASURED box in the cell; the hinge ends up wherever that puts it.
-            var hinge = new Vector2(w * 0.5f - (minX + maxX) * 0.5f * scale,
-                                    h * 0.5f - (minY + maxY) * 0.5f * scale);
-            if (dbg) Log.Print($"[fan]   box ({minX:0.00},{minY:0.00})..({maxX:0.00},{maxY:0.00}) scale={scale:0.0} hinge={hinge}");
 
-            foreach (var it in pieces)
+            // ⭐ THE BOX IS MEASURED OFF A FIVE-NOTE REFERENCE FAN, NOT OFF THE WALLET IN HAND, so scale and
+            // hinge are the SAME for every value (strawberry 2026-09-14: "the note size should stay the same too
+            // (the $188 dollar size)"). Measuring the actual fan made a $15 note draw bigger than a $188 one,
+            // because a smaller arc left spare room and fit-to-cell claimed it -- which meant the notes changed
+            // size as you spent. Fixing the reference pins them.
+            if (pieces.Count > 0)
+            {
+                float rMinX = float.MaxValue, rMinY = float.MaxValue, rMaxX = float.MinValue, rMaxY = float.MinValue;
+                float refArc = FanStepDeg * (FanMaxNotes - 1) * 0.5f;
+                var refPivot = new Vector2(-FanHingeOut, noteSize.Y * 0.5f);
+                for (int i = 0; i < FanMaxNotes; i++)
+                    Accumulate(noteSize, refPivot,
+                               FanBaseDeg + Mathf.Lerp(-refArc, refArc, i / (float)(FanMaxNotes - 1)),
+                               ref rMinX, ref rMinY, ref rMaxX, ref rMaxY);
+
+                float scale = Mathf.Min(w / Mathf.Max(rMaxX - rMinX, 0.001f),
+                                        h / Mathf.Max(rMaxY - rMinY, 0.001f)) * FanFill;
+                var hinge = new Vector2(w * 0.5f - (rMinX + rMaxX) * 0.5f * scale,
+                                        h * 0.5f - (rMinY + rMaxY) * 0.5f * scale);
+                if (dbg) Log.Print($"[fan]   ref ({rMinX:0.00},{rMinY:0.00})..({rMaxX:0.00},{rMaxY:0.00}) scale={scale:0.0} hinge={hinge}");
+                foreach (var it in pieces)
+                    Place(it.Tex, it.Size * scale, it.Pivot * scale, hinge, it.Rot, it.Id);
+            }
+
+            // ⭐ COINS ARE A CONSTANT OF THE TILE, NOT PART OF THE FAN (strawberry: "the coins should have a
+            // fixed spot/size no matter what"). Laid out straight in CELL fractions, so they neither move nor
+            // resize with the wad, and they are added LAST so they stay in front of the notes.
+            float cs = Mathf.Min(w, h) * CoinCell;
+            for (int i = 0; i < coins.Count; i++)
+            {
+                var t = UprightIcon(coins[i]);
+                if (t == null) continue;
+                var size = new Vector2(cs, cs * t.GetSize().Y / Mathf.Max(t.GetSize().X, 1f));
+                var centre = new Vector2(w * CoinCellX + i * cs * CoinGap, h * CoinCellY);
+                Place(t, size, size * 0.5f, centre, 0f, coins[i]);   // a disc does not fan
+            }
+
+            void Place(Texture2D tex, Vector2 size, Vector2 pivot, Vector2 at, float rot, ushort id)
             {
                 // Build, PARENT, and only THEN size. A TextureRect's minimum size is its texture until ExpandMode
                 // says otherwise, and entering the tree runs a layout pass that snaps Size back up to that minimum
                 // -- so a Size written in the object initializer is silently replaced by the full 256px icon.
                 var r = new TextureRect
                 {
-                    Texture = it.Tex,
+                    Texture = tex,
                     ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                     StretchMode = TextureRect.StretchModeEnum.Scale,   // the control IS the art now: no letterboxing
                     MouseFilter = Control.MouseFilterEnum.Ignore,
                 };
                 tile.AddChild(r);
                 r.CustomMinimumSize = Vector2.Zero;
-                r.Size = it.Size * scale;
-                r.PivotOffset = it.Pivot * scale;
-                r.Position = hinge - r.PivotOffset;
-                r.RotationDegrees = it.Rot;
-                if (dbg) Log.Print($"[fan]   {it.Id} tex={it.Tex.GetSize()} size={r.Size} pos={r.Position} rot={it.Rot:0}");
+                r.Size = size;
+                r.PivotOffset = pivot;
+                r.Position = at - pivot;
+                r.RotationDegrees = rot;
+                if (dbg) Log.Print($"[fan]   {id} size={r.Size} pos={r.Position} rot={rot:0}");
             }
         }
 
