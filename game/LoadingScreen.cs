@@ -17,6 +17,18 @@ namespace UnturnedGodot
 
         static readonly string[] LaunchPool = { "pei", "washington", "russia", "germany", "yukon" };
 
+        /// <summary>Who took the shot. These are COMMUNITY screenshots -- retail credits each one on screen and
+        /// carries the author in the filename, so shipping the art without the name would be taking something
+        /// that was given on those terms. Keyed by map, matching loadscreen_&lt;key&gt;.jpg.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, string> ShotCredit = new()
+        {
+            ["pei"]        = "PEI Lighthouse Sunrise by BoomViz",
+            ["washington"] = "Washington Landscape by Phobia",
+            ["russia"]     = "Russia Landscape by Toste",
+            ["yukon"]      = "Yukon Cabin by cucuycharles",
+            ["germany"]    = "Germany Landscape by That One Beach Guy",
+        };
+
         static readonly string[] Tips =
         {
             "Zombies are drawn to gunfire — a silencer keeps you hidden.",
@@ -35,6 +47,11 @@ namespace UnturnedGodot
         Control _root;
         int _total = 1, _done;
         double _timingsHold = -1.0;
+        /// <summary>Size of the background that actually loaded (0,0 = none). Test seam -- see the note at the
+        /// load site for why this is asserted instead of rendered.</summary>
+        public Vector2I DebugShotSize { get; private set; }
+        public string DebugCredit { get; private set; }
+
         bool _loading = true, _launch;
         float _barL, _barW, _barH, _yMap, _y1, _y2;
 
@@ -90,7 +107,17 @@ namespace UnturnedGodot
             _launch = mode == "launch";
             string mapKey = System.Environment.GetEnvironmentVariable("UG_LOADMAP") ?? "pei";
             string bgKey = _launch ? LaunchPool[(int)(GD.Randi() % (uint)LaunchPool.Length)] : mapKey;
-            var shot = LoadBg($"mappreview_{bgKey}.png");
+            // ⭐ THE 4K SHOT FIRST, the 320x180 map preview only as a fallback (strawberry 2026-09-15: "see if
+            // u can find higher resolution images for the loading screens. they should be in the game source").
+            // They are: retail ships LoadingScreens/ -- 39 community screenshots at 3840x2160, credited to their
+            // authors in the FILENAME. mappreview_*.png is the map-picker THUMBNAIL and a TV screen texture as
+            // well as this background, so it stays 320x180 where being small is right, and the big art lands
+            // beside it under its own name rather than bloating those two for no gain.
+            var shot = LoadBg($"loadscreen_{bgKey}.jpg") ?? LoadBg($"mappreview_{bgKey}.png");
+            // Harness seams: WHICH art resolved, at what size. A loading screen cannot be captured by the --shot
+            // path (it is torn down before the frame lands), so "the 4K art is really being used" is asserted
+            // rather than eyeballed -- and asserted for EVERY map, which one screenshot could not have shown.
+            DebugShotSize = shot != null ? new Vector2I((int)shot.GetSize().X, (int)shot.GetSize().Y) : Vector2I.Zero;
             if (shot != null)
             {
                 var shotRect = new TextureRect { Texture = shot, StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize };
@@ -130,6 +157,23 @@ namespace UnturnedGodot
             tip.AddThemeFontSizeOverride("font_size", 20); tip.AddThemeColorOverride("font_color", new Color(0.86f, 0.88f, 0.92f));
             tip.AddThemeColorOverride("font_outline_color", Colors.Black); tip.AddThemeConstantOverride("outline_size", 4);
             _root.AddChild(tip);
+
+            // THE PHOTO CREDIT. Bottom-right, small and dim -- present because these are somebody's screenshots
+            // and retail names them on screen, not because the layout wanted another label. Only drawn when the
+            // shot that actually loaded is one of the credited ones, so a fallback to the old map preview says
+            // nothing rather than crediting the wrong person.
+            if (shot != null && ShotCredit.TryGetValue(bgKey, out string credit))
+            {
+                var by = new Label { Text = credit, HorizontalAlignment = HorizontalAlignment.Right };
+                by.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
+                by.Position = new Vector2(-360f, -34f); by.Size = new Vector2(340f, 22f);
+                by.AddThemeFontSizeOverride("font_size", 13);
+                by.AddThemeColorOverride("font_color", new Color(0.78f, 0.80f, 0.84f, 0.65f));
+                by.AddThemeColorOverride("font_outline_color", Colors.Black);
+                by.AddThemeConstantOverride("outline_size", 3);
+                _root.AddChild(by);
+                DebugCredit = credit;
+            }
 
             // ON A PLATE, LIKE EVERYTHING ELSE (strawberry 2026-09-09: "default godot buttons/labels are ugly").
             // This readout hangs over whatever screen you land on for eight seconds after every load, and it was

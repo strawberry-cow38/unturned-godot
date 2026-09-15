@@ -10,6 +10,45 @@ namespace UnturnedGodot.Testing
     // so it can only be COVERED, never hidden. That makes the cover load-bearing in a way it was not before, and
     // the failure mode of holding it too long (a player stuck staring at a loading screen) is far worse than the
     // flash it replaces. So both directions are checked: it waits, and it gives up waiting.
+    // THE LOADING ART IS THE RETAIL 4K SHOT, NOT THE 320x180 MAP THUMBNAIL (strawberry 2026-09-15: "see if u can
+    // find higher resolution images for the loading screens. they should be in the game source").
+    //
+    // They are -- retail ships LoadingScreens/ at 3840x2160. This is a test rather than a render because the
+    // loading cover is torn down before a --shot frame lands, and because the interesting claim is about ALL FIVE
+    // maps: a screenshot proves one of them and says nothing about the other four.
+    public sealed class LoadingScreenArtTests : GameTest
+    {
+        public override string Name => "load.art_is_high_res";
+
+        public override IEnumerable<Step> Run()
+        {
+            string prevMap = System.Environment.GetEnvironmentVariable("UG_LOADMAP");
+            string prevMode = System.Environment.GetEnvironmentVariable("UG_LOADMODE");
+            System.Environment.SetEnvironmentVariable("UG_LOADMODE", "map");   // launch mode picks at RANDOM
+
+            foreach (string key in new[] { "pei", "washington", "russia", "yukon", "germany" })
+            {
+                System.Environment.SetEnvironmentVariable("UG_LOADMAP", key);
+                var ls = new LoadingScreen();
+                World.AddChild(ls);
+                yield return Ticks(2);
+
+                var sz = ls.DebugShotSize;
+                // > 1920 wide, not "== 3840": the claim is "far bigger than the 320x180 thumbnail it replaced",
+                // and pinning the exact pixels would fail on a re-export at a different size for no real reason.
+                T.Check($"{key}: the loading art loaded ({sz.X}x{sz.Y})", sz.X > 0 && sz.Y > 0);
+                T.Check($"{key}: ...and it is the high-res shot, not the 320x180 preview", sz.X > 1920);
+                T.Check($"{key}: ...credited to its author ({ls.DebugCredit})", !string.IsNullOrEmpty(ls.DebugCredit));
+
+                ls.QueueFree();
+                yield return Ticks(1);
+            }
+
+            System.Environment.SetEnvironmentVariable("UG_LOADMAP", prevMap);
+            System.Environment.SetEnvironmentVariable("UG_LOADMODE", prevMode);
+        }
+    }
+
     public sealed class LoadingCoverTests : GameTest
     {
         public override string Name => "load.cover_outlasts_shader_warm";
