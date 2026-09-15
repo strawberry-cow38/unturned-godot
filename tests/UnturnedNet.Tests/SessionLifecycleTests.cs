@@ -133,6 +133,23 @@ namespace UnturnedNet.Tests
                 Assert.That(NetRejectText.IsRetryable(r), Is.False, $"{r} cannot be fixed by trying again");
         }
 
+        // The retry decision, which the client uses to tell "wait, it will clear" from "no, and it will stay
+        // no". Retrying a ban is a progress bar over a definite refusal; NOT retrying a starting server sends
+        // the player back to the menu a second before it would have let them in.
+        [Test]
+        public void RetryDecisionRespectsBothTheReasonAndTheBudget()
+        {
+            Assert.That(NetRejectText.ShouldRetryReject(NetRejectReason.ServerStarting, 0, 4), Is.True);
+            Assert.That(NetRejectText.ShouldRetryReject(NetRejectReason.ServerFull, 3, 4), Is.True, "the last attempt in the budget is still an attempt");
+            Assert.That(NetRejectText.ShouldRetryReject(NetRejectReason.ServerStarting, 4, 4), Is.False, "the budget is a limit, not a suggestion");
+            foreach (var r in new[] { NetRejectReason.VersionMismatch, NetRejectReason.Banned,
+                                      NetRejectReason.ContentMismatch, NetRejectReason.WrongPassword })
+                Assert.That(NetRejectText.ShouldRetryReject(r, 0, 4), Is.False, $"{r} must never be retried, however much budget is left");
+            // A zero budget must stop everything, including the retryable reasons -- otherwise "disable retry"
+            // silently does not.
+            Assert.That(NetRejectText.ShouldRetryReject(NetRejectReason.ServerStarting, 0, 0), Is.False);
+        }
+
         // Every reason must produce its own sentence. A default that silently covers a new enum value is how
         // a future reason ships showing the generic "could not reach the server" and looks like a timeout.
         [Test]

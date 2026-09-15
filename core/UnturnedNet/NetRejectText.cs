@@ -21,6 +21,14 @@ namespace UnturnedGodot.Net
             reason == NetRejectReason.ServerStarting || reason == NetRejectReason.ServerFull;
 
         /// <summary>
+        /// Whether a refusal should be re-attempted, given how many attempts have already been spent.
+        /// Pure, so the decision is testable without standing up a session -- the branch it guards is one
+        /// the player only ever sees on a server that happens to be starting up or full at that moment.
+        /// </summary>
+        public static bool ShouldRetryReject(NetRejectReason reason, int attemptsSoFar, int limit) =>
+            IsRetryable(reason) && attemptsSoFar < limit;
+
+        /// <summary>
         /// One line, addressed to the player, naming the fix where there is one.
         /// <paramref name="serverVersion"/> is the refusing server's protocol version, 0 when it did not
         /// say (any server older than v51). <paramref name="ourVersion"/> is this build's.

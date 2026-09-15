@@ -85,6 +85,10 @@ namespace UnturnedGodot
         bool _leaving;                 // latched once we've decided to bail -- ReloadCurrentScene is deferred, so _Process runs again
         /// <summary>Seconds of no link before the client gives up and returns to the menu (strawberry 2026-09-15).</summary>
         public const float LinkTimeoutSeconds = 30f;
+        int _rejectRetries;            // retryable refusals survived so far
+        string _lastRetryReason = "";  // shown while retrying, so a wait is explained rather than silent
+        /// <summary>How many times a RETRYABLE refusal (starting up / full) is re-attempted before giving up.</summary>
+        public const int RejectRetryLimit = 4;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
@@ -730,6 +734,8 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             if (Client.State == NetSessionState.Connected)
                 return $"connecting to {Host}:{Port}   ·   {Client.State}   ·   players {Client.Players.Count}";
             int left = Mathf.Max(0, Mathf.CeilToInt(LinkTimeoutSeconds - _linkDownT));
+            if (_rejectRetries > 0)
+                return $"{_lastRetryReason}   ·   retrying ({_rejectRetries} of {RejectRetryLimit})";
             return $"connecting to {Host}:{Port}   ·   {Client.State}   ·   giving up in {left}s";
         }
 
@@ -768,6 +774,19 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             var sess = Client.Session;
             if (sess != null && sess.DisconnectReason == NetDisconnectReason.Rejected)
             {
+                // A RETRYABLE refusal is the one case where bouncing to the menu is the wrong answer: "server
+                // is still starting" and "server is full" are both states that clear on their own, and the
+                // player's correct move is to wait, which the game can do for them. Everything else -- wrong
+                // version, banned, wrong content -- cannot be fixed by asking again, and retrying those would
+                // be a progress bar over a definite no.
+                if (NetRejectText.ShouldRetryReject(sess.RejectReason, _rejectRetries, RejectRetryLimit))
+                {
+                    _rejectRetries++;
+                    _lastRetryReason = NetRejectText.Describe(sess.RejectReason, sess.RejectServerVersion, NetProtocol.Version);
+                    _linkDownT = 0f;
+                    Client.Connect();
+                    return;
+                }
                 LeaveToMenu(NetRejectText.Describe(sess.RejectReason, sess.RejectServerVersion, NetProtocol.Version));
                 return;
             }

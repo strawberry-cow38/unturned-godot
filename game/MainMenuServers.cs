@@ -1,4 +1,5 @@
 using Godot;
+using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
@@ -307,7 +308,15 @@ namespace UnturnedGodot
                     var dim = new Color(0.5f, 0.5f, 0.5f);
                     var lit = new Color(0.9f, 0.9f, 0.88f);
                     if (IsInstanceValid(pingL)) { pingL.Text = ok ? $"{ping} ms" : "—"; pingL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
-                    if (IsInstanceValid(playersL)) { playersL.Text = mismatch ? "mismatch" : (ok ? $"{players}/{(max > 0 ? max : sv.Max)}" : "offline"); playersL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
+                    // The row and the join dialog say the SAME word for the same failure. Two vocabularies for
+                    // one state ("mismatch" here, "different game content" there) is how a player concludes
+                    // they are two different problems.
+                    if (IsInstanceValid(playersL))
+                    {
+                        playersL.Text = mismatch ? NetRejectText.Short(NetRejectReason.ContentMismatch)
+                                      : (ok ? $"{players}/{(max > 0 ? max : sv.Max)}" : NetRejectText.Short(NetRejectReason.None));
+                        playersL.AddThemeColorOverride("font_color", mismatch ? dim : lit);
+                    }
                     if (IsInstanceValid(name)) name.AddThemeColorOverride("font_color", mismatch ? dim : new Color(0.95f, 0.95f, 0.95f));
                     if (_selectedServer == sv) { UpdateSelectedLive(ok, ping, players, max > 0 ? max : sv.Max, mismatch); RefreshJoinButton(); }
                     if (_sortKey == "Ping" || _sortKey == "Players") ApplySort();   // the values it is sorted BY just changed
@@ -498,12 +507,6 @@ namespace UnturnedGodot
             return outp.Length > maxChars ? outp.Substring(0, maxChars) : outp;
         }
 
-        // back-compat shim for the existing callers that only want the five core values
-        static (bool ok, int ping, int players, int max, ulong version) StatusQuery(string host, ushort port, uint nonce)
-        {
-            var st = StatusQueryFull(host, port, nonce);
-            return (st.Ok, st.Ping, st.Players, st.Max, st.Version);
-        }
 
         void UpdateSelectedLive(bool ok, int ping, int players, int max, bool mismatch)
         {

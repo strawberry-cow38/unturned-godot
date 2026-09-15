@@ -26,7 +26,6 @@ namespace UnturnedGodot
         Button _pcConnect;
         int _probeGen;                       // bumps on every new attempt + on Back: a late worker answering for an abandoned attempt must not write to the UI
         public const int ConnectAttempts = 4;         // retail-ish: a few tries before giving up, each one reported
-        public const double ConnectAttemptSeconds = 1.5;
 
         /// <summary>The address a successful probe cleared, handed to the real join.</summary>
         public System.Action<string, ushort, string> OnDirectConnect;   // host, port, password
