@@ -40,6 +40,47 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // ⭐ SUSPENDED IS NOT FALLING (strawberry 2026-09-15: "i wedged myself between two crates (not stuck) i was
+    // suspended for a bit, but then when i landed i took fall damage and legs broke").
+    //
+    // Gravity accumulates into the SIM's velocity every airborne tick. Wedged between two crates the capsule is
+    // not on a floor, so that number runs away toward terminal (-100 m/s) while the body is held by the geometry
+    // and actually moves nowhere -- and the entire fictional speed is cashed in the moment you touch down.
+    //
+    // The control is the two tests above: a real 40 m drop must STILL hurt. A fix that simply stopped booking
+    // fall damage would pass this test and fail those, which is why it is worth having all three.
+    public class PlayerWedgedTakesNoFallDamage : GameTest
+    {
+        public override string Name => "player.wedged_no_fall_damage";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+
+            // Two slabs with a gap narrower than the capsule, well above the ground: the player lands on their
+            // inner faces and is held there, off the floor, exactly as the crates did it.
+            foreach (float x in new[] { -0.45f, 0.45f })
+            {
+                var wall = new StaticBody3D { CollisionLayer = 1u << 0 };
+                wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.6f, 6f, 4f) } });
+                World.AddChild(wall);
+                wall.GlobalPosition = new Vector3(x, 4f, 0f);
+            }
+
+            var p = Rigs.Player(World, new Vector3(0f, 6.5f, 0f));
+            float start = p.Health;
+            yield return Ticks(4);
+
+            // Hang there long enough that the ACCUMULATOR would have reached terminal velocity -- 100 m/s at
+            // 29.43 m/s^2 is ~3.4 s, so 5 s leaves no doubt it is pinned at the worst possible value.
+            yield return Until(() => false, maxSimSeconds: 5);
+
+            T.Check($"suspended between two slabs, still at full health ({p.Health:0}/{start:0})", p.Health >= start);
+            T.Check("...and legs are not broken", !p.Broken);
+            T.Check($"...while never having touched the ground (y={p.GlobalPosition.Y:0.0} above 1)",
+                    p.GlobalPosition.Y > 1f);
+        }
+    }
+
     // Port of the --brokentest BrokenTestDriver: a 40 m fall breaks legs -> a forced SPRINT is demoted to STAND
     // (radius 12, not the SPRINT 20) -> a Medkit (Bones_Modifier Heal) mends -> sprint works again (radius 20).
     public class PlayerBrokenLegsMend : GameTest

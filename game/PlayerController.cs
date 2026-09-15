@@ -5142,6 +5142,10 @@ namespace UnturnedGodot
             if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, broken={Broken}"); TakeDamage(dmg); }
         }
 
+        // The last speed at which the capsule was REALLY descending, carried to the landing tick -- see
+        // StepMoveOnce. Zeroed whenever grounded, so it can only ever describe the fall in progress.
+        float _fallVy;
+
         float _grenadeCd;
 
         // DamageTool.explode (bounded): every zombie within radius takes zombieDamage * (1 - range/radius) -- LINEAR
@@ -12145,7 +12149,28 @@ namespace UnturnedGodot
             // over the side of a ship you are still standing squarely on.
             RideDeckRotation(grounded, delta);
             MoveAndSlide();
-            verticalVel = v.y;
+
+            // ⭐ FALL DAMAGE IS MEASURED OFF THE REAL DESCENT, NOT THE INTENDED ONE (strawberry 2026-09-15:
+            // "i wedged myself between two crates (not stuck) i was suspended for a bit, but then when i landed
+            // i took fall damage and legs broke").
+            //
+            // `v.y` is the SIM's velocity -- an accumulator that gravity adds to every airborne tick. Wedged
+            // between two crates you are not on a floor, so it keeps accumulating toward terminal (-100 m/s)
+            // while the capsule is held by the geometry and actually moves nowhere. Slip free and the whole
+            // fictional speed is cashed in at once: max damage and broken legs for a fall you never took.
+            // GetRealVelocity is what MoveAndSlide ACHIEVED after collisions, so a blocked body reads ~0.
+            //
+            // The landing tick itself is no good to read: MoveAndSlide has already stopped the body against the
+            // ground, so its real velocity is ~0 on exactly the frame the damage is wanted. So the last
+            // genuinely-descending speed is remembered while airborne and spent on touchdown.
+            float realVy = GetRealVelocity().Y;
+            if (grounded) _fallVy = 0f;                                    // on a floor: nothing is being fallen
+            else if (realVy < -0.5f) _fallVy = realVy;                     // actually descending -> this is the speed that counts
+            // ⚠ NO FALLBACK TO v.y. I wrote one ("use the sim's number if nothing was really fallen") and it put
+            // the whole bug straight back: a FULLY wedged player never descends at all, so the fallback is
+            // exactly the case that reaches for the accumulator. If the capsule never really went down, there
+            // was no fall -- that is the whole claim, and it has to hold when the real speed is zero.
+            verticalVel = _fallVy;
         }
 
         PhysicsRayQueryParameters3D _deckRayQ;
