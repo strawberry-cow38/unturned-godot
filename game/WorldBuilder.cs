@@ -1311,6 +1311,7 @@ namespace UnturnedGodot
                 LightTap placedTap = null;      // wire-able power tap on this light's base (INPUT intact / OUTPUT once smashed)
                 TVDevice placedTV = null;        // captured so the body collider below can meta-link the look-ray to it
                 RadioDevice placedRadio = null;  // same route: look-ray -> F toggle, and the break hook below
+                VendingMachine placedVendor = null;   // Vendor_0/1 -> a powered drinks machine, look-ray + F to buy
                 Toaster placedToaster = null;    // same, for the bread pop on a surviving first shot
                 var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
@@ -1397,6 +1398,11 @@ namespace UnturnedGodot
                     placedRadio = RadioDevice.Make(mainMi, name);
                     root.AddChild(placedRadio);
                     radios++;
+                }
+                if (VendingMachine.IsVendorProp(name) && mode != WorldMode.Dedicated)
+                {
+                    placedVendor = VendingMachine.Make(mainMi, name);
+                    if (placedVendor != null) { root.AddChild(placedVendor); vendors++; }
                 }
                 if (TVDevice.IsDeviceProp(name) && mode != WorldMode.Dedicated)
                 {
@@ -1598,6 +1604,7 @@ namespace UnturnedGodot
                         if (placedIndoorLamp != null && LampLight.IsToggle(placedIndoorLamp.LampKind)) body.SetMeta(LampLight.LookMeta, placedIndoorLamp);   // look-at the standing/desk lamp body -> its LampLight (F on/off + outline)
                         if (placedMonitor != null) body.SetMeta(HeartMonitor.HitMeta, placedMonitor);   // same route for the patient monitor
                         if (placedRadio != null) body.SetMeta(RadioDevice.HitMeta, placedRadio);   // look-at the radio body -> its device (F on/off)
+                        if (placedVendor != null) body.SetMeta(VendingMachine.HitMeta, placedVendor);   // look-at a drinks machine -> its device (F buys)
                         if (propSeats != null && propSeats.Count > 0)
                         {   // look-at a chair/couch/bench body -> ITS seats (F sits in the nearest one). An array,
                             // like the traffic signal's heads: one collider, several interactables on it.
