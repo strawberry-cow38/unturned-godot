@@ -1889,16 +1889,54 @@ namespace UnturnedGodot
                     byte U8() => vd[vp++];
                     ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
                     float F32() { var v = System.BitConverter.ToSingle(vd, vp); vp += 4; return v; }
-                    void RStr() { int n = U8(); vp += n; }
+                    string RStr() { int n = U8(); var sv = System.Text.Encoding.UTF8.GetString(vd, vp, n); vp += n; return sv; }
                     byte ver = U8();
                     if (ver > 1 && ver < 3) vp += 8;   // SteamID
                     byte tcount = U8();
+                    // ⭐ READ THE TIERS, don't assume them. Each table is a weighted list of KINDS -- Farm is
+                    // "Quad" at 0.667 and "Tractor" at 0.333 -- and this parser used to skip straight past the
+                    // names and chances, leaving the spawner to hardcode one vehicle per table. That is why every
+                    // Farm point in the world was a tractor and campgrounds were full of them (strawberry
+                    // 2026-09-15), when two in three should have been quads.
+                    var vehTiers = new System.Collections.Generic.List<System.Collections.Generic.List<(float chance, string name)>>();
                     for (int t = 0; t < tcount; t++)
                     {
-                        vp += 3; RStr();                 // color + table name
+                        vp += 3; RStr();                 // colour + table name
                         if (ver > 3) vp += 2;            // tableID
                         byte tiers = U8();
-                        for (int ti = 0; ti < tiers; ti++) { RStr(); vp += 4; byte sc = U8(); vp += sc * 2; }
+                        var list = new System.Collections.Generic.List<(float, string)>();
+                        for (int ti = 0; ti < tiers; ti++)
+                        {
+                            string tn = RStr();
+                            float ch = F32();
+                            byte sc = U8(); vp += sc * 2;   // the ids themselves are retail asset ids, not ours
+                            list.Add((ch, tn));
+                        }
+                        vehTiers.Add(list);
+                    }
+
+                    /// pick a tier by its real chance, DETERMINISTICALLY per spawn point so the same point holds
+                    /// the same vehicle every load (a world that reshuffles its cars on reload reads as a bug).
+                    string TierFor(int table, int point)
+                    {
+                        if (table < 0 || table >= vehTiers.Count) return null;
+                        var tl = vehTiers[table];
+                        // ⚠⚠ ONLY WHERE THERE IS A CHOICE. A tier name is a label within its own table, not a
+                        // vehicle name: Fire's single tier is called "Truck" and Civilian's pickup tier is ALSO
+                        // called "Truck", and Police and Medic both call theirs "Car". Trusting the name on a
+                        // one-tier table puts a civilian pickup at every fire station. Where a table has one
+                        // tier the TABLE is the vehicle, and the per-table default below is already right.
+                        if (tl.Count < 2) return null;
+                        float total = 0f; foreach (var e in tl) total += e.chance;
+                        if (total <= 0f) return tl[point % tl.Count].name;
+                        // Knuth multiplicative mix -> stable per index, no RNG state to thread through the build.
+                        // ⚠ The HIGH bits. A multiplicative hash's low bits are its worst, and `% 100000` reads
+                        // exactly those -- measured over 1000 indices the low-bit form spreads 12 across ten
+                        // buckets where the high-bit form spreads 2. Both are usable; this one is free.
+                        uint h = (uint)(point * 2654435761u);
+                        float acc = ((h >> 16) & 0xFFFFu) / 65536f * total;
+                        foreach (var e in tl) { acc -= e.chance; if (acc <= 0f) return e.name; }
+                        return tl[tl.Count - 1].name;
                     }
                     ushort pcount = U16();
                     for (int i = 0; i < pcount; i++)
@@ -1936,16 +1974,25 @@ namespace UnturnedGodot
                         }
                         else   // drivable: Civilian -> real civilian-car pool, Military -> humvee, Farm -> jeep stand-in (no tractor mesh yet)
                         {
-                            vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
-                            {
-                                0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf, wagon and car_trailer are command-only, excluded)
-                                1 => "police",                                                              // Police
-                                2 => "firetruck",                                                           // Fire
-                                3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
-                                4 => "ambulance",                                                           // Medic -> drivable ambulance
-                                5 => "tractor",                                                             // Farm -> drivable tractor
-                                _ => "quad",                                                                // fallback
-                            };
+                            // ⭐ THE TABLE'S OWN TIER DECIDES, by the chance the map author wrote. Every tier name
+                            // PEI uses maps onto a vehicle we can build -- Offroader/Hatchback/Truck/Sedan/Van/
+                            // Roadster, Ural/Humvee/APC/Jeep, Quad/Tractor -- so this is a lookup, not a guess.
+                            // It also fixes a second case of the same bug nobody had reported: Civilian was
+                            // (i % 6), a flat sixth each, where the data says Roadster is 6% and Offroader 20%.
+                            string tier = TierFor(type, i);
+                            vn = tier != null ? tier.ToLowerInvariant().Replace(' ', '_') : null;
+                            // ⚠ The guard is load-bearing: BuildByName falls back to a JEEP for any name it does
+                            // not know, so an unmapped tier would quietly fill the map with jeeps and look like a
+                            // spawn bug rather than a missing model.
+                            if (vn == null || System.Array.IndexOf(Vehicle.SpecNames, vn) < 0)
+                                vn = type switch   // no tier, or a name we cannot build -> the old per-table default
+                                {
+                                    0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },
+                                    1 => "police", 2 => "firetruck",
+                                    3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },
+                                    4 => "ambulance", 5 => "tractor",
+                                    _ => "quad",
+                                };
                             long _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                             var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
                             long _t1 = System.Diagnostics.Stopwatch.GetTimestamp();
