@@ -42,6 +42,8 @@ namespace UnturnedGodot
         Vector3 _restPos, _bodyRestPos;
         float _shake;              // seconds of wobble left
         float _cooldown;           // one can at a time -- seconds until the machine will serve again
+        ushort _pendingDrink;      // paid for, not yet dropped -- the can waits for the shake to finish
+        PlayerController _pendingFor;
         AudioStreamPlayer3D _clunk;
 
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
@@ -109,16 +111,30 @@ namespace UnturnedGodot
             return p.Inventory.getItemCount(Currency.StackId) < Price ? $"Need ${Price}" : null;
         }
 
-        /// <summary>Buy one. Spends the dollar on the AUTHORITY and spawns the drink in front of the buyer.</summary>
+        /// <summary>Where the can comes out: the machine's own dispensing tray, in MESH-LOCAL coordinates and
+        /// then through its transform (strawberry 2026-09-15: "should spawn relative to the machine, not the
+        /// player"). It used to drop in front of the BUYER, which followed you around the machine.
+        ///
+        /// ⭐ WHICH WAY IS FRONT WAS MEASURED, not assumed. Vendor_0 is 1.6 x 1.145 x 2.5, authored +Z up, so
+        /// depth is Y -- and the +Y face carries 124 of its 212 vertices against the far face's 16. That is the
+        /// window, the frame and the buttons; a flat back panel needs almost none. It also agrees with the screen
+        /// convention TVDevice derives for its cabinets, which is two independent reasons rather than a guess.</summary>
+        Vector3 DispensePoint()
+        {
+            var local = new Vector3(_bodyLocal.Position.X + _bodyLocal.Size.X * 0.5f,   // centred across the front
+                                    _bodyLocal.Position.Y + _bodyLocal.Size.Y + 0.35f,  // ...and clear of it
+                                    _bodyLocal.Position.Z + 0.30f);                     // tray height, not the roof
+            return GlobalTransform * local;
+        }
+
+        /// <summary>Buy one: the coin now, the can when it has finished shaking.</summary>
         public bool Vend(PlayerController p)
         {
             if (p == null || RefusalFor(p) != null) return false;
+            if (!p.RequestVendPay()) return false;   // no coin taken -> no shake, no can
 
-            // In front of the BUYER, not in front of the machine: you can reach a machine from the side, and a can
-            // appearing behind it would be unreachable. Half a metre out and knee-high, like a dropped item.
-            Vector3 drop = p.GlobalPosition - p.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f;
-            if (!p.RequestVend(DrinkId, drop)) return false;
-
+            _pendingFor = p;
+            _pendingDrink = DrinkId;
             _shake = ShakeSeconds;
             _cooldown = ShakeSeconds + 0.55f;   // the wobble, then a beat before it will take another dollar
             _clunk?.Play();
@@ -149,7 +165,7 @@ namespace UnturnedGodot
         void HubTick(double dt)
         {
             if (_cooldown > 0f) _cooldown = Mathf.Max(0f, _cooldown - (float)dt);
-            if (_shake <= 0f) return;
+            if (_shake <= 0f) return;   // NOTE: the drop below runs on the tick the shake REACHES zero, not after
             _shake = Mathf.Max(0f, _shake - (float)dt);
             float amp = 0.018f * (_shake / ShakeSeconds);           // decays to nothing
             float ph = _shake * 46f;                                // ~7 shudders over the window
@@ -165,6 +181,15 @@ namespace UnturnedGodot
             {
                 Position = _restPos;
                 if (_bodyMi != null && GodotObject.IsInstanceValid(_bodyMi)) _bodyMi.Position = _bodyRestPos;
+
+                // THE CAN, now the machine has finished rattling. Cleared before the call, so a drop that throws
+                // or is refused cannot leave a pending can to fall out again on the next tick.
+                if (_pendingDrink != 0)
+                {
+                    ushort drink = _pendingDrink; var buyer = _pendingFor;
+                    _pendingDrink = 0; _pendingFor = null;
+                    if (buyer != null && GodotObject.IsInstanceValid(buyer)) buyer.RequestVendDrop(drink, DispensePoint());
+                }
             }
         }
     }

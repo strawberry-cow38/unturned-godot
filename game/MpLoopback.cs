@@ -342,7 +342,14 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // inside). Both on the authority, so the next owner echo confirms the heal instead of undoing it.
                 // Vending: spend the dollar and spawn the can on the SERVER's inventory, so the owner echo
                 // confirms the purchase instead of refunding it. Same shape as the heal seam below.
-                Player.NetVend = (drinkId, dropPos) =>
+                Player.NetVendDrop = (drinkId, dropPos) =>
+                {
+                    // Godot -> the core's UnityEngine-shaped vectors, as ClientWorldSession.ToU does.
+                    Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(drinkId),
+                        new UnityEngine.Vector3(dropPos.X, dropPos.Y, dropPos.Z), UnityEngine.Vector3.zero);
+                    return true;
+                };
+                Player.NetVendPay = () =>
                 {
                     if (!Server.Inventories.TryGet(Client.PlayerId, out var inve)) return false;
                     var bag = inve.Inventory;
@@ -353,9 +360,6 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                     // something ELSE dirties the page -- master saw the dollar "come back" until they moved an
                     // item. ServerTransactions:864 carries the same note about the gas-can fill.
                     Server.Inventories.ServerMarkDirty(Client.PlayerId);
-                    // Godot -> the core's UnityEngine-shaped vectors, as ClientWorldSession.ToU does.
-                    Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(drinkId),
-                        new UnityEngine.Vector3(dropPos.X, dropPos.Y, dropPos.Z), UnityEngine.Vector3.zero);
                     return true;
                 };
                 Player.NetHealSelf = () =>

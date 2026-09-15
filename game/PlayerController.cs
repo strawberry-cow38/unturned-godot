@@ -5570,7 +5570,8 @@ namespace UnturnedGodot
         /// so MpLoopback can do this in-process. Spending the dollar LOCALLY would be refunded by the next owner
         /// echo while the drink stayed on the floor, which is a free-soda dupe and the same "client mutated, the
         /// authority disagreed" shape as the thrown-grenade spend and the respawn vitals.</summary>
-        public System.Func<ushort, Vector3, bool> NetVend;
+        public System.Func<bool> NetVendPay;                    // spend the coin on the authority
+        public System.Func<ushort, Vector3, bool> NetVendDrop;  // ...and drop the can there, once the machine has shaken
 
         public System.Action NetHealSelf;
 
@@ -6173,12 +6174,24 @@ namespace UnturnedGodot
         }
 
         /// <summary>Vend: the authority spends and spawns where there is one; pure singleplayer does it here.</summary>
-        public bool RequestVend(ushort drinkId, Vector3 dropPos)
+        /// <summary>Take the money. Split from the dispense because the machine SHAKES in between (strawberry
+        /// 2026-09-15: "consume the dollar, shake the machine a bit and then spawn") -- a real machine takes your
+        /// coin before it thinks about it, and paying only on delivery would let you walk away mid-shake with the
+        /// dollar still in your pocket.</summary>
+        public bool RequestVendPay()
         {
-            if (NetVend != null) return NetVend(drinkId, dropPos);
+            if (NetVendPay != null) return NetVendPay();
             if (InventoryIsServerOwned) return false;   // server-owned bag with no seam -> refuse rather than dupe
             if (Inventory == null || Inventory.getItemCount(SDG.Unturned.Currency.StackId) < VendingMachine.Price) return false;
             Inventory.removeItemAmount(SDG.Unturned.Currency.StackId, VendingMachine.Price);
+            return true;
+        }
+
+        /// <summary>...and the can, once the shake has finished.</summary>
+        public bool RequestVendDrop(ushort drinkId, Vector3 dropPos)
+        {
+            if (NetVendDrop != null) return NetVendDrop(drinkId, dropPos);
+            if (InventoryIsServerOwned) return false;
             DropWorldItem(new SDG.Unturned.Item(drinkId), dropPos);
             return true;
         }
