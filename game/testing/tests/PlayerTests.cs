@@ -72,7 +72,12 @@ namespace UnturnedGodot.Testing
 
             // Hang there long enough that the ACCUMULATOR would have reached terminal velocity -- 100 m/s at
             // 29.43 m/s^2 is ~3.4 s, so 5 s leaves no doubt it is pinned at the worst possible value.
-            yield return Until(() => false, maxSimSeconds: 5);
+            //
+            // ⚠ Ticks, NOT `Until(() => false, 5)`. That reads like "wait 5 seconds" and is actually a harness
+            // FAILURE: Until aborts the test when it times out, so every check below it was skipped and the test
+            // reported red while the fix underneath was fine. 250 = 5 s x the 50 Hz in project.godot -- derived,
+            // because a literal tick count is the thing that goes stale if the rate ever moves.
+            yield return Ticks(5 * 50);
 
             T.Check($"suspended between two slabs, still at full health ({p.Health:0}/{start:0})", p.Health >= start);
             T.Check("...and legs are not broken", !p.Broken);
