@@ -7976,7 +7976,12 @@ namespace UnturnedGodot
                 // of bringing up the menu"): the siren handler decides tap-vs-hold on the release, and this list only let PRESSES through,
                 // so _ctrlHolding never cleared and every tap became a hold 220 ms later -- the radial, never the wail.
                 bool ctrlRelease = @event is InputEventKey { Pressed: false, Keycode: Key.Ctrl };
-                bool allowedKey = ctrlRelease || @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
+                // THE INVENTORY OPENS IN A VEHICLE (strawberry 2026-09-15). It half-did already, and only by
+                // accident: the list admits the literal Key.G for a PLANE'S LANDING GEAR, and the inventory
+                // happens to be bound to G too -- so rebinding it broke the inventory, and Tab, the documented
+                // alternate, never worked in a seat at all. Admitted as the ACTION now, plus that Tab, so it
+                // follows the binding instead of sharing a letter with an unrelated feature.
+                bool allowedKey = ctrlRelease || @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Inventory, @event) || dk.PhysicalKeycode == Key.Tab || Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
                     || (Keybinds.HotbarSlot(@event) is int hk && _driving != null && hk <= _driving.TurretSlotCount(_seatIndex)));   // + the 1..N keys while seated at a MOUNT (they pick the weapon; this list ate them, so nobody could switch to the HMG -- master 2026-09-05). Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)

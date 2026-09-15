@@ -1722,7 +1722,21 @@ namespace UnturnedGodot
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
-                result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(F(q[4]))) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-F(q[6]))));   // ex=270/ez=0 upright -> yaw only
+                // ⚠ THE SAME UPRIGHT, WRITTEN ON A DIFFERENT AXIS (strawberry 2026-09-15: "some trash cans are
+                // floating"). These props are authored +Z-up and stood upright by a 270 on X, which StoreShelf's
+                // _upright then cancels to leave pure yaw -- that is what the old comment here assumed. But the
+                // map does not always write it that way: of PEI's 23 wheelie-bin placements, 20 carry ex=270/ez=0
+                // and THREE carry ex=0/ez=270 (one of those ez=275, i.e. the same stand-up plus a 5 degree lean).
+                // Rotating about Z does not change where +Z points, so those three never stood up at all -- the
+                // cancel left a residual and the bin ended up off its base. 3 of 23 is exactly "some".
+                //
+                // Normalised rather than special-cased downstream: the two spellings mean the same placement, so
+                // they are made the same placement here, and anything past this point sees one convention. The
+                // remainder above 270 is KEPT as ex, so a bin authored leaning still leans.
+                float ex = F(q[4]), ez = F(q[6]);
+                if (Mathf.Abs(Mathf.Wrap(ex, -180f, 180f)) < 1f && Mathf.Abs(Mathf.Wrap(ez - 270f, -180f, 180f)) < 45f)
+                { ex = 270f + (ez - 270f); ez = 0f; }
+                result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-ez)));
                 converted++;
                 return true;
             }
