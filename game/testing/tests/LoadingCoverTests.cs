@@ -49,6 +49,50 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // THE MENU CREDITS THE PHOTOGRAPHER, TOP-RIGHT (strawberry 2026-09-15: "add proper credit to the top right of
+    // every community screenshot on the main menu. use the dedicated map's loading screens, but from the hi res
+    // collection").
+    //
+    // Asserted rather than rendered: --menushot drives the CAMERA anchors of the 3D barn menu, not the UI panels,
+    // so the map preview never appears in a captured frame. (Tried it, twice, at two glide budgets.)
+    public sealed class MenuShotCreditTests : GameTest
+    {
+        public override string Name => "menu.shot_credit";
+
+        public override IEnumerable<Step> Run()
+        {
+            var menu = new MainMenu();
+            World.AddChild(menu);
+            yield return Ticks(2);
+
+            var layer = new CanvasLayer();
+            World.AddChild(layer);
+            menu.DebugBuildMapSelectorForTest(layer);
+            yield return Ticks(2);
+
+            foreach (string key in new[] { "pei", "washington", "russia", "yukon", "germany" })
+            {
+                menu.DebugSelectMapForTest(key);
+                yield return Ticks(1);
+                var sz = menu.DebugPreviewSize;
+                T.Check($"{key}: the menu preview is the hi-res community shot ({sz.X}x{sz.Y})", sz.X > 640);
+                T.Check($"{key}: ...credited ({menu.DebugPreviewCredit})", !string.IsNullOrEmpty(menu.DebugPreviewCredit));
+            }
+            T.Check("the credit sits TOP-RIGHT of the shot", menu.DebugCreditIsTopRight);
+
+            // ⭐ THE CONTROL, and the one that matters: the gun range has no community shot, so it falls back to
+            // the plain thumbnail -- and must then credit NOBODY. Without this, "always show a credit" would pass
+            // every check above while attributing someone else's photograph to a picture they did not take.
+            menu.DebugSelectMapForTest("playground");
+            yield return Ticks(1);
+            T.Check($"a map with no community shot credits no one ('{menu.DebugPreviewCredit}')",
+                    string.IsNullOrEmpty(menu.DebugPreviewCredit));
+
+            layer.QueueFree(); menu.QueueFree();
+            yield return Ticks(2);
+        }
+    }
+
     public sealed class LoadingCoverTests : GameTest
     {
         public override string Name => "load.cover_outlasts_shader_warm";

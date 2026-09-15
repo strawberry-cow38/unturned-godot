@@ -18,7 +18,7 @@ namespace UnturnedGodot
         // authored "Official" entry (the VoX MP test server) until there's a real backend.
         static readonly ServerEntry[] OfficialServers =
         {
-            new("VoX Official — Prince Edward Island", "claw.bitvox.me", 47872, "Prince Edward Island", 24, true, false),
+            new("VoX Official — PEI", "claw.bitvox.me", 47872, "PEI", 24, true, false),
         };
 
         ServerEntry _selectedServer;

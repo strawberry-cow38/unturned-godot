@@ -851,7 +851,7 @@ namespace UnturnedGodot
             // Only Editor has a backend (our PEI map editor); the rest ShowStub (RIPPED). Icons from core.masterbundle.
             SubRow(box, "browse",        "Browse Workshop", "Steam Workshop maps + items. (coming to Cow.0)",    () => ShowStub("Browse"));
             SubRow(box, "submit",        "Submit Content",  "Upload your creations. (coming to Cow.0)",          () => ShowStub("Submit"));
-            SubRow(box, "editor",        "Editor",          "The Prince Edward Island map editor.",              () => OnEditor?.Invoke());
+            SubRow(box, "editor",        "Editor",          "The PEI map editor."               ,              () => OnEditor?.Invoke());
             SubRow(box, "localization",  "Localization",    "Translate the game. (coming to Cow.0)",             () => ShowStub("Localization"));
             SubRow(box, "spawns",        "Spawns Editor",   "Edit spawn tables. (coming to Cow.0)",              () => ShowStub("Spawns"));
             SubRow(box, "subscriptions", "Subscriptions",   "Your subscribed Workshop items. (coming to Cow.0)", () => ShowStub("Subscriptions"));

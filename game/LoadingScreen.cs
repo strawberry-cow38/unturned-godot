@@ -17,17 +17,6 @@ namespace UnturnedGodot
 
         static readonly string[] LaunchPool = { "pei", "washington", "russia", "germany", "yukon" };
 
-        /// <summary>Who took the shot. These are COMMUNITY screenshots -- retail credits each one on screen and
-        /// carries the author in the filename, so shipping the art without the name would be taking something
-        /// that was given on those terms. Keyed by map, matching loadscreen_&lt;key&gt;.jpg.</summary>
-        static readonly System.Collections.Generic.Dictionary<string, string> ShotCredit = new()
-        {
-            ["pei"]        = "PEI Lighthouse Sunrise by BoomViz",
-            ["washington"] = "Washington Landscape by Phobia",
-            ["russia"]     = "Russia Landscape by Toste",
-            ["yukon"]      = "Yukon Cabin by cucuycharles",
-            ["germany"]    = "Germany Landscape by That One Beach Guy",
-        };
 
         static readonly string[] Tips =
         {
@@ -113,7 +102,7 @@ namespace UnturnedGodot
             // authors in the FILENAME. mappreview_*.png is the map-picker THUMBNAIL and a TV screen texture as
             // well as this background, so it stays 320x180 where being small is right, and the big art lands
             // beside it under its own name rather than bloating those two for no gain.
-            var shot = LoadBg($"loadscreen_{bgKey}.jpg") ?? LoadBg($"mappreview_{bgKey}.png");
+            var shot = LoadBg(MapShots.FileFor(bgKey)) ?? LoadBg($"mappreview_{bgKey}.png");
             // Harness seams: WHICH art resolved, at what size. A loading screen cannot be captured by the --shot
             // path (it is torn down before the frame lands), so "the 4K art is really being used" is asserted
             // rather than eyeballed -- and asserted for EVERY map, which one screenshot could not have shown.
@@ -162,7 +151,7 @@ namespace UnturnedGodot
             // and retail names them on screen, not because the layout wanted another label. Only drawn when the
             // shot that actually loaded is one of the credited ones, so a fallback to the old map preview says
             // nothing rather than crediting the wrong person.
-            if (shot != null && ShotCredit.TryGetValue(bgKey, out string credit))
+            if (shot != null && MapShots.HasHiRes(bgKey) && MapShots.CreditFor(bgKey) is string credit)
             {
                 var by = new Label { Text = credit, HorizontalAlignment = HorizontalAlignment.Right };
                 by.SetAnchorsPreset(Control.LayoutPreset.BottomRight);

@@ -4,7 +4,7 @@ namespace UnturnedGodot
 {
     // Play area -> retail-style SINGLEPLAYER screen (ripped from MenuPlaySingleplayerUI + SleekLevel):
     //   left  = category tabs (Official active; Curated/Workshop/Misc dummy) + a scrollable MAP LIST
-    //           (Prince Edward Island is real+installed; the other official maps render greyed / "not
+    //           (PEI is real+installed; the other official maps render greyed / "not
     //           installed" so the list reads like retail's Official tab).
     //   right = a preview box + selected map name/description + per-map GAMEPLAY OPTIONS
     //           (Difficulty / Zombies / Loot / Day Cycle / Combat / Cheats / Permadeath) + a big PLAY button.
@@ -25,7 +25,7 @@ namespace UnturnedGodot
         bool _optCheats     = false;
         bool _optPermadeath = false;
 
-        string _selectedMap = "Prince Edward Island";
+        string _selectedMap = "PEI";
         bool _selectedPlayable = true;
 
         // GENERATE MAP (strawberry 2026-08-22: "a 'generate map' option on the play tab of the main menu").
@@ -41,7 +41,10 @@ namespace UnturnedGodot
         const string GenerateMapName = "Generate Island";
         const string GenerateMapDesc = "A procedurally generated island: coastline, hills, and a network of towns, military bases and construction sites joined by roads, trails and rail. The same seed always builds the same island.";
         // the Steam Maps/<folder> name for the selected map -- Main reads this to point the world at the right map.
-        // PEI's folder is "PEI" (its display name is "Prince Edward Island"); every other map's folder == its name.
+        // Every map's display name IS its Steam Maps/ folder now. PEI was the one exception -- shown as "Prince
+        // Edward Island" over a folder called PEI -- and retail calls it PEI, so the exception is gone rather
+        // than being carried (strawberry 2026-09-15: "rename PEI everywhere to just PEI... since thats how it is
+        // in the real game"). Saves are keyed on the FOLDER, so no save moved.
         public string SelectedMapFolder = "PEI";
 
         static readonly string[] Difficulties = { "Easy", "Normal", "Hard" };
@@ -88,7 +91,7 @@ namespace UnturnedGodot
         static readonly (string name, string key, bool playable, string desc)[] OfficialMaps =
         {
             // descriptions are the REAL source text, extracted from each map's Maps/<Name>/English.dat (Description key).
-            ("Prince Edward Island", "pei",        true,  "Sunny island off the East coast of Canada. Several small civilian towns with minor military presence. Tourist attractions include beaches, castles and sailing. Recommended for new survivors."),
+            ("PEI",                  "pei",        true,  "Sunny island off the East coast of Canada. Several small civilian towns with minor military presence. Tourist attractions include beaches, castles and sailing. Recommended for new survivors."),
             ("Washington",           "washington", true,  "Rainy state South-West of Canada. Several large civilian towns with extensive military presence. Tourist attractions include Seattle, golf and racing. Recommended for intermediate survivors."),
             ("Russia",               "russia",     false, "Multi-biome country neighboring Canada. Huge diversity of civilian destinations with varying military presence. Tourist attractions include historical monuments, picturesque countrysides and rock climbing. Recommended for experienced survivors."),
             ("Germany",              "germany",    false, "Mountainous country North of Canada. Modernized cities with active military presence. Tourist attractions include breathtaking vistas, hiking the alpine trails and the local celebration of Oktoberfest. Recommended for intermediate survivors."),
@@ -100,8 +103,24 @@ namespace UnturnedGodot
 
         Label _previewName, _descLabel;
         TextureRect _previewImage;
+        Label _previewCredit;
 
         // load a PNG from content/menu/ as a texture (optionally downscaled to maxSize px for the small row icons).
+        /// <summary>Point the preview at a map's best art and credit it, or clear both. ⚠ The credit is bound to
+        /// the picture that ACTUALLY loaded: a key with no community shot falls back to the 320x180 thumbnail and
+        /// must show NO name, or the menu credits a photographer for someone else's image.
+        ///
+        /// Downsampled to 1280 on load. The source is 3840x2160 and this panel is a few hundred pixels wide, so
+        /// holding the full 4K here would cost ~32 MB of VRAM per map switched to for no visible difference --
+        /// the loading cover, which fills the screen, loads it whole.</summary>
+        void SetPreview(string key)
+        {
+            if (_previewImage == null) return;
+            _previewImage.Texture = string.IsNullOrEmpty(key) ? null : LoadTex(MapShots.FileFor(key), 1280);
+            string credit = _previewImage.Texture != null && MapShots.HasHiRes(key) ? MapShots.CreditFor(key) : null;
+            if (_previewCredit != null) { _previewCredit.Text = credit ?? ""; _previewCredit.Visible = credit != null; }
+        }
+
         Texture2D LoadTex(string file, int maxSize = 0)
         {
             string p = G($"res://content/menu/{file}");
@@ -119,6 +138,18 @@ namespace UnturnedGodot
             }
             return ImageTexture.CreateFromImage(img);
         }
+
+        // ---- render/test seams. The --menushot harness drives the CAMERA anchors, not the UI panels, so the map
+        // preview cannot be captured by it -- these let the claim be asserted instead of eyeballed.
+        public void DebugBuildMapSelectorForTest(CanvasLayer layer) => BuildMapSelector(layer);
+        public void DebugSelectMapForTest(string key) => SetPreview(key);
+        public Vector2I DebugPreviewSize => _previewImage?.Texture is Texture2D t
+            ? new Vector2I((int)t.GetSize().X, (int)t.GetSize().Y) : Vector2I.Zero;
+        public string DebugPreviewCredit => _previewCredit != null && _previewCredit.Visible ? _previewCredit.Text : "";
+        public bool DebugCreditIsTopRight =>
+            _previewCredit != null
+            && Mathf.IsEqualApprox(_previewCredit.AnchorTop, 0f) && Mathf.IsEqualApprox(_previewCredit.AnchorBottom, 0f)
+            && Mathf.IsEqualApprox(_previewCredit.AnchorLeft, 1f) && Mathf.IsEqualApprox(_previewCredit.AnchorRight, 1f);
 
         void BuildMapSelector(CanvasLayer layer)
         {
@@ -151,10 +182,23 @@ namespace UnturnedGodot
             {
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                Texture = LoadTex("mappreview_pei.png"),
             };
             _previewImage.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             preview.AddChild(_previewImage);
+
+            // THE PHOTO CREDIT, top-right of the shot (strawberry 2026-09-15). Added here rather than at each
+            // SelectMap so there is ONE label that gets retargeted, not one created per click and leaked.
+            _previewCredit = new Label { HorizontalAlignment = HorizontalAlignment.Right };
+            _previewCredit.SetAnchorsPreset(Control.LayoutPreset.TopRight);
+            _previewCredit.Position = new Vector2(-306f, 6f);
+            _previewCredit.Size = new Vector2(300f, 18f);
+            _previewCredit.AddThemeFontSizeOverride("font_size", 12);
+            _previewCredit.AddThemeColorOverride("font_color", new Color(0.88f, 0.90f, 0.94f, 0.72f));
+            _previewCredit.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _previewCredit.AddThemeConstantOverride("outline_size", 3);
+            _previewCredit.MouseFilter = Control.MouseFilterEnum.Ignore;
+            preview.AddChild(_previewCredit);
+            SetPreview("pei");
             lcol.AddChild(preview);
             var play = new Button { Text = "PLAY", CustomMinimumSize = new Vector2(340f, 46f) };
             play.AddThemeFontSizeOverride("font_size", 22);
@@ -308,7 +352,7 @@ namespace UnturnedGodot
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = "Playground";
             if (_descLabel != null) _descLabel.Text = "The gun range -- an open sandbox to test weapons and mechanics. No survival, no map: just spawn in with everything.";
-            if (_previewImage != null) _previewImage.Texture = LoadTex("mappreview_playground.png");   // null if not shipped
+            SetPreview("playground");   // no community shot for the gun range -> the thumbnail, and NO credit
             if (_genRow != null) _genRow.Visible = false;
             DisarmReset();
         }
@@ -320,11 +364,11 @@ namespace UnturnedGodot
             if (_genRow != null) _genRow.Visible = false;
             _selectedMap = name;
             _selectedPlayable = playable;
-            SelectedMapFolder = name == "Prince Edward Island" ? "PEI" : name;   // display name -> Steam Maps/ folder
+            SelectedMapFolder = name;   // display name IS the folder now -- PEI was the only map where it was not
 
             if (_previewName != null) _previewName.Text = name;
             if (_descLabel != null) _descLabel.Text = desc;
-            if (_previewImage != null) _previewImage.Texture = key != "" ? LoadTex($"mappreview_{key}.png") : null;
+            SetPreview(key);
             DisarmReset();
         }
 
@@ -453,7 +497,7 @@ namespace UnturnedGodot
             }
             if (!_selectedPlayable)
             {
-                if (_descLabel != null) _descLabel.Text = _selectedMap + " isn't ported yet — only Prince Edward Island is playable right now.";
+                if (_descLabel != null) _descLabel.Text = _selectedMap + " isn't ported yet — only PEI is playable right now.";
                 return;
             }
             OnDrivePEI?.Invoke();
