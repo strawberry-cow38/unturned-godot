@@ -41,6 +41,13 @@ namespace UnturnedGodot.Testing
 
             string prevMap = System.Environment.GetEnvironmentVariable("UG_LOADMAP");
             string prevMode = System.Environment.GetEnvironmentVariable("UG_LOADMODE");
+            // ⚠ try/FINALLY around the whole body, because these are PROCESS-WIDE env vars. Restoring them on
+            // the happy path only means any abort in the middle -- an exception, a harness timeout -- leaves
+            // UG_LOADMODE set for every test that runs after this one. That is precisely the order-dependent
+            // leak shape tinyclaw is currently hunting two of on main, and it costs one keyword not to add a
+            // third. (C# iterators permit try/finally around a yield; only try/CATCH is disallowed.)
+            try
+            {
 
             // ---- 1. INTO A MAP: the map's OWN official screenshot, no photographer.
             System.Environment.SetEnvironmentVariable("UG_LOADMODE", "map");
@@ -79,8 +86,12 @@ namespace UnturnedGodot.Testing
             // the randomness is dead -- which is exactly what "random pool" was asked for.
             T.Check($"the menu pool is actually random ({seen.Count} distinct across 6 loads)", seen.Count > 1);
 
-            System.Environment.SetEnvironmentVariable("UG_LOADMAP", prevMap);
-            System.Environment.SetEnvironmentVariable("UG_LOADMODE", prevMode);
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable("UG_LOADMAP", prevMap);
+                System.Environment.SetEnvironmentVariable("UG_LOADMODE", prevMode);
+            }
         }
     }
 

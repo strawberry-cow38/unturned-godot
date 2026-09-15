@@ -38,6 +38,11 @@ common/physics_interpolation=true
 
 [rendering]
 
+
+; Anisotropic filtering is what the road props ask for by material (WorldBuilder.MatFor -> RoadProp).
+; 2 = 4x, which is ALSO Godot's default -- pinned explicitly so the road filter cannot be silently
+; disabled by someone changing a project default that nothing appeared to depend on.
+textures/default_filters/anisotropic_filtering_level=2
 ; Multithreaded renderer ON by default (strawberry 2026-09-03 "flip multithreaded renderer on by default"): +26% on the
 ; CPU-bound PEI idle scene on the 4080S. The in-game Graphics row still toggles it (override.cfg writes =1 for Single).
 driver/threads/thread_model=2

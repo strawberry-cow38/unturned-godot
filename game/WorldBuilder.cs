@@ -585,6 +585,21 @@ namespace UnturnedGodot
             // platform, not Dock_0, which is a 2.5 m jetty. Everything else still gets the wet sheen and nothing more.
             static bool PuddleProp(string nm) => nm.StartsWith("Road_") || nm.StartsWith("Block_Road") || nm == "Dock_1";
 
+            // ANISOTROPIC FILTERING ON THE ROAD PIECES (strawberry 2026-09-15). A road is the one prop class you
+            // almost always see at a GRAZING angle, and that is exactly the case plain mipmapping handles worst:
+            // the mip is chosen for the steepest axis, so the road blurs into mush a few metres ahead while the
+            // texels across it are still sharp. Anisotropy samples along the view direction instead and the
+            // surface stays legible into the distance.
+            //
+            // ⭐ NEAREST-with-mipmaps-anisotropic, NOT linear. The whole world is Nearest on purpose (the crisp
+            // Unturned look, master); anisotropy is orthogonal to that -- it fixes the MIP SELECTION, and picking
+            // the linear variant here would have smoothed the texels as a side effect and quietly softened the
+            // art style on one prop class.
+            //
+            // Dock_1 is in PuddleProp because it POOLS WATER; it is not a road and does not want this, so the two
+            // predicates are separate rather than one shared "roadish" set.
+            static bool RoadProp(string nm) => nm.StartsWith("Road_") || nm.StartsWith("Block_Road");
+
             // WHICH PROPS SWAY (master 2026-09-07: "add the grass wind effect to hedges"). Hedges are a sprawl of
             // thin alpha-cutout planes -- the same thing grass is -- and they stood dead still next to grass that
             // moves, which is what reads as wrong.
@@ -680,7 +695,9 @@ namespace UnturnedGodot
                         mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
                         // master: the whole world is Nearest (crisp Unturned look); only grass+flowers are bilinear (FoliageField).
                         // palette textures skip mipmaps too (else the 2x2 cells average to black at distance).
-                        mm.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                        mm.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest
+                                          : RoadProp(nm) ? BaseMaterial3D.TextureFilterEnum.NearestWithMipmapsAnisotropic
+                                          : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
                     }
                     else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
                 }
