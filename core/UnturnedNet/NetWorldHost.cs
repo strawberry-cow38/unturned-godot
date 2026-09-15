@@ -1240,8 +1240,11 @@ namespace UnturnedGodot.Net
         public bool SendMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
             => SendCommand(ReplicationIds.CommandMoveItem, new MoveItemCommand { Page0 = page0, X0 = x0, Y0 = y0, Page1 = page1, X1 = x1, Y1 = y1, Rot1 = rot1 }.Write);
 
-        public bool SendDropItem(byte page, byte x, byte y)
-            => SendCommand(ReplicationIds.CommandDropItem, new DropItemCommand { Page = page, X = x, Y = y }.Write);
+        /// <summary>`point` is the client's look-orb (PlayerController's _lookEnd) -- see DropItemCommand.Point.
+        /// Defaulted so a caller with no shell (tests, tools) still drops at the player's feet the old way: the
+        /// server treats a degenerate point as "no aim given" and falls back to the yaw toss.</summary>
+        public bool SendDropItem(byte page, byte x, byte y, Vector3 point = default)
+            => SendCommand(ReplicationIds.CommandDropItem, new DropItemCommand { Page = page, X = x, Y = y, Point = point }.Write);
 
         public bool SendSplitItem(byte page, byte x, byte y, ushort amount,
                                   byte toPage = SplitItemCommand.Anywhere, byte toX = 0, byte toY = 0, byte toRot = 0)

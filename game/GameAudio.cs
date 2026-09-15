@@ -217,6 +217,22 @@ namespace UnturnedGodot
                 ?? Pick("footsteps", mat + "_walk")
                 ?? Pick("footsteps", "concrete" + (run ? "_run" : "_walk"));
         }
+
+        /// <summary>How loud a footstep is, by stance. HERE rather than at the two call sites, because the local
+        /// shell and the remote puppets both have to answer this and a table duplicated in two files drifts the
+        /// first time one of them is tuned -- which is exactly what this method was extracted for.
+        ///
+        /// strawberry 2026-09-15: "turn down the sound of footsteps a bit." 4 dB off every stance, which is ~37%
+        /// of the amplitude -- the stance SPREAD is what makes crouching feel quiet, so it is preserved rather
+        /// than compressed: a flat offset moves the whole curve down without flattening it.</summary>
+        public const float FootstepTrim = -4f;
+        public static float FootstepDb(SDG.Unturned.EPlayerStance stance) => FootstepTrim + stance switch
+        {
+            SDG.Unturned.EPlayerStance.PRONE => -14f,
+            SDG.Unturned.EPlayerStance.CROUCH => -8f,
+            SDG.Unturned.EPlayerStance.SPRINT => 0f,
+            _ => -3f,
+        };
         // ---- FOLEY (content/audio/foley, 107 clips that nothing played until now) ------------------------------
         // Retail drives these off OneShotAudioDefinitions hung on the animations and the equipment; we have neither
         // the definitions nor those animation events, so the TRIGGER is ours and the clips are theirs. Where retail

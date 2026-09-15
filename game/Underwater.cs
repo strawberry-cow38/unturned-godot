@@ -25,6 +25,19 @@ namespace UnturnedGodot
 
         public static bool Active;   // read by anything that wants to know the view is submerged
 
+        /// <summary>THE WARP, owned in C# rather than in the shader's uniform defaults, because a SECOND pass
+        /// now has to move in lockstep with it: the item outline is a CanvasLayer drawn OVER the 3D pass, so
+        /// while everything else refracted the rim stayed pinned to the true silhouette and slid off the item
+        /// (strawberry 2026-09-15: "make the outline for dropped items /interactables follow the underwater
+        /// warping shader"). Two .gdshader files with matching literals would drift the first time one is tuned.
+        /// Both materials are fed from here, so they cannot disagree.</summary>
+        public const float Wobble = 0.006f;       // screen-space refraction amplitude
+        public const float WobbleSpeed = 1.4f;
+
+        /// <summary>0 = at/above the waterline .. 1 = fully under. What the warp is scaled by, published so
+        /// the outline pass fades its own warp in on exactly the same curve.</summary>
+        public static float Submersion;
+
         MeshInstance3D _quad;
         ShaderMaterial _mat;
         float _shown = -1f;   // last submersion pushed, so a still camera does not re-set uniforms every frame
@@ -35,6 +48,8 @@ namespace UnturnedGodot
             var sh = GD.Load<Shader>("res://content/underwater.gdshader");
             if (sh == null) { Log.Err("[underwater] underwater.gdshader missing -- no submerged view"); return; }
             _mat = new ShaderMaterial { Shader = sh };
+            _mat.SetShaderParameter("wobble", Wobble);          // the shader defaults match, but the C# is the
+            _mat.SetShaderParameter("wobble_speed", WobbleSpeed); // source now -- see the constants above
             _quad = new MeshInstance3D
             {
                 Mesh = new QuadMesh { Size = new Vector2(2f, 2f) },
@@ -57,6 +72,7 @@ namespace UnturnedGodot
             if (_forceDepth <= 0f || _quad == null || _mat == null) return;
             _quad.Visible = true;
             Active = true;
+            Submersion = 1f;
             _mat.SetShaderParameter("submersion", 1f);
             _mat.SetShaderParameter("depth_below", _forceDepth);
         }
@@ -73,17 +89,20 @@ namespace UnturnedGodot
             float sub = Mathf.Clamp(below / FadeDepth, 0f, 1f);   // wash in over the first half metre
             _quad.Visible = true;
             Active = true;
-            if (Mathf.Abs(sub - _shown) > 0.004f || _shown < 0f) { _shown = sub; _mat.SetShaderParameter("submersion", sub); }
+            // Submersion moves with the material, not with the raw reading: it IS the published value, so the
+            // outline pass sees exactly what the water pass is drawing and its own on-change push is as rare.
+            if (Mathf.Abs(sub - _shown) > 0.004f || _shown < 0f) { _shown = sub; Submersion = sub; _mat.SetShaderParameter("submersion", sub); }
             _mat.SetShaderParameter("depth_below", below);
         }
 
         void Off()
         {
             if (_quad != null && _quad.Visible) { _quad.Visible = false; _shown = -1f; }
+            Submersion = 0f;
             Active = false;
         }
 
-        public override void _ExitTree() { if (Active) Active = false; }   // a torn-down pass must not leave the flag stuck on
+        public override void _ExitTree() { if (Active) { Active = false; Submersion = 0f; } }   // a torn-down pass must not leave the flag (or the outline's warp) stuck on
 
         /// <summary>Harness: UG_UNDERWATER=&lt;metres&gt; pins the view submerged over any scene, so a render can show
         /// the effect without having to get a camera under the sea first. Attaches to the CURRENT camera, because

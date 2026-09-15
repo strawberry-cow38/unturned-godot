@@ -44,6 +44,9 @@ namespace UnturnedGodot
         public static readonly StringName sun_outer = "sun_outer";
         public static readonly StringName thickness = "thickness";
         public static readonly StringName time_s = "time_s";
+        public static readonly StringName submersion = "submersion";
         public static readonly StringName wind = "wind";
+        public static readonly StringName wobble = "wobble";
+        public static readonly StringName wobble_speed = "wobble_speed";
     }
 }

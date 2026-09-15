@@ -74,6 +74,9 @@ namespace UnturnedGodot
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/item_outline.gdshader") };
             _mat.SetShaderParameter(Sn.thickness, 3.5f);   // master: a teeny bit thicker
+            // the refraction the underwater pass uses, from ITS constants -- see Underwater.Wobble
+            _mat.SetShaderParameter(Sn.wobble, Underwater.Wobble);
+            _mat.SetShaderParameter(Sn.wobble_speed, Underwater.WobbleSpeed);
             _mat.SetShaderParameter(Sn.outline_color, new Vector3(1f, 1f, 1f));
 
             var canvas = new CanvasLayer { Layer = 50 };   // over the 3D view, under the HUD? 50 keeps it above the game, below any 100+ overlays
@@ -110,6 +113,16 @@ namespace UnturnedGodot
             _vpCam.Far = cam.Far;
             _vpCam.KeepAspect = cam.KeepAspect;
             _mat.SetShaderParameter(Sn.outline_color, new Vector3(WorldItem.FocusColor.R, WorldItem.FocusColor.G, WorldItem.FocusColor.B));
+            // ...and refract the rim with the rest of the picture when the eye is under (0 above water = the
+            // shader's whole warp block is skipped). On CHANGE, which for this value means: never, all session,
+            // until you wade in. Underwater already quantizes its own pushes to 0.004, so the surface does not
+            // chatter through here either.
+            if (_shownSub != Underwater.Submersion)
+            {
+                _shownSub = Underwater.Submersion;
+                _mat.SetShaderParameter(Sn.submersion, _shownSub);
+            }
         }
+        float _shownSub = -1f;   // last submersion pushed (-1 = never), so a dry session sets it exactly once
     }
 }

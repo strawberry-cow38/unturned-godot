@@ -222,7 +222,7 @@ namespace UnturnedGodot
                             av.StrideAcc = 0f;
                             bool run = stance == SDG.Unturned.EPlayerStance.SPRINT || av.Speed > 4.5f;
                             var clip = GameAudio.PickFootstep(psurf, run);
-                            float vol = stance switch { SDG.Unturned.EPlayerStance.PRONE => -14f, SDG.Unturned.EPlayerStance.CROUCH => -8f, SDG.Unturned.EPlayerStance.SPRINT => 0f, _ => -3f };
+                            float vol = GameAudio.FootstepDb(stance);   // ONE table, shared with the local shell (it used to be copied here)
                             GameAudio.PlayAt(this, clip, av.Body.GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
                             // The puppets' matching gear foley went with the local one (master: "remove the
                             // 'walking with gear' sound") -- a sound the owner cannot hear must not still be

@@ -128,8 +128,29 @@ namespace UnturnedGodot
             float duck = 1f - Mathf.Clamp(WeatherDuck, 0f, 1f);
             // The night bed keeps retail's curve and retail's linear duck; only the birds get the earlier evening
             // edge and the steeper rain response.
-            SlewTo(_day, ref _dayDb, BirdShare(t) * BirdRainShare(WeatherDuck), (float)delta);
-            SlewTo(_night, ref _nightDb, (1f - day) * duck, (float)delta);
+            float inside = IndoorShare();
+            SlewTo(_day, ref _dayDb, BirdShare(t) * BirdRainShare(WeatherDuck) * inside, (float)delta);
+            SlewTo(_night, ref _nightDb, (1f - day) * duck * inside, (float)delta);
+        }
+
+        /// <summary>UNDER A ROOF THE OUTSIDE GETS QUIETER (strawberry 2026-09-15: "turn down the sound of birds
+        /// and crickets when under a roof (the rain occluder)"). Both beds, not just the birds: crickets are as
+        /// outdoor a sound as birdsong, and master named both.
+        ///
+        /// It reads the RAIN OCCLUDER's cache rather than casting anything of its own -- master's own framing,
+        /// and it means "counts as a roof" has exactly ONE definition in the project. A streetlight already does
+        /// not shelter you from rain, so it does not muffle the birds either, for free.
+        ///
+        /// Ducked, never silenced: you can hear the dawn chorus from inside a house, just not like you are stood
+        /// in it. No smoothing here on purpose -- SlewTo's 0.5*dt lerp is a ~2 s time constant, so walking through
+        /// a doorway fades rather than switches, and a cell flickering at a roof EDGE cannot click.</summary>
+        public static float RoofShare = 0.35f;   // ~-9 dB under cover
+
+        float IndoorShare()
+        {
+            var cam = RainRoofMap.Current?.Follow;
+            if (cam == null || !GodotObject.IsInstanceValid(cam)) return 1f;   // no map / no camera -> outdoors, the old behaviour
+            return RainRoofMap.IsCovered(cam.GlobalPosition) ? RoofShare : 1f;
         }
 
         // Retail lerps the VOLUME at 0.5*dt (LevelLighting.cs:2246). We mix in dB, so slew there instead: a linear

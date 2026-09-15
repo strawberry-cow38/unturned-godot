@@ -845,6 +845,14 @@ namespace UnturnedGodot
             Field?.SetAlive(Index, false);   // zero-scale the tree out of its MultiMesh + drop the trunk collider to layer 0
             SpawnStump();                     // retail stumpGameObject: a stump is left where the tree stood
             SpawnDebris(dir);                 // retail debrisGameObject: a falling tree that topples + is cleaned up
+            // THE DRY PATCH GOES WITH THE TREE (strawberry 2026-09-15: "the rain occluders under trees should
+            // disappear when the tree falls (and come back when tree respawns)"). The roof map caches the height
+            // of the first solid thing above each cell and only re-casts a cell when someone says the world moved
+            // there -- StructureManager and DestructibleField already do; nothing did for trees. So a felled tree
+            // left its own shadow behind: a disc of un-rained ground round a stump, for the rest of the session.
+            // SetAlive above has already dropped the trunk collider to layer 0, and Invalidate applies a couple of
+            // physics ticks later, so the re-cast sees a world with no tree in it.
+            RainRoofMap.Invalidate(GlobalTransform.Origin, CoverRadius());
             // NO LOGS YET (strawberry 2026-09-09: "only produce logs once theyve despawned"). They are dropped by
             // the debris cleanup timer instead, along the trunk that is lying there -- see SpawnDebris.
             GetTree().CreateTimer(Reset).Timeout += Regrow;   // retail asset.reset: it grows back
@@ -991,6 +999,48 @@ namespace UnturnedGodot
         float _trunkLen = 8f;                // measured off the debris mesh, so logs land along the real trunk
         Transform3D _toppleBase;             // the debris' upright world transform (== TreeXf)
 
+        // THE TIMBER LANDS ON THE BEAT (strawberry 2026-09-15: "start playing the tree fall sound so it ends when
+        // the tree hits the ground"). It used to fire AT the impact, so a 4 s crack began after the tree was
+        // already flat -- the sound of a tree falling arriving once it had. The fall's duration is known the
+        // moment it starts, so the clip is started early enough to FINISH on the landing.
+        AudioStream _fallClip;   // the clip we MEASURED -- the bank may pick a different one on a second call, and
+                                 // timing against a length that belongs to another file is worse than not timing
+        float _fallT;            // seconds since the topple began
+        float _fallSfxAt;        // ...and when in that to start the clip: fall duration minus the clip's length
+        float _impactVel;        // the arrival speed the prediction says, so a clip starting EARLY is still scaled
+        bool _fallSfx;           // by how hard it is going to land rather than by how fast it is going now (slow)
+
+        /// <summary>The topple, run forward from (deg, vel) with the SAME integrator the real one uses, to the
+        /// degree it comes to rest at. Returns how long that takes and how fast it gets there.
+        ///
+        /// The live loop substeps by min(frame dt, ToppleStep), so at anything at or above 60 fps this is
+        /// step-for-step identical; below it the live one takes the same steps in the same order, just several
+        /// per frame. Either way the answer is the fall's own arithmetic rather than a model of it.
+        /// The iteration cap is a guard, not a limit: at ToppleAccel the fall is ~6 s = ~350 steps.</summary>
+        static (float Seconds, float Vel) PredictFall(float deg, float vel)
+        {
+            float t = 0f;
+            for (int i = 0; i < 4000 && deg < FallDeg; i++)
+            {
+                vel += ToppleAccel * Mathf.Sin(Mathf.DegToRad(deg)) * ToppleStep;
+                deg += Mathf.RadToDeg(vel) * ToppleStep;
+                t += ToppleStep;
+            }
+            return (t, vel);
+        }
+
+        /// <summary>Start the timber clip. Scaled off the PREDICTED arrival speed, not the current one: the whole
+        /// point is that this fires while the tree is still moving slowly, and reading _toppleVel here would make
+        /// every tree sound like a sapling. A big trunk that is going to land hard is loud from the first frame.
+        /// Carried a long way -- a tree coming down is the loudest thing in a quiet forest.</summary>
+        void PlayFallSfx()
+        {
+            _fallSfx = true;
+            GameAudio.PlayAt(this, _fallClip, GlobalTransform.Origin,
+                             Mathf.Lerp(-6f, 4f, Mathf.Min(1f, _impactVel / 1.094f)), 8f, 90f,
+                             (float)GD.RandRange(0.94, 1.06));
+        }
+
         void SpawnDebris(Vector3 dir)
         {
             _debris = new Node3D();
@@ -1011,6 +1061,17 @@ namespace UnturnedGodot
                 if (c is MeshInstance3D mi && mi.Mesh != null) { box = any ? box.Merge(mi.Mesh.GetAabb()) : mi.Mesh.GetAabb(); any = true; }
             if (any) _trunkLen = Mathf.Max(1f, box.Size.Y * Mathf.Max(0.01f, _toppleBase.Basis.Scale.Y));
             _toppleDeg = ToppleKick; _toppleVel = 0f; _toppling = true; _settling = false; SetProcess(true);
+            // Run the fall forward NOW, through the same integrator the topple below uses, to learn how long it
+            // takes and how fast it arrives. Not solved analytically on purpose: the real curve is
+            // theta'' = k sin(theta), whose closed form is an elliptic integral, and any approximation of it would
+            // drift from the loop that actually moves the tree the moment ToppleAccel or FallDeg is touched. This
+            // cannot drift -- it IS the loop.
+            _fallClip = GameAudio.ResourceBreak(TreeName);
+            var (fallSecs, arriveVel) = PredictFall(ToppleKick, 0f);
+            _impactVel = arriveVel;
+            float clipLen = _fallClip != null ? (float)_fallClip.GetLength() : 0f;
+            _fallSfxAt = Mathf.Max(0f, fallSecs - clipLen);   // a clip LONGER than the fall starts at the chop
+            _fallT = 0f; _fallSfx = false;
             // The logs arrive WITH the cleanup, not at the chop: you fell the tree, it lies there, and what it
             // leaves behind appears as it goes.
             GetTree().CreateTimer(DebrisLife).Timeout += () =>
@@ -1044,6 +1105,8 @@ namespace UnturnedGodot
             float deg;
             if (_toppling)
             {
+                _fallT += dt;
+                if (!_fallSfx && _fallT >= _fallSfxAt) PlayFallSfx();
                 for (float rem = dt; rem > 0f; )                     // substepped: same curve at any frame rate
                 {
                     float h = Mathf.Min(rem, ToppleStep); rem -= h;
@@ -1058,13 +1121,11 @@ namespace UnturnedGodot
                     // IT HITS. Kick the trunk's own flex here, off the speed it actually arrived at, so a big
                     // trunk landing fast rings harder than a sapling tipping over.
                     _trunkVel = Vector3.Up * (TrunkKick * Mathf.Tau * TrunkFreq * Mathf.Min(1f, _toppleVel / 1.094f));
-                    // ...AND IT MAKES A NOISE. Felling was completely silent -- ResourceField had no audio at all --
-                    // while the retail destruction clips sat unplayed in content/audio/explosions. Scaled off the
-                    // speed it arrived at, like the trunk kick on the line above and for the same reason, and
-                    // carried a long way: a tree coming down is the loudest thing in a quiet forest.
-                    GameAudio.PlayAt(this, GameAudio.ResourceBreak(TreeName), GlobalTransform.Origin,
-                                     Mathf.Lerp(-6f, 4f, Mathf.Min(1f, _toppleVel / 1.094f)), 8f, 90f,
-                                     (float)GD.RandRange(0.94, 1.06));
+                    // ...AND IT MADE A NOISE, by now: PlayFallSfx started the clip early enough to END here
+                    // (see the fields). This is the backstop for a fall so short the clip could not fit in it --
+                    // a sapling, or a bank whose clip outlasts the topple -- where _fallSfxAt clamped to 0 and
+                    // the sound has already gone. Guarded, so nothing plays twice.
+                    if (!_fallSfx) PlayFallSfx();
                     _toppling = false; _settling = true; _settleT = 0f;
                 }
             }
@@ -1289,6 +1350,20 @@ namespace UnturnedGodot
             Health = _maxHealth;
             Felled = false;
             Field?.SetAlive(Index, true);   // restores the MultiMesh slot + the trunk's collision layer
+            RainRoofMap.Invalidate(GlobalTransform.Origin, CoverRadius());   // ...and the cover comes back with it
+        }
+
+        /// <summary>How far out this tree's rain shadow reaches: its OWN trunk collider's radius, measured rather
+        /// than assumed, plus a metre so the invalidated square covers the disc at any cell alignment. The body's
+        /// transform is orthonormalized (scale stripped) and the shape was built with the placement scale already
+        /// multiplied in, so the shape radius is the world radius. Trees vary 2-3x in scale across a map; a
+        /// constant here would either leave a rim of stale cells round the big ones or re-cast a needless 60
+        /// cells round every sapling.</summary>
+        float CoverRadius()
+        {
+            foreach (Node c in GetChildren())
+                if (c is CollisionShape3D cs && cs.Shape is CylinderShape3D cy) return cy.Radius + 1f;
+            return 2f;
         }
     }
 

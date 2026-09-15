@@ -15,8 +15,8 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
 // the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
 // body of water look blue instead of merely darker.
-uniform vec4 water_deep : source_color = vec4(0.012, 0.072, 0.30, 0.94);   // master 2026-09-12 "more blue, less transparent, more foggy": deeper navy, near-opaque
-uniform vec4 water_shallow : source_color = vec4(0.045, 0.22, 0.52, 0.58); // shallows still read as shallow, but bluer and much less see-through
+uniform vec4 water_deep : source_color = vec4(0.025, 0.105, 0.26, 0.94);   // 2026-09-15 "turn down how blue": blue is 67% of the tint, back off the 09-12 step (78%) -- the near-opaque ALPHA that step also asked for stays
+uniform vec4 water_shallow : source_color = vec4(0.060, 0.245, 0.44, 0.58); // ...and the shallows with it, 66% blue -> 59%. Alpha untouched: "less see-through" was a separate ask
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -27,7 +27,7 @@ uniform float shore_depth = 2.2;      // vertical water depth (m) under which sh
 uniform float foam_amount : hint_range(0.0, 1.0) = 1.0;
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
-uniform float reflectivity = 0.45;    // how strongly the sky shows at grazing angles (Fresnel); lowered -> less white-out at grazing (master)
+uniform float reflectivity = 0.20;    // how strongly the sky shows at grazing angles (Fresnel). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit"). This scales the planar mirror too (see the reflection blend), so the sea stops acting like a mirror, not just stops blowing out at the horizon
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 uniform sampler2D reflection_tex : filter_linear;   // planar reflection buffer (mirror camera) -- WaterReflection.cs feeds it
 uniform bool reflection_on = false;                 // off until the reflection node wires the buffer in
@@ -205,8 +205,9 @@ void fragment() {
     // THE SUN'S OWN GLINT RIDES ON `reflectivity` TOO. The Fresnel blend above is only the SKY term; Godot's
     // specular lobe is a separate path, and zeroing reflectivity for the map bake still left a sun streak
     // burned across the middle of the sea. Scaling by the same uniform keeps "how reflective is this water"
-    // as ONE number instead of two that can disagree -- and at the default 0.45 this is exactly the 0.5 it
-    // has always been, so nothing else changes.
+    // as ONE number instead of two that can disagree. The /0.45 is where this expression CAME FROM, not the
+    // current default: it was written when reflectivity was 0.45, so the glint came out at Godot's own 0.5 and
+    // nothing changed that day. It is the tie between glint and sky term -- at today's 0.20 it gives 0.22.
     SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
     METALLIC = 0.0;
     // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment

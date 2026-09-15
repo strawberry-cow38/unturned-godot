@@ -39,12 +39,25 @@ namespace UnturnedGodot.Net
     public struct DropItemCommand
     {
         public byte Page, X, Y;
-        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); }
+
+        /// <summary>WHERE THE LOOK-ORB IS (strawberry 2026-09-15: "dropped items should drop at ur lookatradius
+        /// orb, with slight velocity in the direction ur looking in"). The orb is the end of the player's eye-ray:
+        /// LookReach ahead, or wherever a wall stopped it first. The server cannot work that out -- it holds the
+        /// player's YAW and nothing else, no pitch, and ServerTransactions lives in core with no physics world to
+        /// cast a ray in -- so the point rides the command. v52.
+        ///
+        /// Client-supplied POSITION, so the server clamps it: anything further from the eye than the reach could
+        /// be is pulled back onto the eye->point line. That makes a lying client able to place a drop anywhere
+        /// inside its own arm's length, which is exactly what an honest one can do.</summary>
+        public Vector3 Point;
+
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); NetWire.WritePos(w, Point); }
         public static bool TryRead(NetPakReader r, out DropItemCommand cmd)
         {
             cmd = default;
             if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
-            cmd = new DropItemCommand { Page = p, X = x, Y = y };
+            if (!NetWire.ReadPos(r, out Vector3 pt)) return false;
+            cmd = new DropItemCommand { Page = p, X = x, Y = y, Point = pt };
             return true;
         }
     }

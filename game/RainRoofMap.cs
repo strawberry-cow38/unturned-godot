@@ -104,6 +104,20 @@ namespace UnturnedGodot
             lock (_pending) _pending.Add((centre, radius, InvalidateDelayTicks));
         }
 
+        /// <summary>Is this world point under something solid? Reuses the cache the rain shaders already fill --
+        /// the grid IS "height of the first solid thing above this cell", which is the same question indoors-ness
+        /// asks, so nothing new is cast for it. A cell the window has not reached yet reads NaN and answers NO:
+        /// the duck should fade in once the cell is known rather than guess, and the beds slew slowly enough that
+        /// the arriving answer is not a step. NoHit is open sky and is far below any world point by construction.
+        ///
+        /// The 0.5 m margin is so the ground you are standing on can never read as your own roof.</summary>
+        public static bool IsCovered(Vector3 p)
+        {
+            if (!Enabled) return false;
+            float top = Get(Mathf.FloorToInt(p.X / Cell), Mathf.FloorToInt(p.Z / Cell));
+            return !float.IsNaN(top) && top > p.Y + 0.5f;
+        }
+
         /// <summary>Drop the whole cache (a different map loaded).</summary>
         public static void ClearCache() { _tiles.Clear(); lock (_pending) _pending.Clear(); }
 

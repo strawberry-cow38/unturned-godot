@@ -355,7 +355,7 @@ divider_0	Wood_Dynamic
 divider_1	Cloth_Dynamic
 dl_garbage	Cloth_Dynamic
 dock_0	Wood_Static
-dock_1	Metal_Static
+dock_1	Concrete_Static
 dock_2	Wood_Static
 dock_3	Wood_Static
 door_aircraft_carrier	Metal_Dynamic
@@ -398,7 +398,7 @@ fence_metal_1	Metal_Static
 fence_metal_2	Metal_Static
 fence_metal_3	Metal_Static
 fence_metal_4	Metal_Static
-fence_metal_broken_0	Metal_Dynamic
+fence_metal_broken_0	Metal_Static
 fence_metal_broken_1	Metal_Static
 fence_road_0	Metal_Dynamic
 fence_road_broken_0	Metal_Dynamic

@@ -32,7 +32,9 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 51.
+        // id -> name, as of NetProtocol.Version 52. (v52 is a PAYLOAD bump -- DropItemCommand gained a field --
+        // so this table is deliberately unchanged: no id moved and nothing was renamed. That is the gap this
+        // golden has and the keepalive one covers, and vice versa.)
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",

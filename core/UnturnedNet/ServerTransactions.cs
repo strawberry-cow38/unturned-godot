@@ -1062,15 +1062,52 @@ namespace UnturnedGodot.Net
             if (jar?.item == null) return;
             page.removeItem(index);
 
-            // drop it just ahead of the avatar with a small toss -- clients run the cosmetic tumble (§3.3).
-            // Godot convention (-sin,0,-cos): p.YawDegrees is the shell's RotationDegrees.Y, body faces -Z at yaw 0 --
-            // the SAME frame SenderFacingItem uses. (Still latent -- no client sends DropItem yet -- but aligned so a
-            // toss lands in FRONT of the player, not behind, when the seam wires up.)
+            // IT LANDS WHERE YOU ARE LOOKING (strawberry 2026-09-15: "dropped items should drop at ur lookatradius
+            // orb, with slight velocity in the direction ur looking in"). It used to be a yaw-only toss from the
+            // chest -- 1.2 m forward, lofted at 2 m/s -- which ignored pitch entirely: looking at your own feet
+            // threw the item over them, and looking up did the same thing as looking down.
             _players.TryGetByOwner(sender, out var p);
-            float yawRad = (p?.YawDegrees ?? 0f) * (Mathf.PI / 180f);
-            var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
-            var origin = (p?.Pos ?? Vector3.zero) + fwd * 1.2f + new Vector3(0f, 1.0f, 0f);
-            SpawnWorldItem(jar.item, origin, fwd * 2.5f + new Vector3(0f, 2f, 0f));
+            var feet = p?.Pos ?? Vector3.zero;
+            var origin = ClampToReach(feet, p?.Stance ?? (byte)0, p?.YawDegrees ?? 0f, cmd.Point, out Vector3 aim);
+            SpawnWorldItem(jar.item, origin, aim * DropSpeed);
+        }
+
+        /// <summary>A drop's spawn point, and the direction to nudge it in. `point` is the client's look-orb;
+        /// this is where it is made safe and where the fallback lives.
+        ///
+        /// THE EYE IS DERIVED, NOT TABULATED: halfway up the stance's own HEAD box, from the measured
+        /// ServerCombat.PlayerHitZones the hitscan already tests against. A second per-stance height table here
+        /// would be one more thing to forget when the rig is re-measured, and it would be the one the DROP used
+        /// while the SHOOTING used the other.
+        ///
+        /// A point further from the eye than the eye-ray can reach is pulled back onto the line rather than
+        /// rejected: rejecting it would make a laggy client's drop silently vanish, and the clamp already removes
+        /// everything the distance could have been abused for. A degenerate point (a caller that sent none, or a
+        /// client standing exactly in its own orb) falls back to the yaw-forward toss this replaced.</summary>
+        public const float DropReach = 2.6f;    // PlayerController.LookReach -- how far the eye-ray goes
+        public const float DropSlack = 0.75f;   // the server's player pos is a tick or two behind the client's
+        public const float DropSpeed = 1.5f;    // "slight velocity": a nudge along the look, not the old 2 m/s loft
+
+        static Vector3 ClampToReach(Vector3 feet, byte stance, float yawDegrees, Vector3 point, out Vector3 aim)
+        {
+            // The entity's Stance is already the packed 0-3 code, which is the coding PlayerHitZones takes --
+            // the same byte the hitscan reads, so the eye is at the height the shooter is aimed at.
+            ServerCombat.PlayerHitZones(stance, out _, out float top, out float headMin, out _);
+            var eye = feet + new Vector3(0f, (headMin + top) * 0.5f, 0f);
+            var d = point - eye;
+            float len = d.magnitude;
+            if (len < 0.05f)
+            {
+                // No aim given (a caller with no shell) or a client standing in its own orb: the pre-v52 toss,
+                // in the frame it always used. Godot convention (-sin,0,-cos): YawDegrees is the shell's
+                // RotationDegrees.Y and the body faces -Z at yaw 0 -- the SAME frame SenderFacingItem uses.
+                float yawRad = yawDegrees * (Mathf.PI / 180f);
+                aim = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
+                return eye + aim * 1.2f;
+            }
+            aim = d / len;
+            float max = DropReach + DropSlack;
+            return len <= max ? point : eye + aim * max;
         }
 
         /// <summary>DEATH DROP (strawberry 2026-09-02: "your items are kept after death instead of dropping on

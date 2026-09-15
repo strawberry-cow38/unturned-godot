@@ -874,7 +874,7 @@ namespace UnturnedGodot
                 ragdollCache[n] = rm;
                 return rm;
             }
-            long _objT = 0, _objMeshT = 0, _objShapeT = 0, _objMiT = 0, _objBodyT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0, _objBodies = 0;   // UG_PERF buckets ([objprof])
+            long _objT = 0, _objMeshT = 0, _objShapeT = 0, _objMiT = 0, _objBodyT = 0; int _objN = 0, _objMeshMiss = 0, _objShapeMiss = 0, _objBodies = 0, _surfBoxBodies = 0;   // UG_PERF buckets ([objprof])
             // ⚠ 'other' was 888 of the 1065 ms this loop spends -- 83% unattributed, which is barely better than
             // not having measured it. These split it: the per-level LOD MeshInstance3Ds (3001 of them on PEI,
             // each a node plus an AddChild) and the LodTable lookup that picks their distance bands.
@@ -1582,6 +1582,23 @@ namespace UnturnedGodot
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
+                        // ...AND THE PIECES OF IT THAT ARE MADE OF SOMETHING ELSE. A prop is one body with one
+                        // SurfMeta, which cannot say "the pier is concrete and its railings are metal" -- so the
+                        // retail box colliders whose material differs get a small body each, in the SAME
+                        // transform (their coordinates are the prefab's, which is the frame the ripped OBJ is
+                        // already in -- verified against Dock_1, whose three retail boxes reproduce the OBJ's
+                        // bounding box to the centimetre). Two of these exist on the whole map today, so this
+                        // loop is skipped for essentially every prop; see PropSurfaces.BoxesFor.
+                        var surfBoxes = PropSurfaces.BoxesFor(name);
+                        if (surfBoxes != null)
+                            foreach (var sb in surfBoxes)
+                            {
+                                var sbody = new StaticBody3D { Transform = body.Transform, CollisionLayer = body.CollisionLayer };
+                                sbody.SetMeta(PlayerController.SurfMeta, (int)sb.Surf);
+                                sbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = sb.Size }, Position = sb.Center });
+                                root.AddChild(sbody);
+                                _surfBoxBodies++;
+                            }
                         _objBodyT += System.Diagnostics.Stopwatch.GetTimestamp() - _b0; _objBodies++;
                         body.AddToGroup(ColliderBudget.Group);   // distance-streamed: 13.9k collision nodes is a third of the scene tree
                         body.SetMeta(ColliderBudget.RadiusMeta, cull);   // collision outlives the MESH, never less: a prop you can still see must still be shootable
@@ -1863,6 +1880,7 @@ namespace UnturnedGodot
             {
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
+                    Log.Print($"[surf] {_surfBoxBodies} minority-surface bodies placed (the Dock's metal railings and anything like them)");
                     if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objprof] objects={_objN} total={_objT * _f:0} ms | mesh loads={_objMeshMiss} {_objMeshT * _f:0} ms | trimesh shapes={_objShapeMiss} {_objShapeT * _f:0} ms | mesh AddChild={_objMiT * _f:0} ms | bodies={_objBodies} create+AddChild={_objBodyT * _f:0} ms | LOD inst={_objLodMis} {_objLodT * _f:0} ms | LOD ranges={_objRangeT * _f:0} ms | other={(_objT - _objMeshT - _objShapeT - _objMiT - _objBodyT - _objLodT - _objRangeT) * _f:0} ms"); }
                     if (_vehProf) { double _f = 1000.0 / System.Diagnostics.Stopwatch.Frequency; Log.Print($"[objseg] ms  head(mesh+math+lamp)={_objSeg[0] * _f:0} | cull+specialprops={_objSeg[1] * _f:0} | aabb+mainMi={_objSeg[2] * _f:0} | lodlevels={_objSeg[3] * _f:0} | foliage={_objSeg[4] * _f:0} | batch={_objSeg[5] * _f:0} | fluids={_objSeg[6] * _f:0} | devices={_objSeg[7] * _f:0} | lightreg={_objSeg[8] * _f:0} | doors+seats+COLLIDE={_objSeg[9] * _f:0}"); }
                     await Phase("Roads");

@@ -610,7 +610,7 @@ namespace UnturnedGodot
             // skills through the owner skills block (adopted each tick in ShellStep).
             shell.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
             shell.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
-            shell.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+            shell.NetDropItem = (page, x, y, orb) => Client.SendDropItem(page, x, y, new UnityEngine.Vector3(orb.X, orb.Y, orb.Z));
             shell.NetSplitItem = (page, x, y, amt, tp, tx, ty, tr) => Client.SendSplitItem(page, x, y, amt, tp, tx, ty, tr);
             shell.NetQuickTransfer = (page, x, y, tp) => Client.SendQuickTransfer(page, x, y, tp);
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);

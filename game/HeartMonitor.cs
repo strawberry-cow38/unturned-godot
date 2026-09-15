@@ -147,7 +147,7 @@ namespace UnturnedGodot
             };
             AddChild(_screen);
 
-            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -15f, Bus = "Master" };   // -3 -> -15 dB = a quarter of the amplitude (strawberry 2026-09-04 "75% quieter")
+            _audio = new AudioStreamPlayer3D { UnitSize = 7f, MaxDistance = 26f, VolumeDb = -21f, Bus = "Master" };   // -3 -> -15 (strawberry 2026-09-04 "75% quieter") -> -21 (2026-09-15 "by half": another 6 dB is half the amplitude again)
             AddChild(_audio);
 
             // A REAL POWER INPUT. HasFeed has always read `mains OR the wire`, and AttachPort existed to supply the

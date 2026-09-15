@@ -86,7 +86,7 @@ namespace UnturnedNet.Tests
             // nothing in these twelve bytes moves when the command table grows. So this golden guards the
             // FRAMING, and the command table has no equivalent guard; the four unbumped ids were found by
             // reading git dates, not by a test. See CommandTableGoldenTests for the one that would have.
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753308000000000000002800"));   // byte[1]=0x33 = Version 51 (v51: CommandQuickTransfer(63); previously v50, the MERGE of v48 currency/stack-split and v49 chat/moderation). ⭐ DERIVED, NOT PASTED: the ONLY byte that moved is [1], 0x32 -> 0x33, which IS the version -- every other byte is byte-for-byte what it was. If a second byte changes with it the frame SHAPE moved too, and that is not a version bump; re-pasting whatever the code now emits would assert only that the code equals itself.
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("753408000000000000002800"));   // byte[1]=0x34 = Version 52 (v52: DropItemCommand gained the look-orb Point; previously v51 CommandQuickTransfer(63)). ⭐ DERIVED, NOT PASTED: byte[1] is the version, 51 -> 52 is 0x33 -> 0x34, and EVERY OTHER BYTE IS UNCHANGED from the v51 literal above it in this file's history. A keepalive carries no command payload, so a payload-only bump like this one must move exactly that byte and nothing else -- if a second byte moves, the FRAMING changed too and that is not what was claimed. Re-pasting whatever the code now emits would assert only that the code equals itself.
         }
 
         [Test]

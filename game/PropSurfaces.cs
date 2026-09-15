@@ -59,7 +59,62 @@ namespace UnturnedGodot
                 var c = ln.Split('\t');
                 if (c.Length >= 2 && c[0].Length > 0) _byName[c[0].Trim().ToLowerInvariant()] = SurfForMaterial(c[1].Trim());
             }
-            Log.Print($"[surf] {_byName.Count} prop surfaces from the retail physic materials");
+            LoadBoxes();
+            Log.Print($"[surf] {_byName.Count} prop surfaces from the retail physic materials, {_boxCount} minority boxes");
+        }
+
+        /// <summary>A prop is ONE body with ONE surface, and some props are not one material. The large Dock is
+        /// three retail box colliders on a single GameObject -- a 36 x 36 x 40.5 Concrete pier with two
+        /// 1.5 x 1.5 x 41 Metal railings along its top edges -- and it rang like metal underfoot for the whole
+        /// pier, because the old extractor picked the material carried by the MOST colliders and metal won 2-1
+        /// (strawberry 2026-09-15: "the large Dock prop is making a metal footstep sound. should be concrete,
+        /// with the brown metal pillars making metal footstep sounds").
+        ///
+        /// The pier is the prop's surface now (biggest collider wins, see the extractor), and the railings are
+        /// here: the boxes whose material differs, in the prefab's own frame, which is the frame the ripped OBJ
+        /// is already in. WorldBuilder gives each one a small body of its own carrying its own SurfMeta, so a
+        /// step or a bullet on the railing finds metal and everything else finds the pier.
+        ///
+        /// Two entries today. The mechanism is general; the extractor only emits a box where the surface it
+        /// would give actually differs from the prop's, so a Metal_Dynamic strut on a Metal_Static frame -- the
+        /// same bank, the same sound -- never becomes collision geometry that changes nothing.</summary>
+        public readonly struct SurfBox
+        {
+            public readonly PlayerController.Surf Surf;
+            public readonly Vector3 Size, Center;
+            public SurfBox(PlayerController.Surf s, Vector3 size, Vector3 centre) { Surf = s; Size = size; Center = centre; }
+        }
+
+        static Dictionary<string, List<SurfBox>> _boxesByName;
+        static int _boxCount;
+
+        static void LoadBoxes()
+        {
+            _boxesByName = new Dictionary<string, List<SurfBox>>();
+            _boxCount = 0;
+            string p = ProjectSettings.GlobalizePath("res://content/objects/surfaces_boxes.tsv");
+            if (!System.IO.File.Exists(p)) return;   // optional: no file = no prop has a second surface
+            foreach (var ln in System.IO.File.ReadAllLines(p))
+            {
+                var c = ln.Split('\t');
+                if (c.Length < 8 || c[0].Length == 0) continue;
+                if (!float.TryParse(c[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float sx)) continue;
+                float F(int i) => float.TryParse(c[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
+                string key = c[0].Trim().ToLowerInvariant();
+                if (!_boxesByName.TryGetValue(key, out var list)) _boxesByName[key] = list = new List<SurfBox>();
+                list.Add(new SurfBox(SurfForMaterial(c[1].Trim()),
+                                     new Vector3(sx, F(3), F(4)), new Vector3(F(5), F(6), F(7))));
+                _boxCount++;
+            }
+        }
+
+        /// <summary>The prop's own differing-material boxes, or null. EXACT name only -- unlike For(), which
+        /// walks up to the parent prop: a box is authored against ONE prefab's geometry, and handing
+        /// `dock_1_something`'s pieces the dock's railing positions would put metal boxes in mid-air.</summary>
+        public static List<SurfBox> BoxesFor(string propName)
+        {
+            if (_byName == null) Load();
+            return _boxesByName != null && _boxesByName.TryGetValue((propName ?? "").ToLowerInvariant(), out var l) ? l : null;
         }
 
         /// <summary>The prop's surface, or null when the table has nothing for it. Falls back through the

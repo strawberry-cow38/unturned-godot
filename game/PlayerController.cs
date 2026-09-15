@@ -5901,7 +5901,7 @@ namespace UnturnedGodot
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
         public System.Action<byte, byte, byte, byte> NetQuickTransfer;   // (page,x,y, toPage) -> Client.SendQuickTransfer
         public System.Action<byte, byte, byte, ushort, byte, byte, byte, byte> NetSplitItem;   // (page,x,y, amount, toPage,toX,toY,toRot) -> Client.SendSplitItem
-        public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
+        public System.Action<byte, byte, byte, Vector3> NetDropItem; // (page,x,y,lookOrb) -> Client.SendDropItem (server removes + places the world item AT the orb)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
         // (magPage,magX,magY,magId, roundPage,roundX,roundY,roundId, unloading) -> Client.SendMagLoad.
         // Null in pure-direct singleplayer, where the client IS the authority and the local mutation is the
@@ -6200,7 +6200,10 @@ namespace UnturnedGodot
         {
             if (NetDropItem == null) return false;
             FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
-            NetDropItem(page, x, y);
+            // v52: the LOOK-ORB goes with it. The server has our yaw and no pitch, and no physics world to find
+            // the wall our eye-ray stopped against -- so the end of that ray, which we already computed this
+            // frame for focusing, is the one thing only this side knows. The server clamps it.
+            NetDropItem(page, x, y, _lookEnd);
             return true;
         }
 
@@ -11626,7 +11629,7 @@ namespace UnturnedGodot
                         bool run = _move.Stance == EPlayerStance.SPRINT || hsp > 4.5f;
                         if (_viewmodel != null) _viewmodel.CasingSurface = CasingBank(sf);
                         var clip = GameAudio.PickFootstep(sf, run);   // surface_gait -> surface_walk -> concrete: a missing gait must not change the MATERIAL
-                        float vol = _move.Stance switch { EPlayerStance.PRONE => -14f, EPlayerStance.CROUCH => -8f, EPlayerStance.SPRINT => 0f, _ => -3f };
+                        float vol = GameAudio.FootstepDb(_move.Stance);   // ONE table, shared with the remote puppets (it used to be copied there)
                         GameAudio.PlayAt(this, clip, GlobalPosition, vol, 4f, 30f, _rng.RandfRange(0.94f, 1.06f));
                         // NO GEAR FOLEY. There was a per-stride kit rustle here, scaled by how much you had
                         // worn; master 2026-09-11: "remove the 'walking with gear' sound." Taken out rather

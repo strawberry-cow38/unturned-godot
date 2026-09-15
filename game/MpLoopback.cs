@@ -274,7 +274,7 @@ namespace UnturnedGodot
                 //     superseded while these seams are non-null (mirrors the P1 deployable invariant above).
                 Player.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
                 Player.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
-                Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+                Player.NetDropItem = (page, x, y, orb) => Client.SendDropItem(page, x, y, new UnityEngine.Vector3(orb.X, orb.Y, orb.Z));
                 Player.NetSplitItem = (page, x, y, amt, tp, tx, ty, tr) => Client.SendSplitItem(page, x, y, amt, tp, tx, ty, tr);
                 Player.NetQuickTransfer = (page, x, y, tp) => Client.SendQuickTransfer(page, x, y, tp);
                 Player.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
