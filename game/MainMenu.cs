@@ -539,6 +539,7 @@ namespace UnturnedGodot
             BuildPlayMenuPanel(layer); // Play -> retail's Play MENU (Singleplayer / Multiplayer / Playground)
             BuildMapSelector(layer);   // Play > Singleplayer -> map selector + gameplay options (MainMenuPlay.cs)
             BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
+            BuildConnectPanels(layer); // Direct Connect page + the join-failure modal (MainMenuConnect.cs)
             BuildSurvivorsPanel(layer);// Survivors -> Character/Appearance/Group/Clothing (MenuSurvivorsUI)
             BuildAppearancePanel(layer);   // Survivors -> Appearance: the 32 faces
             BuildConfigPanel(layer);   // Configuration -> Graphics/Display/Audio/Controls/Options (MenuConfigurationUI)
@@ -602,6 +603,7 @@ namespace UnturnedGodot
             if (_survivorsPanel != null) _survivorsPanel.Visible = false;
             if (_appearancePanel != null) _appearancePanel.Visible = false;
             if (_configPanel != null) _configPanel.Visible = false;
+            if (_directPanel != null) _directPanel.Visible = false;
         }
 
         // (no `tab` parameter: the camera framing is derived from which panel is OPEN, in _Process.
@@ -664,7 +666,7 @@ namespace UnturnedGodot
             SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             SubRow(box, "singleplayer", "Singleplayer", "Pick a map and play on your own.",                    TogglePlayPanel);
             SubRow(box, "servers",      "Multiplayer",  "Browse and join servers.",                            ToggleServersPanel);
-            SubRow(box, "connect",      "Direct Connect", "Connect to a server by IP. (coming to Cow.0)",      () => ShowStub("Direct Connect"));
+            SubRow(box, "connect",      "Direct Connect", "Connect to a server by IP, with a password if it needs one.", ShowDirectConnect);
             AddBackRow(box);
             _playMenuPanel = panel;
         }

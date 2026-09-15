@@ -280,6 +280,11 @@ namespace UnturnedGodot.Net
             });
             _rawWriter.WriteUInt8((byte)NetControlType.Reject);
             _rawWriter.WriteUInt8((byte)reason);
+            // v51: our protocol version rides along, so a refused client can say "server is 45, you are 51"
+            // instead of "version mismatch". APPENDED, never inserted -- an older server sends only the
+            // reason byte and NetClientSession treats the version as absent (0), which is the case that
+            // actually matters here: the mismatch we most need to explain comes FROM an older server.
+            _rawWriter.WriteUInt8(_version);
             _rawWriter.Flush();
             conn.Send(_rawWriter.buffer, _rawWriter.writeByteIndex, ENetReliability.Unreliable);
         }

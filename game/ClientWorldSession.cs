@@ -81,6 +81,10 @@ namespace UnturnedGodot
         Label _toast; float _toastT;   // brief interaction feedback line (pickup denied, etc.)
         Label _disconnectBanner;       // big centered DISCONNECTED overlay when the server link drops
         bool _wasConnected;            // latches once Connected -> a later non-Connected state is a LOST link (not the initial connect)
+        float _linkDownT;              // seconds the link has been non-Connected, reset on every Connected tick
+        bool _leaving;                 // latched once we've decided to bail -- ReloadCurrentScene is deferred, so _Process runs again
+        /// <summary>Seconds of no link before the client gives up and returns to the menu (strawberry 2026-09-15).</summary>
+        public const float LinkTimeoutSeconds = 30f;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
@@ -720,20 +724,67 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             else Shell.ExitPuppet(exit);
         }
 
+        // The connect line counts DOWN to the give-up, so a stall reads as a bounded wait rather than a hang.
+        string ConnectingStatusText()
+        {
+            if (Client.State == NetSessionState.Connected)
+                return $"connecting to {Host}:{Port}   ·   {Client.State}   ·   players {Client.Players.Count}";
+            int left = Mathf.Max(0, Mathf.CeilToInt(LinkTimeoutSeconds - _linkDownT));
+            return $"connecting to {Host}:{Port}   ·   {Client.State}   ·   giving up in {left}s";
+        }
+
         public override void _Process(double delta)
         {
             if (_status != null)
-                _status.Text = Shell == null ? $"connecting to {Host}:{Port}   ·   {Client.State}   ·   players {Client.Players.Count}" : "";
+                _status.Text = Shell == null ? ConnectingStatusText() : "";
             if (_desyncLabel != null) _desyncLabel.Text = _desyncAlert;
             if (_toast != null && _toastT > 0f) { _toastT -= (float)delta; if (_toastT <= 0f) _toast.Text = ""; }
             // DISCONNECTED overlay: latch once we've been Connected, then show the banner whenever the link
             // is no longer Connected -- so a server bounce / dropped link reads as DISCONNECTED, not a silent freeze
-            if (Client.State == NetSessionState.Connected) _wasConnected = true;
+            if (Client.State == NetSessionState.Connected) { _wasConnected = true; _linkDownT = 0f; }
             // "on each server join" means a RECONNECT re-states it too. The server keeps no profile database,
             // so a peer that comes back is a stranger to it again.
-            else _profileSent = false;
+            else { _profileSent = false; _linkDownT += (float)delta; }
             if (_disconnectBanner != null)
                 _disconnectBanner.Visible = _wasConnected && Client.State != NetSessionState.Connected;
+            CheckLinkGiveUp();
+        }
+
+        // ⭐ A FAILED JOIN HAS TO SAY SOMETHING (strawberry 2026-09-15: "the vox unturned server is down rn" --
+        // it was up, ticking, 0 players, and answering its status port in 18 ms. It was refusing every handshake
+        // on protocol 45 while the client spoke 51, the server sent Reject{VersionMismatch} exactly as designed,
+        // NetClientSession parsed it, and nothing on screen ever said a word.)
+        //
+        // Two ways out, and the difference matters:
+        //   REJECTED  -- the server ANSWERED and said no. That answer is final and already in hand, so waiting
+        //                out a 30 s timeout to show it would be 30 s of pretending we don't know.
+        //   SILENT    -- nothing came back at all. Only here does the timeout apply, and the wording must not
+        //                claim a refusal, because no server ever spoke to us.
+        void CheckLinkGiveUp()
+        {
+            if (_leaving) return;
+            if (Client.State == NetSessionState.Connected) return;
+
+            var sess = Client.Session;
+            if (sess != null && sess.DisconnectReason == NetDisconnectReason.Rejected)
+            {
+                LeaveToMenu(NetRejectText.Describe(sess.RejectReason, sess.RejectServerVersion, NetProtocol.Version));
+                return;
+            }
+            if (_linkDownT >= LinkTimeoutSeconds)
+                LeaveToMenu(_wasConnected
+                    ? $"Lost connection to {Host}:{Port} — no response for {LinkTimeoutSeconds:0} seconds."
+                    : NetRejectText.Describe(NetRejectReason.None));
+        }
+
+        void LeaveToMenu(string message)
+        {
+            _leaving = true;
+            Log.Err($"[CLIENT] join/link failed ({Host}:{Port}): {message}");
+            Main.PendingJoinError = message;   // survives the scene reload; the rebuilt menu shows it
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+            // Deferred: ReloadCurrentScene frees the tree this method is running inside.
+            Callable.From(() => { ResourceCaches.ClearAll(); GetTree().ReloadCurrentScene(); }).CallDeferred();
         }
 
         public override void _ExitTree()

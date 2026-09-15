@@ -26,6 +26,8 @@ namespace UnturnedGodot.Net
         public NetSessionState State { get; private set; } = NetSessionState.Disconnected;
         public NetDisconnectReason DisconnectReason { get; private set; }
         public NetRejectReason RejectReason { get; private set; }
+        /// <summary>Protocol version of the server that refused us, or 0 if it did not say (pre-v51).</summary>
+        public byte RejectServerVersion { get; private set; }
         public ushort PlayerId { get; private set; }
         public uint ServerTickAtAccept { get; private set; }
         /// <summary>P3 holiday parity (wire v6): the server world's activeHoliday, from the Accept. The
@@ -61,6 +63,7 @@ namespace UnturnedGodot.Net
             State = NetSessionState.Connecting;
             DisconnectReason = NetDisconnectReason.None;
             RejectReason = NetRejectReason.None;
+            RejectServerVersion = 0;
             _connectStartTick = _tick;
             SendConnect();
         }
@@ -133,6 +136,11 @@ namespace UnturnedGodot.Net
                     if (State != NetSessionState.Connecting) return;
                     reader.ReadUInt8(out byte reason);
                     RejectReason = (NetRejectReason)reason;
+                    // OPTIONAL trailing byte (v51+): the rejecting server's protocol version. A pre-v51
+                    // server sends the reason and stops, so a failed read must leave this 0 rather than
+                    // abort the parse -- that older server is precisely the one whose version we want to
+                    // report, and losing the whole Reject to get its version would be the wrong trade.
+                    RejectServerVersion = reader.ReadUInt8(out byte sv) ? sv : (byte)0;
                     State = NetSessionState.Disconnected;
                     DisconnectReason = NetDisconnectReason.Rejected;
                     break;

@@ -1047,7 +1047,14 @@ namespace UnturnedGodot
                     menu.OnPlay = () => { menu.QueueFree(); BuildPlayable(null, false, null); };
                     menu.OnDrivePEI = () => { menu.QueueFree(); ApplyMenuMap(menu.SelectedMapFolder); _peiPlayable = true; BuildObjectsTest(); };
                     menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // legacy MP-test entry (fallback)
-                    menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN / direct-connect -> real client join
+                    menu.OnJoinServer = (host, port) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _playableClient = true; BuildClient(); };   // server browser JOIN -> real client join
+                    // Direct Connect has ALREADY probed the address by the time this fires (MainMenuConnect
+                    // RunConnectProbe), which is the whole point of the page: an unreachable host costs four
+                    // 1.5 s status queries instead of a full map load ending in silence.
+                    menu.OnDirectConnect = (host, port, pass) => { menu.QueueFree(); _connectHost = host; _connectPort = port; _joinPassword = pass; _playableClient = true; BuildClient(); };
+                    // A join that failed left its reason in a static, because going back to the menu IS a scene
+                    // reload -- the node that knew why is gone. Show it once, on the rebuilt menu.
+                    if (!string.IsNullOrEmpty(PendingJoinError)) { var err = PendingJoinError; PendingJoinError = null; menu.ShowJoinError(err); }
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
                     menu.OnPlayground = () => { menu.QueueFree(); WorldBuilder.BuildPlaygroundWorld(this); };   // Playground -> the gun range (same entry as --playground)
                     menu.OnOpenMap = name => { menu.QueueFree(); BuildEditorNew(name); };   // Workshop -> a custom map by name (creates or opens)
@@ -7175,6 +7182,11 @@ namespace UnturnedGodot
 
         // Exit the editor back to the main menu. Simplest reliable teardown of the async world + editor = reload
         // the scene (no --args -> the default menu boot).
+        // Set by a failed join just before the scene reloads, read once by the rebuilt MainMenu. STATIC because
+        // ReturnToMenu is ReloadCurrentScene -- the node that knows why the join failed is destroyed by the very
+        // act of going back, so the message cannot ride on an instance. Cleared on read so it shows once.
+        public static string PendingJoinError;
+
         void ReturnToMenu()
         {
             Input.MouseMode = Input.MouseModeEnum.Visible;
@@ -7187,6 +7199,10 @@ namespace UnturnedGodot
             GetTree().ReloadCurrentScene();
         }
 
+        // Collected by Direct Connect. The handshake does not carry a password yet, so this is stored and NOT
+        // pretended to be checked -- a password box that silently does nothing is worse than none, so the page
+        // says so rather than implying the server verified it.
+        string _joinPassword = "";
         bool _mpLoopback;   // --mploopback: legacy opt-in loopback for TEST HARNESSES (MP_PLAN §4 Phase 4); the GAME path defaults to it now (P6a)
         bool _loopbackConsuming;   // A1: set by AttachMpLoopback when the loopback consumes -> the StorageReplicaView owns containers, so SpawnMapContainers (SP nodes) is gated off
         bool _spConsume;    // --spconsume (or UG_SPCONSUME=1): SP/MP-unify P1 legacy consume toggle -- only meaningful on a harness caller now (the GAME path consumes by default, P6a)

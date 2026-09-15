@@ -5,14 +5,20 @@ namespace UnturnedGodot
     // Play dashboard -> "Multiplayer" -> retail-style SERVER BROWSER (ported from MenuPlayServersUI +
     // SleekServer + MenuPlayConnectUI). Retail's list is fed by Steam's master server, which the port has no
     // access to, so the LIST is a hardcoded stand-in: the one Official server (our MP test server,
-    // claw.bitvox.me). The JOIN button + the direct-connect-by-IP box are REAL -- they run the port's actual
+    // claw.bitvox.me). The JOIN button is REAL (direct connect moved to MainMenuConnect.cs) -- it runs the port's actual
     // client join (Main.BuildClient -> ClientWorldSession over UdpClientTransport), the same path the old
     // Multiplayer button used. BuildServersPanel assigns _serversPanel; TogglePlayPanel/etc. mutual-hide it.
     public partial class MainMenu
     {
         // one browsable server. Steam-only stats (VAC / workshop / gold / plugins / curation) have no source in
         // the port; live players + ping aren't queried (no A2S), so they show "-". Host:Port is real + joinable.
-        public sealed record ServerEntry(string Name, string Host, ushort Port, string Map, int Max, bool Pvp, bool Locked);
+        public sealed record ServerEntry(string Name, string Host, ushort Port, string Map, int Max, bool Pvp, bool Locked,
+                                         string Gamemode = "Survival");
+
+        /// <summary>host:port for display, with the DEFAULT port left off. A port in the address column then
+        /// means "this one is unusual", which is the only time it is worth the width (strawberry 2026-09-15).</summary>
+        public static string AddressText(string host, ushort port) =>
+            port == DefaultServerPort ? host : $"{host}:{port}";
 
         // the hardcoded server list. Retail's "Internet" tab is a Steam master-server query; ours is this one
         // authored "Official" entry (the VoX MP test server) until there's a real backend.
@@ -23,10 +29,14 @@ namespace UnturnedGodot
 
         ServerEntry _selectedServer;
         Label _svInfoName, _svInfoDetail;
-        LineEdit _dcHost, _dcPort, _dcPass;
         Button _refreshBtn;
         bool _serversAutoRefreshed;
         readonly System.Collections.Generic.List<(ServerEntry sv, Button row, Label name, Label ping, Label players)> _serverRows = new();
+        VBoxContainer _serverList;        // re-ordered in place when a column head is clicked
+        string _sortKey = "Name";         // which column the list is ordered by
+        bool _sortDesc;                   // second click on the same head reverses
+        readonly System.Collections.Generic.Dictionary<ServerEntry, int> _livePing = new();     // measured, for sorting by a column that shows "-" until Refresh
+        readonly System.Collections.Generic.Dictionary<ServerEntry, int> _livePlayers = new();
         readonly System.Collections.Generic.HashSet<ServerEntry> _mismatched = new();   // servers whose content version != ours -> grayed, join blocked
         Button _joinBtn;
         static int _statusNonce;
@@ -45,7 +55,7 @@ namespace UnturnedGodot
             margin.AddChild(cols);
 
             // ---- left column: header + list-source tabs + search + column heads + scrollable server list
-            var left = new VBoxContainer { CustomMinimumSize = new Vector2(440f, 0f) };
+            var left = new VBoxContainer { CustomMinimumSize = new Vector2(ListWidth, 0f) };
             left.AddThemeConstantOverride("separation", 8);
             cols.AddChild(left);
             left.AddChild(Header("SERVERS", 24));
@@ -61,7 +71,7 @@ namespace UnturnedGodot
                 tabs.AddChild(tb);
             }
 
-            var searchRow = new HBoxContainer { CustomMinimumSize = new Vector2(440f, 30f) };
+            var searchRow = new HBoxContainer { CustomMinimumSize = new Vector2(ListWidth, 30f) };
             searchRow.AddThemeConstantOverride("separation", 6);
             searchRow.AddChild(new LineEdit { PlaceholderText = "Search servers…", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
             _refreshBtn = new Button { Text = "⟳ Refresh", CustomMinimumSize = new Vector2(110f, 30f) };
@@ -70,19 +80,18 @@ namespace UnturnedGodot
             searchRow.AddChild(_refreshBtn);
             left.AddChild(searchRow);
 
-            var hdr = new HBoxContainer { CustomMinimumSize = new Vector2(440f, 20f) };
+            var hdr = new HBoxContainer { CustomMinimumSize = new Vector2(ListWidth, 22f) };
             hdr.AddThemeConstantOverride("separation", 4);
-            hdr.AddChild(ColHead("Name", 258));
-            hdr.AddChild(ColHead("Players", 80));
-            hdr.AddChild(ColHead("Ping", 60));
+            foreach (var (key, w) in Columns) hdr.AddChild(ColHeadButton(key, w));
             left.AddChild(hdr);
 
-            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(440f, 300f), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(ListWidth, 300f), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
             left.AddChild(scroll);
-            var list = new VBoxContainer { CustomMinimumSize = new Vector2(422f, 0f) };
-            list.AddThemeConstantOverride("separation", 3);
-            scroll.AddChild(list);
-            foreach (var sv in OfficialServers) list.AddChild(ServerRow(sv));
+            _serverList = new VBoxContainer { CustomMinimumSize = new Vector2(ListWidth - 18f, 0f) };
+            _serverList.AddThemeConstantOverride("separation", 3);
+            scroll.AddChild(_serverList);
+            foreach (var sv in OfficialServers) _serverList.AddChild(ServerRow(sv));
+            ApplySort();
 
             // ---- right column: selected-server info + JOIN + direct connect
             var right = new VBoxContainer { CustomMinimumSize = new Vector2(320f, 0f) };
@@ -104,21 +113,9 @@ namespace UnturnedGodot
             _joinBtn.Pressed += () => { if (_selectedServer != null && !_mismatched.Contains(_selectedServer)) OnJoinServer?.Invoke(_selectedServer.Host, _selectedServer.Port); };
             right.AddChild(_joinBtn);
 
-            right.AddChild(new HSeparator());
-            right.AddChild(Header("DIRECT CONNECT", 16));
-            _dcHost = DcField("Host / IP", "127.0.0.1", right);
-            _dcPort = DcField("Port", "47872", right);
-            _dcPass = DcField("Password", "", right, isPassword: true);
-            var dcBtn = new Button { Text = "CONNECT", CustomMinimumSize = new Vector2(320f, 40f) };
-            dcBtn.AddThemeFontSizeOverride("font_size", 18);
-            dcBtn.Pressed += () =>
-            {
-                string host = _dcHost.Text.Trim();
-                if (host == "") host = "127.0.0.1";
-                ushort port = ushort.TryParse(_dcPort.Text.Trim(), out var p) && p != 0 ? p : (ushort)47872;
-                OnJoinServer?.Invoke(host, port);   // password collected but not yet part of the port handshake (follow-up)
-            };
-            right.AddChild(dcBtn);
+            // Direct connect MOVED OUT to its own main-menu page (MainMenuConnect.cs, strawberry 2026-09-15).
+            // It never belonged beside a list you pick from, and the version here handed straight to the world
+            // build with no probe and a password it silently dropped.
             var backBtn = new Button { Text = "◄  Back", CustomMinimumSize = new Vector2(0f, 40f), Alignment = HorizontalAlignment.Left };
             backBtn.Pressed += BackToDashboard;   // dashboard is hidden while this is up -> give it its own way out
             right.AddChild(backBtn);
@@ -128,35 +125,103 @@ namespace UnturnedGodot
             if (OfficialServers.Length > 0) SelectServer(OfficialServers[0]);   // preselect the official server
         }
 
-        Label ColHead(string text, int w)
+        // The columns, in display order, with their widths. ONE table drives the heads, the rows and the
+        // sort -- a head list and a row list maintained separately is how a column ends up sorting by its
+        // neighbour.
+        const float ListWidth = 700f;
+        static readonly (string Key, int W)[] Columns =
         {
-            var l = new Label { Text = text, CustomMinimumSize = new Vector2(w, 0f) };
-            l.AddThemeFontSizeOverride("font_size", 12);
-            l.AddThemeColorOverride("font_color", new Color(0.6f, 0.58f, 0.5f));
+            ("Name", 210), ("Map", 120), ("Mode", 58), ("Gamemode", 92), ("Players", 80), ("Ping", 60),
+        };
+
+        // A head is a Button now: every column sorts, and clicking the active one reverses it.
+        Button ColHeadButton(string key, int w)
+        {
+            var b = new Button { Text = key, CustomMinimumSize = new Vector2(w, 22f), Flat = true, Alignment = HorizontalAlignment.Left };
+            b.AddThemeFontSizeOverride("font_size", 12);
+            b.AddThemeColorOverride("font_color", new Color(0.6f, 0.58f, 0.5f));
+            b.Pressed += () =>
+            {
+                if (_sortKey == key) _sortDesc = !_sortDesc; else { _sortKey = key; _sortDesc = false; }
+                ApplySort();
+            };
+            _headButtons[key] = b;
+            return b;
+        }
+
+        readonly System.Collections.Generic.Dictionary<string, Button> _headButtons = new();
+
+        // Sort the EXISTING row nodes rather than rebuilding them: a row owns its live ping/player labels and
+        // its mismatch colouring, and rebuilding would drop a Refresh already in flight onto freed labels.
+        void ApplySort()
+        {
+            if (_serverList == null || !IsInstanceValid(_serverList)) return;
+            var ordered = new System.Collections.Generic.List<(ServerEntry sv, Button row, Label name, Label ping, Label players)>(_serverRows);
+            ordered.Sort((a, b) => { int c = CompareBy(_sortKey, a.sv, b.sv); return _sortDesc ? -c : c; });
+            for (int i = 0; i < ordered.Count; i++)
+                if (IsInstanceValid(ordered[i].row)) _serverList.MoveChild(ordered[i].row, i);
+            foreach (var (key, b) in _headButtons)
+                if (IsInstanceValid(b)) b.Text = key == _sortKey ? key + (_sortDesc ? "  ▼" : "  ▲") : key;
+        }
+
+        // Ping and Players sort by the MEASURED value where there is one. A column that displays a live number
+        // has to sort by that number, not by the static row it was built from -- otherwise "sort by ping" on a
+        // refreshed list silently orders by name.
+        int CompareBy(string key, ServerEntry a, ServerEntry b) => CompareServers(key, a, b, _livePing, _livePlayers);
+
+        /// <summary>The ordering, as a pure function of the rows and the measured values -- so the column
+        /// order is testable without building a menu, which headless cannot do.</summary>
+        public static int CompareServers(string key, ServerEntry a, ServerEntry b,
+                                         System.Collections.Generic.Dictionary<ServerEntry, int> livePing,
+                                         System.Collections.Generic.Dictionary<ServerEntry, int> livePlayers)
+        {
+            switch (key)
+            {
+                case "Map": return string.Compare(a.Map, b.Map, System.StringComparison.OrdinalIgnoreCase);
+                case "Mode": return a.Pvp == b.Pvp ? 0 : (a.Pvp ? -1 : 1);
+                case "Gamemode": return string.Compare(a.Gamemode, b.Gamemode, System.StringComparison.OrdinalIgnoreCase);
+                case "Players": return LiveOr(livePlayers, b, -1).CompareTo(LiveOr(livePlayers, a, -1));   // busiest first
+                case "Ping": return LiveOr(livePing, a, int.MaxValue).CompareTo(LiveOr(livePing, b, int.MaxValue));   // unmeasured sorts last, never first
+                case "Name":
+                default: return string.Compare(a.Name, b.Name, System.StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        static int LiveOr(System.Collections.Generic.Dictionary<ServerEntry, int> d, ServerEntry sv, int fallback) =>
+            d.TryGetValue(sv, out int v) ? v : fallback;
+
+        Label ColCell(string text, int w, bool dim = false)
+        {
+            var l = new Label
+            {
+                Text = text,
+                CustomMinimumSize = new Vector2(w, 0f),
+                VerticalAlignment = VerticalAlignment.Center,
+                ClipText = true,
+            };
+            l.AddThemeFontSizeOverride("font_size", 14);
+            l.AddThemeColorOverride("font_color", dim ? new Color(0.72f, 0.72f, 0.7f) : new Color(0.9f, 0.9f, 0.88f));
             return l;
         }
 
-        // one server row: name (+ lock / PvP tag) + players + ping columns -- the visible subset of SleekServer's
-        // columns (Steam-only columns omitted, no data). The whole row is a Button; the columns overlay it.
+        // one server row: the Columns table, in the same order as the heads above it.
         Control ServerRow(ServerEntry sv)
         {
-            var b = new Button { CustomMinimumSize = new Vector2(422f, 44f) };
+            var b = new Button { CustomMinimumSize = new Vector2(ListWidth - 18f, 44f) };
             b.Pressed += () => SelectServer(sv);
             var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
             row.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             row.AddThemeConstantOverride("separation", 4);
             row.OffsetLeft = 8; row.OffsetRight = -8;
-            var name = new Label
-            {
-                Text = sv.Name + (sv.Locked ? "  🔒" : "") + (sv.Pvp ? "   PvP" : "   PvE"),
-                CustomMinimumSize = new Vector2(258f, 0f),
-                VerticalAlignment = VerticalAlignment.Center,
-                ClipText = true,
-            };
+
+            var name = ColCell(sv.Name + (sv.Locked ? "  \U0001F512" : ""), Columns[0].W);
             name.AddThemeFontSizeOverride("font_size", 15);
             row.AddChild(name);
-            var playersL = InfoBox($"—/{sv.Max}", 80);
-            var pingL = InfoBox("—", 60);
+            row.AddChild(ColCell(sv.Map, Columns[1].W, dim: true));
+            row.AddChild(ColCell(sv.Pvp ? "PvP" : "PvE", Columns[2].W, dim: true));
+            row.AddChild(ColCell(sv.Gamemode, Columns[3].W, dim: true));
+            var playersL = InfoBox($"\u2014/{sv.Max}", Columns[4].W);
+            var pingL = InfoBox("\u2014", Columns[5].W);
             row.AddChild(playersL);
             row.AddChild(pingL);
             _serverRows.Add((sv, b, name, pingL, playersL));   // Refresh updates this row's live ping/count + version-mismatch state
@@ -184,22 +249,9 @@ namespace UnturnedGodot
             if (_svInfoName != null) _svInfoName.Text = sv.Name;
             if (_svInfoDetail != null)
                 _svInfoDetail.Text = _mismatched.Contains(sv)
-                    ? $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  ⚠ VERSION MISMATCH — cannot join"
-                    : $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}     Max players:  {sv.Max}\nStatus:  press ⟳ Refresh for live ping + players";
+                    ? $"Map:  {sv.Map}\nAddress:  {AddressText(sv.Host, sv.Port)}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  ⚠ VERSION MISMATCH — cannot join"
+                    : $"Map:  {sv.Map}\nAddress:  {AddressText(sv.Host, sv.Port)}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}     Max players:  {sv.Max}\nStatus:  press ⟳ Refresh for live ping + players";
             RefreshJoinButton();
-        }
-
-        LineEdit DcField(string label, string def, VBoxContainer parent, bool isPassword = false)
-        {
-            var row = new HBoxContainer { CustomMinimumSize = new Vector2(320f, 30f) };
-            row.AddThemeConstantOverride("separation", 6);
-            var l = new Label { Text = label, CustomMinimumSize = new Vector2(90f, 0f), VerticalAlignment = VerticalAlignment.Center };
-            l.AddThemeFontSizeOverride("font_size", 14);
-            row.AddChild(l);
-            var field = new LineEdit { Text = def, CustomMinimumSize = new Vector2(220f, 28f), Secret = isPassword };
-            row.AddChild(field);
-            parent.AddChild(row);
-            return field;
         }
 
         // ---- server-browser status query (Refresh -> live ping + player count) ----
@@ -234,12 +286,17 @@ namespace UnturnedGodot
                 Callable.From(() =>
                 {
                     if (mismatch) _mismatched.Add(sv); else _mismatched.Remove(sv);
+                    // Keep the measured numbers, not just the label text: a column that displays a live value
+                    // must SORT by that value, or "sort by ping" on a refreshed list quietly orders by name.
+                    if (ok) { _livePing[sv] = ping; _livePlayers[sv] = players; }
+                    else { _livePing.Remove(sv); _livePlayers.Remove(sv); }
                     var dim = new Color(0.5f, 0.5f, 0.5f);
                     var lit = new Color(0.9f, 0.9f, 0.88f);
                     if (IsInstanceValid(pingL)) { pingL.Text = ok ? $"{ping} ms" : "—"; pingL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
                     if (IsInstanceValid(playersL)) { playersL.Text = mismatch ? "mismatch" : (ok ? $"{players}/{(max > 0 ? max : sv.Max)}" : "offline"); playersL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
                     if (IsInstanceValid(name)) name.AddThemeColorOverride("font_color", mismatch ? dim : new Color(0.95f, 0.95f, 0.95f));
                     if (_selectedServer == sv) { UpdateSelectedLive(ok, ping, players, max > 0 ? max : sv.Max, mismatch); RefreshJoinButton(); }
+                    if (_sortKey == "Ping" || _sortKey == "Players") ApplySort();   // the values it is sorted BY just changed
                 }).CallDeferred();
             });
         }
@@ -287,7 +344,7 @@ namespace UnturnedGodot
             if (_selectedServer == null || _svInfoDetail == null || !IsInstanceValid(_svInfoDetail)) return;
             var sv = _selectedServer;
             string status = mismatch ? "⚠ VERSION MISMATCH — cannot join" : (ok ? $"{players}/{max} players  ·  {ping} ms" : "offline / no response");
-            _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  {status}";
+            _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {AddressText(sv.Host, sv.Port)}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  {status}";
         }
 
         // Row gray-out is per-row (QueryServer); the JOIN button tracks whichever server is currently selected.

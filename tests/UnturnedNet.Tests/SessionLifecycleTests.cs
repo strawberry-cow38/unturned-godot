@@ -77,6 +77,79 @@ namespace UnturnedNet.Tests
             Assert.That(h.Server.Peers.Count, Is.EqualTo(0), "no session is built for a rejected version");
         }
 
+        // v51: the reject now carries the REFUSING SERVER'S protocol version, because "version mismatch" on
+        // its own tells a player nothing about who has to move. This is the live case, not a hypothetical --
+        // the vox server sat on protocol 45 while clients were on 51, up and ticking and answering its status
+        // port in 18 ms, and read to strawberry as simply "down" (2026-09-15).
+        [Test]
+        public void VersionMismatch_TellsTheClientWhatTheServerIsRunning()
+        {
+            var h = new NetSimHarness(seed: 2);
+            var c = h.AddClient("timetraveler", version: (byte)(NetProtocol.Version + 1));
+            c.Connect();
+            Assert.That(h.StepUntil(() => c.State == NetSessionState.Disconnected, 100), Is.True, h.SeedInfo);
+            Assert.That(c.RejectServerVersion, Is.EqualTo(NetProtocol.Version),
+                "the refused client must learn which version the SERVER speaks, not just that they differ");
+
+            string msg = NetRejectText.Describe(c.RejectReason, c.RejectServerVersion, (byte)(NetProtocol.Version + 1));
+            Assert.That(msg, Does.Contain(NetProtocol.Version.ToString()), "message names the server's version");
+            Assert.That(msg, Does.Contain((NetProtocol.Version + 1).ToString()), "message names ours too");
+        }
+
+        // A server older than v51 sends the reason byte and STOPS. That server is precisely the one whose
+        // version we most want to report, so the missing byte must degrade to a worded-differently message --
+        // never to a lost Reject, and never to a sentence claiming a version we were not told.
+        [Test]
+        public void Describe_DegradesWhenTheServerDidNotSayItsVersion()
+        {
+            string known = NetRejectText.Describe(NetRejectReason.VersionMismatch, 45, 51);
+            string unknown = NetRejectText.Describe(NetRejectReason.VersionMismatch, 0, 51);
+            Assert.That(known, Does.Contain("45").And.Contain("51"));
+            Assert.That(unknown, Does.Not.Contain("45"), "cannot name a version the server never sent");
+            Assert.That(unknown, Does.Not.Contain(" 0"), "0 is the ABSENT marker and must never reach the player");
+            Assert.That(unknown, Is.Not.Empty.And.Not.EqualTo(known));
+        }
+
+        // None means nothing was heard from a server at all -- a timeout, a closed port, a wrong address.
+        // Wording it as a refusal would invent an interaction that never happened, which is the same class
+        // of wrong as showing the player nothing.
+        [Test]
+        public void Describe_NoneIsNotWordedAsARefusal()
+        {
+            string msg = NetRejectText.Describe(NetRejectReason.None);
+            Assert.That(msg.ToLowerInvariant(), Does.Not.Contain("refus").And.Not.Contain("reject"));
+            Assert.That(msg.ToLowerInvariant(), Does.Contain("offline").Or.Contain("reach"));
+        }
+
+        // Retry is only honest where waiting can actually change the answer. A banned or wrong-version client
+        // retrying is a client being lied to by its own UI.
+        [Test]
+        public void OnlyTransientReasonsAreRetryable()
+        {
+            Assert.That(NetRejectText.IsRetryable(NetRejectReason.ServerStarting), Is.True);
+            Assert.That(NetRejectText.IsRetryable(NetRejectReason.ServerFull), Is.True);
+            foreach (var r in new[] { NetRejectReason.VersionMismatch, NetRejectReason.ContentMismatch,
+                                      NetRejectReason.Banned, NetRejectReason.WrongPassword, NetRejectReason.PingTooHigh })
+                Assert.That(NetRejectText.IsRetryable(r), Is.False, $"{r} cannot be fixed by trying again");
+        }
+
+        // Every reason must produce its own sentence. A default that silently covers a new enum value is how
+        // a future reason ships showing the generic "could not reach the server" and looks like a timeout.
+        [Test]
+        public void EveryReasonHasItsOwnDistinctMessage()
+        {
+            var seen = new System.Collections.Generic.Dictionary<string, NetRejectReason>();
+            foreach (NetRejectReason r in System.Enum.GetValues(typeof(NetRejectReason)))
+            {
+                string m = NetRejectText.Describe(r, 45, 51);
+                Assert.That(m, Is.Not.Empty, $"{r} has no message");
+                if (seen.TryGetValue(m, out var other))
+                    Assert.Fail($"{r} and {other} share a message -- a new reason fell through to the default: \"{m}\"");
+                seen[m] = r;
+                Assert.That(NetRejectText.Short(r), Is.Not.Empty, $"{r} has no short form");
+            }
+        }
+
         [Test]
         public void ServerFull_IsRejected()
         {
