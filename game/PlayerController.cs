@@ -5880,6 +5880,7 @@ namespace UnturnedGodot
         // client never re-packs its own bag, plants its own generator, or levels its own skill).
         public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
         public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
+        public System.Action<byte, byte, byte, byte> NetQuickTransfer;   // (page,x,y, toPage) -> Client.SendQuickTransfer
         public System.Action<byte, byte, byte, ushort, byte, byte, byte, byte> NetSplitItem;   // (page,x,y, amount, toPage,toX,toY,toRot) -> Client.SendSplitItem
         public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
         public System.Action<byte, byte, byte, ushort> NetFitAttachment;   // (page,x,y,id) -> Client.SendFitAttachment (server spends the fitted item)
@@ -6140,6 +6141,16 @@ namespace UnturnedGodot
         {
             if (NetSplitItem == null) return false;
             NetSplitItem(page, x, y, amount, toPage, toX, toY, toRot);
+            return true;
+        }
+
+        /// <summary>MP quick transfer: the SERVER decides which stacks are topped up and in what order, so the
+        /// destination is a page rather than a cell. Resolving a cell here is what stopped it merging at all.</summary>
+        public bool RequestQuickTransfer(byte page, byte x, byte y, byte toPage)
+        {
+            if (NetQuickTransfer == null) return false;
+            FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
+            NetQuickTransfer(page, x, y, toPage);
             return true;
         }
 

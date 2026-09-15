@@ -1621,17 +1621,18 @@ void fragment() {
             // The wire needs an EXPLICIT destination cell where the quick-move only has "somewhere with room", so
             // resolve one against the local grid first. If the server disagrees (someone else took the cell) the
             // move simply fails and the echo repaints -- the same losing race the drag path already accepts.
+            // ⭐ NO CELL IS RESOLVED HERE ANY MORE. This used to pick one empty cell locally and send an ordinary
+            // move, which is exactly why hover-looting never topped up the stacks already in the destination
+            // (strawberry 2026-09-15) -- an empty cell is the one destination that cannot merge. The server is
+            // handed the PAGE and decides, running the same TryQuickTransfer singleplayer runs.
             if (Player != null && Player.InventoryIsServerOwned)
             {
-                if (!ResolveMoveDest(jar, dest, out byte dp, out byte dx, out byte dy, out byte drot)) return false;
-                if (!Player.RequestMoveItem(page, jar.x, jar.y, dp, dx, dy, drot)) return false;
+                if (!Player.RequestQuickTransfer(page, jar.x, jar.y, dest)) return false;
                 if (page != PlayerInventory.AREA) PlayInventoryAudio(jar);
                 CloseSelection(); Refresh();
                 return true;
             }
-            Inv.items[page].removeItem(idx);
-            bool ok = dest == 255 ? Inv.tryAddItem(jar.item) : Inv.items[dest].tryAddItem(jar.item);
-            if (!ok) Inv.items[page].tryAddItem(jar.item);   // no room -> restore, no-op rather than a loss
+            bool ok = Inv.TryQuickTransfer(page, jar.x, jar.y, dest);
             if (ok)
             {
                 // Source onSelectedItem plays the foley on BOTH grid<->storage transfer branches (:887, :898) but NOT

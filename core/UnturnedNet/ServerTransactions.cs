@@ -421,6 +421,11 @@ namespace UnturnedGodot.Net
                 OnDropItem,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
+            commands.Register<QuickTransferCommand>(ReplicationIds.CommandQuickTransfer, QuickTransferCommand.TryRead,
+                OnQuickTransfer,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
+                                           && (cmd.ToPage == 255 || cmd.ToPage < PlayerInventory.PAGES));
+
             commands.Register<SplitItemCommand>(ReplicationIds.CommandSplitItem, SplitItemCommand.TryRead,
                 OnSplitItem,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES
@@ -1034,6 +1039,17 @@ namespace UnturnedGodot.Net
             if (taken == null) { Diag.SplitsRejected++; return; }
             dst.addItem(cmd.ToX, cmd.ToY, cmd.ToRot, taken);
             Diag.SplitsApplied++;
+        }
+
+        /// <summary>QUICK TRANSFER, server side -- the same PlayerInventory.TryQuickTransfer singleplayer runs,
+        /// not a second copy of the stacking rule. Which is the point: the client used to resolve a destination
+        /// CELL and send an ordinary move, so the server never got the chance to top up existing stacks.</summary>
+        void OnQuickTransfer(ushort sender, QuickTransferCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            if (inv == null) return;
+            if (inv.TryQuickTransfer(cmd.Page, cmd.X, cmd.Y, cmd.ToPage)) Diag.GridMovesApplied++;
+            else Diag.GridMovesRejected++;
         }
 
         void OnDropItem(ushort sender, DropItemCommand cmd)

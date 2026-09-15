@@ -214,7 +214,10 @@ namespace UnturnedGodot.Net
         // sides were internally consistent and the merge took one file's line, which is a wire that routes a
         // split request into the chat handler with nothing to notice. The split keeps 61 because it is the one
         // already on main; chat had not left the branch yet, so moving it costs nobody a compatible peer.
-        public const byte CommandChatSend = 62;   // v49: a player says something in global chat. Text only -- who said it is the SENDING peer, never a field, or anyone can speak as anyone.
+        public const byte CommandChatSend = 62;
+        public const byte CommandQuickTransfer = 63;   // v51: hover-loot / Ctrl+RMB / Store / Take as ONE server-side
+                                                       // op, so the fill-partial-stacks-then-overflow rule lives in
+                                                       // one place instead of only on the singleplayer branch.   // v49: a player says something in global chat. Text only -- who said it is the SENDING peer, never a field, or anyone can speak as anyone.
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.

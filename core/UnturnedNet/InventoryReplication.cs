@@ -76,6 +76,24 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>QUICK TRANSFER: hover-loot / Ctrl+RMB / Store / Take. The destination is a PAGE, never a cell,
+    /// because the whole point is that the server decides which stacks get topped up and in what order --
+    /// resolving a cell on the client is what made this path never merge.</summary>
+    public struct QuickTransferCommand
+    {
+        public byte Page, X, Y;
+        public byte ToPage;      // 255 = any of the sender's own pages
+        public void Write(NetPakWriter w) { w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y); w.WriteUInt8(ToPage); }
+        public static bool TryRead(NetPakReader r, out QuickTransferCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)
+                || !r.ReadUInt8(out byte tp)) return false;
+            cmd = new QuickTransferCommand { Page = p, X = x, Y = y, ToPage = tp };
+            return true;
+        }
+    }
+
     public struct PickupItemCommand
     {
         public uint NetId;

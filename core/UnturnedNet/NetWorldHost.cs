@@ -1248,6 +1248,9 @@ namespace UnturnedGodot.Net
             => SendCommand(ReplicationIds.CommandSplitItem, new SplitItemCommand {
                    Page = page, X = x, Y = y, Amount = amount, ToPage = toPage, ToX = toX, ToY = toY, ToRot = toRot }.Write);
 
+        public bool SendQuickTransfer(byte page, byte x, byte y, byte toPage)
+            => SendCommand(ReplicationIds.CommandQuickTransfer, new QuickTransferCommand { Page = page, X = x, Y = y, ToPage = toPage }.Write);
+
         public bool SendPickupItem(uint netId)
             => SendCommand(ReplicationIds.CommandPickupItem, new PickupItemCommand { NetId = netId }.Write);
 

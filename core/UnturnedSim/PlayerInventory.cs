@@ -317,6 +317,46 @@ namespace SDG.Unturned
             return true;
         }
 
+        /// <summary>QUICK TRANSFER (hover-loot / Ctrl+RMB / Store / Take): move the stack at (fromPage,x,y) into
+        /// `toPage`, TOPPING UP that page's matching stacks before it takes a fresh slot -- filling each to its cap
+        /// in turn, then overflowing to empty space, and leaving whatever does not fit in the source
+        /// (strawberry 2026-09-15).
+        ///
+        /// ⭐ All of that is already exactly what tryAddItem does, so this calls it rather than restating the
+        /// rule. AddCore walks the page's jars filling each partial stack of the same id to `cap` before moving
+        /// on, then looks for space for what is left; if that fails it returns false having ALREADY merged what
+        /// it could, which is precisely "leave the remainder in the source" -- the leftover is handed back and
+        /// put where it came from.
+        ///
+        /// ⚠ This exists because the two paths had DRIFTED. Singleplayer went through tryAddItem and behaved
+        /// correctly; the server-owned path resolved one empty cell up-front and moved the whole jar, so it never
+        /// merged at all -- and the listen server is what actually gets played, so the good branch was the one
+        /// nobody saw. One implementation now, called by both.
+        ///
+        /// `toPage` 255 = any of my own pages, walked SLOTS..OWNPAGES as tryAddItem does.</summary>
+        public bool TryQuickTransfer(byte fromPage, byte x, byte y, byte toPage)
+        {
+            if (fromPage >= PAGES || items[fromPage] == null) return false;
+            if (toPage != 255 && (toPage >= PAGES || items[toPage] == null)) return false;
+            byte idx = items[fromPage].getIndex(x, y);
+            if (idx == byte.MaxValue) return false;
+            var jar = items[fromPage].getItem(idx);
+            if (jar?.item == null) return false;
+
+            var moving = jar.item;
+            int before = moving.amount;
+            items[fromPage].removeItem(idx);
+
+            bool placed = toPage == 255 ? tryAddItem(moving) : items[toPage].tryAddItem(moving);
+            if (placed) return true;
+
+            // Nothing fitted, or only part of it did. `moving.amount` is what is LEFT after any merging
+            // tryAddItem managed, so putting it back is what leaves the remainder in the source -- and if
+            // nothing moved at all this restores the stack whole and the caller sees a no-op.
+            if (moving.amount > 0) items[fromPage].tryAddItem(moving);
+            return moving.amount < before;   // true only if some of it actually went across
+        }
+
         // total count of an item id across the player's own pages (0..OWNPAGES), for HUD/ammo/craft checks later
         public int getItemCount(ushort id)
         {
