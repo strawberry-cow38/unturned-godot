@@ -52,12 +52,25 @@ namespace UnturnedGodot
             return pool.Count == 0 ? null : pool[(int)(GD.Randi() % (uint)pool.Count)];
         }
 
+        /// <summary>Decoded loading art, kept by path.
+        ///
+        /// ⚠ THIS IS NOT A MICRO-OPTIMISATION. The official map shots are 3840x2160 PNGs of 5-8 MB -- PEI's is
+        /// 7.6 MB decoding to 8.3 megapixels -- and it was being decoded SYNCHRONOUSLY in _Ready, on the very
+        /// frame the loading screen appears, every single time one is built. One decode is a stall you could
+        /// argue is affordable during a load; repeating it per construction is not, and the L1 suite builds a
+        /// dozen of these in a row.</summary>
+        static readonly Dictionary<string, Texture2D> _bgCache = new();
+
         static Texture2D LoadAbs(string absPath)
         {
-            if (string.IsNullOrEmpty(absPath) || !System.IO.File.Exists(absPath)) return null;
+            if (string.IsNullOrEmpty(absPath)) return null;
+            if (_bgCache.TryGetValue(absPath, out var had)) return had;
+            if (!System.IO.File.Exists(absPath)) return null;
             var img = new Image();
             if (!ContentProvider.LoadOk(img, absPath)) return null;
-            return ImageTexture.CreateFromImage(img);
+            var tex = ImageTexture.CreateFromImage(img);
+            _bgCache[absPath] = tex;
+            return tex;
         }
 
         static Texture2D LoadBg(string file)

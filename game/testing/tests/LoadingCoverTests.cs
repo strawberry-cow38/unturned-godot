@@ -111,15 +111,28 @@ namespace UnturnedGodot.Testing
             menu.DebugBuildMapSelectorForTest(layer);
             yield return Ticks(2);
 
-            foreach (string key in new[] { "pei", "washington", "playground" })
+            // ⚠ THE SIZE CHECK BELONGS INSIDE THE LOOP. It used to sit after it, so it only ever measured the
+            // LAST key -- and that was "playground", the one map with no mappreview_playground.png shipped at
+            // all. It resolved to nothing, read 0x0, and failed. The credit checks were fine because crediting
+            // nobody is the right answer for a missing icon; it was the assertion that escaped the loop and
+            // landed on the single key that has no asset. (tinyclaw found it.)
+            foreach (string key in new[] { "pei", "washington" })
             {
                 menu.DebugSelectMapForTest(key);
                 yield return Ticks(1);
                 T.Check($"{key}: the picker shows an icon, and names no photographer ('{menu.DebugPreviewCredit}')",
                         string.IsNullOrEmpty(menu.DebugPreviewCredit));
+                var sz = menu.DebugPreviewSize;
+                T.Check($"{key}: ...and it is the small icon, not a 4K screenshot ({sz.X}x{sz.Y})",
+                        sz.X > 0 && sz.X <= 640);
             }
-            var sz = menu.DebugPreviewSize;
-            T.Check($"...and it is the small icon, not a 4K screenshot ({sz.X}x{sz.Y})", sz.X > 0 && sz.X <= 640);
+
+            // Playground ships no icon at all, so it gets its own case: no art, and therefore no credit. Asking
+            // it for a size is what broke this test, and it is not a claim worth making about a map with no image.
+            menu.DebugSelectMapForTest("playground");
+            yield return Ticks(1);
+            T.Check($"the gun range has no icon shipped, and so credits nobody ('{menu.DebugPreviewCredit}')",
+                    string.IsNullOrEmpty(menu.DebugPreviewCredit));
 
             layer.QueueFree(); menu.QueueFree();
             yield return Ticks(2);

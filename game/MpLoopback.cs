@@ -340,6 +340,19 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // ...and the console's `heal`, the same way round: the fine vitals through the reset a respawn
                 // uses, and HP through the RegenSink the passive regen already raises it with (clamped to 100
                 // inside). Both on the authority, so the next owner echo confirms the heal instead of undoing it.
+                // Vending: spend the dollar and spawn the can on the SERVER's inventory, so the owner echo
+                // confirms the purchase instead of refunding it. Same shape as the heal seam below.
+                Player.NetVend = (drinkId, dropPos) =>
+                {
+                    if (!Server.Inventories.TryGet(Client.PlayerId, out var inve)) return false;
+                    var bag = inve.Inventory;
+                    if (bag == null || bag.getItemCount(SDG.Unturned.Currency.StackId) < UnturnedGodot.VendingMachine.Price) return false;
+                    bag.removeItemAmount(SDG.Unturned.Currency.StackId, UnturnedGodot.VendingMachine.Price);
+                    // Godot -> the core's UnityEngine-shaped vectors, as ClientWorldSession.ToU does.
+                    Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(drinkId),
+                        new UnityEngine.Vector3(dropPos.X, dropPos.Y, dropPos.Z), UnityEngine.Vector3.zero);
+                    return true;
+                };
                 Player.NetHealSelf = () =>
                 {
                     Server.Vitals.ServerResetForNewLife(Client.PlayerId, Server.Session.CurrentTick);

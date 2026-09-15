@@ -710,7 +710,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
-            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0, radios = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
+            int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0, radios = 0, vendors = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
                                                 //  silently stopped being picked up and only the televisions remained.
@@ -1841,6 +1841,7 @@ namespace UnturnedGodot
             if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             Log.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
             Log.Print($"[medical] {monitorsPlaced} patient monitors");
+            Log.Print($"[vending] {vendors} drinks machines");   // unconditional for the same reason as the radios below: a zero says the prop stopped being placed
             Log.Print($"[radio] {radios} radio sets");   // unconditional, same reason: a zero is the tell that the prop stopped being placed   // printed unconditionally: a zero here is the tell that the prop stopped being placed
             if (signals > 0) Log.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             Log.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");

@@ -601,6 +601,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusGrid)) n++;
                 if (IsInstanceValid(_focusTV)) n++;
                 if (IsInstanceValid(_focusRadio)) n++;
+                if (IsInstanceValid(_focusVendor)) n++;
                 if (IsInstanceValid(_focusShelfItem)) n++;
                 if (IsInstanceValid(_focusShelf)) n++;
                 if (_focusPuppet is Node3D fp && IsInstanceValid(fp)) n++;
@@ -616,6 +617,7 @@ namespace UnturnedGodot
         CarLift _focusCarLift;        // the car-lift platform being LOOKED AT -> F raises/lowers it
         TVDevice _focusTV;            // the TV being LOOKED AT -> F toggles it on/off
         RadioDevice _focusRadio;      // the radio being LOOKED AT -> F toggles it on/off
+        VendingMachine _focusVendor;  // the drinks machine being LOOKED AT -> F buys one
         PropSeat _focusSeat;          // the chair/couch/bench seat being LOOKED AT -> F sits in it
         PropSeat _sitting;            // the seat we are IN, or null. The furniture analogue of _driving.
         public PropSeat DebugFocusSeat => _focusSeat;
@@ -709,7 +711,7 @@ namespace UnturnedGodot
             Vehicle.AccessZone hitAccess = default; bool hitAccessValid = false;
             Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null; TVDevice hitTV = null; NoteBody hitNote = null;
             NpcCharacter hitNpc = null;       // the person under the ray -> nameplate + F to talk
-            RadioDevice hitRadio = null; PropSeat hitSeat = null;
+            RadioDevice hitRadio = null; VendingMachine hitVendor = null; PropSeat hitSeat = null;
             HeartMonitor hitMonitor = null;   // patient monitor under the ray -> F toggles it
             LampLight hitLamp = null;         // standing/desk lamp under the ray -> F on/off + outline
             ElevatorButton hitElevButton = null;   // elevator floor-button under the ray -> F sends the car to that floor
@@ -766,6 +768,7 @@ namespace UnturnedGodot
                     else if (rcol is Node hmn && hmn.HasMeta(HeartMonitor.HitMeta) && hmn.GetMeta(HeartMonitor.HitMeta).As<HeartMonitor>() is HeartMonitor hmd && IsInstanceValid(hmd)) hitMonitor = hmd;   // patient monitor body -> its device (F toggles; the bullet path shoots the screen out)
                     else if (rcol is Node tvn && tvn.HasMeta(TVDevice.HitMeta) && tvn.GetMeta(TVDevice.HitMeta).As<TVDevice>() is TVDevice tvd && IsInstanceValid(tvd)) hitTV = tvd;   // TV body collider tagged in WorldBuilder -> its device (F toggles; the bullet path uses the same meta to find the screen)
                     else if (rcol is Node rdn && rdn.HasMeta(RadioDevice.HitMeta) && rdn.GetMeta(RadioDevice.HitMeta).As<RadioDevice>() is RadioDevice rdd && IsInstanceValid(rdd)) hitRadio = rdd;   // radio body collider tagged in WorldBuilder -> its device (F toggles)
+                    else if (rcol is Node vmn && vmn.HasMeta(VendingMachine.HitMeta) && vmn.GetMeta(VendingMachine.HitMeta).As<VendingMachine>() is VendingMachine vmd && IsInstanceValid(vmd)) hitVendor = vmd;   // drinks machine body -> its device (F buys)
                     else if (rcol is Node psn && psn.HasMeta(PropSeat.HitMeta) && NearestFreeSeat(psn, _lookEnd) is PropSeat pss) hitSeat = pss;   // chair/couch/bench body tagged in WorldBuilder -> the seat NEAREST where you aimed (F sits)
                     else if (rcol is Node lmn && lmn.HasMeta(LampLight.LookMeta) && lmn.GetMeta(LampLight.LookMeta).As<LampLight>() is LampLight lmd && IsInstanceValid(lmd)) hitLamp = lmd;   // standing/desk lamp body tagged in WorldBuilder -> its LampLight (F on/off)
                     else if (rcol is ElevatorButton eb && IsInstanceValid(eb)) hitElevButton = eb;   // elevator floor button -> F sends the car to its floor (the whole car is no longer the interactable, master)
@@ -984,6 +987,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusSeat)) _focusSeat.SetLookFocused(false);
                 _focusSeat = hitSeat;
                 _focusSeat?.SetLookFocused(true);
+            }
+            if (hitVendor != _focusVendor)   // drinks machine look-focus: same whole-prop white outline
+            {
+                if (IsInstanceValid(_focusVendor)) _focusVendor.SetLookFocused(false);
+                _focusVendor = hitVendor;
+                _focusVendor?.SetLookFocused(true);
             }
             if (hitRadio != _focusRadio)   // radio look-focus: same whole-prop white outline as the TV
             {
@@ -5554,6 +5563,15 @@ namespace UnturnedGodot
         /// how singleplayer runs -- HP and the fine vitals are SERVER-owned, and a client-side write reads back
         /// correctly for exactly one tick before the owner echo overwrites it with the server's unchanged copy.
         /// A heal that only ran locally would look like it worked and then quietly undo itself.</summary>
+        /// <summary>Buy from a vending machine ON THE AUTHORITY: spend the dollar and spawn the drink, both on
+        /// the side that owns the bag. (drinkId, dropPos) -> did it happen.
+        ///
+        /// ⚠ A seam, not a wire command, exactly like NetHealSelf beside it -- the listen server IS the server,
+        /// so MpLoopback can do this in-process. Spending the dollar LOCALLY would be refunded by the next owner
+        /// echo while the drink stayed on the floor, which is a free-soda dupe and the same "client mutated, the
+        /// authority disagreed" shape as the thrown-grenade spend and the respawn vitals.</summary>
+        public System.Func<ushort, Vector3, bool> NetVend;
+
         public System.Action NetHealSelf;
 
         /// <summary>Console `heal`: full HP, full food/water/stamina/breath, no infection, no dose, and every
@@ -6151,6 +6169,17 @@ namespace UnturnedGodot
             if (NetQuickTransfer == null) return false;
             FlushGunState(force: true);   // the server must own the gun state BEFORE it owns the move
             NetQuickTransfer(page, x, y, toPage);
+            return true;
+        }
+
+        /// <summary>Vend: the authority spends and spawns where there is one; pure singleplayer does it here.</summary>
+        public bool RequestVend(ushort drinkId, Vector3 dropPos)
+        {
+            if (NetVend != null) return NetVend(drinkId, dropPos);
+            if (InventoryIsServerOwned) return false;   // server-owned bag with no seam -> refuse rather than dupe
+            if (Inventory == null || Inventory.getItemCount(SDG.Unturned.Currency.StackId) < VendingMachine.Price) return false;
+            Inventory.removeItemAmount(SDG.Unturned.Currency.StackId, VendingMachine.Price);
+            DropWorldItem(new SDG.Unturned.Item(drinkId), dropPos);
             return true;
         }
 
@@ -8291,6 +8320,14 @@ namespace UnturnedGodot
                 }
                 else if (_focusTV != null && IsInstanceValid(_focusTV)) _focusTV.Toggle();   // looking at a TV: F toggles it on/off (per-TV state)
                 else if (_focusRadio != null && IsInstanceValid(_focusRadio)) _focusRadio.Toggle();   // ...same for a radio set
+                // A drinks machine. The refusal is SPOKEN rather than silent -- no power, or no dollar, are both
+                // things the player can go and fix, and a machine that simply ignores you reads as broken.
+                else if (_focusVendor != null && IsInstanceValid(_focusVendor))
+                {
+                    string why = _focusVendor.RefusalFor(this);
+                    if (why != null) Log.Print($"[vending] refused: {why}");
+                    else _focusVendor.Vend(this);
+                }
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)
                 else if (_focusMonitor != null && IsInstanceValid(_focusMonitor)) _focusMonitor.Toggle();   // ...same for a patient monitor
