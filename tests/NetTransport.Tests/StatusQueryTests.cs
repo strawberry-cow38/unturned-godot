@@ -132,6 +132,126 @@ namespace NetTransport.Tests
             foreach (char c in motd) Assert.That(c, Is.EqualTo('я'));
         }
 
+        // The icon is PULLED in chunks rather than pushed in the status reply, because a 320x180 png is tens
+        // of KB and the reply-never-exceeds-the-request rule would otherwise demand a 60 KB request per server
+        // per refresh. Pull keeps the rule per-chunk: fetching 60 KB costs the asker 60 KB, so a spoofed
+        // source address reflects nothing an attacker did not already send.
+        [Test]
+        public void IconChunksNeverExceedTheirRequest_AndReassembleExactly()
+        {
+            var srv = new UdpServerTransport(Port + 3);
+            srv.Initialize(null);
+            var icon = new byte[5000];
+            for (int i = 0; i < icon.Length; i++) icon[i] = (byte)(i * 7 % 251);   // a pattern a truncation or an off-by-one would disturb
+            srv.StatusIcon = icon;
+
+            var got = new byte[icon.Length];
+            int have = 0, chunks = 0;
+            using var udp = new UdpClient();
+            udp.Client.ReceiveTimeout = 2000;
+            var buf = new byte[4096];
+            var pump = new Thread(() => { for (int i = 0; i < 4000; i++) { srv.Receive(buf, out _, out _); Thread.Sleep(1); } }) { IsBackground = true };
+            pump.Start();
+
+            const int reqBytes = 1200;
+            while (have < icon.Length && chunks < 200)
+            {
+                var req = new byte[reqBytes];
+                req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'I'; req[3] = (byte)'Q';
+                req[4] = (byte)(have & 0xFF); req[5] = (byte)((have >> 8) & 0xFF); req[6] = (byte)((have >> 16) & 0xFF);
+                udp.Send(req, req.Length, new IPEndPoint(IPAddress.Loopback, Port + 3));
+                var from = new IPEndPoint(IPAddress.Any, 0);
+                byte[] r = udp.Receive(ref from);
+                chunks++;
+
+                Assert.That(r.Length, Is.LessThanOrEqualTo(reqBytes), "a chunk reply must never exceed the request that asked for it");
+                Assert.That(Encoding.ASCII.GetString(r, 0, 4), Is.EqualTo("UGIR"));
+                int off = r[4] | (r[5] << 8) | (r[6] << 16);
+                int total = r[7] | (r[8] << 8) | (r[9] << 16);
+                Assert.That(off, Is.EqualTo(have), "the server echoes the offset it is answering");
+                Assert.That(total, Is.EqualTo(icon.Length), "the total is stated and stable across chunks");
+                int n = r.Length - 10;
+                Assert.That(n, Is.GreaterThan(0));
+                Array.Copy(r, 10, got, have, n);
+                have += n;
+            }
+
+            Assert.That(have, Is.EqualTo(icon.Length), $"reassembled {have} of {icon.Length} in {chunks} chunks");
+            Assert.That(got, Is.EqualTo(icon), "the reassembled bytes must be the icon, exactly");
+        }
+
+        // ⚠ A 1200 B request is bounded by the CHUNK CAP (1024), not by the request -- so it does not test the
+        // budget clamp at all. A small request is the only shape that does, and without this case removing the
+        // clamp entirely leaves every other test green.
+        [Test]
+        public void ASmallRequestIsAnsweredWithASmallChunk()
+        {
+            var srv = new UdpServerTransport(Port + 6);
+            srv.Initialize(null);
+            srv.StatusIcon = new byte[5000];
+
+            using var udp = new UdpClient();
+            udp.Client.ReceiveTimeout = 2000;
+            const int tiny = 100;
+            var req = new byte[tiny];
+            req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'I'; req[3] = (byte)'Q';
+            udp.Send(req, req.Length, new IPEndPoint(IPAddress.Loopback, Port + 6));
+            var buf = new byte[4096];
+            var pump = new Thread(() => { for (int i = 0; i < 400; i++) { srv.Receive(buf, out _, out _); Thread.Sleep(1); } }) { IsBackground = true };
+            pump.Start();
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            byte[] r = udp.Receive(ref from);
+
+            Assert.That(r.Length, Is.LessThanOrEqualTo(tiny),
+                "a 100 B request must draw at most 100 B -- the icon is a pull, and the asker sets the budget");
+            Assert.That(r.Length, Is.GreaterThan(10), "it should still carry SOME payload, not just a header");
+        }
+
+        // An offset past the end is a malformed ask; answering it with anything is how a scanner learns the
+        // shape of your memory. Silence is the whole response.
+        [Test]
+        public void AnOffsetPastTheEndIsNotAnswered()
+        {
+            var srv = new UdpServerTransport(Port + 4);
+            srv.Initialize(null);
+            srv.StatusIcon = new byte[100];
+
+            using var udp = new UdpClient();
+            udp.Client.ReceiveTimeout = 700;
+            var req = new byte[1200];
+            req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'I'; req[3] = (byte)'Q';
+            req[4] = 0xFF; req[5] = 0xFF; req[6] = 0x00;   // offset 65535, well past a 100 B icon
+            udp.Send(req, req.Length, new IPEndPoint(IPAddress.Loopback, Port + 4));
+            var buf = new byte[4096];
+            var pump = new Thread(() => { for (int i = 0; i < 400; i++) { srv.Receive(buf, out _, out _); Thread.Sleep(1); } }) { IsBackground = true };
+            pump.Start();
+
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            Assert.Throws<SocketException>(() => udp.Receive(ref from), "an out-of-range offset must draw no reply at all");
+        }
+
+        // No icon configured means no reply -- not an empty one. An empty reply is still a reflected datagram
+        // and still tells a scanner the port is live and willing.
+        [Test]
+        public void NoIconConfiguredDrawsNoReply()
+        {
+            var srv = new UdpServerTransport(Port + 5);
+            srv.Initialize(null);
+            srv.StatusIcon = null;
+
+            using var udp = new UdpClient();
+            udp.Client.ReceiveTimeout = 700;
+            var req = new byte[1200];
+            req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'I'; req[3] = (byte)'Q';
+            udp.Send(req, req.Length, new IPEndPoint(IPAddress.Loopback, Port + 5));
+            var buf = new byte[4096];
+            var pump = new Thread(() => { for (int i = 0; i < 400; i++) { srv.Receive(buf, out _, out _); Thread.Sleep(1); } }) { IsBackground = true };
+            pump.Start();
+
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            Assert.Throws<SocketException>(() => udp.Receive(ref from));
+        }
+
         static string ReadStr(byte[] r, ref int o)
         {
             int n = r[o++];

@@ -57,6 +57,8 @@ namespace SDG.NetTransport.Udp
         // tick (DedicatedServer). A status-req is swallowed -- never surfaced to the session.
         static readonly byte[] StatusReqMagic = { (byte)'U', (byte)'G', (byte)'S', (byte)'Q' };
         static readonly byte[] StatusRespMagic = { (byte)'U', (byte)'G', (byte)'S', (byte)'R' };
+        static readonly byte[] IconReqMagic = { (byte)'U', (byte)'G', (byte)'I', (byte)'Q' };
+        static readonly byte[] IconRespMagic = { (byte)'U', (byte)'G', (byte)'I', (byte)'R' };
         const int StatusReqMinSize = 24;          // 4 magic + 4 nonce + 16 pad -> req >= resp (no amplification)
         const long StatusMinIntervalMs = 1000;    // per-source-IP rate limit
         public volatile int StatusPlayerCount;    // live player count, pushed by the host each tick
@@ -76,6 +78,14 @@ namespace SDG.NetTransport.Udp
         public const int MotdMaxBytes = 200;          // a browser row, not a broadcast channel
         public const int NameMaxBytes = 64;
         public const int ModeMaxBytes = 32;
+        // A server icon has to be small enough that the REPLY still fits inside the request that asked for
+        // it -- that rule is what keeps this socket from being an amplifier, and an icon is the only field
+        // big enough to threaten it. 600 B holds a 32x32 indexed PNG comfortably; anything larger is an
+        // operator asking every browser refresh to carry their artwork.
+        public const int IconMaxBytes = 64 * 1024;   // a 320x180 png with room to spare; past this an operator is shipping artwork, not an icon
+        public const int IconHeaderBytes = 10;       // magic(4) + offset(3) + total(3)
+        public const int IconChunkBytes = 1024;      // per-datagram payload; the client pulls sequentially
+        public volatile byte[] StatusIcon;           // raw PNG bytes, or null
         readonly System.Collections.Generic.Dictionary<uint, long> _statusLastMs = new();
         long _statusPruneMs;
 
@@ -104,6 +114,12 @@ namespace SDG.NetTransport.Udp
                 {
                     ReplyStatus(buffer, n, (IPEndPoint)remote);   // n, not buffer.Length -- the REQUEST's size is the budget
                     continue;   // swallow it; the session never sees a status-req
+                }
+                if (n >= StatusReqMinSize && buffer[0] == IconReqMagic[0] && buffer[1] == IconReqMagic[1]
+                    && buffer[2] == IconReqMagic[2] && buffer[3] == IconReqMagic[3])
+                {
+                    ReplyIcon(buffer, n, (IPEndPoint)remote);
+                    continue;
                 }
                 size = n;
                 transportConnection = new UdpTransportConnection(_socket, (IPEndPoint)remote);
@@ -141,6 +157,12 @@ namespace SDG.NetTransport.Udp
             AppendString(extra, StatusMap, NameMaxBytes);
             AppendString(extra, StatusGamemode, ModeMaxBytes);
             AppendString(extra, StatusMotd, MotdMaxBytes);
+            // The status block advertises only the icon's SIZE. The image itself is pulled in chunks on
+            // select (UGIQ below) -- a 320x180 png is tens of KB, and "the reply may never exceed the
+            // request" would otherwise mean a 60 KB request per server per refresh.
+            int iconTotal = StatusIcon?.Length ?? 0;
+            extra.Add((byte)(iconTotal & 0xFF)); extra.Add((byte)((iconTotal >> 8) & 0xFF));
+            extra.Add((byte)((iconTotal >> 16) & 0xFF));
 
             int want = 20 + extra.Count;
             int len = want <= reqLen ? want : 20;   // no room in the caller's budget -> send the core only
@@ -170,6 +192,35 @@ namespace SDG.NetTransport.Udp
             }
             into.Add((byte)b.Length);
             into.AddRange(b);
+        }
+
+        // UGIQ: "send me the icon from byte OFFSET". One chunk per request, each reply bounded by the
+        // request that asked for it exactly like the status reply -- so pulling a 60 KB image costs the
+        // client 60 KB of requests. That is what makes a pull safe where a push would not be: an attacker
+        // spoofing a victim's address still has to send every byte they want reflected.
+        //
+        // Deliberately NOT rate-limited at one per second like the status reply: this is a sequential pull of
+        // ~60 chunks and a 1/s limit would make a single icon take a minute. The amplification bound is what
+        // carries the safety here, not the interval.
+        void ReplyIcon(byte[] req, int reqLen, IPEndPoint remote)
+        {
+            byte[] icon = StatusIcon;
+            if (icon == null || icon.Length == 0 || icon.Length > IconMaxBytes) return;
+            int off = req[4] | (req[5] << 8) | (req[6] << 16);
+            if (off < 0 || off >= icon.Length) return;
+            // header is magic(4) + offset(3) + total(3); the CHUNK LENGTH is not a field because the datagram
+            // already carries it -- resp.Length - IconHeaderBytes. A separate length field would be a second
+            // source of truth for something the transport states exactly once.
+            int budget = reqLen - IconHeaderBytes;
+            int take = System.Math.Min(System.Math.Min(IconChunkBytes, budget), icon.Length - off);
+            if (take <= 0) return;
+            var resp = new byte[IconHeaderBytes + take];
+            resp[0] = IconRespMagic[0]; resp[1] = IconRespMagic[1]; resp[2] = IconRespMagic[2]; resp[3] = IconRespMagic[3];
+            resp[4] = req[4]; resp[5] = req[5]; resp[6] = req[6];                                  // echo the offset
+            resp[7] = (byte)(icon.Length & 0xFF); resp[8] = (byte)((icon.Length >> 8) & 0xFF); resp[9] = (byte)((icon.Length >> 16) & 0xFF);
+            System.Array.Copy(icon, off, resp, IconHeaderBytes, take);
+            if (resp.Length > reqLen) return;              // never longer than the request, same rule as the status reply
+            try { _socket.SendTo(resp, 0, resp.Length, SocketFlags.None, remote); } catch (SocketException) { }
         }
 
         void PruneStatus(long now)

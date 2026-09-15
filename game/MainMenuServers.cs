@@ -29,6 +29,7 @@ namespace UnturnedGodot
 
         ServerEntry _selectedServer;
         Label _svInfoName, _svInfoDetail;
+        TextureRect _svIcon;
         Button _refreshBtn;
         bool _serversAutoRefreshed;
         readonly System.Collections.Generic.List<(ServerEntry sv, Button row, Label name, Label ping, Label players)> _serverRows = new();
@@ -100,10 +101,21 @@ namespace UnturnedGodot
             cols.AddChild(right);
 
             right.AddChild(Header("SERVER INFO", 16));
-            _svInfoName = new Label { Text = "Select a server" };
+            var nameRow = new HBoxContainer();
+            nameRow.AddThemeConstantOverride("separation", 8);
+            right.AddChild(nameRow);
+            _svIcon = new TextureRect
+            {
+                CustomMinimumSize = new Vector2(48f, 48f),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                Visible = false,
+            };
+            nameRow.AddChild(_svIcon);
+            _svInfoName = new Label { Text = "Select a server", VerticalAlignment = VerticalAlignment.Center };
             _svInfoName.AddThemeFontSizeOverride("font_size", 20);
             _svInfoName.AddThemeColorOverride("font_color", new Color(0.95f, 0.94f, 0.9f));
-            right.AddChild(_svInfoName);
+            nameRow.AddChild(_svInfoName);
             _svInfoDetail = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(320f, 78f) };
             _svInfoDetail.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.78f));
             _svInfoDetail.AddThemeFontSizeOverride("font_size", 14);
@@ -311,12 +323,13 @@ namespace UnturnedGodot
             public bool Pvp, Passworded, HasFlags;
             public int MaxPing;        // 0 = no limit
             public string Map, Gamemode, Motd;
+            public int IconBytes;      // total size of the server's icon; the image itself is pulled on select
         }
 
         // The request is PADDED to StatusReqBytes, and that padding is what buys the v2 block: the server
         // clamps its reply to the request length, so a bigger ask is the only way to be told more and the
         // socket can never amplify. 512 keeps the whole exchange inside one datagram on any sane path.
-        const int StatusReqBytes = 512;
+        const int StatusReqBytes = 1200;   // room for the icon; still one datagram on any sane path (NetProtocol.MaxDatagramBytes)
 
         // blocking UDP status query, run on a worker thread. Sends UGSQ + nonce (padded so req >= resp), waits
         // up to 1.5 s for UGSR + the echoed nonce + players(u16) + max(u16) + content version, then the
@@ -359,6 +372,7 @@ namespace UnturnedGodot
                 outp.Map = ReadBoundedString(r, ref o, 64);
                 outp.Gamemode = ReadBoundedString(r, ref o, 32);
                 outp.Motd = ReadBoundedString(r, ref o, 200);
+                if (o + 2 < r.Length) { outp.IconBytes = r[o] | (r[o + 1] << 8) | (r[o + 2] << 16); o += 3; }
                 return outp;
             }
             catch { return default; }
@@ -381,6 +395,90 @@ namespace UnturnedGodot
             o += n;
             return Sanitize(v, cap);
         }
+
+        /// <summary>
+        /// Pull a server's icon over UGIQ, one chunk per request, blocking -- call it off the main thread.
+        /// Returns null on anything unexpected rather than a partial image.
+        ///
+        /// ⭐ PULL, NOT PUSH, AND THAT IS THE SECURITY PROPERTY. Every reply is bounded by the request that
+        /// asked for it, so fetching 60 KB costs the asker 60 KB. A spoofed source address therefore gains an
+        /// attacker nothing -- they must send every byte they want reflected. It is the same rule the status
+        /// reply follows, which is why the icon could not simply ride along in one datagram.
+        /// </summary>
+        static byte[] FetchIcon(string host, ushort port, int totalBytes, int capBytes = 64 * 1024)
+        {
+            if (totalBytes <= 0 || totalBytes > capBytes) return null;
+            try
+            {
+                System.Net.IPAddress addr = System.Net.IPAddress.TryParse(host, out var lit)
+                    ? lit
+                    : System.Array.Find(System.Net.Dns.GetHostAddresses(host), a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                      ?? System.Net.Dns.GetHostAddresses(host)[0];
+                var ep = new System.Net.IPEndPoint(addr, port);
+                using var udp = new System.Net.Sockets.UdpClient();
+                udp.Client.ReceiveTimeout = 1500;
+                var buf = new byte[totalBytes];
+                int got = 0, guard = 0;
+                while (got < totalBytes)
+                {
+                    if (++guard > (totalBytes / 256) + 64) return null;   // bounded work: a server feeding short chunks forever is a hang, not a download
+                    var req = new byte[IconReqBytes];
+                    req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'I'; req[3] = (byte)'Q';
+                    req[4] = (byte)(got & 0xFF); req[5] = (byte)((got >> 8) & 0xFF); req[6] = (byte)((got >> 16) & 0xFF);
+                    udp.Send(req, req.Length, ep);
+                    var from = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
+                    byte[] r = udp.Receive(ref from);
+                    if (r.Length <= IconHeaderBytes || r[0] != (byte)'U' || r[1] != (byte)'G' || r[2] != (byte)'I' || r[3] != (byte)'R') return null;
+                    int off = r[4] | (r[5] << 8) | (r[6] << 16);
+                    int total = r[7] | (r[8] << 8) | (r[9] << 16);
+                    if (off != got || total != totalBytes) return null;    // a reply for a different offset or a shifting total is not our transfer
+                    int n = r.Length - IconHeaderBytes;                    // the datagram states the chunk length; there is no second field to disagree with it
+                    if (n <= 0 || got + n > totalBytes) return null;
+                    System.Array.Copy(r, IconHeaderBytes, buf, got, n);
+                    got += n;
+                }
+                return buf;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Decode a server icon, or null. Bounded on BOTH axes: bytes at the fetch, and PIXELS here -- a few
+        /// KB of PNG can still declare enormous dimensions, so a byte cap alone does not bound what the decode
+        /// allocates. Anything that fails is simply not an icon; a server sending rubbish gets no picture.
+        /// </summary>
+        public static ImageTexture TryDecodeIcon(byte[] png, int maxW = 320, int maxH = 180)
+        {
+            if (png == null || png.Length == 0) return null;
+            var img = new Image();
+            if (img.LoadPngFromBuffer(png) != Error.Ok) return null;
+            int w = img.GetWidth(), h = img.GetHeight();
+            if (w <= 0 || h <= 0 || w > maxW || h > maxH) return null;
+            return ImageTexture.CreateFromImage(img);
+        }
+
+        readonly System.Collections.Generic.Dictionary<ServerEntry, ImageTexture> _iconCache = new();
+        int _iconGen;   // a slow fetch for a server the user already clicked away from must not overwrite the new one
+
+        // Fetch + decode off the main thread, then assign only if this is still the selected server.
+        void RequestIcon(ServerEntry sv, string host, ushort port, int totalBytes)
+        {
+            int gen = ++_iconGen;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                byte[] png = FetchIcon(host, port, totalBytes);
+                Callable.From(() =>
+                {
+                    if (gen != _iconGen || _selectedServer != sv) return;
+                    var tex = TryDecodeIcon(png);
+                    if (tex != null) _iconCache[sv] = tex;
+                    if (_svIcon != null && IsInstanceValid(_svIcon)) { _svIcon.Texture = tex; _svIcon.Visible = tex != null; }
+                }).CallDeferred();
+            });
+        }
+
+        const int IconReqBytes = 1200;    // budget the server fills a chunk into; reply <= request, as everywhere here
+        const int IconHeaderBytes = 10;   // magic(4) + offset(3) + total(3) -- must match UdpServerTransport
 
         /// <summary>Strip control/format characters and collapse whitespace, then hard-clamp the length.</summary>
         public static string Sanitize(string v, int maxChars)
@@ -419,6 +517,14 @@ namespace UnturnedGodot
             // A live answer beats the hardcoded row: map and mode come from the SERVER when it told us,
             // because the row is a guess about somebody else's config and the status reply is the fact.
             bool live = _liveStatus.TryGetValue(sv, out var st);
+            // The icon is pulled ONLY here, on select -- never during a browser refresh. That is what makes a
+            // 320x180 image affordable: one transfer when a human asks about one server, not N transfers every
+            // time the list repaints (strawberry 2026-09-15).
+            if (_svIcon != null && IsInstanceValid(_svIcon))
+            {
+                if (_iconCache.TryGetValue(sv, out var cached)) { _svIcon.Texture = cached; _svIcon.Visible = cached != null; }
+                else { _svIcon.Texture = null; _svIcon.Visible = false; if (live && st.IconBytes > 0) RequestIcon(sv, sv.Host, sv.Port, st.IconBytes); }
+            }
             string map = live && !string.IsNullOrEmpty(st.Map) ? st.Map : sv.Map;
             string mode = live && st.HasFlags ? (st.Pvp ? "PvP" : "PvE") : (sv.Pvp ? "PvP" : "PvE");
             string status = mismatch ? "\u26A0 VERSION MISMATCH \u2014 cannot join" : (ok ? $"{players}/{max} players  \u00B7  {ping} ms" : "offline / no response");

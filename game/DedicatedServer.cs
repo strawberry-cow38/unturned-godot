@@ -36,7 +36,8 @@ namespace UnturnedGodot
         // way in, because this is our text arriving on somebody else's screen.
         public string Motd = "";        // UG_MOTD
         public bool Pvp = true;         // UG_PVE=1 flips it
-        public int MaxPing;             // UG_MAXPING, ms; 0 = no limit. Peers over it are dropped with PingTooHigh.
+        public int MaxPing;             // UG_MAXPING, ms; 0 = no limit. Advertised; the client gates on its own measured ping.
+        public string IconPath = "";    // UG_ICON: a png <= 320x180, pulled by browsers on select
         public System.Collections.Generic.List<(Godot.Vector3 Pos, float Yaw)> ArenaSpawns;   // generated at boot by BuildDedicated; null = fall back to Spawns/Players.dat
         public int ArenaMinPlayers = 2;                              // "wait for >1 player before starting"
         public bool MatchLive { get; private set; }                  // false until ArenaMinPlayers are connected
@@ -99,6 +100,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_MOTD") is string motdEnv && motdEnv.Length > 0) Motd = motdEnv;
             if (System.Environment.GetEnvironmentVariable("UG_PVE") == "1") Pvp = false;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_MAXPING"), out int mpEnv) && mpEnv > 0) MaxPing = mpEnv;
+            if (System.Environment.GetEnvironmentVariable("UG_ICON") is string iconEnv && iconEnv.Length > 0) IconPath = iconEnv;
 
             var srvTransport = TransportOverride ?? new UdpServerTransport(Port);
             _statusTransport = srvTransport as UdpServerTransport;   // null under a test MemTransport; else answers browser status-reqs
@@ -111,6 +113,20 @@ namespace UnturnedGodot
                 _statusTransport.StatusGamemode = Arena ? "Arena" : "Survival";
                 _statusTransport.StatusPvp = Pvp;
                 _statusTransport.StatusMaxPing = MaxPing;
+                // Read ONCE at startup, not per request: a status responder that touches the disk is a
+                // status responder a stranger can make touch the disk. Oversized is refused outright rather
+                // than scaled -- resizing someone's art silently is worse than telling them it was too big.
+                if (!string.IsNullOrEmpty(IconPath))
+                {
+                    try
+                    {
+                        byte[] png = System.IO.File.ReadAllBytes(IconPath);
+                        if (png.Length > UdpServerTransport.IconMaxBytes)
+                            Log.Err($"[DEDICATED] server icon {IconPath} is {png.Length} B, over the {UdpServerTransport.IconMaxBytes} B limit -- not published");
+                        else { _statusTransport.StatusIcon = png; Log.Print($"[DEDICATED] server icon published ({png.Length} B)"); }
+                    }
+                    catch (System.Exception e) { Log.Err($"[DEDICATED] could not read server icon {IconPath}: {e.Message}"); }
+                }
             }
             Server = new NetWorldServer(srvTransport,
                 (conn, reason, isError) => Log.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
