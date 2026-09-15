@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class CommandTableGoldenTests
     {
-        // id -> name, as of NetProtocol.Version 45.
+        // id -> name, as of NetProtocol.Version 51.
         static readonly Dictionary<byte, string> Expected = new()
         {
             [35] = "CommandFitAttachment",
@@ -105,6 +105,10 @@ namespace UnturnedNet.Tests
             [60] = "CommandNpcTrade",
             [61] = "CommandSplitItem",  // v48 stack split -- already on main, so it keeps the byte
             [62] = "CommandChatSend",   // v49 global chat, MOVED off 61 in the v50 merge (both branches had appended to 61)
+            // v51: hover-loot / Ctrl+RMB / Store / Take as ONE server-side op. The destination is a PAGE, not a
+            // cell -- the client used to resolve an empty cell and send a plain move, which is the one
+            // destination that cannot merge, so the fill-the-stacks rule only ever ran in singleplayer.
+            [63] = "CommandQuickTransfer",
         };
 
         static Dictionary<byte, string> Actual() =>
