@@ -37,6 +37,7 @@ namespace UnturnedGodot
         bool _sortDesc;                   // second click on the same head reverses
         readonly System.Collections.Generic.Dictionary<ServerEntry, int> _livePing = new();     // measured, for sorting by a column that shows "-" until Refresh
         readonly System.Collections.Generic.Dictionary<ServerEntry, int> _livePlayers = new();
+        readonly System.Collections.Generic.Dictionary<ServerEntry, ServerStatus> _liveStatus = new();   // the v2 block, for the info panel
         readonly System.Collections.Generic.HashSet<ServerEntry> _mismatched = new();   // servers whose content version != ours -> grayed, join blocked
         Button _joinBtn;
         static int _statusNonce;
@@ -281,15 +282,16 @@ namespace UnturnedGodot
             uint nonce = (uint)System.Threading.Interlocked.Increment(ref _statusNonce) ^ (uint)System.Environment.TickCount;
             System.Threading.Tasks.Task.Run(() =>
             {
-                var (ok, ping, players, max, ver) = StatusQuery(sv.Host, sv.Port, nonce);
-                bool mismatch = ok && ver != NetContent.Hash;   // our content identity vs the server's
+                var st = StatusQueryFull(sv.Host, sv.Port, nonce);
+                bool ok = st.Ok; int ping = st.Ping; int players = st.Players; int max = st.Max;
+                bool mismatch = ok && st.Version != NetContent.Hash;   // our content identity vs the server's
                 Callable.From(() =>
                 {
                     if (mismatch) _mismatched.Add(sv); else _mismatched.Remove(sv);
                     // Keep the measured numbers, not just the label text: a column that displays a live value
                     // must SORT by that value, or "sort by ping" on a refreshed list quietly orders by name.
-                    if (ok) { _livePing[sv] = ping; _livePlayers[sv] = players; }
-                    else { _livePing.Remove(sv); _livePlayers.Remove(sv); }
+                    if (ok) { _livePing[sv] = ping; _livePlayers[sv] = players; _liveStatus[sv] = st; }
+                    else { _livePing.Remove(sv); _livePlayers.Remove(sv); _liveStatus.Remove(sv); }
                     var dim = new Color(0.5f, 0.5f, 0.5f);
                     var lit = new Color(0.9f, 0.9f, 0.88f);
                     if (IsInstanceValid(pingL)) { pingL.Text = ok ? $"{ping} ms" : "—"; pingL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
@@ -414,8 +416,16 @@ namespace UnturnedGodot
             // The row labels above already guard this way; these two did not. Review 2026-08-16.
             if (_selectedServer == null || _svInfoDetail == null || !IsInstanceValid(_svInfoDetail)) return;
             var sv = _selectedServer;
-            string status = mismatch ? "⚠ VERSION MISMATCH — cannot join" : (ok ? $"{players}/{max} players  ·  {ping} ms" : "offline / no response");
-            _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {AddressText(sv.Host, sv.Port)}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  {status}";
+            // A live answer beats the hardcoded row: map and mode come from the SERVER when it told us,
+            // because the row is a guess about somebody else's config and the status reply is the fact.
+            bool live = _liveStatus.TryGetValue(sv, out var st);
+            string map = live && !string.IsNullOrEmpty(st.Map) ? st.Map : sv.Map;
+            string mode = live && st.HasFlags ? (st.Pvp ? "PvP" : "PvE") : (sv.Pvp ? "PvP" : "PvE");
+            string status = mismatch ? "\u26A0 VERSION MISMATCH \u2014 cannot join" : (ok ? $"{players}/{max} players  \u00B7  {ping} ms" : "offline / no response");
+            string text = $"Map:  {map}\nAddress:  {AddressText(sv.Host, sv.Port)}\nMode:  {mode}\nStatus:  {status}";
+            if (live && st.MaxPing > 0) text += $"\nMax ping:  {st.MaxPing} ms";
+            if (live && !string.IsNullOrEmpty(st.Motd)) text += $"\n\n{st.Motd}";   // already sanitised + clamped at the parse
+            _svInfoDetail.Text = text;
         }
 
         // Row gray-out is per-row (QueryServer); the JOIN button tracks whichever server is currently selected.
