@@ -20,6 +20,7 @@ namespace UnturnedGodot
         public const ushort ColaId = 80;    // Canned Cola  -- Vendor_0, red
         public const ushort SodaId = 465;   // Canned Soda  -- Vendor_1, blue
         public const int Price = 1;         // dollars; Currency.StackId's amount IS dollars
+        const float ShakeSeconds = 0.45f;
         const float VendWatts = 40f;        // a refrigerated drinks machine; a radio draws 12, a TV 55-120
 
         /// <summary>Collider meta carrying the device, so a look-ray landing on a Vendor body finds it.
@@ -37,8 +38,10 @@ namespace UnturnedGodot
         MeshInstance3D _outline;
         Vector3 _bodyCenterLocal;
         Aabb _bodyLocal;
-        Vector3 _restPos;
+        MeshInstance3D _bodyMi;    // the placed prop mesh; lives under the world root, not under this node
+        Vector3 _restPos, _bodyRestPos;
         float _shake;              // seconds of wobble left
+        float _cooldown;           // one can at a time -- seconds until the machine will serve again
         AudioStreamPlayer3D _clunk;
 
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
@@ -55,6 +58,7 @@ namespace UnturnedGodot
         {
             if (bodyMi == null || !GodotObject.IsInstanceValid(bodyMi)) return null;
             var v = new VendingMachine { Name = "VendingMachine", PropName = propName, Transform = bodyMi.Transform };
+            v._bodyMi = bodyMi;   // ⚠ the PROP MESH, which is NOT a child of this node -- see HubTick
             v.Build(bodyMi.Mesh);
             return v;
         }
@@ -99,6 +103,7 @@ namespace UnturnedGodot
         /// same argument the connect-reject reasons make.</summary>
         public string RefusalFor(PlayerController p)
         {
+            if (_cooldown > 0f) return "Dispensing...";   // one can at a time (strawberry 2026-09-15)
             if (!HasFeed) return "No power";
             if (p?.Inventory == null) return "No power";
             return p.Inventory.getItemCount(Currency.StackId) < Price ? $"Need ${Price}" : null;
@@ -114,7 +119,8 @@ namespace UnturnedGodot
             Vector3 drop = p.GlobalPosition - p.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f;
             if (!p.RequestVend(DrinkId, drop)) return false;
 
-            _shake = 0.45f;
+            _shake = ShakeSeconds;
+            _cooldown = ShakeSeconds + 0.55f;   // the wobble, then a beat before it will take another dollar
             _clunk?.Play();
             return true;
         }
@@ -127,6 +133,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             _restPos = Position;
+            if (_bodyMi != null && GodotObject.IsInstanceValid(_bodyMi)) _bodyRestPos = _bodyMi.Position;
             AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice
             if (GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
             {
@@ -141,12 +148,24 @@ namespace UnturnedGodot
         /// exactly where it started rather than walking across the pavement one purchase at a time.</summary>
         void HubTick(double dt)
         {
+            if (_cooldown > 0f) _cooldown = Mathf.Max(0f, _cooldown - (float)dt);
             if (_shake <= 0f) return;
             _shake = Mathf.Max(0f, _shake - (float)dt);
-            float amp = 0.018f * (_shake / 0.45f);                 // decays to nothing
+            float amp = 0.018f * (_shake / ShakeSeconds);           // decays to nothing
             float ph = _shake * 46f;                                // ~7 shudders over the window
-            Position = _restPos + new Vector3(Mathf.Sin(ph) * amp, 0f, Mathf.Cos(ph * 0.7f) * amp * 0.5f);
-            if (_shake <= 0f) Position = _restPos;                  // land exactly home, never a drifted approximation
+            var off = new Vector3(Mathf.Sin(ph) * amp, 0f, Mathf.Cos(ph * 0.7f) * amp * 0.5f);
+
+            // ⚠ THE PROP MESH IS NOT A CHILD OF THIS NODE. WorldBuilder adds the mesh under the world root and
+            // this device beside it wearing the same transform, so moving `Position` moved only what IS parented
+            // here -- the look-outline. Master saw the outline shudder while the machine stood perfectly still.
+            // Both are moved, off their own remembered rest poses.
+            Position = _restPos + off;
+            if (_bodyMi != null && GodotObject.IsInstanceValid(_bodyMi)) _bodyMi.Position = _bodyRestPos + off;
+            if (_shake <= 0f)   // land exactly home, never a drifted approximation
+            {
+                Position = _restPos;
+                if (_bodyMi != null && GodotObject.IsInstanceValid(_bodyMi)) _bodyMi.Position = _bodyRestPos;
+            }
         }
     }
 }

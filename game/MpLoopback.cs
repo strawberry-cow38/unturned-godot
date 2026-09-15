@@ -348,6 +348,11 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                     var bag = inve.Inventory;
                     if (bag == null || bag.getItemCount(SDG.Unturned.Currency.StackId) < UnturnedGodot.VendingMachine.Price) return false;
                     bag.removeItemAmount(SDG.Unturned.Currency.StackId, UnturnedGodot.VendingMachine.Price);
+                    // ⚠ MARK IT DIRTY. removeItemAmount is a bare model write and raises no grid event, so
+                    // without this the spend never echoes and the wallet keeps showing the old figure until
+                    // something ELSE dirties the page -- master saw the dollar "come back" until they moved an
+                    // item. ServerTransactions:864 carries the same note about the gas-can fill.
+                    Server.Inventories.ServerMarkDirty(Client.PlayerId);
                     // Godot -> the core's UnityEngine-shaped vectors, as ClientWorldSession.ToU does.
                     Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(drinkId),
                         new UnityEngine.Vector3(dropPos.X, dropPos.Y, dropPos.Z), UnityEngine.Vector3.zero);
