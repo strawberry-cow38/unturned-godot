@@ -102,6 +102,16 @@ namespace UnturnedGodot.Net
             _transport.Initialize(connectionFailureCallback);
         }
 
+        // ⚠ THERE IS DELIBERATELY NO SERVER-SIDE PING KICK HERE, and SrttTicks is the wrong number to build
+        // one from. It smooths the ACK TURNAROUND, and on a link with nothing else to say that is paced by
+        // the keepalive interval, not by the network: measured on an idle peer over a 5-tick-each-way link
+        // (a true ~200 ms round trip) it reads 50 ticks -- 1000 ms. A gate on that would kick a healthy
+        // player sitting in a menu the moment an operator set UG_MAXPING=100, which is the opposite of the
+        // feature. The limit is ADVERTISED in the status block instead and enforced client-side against the
+        // status query's ping, which is a real round trip because the client times it end to end.
+        // Doing it properly server-side needs a dedicated ping/pong at a known cadence -- worth building,
+        // but not worth faking with a number that means something else.
+
         public void Tick()
         {
             _tick++;

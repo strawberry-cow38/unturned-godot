@@ -31,6 +31,12 @@ namespace UnturnedGodot
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         // --- Arena server (strawberry 2026-09-02) -------------------------------------------------
         public bool Arena = false;                                   // arena server: players spawn on the POI ring, and the match gates on player count
+        // ---- what the server browser shows about this server WITHOUT joining it (strawberry 2026-09-15).
+        // Operator-set; every one is clamped by the transport on the way out and again by the client on the
+        // way in, because this is our text arriving on somebody else's screen.
+        public string Motd = "";        // UG_MOTD
+        public bool Pvp = true;         // UG_PVE=1 flips it
+        public int MaxPing;             // UG_MAXPING, ms; 0 = no limit. Peers over it are dropped with PingTooHigh.
         public System.Collections.Generic.List<(Godot.Vector3 Pos, float Yaw)> ArenaSpawns;   // generated at boot by BuildDedicated; null = fall back to Spawns/Players.dat
         public int ArenaMinPlayers = 2;                              // "wait for >1 player before starting"
         public bool MatchLive { get; private set; }                  // false until ArenaMinPlayers are connected
@@ -90,10 +96,22 @@ namespace UnturnedGodot
             NetLog.Sink = s => Log.Print(s);
             NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
+            if (System.Environment.GetEnvironmentVariable("UG_MOTD") is string motdEnv && motdEnv.Length > 0) Motd = motdEnv;
+            if (System.Environment.GetEnvironmentVariable("UG_PVE") == "1") Pvp = false;
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_MAXPING"), out int mpEnv) && mpEnv > 0) MaxPing = mpEnv;
 
             var srvTransport = TransportOverride ?? new UdpServerTransport(Port);
             _statusTransport = srvTransport as UdpServerTransport;   // null under a test MemTransport; else answers browser status-reqs
-            if (_statusTransport != null) _statusTransport.StatusVersion = NetContent.Hash;   // browser grays + blocks join on a version mismatch
+            if (_statusTransport != null)
+            {
+                _statusTransport.StatusVersion = NetContent.Hash;   // browser grays + blocks join on a version mismatch
+                _statusTransport.StatusProtocol = NetProtocol.Version;   // so a refused client can be told BOTH numbers
+                _statusTransport.StatusMotd = Motd ?? "";
+                _statusTransport.StatusMap = string.IsNullOrEmpty(MapRoot) ? "" : System.IO.Path.GetFileName(MapRoot.TrimEnd('/'));
+                _statusTransport.StatusGamemode = Arena ? "Arena" : "Survival";
+                _statusTransport.StatusPvp = Pvp;
+                _statusTransport.StatusMaxPing = MaxPing;
+            }
             Server = new NetWorldServer(srvTransport,
                 (conn, reason, isError) => Log.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected

@@ -57,6 +57,53 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    public class MenuPingGate : GameTest
+    {
+        public override string Name => "menu.ping_gate";
+        public override IEnumerable<Step> Run()
+        {
+            // 0 is the default and means NO limit -- the gate being off has to be genuinely off, or every
+            // server that never configured one starts refusing players.
+            T.Check("no limit configured lets anything through", MainMenu.PingGateRefusal(0, 5000) == null);
+            T.Check("under the limit passes", MainMenu.PingGateRefusal(100, 99) == null);
+            T.Check("exactly at the limit passes", MainMenu.PingGateRefusal(100, 100) == null);
+
+            string refused = MainMenu.PingGateRefusal(100, 101);
+            T.Check($"over the limit is refused (got {refused ?? "null"})", refused != null);
+            T.Check("the refusal names BOTH numbers, or the player cannot tell how far over they are",
+                    refused != null && refused.Contains("100") && refused.Contains("101"));
+            yield break;
+        }
+    }
+
+    public class MenuMotdSanitising : GameTest
+    {
+        public override string Name => "menu.motd_is_sanitised";
+        public override IEnumerable<Step> Run()
+        {
+            // ⚠ This is a stranger's server sending text into OUR ui. Size is only half the problem -- the
+            // shape is the other half, and it is the half that lets a MOTD forge rows or hide characters.
+            T.Check("newlines cannot forge extra lines",
+                    !MainMenu.Sanitize("evil\nPLAYERS: 99/99", 200).Contains("\n"));
+            T.Check("carriage returns go too",
+                    !MainMenu.Sanitize("a\rb", 200).Contains("\r"));
+            T.Check("zero-width characters are stripped, not passed through invisibly",
+                    MainMenu.Sanitize("a\u200Bb", 200) == "ab" || MainMenu.Sanitize("a\u200Bb", 200) == "a b");
+            T.Check("control characters are stripped",
+                    !MainMenu.Sanitize("a\u0007b", 200).Contains('\u0007'));
+            T.Check("runs of whitespace collapse so padding cannot shove text off-screen",
+                    MainMenu.Sanitize("a" + new string(' ', 400) + "b", 200) == "a b");
+
+            string clamped = MainMenu.Sanitize(new string('x', 900), 200);
+            T.Check($"length is hard-clamped ({clamped.Length} <= 200)", clamped.Length <= 200);
+
+            // Ordinary text must survive intact -- a sanitiser that eats real content is its own bug.
+            T.Check("normal text is untouched", MainMenu.Sanitize("Welcome to VoX Official!", 200) == "Welcome to VoX Official!");
+            T.Check("non-ascii names survive", MainMenu.Sanitize("Сервер", 200) == "Сервер");
+            yield break;
+        }
+    }
+
     public class MenuServerSorting : GameTest
     {
         public override string Name => "menu.server_columns_sort";

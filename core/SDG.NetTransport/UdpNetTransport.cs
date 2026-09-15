@@ -62,6 +62,20 @@ namespace SDG.NetTransport.Udp
         public volatile int StatusPlayerCount;    // live player count, pushed by the host each tick
         public volatile int StatusMaxPlayers = 24;
         public ulong StatusVersion;               // server content identity (NetContent.Hash); the browser grays + blocks join on a mismatch
+
+        // ---- v2 status block: what the browser wants to show WITHOUT joining (strawberry 2026-09-15).
+        // Server-set, all optional. Each is clamped on the way OUT as well as on the way in, because these are
+        // operator-authored strings heading for other people's clients.
+        public volatile string StatusMotd = "";       // operator message, clamped to MotdMaxBytes
+        public volatile string StatusMap = "";
+        public volatile string StatusGamemode = "";
+        public volatile bool StatusPvp = true;
+        public volatile bool StatusPassworded;
+        public volatile int StatusMaxPing;            // 0 = no limit
+        public volatile byte StatusProtocol;          // NetProtocol.Version of this server; 0 = not stated
+        public const int MotdMaxBytes = 200;          // a browser row, not a broadcast channel
+        public const int NameMaxBytes = 64;
+        public const int ModeMaxBytes = 32;
         readonly System.Collections.Generic.Dictionary<uint, long> _statusLastMs = new();
         long _statusPruneMs;
 
@@ -88,7 +102,7 @@ namespace SDG.NetTransport.Udp
                 if (n >= StatusReqMinSize && buffer[0] == StatusReqMagic[0] && buffer[1] == StatusReqMagic[1]
                     && buffer[2] == StatusReqMagic[2] && buffer[3] == StatusReqMagic[3])
                 {
-                    ReplyStatus(buffer, (IPEndPoint)remote);
+                    ReplyStatus(buffer, n, (IPEndPoint)remote);   // n, not buffer.Length -- the REQUEST's size is the budget
                     continue;   // swallow it; the session never sees a status-req
                 }
                 size = n;
@@ -97,7 +111,10 @@ namespace SDG.NetTransport.Udp
             }
         }
 
-        void ReplyStatus(byte[] req, IPEndPoint remote)
+        // reqLen is the DATAGRAM length, not the receive buffer's. Passing the buffer would hand the reply a
+        // 2 KB budget that no client ever asked for, which is precisely the amplification this guards against
+        // -- and it is invisible until something asserts the sizes, because the reply still looks correct.
+        void ReplyStatus(byte[] req, int reqLen, IPEndPoint remote)
         {
             long now = System.Environment.TickCount64;
             byte[] ab = remote.Address.MapToIPv4().GetAddressBytes();
@@ -108,13 +125,51 @@ namespace SDG.NetTransport.Udp
             int players = StatusPlayerCount < 0 ? 0 : (StatusPlayerCount > 65535 ? 65535 : StatusPlayerCount);
             int max = StatusMaxPlayers < 0 ? 0 : (StatusMaxPlayers > 65535 ? 65535 : StatusMaxPlayers);
             ulong ver = StatusVersion;
-            var resp = new byte[20];   // magic(4)+nonce(4)+players(2)+max(2)+version(8) = 20 B, still < the 24 B request (no amplification)
+
+            // ⭐ THE INVARIANT IS "NEVER LONGER THAN WHAT ASKED FOR IT". The first 20 bytes are unchanged and
+            // always sent, so a pre-v2 client (24 B request) still parses exactly what it always did. A newer
+            // client pads its request out, and that padding is what BUYS the extra block -- the response is
+            // clamped to the request length, so this socket can never be an amplifier no matter what an
+            // operator puts in the MOTD. That is the same property the original 24-vs-20 comment protected,
+            // expressed as a rule instead of as two constants that have to be remembered together.
+            var extra = new System.Collections.Generic.List<byte>();
+            extra.Add(StatusProtocol);
+            byte flags = (byte)((StatusPvp ? 1 : 0) | (StatusPassworded ? 2 : 0));
+            extra.Add(flags);
+            int mp = StatusMaxPing < 0 ? 0 : (StatusMaxPing > 65535 ? 65535 : StatusMaxPing);
+            extra.Add((byte)(mp & 0xFF)); extra.Add((byte)((mp >> 8) & 0xFF));
+            AppendString(extra, StatusMap, NameMaxBytes);
+            AppendString(extra, StatusGamemode, ModeMaxBytes);
+            AppendString(extra, StatusMotd, MotdMaxBytes);
+
+            int want = 20 + extra.Count;
+            int len = want <= reqLen ? want : 20;   // no room in the caller's budget -> send the core only
+            var resp = new byte[len];
             resp[0] = StatusRespMagic[0]; resp[1] = StatusRespMagic[1]; resp[2] = StatusRespMagic[2]; resp[3] = StatusRespMagic[3];
             resp[4] = req[4]; resp[5] = req[5]; resp[6] = req[6]; resp[7] = req[7];   // echo the nonce (client rejects spoofed / stale replies)
             resp[8] = (byte)(players & 0xFF); resp[9] = (byte)((players >> 8) & 0xFF);
             resp[10] = (byte)(max & 0xFF); resp[11] = (byte)((max >> 8) & 0xFF);
             for (int i = 0; i < 8; i++) resp[12 + i] = (byte)((ver >> (8 * i)) & 0xFF);   // content version (little-endian)
+            if (len > 20) extra.CopyTo(0, resp, 20, len - 20);
             try { _socket.SendTo(resp, 0, resp.Length, SocketFlags.None, remote); } catch (SocketException) { }
+        }
+
+        // length-prefixed UTF-8, truncated at a CHARACTER boundary. Clamping by byte count alone can cut a
+        // multi-byte codepoint in half and hand the client a string that will not decode -- a server name in
+        // Cyrillic is not an exotic case.
+        static void AppendString(System.Collections.Generic.List<byte> into, string value, int maxBytes)
+        {
+            value ??= "";
+            var enc = System.Text.Encoding.UTF8;
+            byte[] b = enc.GetBytes(value);
+            if (b.Length > maxBytes)
+            {
+                int chars = value.Length;
+                while (chars > 0 && enc.GetByteCount(value.Substring(0, chars)) > maxBytes) chars--;
+                b = enc.GetBytes(value.Substring(0, chars));
+            }
+            into.Add((byte)b.Length);
+            into.AddRange(b);
         }
 
         void PruneStatus(long now)

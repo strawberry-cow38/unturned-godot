@@ -301,10 +301,27 @@ namespace UnturnedGodot
             });
         }
 
-        // blocking UDP status query, run on a worker thread. Sends UGSQ + nonce (padded so req >= resp), waits up to
-        // 1.5 s for UGSR + the echoed nonce + players(u16) + max(u16); ping = the measured round-trip time.
-        static (bool ok, int ping, int players, int max, ulong version) StatusQuery(string host, ushort port, uint nonce)
+        /// <summary>What a status query got back. Everything past `Version` is v2 and may be absent.</summary>
+        public struct ServerStatus
         {
+            public bool Ok; public int Ping; public int Players; public int Max; public ulong Version;
+            public byte Protocol;      // 0 = the server did not say (pre-v2)
+            public bool Pvp, Passworded, HasFlags;
+            public int MaxPing;        // 0 = no limit
+            public string Map, Gamemode, Motd;
+        }
+
+        // The request is PADDED to StatusReqBytes, and that padding is what buys the v2 block: the server
+        // clamps its reply to the request length, so a bigger ask is the only way to be told more and the
+        // socket can never amplify. 512 keeps the whole exchange inside one datagram on any sane path.
+        const int StatusReqBytes = 512;
+
+        // blocking UDP status query, run on a worker thread. Sends UGSQ + nonce (padded so req >= resp), waits
+        // up to 1.5 s for UGSR + the echoed nonce + players(u16) + max(u16) + content version, then the
+        // optional v2 tail; ping = the measured round-trip time.
+        static ServerStatus StatusQueryFull(string host, ushort port, uint nonce)
+        {
+            var outp = new ServerStatus();
             try
             {
                 System.Net.IPAddress addr = System.Net.IPAddress.TryParse(host, out var lit)
@@ -314,7 +331,7 @@ namespace UnturnedGodot
                 var ep = new System.Net.IPEndPoint(addr, port);
                 using var udp = new System.Net.Sockets.UdpClient();
                 udp.Client.ReceiveTimeout = 1500;
-                var req = new byte[24];   // 4 magic + 4 nonce + 16 pad (req >= resp: no amplification)
+                var req = new byte[StatusReqBytes];
                 req[0] = (byte)'U'; req[1] = (byte)'G'; req[2] = (byte)'S'; req[3] = (byte)'Q';
                 req[4] = (byte)(nonce & 0xFF); req[5] = (byte)((nonce >> 8) & 0xFF); req[6] = (byte)((nonce >> 16) & 0xFF); req[7] = (byte)((nonce >> 24) & 0xFF);
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -322,16 +339,70 @@ namespace UnturnedGodot
                 var from = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
                 byte[] r = udp.Receive(ref from);   // SocketException on timeout -> caught below
                 sw.Stop();
-                if (r.Length >= 20 && r[0] == (byte)'U' && r[1] == (byte)'G' && r[2] == (byte)'S' && r[3] == (byte)'R'
-                    && r[4] == req[4] && r[5] == req[5] && r[6] == req[6] && r[7] == req[7])
-                {
-                    ulong ver = 0;
-                    for (int i = 0; i < 8; i++) ver |= (ulong)r[12 + i] << (8 * i);   // content version (little-endian)
-                    return (true, (int)sw.ElapsedMilliseconds, r[8] | (r[9] << 8), r[10] | (r[11] << 8), ver);
-                }
-                return (false, 0, 0, 0, 0);
+                if (r.Length < 20 || r[0] != (byte)'U' || r[1] != (byte)'G' || r[2] != (byte)'S' || r[3] != (byte)'R'
+                    || r[4] != req[4] || r[5] != req[5] || r[6] != req[6] || r[7] != req[7]) return outp;
+                ulong ver = 0;
+                for (int i = 0; i < 8; i++) ver |= (ulong)r[12 + i] << (8 * i);
+                outp.Ok = true; outp.Ping = (int)sw.ElapsedMilliseconds;
+                outp.Players = r[8] | (r[9] << 8); outp.Max = r[10] | (r[11] << 8); outp.Version = ver;
+
+                // ---- optional v2 tail. EVERY read is bounded by the buffer AND by our own caps: the server
+                // clamps on its side, but a client that trusts a remote length byte is a client that can be
+                // made to read whatever a hostile server likes. Any short read just stops -- a truncated tail
+                // must degrade to "we know less", never to a throw that loses the whole (valid) core.
+                int o = 20;
+                if (o < r.Length) { outp.Protocol = r[o++]; }
+                if (o < r.Length) { byte f = r[o++]; outp.Pvp = (f & 1) != 0; outp.Passworded = (f & 2) != 0; outp.HasFlags = true; }
+                if (o + 1 < r.Length) { outp.MaxPing = r[o] | (r[o + 1] << 8); o += 2; }
+                outp.Map = ReadBoundedString(r, ref o, 64);
+                outp.Gamemode = ReadBoundedString(r, ref o, 32);
+                outp.Motd = ReadBoundedString(r, ref o, 200);
+                return outp;
             }
-            catch { return (false, 0, 0, 0, 0); }
+            catch { return default; }
+        }
+
+        // Length-prefixed UTF-8, clamped twice (buffer AND our cap) and stripped of control characters.
+        // ⚠ THE STRIP IS NOT COSMETIC. This is operator-authored text from a stranger's server heading into
+        // our UI: newlines and zero-width characters let a MOTD forge extra rows or hide text inside a name.
+        // strawberry asked for size limits "for security of server owners sending stuff to clients" -- the
+        // size is only half of it, the shape is the other half.
+        static string ReadBoundedString(byte[] r, ref int o, int cap)
+        {
+            if (o >= r.Length) return "";
+            int n = r[o++];
+            if (n <= 0) return "";
+            if (n > cap) n = cap;
+            if (o + n > r.Length) n = r.Length - o;
+            if (n <= 0) return "";
+            string v = System.Text.Encoding.UTF8.GetString(r, o, n);
+            o += n;
+            return Sanitize(v, cap);
+        }
+
+        /// <summary>Strip control/format characters and collapse whitespace, then hard-clamp the length.</summary>
+        public static string Sanitize(string v, int maxChars)
+        {
+            if (string.IsNullOrEmpty(v)) return "";
+            var sb = new System.Text.StringBuilder(v.Length);
+            foreach (char c in v)
+            {
+                var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+                if (cat == System.Globalization.UnicodeCategory.Control
+                    || cat == System.Globalization.UnicodeCategory.Format
+                    || cat == System.Globalization.UnicodeCategory.LineSeparator
+                    || cat == System.Globalization.UnicodeCategory.ParagraphSeparator) { sb.Append(' '); continue; }
+                sb.Append(c);
+            }
+            string outp = System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+            return outp.Length > maxChars ? outp.Substring(0, maxChars) : outp;
+        }
+
+        // back-compat shim for the existing callers that only want the five core values
+        static (bool ok, int ping, int players, int max, ulong version) StatusQuery(string host, ushort port, uint nonce)
+        {
+            var st = StatusQueryFull(host, port, nonce);
+            return (st.Ok, st.Ping, st.Players, st.Max, st.Version);
         }
 
         void UpdateSelectedLive(bool ok, int ping, int players, int max, bool mismatch)

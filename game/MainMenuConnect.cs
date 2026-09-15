@@ -157,6 +157,19 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>
+        /// The max-ping gate, client side. The server ADVERTISES its limit in the status block and the client
+        /// measures its own round trip timing the status query -- which is a real ping, unlike the server's
+        /// smoothed ack turnaround (see the note in NetServerSession: idle, that reads the keepalive interval
+        /// and would kick a healthy player). Returns null when the join may proceed.
+        /// </summary>
+        public static string PingGateRefusal(int serverMaxPing, int measuredPing)
+        {
+            if (serverMaxPing <= 0) return null;              // 0 = no limit, and it is the default
+            if (measuredPing <= serverMaxPing) return null;
+            return $"{NetRejectText.Describe(NetRejectReason.PingTooHigh)} (this server allows {serverMaxPing} ms, yours is {measuredPing} ms)";
+        }
+
         void StartDirectConnect()
         {
             if (!TryParseAddress(_pcHost?.Text, _pcPort?.Text, out string host, out ushort port, out string err))
@@ -181,11 +194,12 @@ namespace UnturnedGodot
                 {
                     if (gen != _probeGen) return;   // Back pressed, or a newer attempt started
                     uint nonce = (uint)System.Threading.Interlocked.Increment(ref _statusNonce) ^ (uint)System.Environment.TickCount;
-                    var (ok, ping, _, _, ver) = StatusQuery(host, port, nonce);
+                    var st = StatusQueryFull(host, port, nonce);
+                    bool ok = st.Ok; int ping = st.Ping; int maxPing = st.MaxPing;
                     if (gen != _probeGen) return;
                     if (ok)
                     {
-                        bool contentOk = ver == NetContent.Hash;
+                        bool contentOk = st.Version == NetContent.Hash;
                         Callable.From(() =>
                         {
                             if (gen != _probeGen) return;
@@ -195,6 +209,8 @@ namespace UnturnedGodot
                                 SetConnectBusy(false);
                                 return;
                             }
+                            string pingRefusal = PingGateRefusal(maxPing, ping);
+                            if (pingRefusal != null) { SetProbeStatus(pingRefusal, true); SetConnectBusy(false); return; }
                             SetProbeStatus($"Reached {host}:{port} ({ping} ms) — joining…", false);
                             OnDirectConnect?.Invoke(host, port, password);
                         }).CallDeferred();
