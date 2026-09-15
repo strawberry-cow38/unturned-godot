@@ -44,6 +44,22 @@ namespace UnturnedGodot
         bool _loading = true, _launch;
         float _barL, _barW, _barH, _yMap, _y1, _y2;
 
+        /// <summary>One of the install's community screenshots, at random -- the pool retail draws from for the
+        /// menu load. Null with no install.</summary>
+        static string PickCommunityShot()
+        {
+            var pool = MapShots.CommunityShots();
+            return pool.Count == 0 ? null : pool[(int)(GD.Randi() % (uint)pool.Count)];
+        }
+
+        static Texture2D LoadAbs(string absPath)
+        {
+            if (string.IsNullOrEmpty(absPath) || !System.IO.File.Exists(absPath)) return null;
+            var img = new Image();
+            if (!ContentProvider.LoadOk(img, absPath)) return null;
+            return ImageTexture.CreateFromImage(img);
+        }
+
         static Texture2D LoadBg(string file)
         {
             string p = ProjectSettings.GlobalizePath($"res://content/menu/{file}");
@@ -96,13 +112,16 @@ namespace UnturnedGodot
             _launch = mode == "launch";
             string mapKey = System.Environment.GetEnvironmentVariable("UG_LOADMAP") ?? "pei";
             string bgKey = _launch ? LaunchPool[(int)(GD.Randi() % (uint)LaunchPool.Length)] : mapKey;
-            // ⭐ THE 4K SHOT FIRST, the 320x180 map preview only as a fallback (strawberry 2026-09-15: "see if
-            // u can find higher resolution images for the loading screens. they should be in the game source").
-            // They are: retail ships LoadingScreens/ -- 39 community screenshots at 3840x2160, credited to their
-            // authors in the FILENAME. mappreview_*.png is the map-picker THUMBNAIL and a TV screen texture as
-            // well as this background, so it stays 320x180 where being small is right, and the big art lands
-            // beside it under its own name rather than bloating those two for no gain.
-            var shot = LoadBg(MapShots.FileFor(bgKey)) ?? LoadBg($"mappreview_{bgKey}.png");
+            // ⭐ TWO DIFFERENT PICTURES, and which one depends on where you are going (strawberry 2026-09-15:
+            // "the loading into maps should use the official map screenshots (not community screenshots).
+            // community screenshots are just the loading into main menu shots").
+            //   launch -> a RANDOM community screenshot, credited to whoever took it
+            //   map    -> that map's OWN official screenshot (Maps/<Folder>/Level.png), which needs no credit
+            // Both come out of the player's install rather than out of git -- see MapShots. No install (a CI box,
+            // a fresh clone) falls back to the shipped 320x180 menu icon, which is small but never absent.
+            string shotPath = _launch ? PickCommunityShot() : MapShots.OfficialMapShot(bgKey);
+            var shot = shotPath != null ? LoadAbs(shotPath) : null;
+            if (shot == null) { shotPath = null; shot = LoadBg($"mappreview_{bgKey}.png"); }
             // Harness seams: WHICH art resolved, at what size. A loading screen cannot be captured by the --shot
             // path (it is torn down before the frame lands), so "the 4K art is really being used" is asserted
             // rather than eyeballed -- and asserted for EVERY map, which one screenshot could not have shown.
@@ -151,7 +170,10 @@ namespace UnturnedGodot
             // and retail names them on screen, not because the layout wanted another label. Only drawn when the
             // shot that actually loaded is one of the credited ones, so a fallback to the old map preview says
             // nothing rather than crediting the wrong person.
-            if (shot != null && MapShots.HasHiRes(bgKey) && MapShots.CreditFor(bgKey) is string credit)
+            // Only a COMMUNITY shot carries a name. An official map screenshot, and the shipped icon we fall
+            // back to, must credit nobody -- putting a photographer's name under someone else's picture is worse
+            // than showing no name at all.
+            if (shot != null && MapShots.CreditFor(shotPath) is string credit)
             {
                 var by = new Label { Text = credit, HorizontalAlignment = HorizontalAlignment.Right };
                 by.SetAnchorsPreset(Control.LayoutPreset.BottomRight);

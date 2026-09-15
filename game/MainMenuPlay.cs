@@ -106,19 +106,16 @@ namespace UnturnedGodot
         Label _previewCredit;
 
         // load a PNG from content/menu/ as a texture (optionally downscaled to maxSize px for the small row icons).
-        /// <summary>Point the preview at a map's best art and credit it, or clear both. ⚠ The credit is bound to
-        /// the picture that ACTUALLY loaded: a key with no community shot falls back to the 320x180 thumbnail and
-        /// must show NO name, or the menu credits a photographer for someone else's image.
-        ///
-        /// Downsampled to 1280 on load. The source is 3840x2160 and this panel is a few hundred pixels wide, so
-        /// holding the full 4K here would cost ~32 MB of VRAM per map switched to for no visible difference --
-        /// the loading cover, which fills the screen, loads it whole.</summary>
+        /// <summary>Point the map-picker preview at a map's menu icon.</summary>
         void SetPreview(string key)
         {
             if (_previewImage == null) return;
-            _previewImage.Texture = string.IsNullOrEmpty(key) ? null : LoadTex(MapShots.FileFor(key), 1280);
-            string credit = _previewImage.Texture != null && MapShots.HasHiRes(key) ? MapShots.CreditFor(key) : null;
-            if (_previewCredit != null) { _previewCredit.Text = credit ?? ""; _previewCredit.Visible = credit != null; }
+            // ⚠ THE MENU ICON, deliberately the small one. mappreview_<key>.png IS the map's menu icon
+            // (strawberry 2026-09-15: "the small low res pics you have are the menu ICONS for the maps") -- it is
+            // not a community screenshot and carries no photographer, so no credit is drawn here. The community
+            // art appears on the MENU LOADING screen instead, which is where retail shows it.
+            _previewImage.Texture = string.IsNullOrEmpty(key) ? null : LoadTex($"mappreview_{key}.png");
+            if (_previewCredit != null) { _previewCredit.Text = ""; _previewCredit.Visible = false; }
         }
 
         Texture2D LoadTex(string file, int maxSize = 0)

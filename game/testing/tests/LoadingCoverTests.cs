@@ -10,22 +10,40 @@ namespace UnturnedGodot.Testing
     // so it can only be COVERED, never hidden. That makes the cover load-bearing in a way it was not before, and
     // the failure mode of holding it too long (a player stuck staring at a loading screen) is far worse than the
     // flash it replaces. So both directions are checked: it waits, and it gives up waiting.
-    // THE LOADING ART IS THE RETAIL 4K SHOT, NOT THE 320x180 MAP THUMBNAIL (strawberry 2026-09-15: "see if u can
-    // find higher resolution images for the loading screens. they should be in the game source").
+    // THREE DIFFERENT PICTURES, AND THEY ARE NOT INTERCHANGEABLE (strawberry 2026-09-15: "the loading into maps
+    // should use the official map screenshots (not community screenshots). community screenshots are just the
+    // loading into main menu shots. the small low res pics you have are the menu ICONS for the maps").
     //
-    // They are -- retail ships LoadingScreens/ at 3840x2160. This is a test rather than a render because the
-    // loading cover is torn down before a --shot frame lands, and because the interesting claim is about ALL FIVE
-    // maps: a screenshot proves one of them and says nothing about the other four.
+    // Loading into a MAP shows that map's own official 4K screenshot and credits nobody, because the game's
+    // authors made it. Loading into the MENU shows a random community screenshot and MUST name whoever took it.
+    // The map picker shows a 320x180 icon and credits nobody either.
+    //
+    // ⚠ The art is read from the player's Unturned install, not from git, so these skip when there is no install
+    // rather than failing -- a CI box with no Unturned is not a broken loading screen. The build box HAS one, so
+    // the real paths do get exercised.
+    //
+    // Asserted rather than rendered: the loading cover is torn down before a --shot frame lands (tried three
+    // capture times), and --menushot drives the 3D barn's CAMERA anchors, not its UI panels (tried two glide
+    // budgets). The limitation is structural, not effort.
     public sealed class LoadingScreenArtTests : GameTest
     {
-        public override string Name => "load.art_is_high_res";
+        public override string Name => "load.art_sources";
 
         public override IEnumerable<Step> Run()
         {
+            bool haveInstall = MapShots.CommunityShots().Count > 0;
+            T.Check($"an Unturned install to read art from ({MapShots.InstallRoot})", true);   // informational
+            if (!haveInstall)
+            {
+                T.Check("no install on this box -> art tests skipped, fallback icon path is what runs", true);
+                yield break;
+            }
+
             string prevMap = System.Environment.GetEnvironmentVariable("UG_LOADMAP");
             string prevMode = System.Environment.GetEnvironmentVariable("UG_LOADMODE");
-            System.Environment.SetEnvironmentVariable("UG_LOADMODE", "map");   // launch mode picks at RANDOM
 
+            // ---- 1. INTO A MAP: the map's OWN official screenshot, no photographer.
+            System.Environment.SetEnvironmentVariable("UG_LOADMODE", "map");
             foreach (string key in new[] { "pei", "washington", "russia", "yukon", "germany" })
             {
                 System.Environment.SetEnvironmentVariable("UG_LOADMAP", key);
@@ -34,59 +52,63 @@ namespace UnturnedGodot.Testing
                 yield return Ticks(2);
 
                 var sz = ls.DebugShotSize;
-                // > 1920 wide, not "== 3840": the claim is "far bigger than the 320x180 thumbnail it replaced",
-                // and pinning the exact pixels would fail on a re-export at a different size for no real reason.
-                T.Check($"{key}: the loading art loaded ({sz.X}x{sz.Y})", sz.X > 0 && sz.Y > 0);
-                T.Check($"{key}: ...and it is the high-res shot, not the 320x180 preview", sz.X > 1920);
-                T.Check($"{key}: ...credited to its author ({ls.DebugCredit})", !string.IsNullOrEmpty(ls.DebugCredit));
-
+                T.Check($"{key}: the official map shot loaded ({sz.X}x{sz.Y})", sz.X > 1920);
+                T.Check($"{key}: ...and credits nobody, being the game's own art ('{ls.DebugCredit}')",
+                        string.IsNullOrEmpty(ls.DebugCredit));
                 ls.QueueFree();
                 yield return Ticks(1);
             }
+
+            // ---- 2. INTO THE MENU: a community screenshot, and it MUST be credited.
+            System.Environment.SetEnvironmentVariable("UG_LOADMODE", "launch");
+            var seen = new HashSet<string>();
+            for (int i = 0; i < 6; i++)
+            {
+                var ls = new LoadingScreen();
+                World.AddChild(ls);
+                yield return Ticks(2);
+                var sz = ls.DebugShotSize;
+                T.Check($"menu load {i}: a community shot loaded ({sz.X}x{sz.Y})", sz.X > 1920);
+                T.Check($"menu load {i}: ...credited to its author ('{ls.DebugCredit}')",
+                        !string.IsNullOrEmpty(ls.DebugCredit) && ls.DebugCredit.Contains(" by "));
+                if (!string.IsNullOrEmpty(ls.DebugCredit)) seen.Add(ls.DebugCredit);
+                ls.QueueFree();
+                yield return Ticks(1);
+            }
+            // ⭐ It is a POOL, not one picture. Six draws from 39 landing on a single shot every time would mean
+            // the randomness is dead -- which is exactly what "random pool" was asked for.
+            T.Check($"the menu pool is actually random ({seen.Count} distinct across 6 loads)", seen.Count > 1);
 
             System.Environment.SetEnvironmentVariable("UG_LOADMAP", prevMap);
             System.Environment.SetEnvironmentVariable("UG_LOADMODE", prevMode);
         }
     }
 
-    // THE MENU CREDITS THE PHOTOGRAPHER, TOP-RIGHT (strawberry 2026-09-15: "add proper credit to the top right of
-    // every community screenshot on the main menu. use the dedicated map's loading screens, but from the hi res
-    // collection").
-    //
-    // Asserted rather than rendered: --menushot drives the CAMERA anchors of the 3D barn menu, not the UI panels,
-    // so the map preview never appears in a captured frame. (Tried it, twice, at two glide budgets.)
-    public sealed class MenuShotCreditTests : GameTest
+    // The map picker shows an ICON, and an icon has no photographer. Separate from the art test above because it
+    // needs no install at all -- the icons are ours and always shipped.
+    public sealed class MenuIconTests : GameTest
     {
-        public override string Name => "menu.shot_credit";
+        public override string Name => "menu.map_icon_uncredited";
 
         public override IEnumerable<Step> Run()
         {
             var menu = new MainMenu();
             World.AddChild(menu);
             yield return Ticks(2);
-
             var layer = new CanvasLayer();
             World.AddChild(layer);
             menu.DebugBuildMapSelectorForTest(layer);
             yield return Ticks(2);
 
-            foreach (string key in new[] { "pei", "washington", "russia", "yukon", "germany" })
+            foreach (string key in new[] { "pei", "washington", "playground" })
             {
                 menu.DebugSelectMapForTest(key);
                 yield return Ticks(1);
-                var sz = menu.DebugPreviewSize;
-                T.Check($"{key}: the menu preview is the hi-res community shot ({sz.X}x{sz.Y})", sz.X > 640);
-                T.Check($"{key}: ...credited ({menu.DebugPreviewCredit})", !string.IsNullOrEmpty(menu.DebugPreviewCredit));
+                T.Check($"{key}: the picker shows an icon, and names no photographer ('{menu.DebugPreviewCredit}')",
+                        string.IsNullOrEmpty(menu.DebugPreviewCredit));
             }
-            T.Check("the credit sits TOP-RIGHT of the shot", menu.DebugCreditIsTopRight);
-
-            // ⭐ THE CONTROL, and the one that matters: the gun range has no community shot, so it falls back to
-            // the plain thumbnail -- and must then credit NOBODY. Without this, "always show a credit" would pass
-            // every check above while attributing someone else's photograph to a picture they did not take.
-            menu.DebugSelectMapForTest("playground");
-            yield return Ticks(1);
-            T.Check($"a map with no community shot credits no one ('{menu.DebugPreviewCredit}')",
-                    string.IsNullOrEmpty(menu.DebugPreviewCredit));
+            var sz = menu.DebugPreviewSize;
+            T.Check($"...and it is the small icon, not a 4K screenshot ({sz.X}x{sz.Y})", sz.X > 0 && sz.X <= 640);
 
             layer.QueueFree(); menu.QueueFree();
             yield return Ticks(2);
