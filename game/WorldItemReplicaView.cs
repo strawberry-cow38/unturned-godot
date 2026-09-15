@@ -31,6 +31,15 @@ namespace UnturnedGodot
         readonly List<uint> _gone = new();
         bool _catalogReady;
 
+        // The server publishes a falling item's position every 50 Hz tick and the composer puts it on the wire at
+        // 25 Hz (SnapshotDivisorTicks=2), so assigning the replicated position straight to the node draws the fall
+        // as a 25-frame-per-second flipbook. Glide toward it the way VehicleReplicaView does -- an exponential
+        // approach, with a straight snap past a distance no item could have covered between two snapshots (a spawn
+        // correction, a settle that happened off-screen, a pickup-and-redrop reusing the node).
+        const float GlideRate = 35f;      // 1/s. Steady-state lag is speed/rate -- ~17 cm behind a can doing 6 m/s, gone at rest
+        const float SnapDistance = 4f;    // beyond this a glide reads as the item SKATING across the floor
+        const float RestEpsilonSq = 1e-6f; // 1 mm: land exactly on target and stop writing (hundreds of resting loot puppets)
+
         public int NodeCount => _nodes.Count;
         public bool TryGetNode(uint netId, out Node3D node) => _nodes.TryGetValue(netId, out node) && IsInstanceValid(node);
 
@@ -48,6 +57,7 @@ namespace UnturnedGodot
             }
 
             _seen.Clear();
+            float a = 1f - Mathf.Exp(-GlideRate * (float)delta);   // frame-rate independent approach, computed once
             foreach (var e in Client.WorldItems.All)
             {
                 _seen.Add(e.NetIdValue);
@@ -61,7 +71,13 @@ namespace UnturnedGodot
                     _nodes[e.NetIdValue] = node;
                     GrassDisplacers.Register(node, GrassDisplacers.ItemRadius);   // master: a dropped item dimples the grass it rests in (this puppet is the visible copy on a client/host)
                 }
-                if (node.GlobalPosition != target) node.GlobalPosition = target;   // the settle event moves it once; snapshots correct it
+                // follow the published position: in-flight moves arrive every snapshot, the settle event is the last one
+                var pos = node.GlobalPosition;
+                float d2 = pos.DistanceSquaredTo(target);
+                if (d2 > RestEpsilonSq)
+                    node.GlobalPosition = d2 > SnapDistance * SnapDistance ? target : pos.Lerp(target, a);
+                else if (pos != target)
+                    node.GlobalPosition = target;
             }
 
             _gone.Clear();   // server retired an entity (pickup/despawn) -> the visual leaves too

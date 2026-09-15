@@ -2635,4 +2635,82 @@ namespace UnturnedGodot.Testing
                     got2 && end.Settled);
         }
     }
+
+    // ...AND THE FALL IS DRAWN, not just its endpoints. unify.dropped_item_falls above was green the whole time
+    // the item looked broken on screen, because it only ever asks whether the replicated Y CAME DOWN -- and it did,
+    // in one step, at the settle. WorldItemReplication.Pos changed exactly twice in an entity's life (ServerSpawn,
+    // ServerSettle), so the replica puppet -- the only copy the player sees under consume -- hung at the drop point
+    // for the whole fall and then appeared on the floor. strawberry 2026-09-15: "the dropped item physics
+    // everywhere seem to work, but they are really slow. at less than 1hz." One update per drop is not a rate.
+    //
+    // TEETH: this samples the CLIENT's replicated Y every tick and counts the values STRICTLY BETWEEN the release
+    // height and the resting height. Endpoints are excluded, so publish-only-on-settle scores exactly ZERO however
+    // long it is left to run -- a floor of 3 cannot be reached by a two-position entity. The floor above that is
+    // DERIVED from the measured fall and the composer's own SnapshotDivisorTicks rather than written down, so a
+    // tick-rate or cadence change moves it instead of going quietly stale; a third of the ideal absorbs the slow
+    // top of the fall, where consecutive samples quantize to the same value.
+    public sealed class DroppedItemFallIsDrawnTests : GameTest
+    {
+        public override string Name => "unify.dropped_item_fall_is_drawn";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260915);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            world.Sim.Sim.Add(new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump"));
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            yield return Until(() => ded.Server.Players.TryGetByOwner(client.PlayerId, out _), 5);
+            T.Check("server owns the player entity", ded.Server.Players.TryGetByOwner(client.PlayerId, out _));
+            ded.Server.Players.TryGetByOwner(client.PlayerId, out var me);
+
+            // 4 m, so the fall lasts long enough to have a middle worth drawing at all
+            var from = new UnityEngine.Vector3(me.Pos.x, me.Pos.y + 4f, me.Pos.z);
+            var e = ded.Server.Transactions.SpawnWorldItem(new Item(458), from, UnityEngine.Vector3.zero);
+            T.Check("the server made the drop entity", e != null);
+            float startY = e.Pos.y;
+
+            // the OTHER half of the 5 Hz lag: the node the item falls with was minted on the sync's own beat, so
+            // the drop hung in the bag's mouth for up to DivisorTicks (10) ticks before gravity applied to it.
+            yield return Ticks(2);
+            bool simmed = ded.Server.WorldItems.TryGet(e.NetIdValue, out var s0) && s0.ServerSimulated;
+            T.Check($"the drop got its physics node within 2 ticks (the 5 Hz beat took up to {WorldItemNetSync.DivisorTicks})", simmed);
+
+            // sample what the CLIENT is given, every tick, until the item comes to rest
+            var seen = new HashSet<float>();
+            int fallTicks = 0;
+            bool settled = false;
+            float restY = startY;
+            for (int i = 0; i < 400 && !settled; i++)
+            {
+                yield return Ticks(1);
+                fallTicks++;
+                if (!client.WorldItems.TryGet(e.NetIdValue, out var r)) continue;
+                seen.Add(r.Pos.y);
+                restY = r.Pos.y;
+                settled = r.Settled;
+            }
+            T.Check($"the client's replica came to rest ({fallTicks} ticks, y {startY:0.00} -> {restY:0.00})",
+                    settled && restY < startY - 0.5f);
+
+            int mid = 0;
+            foreach (float y in seen) if (y < startY - 0.0001f && y > restY + 0.0001f) mid++;
+            // one client-visible position per snapshot is the ceiling; a third of it is the floor, never below 3
+            int ideal = fallTicks / Mathf.Max(1, ded.Server.SnapshotDivisorTicks);
+            int floor = Mathf.Max(3, ideal / 3);
+            T.Check($"the client SAW the item mid-fall: {mid} distinct in-between heights (floor {floor}, ideal {ideal}; publish-on-settle scores 0)",
+                    mid >= floor);
+        }
+    }
 }

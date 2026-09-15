@@ -180,6 +180,25 @@ namespace UnturnedGodot.Net
             return e;
         }
 
+        /// <summary>The IN-FLIGHT transform. Pos used to change exactly TWICE in an entity's life -- ServerSpawn
+        /// and ServerSettle -- so the replica the player actually sees (the direct node is suppressed under
+        /// consume) hung at the drop point for the whole fall and then arrived at its rest pose in ONE step.
+        /// strawberry 2026-09-15: "the dropped item physics everywhere seem to work, but they are really slow.
+        /// at less than 1hz." They were at exactly one update per drop.
+        ///
+        /// No new command and no protocol bump: stamping LastChangedTick dirties the entity and the snapshot
+        /// delta already carries Pos. Dirty-checked against the QUANTIZED value rather than the raw one, or a
+        /// body that has come to rest but not yet crossed the settle threshold re-stamps every tick and pays
+        /// delta bytes for standing still.</summary>
+        public void ServerMove(uint netId, Vector3 pos, long tick)
+        {
+            if (!TryGet(netId, out var e) || e.Settled) return;
+            var q = PlayerReplication.Quantize(pos);
+            if (q.x == e.Pos.x && q.y == e.Pos.y && q.z == e.Pos.z) return;
+            e.Pos = q;
+            e.LastChangedTick = Stamp(tick);
+        }
+
         public void ServerSettle(uint netId, Vector3 pos, long tick)
         {
             if (!TryGet(netId, out var e) || e.Settled) return;
