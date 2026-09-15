@@ -272,6 +272,36 @@ namespace SDG.Unturned
                 return true;
             }
 
+            // MERGE onto a stack of the same thing, up to that item's cap -- for money that cap is $500
+            // (strawberry 2026-09-15: "dragging money stacks onto eachother should combine the stack you dragged
+            // a stack onto, up to 500, and leaving the remainder (if any) in the origin slot"). Written against
+            // stackSize rather than against money, because "combine up to the cap" is the same rule for shells
+            // and planks and the alternative is a currency special case in the middle of the grid math.
+            //
+            // ⚠ THE GUARD THAT MATTERS: `amount` is OVERLOADED -- on a MAGAZINE it is the loaded round count,
+            // not a quantity of magazines. Merging two half-full mags would breed a single over-full one. They
+            // carry stackSize 1 today so `room` would already be 0, but that is a coincidence of the catalog and
+            // not a rule, so it is stated instead of relied on.
+            //
+            // Two FULL stacks fall through to the swap below, which is still the sensible answer for a drag that
+            // cannot combine: the items trade places rather than the gesture doing nothing.
+            if (dest.item != null && item.item != null && dest.item.id == item.item.id)
+            {
+                var da = Assets.find(dest.item.id);
+                int cap = System.Math.Max(1, da?.stackSize ?? 1);
+                int room = da != null && da.IsMagazine ? 0 : cap - dest.item.amount;
+                if (room > 0)
+                {
+                    int moved = System.Math.Min(room, item.item.amount);
+                    dest.item.amount = (ushort)(dest.item.amount + moved);
+                    item.item.amount = (ushort)(item.item.amount - moved);
+                    if (item.item.amount == 0) items[page0].removeItem(index);   // all of it moved -> the origin slot frees
+                    else items[page0].raiseStateUpdated();                       // ...otherwise the remainder stays put
+                    items[page1].raiseStateUpdated();
+                    return true;
+                }
+            }
+
             // SWAP with the item already there
             byte rot0 = dest.rot;
             if (!items[page0].checkSpaceSwap(x0, y0, item.size_x, item.size_y, item.rot, dest.size_x, dest.size_y, rot0)) return false;

@@ -275,7 +275,8 @@ namespace UnturnedGodot
             // containers like shelves and cabinets are. toaster holds TWO slots").
             // Tables are the REAL PEI table indices (Spawns/Items.dat, parsed: 6 Food, 17 Kitchen, 21 Civilian Canada),
             // not guesses -- 11 "Chef" and 24 "Booty" were considered and passed over, Booty because it is a single
-            // tier of two ids and every register in the world would hand back the same two things.
+            // tier of two ids and every register in the world would hand back the same two things. (The register
+            // has since moved OFF table 21 to the virtual cash table -- see its entry below.)
             ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", 17, false, "Dishwasher"),      // has a door leaf, like Fridge_0
             ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", 17, false, "Stove"),             // ditto
             ["6fb78536e8cb4b01b6050a2efb3d912c"] = ("Microwave_0", 17, false, "Microwave"),
@@ -284,7 +285,10 @@ namespace UnturnedGodot
             ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", 6, false, "BBQ"),
             ["65906f4174724825849478b60ecc348a"] = ("Files_0", 21, false, "Filing Cabinet"),   // 4-drawer cabinet (rendered to confirm; "Files" is also a name for loose paper)
             ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", 21, false, "Filing Cabinet"),
-            ["84b3a672bc0643d1b12b2b345a88ba46"] = ("Register_0", 21, false, "Cash Register"),
+            // A TILL HOLDS CASH (strawberry 2026-09-15). LootTables.CashRegister is a virtual table -- see the
+            // note there for why a real one could not do it: PEI's only money table is 24 "Booty", one tier of
+            // {loonie, toonie}, which is what this entry used to reject Booty for in the comment above.
+            ["84b3a672bc0643d1b12b2b345a88ba46"] = ("Register_0", LootTables.CashRegister, false, "Cash Register"),
             ["61e43d05791d4269b626de9bedbf0a03"] = ("Garbage_0", 21, false, "Garbage Bag"),    // a tied-off bag, not a bin
             ["a19b3ec55a2046668611c9d2775efd99"] = ("Garbage_1", 21, false, "Garbage Bag"),
             ["ba109246d52c400a8f35704aef77a3ee"] = ("DL_Garbage", 21, false, "Garbage Bag"),

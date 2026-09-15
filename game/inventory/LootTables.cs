@@ -14,10 +14,37 @@ namespace UnturnedGodot
         public static bool Loaded => _loaded && _tiers != null;
         public static int TableCount => _tiers?.Length ?? 0;
 
+        /// <summary>A CASH REGISTER HOLDS CASH (strawberry 2026-09-15: "change the loot table of the cash
+        /// registers to spawn money inside").
+        ///
+        /// ⚠ This is a VIRTUAL table id, deliberately outside every real map's range, and it has to be: the real
+        /// tables are parsed from each map's OWN Spawns/Items.dat and the COUNT differs per map, so a synthetic
+        /// table appended to the loaded array would have a different index on PEI than on Washington and the
+        /// register's entry could not name one number.
+        ///
+        /// Why not a real table: PEI has exactly one containing money -- 24 "Booty", a single tier of
+        /// {1056, 1057} -- so pointing tills at it makes every register in the world hand back a loonie or a
+        /// toonie, which is why it was passed over when these props were first wired. This spreads the
+        /// denominations instead, weighted like a till: mostly small change, a note now and then.
+        ///
+        /// Every id here converts at FACE VALUE on pickup (Items.tryAddItem -> Currency), so a rolled $20 note
+        /// really is $20 and the whole till collapses into ONE wallet stack rather than filling the grid.</summary>
+        public const int CashRegister = 1000;
+
+        static readonly (float chance, ushort[] ids)[] CashRegisterTiers =
+        {
+            (0.40f, new ushort[] { 1056, 1057 }),   // $1 loonie, $2 toonie -- the float in the drawer
+            (0.32f, new ushort[] { 1051 }),         // $5
+            (0.18f, new ushort[] { 1052 }),         // $10
+            (0.08f, new ushort[] { 1053 }),         // $20
+            (0.02f, new ushort[] { 1054, 1055 }),   // $50, $100 -- rare, so a till is worth opening but not a jackpot
+        };
+
         // ---- test hooks (L1 loot-projection tests need a deterministic table without a real Items.dat) ----
         public static void ResetForTests() { _loaded = false; _tiers = null; _names = null; }
         public static void LoadTiersForTests((float chance, ushort[] ids)[][] tiers, string[] names) { _tiers = tiers; _names = names; _loaded = true; }
-        public static string TableName(int t) => _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
+        public static string TableName(int t) => t == CashRegister ? "Cash Register"
+            : _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
 
         public static void Load(string itemsDatPath)
         {
@@ -62,8 +89,10 @@ namespace UnturnedGodot
         public static int Roll(int table, RandomNumberGenerator rng)
         {
             rng ??= _rng;
-            if (_tiers == null || table < 0 || table >= _tiers.Length) return -1;
-            var tiers = _tiers[table];
+            // The virtual table is answered BEFORE the bounds check, which would otherwise reject it as
+            // out-of-range -- and it needs no loaded Items.dat, so a till is stocked on any map.
+            var tiers = table == CashRegister ? CashRegisterTiers
+                      : (_tiers == null || table < 0 || table >= _tiers.Length) ? null : _tiers[table];
             if (tiers == null || tiers.Length == 0) return -1;
             float total = 0f; foreach (var t in tiers) total += t.chance;
             int pick = tiers.Length - 1;
