@@ -167,7 +167,13 @@ namespace UnturnedGodot.Testing
             yield return Ticks(3);
             T.Check("...and it is still up several frames later", RootVisible(b));
             ShaderWarm.SetBusyForTest(false);
-            yield return Ticks(2);
+            // ⚠ WAIT ON THE CONDITION, not on a tick count. TryReveal is driven from _Process and this harness
+            // steps _PhysicsProcess, so Ticks(n) does NOT advance _Process in lockstep -- two physics ticks can
+            // pass with the reveal never having been given a frame. The cover logic was always correct; the
+            // wait was not. (tinyclaw diagnosed it: Ticks(20) also passes, but a count that happens to be big
+            // enough is the same bug with a bigger number.) Case 3 below already waits this way, which is why
+            // it never failed there.
+            yield return Until(() => !RootVisible(b), 2.0);
             T.Check("...then drops once the warm finishes", !RootVisible(b));
             b.QueueFree();
             yield return Ticks(2);
