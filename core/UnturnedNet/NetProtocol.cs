@@ -40,6 +40,33 @@ namespace UnturnedGodot.Net
         WrongPassword = 7,     // password-protected and the supplied one did not match
     }
 
+    /// <summary>
+    /// ⚠ THE DISCONNECT CONTROL WRITES ONE OF THESE ON THE WIRE AND THE RECEIVER NEVER READS IT.
+    /// Both senders populate the byte -- NetClientSession.cs:172 writes Requested, NetServerSession.cs:325
+    /// writes Kicked -- and both receivers discard the payload and substitute a constant from the
+    /// DIRECTION instead (NetServerSession.cs:257 records Requested, NetClientSession.cs:151 records
+    /// Kicked). Verified original rather than drift: in c0599766, the first commit of the session layer,
+    /// the Reject and Disconnect cases were written ADJACENT, Reject reading its byte and Disconnect
+    /// reading nothing. No reader was ever removed; one never existed.
+    ///
+    /// Harmless today only because direction fully determines meaning under these five values, so the
+    /// byte carries nothing the receiver does not already know. SO, THE PRECONDITION FOR ANYONE ADDING A
+    /// VALUE HERE: it will be written, transmitted, and thrown away. A ShuttingDown or BannedMidSession
+    /// added to this enum still arrives at the client as Kicked, because the client hardcodes Kicked.
+    ///
+    /// And the field HAS live consumers, which is what makes that worth a sentence rather than a shrug --
+    /// game/ClientWorldSession.cs:775 branches on it, plus assertions in SessionLifecycleTests,
+    /// JoinMidGameTests and FloodGuardTests. They read the locally-substituted constant, never the wire
+    /// byte, so a new reason does not fail loudly: it routes those consumers down the wrong branch while
+    /// every existing test stays green. Wiring the read is one line in each receiver's Disconnect case;
+    /// do it in the same commit that adds a value, not afterwards.
+    ///
+    /// The mirror of the gun-state scar in InventoryReplication's WriteJar, which is the same mistake from
+    /// the other end: there, a field rode the wire with nothing populating its SOURCE; here, a field is
+    /// populated with nothing wired to its SINK.
+    /// (Traced by a peer session's wire sweep, 2026-09-16, which also corrected its own first reading of
+    /// this as drift. I re-verified the read side and the consumer list.)
+    /// </summary>
     public enum NetDisconnectReason : byte
     {
         None = 0,
