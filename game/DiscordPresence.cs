@@ -49,6 +49,7 @@ namespace UnturnedGodot
         readonly record struct Activity(
             string Details,       // top line
             string State,         // second line
+            string LargeImage,    // asset key for the big picture: "map_pei", else "logo"
             string LargeText,     // tooltip on the big icon
             string SmallImage,    // per-state badge, if the app has art uploaded
             string SmallText,
@@ -74,10 +75,10 @@ namespace UnturnedGodot
         // this file does not reach into Terrain, the menu, the editor and the net session to guess.
 
         public static void SetMenu() =>
-            Push("menu", new Activity("In the main menu", "", "Unturned Godot", "menu", "Main menu", 0, 0, 0));
+            Push("menu", new Activity("In the main menu", "", "logo", "Unturned Godot", "menu", "Main menu", 0, 0, 0));
 
         public static void SetEditor(string mapName) =>
-            Push("editor", new Activity("Map Editor", Clean(mapName), "Unturned Godot", "editor", "Map editor", 0, 0, 0));
+            Push("editor", new Activity("Map Editor", Clean(mapName), MapAsset(mapName), "Unturned Godot", "editor", "Map editor", 0, 0, 0));
 
         /// <summary>Singleplayer: the map, and how long you have kept it together. `day` is
         /// DayNightCycle.Day.</summary>
@@ -85,7 +86,9 @@ namespace UnturnedGodot
             Push("sp", new Activity(
                 Details: "Singleplayer",
                 State: $"{Clean(mapName)} — day {Math.Max(1, day)}",
-                LargeText: "Unturned Godot", SmallImage: "singleplayer", SmallText: "Singleplayer",
+                LargeImage: MapAsset(mapName),
+                LargeText: string.IsNullOrEmpty(Clean(mapName)) ? "Unturned Godot" : Clean(mapName),
+                SmallImage: "singleplayer", SmallText: "Singleplayer",
                 PartySize: 0, PartyMax: 0, StartUnix: 0));
 
         /// <summary>Multiplayer: whose server, which map, how full, what mode. Population comes from the
@@ -97,7 +100,9 @@ namespace UnturnedGodot
             Push("mp", new Activity(
                 Details: Clean(serverName),
                 State: second,
-                LargeText: "Unturned Godot", SmallImage: "multiplayer", SmallText: "Multiplayer",
+                LargeImage: MapAsset(mapName),
+                LargeText: string.IsNullOrEmpty(Clean(mapName)) ? "Unturned Godot" : Clean(mapName),
+                SmallImage: "multiplayer", SmallText: "Multiplayer",
                 PartySize: players > 0 ? players : 0,
                 PartyMax: max > 0 ? max : 0,
                 StartUnix: 0));
@@ -341,11 +346,34 @@ namespace UnturnedGodot
             // draws no image -- it is not an error and the text fields still show, which is why these are sent
             // unconditionally rather than gated on someone remembering to upload art.
             if (!first) sb.Append(',');
-            sb.Append("\"assets\":{\"large_image\":\"logo\",\"large_text\":\"").Append(Esc(a.LargeText)).Append('"');
+            sb.Append("\"assets\":{\"large_image\":\"").Append(Esc(string.IsNullOrEmpty(a.LargeImage) ? "logo" : a.LargeImage))
+              .Append("\",\"large_text\":\"").Append(Esc(a.LargeText)).Append('"');
             if (!string.IsNullOrEmpty(a.SmallImage))
                 sb.Append(",\"small_image\":\"").Append(Esc(a.SmallImage)).Append("\",\"small_text\":\"").Append(Esc(a.SmallText)).Append('"');
             sb.Append("}}}}");
             return sb.ToString();
+        }
+
+        /// <summary>Map name -> uploaded asset key, e.g. PEI -> "map_pei".
+        ///
+        /// ⚠ There is NO WAY for the game to know which assets the application actually has -- that list lives
+        /// on Discord and asking for it at runtime would be a network call per join. So an unuploaded map
+        /// simply draws no large image; the text lines are unaffected. The fix for a missing map picture is an
+        /// upload, never a code change, which is why this does not carry a hardcoded list of "known" maps that
+        /// would go stale the first time someone adds one.
+        /// Lowercased and reduced to [a-z0-9_] because Discord asset keys are, and a map folder is free to
+        /// contain a space or a dash that would silently never match.</summary>
+        static string MapAsset(string mapName)
+        {
+            string m = Clean(mapName);
+            if (string.IsNullOrEmpty(m)) return "logo";
+            var sb = new StringBuilder("map_");
+            foreach (char c in m.ToLowerInvariant())
+            {
+                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) sb.Append(c);
+                else if (c == ' ' || c == '-' || c == '_') sb.Append('_');
+            }
+            return sb.Length > 4 ? sb.ToString() : "logo";
         }
 
         static string Esc(string s) => JsonEncodedText.Encode(s ?? "").ToString();
@@ -353,7 +381,9 @@ namespace UnturnedGodot
         // Test seam: the frame JSON is the whole wire contract, and it is the one part of this that can be
         // wrong without Discord being installed to notice.
         internal static string FrameForTest(string details, string state, int size, int max, long start) =>
-            Frame(new Activity(details, state, "Unturned Godot", "", "", size, max, start));
+            Frame(new Activity(details, state, "logo", "Unturned Godot", "", "", size, max, start));
+
+        internal static string MapAssetForTest(string mapName) => MapAsset(mapName);
 
         /// <summary>⚠ Clean() runs in the SetX methods, NOT in Frame() -- escaping and sanitising are separate
         /// jobs and only one of them is Frame's. A test that drove Clean THROUGH FrameForTest would be

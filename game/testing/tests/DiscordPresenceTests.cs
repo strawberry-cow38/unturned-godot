@@ -113,6 +113,20 @@ namespace UnturnedGodot.Testing
             // update. Clamped at the source instead.
             T.Check("an absurd name is clamped before it reaches the pipe",
                     DiscordPresence.CleanForTest(new string('x', 400)).Length <= 120);
+
+            // ---- the map -> asset key, which is a STRING MATCH against art uploaded on Discord ------------
+            // Nothing validates this at runtime: a key that does not match an uploaded asset draws no image
+            // and reports nothing, so a casing or punctuation slip is invisible until someone looks at the
+            // panel. These are the exact keys the uploaded art carries.
+            T.Check("PEI -> map_pei", DiscordPresence.MapAssetForTest("PEI") == "map_pei");
+            T.Check("Washington -> map_washington", DiscordPresence.MapAssetForTest("Washington") == "map_washington");
+            // A map folder is free to contain a space or a dash; an asset key is not.
+            T.Check("Alpha Valley -> map_alpha_valley", DiscordPresence.MapAssetForTest("Alpha Valley") == "map_alpha_valley");
+            T.Check("Paintball-Arena -> map_paintball_arena", DiscordPresence.MapAssetForTest("Paintball-Arena") == "map_paintball_arena");
+            // ⚠ No map -> the generic logo, NOT "map_" with nothing after it, which would match no asset and
+            // silently blank the picture on every menu frame.
+            T.Check("no map falls back to logo", DiscordPresence.MapAssetForTest("") == "logo");
+            T.Check("null map falls back to logo", DiscordPresence.MapAssetForTest(null) == "logo");
             yield break;
         }
     }
