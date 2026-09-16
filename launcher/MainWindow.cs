@@ -55,6 +55,7 @@ public class MainWindow : Window
     readonly TextBox _keyBox = new() { Width = 260, Watermark = "paste key, then Save", FontSize = 13 };
     readonly TextBlock _keyStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
+    readonly CheckBox _consoleCheck = new() { Content = "Debug console window", FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
     readonly ComboBox _branchBox = new() { MinWidth = 220, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };   // branch selector (populated from the remote after clone)
     // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
     // in-game main menu, which connects to claw.bitvox.me itself. Server browser later.)
@@ -69,6 +70,11 @@ public class MainWindow : Window
         _branch = LoadBranch();   // the persisted branch selection (default main); the dropdown updates it
 
         Title = "Unturned Godot — Launcher";
+        // Avalonia does NOT inherit the window icon from <ApplicationIcon> (that is the exe's shell icon only),
+        // so it is set here as well. Embedded via avares:// rather than read from disk: the launcher updates by
+        // replacing a single exe, so a loose icon file beside it is one the updater never refreshes.
+        try { Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://UnturnedGodotLauncher/Assets/unturned.png"))); }
+        catch { }   // a missing icon must never stop the launcher opening -- it is decoration, the Play button is not
         Width = 680; Height = 520; MinWidth = 560; MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = new SolidColorBrush(Color.Parse("#16181d"));
@@ -171,9 +177,31 @@ public class MainWindow : Window
         };
         RefreshProfileStatus();
 
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
+        // ---- options: per-machine launch switches -------------------------------------------------
+        // Deliberately a ROW that holds several checkboxes rather than one control, so the next switch is an
+        // entry in this panel instead of another grid restructure (tinyclaw's offline-mode toggle lands here).
+        // Same one-small-file-per-setting shape as Branch / the Unturned folder / the report key.
+        //
+        // Godot mono ships BOTH godot.exe and godot_console.exe; the console build is a separate binary that
+        // allocates a Windows console, it is not a flag. So the toggle picks the executable -- see Play().
+        // ⚠ DEFAULT ON, which is the behaviour every existing install already has. A launcher that quietly
+        // stops showing you the log the day it updates is a worse surprise than an unticked box.
+        _consoleCheck.IsChecked = LoadDebugConsole();
+        _consoleCheck.IsCheckedChanged += (_, _) => SaveDebugConsole(_consoleCheck.IsChecked == true);
+        var optionsRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14,
+            Margin = new Avalonia.Thickness(0, 8, 0, 0),
+            Children =
+            {
+                new TextBlock { Text = "Options:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
+                _consoleCheck,
+            },
+        };
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
-        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(profileRow, 3); Row(keyRow, 4); Row(buildBox, 5); Row(logHeader, 6); Row(_log, 7); Row(footer, 8);
+        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(profileRow, 3); Row(keyRow, 4); Row(optionsRow, 5); Row(buildBox, 6); Row(logHeader, 7); Row(_log, 8); Row(footer, 9);
         return grid;
     }
 
@@ -439,12 +467,13 @@ public class MainWindow : Window
             if (reportKey.Length == 0) Log("(no report key set — bug reports will file anonymously)");
 
             string exe = _godot;
-            if (OperatingSystem.IsWindows())   // Godot mono ships a *_console.exe that pops a debug console window
+            if (OperatingSystem.IsWindows() && LoadDebugConsole())   // Godot mono ships a *_console.exe that pops a debug console window
             {
                 string con = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? exe[..^4] + "_console.exe" : exe + "_console";
                 if (File.Exists(con)) exe = con;
                 else Log("(no *_console.exe next to godot — launching without a separate debug window)");
             }
+            else if (OperatingSystem.IsWindows()) Log("(debug console off — launching the windowed build)");
             var psi = new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = _gameDir };
             psi.ArgumentList.Add("--path");
             psi.ArgumentList.Add(_gameDir);
@@ -581,6 +610,26 @@ public class MainWindow : Window
 
     // ---- branch selection persistence (remembers the dropdown choice across launches) ----
     string BranchConfig => Path.Combine(_baseDir, "branch.txt");
+
+    // ---- debug console toggle -----------------------------------------------------------------------
+    // ⚠ Read from DISK at Play time, not from the checkbox: Play() can run on a launcher whose window was
+    // never shown (and the control therefore never initialised), and the file is the thing that survives a
+    // self-update anyway. The checkbox writes it; nothing else reads the checkbox.
+    string DebugConsoleConfig => Path.Combine(_baseDir, "debug_console.txt");
+
+    /// <summary>ON unless explicitly turned off -- a missing file is a fresh install, which must behave the
+    /// way every existing one already does.</summary>
+    bool LoadDebugConsole()
+    {
+        try { return !File.Exists(DebugConsoleConfig) || File.ReadAllText(DebugConsoleConfig).Trim() != "0"; }
+        catch { return true; }
+    }
+
+    void SaveDebugConsole(bool on)
+    {
+        try { File.WriteAllText(DebugConsoleConfig, on ? "1" : "0"); Log(on ? "debug console: on" : "debug console: off (takes effect next launch)"); }
+        catch (Exception ex) { Log("!! could not save the debug console setting: " + ex.Message); }
+    }
 
     // ---- report key ---------------------------------------------------------------------------------
     string ReportKeyConfig => Path.Combine(_baseDir, "bugreport_key.txt");
