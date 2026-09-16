@@ -2119,6 +2119,7 @@ namespace UnturnedGodot
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
             UpdateOptic();
+            UpdateSpinBarrel(delta);
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
             UpdateTacticalLaser();   // the gun-rail laser's beam + dot (N)
@@ -2531,15 +2532,55 @@ namespace UnturnedGodot
         }
 
         // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
-        public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y)> HotbarBinds = new();
-        public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); Log.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
+        /// <summary>A bind carries the ITEM it was made against, not just the cell (strawberry 2026-09-16: "the
+        /// 3-10 slot bind binds the SLOT not the item. should bind the item, unbinding when the item moves").
+        /// Binding a CELL means the key follows whatever is in that square afterwards -- bind 5 to your medkit,
+        /// drag the medkit one cell over, and 5 now equips whatever slid into its place. The id is what turns
+        /// that from a silent mis-equip into a bind that knows it is stale.</summary>
+        public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y, ushort id)> HotbarBinds = new();
+
+        public void BindHotbar(int key, byte page, byte x, byte y)
+        {
+            var it = ItemAt(page, x, y);
+            if (it == null) return;   // binding an empty cell would bind the key to nothing and read as "it didn't work"
+            HotbarBinds[key] = (page, x, y, it.id);
+            Log.Print($"[hotbar] key {key} -> item {it.id} at page {page} ({x},{y})");
+        }
+
+        SDG.Unturned.Item ItemAt(byte page, byte x, byte y)
+        {
+            if (Inventory == null || page >= Inventory.items.Length) return null;
+            var pg = Inventory.items[page];
+            byte idx = pg?.getIndex(x, y) ?? byte.MaxValue;
+            return idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
+        }
+
+        /// <summary>Where a hotbar key points, or false if the bind has gone stale -- in which case it is DROPPED
+        /// here, so a key whose item moved stops equipping the stranger that replaced it and stops drawing it on
+        /// the row. Checked on read rather than driven by an inventory event because every move path in the game
+        /// (drag, quick-transfer, server echo, death drop) would otherwise need to remember to fire one, and the
+        /// one that forgot would be the silent mis-equip this exists to prevent.</summary>
+        public bool TryResolveHotbar(int key, out byte page, out byte x, out byte y)
+        {
+            page = x = y = 0;
+            if (!HotbarBinds.TryGetValue(key, out var b)) return false;
+            var it = ItemAt(b.page, b.x, b.y);
+            if (it == null || it.id != b.id)
+            {
+                HotbarBinds.Remove(key);
+                Log.Print($"[hotbar] key {key} unbound -- item {b.id} is no longer at page {b.page} ({b.x},{b.y})");
+                return false;
+            }
+            page = b.page; x = b.x; y = b.y;
+            return true;
+        }
         static int? HotbarSlot(InputEvent e) => Keybinds.HotbarSlot(e);   // shared logic lives in Keybinds so equip + bind-item read one key space
 
         public void EquipHotbar(int n)
         {
             if (n == 1) { EquipFromLocation(0, 0, 0); return; }        // primary slot (page 0)
             if (n == 2) { EquipFromLocation(1, 0, 0); return; }        // secondary slot (page 1)
-            if (HotbarBinds.TryGetValue(n, out var loc)) EquipFromLocation(loc.page, loc.x, loc.y);   // a bound item (3-9)
+            if (TryResolveHotbar(n, out byte bp, out byte bx, out byte by)) EquipFromLocation(bp, bx, by);   // a bound item (3-9), if it is still there
         }
         void EquipFromLocation(byte page, byte x, byte y)
         {
@@ -3351,6 +3392,32 @@ namespace UnturnedGodot
         public bool HoldingOptic => _heldOptic != null;
         public float OpticZoom => _bino?.Zoom ?? 1f;
         public bool OpticRaised => _bino != null && _bino.Raised;
+        // THE MINIGUN (strawberry 2026-09-16: "wire it to spin up with rmb (no ads on the minigun.) and fire when
+        // spun up on lmb"). A deliberate deviation from retail, which ships Aim_Start/Aim_Stop for this gun and no
+        // spin at all -- there is no clip to port, so the behaviour is ours.
+        //
+        // Keyed off the VIEWMODEL having a spinning assembly rather than off an item id: the gun that has one is
+        // the gun whose mesh shipped a `_barrel.txt`, so a second minigun is an asset and not a special case in
+        // the shell. Nothing here names the fury.
+        const float SpinUpSeconds = 0.9f;     // RMB held -> fully spun
+        const float SpinDownSeconds = 1.4f;   // ...and the wind-down is slower, so a tap does not rearm instantly
+        const float SpinMaxTurns = 11f;       // revolutions/second at full spin
+        float _spin;                          // 0 = parked .. 1 = up to speed. The FIRE GATE reads this.
+
+        /// <summary>True once the barrel is up to speed, or when the gun has no barrel to spin -- so every other
+        /// gun in the game answers "yes, fire" and the gate below costs them nothing.</summary>
+        public bool SpunUp => _viewmodel?.HasSpinBarrel != true || _spin >= 1f;
+
+        void UpdateSpinBarrel(double dt)
+        {
+            if (_viewmodel?.HasSpinBarrel != true) { _spin = 0f; return; }
+            bool want = !_dead && _driving == null && !UiInputBlocked && !AltLooking
+                        && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim);
+            _spin = Mathf.Clamp(_spin + (want ? (float)dt / SpinUpSeconds : -(float)dt / SpinDownSeconds), 0f, 1f);
+            // Rate scales with the spin-up, so it visibly winds up and coasts down instead of snapping to speed.
+            _viewmodel.DriveSpinBarrel(_spin * SpinMaxTurns, dt);
+        }
+
         /// <summary>Per tick: RMB HELD presents the binoculars to the eyes (master 2026-09-05); release lowers them to the two-hand carry.</summary>
         void UpdateOptic()
         {
@@ -7324,6 +7391,70 @@ namespace UnturnedGodot
             return GlobalPosition;
         }
 
+        /// <summary>⚠ SafeSpot IS NOT A COLLISION CHECK. It refuses the world ORIGIN and nothing else, and
+        /// ClampExitSpot only rays DOWNWARD -- it lifts you out of a hill, and knows nothing about the wall
+        /// beside you. So getting out of a chair put you wherever the seat's facing pointed, and if that was a
+        /// wall you were inside it (strawberry 2026-09-16: "we should also find a safe space for exiting a chair,
+        /// so we dont get stuck inside collision/teleporting through wall. vehicles should have checks like this
+        /// too for exit"). PropSeat.ExitSpot's own doc says the caller "still runs this through SafeSpot" as
+        /// though that made the spot clear; it never did.
+        ///
+        /// This is the missing half: does the player's OWN capsule actually fit there. Same probe HeadroomFor
+        /// uses, including its foot leniency -- skip the bottom quarter-metre so the floor you are standing on is
+        /// not counted as the thing blocking you, which would refuse every spot on earth.</summary>
+        bool CapsuleFits(Vector3 at, Godot.Collections.Array<Rid> exclude)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return true;   // no physics world to consult -> never block the exit on it
+            const float foot = 0.25f;
+            float h = Mathf.Max(0.1f, (_capsule?.Height ?? 1.8f) - foot), r = _capsule?.Radius ?? 0.30f;
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = new CapsuleShape3D { Height = h, Radius = r },
+                Transform = new Transform3D(Basis.Identity, at + Vector3.Up * (foot + h / 2f)),
+                CollisionMask = CollisionMask,
+                Exclude = exclude,
+            };
+            return space.IntersectShape(q, 1).Count == 0;
+        }
+
+        // Where to look when the intended spot is blocked: the WANTED bearing first, then alternating to either
+        // side of it, then directly behind. Ordered so a chair against a wall steps you sideways rather than
+        // spinning you round for no reason -- the intended direction is still the best answer when it is free.
+        static readonly float[] ExitSweepDeg = { 0f, 40f, -40f, 80f, -80f, 120f, -120f, 160f, -160f, 180f };
+        static readonly float[] ExitRingsOut = { 0f, 0.55f, 1.15f };
+
+        /// <summary>A spot near `want` that the player actually FITS in, fanning out around `anchor` (the seat or
+        /// the vehicle) when the intended one is blocked. Every candidate is ground-clamped, so a clear bearing
+        /// over a slope still puts you on the floor rather than in it.
+        ///
+        /// Falls back to where the player is STANDING NOW, not to `want`. If nothing within a couple of metres is
+        /// clear you are in a cupboard, and the inside of the car you were sitting in is a place you can drive
+        /// out of -- the inside of a wall is not. Says so in the log, because a silent teleport is what made the
+        /// last one of these take three goes to find.</summary>
+        Vector3 ClearExitSpot(Vector3 want, Vector3 anchor, string why)
+        {
+            // Only SELF is excluded, deliberately -- NOT the vehicle or chair you are leaving. A spot that overlaps
+            // the car is a spot you climb out into the car, so letting the car block it is the behaviour we want:
+            // the fan simply steps further out until it is genuinely beside the thing.
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var first = ClampExitSpot(want);
+            if (CapsuleFits(first, exclude)) return first;
+
+            float baseR = new Vector2(want.X - anchor.X, want.Z - anchor.Z).Length();
+            if (baseR < 0.5f) baseR = 1.2f;                       // degenerate: want ~= anchor, pick a real radius
+            float wantAng = Mathf.Atan2(want.Z - anchor.Z, want.X - anchor.X);
+            foreach (float outw in ExitRingsOut)
+                foreach (float deg in ExitSweepDeg)
+                {
+                    float ang = wantAng + Mathf.DegToRad(deg), rad = baseR + outw;
+                    var cand = ClampExitSpot(new Vector3(anchor.X + Mathf.Cos(ang) * rad, want.Y, anchor.Z + Mathf.Sin(ang) * rad));
+                    if (CapsuleFits(cand, exclude)) return cand;
+                }
+            Log.Print($"[place] no clear exit within {baseR + ExitRingsOut[^1]:0.0} m for {why} -- staying at {GlobalPosition}");
+            return GlobalPosition;
+        }
+
         Vector3 ClampExitSpot(Vector3 spot)
         {
             var space = GetWorld3D()?.DirectSpaceState;
@@ -7399,7 +7530,7 @@ namespace UnturnedGodot
         /// a hip-height below the cushion (the pelvis lands on it); lying down the body pivots instead, so the
         /// feet -- and the origin -- stay on the mattress.</summary>
         static Vector3 SeatStandPosition(PropSeat seat)
-            => seat.Recline ? seat.Anchor.Origin : seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+            => seat.Recline ? seat.Anchor.Origin : seat.Anchor.Origin - Vector3.Up * PropSeat.HipSeated;
 
         public void SitDown(PropSeat seat)
         {
@@ -7468,7 +7599,7 @@ namespace UnturnedGodot
             if (seat != null && IsInstanceValid(seat))
             {
                 if (seat.Occupant == this) seat.Occupant = null;
-                GlobalPosition = SafeSpot(seat.ExitSpot(), "seat exit");
+                GlobalPosition = SafeSpot(ClearExitSpot(seat.ExitSpot(), seat.Anchor.Origin, "seat exit"), "seat exit");
             }
             _move.Stance = EPlayerStance.STAND;   // the next PhysicsTick's StepStanceOnce re-decides and resizes the capsule from here
             Velocity = Vector3.Zero;
@@ -7502,7 +7633,7 @@ namespace UnturnedGodot
             // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
             // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
             // thing you can do to yourself on purpose now.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "death eject"); }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "death eject"), "death eject"); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -8209,6 +8340,11 @@ namespace UnturnedGodot
                 else if (HoldingThrowable) { if (Keybinds.IsDown(@event)) ThrowHeld(strong: false); }   // RMB with a throwable = the WEAK toss (source startSecondary -> ESwingMode.WEAK); LMB is the hard throw
                 else if (HoldingLight) { if (Keybinds.IsDown(@event)) ToggleHeldLight(); }   // RMB with the torch in hand toggles it (strawberry 2026-09-04 "change the flashlight to be toggled on/off with rmb instead of b"). Ahead of the strong-swing branch on purpose: the flashlight IS a melee item, so without this it would keep swinging instead.
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
+                // A MINIGUN DOES NOT AIM DOWN SIGHTS. RMB spins the barrels instead, and the spin itself is driven
+                // per tick by UpdateSpinBarrel off the HELD key -- this arm exists only to swallow the event so it
+                // cannot fall through and raise the sights as well. Ahead of the general gun arm for the same
+                // reason the torch branch sits ahead of melee.
+                else if (_viewmodel?.HasSpinBarrel == true) { }
                 else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
@@ -8240,7 +8376,7 @@ namespace UnturnedGodot
                 Log.Print($"[turret] slot {mtSlot}: {_driving.TurretFor(_seatIndex, _turretSlot)?.GunId ?? "?"}");
             }
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
-                EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
+                EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-10 = bound item. Bindable Hotbar1..Hotbar10 (default 1..9 then 0). Binding (RMB item + 3-10) is handled in InventoryUI while the bag's open.
             else if (_driving != null && _driving.HasTurretHatch && _seatIndex == 1 && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
                 _driving.GunnerHeadOut = !_driving.GunnerHeadOut;   // the tank gunner pops out of / drops back into the top hatch (master 2026-09-05: "press ctrl to toggle")
             else if (_driving != null && _driving.HasBiFoldDoor && Keybinds.JustPressed(GameAction.VehicleDoor, @event))   // ONLY a vehicle with the folding door claims Ctrl here -- Ctrl is also the siren tap / lightbar hold further down (master: "i cant open the lightbar radial menu anymore")
@@ -8734,6 +8870,10 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
+            // SPUN UP OR NOTHING. A minigun with cold barrels does not fire -- and this is the single gate every
+            // path reaches (LMB press, held-auto poll, burst), which is why it is here rather than at the three
+            // call sites. SpunUp is true for every gun without a spinning assembly, so nothing else changes.
+            if (!SpunUp) return false;
             // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
             // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
@@ -10107,7 +10247,8 @@ namespace UnturnedGodot
                         _magSwapAutoRack = false;
                         _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
                     }
-                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming)
+                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming
+                             && _viewmodel?.HasSpinBarrel != true)   // ...but a minigun has no sights to resume INTO -- RMB is its spin-up
                         _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
                 }
             }
@@ -10950,7 +11091,7 @@ namespace UnturnedGodot
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "vehicle exit");
+            if (v != null) GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "vehicle exit"), "vehicle exit");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;

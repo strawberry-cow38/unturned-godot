@@ -70,10 +70,19 @@ namespace SDG.Unturned
             return outp;
         }
 
-        /// <summary>⚠ A STACK CANNOT HOLD MORE THAN THIS, because `Item.amount` is a BYTE -- the same ceiling
-        /// every other stack in the game has. Money overflows into a second stack exactly like ammo does. It is
-        /// a real limit rather than a chosen one: raising it means widening amount on the wire and in saves,
-        /// which is a protocol change and not a balance tweak.</summary>
+        /// <summary>A stack cannot hold more than this. Money overflows into a second stack exactly like ammo
+        /// does.
+        ///
+        /// ⚠ This note used to read "because `Item.amount` is a BYTE -- a real limit rather than a chosen one",
+        /// and it went stale the day the limit was chosen: 500 does not fit in a byte, and amount was widened to
+        /// ushort across all three wire shapes to raise it (NetProtocol's v48 entry records that). So the
+        /// justification sat here contradicting both the constant beneath it and the type it named, telling the
+        /// next reader that the number they were looking at was impossible.
+        ///
+        /// It IS a chosen number now, and the cost of changing it is real but known: amount is u16 on the jar,
+        /// u16 in the save, and mixed at FULL WIDTH into the inventory state hash -- that last one matters,
+        /// because a narrow mix makes 44 and 300 the same byte and therefore the same hash, which is a desync
+        /// that no test failure would ever point at.</summary>
         public const int MaxPerStack = 500;
     }
 }

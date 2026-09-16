@@ -16,7 +16,10 @@ namespace UnturnedGodot
         Fire, Aim, Reload, Firemode, Melee, Grenade, Interact, AttachMenu, ToggleFirstPerson, Flashlight,
         QuickTransfer,
         Inventory, Map, Craft, Skills, Console, Chat,
-        Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9,
+        // ⚠ Hotbar10 sits HERE, directly after Hotbar9, and must stay there: HotbarSlot walks this run with
+        // `GameAction.Hotbar1 + h`, so a gap breaks the arithmetic. Safe to insert mid-enum because binds are
+        // persisted by NAME (a.ToString()), not by ordinal -- no migration, and existing saved binds still load.
+        Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9, Hotbar10,
         VehicleHandbrake, VehicleDoor,
         // GESTURES. Surrender gets a real key because it is the only one with mechanical weight -- you cannot
         // be handcuffed unless you are in it, and a sentry will hold fire on you. The rest are flavour and ship
@@ -184,6 +187,7 @@ namespace UnturnedGodot
             [GameAction.Hotbar7] = new Bind(Key.Key7),
             [GameAction.Hotbar8] = new Bind(Key.Key8),
             [GameAction.Hotbar9] = new Bind(Key.Key9),
+            [GameAction.Hotbar10] = new Bind(Key.Key0),   // strawberry 2026-09-16 "add 0 as 10" -- the row's tenth cell, where a keyboard puts it
             [GameAction.VehicleHandbrake] = new Bind(Key.Space), // defaults to Space like Jump but its OWN action -- rebinding Jump must not strand the handbrake
             [GameAction.VehicleDoor] = new Bind(Key.Ctrl),      // the bus's folding door, from the driver's seat (master 2026-09-05 "ctrl in the drivers seat should open/close it")
             [GameAction.Surrender] = new Bind(Key.B),          // free letter; retail binds surrender to nothing at all, so this is a choice rather than a port
@@ -258,10 +262,10 @@ namespace UnturnedGodot
         public static bool JustReleased(GameAction a, InputEvent e) => Matches(a, e) && !IsDown(e);
 
         /// <summary>Which hotbar slot (1..9) this event's control maps to, or null. Shared by the equip poll and the
-        /// bind-item UI so both read the SAME key space (Hotbar1..Hotbar9 are consecutive in the enum).</summary>
+        /// bind-item UI so both read the SAME key space (Hotbar1..Hotbar10 are consecutive in the enum).</summary>
         public static int? HotbarSlot(InputEvent e)
         {
-            for (int h = 0; h < 9; h++)
+            for (int h = 0; h < 10; h++)
                 if (Matches(GameAction.Hotbar1 + h, e)) return h + 1;
             return null;
         }

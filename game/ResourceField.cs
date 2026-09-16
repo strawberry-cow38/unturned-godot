@@ -930,8 +930,20 @@ namespace UnturnedGodot
 
             float h = (top - StumpBaseLocal) * sh;
             _stumpBody = new StaticBody3D { CollisionLayer = 1u << 0, Name = "StumpCollider" };
+            // ⚠ A BOX, NOT A CYLINDER (strawberry 2026-09-16: "its possible to get stuck in a tree stump by
+            // jumping onto it. simplify the collision so this doesnt happen").
+            //
+            // This is not a small obstacle: the stump mesh spans y -1.2..+1.6, so on a full-grown tree the
+            // collider stands about chest high and roughly a metre across -- a POST you land on top of, not a
+            // lump you step over. That is what makes the shape matter.
+            //
+            // A cylinder's curved wall meets its flat cap in a circular RIM, and a capsule coming down on that
+            // rim has an ill-conditioned contact: the normal swings between "up" and "outward" across a
+            // hairsbreadth of position, so depenetration shoves the body sideways and back down instead of
+            // settling it. A box has flat faces and fixed normals, so a landing resolves to one of them and
+            // stays resolved. At this size the squared-off corners are invisible against a 16-sided stump mesh.
             _stumpBody.AddChild(new CollisionShape3D {
-                Shape = new CylinderShape3D { Radius = TrunkRadius * sr, Height = h },
+                Shape = new BoxShape3D { Size = new Vector3(TrunkRadius * sr * 2f, h, TrunkRadius * sr * 2f) },
                 Position = new Vector3(0f, (top + StumpBaseLocal) * 0.5f * sh, 0f) });
             AddChild(_stumpBody);
             _stumpBody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);   // it is a tree: wood footsteps

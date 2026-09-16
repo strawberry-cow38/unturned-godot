@@ -1087,6 +1087,7 @@ namespace UnturnedGodot.Net
         public const float DropReach = 2.6f;    // PlayerController.LookReach -- how far the eye-ray goes
         public const float DropSlack = 0.75f;   // the server's player pos is a tick or two behind the client's
         public const float DropSpeed = 1.5f;    // "slight velocity": a nudge along the look, not the old 2 m/s loft
+        public const float DropDistanceFraction = 0.25f;   // ...and it lands a QUARTER of the way to the orb, not at it
 
         static Vector3 ClampToReach(Vector3 feet, byte stance, float yawDegrees, Vector3 point, out Vector3 aim)
         {
@@ -1107,7 +1108,13 @@ namespace UnturnedGodot.Net
             }
             aim = d / len;
             float max = DropReach + DropSlack;
-            return len <= max ? point : eye + aim * max;
+            // A QUARTER OF THE WAY TO THE ORB (strawberry 2026-09-16: "dropped items should drop at a quarter of
+            // the lookatradius' orb's distance"). Dropping AT the orb put the item at arm's length, which reads
+            // as throwing it rather than putting it down -- and at a wall it deposited the item against the wall
+            // instead of by your feet. The DIRECTION is still the orb's, so it still lands where you are looking;
+            // only how far along that line changes. Clamped first, so a client that sent a distant point cannot
+            // buy back reach by having a quarter of something larger.
+            return eye + aim * (Mathf.Min(len, max) * DropDistanceFraction);
         }
 
         /// <summary>DEATH DROP (strawberry 2026-09-02: "your items are kept after death instead of dropping on

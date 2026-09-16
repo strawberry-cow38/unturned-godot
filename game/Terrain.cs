@@ -1885,7 +1885,14 @@ void fragment() {
             // ground the player is standing on by up to a quarter of a metre mid-slope.
             return Mathf.Lerp(h0, h1, ty) * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutWorld(worldX, worldZ);
         }
-        // dominant splatmap layer at a world point (2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt); 255 = no splats
+        // Dominant splatmap layer at a world point; 255 = no splats.
+        // PEI, SOURCE-TRUTH (Maps/PEI/Level.hierarchy -> Landscape "Tiles" -> 8 Material GUIDs -> LandscapeMaterialAsset):
+        //   0=PEI_Dirt_01  1=PEI_Farm_Wheat_00  2=PEI_Grass_00  3=PEI_Gravel_00
+        //   4=Russia_Road_00 (shared, paved)  5=PEI_Sand_01  6=Yukon_Snow_00 (shared)  7=PEI_Stone_01
+        // ⚠ The line that used to be here said "2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt".
+        // That is the EYEBALLED palette, and it was wrong on six of the eight. It was corrected in LayerColor on
+        // 2026-07-10 when the GUIDs were actually read -- and NOT corrected here, so the superseded mapping has
+        // been sitting in this comment ever since, one screen above a function that depends on it.
         public byte SampleDominantLayer(float worldX, float worldZ)
         {
             if (_dom == null) return 255;
@@ -1893,7 +1900,23 @@ void fragment() {
             int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _dh - 1);
             return _dom[gx, gy];
         }
-        public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
+        /// <summary>⚠ MISNAMED, AND IT IS A PROXY: there is NO water splat layer. Unturned's water is a separate
+        /// PLANE and the ground beneath it is painted SAND -- layer 5 is PEI_Sand_01, which covers the submerged
+        /// seabed AND every beach above the waterline. So this answers "is this sand", and every caller reading it
+        /// as "is this ocean" also refuses BEACHES: no animals wander onto them (AnimalAgent/AnimalField), no
+        /// zombies populate them (ZombieChunkField), no vehicle ring is placed on them (WorldBuilder x2) and the
+        /// arena spawns neither guns nor players there (ArenaGuns/ArenaMode).
+        ///
+        /// Scale, measured rather than guessed: a PEI load reports "1403/1456 Animals.dat pts (53 water dropped)",
+        /// so 53 points is the UPPER bound on what this wrongly excludes for animals -- 3.6%, and most of those
+        /// are genuinely in the sea. A real bug, and a small one; that ratio is why the eight call sites have not
+        /// been churned for it.
+        ///
+        /// THE CORRECT TEST ALREADY EXISTS and needs no splatmap at all: IsPointUnderwater(SampleHeight(x, z)) --
+        /// exact, since it compares real ground height against the real sea level instead of inferring wetness
+        /// from what the ground is made of. Migrating the callers to it is the actual fix, and it is a map-wide
+        /// change to spawn placement, so it wants a run behind it rather than an inference.</summary>
+        public static bool IsWater(byte layer) => layer == 5;
 
         public static Terrain Active;   // most-recently-built terrain -> bullet impacts sample the ground material off its splatmap
 

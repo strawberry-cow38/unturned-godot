@@ -11,7 +11,10 @@ global uniform float rain_intensity;                     // 0 .. 1 -- drives the
 global uniform float rain_puddle;                        // 0 .. 1 standing water, minutes behind the rain (WeatherManager)
 global uniform sampler2D rain_roof;                      // RainRoofMap (see rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
-uniform sampler2D albedo_tex : source_color, filter_nearest_mipmap, repeat_enable;   // ROADS (master 2026-09-04 "not seeing the ripple impacts on the road"): the textured surface variant
+uniform sampler2D albedo_tex : source_color, filter_nearest_mipmap_anisotropic, repeat_enable;   // ROADS (master 2026-09-04 "not seeing the ripple impacts on the road"): the textured surface variant.
+                                                                                    // ...ANISOTROPIC as of 2026-09-16: the paved roads come through here, not through a StandardMaterial3D, so the
+                                                                                    // road-prop aniso pass could not reach them -- a filter on a ShaderMaterial is a sampler HINT, not a C# property.
+                                                                                    // albedo_tex_nomip below stays plain nearest on purpose: no mipmaps means there is no mip choice to fix.
 uniform bool use_tex = false;
 uniform sampler2D albedo_tex_nomip : source_color, filter_nearest, repeat_enable;   // PALETTE props (WetSurface): nearest, no mipmaps, like their StandardMaterial3D
 uniform bool use_nomip = false;

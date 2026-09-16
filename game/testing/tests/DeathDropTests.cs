@@ -23,6 +23,19 @@ namespace UnturnedGodot.Testing
     // A respawn that re-granted an outfit would double the clothes on the ground: (4) catches it.
     public class NetDeathDropsItemsVisibleToOthers : GameTest
     {
+        /// <summary>The worst distance between a witness puppet and the server position it is following.
+        /// Extracted because it is now measured twice -- once to wait for the glide to converge, once to assert
+        /// it did -- and a copy of it in the Until and the Check could drift apart into a test that waits for
+        /// one thing and asserts another.</summary>
+        static float PuppetError(WorldItemReplicaView view, List<WorldItemReplication.WorldItemEntity> items)
+        {
+            float err = 0f;
+            foreach (var e in items)
+                if (view.TryGetNode(e.NetIdValue, out var node))
+                    err = Mathf.Max(err, node.GlobalPosition.DistanceTo(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z)));
+            return err;
+        }
+
         public override string Name => "net.death_drops_items_visible_to_others";
         public override double TimeoutSimSeconds => 60;
 
@@ -109,10 +122,28 @@ namespace UnturnedGodot.Testing
             yield return Until(() => dropped.All(e => witnessView.TryGetNode(e.NetIdValue, out _)), 5);
             int seen = dropped.Count(e => witnessView.TryGetNode(e.NetIdValue, out _));
             T.Check($"the witness's WorldItemReplicaView built a puppet for every dropped item ({seen}/{dropped.Count})", dropped.Count > 0 && seen == dropped.Count);
-            float puppetErr = 0f;
-            foreach (var e in dropped)
-                if (witnessView.TryGetNode(e.NetIdValue, out var node))
-                    puppetErr = Mathf.Max(puppetErr, node.GlobalPosition.DistanceTo(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z)));
+            // AT REST, not mid-fall. This compared a MOVING target against a GLIDING puppet and called the
+            // difference an error. Both halves are new (2026-09-15) and neither is a bug:
+            //   - the server now publishes a dropped item's position every tick while it falls (ServerMove).
+            //     Pos used to change exactly twice in an entity's life -- spawn, then settle -- so at this point
+            //     it was still the spawn ring, the puppet matched it by construction, and a 5 cm threshold was
+            //     free because NOTHING WAS MOVING. The assertion was true of a value that was not.
+            //   - the puppet GLIDES toward what it is given (WorldItemReplicaView, the VehicleReplicaView
+            //     pattern) instead of teleporting, because 25 Hz assigned straight to a node draws a fall as a
+            //     flipbook. A glide lags a moving target by about speed/GlideRate -- ~0.12 m at 4 m/s, which is
+            //     what the sweep measured.
+            // The property gameplay actually depends on is that the thing you walk up to and press F on is where
+            // the server says it is, and that is an AT-REST claim: the glide snaps exact once the target stops.
+            // So wait for the bodies to come to rest and then assert it, which keeps every tooth the old line
+            // had -- a puppet built in the wrong place, or not following its entity at all, still fails here --
+            // while no longer asserting that a falling item does not fall.
+            // Mid-flight tracking is not lost coverage: unify.dropped_item_fall_is_drawn owns that, and owns it
+            // properly, by counting the heights the client is shown STRICTLY BETWEEN release and rest.
+            yield return Until(() => dropped.All(e => e.Settled), 15);
+            T.Check($"the dropped items came to rest ({dropped.Count(e => e.Settled)}/{dropped.Count} settled)",
+                    dropped.All(e => e.Settled));
+            yield return Until(() => PuppetError(witnessView, dropped) < 0.05f, 3);
+            float puppetErr = PuppetError(witnessView, dropped);
             T.Check($"...each puppet sits at the server's spot (max err {puppetErr:0.000} m)", puppetErr < 0.05f);
 
             // (3) the VICTIM: its own view shows them, and its adopted bag is empty

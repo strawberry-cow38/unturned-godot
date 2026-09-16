@@ -201,7 +201,10 @@ void fragment() {
         /// stale reference would charge an item that is no longer there. A cell is re-resolved every tick and
         /// simply drops out of the queue when nothing answers to it. Grid items do not shuffle when a
         /// neighbour leaves, so a queued (page,x,y) stays valid across the transfers ahead of it.</summary>
-        readonly List<(byte page, byte x, byte y)> _qtQueue = new();
+        /// <summary>The hover-loot queue. Entries carry the ITEM ID as well as the cell, because a cell is not an
+        /// item: move something else into a queued square and a cell-only queue calmly transfers the stranger that
+        /// replaced it. The same bug the hotbar binds had, in a different file.</summary>
+        readonly List<(byte page, byte x, byte y, ushort id)> _qtQueue = new();
         byte _qtPage = 255, _qtX, _qtY;       // the head, mirrored for the draw + the debug accessors
         /// <summary>Harness seams. These inject ONLY the two environmental reads -- is the key down, where is
         /// the pointer -- because headless has neither a keyboard nor a cursor. Everything else runs for real:
@@ -618,27 +621,42 @@ void fragment() {
             // go simply stops you adding more. The three conditions below still cancel, because each is the
             // player doing something else with the same cursor rather than merely stopping.
             bool held = DebugQtHeld || Keybinds.Pressed(GameAction.QuickTransfer);
-            if (!crateOpen || _dragging || _selPanel != null) { CancelQuickTransfer(); return; }
+            // ⚠ _dragging is NOT in this condition any more (strawberry 2026-09-16: "if hoverloot is interrupted
+            // by an item being moved (not by the hoverloot), remove the item that moved from the queue and keep
+            // moving on the rest"). Picking one item up used to throw the WHOLE queue away -- line eight things
+            // up, move a ninth by hand, all eight forgotten.
+            if (!crateOpen || _selPanel != null) { CancelQuickTransfer(); return; }
+
+            // The hand-moved item leaves the queue, and ONLY it. Done here rather than at the five places a drag
+            // can begin: this is keyed to the state ("something is in hand, from there") instead of to each entry
+            // point, so a sixth drag path cannot forget to call it. Idempotent -- after the first tick removes the
+            // entry there is nothing left to find.
+            if (_dragging) DropFromQuickTransfer(_dragPage, _dragX0, _dragY0);
 
             // 1. COLLECT. Whatever is under the cursor joins the back of the queue, once -- while H is down.
-            if (held && PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
+            // Collection stops while an item is in hand -- the cursor is carrying something, so what it passes
+            // over is not a thing you are pointing AT. Draining carries on regardless; that is the whole ask.
+            if (held && !_dragging && PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
                 && !isSlot && hp <= PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
             {
                 byte hidx = Inv.items[hp].getIndex(hx, hy);
                 if (hidx != byte.MaxValue && Inv.items[hp].getItem(hidx) is { item: not null } hj)
                 {
-                    var key = (hp, hj.x, hj.y);               // the item's OWN origin, so the same item can't enqueue twice
-                    if (!_qtQueue.Contains(key)) _qtQueue.Add(key);
+                    // the item's OWN origin, so the same item can't enqueue twice. Matched on the CELL alone --
+                    // the id rides along for the staleness check in the drain, it is not part of identity here.
+                    if (!QueuedAt(hp, hj.x, hj.y)) _qtQueue.Add((hp, hj.x, hj.y, hj.item.id));
                 }
             }
 
             // 2. DRAIN. Only the head charges -- "only one delay is counting down at a time".
             while (_qtQueue.Count > 0)
             {
-                var (page, x, y) = _qtQueue[0];
+                var (page, x, y, qid) = _qtQueue[0];
                 byte idx = Inv.items[page].getIndex(x, y);
                 var jar = idx == byte.MaxValue ? null : Inv.items[page].getItem(idx);
-                if (jar?.item == null) { _qtQueue.RemoveAt(0); _qtT = 0f; continue; }   // gone from under us -> skip it
+                // Gone, OR replaced by something else -- either way what was queued is not there, so the entry
+                // goes and the queue moves on. Without the id half, the second case transferred the replacement.
+                if (jar?.item == null || jar.item.id != qid) { _qtQueue.RemoveAt(0); _qtT = 0f; continue; }
                 if (page != _qtPage || x != _qtX || y != _qtY) { _qtPage = page; _qtX = x; _qtY = y; _qtT = 0f; }
                 _qtToCrate = page != PlayerInventory.STORAGE;
 
@@ -660,6 +678,26 @@ void fragment() {
         /// ui"). Refresh() does NOT clear it on purpose -- a background rebuild while you hold over an item is
         /// not you letting go.</summary>
         void CancelQuickTransfer() { _qtQueue.Clear(); _qtPage = 255; _qtT = 0f; }
+
+        bool QueuedAt(byte page, byte x, byte y)
+        {
+            foreach (var q in _qtQueue) if (q.page == page && q.x == x && q.y == y) return true;
+            return false;
+        }
+
+        /// <summary>Drop one cell's entry and leave the rest of the queue alone. If it was the HEAD its
+        /// part-charge goes with it, so the next item starts from zero instead of inheriting a countdown it
+        /// never earned.</summary>
+        void DropFromQuickTransfer(byte page, byte x, byte y)
+        {
+            for (int i = _qtQueue.Count - 1; i >= 0; i--)
+            {
+                var q = _qtQueue[i];
+                if (q.page != page || q.x != x || q.y != y) continue;
+                _qtQueue.RemoveAt(i);
+                if (i == 0) { _qtPage = 255; _qtT = 0f; }
+            }
+        }
 
         // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
         // STORAGE with zero jars moving) -> detects any background change without rebuilding each frame.
@@ -826,7 +864,10 @@ void fragment() {
                 }
                 else if (_dragging) { _dragTile.GlobalPosition = mm.GlobalPosition - _grab; _dragMouse = mm.GlobalPosition; }
             }
-            else if (e is InputEventKey { Pressed: true, Keycode: Key.R } && _dragging)
+            // SPACE rotates too (strawberry 2026-09-16: "add spacebar for an alt control for rotating in the
+            // inventory"). Gated on `_dragging` exactly as R is, which is what keeps it from eating JUMP: with
+            // nothing in hand this arm does not match and the key falls through to the shell untouched.
+            else if (e is InputEventKey { Pressed: true, Keycode: Key.R or Key.Space } && _dragging)
             {
                 // Source: `dragJar.rot++; dragJar.rot %= 4` -- FOUR orientations, not a 90-degree toggle. This is
                 // not cosmetic: a 2-state toggle can never place a non-square item at 180/270, which changes what
@@ -838,7 +879,7 @@ void fragment() {
             }
             else if (Keybinds.IsDown(e) && _selPanel != null && Keybinds.HotbarSlot(e) is int hbNum && hbNum >= 3)
             {
-                // RMB'd an item (its selection panel is open) + a hotbar 3-9 control -> BIND it to equip this item (master).
+                // RMB'd an item (its selection panel is open) + a hotbar 3-10 control -> BIND it to equip this item (master).
                 // Keybinds.HotbarSlot so assign + equip share ONE rebindable key space (slots 1/2 = primary/secondary, not bound here).
                 Player?.BindHotbar(hbNum, _selPage, _selX, _selY);
                 CloseSelection();
@@ -1401,7 +1442,7 @@ void fragment() {
             }
             for (int qi = 0; qi < _qtQueue.Count; qi++)
             {
-                var (qp, qx, qy) = _qtQueue[qi];
+                var (qp, qx, qy, _) = _qtQueue[qi];
                 var qJar = JarAt(qp, qx, qy);
                 if (qJar?.GetAsset() is not { } qA || !MagRect(qp, qx, qy, qA, qJar.rot, out Rect2 qr)) continue;
                 // The head shows its real charge; everything behind it shows an empty ring, so a queued item is
@@ -3228,7 +3269,12 @@ void fragment() {
         /// dead space down the other: the extent depends on the per-denomination art margins above, so it is
         /// not knowable before the pieces exist. Measure, then scale -- that also means the fan is automatically
         /// as big as the cell allows at whatever arc it is given, which is the "use the real estate" half.</summary>
-        static void BuildMoneyFan(Control tile, int dollars, float w, float h)
+        /// <summary>internal, not private: the HOTBAR draws the same fan. A money stack has to read as its VALUE
+        /// everywhere it appears (strawberry 2026-09-16 "make sure the money's stack reflects its value
+        /// everywhere. on the hotbar it isnt"), and two implementations of "what does $188 look like" would
+        /// drift the first time either is tuned -- this one already carries the fan angles, the same-denomination
+        /// collapse and the upright-icon bake.</summary>
+        internal static void BuildMoneyFan(Control tile, int dollars, float w, float h)
         {
             var all = SDG.Unturned.Currency.Breakdown(dollars);
             bool dbg = System.Environment.GetEnvironmentVariable("UG_FANDBG") == "1";

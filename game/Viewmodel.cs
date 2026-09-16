@@ -191,6 +191,52 @@ namespace UnturnedGodot
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
         string _gunTxt;   // current gun's mesh name (gv.Gun) -- gates gun-specific attachment tuning (the red-dot ADS aim is eaglefire-tuned for now)
+
+        // The spinning assembly, when the equipped gun has one. Null for every other gun, which is what makes
+        // HasSpinBarrel the test for "is this a minigun" without naming the fury anywhere in the shell.
+        MeshInstance3D _spinBarrel;
+        float _spinAngle;                 // radians, accumulated -- kept here so the spin survives a re-aim
+        public bool HasSpinBarrel => _spinBarrel != null && IsInstanceValid(_spinBarrel);
+
+        /// <summary>Turn the barrels. `turns` is revolutions per second, so 0 parks them and the caller owns the
+        /// spin-up curve -- the viewmodel just draws whatever rate it is handed.
+        ///
+        /// About local Y, and that is MEASURED rather than assumed. The assembly is six identical 8-vertex tubes
+        /// all spanning y 0.325..0.911, ringed around (0,0) in XZ between two plates at y 0.150..0.350 and
+        /// 0.886..1.036. Six tubes of equal length sharing an axis IS the definition of the cluster, and the ring
+        /// centres on the origin, so there is no offset to find.
+        ///
+        /// ⚠ The first attempt span about Z, on a piece picked for being "symmetric about the bore and furthest
+        /// forward" -- both true of the AMMO DRUM, which is what it was. Master saw it immediately: "its rotating
+        /// the MAG". A vertical drum turned about the bore sweeps sideways through the receiver, which is why it
+        /// read as mispositioned AND inside-out. Symmetry and extent picked the wrong part; six-of-a-kind picked
+        /// the right one.</summary>
+        /// <summary>A fixed quarter-turn on the barrel assembly (strawberry 2026-09-16: "rotate the BARREL 90
+        /// degrees"). The gun's HOLD is what actually points it wrong -- Fury_Equip poses the hand differently
+        /// from Eaglefire_Equip, proven by rendering both under identical framing -- but the receiver is a
+        /// 0.5x0.6x0.65 cube whose orientation nobody can read, so only the barrel shows the error. Turning the
+        /// one visible part is a smaller and more honest change than re-posing a hold clip or adding the per-gun
+        /// pitch the gun branch was deliberately built without.</summary>
+        // ⭐ NO ORIENTATION FIX. The assembly is taken from the WORLD mesh (items/1364.txt) and the viewmodel
+        // body (fury_gun.txt) is the SAME RIP: 88/88 of the body's distinct vertices land on the world mesh under
+        // IDENTITY, and the two face counts are exactly complementary (160 + 84 = 244). They already share a
+        // frame, so the barrel is in its correct place the moment it loads and ANY rotation here moves it off
+        // the gun. Two shipped rotations (a -90 Z, then the same about the mount) are what master was counting
+        // when they said "its still 2" and then "STILL two": receiver in one place, barrel in another.
+        //
+        // The +Y bore is not an anomaly to correct either -- it is the convention: 57 of the 59 *_gun.txt rips
+        // are longest along Y. Fury looks like the exception (0.50 x 0.60 x 0.65) only because its *_gun.txt is
+        // the bare receiver; with the barrel back on, its Y extent is -0.402..1.036 = 1.44m, in the middle of
+        // the rifle pack (eaglefire 1.35).
+
+        /// <summary>Spin the assembly about its own bore. The six tubes ring X=0,Z=0 and run along +Y, so the
+        /// bore IS local Y through the origin -- no pivot offset, and nothing to compose with.</summary>
+        public void DriveSpinBarrel(float turns, double delta)
+        {
+            if (!HasSpinBarrel) return;
+            _spinAngle = Mathf.Wrap(_spinAngle + turns * Mathf.Tau * (float)delta, 0f, Mathf.Tau);
+            _spinBarrel.Basis = Basis.FromEuler(new Vector3(0f, _spinAngle, 0f));
+        }
         public bool IntegralSight => _gunTxt != null && _gunTxt.Contains("augewehr");   // aug: built-in 4x scope is part of the gun -- no detachable/replaceable Sight slot (master)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
@@ -617,6 +663,22 @@ namespace UnturnedGodot
             }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
+            // UG_VMNOARMS=1: render the HELD ITEM alone. The arms rig is armsOnly -- a hollow, single-sided
+            // half-body with no far side -- so the moment a harness pushes it away from the eye to get the item
+            // in shot (UG_VMTUNE, the only handle there is), you are looking into the inside of it and the result
+            // reads as a stack of flat planes. strawberry 2026-09-16: "your harness renders like 20 viewmodel
+            // arms on top of eachother."
+            //
+            // They are not duplicated -- there is exactly one rig, built here, once, in _Ready. The fix is not to
+            // count them but to stop drawing them: with the arms hidden the item sits alone in frame and a gun
+            // can actually be inspected. The rig still EXISTS and still animates, because the item is parented to
+            // its hand bone and hiding the bones would take the gun with it.
+            if (System.Environment.GetEnvironmentVariable("UG_VMNOARMS") == "1" && _arms != null)
+            {
+                foreach (var n in _arms.FindChildren("*", "MeshInstance3D", true, false))
+                    if (n is MeshInstance3D am) am.Visible = false;
+                Log.Print("[vm] UG_VMNOARMS: arms hidden, held item rendered alone");
+            }
             if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
             {
                 int meshes = 0; long verts = 0;
@@ -754,6 +816,48 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+
+                    // A SPINNING PART, BY CONVENTION (strawberry 2026-09-16: the minigun). If a gun ships a
+                    // `<name>_barrel.txt` beside its `_gun.txt`, that file is a separately-drawn assembly that
+                    // rotates about the bore. No table column and no parser change: the mesh naming already carries
+                    // this (nykorev_sight.txt is the same idea), so a second gun that gets one is a file, not a
+                    // schema edit.
+                    //
+                    // ⚠⚠ THE BARRELS ARE NOT IN THE VIEWMODEL MESH AT ALL -- the held minigun has never had them.
+                    // fury_gun.txt is 4 components and 160 faces; the WORLD model, content/items/1364.txt, is the
+                    // same four plus eight more and 244 faces. Master: "the dropped worldmodel has the barrel".
+                    // Islands 0-3 have identical bounds in both files, so the two rips share a frame and a scale
+                    // and the extra assembly drops straight onto the held gun. So this does not only spin the
+                    // barrels, it ADDS them.
+                    //
+                    // Cut with tools/split_gun_islands.py from the WORLD mesh, islands 4-11: two plates and six
+                    // identical tubes. The remainder came out at exactly 160 faces -- the viewmodel's whole mesh --
+                    // which is the arithmetic proving the two rips differ by precisely this part.
+                    //
+                    // It shares the body's material by design: same albedo, same UVs, same filter, and a second
+                    // material would be a second thing to keep in step.
+                    _spinBarrel = null; _spinAngle = 0f;
+                    string barrelTxt = gv.Gun?.Replace("_gun.txt", "_barrel.txt");
+                    // EXISTS-CHECK FIRST. ParseObj logs "[ContentProvider] obj not found" for a missing file, and
+                    // every gun but one has no barrel part -- so probing blind would print an error on every equip
+                    // in the game for a file that is correctly absent. An optional asset has to be asked about
+                    // quietly.
+                    if (barrelTxt != null && Godot.FileAccess.FileExists($"res://content/{barrelTxt}")
+                        && ContentProvider.ParseObj($"res://content/{barrelTxt}") is { } spinMesh)
+                    {
+                        var smi = new MeshInstance3D { Mesh = spinMesh, MaterialOverride = mat };
+                        att.AddChild(smi);
+                        _spinBarrel = smi;
+                        // ⚠ THE PIVOT IS THE BARREL'S OWN MOUNT, NOT THE GUN ORIGIN. The assembly sits at
+                        // y 0.150..1.036 -- ABOVE the receiver, not around it -- so rotating it about (0,0,0)
+                        // does not aim it, it CARRIES it: the cluster swings off to one side and sits there as a
+                        // second object floating beside the gun. strawberry, looking at exactly that: "its still
+                        // 2". Pivoting at the base keeps it bolted to the receiver while it turns.
+                        // Measured off the mesh (its own min-Y) rather than written as a constant, so a re-cut
+                        // assembly brings its own mount with it.
+                        // parked pose is the mesh's own -- see BarrelFixDeg's grave above
+                        Log.Print($"[vm] {barrelTxt} is a spinning assembly ({spinMesh.GetAabb().Size})");
+                    }
                     // THE HELD MODEL IS NOT ONE PIECE. Retail's equipable.prefab carries Model_0..n plus Bone_0..n,
                     // each its own mesh, and the item's Use clip animates them -- that is how a chip bag opens and
                     // how a canned meal's spoon moves. `mi` above is the old single-mesh rip of the WORLD model; if
@@ -930,7 +1034,14 @@ namespace UnturnedGodot
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
+                    // ⚠ THE HOOK TURNS WITH THE BARREL. guns_visual.tsv pins fury's muzzle at (0, 1.036, 0) and the
+                    // barrel assembly ends at exactly 1.036 -- that match is why the flash sits on the bore today.
+                    // Rotate the barrel node and leave the hook alone and the flash keeps erupting from where the
+                    // barrel USED to point, which is the sort of thing nobody traces for a month. Same matrix, so
+                    // the two cannot drift; identity for every gun without a spinning assembly. (tinyclaw spotted
+                    // this before I shipped it.)
+                    var muzzle = gv.MuzzleHook;   // barrel is unrotated, so the hook needs no correction either
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = muzzle, Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
                     _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };

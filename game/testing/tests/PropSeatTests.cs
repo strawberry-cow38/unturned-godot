@@ -95,19 +95,27 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check("the player starts on foot with a live collider", !p.IsSeatedOnProp && ColliderOn(p));
 
-            // ---- SIT. The hips must land ON the cushion: origin = cushion - HipRest.
+            // ---- SIT. The hips must land ON the cushion: origin = cushion - HipSeated. Not HipRest: Idle_Sit
+            // keys the hip bones down to y 0.4220 from a rest of 0.7350, so using the rest height sank you 0.313 m.
             var seat = made[0];
             p.SitDown(seat);
             yield return Ticks(2);
             T.Check("the player is seated", p.IsSeatedOnProp && p.DebugSitting == seat);
             T.Check("...the seat knows who is in it", !seat.Free);
-            float hips = p.GlobalPosition.Y + PropSeat.HipRest;
+            float hips = p.GlobalPosition.Y + PropSeat.HipSeated;   // the SEATED hip height (measured off Idle_Sit), not the rest one
             T.Check($"...hips land on the cushion (hips {hips:0.000} vs seat {seat.Anchor.Origin.Y:0.000})",
                     Mathf.Abs(hips - seat.Anchor.Origin.Y) < 0.01f);
             // ...which is a DIFFERENT claim from "the player is at the cushion". Assert the origin is genuinely
             // below it, or a version that skipped the offset entirely would pass the check above by accident.
-            T.Check($"...so the origin is a hip-height BELOW it ({p.GlobalPosition.Y:0.000})",
-                    seat.Anchor.Origin.Y - p.GlobalPosition.Y > 0.5f);
+            //
+            // ⚠ DERIVED FROM HipSeated, not a literal. This read `> 0.5f`, which was true while the offset was
+            // the REST hip height (0.735) and false the moment it became the measured SEATED one (0.422) -- so
+            // correct behaviour tripped a guard by construction, and the 0.313 m sink I had just removed from the
+            // game was still sitting in this threshold. Half the offset keeps the guard's actual job (a skipped
+            // offset leaves a gap of ~0 and still fails) without pinning it to a number that goes stale the next
+            // time the constant is re-measured.
+            T.Check($"...so the origin is a hip-height BELOW it ({p.GlobalPosition.Y:0.000}, gap must exceed {PropSeat.HipSeated * 0.5f:0.000})",
+                    seat.Anchor.Origin.Y - p.GlobalPosition.Y > PropSeat.HipSeated * 0.5f);
             T.Check($"...facing the way the seat faces",
                     Mathf.Abs(Mathf.AngleDifference(p.Rotation.Y, seat.Anchor.Basis.GetEuler().Y)) < 0.02f);
             T.Check("...the collider is off while seated (or the capsule fights the couch)", !ColliderOn(p));
