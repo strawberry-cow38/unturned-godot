@@ -10579,8 +10579,18 @@ namespace UnturnedGodot
             // leaves _shotPath null -- the process then renders happily forever with no capture pending and
             // nothing to report. Watching the command-line intent instead of the armed path is what makes
             // this visible at all.
-            if (_shotPath == null) return "capture never armed -- the scene builder bailed before requesting it "
-                                        + "(world/map data almost certainly missing)";
+            // ⚠ THIS LINE USED TO GUESS, IN A FUNCTION WHOSE OWN COMMENT FORBIDS GUESSING. It said the builder
+            // bailed "(world/map data almost certainly missing)", and cow tools hit it on 2026-09-16 with a
+            // world that had built 4001 objects: the BLOCKED-ON state was right, the cause was invented. The
+            // real reason there was that --connect= never armed a capture at all (fixed in 24049b2d) -- a
+            // cause this function had no way to know and asserted anyway.
+            // So: report the state we can SEE, and list candidates as candidates.
+            if (_shotPath == null) return "capture never armed -- nothing requested one. "
+                                        + $"Observed: worldBuild={_worldBuild}, worldReady={_worldReady}. "
+                                        + "CANDIDATES, not a diagnosis: a builder that bails early leaves it null "
+                                        + "(a missing map does that, and worldReady=false above would agree); or this "
+                                        + "entry path never arms a capture -- the showcase modes do not, and --connect= "
+                                        + "did not until 24049b2d. If worldReady=true the map is NOT your problem.";
             if (_worldBuild && !_worldReady) return "async world load (worldReady=false; map data missing or still loading)";
             if (_peiPlay) return $"peiplay frame budget (frame={_peiFrame})";
             if (_fireTest) return $"firetest (frame={_ftFrame}, ammo={_ftPlayer?.Ammo.ToString() ?? "no player"})";
