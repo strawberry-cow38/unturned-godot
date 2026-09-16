@@ -211,11 +211,23 @@ namespace UnturnedGodot
         /// the MAG". A vertical drum turned about the bore sweeps sideways through the receiver, which is why it
         /// read as mispositioned AND inside-out. Symmetry and extent picked the wrong part; six-of-a-kind picked
         /// the right one.</summary>
+        /// <summary>A fixed quarter-turn on the barrel assembly (strawberry 2026-09-16: "rotate the BARREL 90
+        /// degrees"). The gun's HOLD is what actually points it wrong -- Fury_Equip poses the hand differently
+        /// from Eaglefire_Equip, proven by rendering both under identical framing -- but the receiver is a
+        /// 0.5x0.6x0.65 cube whose orientation nobody can read, so only the barrel shows the error. Turning the
+        /// one visible part is a smaller and more honest change than re-posing a hold clip or adding the per-gun
+        /// pitch the gun branch was deliberately built without.</summary>
+        public static Vector3 BarrelFixDeg = new Vector3(0f, 0f, -90f);
+
         public void DriveSpinBarrel(float turns, double delta)
         {
             if (!HasSpinBarrel) return;
             _spinAngle = Mathf.Wrap(_spinAngle + turns * Mathf.Tau * (float)delta, 0f, Mathf.Tau);
-            _spinBarrel.Rotation = new Vector3(0f, _spinAngle, 0f);
+            // ORDER MATTERS: the fix is applied OUTSIDE the spin, so the cluster still turns about its OWN long
+            // axis (+Y in mesh space, where the six tubes lie) and the quarter-turn then aims that axis. Composing
+            // the other way round would spin it about whatever axis the fix happened to leave pointing up.
+            _spinBarrel.Basis = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f))
+                              * Basis.FromEuler(new Vector3(0f, _spinAngle, 0f));
         }
         public bool IntegralSight => _gunTxt != null && _gunTxt.Contains("augewehr");   // aug: built-in 4x scope is part of the gun -- no detachable/replaceable Sight slot (master)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
@@ -812,6 +824,7 @@ namespace UnturnedGodot
                         var smi = new MeshInstance3D { Mesh = spinMesh, MaterialOverride = mat };
                         att.AddChild(smi);
                         _spinBarrel = smi;
+                        smi.Basis = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f));   // parked pose: the fix applies before anything spins
                         Log.Print($"[vm] {barrelTxt} is a spinning assembly ({spinMesh.GetAabb().Size})");
                     }
                     // THE HELD MODEL IS NOT ONE PIECE. Retail's equipable.prefab carries Model_0..n plus Bone_0..n,
@@ -990,7 +1003,16 @@ namespace UnturnedGodot
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
+                    // ⚠ THE HOOK TURNS WITH THE BARREL. guns_visual.tsv pins fury's muzzle at (0, 1.036, 0) and the
+                    // barrel assembly ends at exactly 1.036 -- that match is why the flash sits on the bore today.
+                    // Rotate the barrel node and leave the hook alone and the flash keeps erupting from where the
+                    // barrel USED to point, which is the sort of thing nobody traces for a month. Same matrix, so
+                    // the two cannot drift; identity for every gun without a spinning assembly. (tinyclaw spotted
+                    // this before I shipped it.)
+                    var muzzle = _spinBarrel != null
+                        ? Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f)) * gv.MuzzleHook
+                        : gv.MuzzleHook;
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = muzzle, Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
                     _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
