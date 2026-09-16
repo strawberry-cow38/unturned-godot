@@ -339,7 +339,14 @@ namespace UnturnedGodot
         {
             const float Unit = 4f;
             float target = ToGrid(poi.GroundY);
-            float inner = poi.HalfSize, outer = poi.HalfSize * 1.6f;
+            // ⚠ THE PAD MUST CONTAIN THE ROADS ON IT, and it did not: BuildMonument puts its outermost tile
+            // centre at (n-1)*TileSize/2, so that tile's far edge lands at n*TileSize/2 -- which is EXACTLY
+            // HalfSize. The outer streets therefore sat precisely where the skirt begins to grade away, flush
+            // with the boundary and with nothing to spare (strawberry: "make sure the flattened terrain area of
+            // the towns is big enough to fully encapsulate the roads"). Half a tile plus the carriageway
+            // overhang is what was missing.
+            const float PadMargin = TileSize * 0.5f + HalfCarriageway;   // 12 + 8 = 20 m
+            float inner = poi.HalfSize + PadMargin, outer = inner * 1.6f;
             int cx = Mathf.RoundToInt(poi.X / Unit), cy = Mathf.RoundToInt(poi.Z / Unit);
             int rad = Mathf.CeilToInt(outer / Unit) + 1;
             for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
@@ -548,12 +555,27 @@ namespace UnturnedGodot
             public Route(LinkKind k, System.Collections.Generic.List<Vector2> pts) { Kind = k; Points = pts; }
         }
 
-        static float HalfWidthFor(LinkKind k) => k switch
+        /// <summary>The half-width of the ribbon RoadField actually DRAWS: PEI's material is Width 8.0 and
+        /// RoadField applies WidthScale 1.15, so the road on screen is 18.4 m across. ⚠ The carve was sized to
+        /// the DESIGN widths below (4 m for a Road) and the mesh is more than twice that, so between 4 m and
+        /// 9.2 m the ground was only partly levelled and the road was laid straight over it -- which is the
+        /// terrain that pokes up through the surface (strawberry: "reduce the amount of clipping of terrain
+        /// through the roads"). A carve narrower than its own road cannot help clipping however smooth it is.</summary>
+        public const float RenderedRoadHalf = 9.2f;
+        const float CarveMargin = 2.5f;   // levelled a little past the edge, so the blend starts off the tarmac
+
+        /// <summary>What a kind WOULD want if it had its own material. Kept per-kind rather than collapsed,
+        /// because the day a Trail gets a narrower material this is the number that should shrink.</summary>
+        static float DesignHalfFor(LinkKind k) => k switch
         {
             LinkKind.Road => 4.0f,    // 8 m carriageway
             LinkKind.Rail => 3.0f,    // single track + ballast shoulder
             _ => 2.5f,                // dirt trail
         };
+
+        /// <summary>What to actually flatten: never narrower than the thing being drawn on it. Every kind
+        /// currently renders with material 0, so today this is the rendered width for all three.</summary>
+        static float HalfWidthFor(LinkKind k) => Mathf.Max(DesignHalfFor(k), RenderedRoadHalf) + CarveMargin;
 
         /// <summary>How much a route hates climbing. Rail hates it most -- real track tops out around 2-3 %, so
         /// a railway that shrugs at a hillside is the single most obviously-wrong thing this could produce.</summary>
@@ -595,6 +617,13 @@ namespace UnturnedGodot
                 if (pts.Count >= 2) routes.Add(new Route(links[li].Kind, pts));
             }
             foreach (var r in routes) Carve(grid, gw, gh, r, p);
+            // ⚠ AFTER every carve, not inside one. Routes cross and run alongside each other, and a smoothing
+            // pass folded into Carve would be re-cut by the next route through the same cells -- the same
+            // reason Smooth() runs after all the pads rather than per-pad. This is the "slight smoothing pass"
+            // proper: the carve lands each grid sample on its own lerp toward the profile, which leaves a
+            // low-amplitude ripple between adjacent samples that a wide flat ribbon sitting on top shows up
+            // as speckled clipping.
+            foreach (var r in routes) SmoothCorridor(grid, gw, gh, r);
             return routes;
         }
 
@@ -812,6 +841,35 @@ namespace UnturnedGodot
                         // corridor continuous instead of scalloped.
                         grid[x, y] = Mathf.Lerp(grid[x, y], want, w);
                     }
+            }
+        }
+
+        /// <summary>Box-blur the ground along one route's corridor, weighted so the centre is smoothed hardest
+        /// and the effect fades out at the shoulder -- blurring to a hard edge would just move the discontinuity
+        /// outwards. Two light passes rather than one heavy one: a single wide kernel flattens the corridor into
+        /// a trough that reads as a trench from the side.</summary>
+        static void SmoothCorridor(float[,] grid, int gw, int gh, Route r)
+        {
+            float half = HalfWidthFor(r.Kind), shoulder = half * 2.2f;
+            const float Unit = 4f;
+            int rad = Mathf.CeilToInt(shoulder / Unit) + 1;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                var src = (float[,])grid.Clone();
+                foreach (var pt in r.Points)
+                {
+                    int cx = Mathf.RoundToInt(pt.X / Unit), cy = Mathf.RoundToInt(pt.Y / Unit);
+                    for (int x = Mathf.Max(1, cx - rad); x <= Mathf.Min(gw - 2, cx + rad); x++)
+                        for (int y = Mathf.Max(1, cy - rad); y <= Mathf.Min(gh - 2, cy + rad); y++)
+                        {
+                            float dx = x * Unit - pt.X, dy = y * Unit - pt.Y;
+                            float d = Mathf.Sqrt(dx * dx + dy * dy);
+                            if (d > shoulder) continue;
+                            float w = d <= half ? 1f : 1f - Mathf.SmoothStep(half, shoulder, d);
+                            float avg = (src[x, y] + src[x - 1, y] + src[x + 1, y] + src[x, y - 1] + src[x, y + 1]) * 0.2f;
+                            grid[x, y] = Mathf.Lerp(grid[x, y], avg, w * 0.6f);
+                        }
+                }
             }
         }
 
