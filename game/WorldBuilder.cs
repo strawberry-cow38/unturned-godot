@@ -1751,12 +1751,27 @@ namespace UnturnedGodot
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
                 _SEG(9);
             }
-            // SP loot distribution: a registered prop spawns as a lootable StoreShelf here (at the placement transform)
-            // instead of the decoration mesh. Only in Playable -- the editor shows decoration; the client is server-driven.
+            // Loot distribution: a registered prop becomes a lootable container instead of a decoration mesh.
+            //
+            // ⚠ THIS USED TO READ `mode != WorldMode.Playable`, and the comment enumerated why: "the editor shows
+            // decoration; the client is server-driven". Both true -- and between them sits the case nobody named,
+            // WorldMode.Dedicated, which is THE SERVER DOING THE DRIVING. It recorded nothing, so
+            // ContainerNetSync was handed an empty manifest and published zero fixtures, so a client materialised
+            // zero containers (strawberry 2026-09-16: "'smart' storage containers arent there on servers"). The
+            // reasoning was sound for every mode it considered; the bug is the mode it did not.
+            //
+            // ⚠ AND RECORDING IS NOT THE SAME AS SKIPPING, which is why this returns a value rather than just
+            // gating the dictionary lookup. Returning true makes the caller `continue`, skipping PlaceObject --
+            // the decoration mesh AND its collider. In Playable that is correct, because SpawnMapContainers
+            // puts a real StoreShelf node back at the same transform afterwards. On a DEDICATED server nothing
+            // does: ContainerNetSync registers a replication FIXTURE, which is a record, not a node. Skip there
+            // and the server silently loses that prop's collision -- players walk through fridges and bullets
+            // pass through bookcases. So Dedicated records the container AND keeps the prop.
             int converted = 0;
             bool TryContainer(string[] q)
             {
-                if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
+                if (mode != WorldMode.Playable && mode != WorldMode.Dedicated) return false;
+                if (!ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
                 // ⚠ THE SAME UPRIGHT, WRITTEN ON A DIFFERENT AXIS (strawberry 2026-09-15: "some trash cans are
@@ -1775,7 +1790,9 @@ namespace UnturnedGodot
                 { ex = 270f + (ez - 270f); ez = 0f; }
                 result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-ez)));
                 converted++;
-                return true;
+                // Playable replaces the prop with a StoreShelf node, so the decoration goes. Dedicated keeps it:
+                // it is the only collider the server will ever have for this object.
+                return mode == WorldMode.Playable;
             }
             // A readable note placement -> a NoteBody (same transform math as PlaceObject) that renders the note mesh
             // and carries its text for the look-focus + F read. Playable-only (see the call site).
