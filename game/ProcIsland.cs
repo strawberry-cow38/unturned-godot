@@ -792,8 +792,15 @@ namespace UnturnedGodot
             // the roads are gentle and the sharpest says there is a hairpin in there somewhere, and it is the
             // hairpin that reads as "unnatural". The limiter below only touches points that are actually too
             // tight, so the rest of the route keeps the line the terrain cost chose for it.
-            const float MinRadius = 55f;
-            const int LimitPasses = 24;
+            // ⚠ 90, NOT 55 (strawberry: "the road spline between two curves is perfectly straight and doesnt
+            // counter-curve the curve of the piece going into it"). What they are describing is a route made of
+            // straights joined by corners instead of one continuous line: the limiter only opened bends that
+            // were already tight, so anything the smoothing had flattened STAYED flat and met the next bend at
+            // a kink. Raising the floor makes the limiter act on gentle corners too, and because it pulls a
+            // point toward the midpoint of its window it lengthens every turn into its neighbours -- which is
+            // what puts an opposing curve on the straight between two bends rather than a hinge at each end.
+            const float MinRadius = 90f;
+            const int LimitPasses = 40;
             if (pts.Count < Pin * 2 + 3) return pts;
             var cur = new System.Collections.Generic.List<Vector2>(pts);
             for (int pass = 0; pass < Passes; pass++)

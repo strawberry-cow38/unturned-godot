@@ -15,6 +15,15 @@ namespace UnturnedGodot
 
         struct RoadMat { public float Width, Height, Depth, Offset; public bool Concrete; }
         const float WidthScale = 1.15f;   // master 2026-08-24: roads slightly thicker (fills the bald patch next to Fernwood Farm); the collider shares this width
+        /// <summary>...and the same idea on the other axis (strawberry 2026-09-16: "still got bald patches on
+        /// road splines. might pay to make them slightly thicker vertically").
+        ///
+        /// A road's SURFACE verts sit halfVerticalSize ABOVE the sampled ground and its outer taper verts the
+        /// same distance BELOW, so this is the depth of the lip that hides the join. A bald patch is ground
+        /// showing through near the edge, and on a slope the edge is exactly where the terrain is furthest from
+        /// the centreline sample -- so the lip is what has to reach it. Scaled rather than added, so a material
+        /// authored thin stays proportionally thin.</summary>
+        const float DepthScale = 1.6f;
         class Joint   // class so the editor can move a vertex/tangent in place
         {
             public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode;
@@ -924,7 +933,7 @@ namespace UnturnedGodot
             // halfVerticalSize while the outer TAPER verts go DOWN by halfVerticalSize -> the taper sinks BELOW the
             // ground so there's never a gap to see under. verticalOffset is applied per-vert along the normal, NOT as a lift.
             float halfWidth = mat.Width * WidthScale;   // master: slightly thicker (fills bald patches)
-            float halfVerticalSize = mat.Depth;
+            float halfVerticalSize = mat.Depth * DepthScale;
             float verticalSize = halfVerticalSize * 2f;
             float verticalOffset = mat.Offset;
             bool loop = r.IsLoop;

@@ -510,84 +510,114 @@ namespace UnturnedGodot
                 _ => new[] { (0f, 1f), (0f, -1f) },
             };
 
+            // ⭐ ONE RULE GIVES MASTER'S WHOLE SPEC: the free side of a tile is the NEGATED SUM of its street
+            // directions, and its length says how much free side there is.
+            //
+            // strawberry: "there are street lights in the middle of the road, they arent following the curve of
+            // the road turn piece. the quad shouldnt have street lights. the tee can, but only along the face
+            // that has a sidewalk along it."
+            //
+            // The old code offset perpendicular to ONE arm, which is only correct for a Line. On a Turn (arms
+            // +X and -Y) a perpendicular to either arm points straight down the OTHER one -- a lamp post in the
+            // carriageway, which is exactly what was in the render. Summing instead:
+            //     Line  (+Y,-Y)          -> sum 0 ... handled below as "either flank"
+            //     Turn  (+X,-Y)          -> -(+X-Y)  = the OUTSIDE corner of the bend, following its curve
+            //     Tee   (+X,-X,+Y)       -> -(+Y)    = the one face with no street on it: the sidewalk face
+            //     Quad  (all four)       -> sum 0    = no free side at all, so NOTHING is placed
+            // The Quad case falls out rather than being special-cased, and a Line's zero is the opposite kind
+            // of zero -- two free flanks, not none -- so it is the one piece that needs its own branch.
+            static (float x, float z) FreeSide((float x, float z)[] worldArms)
+            {
+                float sx = 0f, sz = 0f;
+                foreach (var a in worldArms) { sx += a.x; sz += a.z; }
+                float len = Mathf.Sqrt(sx * sx + sz * sz);
+                return len < 0.25f ? (0f, 0f) : (-sx / len, -sz / len);
+            }
+
             int idx = -1;
             foreach (var t in terr.IslandTiles)
             {
                 idx++;
-                // ⚠ A REAL JUNCTION ONLY. The Cap variants were in this set and they are not crossroads --
-                // a cap is where a street LEAVES the town, and signalling it put 111 traffic lights on an
-                // island where PEI has 21 in total. Quad and Tee are the shapes a driver actually has to be
-                // told what to do at.
                 bool junction = t.Piece is ProcIsland.RoadPiece.Quad or ProcIsland.RoadPiece.Tee;
-                var arms = ArmsOf(t.Piece);
+                var local = ArmsOf(t.Piece);
+                var wArms = new (float x, float z)[local.Length];
+                for (int i = 0; i < local.Length; i++) wArms[i] = ArmDir(t.YawDeg, local[i].x, local[i].y);
+                var free = FreeSide(wArms);
+                bool straight = t.Piece is ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.LineCap;
 
-                // ---- TRAFFIC LIGHTS: one per approach of a junction, mast arm out over the carriageway -----
+                // ---- TRAFFIC LIGHTS: ONE per junction, arm along a road, never diagonal ---------------------
+                // strawberry: "why are the traffic lights diagonal, 3 (tee) or 4 (quad) per intersection".
+                // Diagonal because the old code stood the pole on the corner and yawed it at the tile CENTRE,
+                // which on a square tile is the 45-degree line. A mast arm reaches out over ONE road; standing
+                // it beside that road and pointing it along that road is the only arrangement where the signal
+                // ends up above the lane it governs.
                 if (junction)
                 {
-                    int put = 0;
-                    foreach (var a in arms)
+                    var app = wArms[0];                       // the approach this signal governs
+                    var flank = (-app.z, app.x);              // beside it, not on it
+                    float px = t.X + flank.Item1 * Verge, pz = t.Z + flank.Item2 * Verge;
+                    if (Free(px, pz, 6f) && TownPropOk(terr, px, pz))
                     {
-                        if (put >= 2) break;   // two opposing approaches, not one per arm
-                        var d = ArmDir(t.YawDeg, a.x, a.y);
-                        // Stand on the corner BESIDE this approach and reach back across it: position along the
-                        // arm, offset to one side, and yaw so +Y points at the tile centre.
-                        var side = (-d.z, d.x);
-                        float px = t.X + d.x * Verge + side.Item1 * Verge;
-                        float pz = t.Z + d.z * Verge + side.Item2 * Verge;
-                        if (!Free(px, pz, 6f) || !TownPropOk(terr, px, pz)) continue;
-                        // The mast arm reaches back ALONG THE APPROACH it controls, not diagonally across the
-                        // junction: the pole stands on the corner and the signal hangs over that road's own
-                        // carriageway, which is where a driver on it can see it.
-                        float yaw = ProcIsland.YawForDir(-d.x, -d.z);
-                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz), RotFor(yaw)) != null)
-                        { signals++; put++; taken.Add((px, pz)); }
+                        // +Y along the approach, so the arm lies over that carriageway.
+                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(app.x, app.z))) != null)
+                        { signals++; taken.Add((px, pz)); }
                         else miss++;
                     }
                 }
 
-                // ---- STREET LIGHTS: one per tile, on alternating sides so a street is lit from both ---------
+                // ⚠ A LINE'S ZERO IS THE OPPOSITE OF A QUAD'S, and reading them the same way is what emptied the
+                // streets: FreeSide sums the arm directions, so a Line (+Y and -Y) cancels to zero meaning TWO
+                // free flanks while a Quad cancels to zero meaning NONE. First cut tested `free != 0` for
+                // hydrants and bins and dropped them from every straight tile on the island -- 47 hydrants to
+                // 17, 62 bins to 7. Resolve the verge ONCE, here, and let all three furniture passes use it.
+                (float x, float z) side = free;
+                if (straight)
                 {
-                    var a = arms[idx % arms.Length];
-                    var d = ArmDir(t.YawDeg, a.x, a.y);
-                    var side = ((idx & 1) == 0) ? (-d.z, d.x) : (d.z, -d.x);
-                    float px = t.X + side.Item1 * Verge, pz = t.Z + side.Item2 * Verge;
-                    if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
+                    var a0 = wArms[0];
+                    // Alternate flanks so a street is lit from both kerbs in turn, which is also what retail's
+                    // 1.0 m nearest-neighbour street-light pairs are.
+                    side = ((idx & 1) == 0) ? (-a0.z, a0.x) : (a0.z, -a0.x);
+                }
+
+                // ---- STREET LIGHTS: only where there IS a free side ----------------------------------------
+                // A Quad returns (0,0) from FreeSide and gets none, which is master's rule, not a check for it.
+                {
+                    if (side != (0f, 0f))
                     {
-                        // +Y toward the street: the lamp arm has to reach over the carriageway, not the verge.
-                        float yaw = ProcIsland.YawForDir(-side.Item1, -side.Item2);
-                        if (objs.Place("Street_Light_0", PosFor(terr, px, pz), RotFor(yaw)) != null)
-                        { lights++; taken.Add((px, pz)); }
-                        else miss++;
+                        float px = t.X + side.x * Verge, pz = t.Z + side.z * Verge;
+                        if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
+                        {
+                            // +Y toward the street: the lamp arm reaches over the carriageway, not the verge.
+                            if (objs.Place("Street_Light_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
+                            { lights++; taken.Add((px, pz)); }
+                            else miss++;
+                        }
                     }
                 }
 
-                // ---- HYDRANTS: every third tile, opposite the light -----------------------------------------
-                if (idx % 3 == 1)
+                // ---- HYDRANTS: on the free side too, every third tile ---------------------------------------
+                if (idx % 3 == 1 && side != (0f, 0f))
                 {
-                    var a = arms[0];
-                    var d = ArmDir(t.YawDeg, a.x, a.y);
-                    var side = ((idx & 1) == 0) ? (d.z, -d.x) : (-d.z, d.x);
-                    float px = t.X + side.Item1 * Verge + d.x * 6f, pz = t.Z + side.Item2 * Verge + d.z * 6f;
+                    var along = wArms[0];
+                    float px = t.X + side.x * Verge + along.x * 6f, pz = t.Z + side.z * Verge + along.z * 6f;
                     if (Free(px, pz, 3f) && TownPropOk(terr, px, pz))
                     {
-                        if (objs.Place("Fire_Hydrant_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.Item1, -side.Item2))) != null)
+                        if (objs.Place("Fire_Hydrant_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
                         { hydrants++; taken.Add((px, pz)); }
                         else miss++;
                     }
                 }
 
                 // ---- BINS: in little groups, like retail's 3 m clusters -------------------------------------
-                if (idx % 6 == 2)
+                if (idx % 6 == 2 && side != (0f, 0f))
                 {
-                    var a = arms[0];
-                    var d = ArmDir(t.YawDeg, a.x, a.y);
-                    var side = ((idx & 2) == 0) ? (-d.z, d.x) : (d.z, -d.x);
+                    var along = wArms[0];
                     int group = 2 + rng.Next(2);
                     for (int k = 0; k < group; k++)
                     {
-                        float along = (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
-                        float px = t.X + side.Item1 * Verge + d.x * along;
-                        float pz = t.Z + side.Item2 * Verge + d.z * along;
+                        float step = (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
+                        float px = t.X + side.x * Verge + along.x * step;
+                        float pz = t.Z + side.z * Verge + along.z * step;
                         if (!Free(px, pz, 1.2f) || !TownPropOk(terr, px, pz)) continue;
                         // Dumpster_3/4 is the wheelie bin the container table already labels "Trash Can";
                         // Garbage_0/1 are the tied-off bags that stand next to one.
@@ -763,9 +793,20 @@ namespace UnturnedGodot
                         var nrm = new Vector2(-tg.Y, tg.X) * outward;
                         float px = at.X + nrm.X * FenceOffset, pz = at.Y + nrm.Y * FenceOffset;
                         if (!RoadsideOk(terr, px, pz)) continue;
+                        // ⚠ THE RAIL FACE HAS TO FACE THE ROAD (strawberry: "make sure the guardrail side of the
+                        // fence road is facing the road spline"). Measured off the mesh rather than guessed: in
+                        // the rail height band (local z 0..1.3) Fence_Road_0 has 158 vertices at local x > 0
+                        // spanning z 0.50..1.28 -- the beam -- against 30 at x < 0 sitting on a single plane at
+                        // z 1.25, which is the back edge. So the guardrail is the LOCAL +X half.
+                        //
+                        // With the yaw that points local +Y along the tangent, local +X lands on (tz, -tx), the
+                        // tangent's RIGHT normal -- which faces the road only when the fence was put on the
+                        // left. Yawing by the OUTWARD sign reverses both local axes at once: +Y just runs the
+                        // other way along the road, which is invisible on panels that butt end to end, and +X
+                        // comes back round to face the carriageway.
                         // Fence_Road_0's mesh also runs a metre below its origin, for the same reason.
                         var pos = PosFor(terr, px, pz);
-                        if (objs.Place("Fence_Road_0", pos, RotFor(ProcIsland.YawForDir(tg.X, tg.Y))) != null) fences++;
+                        if (objs.Place("Fence_Road_0", pos, RotFor(ProcIsland.YawForDir(tg.X * outward, tg.Y * outward))) != null) fences++;
                         else miss++;
                     }
                 }
@@ -851,10 +892,15 @@ namespace UnturnedGodot
             // scale range means the roll of a prop name IS the size roll -- the inconsistency complaint.
             // Choosing a target radius and solving scale = target / propRadius makes every rock the size it was
             // meant to be, out of whichever mesh got picked.
-            const float SmallR = 1.6f, BigR = 4.5f;
-            // ...with a few landmarks. A face of nothing but 2 m rocks is as uniform as a face of nothing but
-            // 20 m ones; the tail is what makes it read as a rockfall.
-            const float LandmarkR = 9f, LandmarkChance = 0.06f;
+            // ⚠ BIGGER AND FEWER (strawberry: "boulder props can be bigger: less of em"). The count is not set
+            // anywhere -- it falls out of the radii, because the occupancy test spaces rocks by their own size.
+            // Doubling the small end therefore roughly quarters the population on its own, which is the right
+            // way round: asking for a count and a size separately is how you get 4000 pebbles or 40 boulders in
+            // a heap.
+            const float SmallR = 3.2f, BigR = 8.5f;
+            // ...with a few landmarks. A face of nothing but one size is as uniform as a face of nothing but
+            // another; the tail is what makes it read as a rockfall.
+            const float LandmarkR = 15f, LandmarkChance = 0.05f;
 
             // Radius-aware occupancy, in a spatial hash. The old test was O(placed) against every rock on the
             // island for every candidate, which a 5 m scan would have turned into minutes, and it compared
@@ -947,12 +993,16 @@ namespace UnturnedGodot
                         ? stand
                         : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
                     // SEAT IT BY ITS OWN MESH, not by a fudge. Put the origin where the rock's BOTTOM lands a
-                    // fifth of its height under the ground: bottom-to-origin is -Bottom*scale, so the origin
+                    // fraction of its height under the ground: bottom-to-origin is -Bottom*scale, so the origin
                     // sits that far above the surface, less the bury. A flat sink could not do this across a
                     // kit whose origins sit anywhere from -2.5 m to -7.9 m inside the mesh -- it left the tall
                     // rocks perched and swallowed the flat ones.
+                    // ⚠ 45%, not 20% (strawberry: "they can also be embedded into the cliff instead of sitting
+                    // on top"). Near half the rock underground is what reads as a boulder the hillside grew
+                    // around; a fifth reads as one someone put there. It also hides the seam where a round mesh
+                    // meets a faceted heightmap, which is most of why a shallow rock looks stuck on.
                     float sc = scale;
-                    var pos = new Vector3(px, y - pick.Bottom * sc - pick.Height * sc * 0.20f, pz);
+                    var pos = new Vector3(px, y - pick.Bottom * sc - pick.Height * sc * 0.45f, pz);
                     if (objs.Place(pick.Name, pos, basis.Scaled(Vector3.One * scale)) != null) { Occupy(px, pz, want); n++; }
                     else miss++;
                 }
