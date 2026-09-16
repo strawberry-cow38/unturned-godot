@@ -32,6 +32,25 @@ namespace UnturnedGodot
             // PAUSE: the hub lives under the root, so a paused tree would freeze every registrant even those whose own ProcessMode
             // is Always (the TestHost world). ProcessMode.Always here + the per-node CanProcess() check below keeps the engine's
             // exact per-node pause semantics.
+            // ⚠⚠ A NEW HUB MEANS A NEW WORLD, AND THE SUBSCRIBER LISTS ARE STATIC. They outlive the hub node, the
+            // scene and (in the L1 suite) the whole world teardown -- so a registrant from the PREVIOUS world is
+            // still in them when the next one starts, and gets ticked into it.
+            //
+            // 37 call sites register; THREE deregister (SamMissile, SamSite, SecurityCamera). That ratio is not
+            // an oversight, it is the design: RunFrames drops a node the moment IsInstanceValid goes false, so a
+            // QueueFree'd registrant cleans itself up and almost nothing needs an _ExitTree. What that does NOT
+            // catch is a node that is still ALIVE and belongs to a world that is gone -- nothing prunes it, and
+            // it keeps running its tick against the next test's state. Three order-dependent L1 failures share
+            // that signature (vehicle.trailers, tank.differential_steer, inv.hold_transfer: each green alone at
+            // the exact seed it fails at in suite), and a leak scan found TickHub._procs carrying residue across
+            // an inv slice it had no business in.
+            //
+            // Clearing HERE rather than in the test harness on purpose: it is keyed to the real event ("the hub
+            // is being rebuilt, therefore the world it served is gone"), so it holds for a map change in the
+            // shipped game exactly as it does between two tests, and it cannot be forgotten by a harness that
+            // does not know about a future registrant. Ensure() runs BEFORE the caller's own Add (see AddProcess
+            // et al), so the registrant asking for the new hub survives its own clear.
+            _ticks.Clear(); _procs.Clear(); _phys.Clear(); _physLate.Clear();
             _inst = new TickHub { Name = "TickHub", ProcessPhysicsPriority = -10, ProcessPriority = -10, ProcessMode = ProcessModeEnum.Always };
             _late = new TickHubLate { Name = "TickHubLate", ProcessPhysicsPriority = 10, ProcessMode = ProcessModeEnum.Always };   // see AddPhysicsLate
             tree.Root.CallDeferred(Node.MethodName.AddChild, _late);
@@ -69,6 +88,11 @@ namespace UnturnedGodot
         internal static void RunLate(double delta) => RunFrames(_physLate, delta);
         public static void RemoveProcess(Node node) { for (int i = _procs.Count - 1; i >= 0; i--) if (_procs[i].Node == node) _procs.RemoveAt(i); }
         public static void RemovePhysics(Node node) { for (int i = _phys.Count - 1; i >= 0; i--) if (_phys[i].Node == node) _phys.RemoveAt(i); }
+        // Symmetry, and it was missing: AddProcess/AddPhysics each had a partner and AddPhysicsLate had none, so
+        // a still-valid node registered there could not be deregistered by any call that existed -- only by being
+        // freed, which is the one case that already self-heals. One caller today (PlayerController), so this is a
+        // structural hole rather than a live bug; it is here so the next registrant has the option.
+        public static void RemovePhysicsLate(Node node) { for (int i = _physLate.Count - 1; i >= 0; i--) if (_physLate[i].Node == node) _physLate.RemoveAt(i); }
         public static int ProcessCount => _procs.Count; public static int PhysicsCount => _phys.Count;
         static void RunFrames(System.Collections.Generic.List<Frame> list, double delta)
         {
