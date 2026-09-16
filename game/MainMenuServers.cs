@@ -124,7 +124,12 @@ namespace UnturnedGodot
 
             _joinBtn = new Button { Text = "JOIN", CustomMinimumSize = new Vector2(320f, 48f) };
             _joinBtn.AddThemeFontSizeOverride("font_size", 22);
-            _joinBtn.Pressed += () => { if (_selectedServer != null && !_mismatched.Contains(_selectedServer)) OnJoinServer?.Invoke(_selectedServer.Host, _selectedServer.Port); };
+            // ⚠ OnJoinServer carries host+port and nothing else, so the NAME, cap and gamemode the browser
+            // already knows would be lost the moment you join -- and the client cannot recover them: nothing
+            // on the wire tells a joined client what its server is called. Hand them over the same way
+            // PendingJoinError travels (Main.cs), a static read once on the far side. Null when the join did
+            // not come from the browser (--connect=), which is exactly when there IS no name to show.
+            _joinBtn.Pressed += () => { if (_selectedServer != null && !_mismatched.Contains(_selectedServer)) { Main.PendingJoinServer = _selectedServer; OnJoinServer?.Invoke(_selectedServer.Host, _selectedServer.Port); } };
             right.AddChild(_joinBtn);
 
             // Direct connect MOVED OUT to its own main-menu page (MainMenuConnect.cs, strawberry 2026-09-15).

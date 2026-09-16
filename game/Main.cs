@@ -512,6 +512,7 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
+                DiscordPresence.SetEditor(MapUI.MapFolder);   // static: the editor's map never changes under it mid-session
                 // UG_GENSEED=<n>: the menu's Generate Map, reachable from a flag so the generated world can be
                 // LOOKED at (tools/shot.py island). The suite can only ever check the generator's numbers; a
                 // road prop rotated 180 or a building sunk into a hillside is invisible to every one of them.
@@ -2859,6 +2860,9 @@ namespace UnturnedGodot
             AddChild(sun);
             var dn = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };   // a 5-minute day/night cycle
             AddChild(dn);
+            // Discord: map + days survived. Ticked rather than set once because the day counter MOVES -- the
+            // push is dropped unless a field actually changed, so a repeat costs one struct compare.
+            AddChild(new DiscordPresenceTicker { Push = () => DiscordPresence.SetSingleplayer(MapUI.MapFolder, dn.Day) });
             // Weather is now SCHEDULED off PEI's real Weather_Types table instead of a one-shot coin flip at
             // world build -- forecast, fade in, hold, fade out, repeat (src LightingManager). The overlay is the
             // same shader; WeatherManager just owns whether and how hard it rains.
@@ -7204,6 +7208,10 @@ namespace UnturnedGodot
         // ReturnToMenu is ReloadCurrentScene -- the node that knows why the join failed is destroyed by the very
         // act of going back, so the message cannot ride on an instance. Cleared on read so it shows once.
         public static string PendingJoinError;
+        /// <summary>The browser row the player clicked Join on -- name, map, cap and gamemode, none of which
+        /// the client can learn from the server once connected. Null for a --connect= join. Read by
+        /// BuildClient for the Discord presence line.</summary>
+        public static MainMenu.ServerEntry PendingJoinServer;
 
         void ReturnToMenu()
         {
@@ -9260,12 +9268,28 @@ namespace UnturnedGodot
                 _worldReady = res.Ready;
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
-                    AddChild(new ClientWorldSession { Host = _connectHost, Port = _connectPort != 0 ? _connectPort : PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
+                    var mpSession = new ClientWorldSession { Host = _connectHost, Port = _connectPort != 0 ? _connectPort : PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
                                                       PlayerName = PlayerProfile.Name,   // the HANDSHAKE name (what others see until SetProfile lands, and if it never does) -- was the field default "player" for every real joiner
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
-                                                      ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                                                      ApplyServerHoliday = res.ApplyHoliday };              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                    AddChild(mpSession);
+                    // Discord: whose server, which map, how full, what mode.
+                    // ⚠ POPULATION IS COUNTED, NOT ASSERTED. The browser row's player count is a status-query
+                    // snapshot from before you joined and goes stale the moment anyone else does; the puppets
+                    // the client is actually rendering are the live number. +1 because self never puppets.
+                    // Name/cap/gamemode come from the row because NOTHING on the wire carries them -- and when
+                    // the join did not come from the browser there is no name, so the address is the honest
+                    // thing to show rather than a hardcoded "Unturned Godot Server".
+                    var row = PendingJoinServer;
+                    string svName = row?.Name ?? MainMenu.AddressText(_connectHost, _connectPort != 0 ? _connectPort : PortEnv());
+                    string svMap = row?.Map ?? MapUI.MapFolder;
+                    string svMode = row?.Gamemode ?? "";
+                    int svMax = row?.Max ?? 0;
+                    AddChild(new DiscordPresenceTicker { Push = () =>
+                        DiscordPresence.SetMultiplayer(svName, svMap,
+                            mpSession.Remotes != null ? mpSession.Remotes.PuppetCount + 1 : 0, svMax, svMode) });
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
