@@ -28,7 +28,7 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 13;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
+    const int LauncherVersion = 14;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
     // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
     // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
@@ -56,6 +56,7 @@ public class MainWindow : Window
     readonly TextBlock _keyStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
     readonly CheckBox _consoleCheck = new() { Content = "Debug console window", FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+    readonly CheckBox _offlineCheck = new() { Content = "Offline mode", FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
     readonly ComboBox _branchBox = new() { MinWidth = 220, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };   // branch selector (populated from the remote after clone)
     // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
     // in-game main menu, which connects to claw.bitvox.me itself. Server browser later.)
@@ -188,6 +189,11 @@ public class MainWindow : Window
         // stops showing you the log the day it updates is a worse surprise than an unticked box.
         _consoleCheck.IsChecked = LoadDebugConsole();
         _consoleCheck.IsCheckedChanged += (_, _) => SaveDebugConsole(_consoleCheck.IsChecked == true);
+        // ⚠ DEFAULT OFF, for the same reason the console defaults ON: a fresh install must behave like every
+        // existing one, and every existing one has multiplayer. Nobody's launcher grows a new restriction.
+        _offlineCheck.IsChecked = LoadOfflineMode();
+        _offlineCheck.IsCheckedChanged += (_, _) => SaveOfflineMode(_offlineCheck.IsChecked == true);
+        ToolTip.SetTip(_offlineCheck, "Hides Multiplayer and Direct Connect in game. Singleplayer is unaffected.");
         var optionsRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14,
@@ -196,6 +202,7 @@ public class MainWindow : Window
             {
                 new TextBlock { Text = "Options:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
                 _consoleCheck,
+                _offlineCheck,
             },
         };
 
@@ -462,6 +469,13 @@ public class MainWindow : Window
             Log(username.Length > 0 ? $"Profile: {username}{(File.Exists(ProfilePngConfig) ? " (+picture)" : "")}"
                                     : "(no name set -- joining as " + ProfileRules.FallbackName + ")");
 
+            // From DISK, not from _offlineCheck: Play() can run on a launcher whose window was never shown,
+            // so the control may never have initialised. Same shape as LoadDebugConsole() above, and for the
+            // same reason -- the file is also what survives a self-update.
+            bool offline = LoadOfflineMode();
+            Environment.SetEnvironmentVariable("UG_OFFLINE", offline ? "1" : null);
+            if (offline) Log("Offline mode: multiplayer is hidden in game.");
+
             string reportKey = LoadReportKey();
             Environment.SetEnvironmentVariable("UG_BUGREPORT_KEY", reportKey.Length > 0 ? reportKey : null);
             if (reportKey.Length == 0) Log("(no report key set — bug reports will file anonymously)");
@@ -629,6 +643,26 @@ public class MainWindow : Window
     {
         try { File.WriteAllText(DebugConsoleConfig, on ? "1" : "0"); Log(on ? "debug console: on" : "debug console: off (takes effect next launch)"); }
         catch (Exception ex) { Log("!! could not save the debug console setting: " + ex.Message); }
+    }
+
+    // ---- offline mode -------------------------------------------------------------------------------
+    // A PREFERENCE, not a restriction the game enforces against its owner -- it exists so somebody who will
+    // not be signing in gets a menu without dead ends, instead of a Multiplayer button that walks them to a
+    // rejection. Read from disk at Play time for the same reason as the debug console above.
+    string OfflineModeConfig => Path.Combine(_baseDir, "offline_mode.txt");
+
+    /// <summary>OFF unless explicitly turned on -- a missing file is a fresh install, and no install should
+    /// quietly acquire a restriction it did not have yesterday.</summary>
+    bool LoadOfflineMode()
+    {
+        try { return File.Exists(OfflineModeConfig) && File.ReadAllText(OfflineModeConfig).Trim() == "1"; }
+        catch { return false; }
+    }
+
+    void SaveOfflineMode(bool on)
+    {
+        try { File.WriteAllText(OfflineModeConfig, on ? "1" : "0"); Log(on ? "offline mode: on (takes effect next launch)" : "offline mode: off"); }
+        catch (Exception ex) { Log("!! could not save the offline mode setting: " + ex.Message); }
     }
 
     // ---- report key ---------------------------------------------------------------------------------

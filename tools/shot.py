@@ -74,6 +74,11 @@ SCENES = {
     "fluidflow": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "flow"}, False, 180, "source -> powered pump -> valve -> uphill tank, real generator and hoses"),
     "vehicle":  (["--vehicle={TMP}"], {"UG_QUICK": "1", "UG_VSIDE": "2"}, False, 180, "jeep beauty shot"),
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
+    # The PLAY submenu, which nothing could photograph before: every panel in MainMenu opens only on a Button
+    # press, so the harness saw the dashboard and never what was behind it. OFFLINE=1 is the state worth
+    # looking at -- it should grey Multiplayer + Direct Connect and leave Singleplayer alone.
+    "playmenu": (["--menushot={TMP}"], {"UG_MENUOPEN": "playmenu", "UG_OFFLINE": os.environ.get("OFFLINE", "0")},
+                 False, 300, "the PLAY submenu rows (OFFLINE=1 greys Multiplayer + Direct Connect)"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),
     "navfull":  (["--navshot={OUT}"], {"UG_NAVFULL": "1"}, True, 300, "top-down island map of all 19 nav pockets"),
     # 700, not 400. PEI is the heaviest scene here and 400 did not fit it: two attempts on 2026-09-06 died at
@@ -149,7 +154,7 @@ SCENES = {
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),
 }
-MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
+MULTI = {"menu": "menu_00.png", "playmenu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
 
 
 def reap(proc):
