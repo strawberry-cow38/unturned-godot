@@ -96,7 +96,15 @@ namespace UnturnedGodot
             if (!concrete)   // dirt / gravel TRAILS stay plain: no wet sheen, no raindrop rings (strawberry: "just the solid concrete roads")
             {
                 if (img != null)
-                    return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    // ANISOTROPIC, like the road PROPS (WorldBuilder:699). A road is the worst case for mip
+                    // selection in the whole world -- it runs away from the eye at a grazing angle for hundreds
+                    // of metres, which is exactly where an isotropic mip picks a level for the wrong axis and
+                    // the surface shimmers. Master asked for this on "the road props" and got it there; the
+                    // SPLINES are the surface you actually drive on and were missed, because dirt trails build
+                    // their material here and paved roads build a ShaderMaterial (below) -- two paths, neither
+                    // of them the prop path that was fixed. Still NEAREST: anisotropy is orthogonal to the crisp
+                    // Unturned look, it fixes which mip is chosen, not how the texel is filtered.
+                    return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmapsAnisotropic, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 return new StandardMaterial3D { AlbedoColor = new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             }
             // CONCRETE (asphalt) roads: the wet-surface shader -- rain rings + sheen, roofed spans stay dry via the roof map.
