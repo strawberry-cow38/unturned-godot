@@ -28,7 +28,12 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 15;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
+    const int LauncherVersion = 15;   // v15: sign-in goes through stmauth -- what is stored is a SIGNED token bound to a keypair this box holds (AuthClient), not a SteamID only this launcher believes. UG_AUTH_TOKEN + UG_AUTH_KEY (path, never the value)
+    // ⚠ THE LINE ABOVE DESCRIBED v13 WHILE THE CONSTANT SAID 15, because I bumped it twice today and updated
+    // neither. That is the same rot the NetProtocol "the live server is v45" comment had -- a fact stapled to
+    // a number that moves without it. The number is the release; the note is what shipped in it. Move both.
+    // v14: Offline mode toggle -> offline_mode.txt -> UG_OFFLINE (hides Multiplayer + Direct Connect in game)
+    // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
     // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
     // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
