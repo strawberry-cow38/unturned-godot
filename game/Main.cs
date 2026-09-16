@@ -6318,6 +6318,9 @@ namespace UnturnedGodot
             // The monuments the generator laid out are only lists until something instantiates them.
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
+            // A generated island had no player spawns at all (the save line read "0 spawns" every time), so give
+            // it its own. Seeded off the island's seed: same seed, same island, same start points.
+            if (genPois != null && genSeed.HasValue) ProcIslandSpawn.PlacePlayerSpawns(terr, spawns, genSeed.Value);
             var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;

@@ -51,6 +51,116 @@ namespace UnturnedGodot
             return new Vector3(wx, terr != null ? terr.SampleHeight(wx, wz) : 0f, wz);
         }
 
+        /// <summary>Give a generated island its own player spawn points.
+        ///
+        /// A generated island had NONE -- `spawn` does not appear in ProcIsland at all -- and the editor's save
+        /// line said so every time: `238 props, 0 spawns`.
+        ///
+        /// ⚠ WHAT THIS DOES **NOT** FIX, because the two look like one problem and are not. Playtest drops you
+        /// under the fly camera on purpose (EditorPlayMode, master: "spawns u to walk around somewhere near the
+        /// editor camera"), so a rooftop landing there is that feature working, not this one missing. And at
+        /// REAL play time nothing reads these yet: LevelSpawns.PlayerSpawns reads `&lt;mapRoot&gt;/Spawns/Players.dat`
+        /// in the retail binary format, and a generated map never changes _mapRoot off PEI -- so it would
+        /// inherit PEI's 22 spawn points, which describe PEI's geometry and mean nothing on this island. That is
+        /// an architectural gap (custom maps have no map root of their own) and is deliberately NOT papered over
+        /// here; these points exist, are visible, editable and save with the map, which is what the editor is for.
+        ///
+        /// CHOOSING A POINT. Candidates are the verge beside a road tile, because a spawn wants to be somewhere
+        /// you can walk out of and somewhere that reads as a place. The four cardinal offsets are tried rather
+        /// than the road's own perpendicular: the tile yaw convention is the exact thing that has been got
+        /// backwards here before (see ArmDir's note), and "is this spot flat, dry and clear" answers itself
+        /// without needing to know which way the road runs.
+        ///
+        /// Deterministic from the island seed -- the same seed must give the same island, spawns included, or
+        /// two machines generating "the same" world disagree about where people start.</summary>
+        public static int PlacePlayerSpawns(Terrain terr, EditorSpawns spawns, int seed, int want = 24)
+        {
+            if (spawns == null) return 0;
+            var picks = ChoosePlayerSpawns(terr, seed, want);
+            foreach (var (pos, yaw) in picks) spawns.AddSpawn(pos, yaw);
+            Log.Print($"[island] placed {picks.Count} player spawn(s) of {want} wanted"
+                      + (picks.Count < want ? " -- ran out of flat, dry, unblocked roadside" : ""));
+            return picks.Count;
+        }
+
+        /// <summary>The CHOICE, with no nodes in it -- same split ProcIsland itself keeps ("deliberately pure:
+        /// it produces heights and lists and instantiates nothing, so every check in the suite can run
+        /// headless"). PlacePlayerSpawns is the crossover; this is the part a test can interrogate, and
+        /// "24 points were placed" is exactly the kind of number that looks like success while being 24 bad
+        /// points.</summary>
+        public static System.Collections.Generic.List<(Vector3 Pos, float Yaw)> ChoosePlayerSpawns(
+            Terrain terr, int seed, int want = 24)
+        {
+            var picks = new System.Collections.Generic.List<(Vector3, float)>();
+            if (terr == null || terr.IslandTiles == null || terr.IslandTiles.Count == 0) return picks;
+
+            const float Verge = 7f;        // m from the tile centre: off the carriageway, still roadside
+            const float FlatProbe = 2.5f;  // m; the square sampled to call a spot flat
+            const float FlatTol = 1.1f;    // m of height spread tolerated across that square
+            const float DryMargin = 3f;    // m above sea level -- a spawn at the waterline is a spawn in the surf
+            const float ClearBuild = 9f;   // m from a building origin (footprints are unknown; a radius is the honest approximation)
+            const float ClearRoad = 4f;    // m from any OTHER road tile, so a spawn never lands in a carriageway
+            const float Apart = 30f;       // m between spawns, so 24 points are a map's worth and not a car park
+
+            var chosen = new System.Collections.Generic.List<Vector3>();
+            // Walk the tiles in a seeded order rather than in list order: list order is the generator's build
+            // order, so taking the first N clusters every spawn in whichever monument happened to be built first.
+            var order = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < terr.IslandTiles.Count; i++) order.Add(i);
+            var rng = new System.Random(seed);
+            for (int i = order.Count - 1; i > 0; i--) { int j = rng.Next(i + 1); (order[i], order[j]) = (order[j], order[i]); }
+
+            foreach (int idx in order)
+            {
+                if (chosen.Count >= want) break;
+                var t = terr.IslandTiles[idx];
+                for (int dir = 0; dir < 4; dir++)
+                {
+                    float px = t.X + (dir == 0 ? Verge : dir == 1 ? -Verge : 0f);
+                    float pz = t.Z + (dir == 2 ? Verge : dir == 3 ? -Verge : 0f);
+                    var w = PosFor(terr, px, pz);
+
+                    if (Terrain.HasWater && w.Y < Terrain.SeaLevelY + DryMargin) continue;
+
+                    // flat enough to stand on, measured rather than assumed from the tile being a road
+                    float lo = w.Y, hi = w.Y;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        float sx = px + (k == 0 ? FlatProbe : k == 1 ? -FlatProbe : 0f);
+                        float sz = pz + (k == 2 ? FlatProbe : k == 3 ? -FlatProbe : 0f);
+                        float h = PosFor(terr, sx, sz).Y;
+                        if (h < lo) lo = h; if (h > hi) hi = h;
+                    }
+                    if (hi - lo > FlatTol) continue;
+
+                    bool blocked = false;
+                    foreach (var b in terr.IslandBuildings)
+                        if (Near(px, pz, b.X, b.Z, ClearBuild)) { blocked = true; break; }
+                    if (blocked) continue;
+                    foreach (var o in terr.IslandTiles)
+                        if (!(o.X == t.X && o.Z == t.Z) && Near(px, pz, o.X, o.Z, ClearRoad)) { blocked = true; break; }
+                    if (blocked) continue;
+                    foreach (var c in chosen)
+                        if (Near(w.X, w.Z, c.X, c.Z, Apart)) { blocked = true; break; }
+                    if (blocked) continue;
+
+                    // Face the road you are standing beside, so you spawn looking at somewhere to go.
+                    var road = PosFor(terr, t.X, t.Z);
+                    float yaw = Mathf.RadToDeg(Mathf.Atan2(road.X - w.X, road.Z - w.Z));
+                    picks.Add((w, yaw));
+                    chosen.Add(w);
+                    break;   // one spawn per tile at most
+                }
+            }
+            return picks;
+        }
+
+        static bool Near(float ax, float az, float bx, float bz, float r)
+        {
+            float dx = ax - bx, dz = az - bz;
+            return dx * dx + dz * dz < r * r;
+        }
+
         /// <summary>Place every road tile and building of the last GenerateIsland through the editor's own
         /// object placer, so the result is selectable, movable and saves with the map like anything a human
         /// dragged in. Returns what actually landed -- a name the catalogue does not know returns null from
