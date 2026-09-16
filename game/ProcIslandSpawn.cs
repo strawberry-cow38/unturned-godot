@@ -77,6 +77,19 @@ namespace UnturnedGodot
         /// belongs a few centimetres above it, not embedded in it.</summary>
         public const float RoadPropLift = 0.06f;
 
+        /// <summary>How far a BUILDING sits above the ground (strawberry: "all buildings need to be lifted off
+        /// the ground an amount"). A touch more than a road prop's lift: a building's base is a bigger, flatter
+        /// face pressed against the terrain, so it has more area to z-fight over, and unlike a road it reads
+        /// fine sitting a little proud.</summary>
+        public const float BuildingLift = 0.12f;
+
+        /// <summary>Where a BUILDING sits: on the town's flat pad, lifted clear of it.</summary>
+        public static Vector3 BuildingPosFor(Terrain terr, float px, float pz)
+        {
+            var c = PosFor(terr, px, pz);
+            return new Vector3(c.X, c.Y + BuildingLift, c.Z);
+        }
+
         /// <summary>Where a road TILE sits: on the town's flat pad, lifted clear of it.
         ///
         /// ⭐ This used to hunt the highest point under the tile's own footprint, because the ground under a
@@ -104,6 +117,57 @@ namespace UnturnedGodot
         /// moved to 8 m joints while the probe still sampled 20 m ones, and the "worse" reading was the
         /// instrument, not the road.</summary>
         public const int RouteJointStride = 2;   // ~8 m between joints
+
+        /// <summary>What the road kit actually laid, and how much of it opens onto nothing.
+        ///
+        /// strawberry: "roads cannot have exposed non-cap ends exposed to 'air' (not connected to a road)" and
+        /// "prevent road quads being spammed in towns (there are entire towns of road quads and nothing else)".
+        /// Both are claims about the MIX of pieces, so the mix is what gets counted -- rewriting selection logic
+        /// on a hunch about which rule misfires is how the wrong rule gets tightened.
+        ///
+        /// An EXPOSED END is an arm of a non-cap piece pointing at a lattice cell that has no tile in it. Caps
+        /// are exempt: terminating a run is their whole job.</summary>
+        static void ReportPieces(Terrain terr)
+        {
+            if (terr?.IslandTiles == null) return;
+            var counts = new System.Collections.Generic.Dictionary<ProcIsland.RoadPiece, int>();
+            foreach (var t in terr.IslandTiles) { counts.TryGetValue(t.Piece, out int c); counts[t.Piece] = c + 1; }
+            // ⚠ NEIGHBOURS BY DISTANCE, NOT BY A RECONSTRUCTED LATTICE INDEX. The obvious probe rounds
+            // t.X / TileSize into a grid -- but a monument's tiles are laid at poi.X + k*TileSize and poi.X is
+            // NOT a multiple of TileSize, so every town sits on its own sub-lattice and a shared integer grid
+            // puts neighbouring tiles in non-adjacent cells. That probe reports phantom exposed arms, which is
+            // an instrument failure wearing the shape of the bug it is looking for.
+            // Arms per piece, in lattice steps, before the tile's own yaw is applied.
+            int exposed = 0, checkedArms = 0;
+            foreach (var t in terr.IslandTiles)
+            {
+                int armCount = t.Piece switch
+                {
+                    ProcIsland.RoadPiece.Quad => 4,
+                    ProcIsland.RoadPiece.Tee => 3,
+                    ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.Turn => 2,
+                    _ => 0,   // caps terminate on purpose
+                };
+                if (armCount == 0) continue;
+                int here = 0;
+                foreach (var o in terr.IslandTiles)
+                {
+                    float dx = o.X - t.X, dz = o.Z - t.Z;
+                    // one tile step away, cardinally: 24 m along one axis and ~0 on the other
+                    bool xStep = Mathf.Abs(Mathf.Abs(dx) - 24f) < 2f && Mathf.Abs(dz) < 2f;
+                    bool zStep = Mathf.Abs(Mathf.Abs(dz) - 24f) < 2f && Mathf.Abs(dx) < 2f;
+                    if (xStep || zStep) here++;
+                }
+                // A piece with more arms than it has neighbours is opening at least that many onto air.
+                if (armCount > here) exposed += armCount - here;
+                checkedArms += armCount;
+            }
+            var parts = new System.Collections.Generic.List<string>();
+            int total = terr.IslandTiles.Count;
+            foreach (var kv in counts) parts.Add($"{kv.Key} {kv.Value} ({(total > 0 ? kv.Value * 100 / total : 0)}%)");
+            Log.Print($"[island-pieces] {string.Join(", ", parts)}");
+            Log.Print($"[island-pieces] {exposed} arm(s) of {checkedArms} open onto air (caps excluded)");
+        }
 
         /// <summary>UG_CLIPDBG=1: measure what is actually clipping, instead of guessing at it again.
         ///
@@ -205,6 +269,7 @@ namespace UnturnedGodot
             // up to 39 m across (Medic_1). A radius picked by eye against a mesh you have not measured is just
             // a number that looked reasonable in a comment.
             const float RoadHalf = 8f;       // = ProcIsland.HalfCarriageway; the carriageway is 16 m wide
+            const float TileSpan = 24f;      // = ProcIsland.TileSize -- the prop mesh measures exactly 24.00 x 24.00
             // ⚠ THE BORDER IS PER-KIND, not one shared number. It started shared "so they match" and they
             // should not: strawberry, looking at the render, "road splines need to be a bit wider, buildings
             // need a lil less". A roadside shoulder and a building's cleared plot are different things and
@@ -215,11 +280,17 @@ namespace UnturnedGodot
             const float RouteHalf = 9f;      // the ribbon itself, widened with the shoulder
             int tiles = 0, builds = 0, sized = 0, routePts = 0;
 
+            // ⚠ SQUARES, NOT CIRCLES, and this was a real bug: a road tile is a 24 m SQUARE, so its corner is
+            // 12*sqrt(2) = 16.97 m from centre while the circle I was painting reached 12.5 m. That left 4.47 m
+            // of diagonal bare at EVERY corner -- a diamond of grass at every joint between tiles, which is
+            // exactly where strawberry saw it ("weird patches of grass ... seems to be along the joints").
+            // Worse than cosmetic: the scatter reads the splat, so those diamonds were the one place in a town
+            // that grew grass and trees, under the road.
             if (terr.IslandTiles != null)
                 foreach (var t in terr.IslandTiles)
                 {
                     var w = PosFor(terr, t.X, t.Z);
-                    terr.PaintSplat(w.X, w.Z, RoadHalf + TileBorder, DirtLayer); tiles++;
+                    PaintFootprint(terr, w, t.YawDeg, TileSpan, TileSpan, TileBorder); tiles++;
                 }
 
             if (terr.IslandBuildings != null)
@@ -467,8 +538,9 @@ namespace UnturnedGodot
             }
             foreach (var b in terr.IslandBuildings)
             {
-                if (objs.Place(b.Prop, PosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
+                if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
             }
+            ReportPieces(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);
         }
