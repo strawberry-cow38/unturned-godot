@@ -44,28 +44,51 @@ namespace UnturnedGodot
             return (v.X, -v.Z);   // world -> ProcIsland's frame, which negates Z
         }
 
-        /// <summary>Where a road TILE sits: the HIGHEST ground under its own 24 m footprint, not the height at
-        /// its centre.
+        /// <summary>Where a spline JOINT sits: on the highest ground it spans, lifted clear.
         ///
-        /// ⚠ A road tile is a flat quad, and only terrain ABOVE it clips through it -- terrain below leaves a
-        /// gap nobody can see. Seating it on the centre sample means every high corner of its footprint pokes
-        /// through the surface; seating it on the maximum means nothing can. Measured on seed 12345, the
-        /// ground rose above a centre-seated quad by up to 2.88 m.
-        /// This is the fix that CANNOT fight anything else: it moves the PROP, not the terrain, so it cannot
-        /// re-bury a carved route the way raising ground under the tiles did (see FlattenUnderTiles' note).
-        /// The cost is a tile floating a little over a hollow, which is the invisible half of the trade.</summary>
-        public static Vector3 TilePosFor(Terrain terr, float px, float pz)
+        /// ⭐ Same principle that took the tiles to zero, applied to the other kind of road: ONLY TERRAIN ABOVE
+        /// A SURFACE CLIPS THROUGH IT. A joint seated on the ground exactly at its own point leaves the ribbon
+        /// free to pass below any bump between it and the next joint -- and the ribbon is a smooth curve while
+        /// the ground is not, so there is always something between them. Seating each joint on the local
+        /// maximum lifts the whole chord above what it spans.
+        /// ⚠ The radius is a little over half the joint spacing, so consecutive joints' samples OVERLAP.
+        /// Sampling only at the joint leaves the midpoint of every segment unconsidered, which is exactly where
+        /// the clipping was measured.</summary>
+        public static Vector3 JointPosFor(Terrain terr, float px, float pz)
         {
-            const float Half = 12f;   // ProcIsland.TileSize * 0.5
+            const float R = 5f;   // joints are ~8 m apart; this reaches past the midpoint from both sides
             var c = PosFor(terr, px, pz);
             float top = c.Y;
             for (int dx = -1; dx <= 1; dx++)
                 for (int dz = -1; dz <= 1; dz++)
                 {
-                    float h = PosFor(terr, px + dx * Half, pz + dz * Half).Y;
+                    float h = PosFor(terr, px + dx * R, pz + dz * R).Y;
                     if (h > top) top = h;
                 }
-            return new Vector3(c.X, top, c.Z);
+            return new Vector3(c.X, top + RoadPropLift, c.Z);
+        }
+
+        /// <summary>How far a road prop sits ABOVE the ground it is laid on.
+        ///
+        /// ⚠ NOT ZERO, and zero is what was wrong. Seating the quad exactly on the terrain makes two coplanar
+        /// surfaces at the same depth, and the depth buffer then picks between them per-pixel -- the terrain
+        /// shows THROUGH the road in a shifting speckle. strawberry: "the 'road surface' that its measuring is
+        /// z fighting with the terrain under it". A prop is a physical object lying on the ground, so it
+        /// belongs a few centimetres above it, not embedded in it.</summary>
+        public const float RoadPropLift = 0.06f;
+
+        /// <summary>Where a road TILE sits: on the town's flat pad, lifted clear of it.
+        ///
+        /// ⭐ This used to hunt the highest point under the tile's own footprint, because the ground under a
+        /// town was not level and a flat quad had to clear whatever rose through it. FlattenTownsExactly makes
+        /// the footprint exactly level, so there is nothing to hunt -- and because every tile samples the same
+        /// flat pad, they all come back with the SAME height, which is what stops neighbouring 24 m pieces
+        /// disagreeing at their shared edges. The fix for the overlap is the flat ground, not a rule about
+        /// props.</summary>
+        public static Vector3 TilePosFor(Terrain terr, float px, float pz)
+        {
+            var c = PosFor(terr, px, pz);
+            return new Vector3(c.X, c.Y + RoadPropLift, c.Z);
         }
 
         /// <summary>The world position of a ProcIsland (x, z) pair, dropped onto the terrain.</summary>
@@ -104,7 +127,7 @@ namespace UnturnedGodot
                     // invisible, the quad simply floats over a gap. Reporting spread made a lower-only fix look
                     // like a regression (6.31 m "worse") while the thing that actually clips had improved. The
                     // tile is placed at its CENTRE height, so what clips is how far the ground rises above that.
-                    var c = TilePosFor(terr, t.X, t.Z);   // measure against where the tile IS, not where it used to be
+                    var c = TilePosFor(terr, t.X, t.Z);   // measure against where the tile IS, lift included
                     float rise = 0f;
                     for (int dx = -1; dx <= 1; dx++)
                         for (int dz = -1; dz <= 1; dz++)
@@ -127,8 +150,8 @@ namespace UnturnedGodot
                     if (route.Points == null || route.Points.Count < Stride + 1) continue;
                     for (int i = 0; i + Stride < route.Points.Count; i += Stride)
                     {
-                        var a = PosFor(terr, route.Points[i].X, route.Points[i].Y);
-                        var b = PosFor(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y);
+                        var a = JointPosFor(terr, route.Points[i].X, route.Points[i].Y);   // where the ribbon IS, lift included
+                        var b = JointPosFor(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y);
                         for (int k = 1; k < Stride; k++)
                         {
                             float f = k / (float)Stride;
@@ -300,10 +323,10 @@ namespace UnturnedGodot
                 for (int i = 0; i < route.Points.Count; i += Stride)
                 {
                     var p = route.Points[i];
-                    pts.Add(PosFor(terr, p.X, p.Y));   // route points are in ProcIsland's 2D frame; PosFor negates Z and drops it on the ground
+                    pts.Add(JointPosFor(terr, p.X, p.Y));
                 }
                 var last = route.Points[^1];
-                var lastW = PosFor(terr, last.X, last.Y);
+                var lastW = JointPosFor(terr, last.X, last.Y);
                 if (pts.Count == 0 || pts[^1].DistanceTo(lastW) > 0.01f) pts.Add(lastW);
                 if (pts.Count < 2) { skipped++; continue; }
 

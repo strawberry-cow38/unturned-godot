@@ -502,12 +502,16 @@ void fragment() {
             for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors));
             _islandBuildings.Clear();
             for (int i = 0; i < pois.Count; i++) _islandBuildings.AddRange(ProcIsland.PlaceBuildings(i, pois[i], _islandTiles, pars));
+            // TOWNS FIRST, THEN ROUTES, each owning its own ground instead of layering and fighting.
+            // Flatten() levels the pads early and Smooth() then blurs the whole grid, so a pad is no longer
+            // flat by the time anything is placed on it -- this re-levels each footprint EXACTLY, and
+            // CarveRoutes below skips every cell inside one.
+            // ⚠ THE OTHER ORDER WAS TRIED AND MEASURED. Carving first and flattening after erased the corridor
+            // where a route enters a town, and the splines' worst rise went 0.31 m -> 2.73 m. Layering these
+            // two in either order has one undoing the other; giving each its own territory is what stops it.
+            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois);
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
-            // AFTER the routes: a route carves through a monument near its gates, so levelling the tiles first
-            // would just have them re-cut. Town road props are flat 24 m quads and nothing had ever flattened
-            // the ground under one -- measured at 6.44 m of spread across a single tile's footprint.
-            ProcIsland.FlattenUnderTiles(_grid, _gw, _gh, _islandTiles);
             RebuildAll();
             return pois;
         }

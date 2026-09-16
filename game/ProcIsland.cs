@@ -616,14 +616,14 @@ namespace UnturnedGodot
                 var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p));
                 if (pts.Count >= 2) routes.Add(new Route(links[li].Kind, pts));
             }
-            foreach (var r in routes) Carve(grid, gw, gh, r, p);
+            foreach (var r in routes) Carve(grid, gw, gh, r, p, pois);
             // ⚠ AFTER every carve, not inside one. Routes cross and run alongside each other, and a smoothing
             // pass folded into Carve would be re-cut by the next route through the same cells -- the same
             // reason Smooth() runs after all the pads rather than per-pad. This is the "slight smoothing pass"
             // proper: the carve lands each grid sample on its own lerp toward the profile, which leaves a
             // low-amplitude ripple between adjacent samples that a wide flat ribbon sitting on top shows up
             // as speckled clipping.
-            foreach (var r in routes) SmoothCorridor(grid, gw, gh, r);
+            foreach (var r in routes) SmoothCorridor(grid, gw, gh, r, pois);
             return routes;
         }
 
@@ -792,7 +792,24 @@ namespace UnturnedGodot
         /// path. The profile is smoothed first, so the road gets a steady gradient instead of inheriting every
         /// bump the ground had -- levelling each point to its own local height would carve a road that is
         /// perfectly flat crosswise and still a staircase lengthwise.</summary>
-        static void Carve(float[,] grid, int gw, int gh, Route r, Params p)
+        /// <summary>True if this grid cell is inside a town's exactly-flattened footprint.
+        /// ⚠ Carving must not touch it. The town is flattened FIRST and is the last word on that ground -- a
+        /// route cutting a channel back through it is what made neighbouring road props disagree about their
+        /// height. Outside the footprint the route owns the ground; inside, the town does. Ordering the two
+        /// passes and giving each its own territory is what stops them undoing each other, which layering them
+        /// in either order never did.</summary>
+        static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)
+        {
+            if (pois == null) return false;
+            foreach (var poi in pois)
+            {
+                float inner = poi.HalfSize + TileSize * 0.5f + HalfCarriageway;
+                if (Mathf.Max(Mathf.Abs(wx - poi.X), Mathf.Abs(wz - poi.Z)) <= inner) return true;
+            }
+            return false;
+        }
+
+        static void Carve(float[,] grid, int gw, int gh, Route r, Params p, System.Collections.Generic.List<Poi> pois)
         {
             const float Unit = 4f;
             int m = r.Points.Count;
@@ -834,6 +851,7 @@ namespace UnturnedGodot
                         float dx = x * Unit - r.Points[i].X, dy = y * Unit - r.Points[i].Y;
                         float d = Mathf.Sqrt(dx * dx + dy * dy);
                         if (d > shoulder) continue;
+                        if (InsideTown(x * Unit, y * Unit, pois)) continue;   // the town owns its own ground
                         float w = d <= half ? 1f : 1f - Mathf.SmoothStep(half, shoulder, d);
                         float want = ToGrid(sm[i]);
                         // MAX, not assign: consecutive path points overlap, and a plain lerp lets a later point
@@ -844,52 +862,49 @@ namespace UnturnedGodot
             }
         }
 
-        /// <summary>Flatten the ground under each town road TILE to that tile's own height.
+        /// <summary>Make each town's footprint EXACTLY flat, as the last word on that ground.
         ///
-        /// ⚠ MEASURED, NOT GUESSED, and the measurement reversed the ranking. A road tile is a flat 24 m quad
-        /// dropped at its CENTRE height, and nothing had ever levelled the ground beneath one -- only routes
-        /// were carved. Sampling the nine points of each tile's footprint on seed 12345: worst spread 6.44 m,
-        /// mean 1.08 m across 126 tiles. Six metres of terrain through a flat quad. The splines' worst rise
-        /// between joints was 0.84 m over the same island, so tiles were the problem by roughly eight to one
-        /// and the obvious suspect (spline joint spacing) was the smaller half.
+        /// strawberry: "the generator should plot the town and town size in the terrain phase, perfectly
+        /// flattening it over the entire footprint. all road props should be at the same vertical position
+        /// within each town."
         ///
-        /// Runs AFTER CarveRoutes, because a route carves through the monument near its gates and would
-        /// otherwise re-cut the tiles it had just levelled.
+        /// ⚠ "PERFECTLY" IS THE REQUIREMENT AND IT IS WHY THIS RUNS LAST. Flatten() already levels a pad, but
+        /// Smooth() box-blurs the whole grid afterwards and CarveRoutes then cuts corridors through the
+        /// monument near its gates -- so by the time anything is placed, the "flat" pad has a blurred rim and
+        /// carved channels in it. A pad that is flattened and then edited is not flat, and the difference is
+        /// exactly the millimetres a 24 m quad turns into a visible seam.
         ///
-        /// ⚠ Each tile is levelled to ITS OWN centre, not to one town-wide height: the pad is flat so
-        /// neighbours agree anyway, and keeping it per-tile means this still does the right thing on a monument
-        /// whose pad is ever allowed to slope, rather than silently stamping a plateau.</summary>
-        public static void FlattenUnderTiles(float[,] grid, int gw, int gh, System.Collections.Generic.List<MonumentTile> tiles)
+        /// ASSIGNED, NOT LERPED, inside the footprint: every cell takes the pad height outright. A weighted
+        /// blend leaves a gradient that is small, real, and enough to make neighbouring road props disagree
+        /// about their height -- which is the overlap between pieces. The graded skirt lives entirely OUTSIDE
+        /// the footprint, where nothing is placed.
+        ///
+        /// ⭐ This is also what makes "all road props at the same vertical position" fall out for free rather
+        /// than being enforced separately: on ground that is exactly level, sampling the terrain under each
+        /// tile returns the same number for every tile in the town.</summary>
+        public static void FlattenTownsExactly(float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois)
         {
-            if (tiles == null) return;
+            if (pois == null) return;
             const float Unit = 4f;
-            const float Half = TileSize * 0.5f;            // the quad's own reach, 12 m
-            const float Inner = Half + HalfCarriageway;    // ...plus the carriageway overhang the prop draws
-            const float Outer = Inner * 1.45f;             // graded skirt, or every tile stamps a visible step
-            int rad = Mathf.CeilToInt(Outer / Unit) + 1;
-            foreach (var t in tiles)
+            foreach (var poi in pois)
             {
-                int cx = Mathf.RoundToInt(t.X / Unit), cy = Mathf.RoundToInt(t.Z / Unit);
-                float target = grid[Mathf.Clamp(cx, 0, gw - 1), Mathf.Clamp(cy, 0, gh - 1)];
+                float target = ToGrid(poi.GroundY);
+                // The footprint must contain the outermost road prop: BuildMonument's furthest tile CENTRE is at
+                // (n-1)*TileSize/2, so its far edge is half a tile beyond that, and the prop's own carriageway
+                // overhangs further still.
+                float inner = poi.HalfSize + TileSize * 0.5f + HalfCarriageway;
+                float outer = inner * 1.5f;
+                int rad = Mathf.CeilToInt(outer / Unit) + 1;
+                int cx = Mathf.RoundToInt(poi.X / Unit), cy = Mathf.RoundToInt(poi.Z / Unit);
                 for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
                     for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
                     {
-                        // Chebyshev: the tile is a SQUARE, and a radial falloff would leave its corners proud.
-                        float d = Mathf.Max(Mathf.Abs(x * Unit - t.X), Mathf.Abs(y * Unit - t.Z));
-                        if (d > Outer) continue;
-                        float w = d <= Inner ? 1f : 1f - Mathf.SmoothStep(Inner, Outer, d);
-                        // ⚠ LOWER ONLY. Two reasons, and the second one is a bug I caused and measured.
-                        // 1. ONLY TERRAIN ABOVE A SURFACE CLIPS THROUGH IT. Ground below the quad leaves an
-                        //    invisible gap; ground above it pokes through. So cutting high spots is the entire
-                        //    job and filling hollows buys nothing you can see.
-                        // 2. This pass runs after CarveRoutes, and a plain Lerp RAISED the carved corridor back
-                        //    up where a route passes a monument's gate -- re-burying the road the carve had just
-                        //    cleared. Measured: the splines' worst rise went 0.84 m -> 2.99 m when this landed,
-                        //    while their clipping SAMPLE COUNT fell. Fewer, worse spikes is the signature of one
-                        //    pass undoing another, not of a scatter getting rougher.
-                        // Same hazard the Carve loop already calls out ("a later point undoes an earlier one's
-                        //    cut"), reached from the other direction.
-                        grid[x, y] = Mathf.Min(grid[x, y], Mathf.Lerp(grid[x, y], target, w));
+                        // Chebyshev, because the pad is a SQUARE (see Poi.HalfSize) and a radial test would
+                        // leave its corners unflattened -- which is precisely where the corner tiles sit.
+                        float d = Mathf.Max(Mathf.Abs(x * Unit - poi.X), Mathf.Abs(y * Unit - poi.Z));
+                        if (d > outer) continue;
+                        if (d <= inner) grid[x, y] = target;                       // EXACT
+                        else grid[x, y] = Mathf.Lerp(grid[x, y], target, 1f - Mathf.SmoothStep(inner, outer, d));
                     }
             }
         }
@@ -898,7 +913,7 @@ namespace UnturnedGodot
         /// and the effect fades out at the shoulder -- blurring to a hard edge would just move the discontinuity
         /// outwards. Two light passes rather than one heavy one: a single wide kernel flattens the corridor into
         /// a trough that reads as a trench from the side.</summary>
-        static void SmoothCorridor(float[,] grid, int gw, int gh, Route r)
+        static void SmoothCorridor(float[,] grid, int gw, int gh, Route r, System.Collections.Generic.List<Poi> pois)
         {
             float half = HalfWidthFor(r.Kind), shoulder = half * 2.2f;
             const float Unit = 4f;
@@ -915,6 +930,7 @@ namespace UnturnedGodot
                             float dx = x * Unit - pt.X, dy = y * Unit - pt.Y;
                             float d = Mathf.Sqrt(dx * dx + dy * dy);
                             if (d > shoulder) continue;
+                            if (InsideTown(x * Unit, y * Unit, pois)) continue;   // ...and must not be blurred back out of level
                             float w = d <= half ? 1f : 1f - Mathf.SmoothStep(half, shoulder, d);
                             float avg = (src[x, y] + src[x - 1, y] + src[x + 1, y] + src[x, y - 1] + src[x, y + 1]) * 0.2f;
                             grid[x, y] = Mathf.Lerp(grid[x, y], avg, w * 0.6f);
