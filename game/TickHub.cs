@@ -40,14 +40,28 @@ namespace UnturnedGodot
             // an oversight, it is the design: RunFrames drops a node the moment IsInstanceValid goes false, so a
             // QueueFree'd registrant cleans itself up and almost nothing needs an _ExitTree. What that does NOT
             // catch is a node that is still ALIVE and belongs to a world that is gone -- nothing prunes it, and
-            // it keeps running its tick against the next test's state. Three order-dependent L1 failures share
-            // that signature (vehicle.trailers, tank.differential_steer, inv.hold_transfer: each green alone at
-            // the exact seed it fails at in suite), and a leak scan found TickHub._procs carrying residue across
-            // an inv slice it had no business in.
+            // it keeps running its tick against the next test's state.
             //
-            // Clearing HERE rather than in the test harness on purpose: it is keyed to the real event ("the hub
-            // is being rebuilt, therefore the world it served is gone"), so it holds for a map change in the
-            // shipped game exactly as it does between two tests, and it cannot be forgotten by a harness that
+            // ⚠⚠ THIS DOES NOT REACH THE L1 SUITE, and the commit that added it claimed otherwise. Corrected
+            // 2026-09-16 by tinyclaw, verified here: the hub is added to tree.Root (below), TestHost.EndTest
+            // frees only _sandbox, and NOTHING in game/testing frees or nulls _inst. So across one L1 boot the
+            // hub is built once and lives forever, this clear runs once at the first registration, and the lists
+            // it is meant to clear are exactly the ones it never reaches again. It is right for the SHIPPED game
+            // -- map change -> ReloadCurrentScene -> hub freed -> rebuilt -> cleared -- and structurally unable
+            // to touch the three order-dependent L1 reds (vehicle.trailers, tank.differential_steer,
+            // inv.hold_transfer) it was written for. Those remain unexplained.
+            //
+            // ⚠ AND THE NUMBER THAT MADE THAT THEORY LOOK MEASURED WAS A SINGLETON. A leak scan showed _procs at
+            // a baseline of 1 entering an inv slice, read as residue. It is Main: Main.cs:231 registers at boot,
+            // outside the sandbox, and must survive every reset -- as do GameAudio.cs:419 and SimDriver.cs:11.
+            // The same scan's 1 -> 10 -> 1 RETURNS to that baseline, which is the harness cleaning up correctly.
+            // A real leak here is a count that does NOT return, or an entry whose node is under a freed sandbox.
+            // ⚠ For the same reason, a wholesale clear from ResetGlobals would deregister Main after the first
+            // test and it would never tick again; the shape that works is RemoveUnder(sandbox) from EndTest.
+            //
+            // Clearing HERE rather than in the test harness: it is keyed to the real event ("the hub is being
+            // rebuilt, therefore the world it served is gone"), which is a real event in the GAME, and it cannot
+            // be forgotten by a harness that
             // does not know about a future registrant. Ensure() runs BEFORE the caller's own Add (see AddProcess
             // et al), so the registrant asking for the new hub survives its own clear.
             _ticks.Clear(); _procs.Clear(); _phys.Clear(); _physLate.Clear();
