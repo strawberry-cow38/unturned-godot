@@ -219,15 +219,28 @@ namespace UnturnedGodot
         /// pitch the gun branch was deliberately built without.</summary>
         public static Vector3 BarrelFixDeg = new Vector3(0f, 0f, -90f);
 
+        Vector3 _spinPivot;   // the assembly's mount point in gun-local space -- what it turns ABOUT
+
+        /// <summary>Pose the assembly: aim it, spin it, and keep it attached.
+        ///
+        /// ORDER MATTERS twice over. The fix is applied OUTSIDE the spin, so the cluster turns about its OWN long
+        /// axis (+Y in mesh space, where the six tubes lie) and the quarter-turn then aims that axis -- composing
+        /// the other way spins it about whatever the fix left pointing up. And the whole thing rotates about the
+        /// PIVOT, not the origin: `p' = P + R(p - P)`, i.e. Transform(R, P - R*P). A rotation about the origin
+        /// would translate a part that does not straddle it, which is how the barrel ended up beside the gun
+        /// instead of on the end of it.</summary>
+        void ApplySpinBasis()
+        {
+            var r = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f))
+                  * Basis.FromEuler(new Vector3(0f, _spinAngle, 0f));
+            _spinBarrel.Transform = new Transform3D(r, _spinPivot - r * _spinPivot);
+        }
+
         public void DriveSpinBarrel(float turns, double delta)
         {
             if (!HasSpinBarrel) return;
             _spinAngle = Mathf.Wrap(_spinAngle + turns * Mathf.Tau * (float)delta, 0f, Mathf.Tau);
-            // ORDER MATTERS: the fix is applied OUTSIDE the spin, so the cluster still turns about its OWN long
-            // axis (+Y in mesh space, where the six tubes lie) and the quarter-turn then aims that axis. Composing
-            // the other way round would spin it about whatever axis the fix happened to leave pointing up.
-            _spinBarrel.Basis = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f))
-                              * Basis.FromEuler(new Vector3(0f, _spinAngle, 0f));
+            ApplySpinBasis();
         }
         public bool IntegralSight => _gunTxt != null && _gunTxt.Contains("augewehr");   // aug: built-in 4x scope is part of the gun -- no detachable/replaceable Sight slot (master)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
@@ -840,7 +853,15 @@ namespace UnturnedGodot
                         var smi = new MeshInstance3D { Mesh = spinMesh, MaterialOverride = mat };
                         att.AddChild(smi);
                         _spinBarrel = smi;
-                        smi.Basis = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f));   // parked pose: the fix applies before anything spins
+                        // ⚠ THE PIVOT IS THE BARREL'S OWN MOUNT, NOT THE GUN ORIGIN. The assembly sits at
+                        // y 0.150..1.036 -- ABOVE the receiver, not around it -- so rotating it about (0,0,0)
+                        // does not aim it, it CARRIES it: the cluster swings off to one side and sits there as a
+                        // second object floating beside the gun. strawberry, looking at exactly that: "its still
+                        // 2". Pivoting at the base keeps it bolted to the receiver while it turns.
+                        // Measured off the mesh (its own min-Y) rather than written as a constant, so a re-cut
+                        // assembly brings its own mount with it.
+                        _spinPivot = new Vector3(0f, spinMesh.GetAabb().Position.Y, 0f);
+                        ApplySpinBasis();   // parked pose: the fix applies before anything spins
                         Log.Print($"[vm] {barrelTxt} is a spinning assembly ({spinMesh.GetAabb().Size})");
                     }
                     // THE HELD MODEL IS NOT ONE PIECE. Retail's equipable.prefab carries Model_0..n plus Bone_0..n,
@@ -1025,9 +1046,14 @@ namespace UnturnedGodot
                     // barrel USED to point, which is the sort of thing nobody traces for a month. Same matrix, so
                     // the two cannot drift; identity for every gun without a spinning assembly. (tinyclaw spotted
                     // this before I shipped it.)
-                    var muzzle = _spinBarrel != null
-                        ? Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f)) * gv.MuzzleHook
-                        : gv.MuzzleHook;
+                    // ...and about the SAME pivot, or it lands where a rotation-about-origin would have put the
+                    // barrel rather than where the barrel actually is.
+                    var muzzle = gv.MuzzleHook;
+                    if (_spinBarrel != null)
+                    {
+                        var rFix = Basis.FromEuler(BarrelFixDeg * (Mathf.Pi / 180f));
+                        muzzle = _spinPivot + rFix * (gv.MuzzleHook - _spinPivot);
+                    }
                     _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = muzzle, Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
