@@ -95,6 +95,8 @@ namespace UnturnedGodot
         const float HotbarCellMin = 44f, HotbarCellMax = 112f;
         const float HotbarBottomGap = 18f;
 
+        const float StatusSz = 40f, StatusStride = 46f, StatusGap = 8f;   // the status row, laid out off VitalsTopGap
+
         const float VitalTweenRate = 6f;      // 1/s exponential approach -- ~0.17 s to close most of a gap
         const float VitalSnapEps = 0.002f;    // ...and land exactly, so a bar actually reaches full/empty
         readonly System.Collections.Generic.List<BipolarBar> _bipolar = new();   // temperature: grows from the CENTRE, so it cannot share the one-anchor update the others use
@@ -236,7 +238,15 @@ namespace UnturnedGodot
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
             AddStatus(root, 0, "hud_bleeding.png", () => Player != null && Player.Bleeding);
             AddStatus(root, 1, "hud_broken.png",   () => Player != null && Player.Broken);
-            AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
+            // ⚠ STARVING AND DYING OF THIRST ARE NOT THE SAME ICON (strawberry 2026-09-16: "when dying of thirst,
+            // its showing the starving status icon"). One status covered `Food <= 0 || Water <= 0`, so the game
+            // told you to eat while you were dehydrating -- the worst kind of HUD bug, because it is not silent,
+            // it is confidently wrong. Two statuses now, each on its own condition.
+            AddStatus(root, 2, "hud_starved.png",  () => Player != null && Player.Food  <= 0f);
+            // hud_water.png, the WATER METER's own symbol, not an invented hud_dehydrated.png: there is no such
+            // file, LoadTex returns null for a missing one, and a made-up filename would draw an empty black box
+            // that looks exactly like an icon which never fires. Same reasoning the radiation status below uses.
+            AddStatus(root, 3, "hud_water.png",    () => Player != null && Player.Water <= 0f);
             // virus is now the situational infection METER in the vitals (above), not a binary status icon (master)
             // RADIATION: you are standing in contaminated ground (strawberry 2026-09-11: "add a new radiation
             // effect symbol (the infection one) when in a deadzone"). Reuses hud_virus.png on purpose -- named
@@ -245,7 +255,7 @@ namespace UnturnedGodot
             // hud_virus.png, not a new asset: "(the infection one)" names it, it is the honest symbol now that
             // a deadzone's ONLY effect is infection, and LoadTex returns null for a missing file -- so a
             // made-up filename here would have drawn an empty box and looked like the icon simply never fires.
-            AddStatus(root, 3, "hud_virus.png", () => Player != null && Player.InDeadzone);
+            AddStatus(root, 4, "hud_virus.png", () => Player != null && Player.InDeadzone);
 
             // HOTBAR, bottom-centre (strawberry 2026-08-16: "add a 'hotbar' showing the icons of you primary,
             // secondary slots (providing theres something in those slots) plus whatever item icons for the
@@ -466,8 +476,15 @@ namespace UnturnedGodot
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
         void AddStatus(Control root, int i, string icon, System.Func<bool> on)
         {
+            // ABOVE THE VITALS PANEL, derived from it (strawberry 2026-09-16: "move the status icons to be
+            // properly placed above the vitals panel, horizontally"). The row sat at a hardcoded 132 px off the
+            // bottom while the panel's top is VitalsTopGap -- 233 px before today and 276 after the vitals were
+            // enlarged -- so the icons have been drawing INSIDE the panel, on top of the bars, the whole time.
+            // Reading the panel's own height means they cannot fall behind it again the next time a vital row is
+            // added or the panel is resized; a second hardcoded number would have gone stale on exactly the
+            // change that is already in this commit.
             var box = new Control();
-            Anchor(box, 8f + i * 46f, 132f, 40f, 40f);
+            Anchor(box, VitalsLeft + i * StatusStride, VitalsTopGap + StatusGap, StatusSz, StatusSz);
             var bg = new ColorRect { Color = new Color(0f, 0f, 0f, 0.5f) };
             bg.SetAnchorsPreset(Control.LayoutPreset.FullRect); bg.MouseFilter = Control.MouseFilterEnum.Ignore;
             box.AddChild(bg);
@@ -523,11 +540,12 @@ namespace UnturnedGodot
             }
             for (int k = 3; k <= 9; k++)
             {
-                if (!Player.HotbarBinds.TryGetValue(k, out var loc)) continue;
-                if (loc.page >= inv.items.Length) continue;
-                var pg = inv.items[loc.page];
-                byte idx = pg?.getIndex(loc.x, loc.y) ?? byte.MaxValue;
-                if (idx == byte.MaxValue) continue;   // the bind points at a cell that is now empty -> draw nothing
+                // TryResolveHotbar, not a raw dictionary read: a bind whose item has moved away is DROPPED there
+                // rather than drawn, so the row stops showing a key that would equip the wrong thing.
+                if (!Player.TryResolveHotbar(k, out byte bp, out byte bx, out byte by)) continue;
+                var pg = inv.items[bp];
+                byte idx = pg?.getIndex(bx, by) ?? byte.MaxValue;
+                if (idx == byte.MaxValue) continue;
                 var it = pg.getItem(idx)?.item;
                 if (it != null) entries.Add((k, it.id, it.amount));
             }

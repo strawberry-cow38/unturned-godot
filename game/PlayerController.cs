@@ -2531,15 +2531,55 @@ namespace UnturnedGodot
         }
 
         // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
-        public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y)> HotbarBinds = new();
-        public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); Log.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
+        /// <summary>A bind carries the ITEM it was made against, not just the cell (strawberry 2026-09-16: "the
+        /// 3-10 slot bind binds the SLOT not the item. should bind the item, unbinding when the item moves").
+        /// Binding a CELL means the key follows whatever is in that square afterwards -- bind 5 to your medkit,
+        /// drag the medkit one cell over, and 5 now equips whatever slid into its place. The id is what turns
+        /// that from a silent mis-equip into a bind that knows it is stale.</summary>
+        public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y, ushort id)> HotbarBinds = new();
+
+        public void BindHotbar(int key, byte page, byte x, byte y)
+        {
+            var it = ItemAt(page, x, y);
+            if (it == null) return;   // binding an empty cell would bind the key to nothing and read as "it didn't work"
+            HotbarBinds[key] = (page, x, y, it.id);
+            Log.Print($"[hotbar] key {key} -> item {it.id} at page {page} ({x},{y})");
+        }
+
+        SDG.Unturned.Item ItemAt(byte page, byte x, byte y)
+        {
+            if (Inventory == null || page >= Inventory.items.Length) return null;
+            var pg = Inventory.items[page];
+            byte idx = pg?.getIndex(x, y) ?? byte.MaxValue;
+            return idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
+        }
+
+        /// <summary>Where a hotbar key points, or false if the bind has gone stale -- in which case it is DROPPED
+        /// here, so a key whose item moved stops equipping the stranger that replaced it and stops drawing it on
+        /// the row. Checked on read rather than driven by an inventory event because every move path in the game
+        /// (drag, quick-transfer, server echo, death drop) would otherwise need to remember to fire one, and the
+        /// one that forgot would be the silent mis-equip this exists to prevent.</summary>
+        public bool TryResolveHotbar(int key, out byte page, out byte x, out byte y)
+        {
+            page = x = y = 0;
+            if (!HotbarBinds.TryGetValue(key, out var b)) return false;
+            var it = ItemAt(b.page, b.x, b.y);
+            if (it == null || it.id != b.id)
+            {
+                HotbarBinds.Remove(key);
+                Log.Print($"[hotbar] key {key} unbound -- item {b.id} is no longer at page {b.page} ({b.x},{b.y})");
+                return false;
+            }
+            page = b.page; x = b.x; y = b.y;
+            return true;
+        }
         static int? HotbarSlot(InputEvent e) => Keybinds.HotbarSlot(e);   // shared logic lives in Keybinds so equip + bind-item read one key space
 
         public void EquipHotbar(int n)
         {
             if (n == 1) { EquipFromLocation(0, 0, 0); return; }        // primary slot (page 0)
             if (n == 2) { EquipFromLocation(1, 0, 0); return; }        // secondary slot (page 1)
-            if (HotbarBinds.TryGetValue(n, out var loc)) EquipFromLocation(loc.page, loc.x, loc.y);   // a bound item (3-9)
+            if (TryResolveHotbar(n, out byte bp, out byte bx, out byte by)) EquipFromLocation(bp, bx, by);   // a bound item (3-9), if it is still there
         }
         void EquipFromLocation(byte page, byte x, byte y)
         {
