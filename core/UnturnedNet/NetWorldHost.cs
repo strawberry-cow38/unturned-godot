@@ -185,6 +185,10 @@ namespace UnturnedGodot.Net
             };
             // A ban is checked at the HANDSHAKE, where both handles are first known. Expired entries drop
             // themselves inside IsBanned, so the list cannot grow stale across a long uptime.
+            // ⚠ STILL (ip, name) ON PURPOSE. ServerModeration can match a verified SteamId now, but the
+            // handshake carries no token yet, so there is nothing to pass -- and widening this delegate to
+            // take an id that is always "" would look like the feature was wired when it was not. It joins
+            // here in the same change that puts the token on the wire, not before.
             Session.BanCheck = (ip, name) =>
             {
                 long nowUnix = System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
