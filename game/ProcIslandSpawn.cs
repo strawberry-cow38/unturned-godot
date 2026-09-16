@@ -84,16 +84,22 @@ namespace UnturnedGodot
             // wide (ProcIsland.HalfCarriageway = 8), the monument lattice steps every 24 m, and buildings run
             // up to 39 m across (Medic_1). A radius picked by eye against a mesh you have not measured is just
             // a number that looked reasonable in a comment.
-            const float RoadHalf = 8f;     // = ProcIsland.HalfCarriageway; the carriageway is 16 m wide
-            const float Border = 4.5f;     // master's "+ some border", applied to every kind so they match
-            const float RouteHalf = 7f;    // the between-towns ribbon is narrower than a town street
+            const float RoadHalf = 8f;       // = ProcIsland.HalfCarriageway; the carriageway is 16 m wide
+            // ⚠ THE BORDER IS PER-KIND, not one shared number. It started shared "so they match" and they
+            // should not: strawberry, looking at the render, "road splines need to be a bit wider, buildings
+            // need a lil less". A roadside shoulder and a building's cleared plot are different things and
+            // reading them off one constant was tidiness standing in for a decision.
+            const float TileBorder = 4.5f;   // town street verge
+            const float RouteBorder = 6f;    // between-towns shoulder: wider, it runs through open country
+            const float BuildBorder = 2f;    // a building's plot hugs the walls
+            const float RouteHalf = 9f;      // the ribbon itself, widened with the shoulder
             int tiles = 0, builds = 0, sized = 0, routePts = 0;
 
             if (terr.IslandTiles != null)
                 foreach (var t in terr.IslandTiles)
                 {
                     var w = PosFor(terr, t.X, t.Z);
-                    terr.PaintSplat(w.X, w.Z, RoadHalf + Border, DirtLayer); tiles++;
+                    terr.PaintSplat(w.X, w.Z, RoadHalf + TileBorder, DirtLayer); tiles++;
                 }
 
             if (terr.IslandBuildings != null)
@@ -105,10 +111,10 @@ namespace UnturnedGodot
                     {
                         // "fits the size and shape": a real footprint, Width across by Front+Back deep, turned
                         // the way the building is turned -- not a circle around its origin.
-                        PaintFootprint(terr, w, b.YawDeg, info.Value.Width, info.Value.Front + info.Value.Back, Border);
+                        PaintFootprint(terr, w, b.YawDeg, info.Value.Width, info.Value.Front + info.Value.Back, BuildBorder);
                         sized++;
                     }
-                    else terr.PaintSplat(w.X, w.Z, 10f + Border, DirtLayer);   // prop not in the catalogue -> a skirt, and say so below
+                    else terr.PaintSplat(w.X, w.Z, 10f + BuildBorder, DirtLayer);   // prop not in the catalogue -> a skirt, and say so below
                     builds++;
                 }
 
@@ -121,10 +127,10 @@ namespace UnturnedGodot
                     foreach (var p in route.Points)
                     {
                         var w = PosFor(terr, p.X, p.Y);
-                        terr.PaintSplat(w.X, w.Z, RouteHalf + Border, DirtLayer); routePts++;
+                        terr.PaintSplat(w.X, w.Z, RouteHalf + RouteBorder, DirtLayer); routePts++;
                     }
                 }
-            Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + Border:0.#}m, "
+            Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
                       + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s)");
         }
 
