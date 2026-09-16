@@ -599,9 +599,9 @@ void fragment() {
             _islandLinks = ProcIsland.BuildLinks(pois);
             // Snap BEFORE routing: the routes start at the gates, so moving a gate afterwards would leave the
             // road pointing at where the gate used to be.
-            _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks));
+            _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks), pars.Seed);
             _islandTiles.Clear();
-            for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors));
+            for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors, pars.Seed));
             _islandBuildings.Clear();
             for (int i = 0; i < pois.Count; i++) _islandBuildings.AddRange(ProcIsland.PlaceBuildings(i, pois[i], _islandTiles, pars));
             // TOWNS FIRST, THEN ROUTES, each owning its own ground instead of layering and fighting.

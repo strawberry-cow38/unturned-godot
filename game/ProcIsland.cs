@@ -1368,8 +1368,38 @@ namespace UnturnedGodot
         /// it is a crossroads, a T, a straight, a corner or a dead end, and the dead ends are exactly the cells
         /// where a link leaves. Those get the Cap, ramp outward (strawberry: only Cap props should have
         /// connections, on the ramp side).</summary>
+        /// <summary>Which lattice lines this monument's streets run along -- AVENUES (constant i) and CROSS
+        /// STREETS (constant j), chosen separately and seeded per monument.
+        ///
+        /// ⭐ THIS IS WHY EVERY ISLAND LOOKED THE SAME (strawberry: "idk if the maps are actually random lol.
+        /// they look VERY similar"). The terrain genuinely varies -- every noise call in Fill is seeded, and the
+        /// coastline radius swings between 0.29 and 0.68 of the map -- but the TOWNS did not vary at all. The
+        /// street lines were `for (k = 1; k <= n-2; k += 2)`, which is {1,3} on every 5-tile town and {1} on
+        /// every 3-tile base, symmetric in both axes, on every seed. So the thing a player looks AT closest and
+        /// longest was identical island to island, and a varied coastline underneath does not register against
+        /// that. A generator can be correctly random and still look repetitive if the randomness is all in the
+        /// parts nobody inspects.
+        ///
+        /// Choosing the two axes independently is what buys the shapes: {1,3}x{1,3} is the nine-block grid it
+        /// always was, {2}x{1,3} is a single avenue crossed twice, {1}x{3} is an L of two streets meeting at a
+        /// corner. All still obey the kit -- interior lines only, never adjacent, so whole 24 m tiles survive
+        /// between them as blocks.
+        /// ⚠ PURE, and read by BOTH SnapConnectorsToLattice and BuildMonument. A gate has to land ON a street
+        /// line or its access road runs into the back of a block, so the two cannot each have an opinion.</summary>
+        public static (int[] I, int[] J) StreetPlanFor(int poiIndex, int n, int seed)
+        {
+            if (n < 3) return (System.Array.Empty<int>(), System.Array.Empty<int>());
+            if (n == 3) return (new[] { 1 }, new[] { 1 });   // one interior line; there is no other plan
+            // n >= 5: the interior lines are 1..n-2, and a street may not be adjacent to another or the block
+            // between them disappears. These are the legal sets for n = 5.
+            var sets = new[] { new[] { 1, 3 }, new[] { 1, 3 }, new[] { 2 }, new[] { 1 }, new[] { 3 } };
+            int ai = (int)(Hash01(poiIndex * 131 + 17, 5, seed + 60013) * (sets.Length - 1) + 0.5f);
+            int aj = (int)(Hash01(poiIndex * 197 + 41, 9, seed + 60017) * (sets.Length - 1) + 0.5f);
+            return (sets[Mathf.Clamp(ai, 0, sets.Length - 1)], sets[Mathf.Clamp(aj, 0, sets.Length - 1)]);
+        }
+
         public static System.Collections.Generic.List<MonumentTile> BuildMonument(
-            int poiIndex, Poi poi, System.Collections.Generic.List<Connector> cons)
+            int poiIndex, Poi poi, System.Collections.Generic.List<Connector> cons, int seed = 0)
         {
             int n = TilesFor(poi.Kind);
             var tiles = new System.Collections.Generic.List<MonumentTile>();
@@ -1449,12 +1479,11 @@ namespace UnturnedGodot
             // between them as blocks. n=5 gives lines {1,3}: two avenues each way, nine blocks. n=3 gives {1}:
             // a single crossroads with four corner blocks. Interior only, because a street on line 0 or n-1
             // would run along the footprint edge, and the gates have to be non-corner anyway.
-            var streetLines = new System.Collections.Generic.List<int>();
-            for (int k2 = 1; k2 <= n - 2; k2 += 2) streetLines.Add(k2);
+            var plan = StreetPlanFor(poiIndex, n, seed);
             if (FillsGrid(poi.Kind))
                 for (int i2 = 0; i2 < n; i2++)
                     for (int j2 = 0; j2 < n; j2++)
-                        if (streetLines.Contains(i2) || streetLines.Contains(j2))
+                        if (System.Array.IndexOf(plan.I, i2) >= 0 || System.Array.IndexOf(plan.J, j2) >= 0)
                             skel.Add((i2, j2));
 
             foreach (var kv in exitCells) skel.Add(kv.Key);
@@ -1861,7 +1890,7 @@ namespace UnturnedGodot
         /// centre +/-12, i.e. only ever on a lattice line. Without this the road meets the monument up to 12 m
         /// off the end of the road piece it is supposed to join.</summary>
         public static System.Collections.Generic.List<Connector> SnapConnectorsToLattice(
-            System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Connector> cons)
+            System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Connector> cons, int seed = 0)
         {
             var outp = new System.Collections.Generic.List<Connector>(cons.Count);
             // Group by monument: the placements interact, so they cannot be decided one at a time.
@@ -1960,9 +1989,16 @@ namespace UnturnedGodot
                     // Widening at level >= 1 costs a gate whose inner cell is a block rather than a street,
                     // which the growing pass below then fixes by adding one. That is a much smaller price than
                     // a road that never reaches the town.
+                    // ⚠ THE LINES THIS MONUMENT ACTUALLY HAS, per face. A gate on an X face varies its `ej`
+                    // and its exit cell sits on the grid's EDGE in i, so that cell is a street only if ej is one
+                    // of the CROSS streets; a gate on a Z face is the mirror. Offering a fixed {1,3} to both,
+                    // as this did, was correct exactly while every town had a {1,3}x{1,3} grid -- which is the
+                    // sameness StreetPlanFor exists to end.
                     if (FillsGrid(poi.Kind) && n >= 3 && level == 0)
                     {
-                        for (int k = 1; k <= n - 2; k += 2) { cur[a] = k; Recurse(a + 1); }
+                        var pl = StreetPlanFor(kv.Key, n, seed);
+                        var lines = Mathf.Abs(cons[idxs[a]].DirX) > 0.5f ? pl.J : pl.I;
+                        foreach (int k in lines) { cur[a] = k; Recurse(a + 1); }
                     }
                     else
                     {

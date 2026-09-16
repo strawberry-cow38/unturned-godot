@@ -34,7 +34,11 @@ namespace UnturnedGodot
         // whole point of a deterministic generator -- an island you liked is a number you can write down.
         bool _generateSelected;
         bool _playgroundSelected;   // Playground picked in the map list -> PLAY runs the gun range, not a survival map
-        int _genSeed = 1234;
+        // ⚠ ROLLED, NOT 1234 (strawberry 2026-09-16: "make the default seed NOT 1234, but a random one"). A
+        // constant default means the island everybody sees first is the same island, and "procedurally
+        // generated" is a claim the front door was quietly contradicting. The dice button beside the field
+        // still exists for picking a specific one; this only changes what it starts on.
+        int _genSeed = (int)(GD.Randi() & 0x7FFFFFFF);
         Control _genRow;
         LineEdit _genSeedEdit;
         public System.Action<int> OnGenerateMap;

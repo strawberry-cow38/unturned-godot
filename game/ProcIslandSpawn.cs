@@ -240,6 +240,15 @@ namespace UnturnedGodot
         /// belongs a few centimetres above it, not embedded in it.</summary>
         public const float RoadPropLift = 0.06f;
 
+        /// <summary>⚠ THE PAVEMENT IS 0.40 m ABOVE THE TILE'S ORIGIN, and seating furniture on the TERRAIN
+        /// buried all of it (strawberry: "the trash bags/garbage cans, streetlights, traffic lights, hydrants
+        /// are all sunk into the sidewalks"). Measured off Road_Line_0: in the verge band the mesh has 16
+        /// vertices at local z 0.40, 8 at -1.00 and 4 at 0.00, so the walkable top is the 0.40 plane -- and the
+        /// tile itself already sits RoadPropLift above the pad, so the surface a hydrant should stand on is
+        /// 0.46 m above the ground PosFor returns. A prop here is standing on the ROAD PIECE, not on the field
+        /// it was laid over.</summary>
+        public const float PavementTop = 0.40f;
+
         /// <summary>How far a BUILDING sits above the ground (strawberry: "all buildings need to be lifted off
         /// the ground an amount"). A touch more than a road prop's lift: a building's base is a bigger, flatter
         /// face pressed against the terrain, so it has more area to z-fight over, and unlike a road it reads
@@ -703,7 +712,7 @@ namespace UnturnedGodot
                         // from the corner out over this approach's carriageway. Pointing it along the approach
                         // -- which is what it did -- runs it down the verge, parallel to the traffic, over
                         // nothing.
-                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz),
+                        if (objs.Place("Traffic_Light_0", PavementPos(terr, t, px, pz),
                                        RotFor(ProcIsland.YawForDir(-flank.Item1, -flank.Item2))) != null)
                         { signals++; taken.Add((px, pz)); }
                         else miss++;
@@ -724,8 +733,12 @@ namespace UnturnedGodot
                     side = ((idx & 1) == 0) ? (-a0.z, a0.x) : (a0.z, -a0.x);
                 }
 
-                // ---- STREET LIGHTS: only where there IS a free side ----------------------------------------
-                // A Quad returns (0,0) from FreeSide and gets none, which is master's rule, not a check for it.
+                // ---- STREET LIGHTS: only where there IS a free side, and not at junctions -------------------
+                // A Quad returns (0,0) from FreeSide and gets none, which is master's rule falling out of the
+                // geometry. A Tee has a free side and is excluded by NAME (strawberry, after seeing it: "prevent
+                // street lights spawning on tees now") -- a tee's sidewalk face is also where its traffic signal
+                // stands, and two poles on one short kerb reads as clutter.
+                if (t.Piece != ProcIsland.RoadPiece.Tee && t.Piece != ProcIsland.RoadPiece.TeeCap)
                 {
                     if (side != (0f, 0f))
                     {
@@ -733,7 +746,7 @@ namespace UnturnedGodot
                         if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
                         {
                             // +Y toward the street: the lamp arm reaches over the carriageway, not the verge.
-                            if (objs.Place("Street_Light_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
+                            if (objs.Place("Street_Light_0", PavementPos(terr, t, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
                             { lights++; taken.Add((px, pz)); }
                             else miss++;
                         }
@@ -747,7 +760,7 @@ namespace UnturnedGodot
                     float px = t.X + side.x * VergeAlong(side) + along.x * 6f, pz = t.Z + side.z * VergeAlong(side) + along.z * 6f;
                     if (Free(px, pz, 3f) && TownPropOk(terr, px, pz))
                     {
-                        if (objs.Place("Fire_Hydrant_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
+                        if (objs.Place("Fire_Hydrant_0", PavementPos(terr, t, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
                         { hydrants++; taken.Add((px, pz)); }
                         else miss++;
                     }
@@ -769,7 +782,7 @@ namespace UnturnedGodot
                         string prop = k == 0
                             ? (rng.Next(2) == 0 ? "Dumpster_3" : "Dumpster_4")
                             : (rng.Next(2) == 0 ? "Garbage_0" : "Garbage_1");
-                        if (objs.Place(prop, PosFor(terr, px, pz), RotFor((float)(rng.NextDouble() * 360.0))) != null)
+                        if (objs.Place(prop, PavementPos(terr, t, px, pz), RotFor((float)(rng.NextDouble() * 360.0))) != null)
                         { bins++; taken.Add((px, pz)); }
                         else miss++;
                     }
@@ -779,6 +792,17 @@ namespace UnturnedGodot
             missing += miss;
             Log.Print($"[island-street] {lights} street light(s), {signals} traffic light(s), {hydrants} hydrant(s), {bins} bin(s) on the town verges"
                       + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
+        }
+
+        /// <summary>Where street furniture stands: on the ROAD PIECE's top surface, not on the ground the piece
+        /// was laid over. ⚠ Uses the TILE's seated height, not a terrain sample at the prop's own spot -- the pad
+        /// is exactly flat so the two agree today, and tying it to the tile means they still agree the day it
+        /// is not.</summary>
+        static Vector3 PavementPos(Terrain terr, ProcIsland.MonumentTile t, float px, float pz)
+        {
+            float y = TilePosFor(terr, t.X, t.Z).Y + PavementTop;
+            var w = PosFor(terr, px, pz);
+            return new Vector3(w.X, y, w.Z);
         }
 
         /// <summary>Whether a piece of street furniture can stand here: on a town's own flat pad, clear of the
@@ -949,9 +973,22 @@ namespace UnturnedGodot
                         // left. Yawing by the OUTWARD sign reverses both local axes at once: +Y just runs the
                         // other way along the road, which is invisible on panels that butt end to end, and +X
                         // comes back round to face the carriageway.
+                        // ⚠ TILTED ONTO THE GROUND, not stood bolt upright on it (strawberry: "allow the road
+                        // fences to be rotated on all axis to fit terrain better"). A 16 m barrier panel is long
+                        // enough that a couple of degrees of cross-fall leaves one end buried and the other in
+                        // the air; laying it over the terrain normal puts the whole run on the slope. Same
+                        // composition the boulders use -- tilt * stand, so the yaw happens in the prop's own
+                        // frame before the whole thing is laid over, or turning a panel also changes which way
+                        // it leans.
                         // Fence_Road_0's mesh also runs a metre below its origin, for the same reason.
                         var pos = PosFor(terr, px, pz);
-                        if (objs.Place("Fence_Road_0", pos, RotFor(ProcIsland.YawForDir(tg.X * outward, tg.Y * outward))) != null) fences++;
+                        var fN = terr.NormalAt(px, pz);
+                        var fAxis = Vector3.Up.Cross(fN);
+                        var fStand = RotFor(ProcIsland.YawForDir(tg.X * outward, tg.Y * outward));
+                        var fBasis = fAxis.LengthSquared() < 1e-8f
+                            ? fStand
+                            : new Basis(fAxis.Normalized(), Vector3.Up.AngleTo(fN)) * fStand;
+                        if (objs.Place("Fence_Road_0", pos, fBasis) != null) fences++;
                         else miss++;
                     }
                 }

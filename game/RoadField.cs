@@ -23,7 +23,10 @@ namespace UnturnedGodot
         /// showing through near the edge, and on a slope the edge is exactly where the terrain is furthest from
         /// the centreline sample -- so the lip is what has to reach it. Scaled rather than added, so a material
         /// authored thin stays proportionally thin.</summary>
-        const float DepthScale = 1.6f;
+        /// ⚠ 1.1, down from 1.6 (strawberry: "make the roads less thick vertically"). 1.6 was chosen to hide
+        /// bald patches at the ribbon's edge; the ground under a generated island's roads is now conformed to
+        /// the road itself, so there is nothing left for the lip to hide and it was just a visible slab.
+        const float DepthScale = 1.1f;
         class Joint   // class so the editor can move a vertex/tangent in place
         {
             public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode;
