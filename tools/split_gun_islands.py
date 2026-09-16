@@ -19,14 +19,14 @@ Island 1 is identified by two properties nothing else has: it is symmetric about
 bore) and it reaches furthest forward, to Z +0.317 where every other island stops at +0.110. That is a barrel
 cluster mounted through the receiver, and its symmetry gives the spin axis for free: Z, through (0, 0).
 
-    python split_gun_islands.py <in.txt> <island-index> <part-out.txt> <rest-out.txt>
+    python split_gun_islands.py <in.txt> <island-index[,index...]> <part-out.txt> <rest-out.txt>
 
 Both outputs together contain every face of the input exactly once -- the script asserts it rather than
 trusting it, because a split that quietly drops geometry looks like a modelling choice.
 """
 import sys, collections
 
-src, want, part_out, rest_out = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+src, want, part_out, rest_out = sys.argv[1], [int(x) for x in sys.argv[2].split(",")], sys.argv[3], sys.argv[4]
 lines = open(src).read().splitlines()
 vs, faces = [], []                       # faces: (line index, [vertex indices])
 for li, l in enumerate(lines):
@@ -53,8 +53,8 @@ for _, f in faces:
 groups = collections.defaultdict(list)
 for li, f in faces: groups[find(weld[f[0]])].append(li)
 order = sorted(groups.values(), key=len, reverse=True)
-assert 0 <= want < len(order), f"island {want} out of range (found {len(order)})"
-chosen = set(order[want])
+for w in want: assert 0 <= w < len(order), f"island {w} out of range (found {len(order)})"
+chosen = set().union(*(set(order[w]) for w in want))
 
 def emit(path, keep):
     out = []
@@ -68,6 +68,6 @@ a = emit(part_out, chosen)
 b = emit(rest_out, {li for li, _ in faces} - chosen)
 assert a + b == len(faces), f"faces lost: {a} + {b} != {len(faces)}"
 print(f"[split] {src}: {len(vs)} raw verts, {len(pos)} welded, {len(order)} islands")
-print(f"[split]   island {want} -> {part_out}  ({a} faces)")
+print(f"[split]   islands {want} -> {part_out}  ({a} faces)")
 print(f"[split]   the rest   -> {rest_out}  ({b} faces)")
 print(f"[split]   {a} + {b} == {len(faces)} faces, none lost")
