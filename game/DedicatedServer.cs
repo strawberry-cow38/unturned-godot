@@ -46,7 +46,7 @@ namespace UnturnedGodot
         // MATCHING the singleplayer default above -- if these disagreed, joining a server would silently turn
         // survival off and the same world would play by two different rule sets depending on how you launched it.
         public bool SurvivalDrain = true;
-        public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
+        public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph, mains ON (see the GridSource branch below -- this said "mains OFF" for as long as ovens did not work on dedicated)
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Godot.Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)
 
@@ -208,6 +208,23 @@ namespace UnturnedGodot
                     // A2: a placed gas pump joins its shared station tank + seeds its replicated full percent.
                     if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GasPump)
                         GasStation.RegisterPump(fe, f.StationId, Server.Deployables, Server.Session.CurrentTick);
+                    // ⚠ THE MAINS, which this loop used to leave OFF -- and the header on the Fixtures field
+                    // said so ("mains OFF") without anyone reading it as a defect. "grid mains ON by DEFAULT"
+                    // (master 2026-07-20) was applied to MpLoopback and nowhere else: `ToggledOn = true`
+                    // appeared exactly ONCE in the whole codebase, on the singleplayer path.
+                    //
+                    // The consequence is silent and total. MainsAreUp() is what ServerCooking asks before an
+                    // oven, toaster or microwave is allowed to cook, so on a dedicated server every electric
+                    // appliance sat switched on, in an unpowered building, cooking nothing -- while barbecues
+                    // and campfires, which burn fuel and never consult the mains, worked perfectly. That split
+                    // is what makes it read as "cooking is broken" rather than as "the power is off"
+                    // (strawberry 2026-09-16: "food in the cooking containers is not getting cooked").
+                    //
+                    // ⚠ Set BEFORE any join snapshot composes, exactly as the loopback does: the client derives
+                    // PowerProducing from this replicated bit (GridPowerSource.NetProducingOverride), so a
+                    // joiner whose snapshot was composed first sees dead lights on a live grid.
+                    else if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GridSource)
+                        fe.ToggledOn = true;
                 }
             Server.Transactions.FuelStations = GasStation;   // A2: the ExtractFuel choke drains the tanks through this seam
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades

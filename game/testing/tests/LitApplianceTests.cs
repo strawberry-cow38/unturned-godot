@@ -37,20 +37,26 @@ namespace UnturnedGodot.Testing
             {
                 ("Barbecue_1", 6, false, "BBQ", new Vector3(2f, 0f, 0f), 0f),
                 ("Barbecue_0", 6, false, "BBQ", new Vector3(5f, 0f, 0f), 0f),
+                // ⚠ AN OVEN, because every appliance in this test used to be a barbecue -- so the rule "lit
+                // holds the leaf up" was only ever asserted on the one kind where it is CORRECT, and applied
+                // to all of them. Oven_0 has a real door row (Oven_0_door.obj), so this is a swing that can
+                // actually be measured rather than a no-op that passes either way.
+                ("Oven_0", 17, false, "Stove", new Vector3(8f, 0f, 0f), 0f),
             };
             var loop = new MpLoopback { Player = player, Driver = driver, DayNight = dayNight, Resources = resources,
                                         Containers = manifest, ConsumeDeployables = true };
             World.AddChild(loop);
             yield return Until(() => loop.Client.State == NetSessionState.Connected, 20);
-            yield return Until(() => loop.Server.Cooking.Count >= 2 && loop.Client.Containers.Count >= 2, 20);
-            T.Check($"both barbecues registered and replicated ({loop.Server.Cooking.Count} cookers)", loop.Server.Cooking.Count >= 2);
+            yield return Until(() => loop.Server.Cooking.Count >= 3 && loop.Client.Containers.Count >= 3, 20);
+            T.Check($"both barbecues and the oven registered and replicated ({loop.Server.Cooking.Count} cookers)", loop.Server.Cooking.Count >= 3);
 
-            uint redId = 0, plainId = 0;
+            uint redId = 0, plainId = 0, ovenId = 0;
             foreach (var e in loop.Client.Containers.All)
             {
                 var kind = ContainerSchema.Get(e.KindId);
                 if (kind.Mesh == "Barbecue_1") redId = e.NetIdValue;
                 else if (kind.Mesh == "Barbecue_0") plainId = e.NetIdValue;
+                else if (kind.Mesh == "Oven_0") ovenId = e.NetIdValue;
             }
             T.Check($"found the red bbq ({redId}) and the plain one ({plainId})", redId != 0 && plainId != 0);
             if (redId == 0 || plainId == 0) yield break;
@@ -107,6 +113,35 @@ namespace UnturnedGodot.Testing
             GD.Print($"[lit] doused: swing {red.DebugDoorSwing():0.00}, smoking {red.DebugSmoking}");
             T.Check($"...and the lid comes down when it goes out ({red.DebugDoorSwing():0.00})", red.DebugDoorSwing() < 0.5f);
             T.Check("...and the smoke stops", !red.DebugSmoking);
+
+            // ---- AN OVEN IS NOT A GRILL ---------------------------------------------------------------
+            // strawberry 2026-09-16: "oven door shouldnt stay open for cooking. that was JUST for the bbqs".
+            // The rule came from "make the red bbq lid stay open when its on" and was applied to every cooker,
+            // so an oven cooked with its door hanging open. Everything above this line passed the whole time,
+            // because every appliance in this test was a barbecue.
+            T.Check($"found the oven ({ovenId})", ovenId != 0);
+            if (ovenId == 0) yield break;
+            yield return Until(() => loop.Storage != null && loop.Storage.TryGetNode(ovenId, out _), 20);
+            loop.Storage.TryGetNode(ovenId, out var oven);
+            T.Check("the oven materialized as a node", oven != null);
+            if (oven == null) yield break;
+            T.Check($"the oven has a door to measure ({oven.HasDoors})", oven.HasDoors);
+
+            T.Check("the server lights the oven", loop.Server.Cooking.SetOn(ovenId, true));
+            yield return Until(() => oven.DebugCookerOn, 10);
+            for (int i = 0; i < 60; i++) { oven.TickDoorsForTest(1.0 / 60.0); yield return Ticks(1); }
+            float ovenLit = oven.DebugDoorSwing();
+            GD.Print($"[lit] oven lit: swing {ovenLit:0.00} (bbq lit was {litSwing:0.00})");
+            T.Check($"a lit OVEN keeps its door SHUT ({ovenLit:0.00})", ovenLit < 0.5f);
+
+            // ⚠ And the door is not merely dead: a player opening the panel must still open it. Without this
+            // the fix could be "the oven door never moves", which passes the line above and is a worse bug --
+            // the same trade as suppressing a mesh instead of drawing it once.
+            oven.SetDoorsOpen(true);
+            for (int i = 0; i < 60; i++) { oven.TickDoorsForTest(1.0 / 60.0); yield return Ticks(1); }
+            float ovenOpened = oven.DebugDoorSwing();
+            GD.Print($"[lit] oven panel opened while lit: swing {ovenOpened:0.00}");
+            T.Check($"...but still opens when a player opens the panel ({ovenOpened:0.00})", ovenOpened > 0.5f);
 
             // A LIT APPLIANCE IS ALSO A HEAT SOURCE. Asserted through ThermalField rather than on the
             // ThermalSource's own flag, because the flag being false is a setter working and the question is
