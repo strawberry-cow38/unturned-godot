@@ -607,6 +607,22 @@ namespace UnturnedGodot
         {
             const float Unit = 4f;
             var routes = new System.Collections.Generic.List<Route>();
+            // ⚠ ROADS MUST NOT RUN ALONGSIDE EACH OTHER (strawberry: "they cannot directly cross over eachother,
+            // or overlap along their length (perpendicular intersecting is fine)", and again on the renders:
+            // "you have road splines crossing in the 3rd scree shot").
+            //
+            // ⭐ THE CAUSE IS THAT EACH ROUTE IS SOLVED ALONE. Every route is an A* over the SAME cost field, so
+            // two links whose ends are anywhere near each other find the same cheap valley and travel down it
+            // together, a few metres apart -- not a bug in any one route, an inevitability of solving them
+            // independently. Deleting the loser afterwards would disconnect a town; the fix is to make the
+            // second route KNOW about the first.
+            //
+            // So route them in turn and stamp each finished route's corridor into a penalty field the next A*
+            // adds to its step cost. The asymmetry does the work by itself: crossing a corridor square-on is a
+            // handful of penalised cells and stays affordable, while running parallel pays the penalty for
+            // every cell of the way. Perpendicular intersections survive exactly as master asked, and the
+            // routes that used to pair up are pushed onto their own line instead.
+            var used = new float[gw, gh];
             for (int li = 0; li < links.Count; li++)
             {
                 Connector a = default, b = default;
@@ -618,8 +634,15 @@ namespace UnturnedGodot
                     else { b = c; gb = true; }
                 }
                 if (!ga || !gb) continue;
-                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p));
-                if (pts.Count >= 2) routes.Add(new Route(links[li].Kind, pts));
+                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p, used));
+                if (pts.Count < 2) continue;
+                routes.Add(new Route(links[li].Kind, pts));
+                // ⚠ UG_NOROADPENALTY=1 SKIPS THE STAMP. The penalty and the probe that scores it were written
+                // in the same change, so "0 m in open country" on its own proves nothing -- it is equally
+                // consistent with the penalty working and with there never having been any to find. This is
+                // the control: run the same seed with the stamp off and the number has to come back up, or the
+                // measurement is describing the island rather than the fix.
+                if (!NoRoadPenalty) StampUsed(used, gw, gh, pts);
             }
             foreach (var r in routes) Carve(grid, gw, gh, r, p, pois);
             // ⚠ AFTER every carve, not inside one. Routes cross and run alongside each other, and a smoothing
@@ -629,7 +652,123 @@ namespace UnturnedGodot
             // low-amplitude ripple between adjacent samples that a wide flat ribbon sitting on top shows up
             // as speckled clipping.
             foreach (var r in routes) SmoothCorridor(grid, gw, gh, r, pois);
+            // ⚠⚠ AND THEN RE-LEVEL WHAT THE ROAD ACTUALLY COVERS. SmoothCorridor blurs, and a blur on a
+            // HILLSIDE pulls the uphill neighbours into the corridor -- so the very pass that removes the
+            // lengthwise ripple raises the corridor's uphill edge into the ribbon. That is the bald patch
+            // strawberry sees "when going up/down a slope", and turning the smoothing up (which is what was
+            // asked for, and is right for the surroundings) makes that particular symptom WORSE on its own.
+            // So: blur wide, then assign the ribbon's own footprint flat, the same way FlattenTownsExactly is
+            // the last word on a town. Only terrain ABOVE a surface clips; after this there is none.
+            LevelCorridors(grid, gw, gh, routes, pois);
+            ReportRoutePairs(routes);
             return routes;
+        }
+
+        /// <summary>Assign the ground under every ribbon to that ribbon's own smoothed profile, exactly.
+        ///
+        /// ⚠ CROSSINGS ARE AVERAGED, NOT OVERWRITTEN. Two routes that genuinely meet must agree on the height
+        /// of the cell they share, and letting whichever ran last win puts a step across the junction. The
+        /// first writer assigns; a second averages into it, which is a junction that slopes gently from one
+        /// road's grade to the other's rather than one that has a kerb across it.</summary>
+        static void LevelCorridors(float[,] grid, int gw, int gh,
+                                   System.Collections.Generic.List<Route> routes,
+                                   System.Collections.Generic.List<Poi> pois)
+        {
+            const float Unit = 4f;
+            // The DRAWN half-width plus a real margin, not the carve width: this is levelling what the mesh
+            // covers. ⚠ THE MARGIN IS NOT COSMETIC -- the heightmap is a 4 m grid and SampleHeight INTERPOLATES,
+            // so a point at the ribbon's edge reads partly from the first cell OUTSIDE the levelled disc. At
+            // +1.5 m that cell was still hillside and the probe still found 1.59 m of terrain above the road.
+            // Levelling a grid cell past the edge is what makes the edge itself flat.
+            const float Cover = RenderedRoadHalf + 4f;
+            int rad = Mathf.CeilToInt(Cover / Unit) + 1;
+            var written = new bool[gw, gh];
+            foreach (var r in routes)
+            {
+                int m = r.Points.Count;
+                if (m < 2) continue;
+                // Same profile the carve used: sample, then box-smooth, so this agrees with the grade the
+                // corridor was cut to instead of re-deriving a different one from the blurred ground.
+                var prof = new float[m];
+                for (int i = 0; i < m; i++)
+                {
+                    int gx = Mathf.Clamp(Mathf.RoundToInt(r.Points[i].X / Unit), 0, gw - 1);
+                    int gy = Mathf.Clamp(Mathf.RoundToInt(r.Points[i].Y / Unit), 0, gh - 1);
+                    prof[i] = ToWorld(grid[gx, gy]);
+                }
+                int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 14 : 9;
+                var sm = new float[m];
+                for (int i = 0; i < m; i++)
+                {
+                    float sum = 0f; int cnt = 0;
+                    for (int k = -win; k <= win; k++)
+                    {
+                        int j = i + k;
+                        if (j < 0 || j >= m) continue;
+                        sum += prof[j]; cnt++;
+                    }
+                    sm[i] = sum / cnt;
+                }
+                for (int i = 0; i < m; i++)
+                {
+                    int cx = Mathf.RoundToInt(r.Points[i].X / Unit), cy = Mathf.RoundToInt(r.Points[i].Y / Unit);
+                    for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                        for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                        {
+                            float dx = x * Unit - r.Points[i].X, dy = y * Unit - r.Points[i].Y;
+                            if (dx * dx + dy * dy > Cover * Cover) continue;
+                            if (InsideTown(x * Unit, y * Unit, pois)) continue;   // the town is still the last word on its own ground
+                            float want = ToGrid(TownRamped(x * Unit, y * Unit, sm[i]));
+                            grid[x, y] = written[x, y] ? (grid[x, y] + want) * 0.5f : want;
+                            written[x, y] = true;
+                        }
+                }
+            }
+        }
+
+        /// <summary>How much any two routes share ground, and at what angle they meet. ⚠ THE ANGLE IS THE
+        /// WHOLE POINT -- master allows a perpendicular intersection and forbids a shallow one, so a count of
+        /// "crossings" would condemn the junctions this generator is supposed to make. Shallow is the defect;
+        /// square-on is a crossroads.</summary>
+        public static float PairParallelMetres, PairWorstAngle; public static float PairSquareMetres, PairFanMetres;
+
+        static void ReportRoutePairs(System.Collections.Generic.List<Route> routes)
+        {
+            PairParallelMetres = 0f; PairSquareMetres = 0f; PairFanMetres = 0f; PairWorstAngle = 90f;
+            const float Near = 26f;          // inside this the two ribbons (9.2 m each) share shoulder
+            const float ShallowDeg = 40f;
+            for (int i = 0; i < routes.Count; i++)
+                for (int j = i + 1; j < routes.Count; j++)
+                {
+                    var A = routes[i].Points; var B = routes[j].Points;
+                    for (int a = 1; a < A.Count; a++)
+                        for (int b = 1; b < B.Count; b++)
+                        {
+                            var p0 = A[a - 1]; var p1 = A[a];
+                            var q0 = B[b - 1]; var q1 = B[b];
+                            var da = p1 - p0; var db = q1 - q0;
+                            if (da.Length() < 1e-4f || db.Length() < 1e-4f) continue;
+                            float mid = ((p0 + p1) * 0.5f).DistanceTo((q0 + q1) * 0.5f);
+                            if (mid > Near) continue;
+                            // |dot| of the unit tangents: 1 -> the lines are PARALLEL (0 deg between them),
+                            // 0 -> perpendicular (90 deg). Acos of it IS the angle between the two roads, so
+                            // small means shallow, which is the case master forbids.
+                            float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(Mathf.Abs(da.Normalized().Dot(db.Normalized())), 0f, 1f)));
+                            if (ang >= ShallowDeg) { PairSquareMetres += da.Length(); continue; }
+                            // ⚠ SEPARATE THE GATE FAN. Two streets leaving neighbouring gates on the same face
+                            // of a town are 24 m apart and parallel for the length of their stubs, by design --
+                            // that is a town with two exits, not two roads sharing a valley. Counting them with
+                            // the real offenders makes the number un-actionable: it can never reach zero, so it
+                            // stops being able to say whether the thing master is looking at got fixed.
+                            var mp = (p0 + p1) * 0.5f;
+                            if (InsideAnyTownPad(mp.X, mp.Y, 60f)) { PairFanMetres += da.Length(); continue; }
+                            PairParallelMetres += da.Length();
+                            if (ang < PairWorstAngle) PairWorstAngle = ang;
+                        }
+                }
+            Log.Print($"[island-routepairs] OPEN COUNTRY {PairParallelMetres:0} m of route within {Near:0} m of another at UNDER {ShallowDeg:0} deg (the forbidden kind)"
+                      + (PairParallelMetres > 0f ? $", shallowest {PairWorstAngle:0.#} deg" : "")
+                      + $"; {PairFanMetres:0} m is a town's own gate fan; {PairSquareMetres:0} m meets at a proper angle (junctions, allowed)");
         }
 
         /// <summary>Round off the corners. An 8-connected A* can only turn in 45-degree increments and
@@ -641,8 +780,20 @@ namespace UnturnedGodot
         static System.Collections.Generic.List<Vector2> Relax(System.Collections.Generic.List<Vector2> pts)
         {
             const int Pin = 6;        // held exactly at each end -- the stub is StubCells+1 = 6 points
-            const int Win = 5, Passes = 4;
+            // ⚠ WIDER AND MORE PASSES (strawberry 2026-09-16: "do some more road bend smoothing. a lotta sharp
+            // or unnatural corners around"). An 8-connected A* turns in 45-degree steps and staircases along
+            // every other bearing, so what comes out of the search is a run of hard corners with the right
+            // overall shape. Smoothing is free here -- Carve runs AFTER Relax, so the corridor is levelled
+            // along whatever line this produces rather than along the staircase.
+            const int Win = 7, Passes = 9;
             const int Blend = 14;   // free points spent easing off the stub's line
+            // ...and a floor under the RADIUS, because averaging alone converges slowly on the one corner that
+            // matters. Measured before this: median corner radius 185 m and sharpest 15 m -- the median says
+            // the roads are gentle and the sharpest says there is a hairpin in there somewhere, and it is the
+            // hairpin that reads as "unnatural". The limiter below only touches points that are actually too
+            // tight, so the rest of the route keeps the line the terrain cost chose for it.
+            const float MinRadius = 55f;
+            const int LimitPasses = 24;
             if (pts.Count < Pin * 2 + 3) return pts;
             var cur = new System.Collections.Generic.List<Vector2>(pts);
             for (int pass = 0; pass < Passes; pass++)
@@ -694,12 +845,73 @@ namespace UnturnedGodot
             }
             Ease(Pin, +1);                    // leaving the head stub
             Ease(cur.Count - 1 - Pin, -1);    // and the tail, walking backwards
+
+            // CURVATURE LIMITER. Radius over a +/-2 window is chord / turn; where that is under MinRadius, pull
+            // the point toward the midpoint of that window, which is the direction that opens the bend. Run to
+            // convergence rather than a fixed strength: one hard pull would flatten a legitimate curve, and
+            // many soft ones only keep working where the corner is still too tight.
+            for (int pass = 0; pass < LimitPasses; pass++)
+            {
+                bool any = false;
+                var next = new System.Collections.Generic.List<Vector2>(cur);
+                // From Pin itself, not Pin+2: the window reads cur[i-2] which reaches INTO the pinned stub, and
+                // that is exactly what should anchor it. Starting two points later left the stub/free seam --
+                // the sharpest corner on the route by construction -- outside the limiter's reach.
+                for (int i = Pin; i < cur.Count - Pin; i++)
+                {
+                    Vector2 a = cur[i - 2], b = cur[i + 2];
+                    Vector2 d0 = cur[i] - a, d1 = b - cur[i];
+                    if (d0.Length() < 1e-4f || d1.Length() < 1e-4f) continue;
+                    float turn = Mathf.Acos(Mathf.Clamp(d0.Normalized().Dot(d1.Normalized()), -1f, 1f));
+                    if (turn < 1e-4f) continue;
+                    float radius = a.DistanceTo(b) / turn;
+                    if (radius >= MinRadius) continue;
+                    any = true;
+                    next[i] = cur[i].Lerp((a + b) * 0.5f, 0.35f);
+                }
+                cur = next;
+                if (!any) break;
+            }
             return cur;
         }
 
         /// <summary>A* from one gate to the other over a slope-weighted grid.</summary>
+        /// <summary>How dearly a route pays to share ground with one already laid. The inner value applies over
+        /// the carriageway itself and the outer over a halo, so roads do not merely avoid overlapping, they
+        /// avoid hugging. Tuned against the base step cost of 1: a perpendicular crossing pays for about five
+        /// cells (+40 on a route that costs several hundred) while 100 m of parallel running pays for
+        /// twenty-five (+200) and loses to almost any detour.</summary>
+        static readonly bool NoRoadPenalty = System.Environment.GetEnvironmentVariable("UG_NOROADPENALTY") == "1";
+        const float UsedInner = 8f, UsedOuter = 2.5f;
+        const float UsedInnerR = 14f, UsedOuterR = 30f;
+
+        static void StampUsed(float[,] used, int gw, int gh, System.Collections.Generic.List<Vector2> pts)
+        {
+            const float Unit = 4f;
+            int rad = Mathf.CeilToInt(UsedOuterR / Unit) + 1;
+            foreach (var pt in pts)
+            {
+                int cx = Mathf.RoundToInt(pt.X / Unit), cy = Mathf.RoundToInt(pt.Y / Unit);
+                for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                    for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                    {
+                        float dx = x * Unit - pt.X, dy = y * Unit - pt.Y;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+                        if (d > UsedOuterR) continue;
+                        // ⚠ NOT INSIDE A TOWN. Every road on the island converges on the same few monuments, so
+                        // penalising the ground around a town would price the LAST-routed link out of its own
+                        // gate and send it round the houses. The pads are already off-limits to the carve for
+                        // the same reason -- the town owns that ground, and its own street grid is what roads
+                        // are supposed to share there.
+                        if (InsideAnyTownPad(x * Unit, y * Unit, UsedOuterR)) continue;
+                        float v = d <= UsedInnerR ? UsedInner : UsedOuter;
+                        if (v > used[x, y]) used[x, y] = v;   // MAX, not sum: two crossings do not make a wall
+                    }
+            }
+        }
+
         static System.Collections.Generic.List<Vector2> Route2D(
-            float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p)
+            float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p, float[,] used = null)
         {
             const float Unit = 4f;
             // PERPENDICULAR DEPARTURE. A* is free to pick any of eight directions out of the first cell, so left
@@ -770,6 +982,7 @@ namespace UnturnedGodot
                         float climb = Mathf.Abs(nh - ch) / Unit;              // gradient of THIS step
                         float cost = step * (1f + slopeCost * climb);
                         if (nh <= p.SeaLevel) cost += 400f;
+                        if (used != null) cost += used[nx, ny] * step;   // another road is already here
                         float cand = best[cur] + cost;
                         if (cand < best[ni]) { best[ni] = cand; prev[ni] = cur; open.Enqueue(ni, cand + H(nx, ny)); }
                     }
@@ -1006,10 +1219,19 @@ namespace UnturnedGodot
         /// a trough that reads as a trench from the side.</summary>
         static void SmoothCorridor(float[,] grid, int gw, int gh, Route r, System.Collections.Generic.List<Poi> pois)
         {
-            float half = HalfWidthFor(r.Kind), shoulder = half * 2.2f;
+            // ⚠ MORE, AND WIDER, ON SLOPES (strawberry 2026-09-16: "a lot of bald patches still on road splines
+            // when going up/down a slope. needs more smoothing of the terrain there").
+            //
+            // A bald patch is the ground coming through the ribbon, and on a slope it is a BREAK of slope, not
+            // the slope itself: along a uniform grade the chord between two joints lies on the ground, and at a
+            // crest it cuts under it. Two light passes were enough on flat country and are not enough over a
+            // brow -- the blur has to reach far enough along the corridor to take the top off the crest rather
+            // than just soften it. Five passes over a 2.6x shoulder converges on a corridor whose lengthwise
+            // curvature the ribbon can actually follow.
+            float half = HalfWidthFor(r.Kind), shoulder = half * 2.6f;
             const float Unit = 4f;
             int rad = Mathf.CeilToInt(shoulder / Unit) + 1;
-            for (int pass = 0; pass < 2; pass++)
+            for (int pass = 0; pass < 5; pass++)
             {
                 var src = (float[,])grid.Clone();
                 foreach (var pt in r.Points)

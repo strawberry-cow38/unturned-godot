@@ -398,16 +398,27 @@ namespace UnturnedGodot
                     {
                         var a = JointPosFor(terr, route.Points[i].X, route.Points[i].Y);   // where the ribbon IS, lift included
                         var b = JointPosFor(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y);
+                        // ⚠ ACROSS THE RIBBON, NOT JUST ALONG IT. This used to sample the CENTRELINE only, and
+                        // the ribbon is 18.4 m wide -- so on a hillside traverse the uphill EDGE can be metres
+                        // into the hill while the middle is perfectly clear, and the probe reported 0/1137
+                        // samples above the surface on an island strawberry could see bald patches in. A
+                        // measurement that only looks where the fault is not will always agree with you.
+                        var perp = (route.Points[i + Stride] - route.Points[i]);
+                        perp = perp.Length() > 1e-4f ? new Vector2(-perp.Y, perp.X).Normalized() : Vector2.Right;
                         for (int k = 1; k < Stride; k++)
                         {
                             float f = k / (float)Stride;
                             var mid = route.Points[i + k];
-                            float ground = PosFor(terr, mid.X, mid.Y).Y;
                             float ribbon = Mathf.Lerp(a.Y, b.Y, f);
-                            float rise = ground - ribbon;      // + = terrain ABOVE the road surface
-                            if (rise > worstGap) worstGap = rise;
-                            if (rise > 0.05f) over++;
-                            sumGap += rise; nGap++;
+                            for (int e = -2; e <= 2; e++)
+                            {
+                                float off = e * (ProcIsland.RenderedRoadHalf * 0.5f);
+                                float ground = PosFor(terr, mid.X + perp.X * off, mid.Y + perp.Y * off).Y;
+                                float rise = ground - ribbon;      // + = terrain ABOVE the road surface
+                                if (rise > worstGap) worstGap = rise;
+                                if (rise > 0.05f) over++;
+                                sumGap += rise; nGap++;
+                            }
                         }
                     }
                 }
@@ -429,6 +440,168 @@ namespace UnturnedGodot
 
         /// <summary>The boulder props that actually exist in content/objects. Listed rather than generated:
         /// the numbering has gaps.</summary>
+        /// <summary>Street furniture along the town's road props: lights, signals, hydrants and bins
+        /// (strawberry 2026-09-16: "add hydrants, street lights, traffic lights, garbage can (smart container
+        /// variants) around along road props in the towns").
+        ///
+        /// ⭐ EVERY NUMBER HERE IS OFF RETAIL placements.txt, read back the same way the roadside pass was:
+        ///   Fire_Hydrant_0 x46, nearest-neighbour median 20.0 m;  Street_Light_0 x39, median 19.2 m with a
+        ///   min of 1.0 (pairs facing each other across a street);  Traffic_Light_0 x21, median 20.3 m and
+        ///   EVERY one has 2-4 neighbours within 40 m -- they come in clusters at a junction, not singly;
+        ///   Garbage_0/1 x17/x16, median 3.0-3.6 m, i.e. bins stand in little groups. The lattice steps 24 m,
+        ///   so "one per tile" lands almost exactly on retail's spacing without a rule about it.
+        ///
+        /// ⚠ THE ARMS POINT ALONG LOCAL +Y, measured off the meshes rather than assumed: Street_Light_0's
+        /// vertices above z=4.5 run local Y -0.12..+2.35 and Traffic_Light_0's run -0.12..+8.91, while both
+        /// bases are centred on Y=0. So the arm is the +Y half, and a light yawed with YawForDir pointing at
+        /// the street reaches OVER the carriageway. Yawed the other way it would hang the signal over the
+        /// pavement, which a symmetric-looking pole gives away only in a close render.
+        ///
+        /// ⚠ THE BINS ARE MESHES HERE, NOT LIVE CONTAINERS. Dumpster_3/4 ("Trash Can") and Garbage_0/1 are in
+        /// WorldBuilder.ContainerShelf, so they ARE smart containers on the world-load path -- but the editor's
+        /// own placement path attaches devices through SmartProps, which covers lights, hydrants and doors and
+        /// has no container case. Adding one means editing shared container code that tinyclaw is live in, so
+        /// it is flagged rather than done.</summary>
+        static void ScatterTownFurniture(Terrain terr, EditorObjects objs, ref int missing)
+        {
+            if (terr?.IslandTiles == null || objs == null) return;
+
+            // ⚠ MEASURED FROM THE PIECE. The carriageway is 16 m inside a 24 m tile, so the pavement is the
+            // ring from 8 m to 12 m off the tile centreline. 10 m is the middle of it: clear of the tarmac,
+            // inside the prop, and well short of the 14.5 m where a building's front wall now starts.
+            const float Verge = 10f;
+            var rng = new System.Random(20260917);
+            int lights = 0, signals = 0, hydrants = 0, bins = 0, miss = 0;
+            var taken = new System.Collections.Generic.List<(float X, float Z)>();
+
+            bool Free(float x, float z, float r)
+            {
+                foreach (var q in taken) if (Near(x, q.X, z, q.Z, r)) return false;
+                return true;
+            }
+
+            // The street directions a piece serves, in ProcIsland's frame. Each piece has its connectors on
+            // FIXED local axes (Line +Y/-Y, Turn +X/-Y, Tee +X/-X/+Y, Quad all four, and a Cap's ramp is +Y),
+            // so running them through ArmDir at the tile's own yaw gives the real bearings -- the same helper
+            // the exposure report uses, rather than a second table that can disagree with it.
+            static (float x, float y)[] ArmsOf(ProcIsland.RoadPiece p) => p switch
+            {
+                ProcIsland.RoadPiece.Line    => new[] { (0f, 1f), (0f, -1f) },
+                ProcIsland.RoadPiece.Turn    => new[] { (1f, 0f), (0f, -1f) },
+                ProcIsland.RoadPiece.Tee     => new[] { (1f, 0f), (-1f, 0f), (0f, 1f) },
+                ProcIsland.RoadPiece.Quad    => new[] { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f) },
+                ProcIsland.RoadPiece.LineCap => new[] { (0f, 1f), (0f, -1f) },
+                ProcIsland.RoadPiece.TeeCap  => new[] { (0f, 1f), (1f, 0f), (-1f, 0f) },
+                ProcIsland.RoadPiece.QuadCap => new[] { (0f, 1f), (1f, 0f), (-1f, 0f), (0f, -1f) },
+                _ => new[] { (0f, 1f), (0f, -1f) },
+            };
+
+            int idx = -1;
+            foreach (var t in terr.IslandTiles)
+            {
+                idx++;
+                // ⚠ A REAL JUNCTION ONLY. The Cap variants were in this set and they are not crossroads --
+                // a cap is where a street LEAVES the town, and signalling it put 111 traffic lights on an
+                // island where PEI has 21 in total. Quad and Tee are the shapes a driver actually has to be
+                // told what to do at.
+                bool junction = t.Piece is ProcIsland.RoadPiece.Quad or ProcIsland.RoadPiece.Tee;
+                var arms = ArmsOf(t.Piece);
+
+                // ---- TRAFFIC LIGHTS: one per approach of a junction, mast arm out over the carriageway -----
+                if (junction)
+                {
+                    int put = 0;
+                    foreach (var a in arms)
+                    {
+                        if (put >= 2) break;   // two opposing approaches, not one per arm
+                        var d = ArmDir(t.YawDeg, a.x, a.y);
+                        // Stand on the corner BESIDE this approach and reach back across it: position along the
+                        // arm, offset to one side, and yaw so +Y points at the tile centre.
+                        var side = (-d.z, d.x);
+                        float px = t.X + d.x * Verge + side.Item1 * Verge;
+                        float pz = t.Z + d.z * Verge + side.Item2 * Verge;
+                        if (!Free(px, pz, 6f) || !TownPropOk(terr, px, pz)) continue;
+                        // The mast arm reaches back ALONG THE APPROACH it controls, not diagonally across the
+                        // junction: the pole stands on the corner and the signal hangs over that road's own
+                        // carriageway, which is where a driver on it can see it.
+                        float yaw = ProcIsland.YawForDir(-d.x, -d.z);
+                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz), RotFor(yaw)) != null)
+                        { signals++; put++; taken.Add((px, pz)); }
+                        else miss++;
+                    }
+                }
+
+                // ---- STREET LIGHTS: one per tile, on alternating sides so a street is lit from both ---------
+                {
+                    var a = arms[idx % arms.Length];
+                    var d = ArmDir(t.YawDeg, a.x, a.y);
+                    var side = ((idx & 1) == 0) ? (-d.z, d.x) : (d.z, -d.x);
+                    float px = t.X + side.Item1 * Verge, pz = t.Z + side.Item2 * Verge;
+                    if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
+                    {
+                        // +Y toward the street: the lamp arm has to reach over the carriageway, not the verge.
+                        float yaw = ProcIsland.YawForDir(-side.Item1, -side.Item2);
+                        if (objs.Place("Street_Light_0", PosFor(terr, px, pz), RotFor(yaw)) != null)
+                        { lights++; taken.Add((px, pz)); }
+                        else miss++;
+                    }
+                }
+
+                // ---- HYDRANTS: every third tile, opposite the light -----------------------------------------
+                if (idx % 3 == 1)
+                {
+                    var a = arms[0];
+                    var d = ArmDir(t.YawDeg, a.x, a.y);
+                    var side = ((idx & 1) == 0) ? (d.z, -d.x) : (-d.z, d.x);
+                    float px = t.X + side.Item1 * Verge + d.x * 6f, pz = t.Z + side.Item2 * Verge + d.z * 6f;
+                    if (Free(px, pz, 3f) && TownPropOk(terr, px, pz))
+                    {
+                        if (objs.Place("Fire_Hydrant_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.Item1, -side.Item2))) != null)
+                        { hydrants++; taken.Add((px, pz)); }
+                        else miss++;
+                    }
+                }
+
+                // ---- BINS: in little groups, like retail's 3 m clusters -------------------------------------
+                if (idx % 6 == 2)
+                {
+                    var a = arms[0];
+                    var d = ArmDir(t.YawDeg, a.x, a.y);
+                    var side = ((idx & 2) == 0) ? (-d.z, d.x) : (d.z, -d.x);
+                    int group = 2 + rng.Next(2);
+                    for (int k = 0; k < group; k++)
+                    {
+                        float along = (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
+                        float px = t.X + side.Item1 * Verge + d.x * along;
+                        float pz = t.Z + side.Item2 * Verge + d.z * along;
+                        if (!Free(px, pz, 1.2f) || !TownPropOk(terr, px, pz)) continue;
+                        // Dumpster_3/4 is the wheelie bin the container table already labels "Trash Can";
+                        // Garbage_0/1 are the tied-off bags that stand next to one.
+                        string prop = k == 0
+                            ? (rng.Next(2) == 0 ? "Dumpster_3" : "Dumpster_4")
+                            : (rng.Next(2) == 0 ? "Garbage_0" : "Garbage_1");
+                        if (objs.Place(prop, PosFor(terr, px, pz), RotFor((float)(rng.NextDouble() * 360.0))) != null)
+                        { bins++; taken.Add((px, pz)); }
+                        else miss++;
+                    }
+                }
+            }
+
+            missing += miss;
+            Log.Print($"[island-street] {lights} street light(s), {signals} traffic light(s), {hydrants} hydrant(s), {bins} bin(s) on the town verges"
+                      + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
+        }
+
+        /// <summary>Whether a piece of street furniture can stand here: on a town's own flat pad, clear of the
+        /// sea. ⚠ The pad test has NO margin, unlike the roadside pass's -- these belong INSIDE the town, which
+        /// is the exact opposite requirement, and reusing RoadsideOk would have refused every one of them.</summary>
+        static bool TownPropOk(Terrain terr, float px, float pz)
+        {
+            if (!ProcIsland.InsideAnyTownPad(px, pz)) return false;
+            var w = PosFor(terr, px, pz);
+            return !Terrain.HasWater || w.Y >= Terrain.SeaLevelY + 0.5f;
+        }
+
         /// <summary>Roadside furniture along the routes between towns: crash barriers on the bends and a power
         /// line down one side (strawberry 2026-09-16: "place fence road props along sharp-ish road spline
         /// corners. place power lines along one side of the road splines, off to the side on the dirt beside
@@ -615,12 +788,23 @@ namespace UnturnedGodot
         /// ⚠ NAMED, NOT NUMBERED. Boulder_00..22 is not contiguous in the rip -- 05, 07 and 14-21 are absent --
         /// so generating an index range asked for props that do not exist and 141 of 829 placements silently
         /// failed. The miss counter is what caught it.</summary>
-        static readonly (string Name, float Radius)[] BoulderProps =
+        static readonly (string Name, float Radius, float Bottom, float Height)[] BoulderProps =
         {
-            ("Boulder_00",  9.63f), ("Boulder_01", 16.90f), ("Boulder_02",  8.70f), ("Boulder_03", 15.00f),
-            ("Boulder_04", 24.00f), ("Boulder_06",  9.63f), ("Boulder_08",  5.09f), ("Boulder_09",  5.88f),
-            ("Boulder_10", 17.00f), ("Boulder_11",  9.63f), ("Boulder_12", 16.90f), ("Boulder_13",  8.70f),
-            ("Boulder_22", 15.57f),
+            // ⚠ THE PEI SET ONLY (strawberry 2026-09-16: "should only be using PEI boulders because those are
+            // the correct color for the dirt"). The kit has 15 rock props; PEI's placements.txt uses exactly
+            // FOUR of them -- Boulder_13 x118, Boulder_11 x85, Boulder_12 x48, Boulder_22_PEI x7 -- and the
+            // rest are other maps' palettes. Every one of the other eleven is placed ZERO times. The island
+            // shares PEI's terrain textures, so a rock from Russia's set is the right shape and the wrong
+            // colour against this dirt, which is not something the geometry can tell you.
+            //
+            // Radius is half the larger plan axis; Bottom and Height are the mesh's own vertical extent about
+            // its origin, both measured off the OBJs. These props are ORIGIN-CENTRED (Boulder_13 spans
+            // -4.61..+4.38), so a flat "sink it a bit" on top of that buries most of the rock -- the seating
+            // below solves for where the origin has to go instead.
+            ("Boulder_11",  9.63f, -7.85f, 17.28f),
+            ("Boulder_12", 16.90f, -2.48f,  5.83f),
+            ("Boulder_13",  8.70f, -4.61f,  9.00f),
+            ("Boulder_22_PEI", 15.57f, -4.53f, 9.17f),
         };
 
         /// <summary>Scatter BOULDERS down the steep faces (strawberry: "place boulder props along the steep
@@ -748,9 +932,13 @@ namespace UnturnedGodot
                     var basis = axis.LengthSquared() < 1e-8f
                         ? stand
                         : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
-                    // Sink PROPORTIONALLY. A flat 0.35 m bedded a 3 m rock nicely and left a 30 m one sitting on
-                    // the hillside like a marble on a table; a third of the radius beds both.
-                    var pos = new Vector3(px, y - want * 0.33f, pz);
+                    // SEAT IT BY ITS OWN MESH, not by a fudge. Put the origin where the rock's BOTTOM lands a
+                    // fifth of its height under the ground: bottom-to-origin is -Bottom*scale, so the origin
+                    // sits that far above the surface, less the bury. A flat sink could not do this across a
+                    // kit whose origins sit anywhere from -2.5 m to -7.9 m inside the mesh -- it left the tall
+                    // rocks perched and swallowed the flat ones.
+                    float sc = scale;
+                    var pos = new Vector3(px, y - pick.Bottom * sc - pick.Height * sc * 0.20f, pz);
                     if (objs.Place(pick.Name, pos, basis.Scaled(Vector3.One * scale)) != null) { Occupy(px, pz, want); n++; }
                     else miss++;
                 }
@@ -1108,6 +1296,7 @@ namespace UnturnedGodot
             }
             ScatterBoulders(terr, objs, ref missing);
             ScatterRoadside(terr, objs, ref missing);
+            ScatterTownFurniture(terr, objs, ref missing);
             ReportPieces(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);
