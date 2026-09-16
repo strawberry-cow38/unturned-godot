@@ -655,6 +655,22 @@ namespace UnturnedGodot
             }
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
+            // UG_VMNOARMS=1: render the HELD ITEM alone. The arms rig is armsOnly -- a hollow, single-sided
+            // half-body with no far side -- so the moment a harness pushes it away from the eye to get the item
+            // in shot (UG_VMTUNE, the only handle there is), you are looking into the inside of it and the result
+            // reads as a stack of flat planes. strawberry 2026-09-16: "your harness renders like 20 viewmodel
+            // arms on top of eachother."
+            //
+            // They are not duplicated -- there is exactly one rig, built here, once, in _Ready. The fix is not to
+            // count them but to stop drawing them: with the arms hidden the item sits alone in frame and a gun
+            // can actually be inspected. The rig still EXISTS and still animates, because the item is parented to
+            // its hand bone and hiding the bones would take the gun with it.
+            if (System.Environment.GetEnvironmentVariable("UG_VMNOARMS") == "1" && _arms != null)
+            {
+                foreach (var n in _arms.FindChildren("*", "MeshInstance3D", true, false))
+                    if (n is MeshInstance3D am) am.Visible = false;
+                Log.Print("[vm] UG_VMNOARMS: arms hidden, held item rendered alone");
+            }
             if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
             {
                 int meshes = 0; long verts = 0;
