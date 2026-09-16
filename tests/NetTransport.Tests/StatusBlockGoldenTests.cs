@@ -48,6 +48,15 @@ namespace NetTransport.Tests
     {
         const int Port = 47933;   // a port no other test in the fleet binds
 
+        // ⚠ THIS FIXTURE MUST RELEASE ITS SOCKET, and the reason is worth keeping. StatusQueryTests has no
+        // TearDown and leaks a bound UdpServerTransport per test method; that is invisible while it is the
+        // only fixture in the assembly, because each leaked socket is finalized before the next Initialize
+        // needs the port. Adding a SECOND socket-owning fixture changed that timing and the SHIPPED tests
+        // started failing with "Address already in use" on their own port -- a failure I caused and first
+        // mistook for pre-existing flake. So: stop the pump, then TearDown, in a finally.
+        static volatile bool _pumping;
+        static Thread _pump;
+
         // Hand-derived from ReplyStatus's field layout:
         //   "UGSR"                  55 47 53 52
         //   nonce echoed verbatim   11 22 33 44      (request carries 0x44332211 little-endian)
@@ -87,8 +96,14 @@ namespace NetTransport.Tests
 
             // The transport answers status requests from inside Receive(), so it has to be pumped.
             var buf = new byte[2048];
-            var pump = new Thread(() => { for (int i = 0; i < 400; i++) { srv.Receive(buf, out _, out _); Thread.Sleep(2); } }) { IsBackground = true };
-            pump.Start();
+            _pumping = true;
+            _pump = new Thread(() =>
+            {
+                try { while (_pumping) { srv.Receive(buf, out _, out _); Thread.Sleep(2); } }
+                catch (ObjectDisposedException) { }   // TearDown closed the socket under us; that is the exit path
+                catch (SocketException) { }
+            }) { IsBackground = true };
+            _pump.Start();
 
             var from = new IPEndPoint(IPAddress.Any, 0);
             byte[] r = udp.Receive(ref from);
@@ -100,6 +115,8 @@ namespace NetTransport.Tests
         public void the_status_block_layout_has_not_moved()
         {
             var srv = new UdpServerTransport(Port);
+            try
+            {
             srv.Initialize(null);   // the ctor only stores the port; Initialize binds the socket
             srv.StatusPlayerCount = 0x0102; srv.StatusMaxPlayers = 0x0304;
             srv.StatusVersion = 0x0102030405060708UL;
@@ -117,6 +134,13 @@ namespace NetTransport.Tests
                 + "that. The visible symptom is a HEALTHY server refused at the join probe with 'content "
                 + "mismatch' or 'ping too high'. If this change is intended, the client parse in "
                 + "game/MainMenuServers.cs StatusQueryFull must move in the same commit.");
+            }
+            finally
+            {
+                _pumping = false;
+                _pump?.Join(500);
+                srv.TearDown();   // IServerTransport.TearDown closes the socket; without it the port stays bound
+            }
         }
     }
 }
