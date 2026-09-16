@@ -786,7 +786,7 @@ namespace UnturnedGodot
             // overall shape. Smoothing is free here -- Carve runs AFTER Relax, so the corridor is levelled
             // along whatever line this produces rather than along the staircase.
             const int Win = 7, Passes = 9;
-            const int Blend = 14;   // free points spent easing off the stub's line
+            const int Blend = 26;   // free points spent easing off the stub's line: ~100 m, enough for a real S
             // ...and a floor under the RADIUS, because averaging alone converges slowly on the one corner that
             // matters. Measured before this: median corner radius 185 m and sharpest 15 m -- the median says
             // the roads are gentle and the sharpest says there is a hairpin in there somewhere, and it is the
@@ -834,20 +834,52 @@ namespace UnturnedGodot
             // 0 -> 1. At the seam the route still travels exactly along the stub's heading; by the end of the
             // blend it is fully on the smoothed line. The turn is then spread over Blend points by construction
             // rather than by hoping the averaging spreads it.
+            // ⚠⚠ A LERP BETWEEN A RAY AND A PATH CANNOT COUNTER-CURVE, which is why two rounds of turning the
+            // smoothing up did nothing for it (strawberry: "the road spline between two curves is perfectly
+            // straight and doesnt counter-curve the curve of the piece going into it", then "counter curves
+            // dont seem to be working either").
+            //
+            // The old blend walked a STRAIGHT ray out of the stub and lerped it toward the smoothed path. Every
+            // point of that is a weighted average of two nearly-straight lines, so the result is nearly
+            // straight too, and all the turning still piles up where the weight finishes. Smoothing harder only
+            // straightens the thing being averaged toward.
+            //
+            // A cubic Hermite is the shape that actually has the property asked for: give it the stub's heading
+            // at one end and the route's own heading at the other, and where those two disagree it produces an
+            // S -- it curves one way out of the junction and back the other way onto the line, which is exactly
+            // "counter-curve the piece going into it". Where they agree it degenerates to the straight line, so
+            // a road that genuinely leaves straight still does.
             void Ease(int from, int step)
             {
                 int a0 = from - step, a1 = from - 2 * step;                 // the last two PINNED points
                 if (a1 < 0 || a1 >= cur.Count || a0 < 0 || a0 >= cur.Count) return;
-                Vector2 anchor = cur[a0], dir = (cur[a0] - cur[a1]);
-                if (dir.Length() < 1e-4f) return;
-                float spacing = dir.Length();
-                dir = dir.Normalized();
-                for (int k = 0; k < Blend; k++)
+                Vector2 p0 = cur[a0], t0 = cur[a0] - cur[a1];
+                if (t0.Length() < 1e-4f) return;
+                t0 = t0.Normalized();
+                int last = from + (Blend - 1) * step;
+                if (last < 0 || last >= cur.Count) return;
+                // The far anchor's own heading, read across the points either side of it rather than from one
+                // segment -- a single 4 m step of an 8-connected path is a 45-degree quantum, not a direction.
+                int f0 = last - 2 * step, f1 = last + 2 * step;
+                if (f0 < 0 || f0 >= cur.Count || f1 < 0 || f1 >= cur.Count) return;
+                Vector2 p1 = cur[last], t1 = (cur[f1] - cur[f0]) * step;
+                if (t1.Length() < 1e-4f) return;
+                t1 = t1.Normalized();
+                // Tangent magnitude = the straight-line distance between the anchors. Longer makes the S
+                // deeper; this is the standard choice and keeps the curve inside the corridor the A* picked.
+                float span = p0.DistanceTo(p1);
+                if (span < 1e-3f) return;
+                Vector2 m0 = t0 * span, m1 = t1 * span;
+                for (int k = 1; k < Blend - 1; k++)
                 {
                     int i = from + k * step;
                     if (i < 0 || i >= cur.Count) return;
-                    Vector2 onRay = anchor + dir * (spacing * (k + 1));
-                    cur[i] = onRay.Lerp(cur[i], (k + 1) / (float)(Blend + 1));
+                    float u = k / (float)(Blend - 1);
+                    float h00 = 2f * u * u * u - 3f * u * u + 1f;
+                    float h10 = u * u * u - 2f * u * u + u;
+                    float h01 = -2f * u * u * u + 3f * u * u;
+                    float h11 = u * u * u - u * u;
+                    cur[i] = h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
                 }
             }
             Ease(Pin, +1);                    // leaving the head stub
@@ -1235,10 +1267,14 @@ namespace UnturnedGodot
             // brow -- the blur has to reach far enough along the corridor to take the top off the crest rather
             // than just soften it. Five passes over a 2.6x shoulder converges on a corridor whose lengthwise
             // curvature the ribbon can actually follow.
-            float half = HalfWidthFor(r.Kind), shoulder = half * 2.6f;
+            // ⚠ MORE AGAIN (strawberry: "the road splines need to smooth the terrain under them MORE"). Safe to
+            // push because LevelCorridors runs after this and re-assigns the ribbon's own footprint flat -- the
+            // blur's job here is purely the APPROACH to the road, where a wider, softer transition is what
+            // stops the corridor reading as a trench cut into the hill.
+            float half = HalfWidthFor(r.Kind), shoulder = half * 3.4f;
             const float Unit = 4f;
             int rad = Mathf.CeilToInt(shoulder / Unit) + 1;
-            for (int pass = 0; pass < 5; pass++)
+            for (int pass = 0; pass < 9; pass++)
             {
                 var src = (float[,])grid.Clone();
                 foreach (var pt in r.Points)

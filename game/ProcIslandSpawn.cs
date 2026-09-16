@@ -553,13 +553,31 @@ namespace UnturnedGodot
                 // ends up above the lane it governs.
                 if (junction)
                 {
-                    var app = wArms[0];                       // the approach this signal governs
-                    var flank = (-app.z, app.x);              // beside it, not on it
-                    float px = t.X + flank.Item1 * Verge, pz = t.Z + flank.Item2 * Verge;
-                    if (Free(px, pz, 6f) && TownPropOk(terr, px, pz))
+                    // ONE PER APPROACH, and the earlier complaint was never the count.
+                    // strawberry, first: "why are the traffic lights diagonal, 3 (tee) or 4 (quad) per
+                    // intersection"; then, after I cut it to one: "you placed 1 traffic light per intersection.
+                    // and you placed them on the middle of the road. should be offset to the side, overhanging
+                    // over the road." Read together, the fault was DIAGONAL and MID-ROAD both times, and
+                    // dropping to one signal per junction fixed neither -- it just made the wrong one lonelier.
+                    // A signalled junction has a head facing every approach, which is also what retail's
+                    // clusters of 2-4 within 40 m are.
+                    foreach (var app in wArms)
                     {
-                        // +Y along the approach, so the arm lies over that carriageway.
-                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(app.x, app.z))) != null)
+                        // ⚠ THE CORNER, NOT THE MIDDLE. Offsetting only perpendicular to the approach put the
+                        // pole level with the tile centre -- which on a crossroads is standing in the OTHER
+                        // road. Step back along this approach as well and the pole lands on the corner between
+                        // the two, which is the only spot on a junction tile that is not carriageway.
+                        var flank = (-app.z, app.x);
+                        float px = t.X + app.x * Verge + flank.Item1 * Verge;
+                        float pz = t.Z + app.z * Verge + flank.Item2 * Verge;
+                        if (!Free(px, pz, 6f) || !TownPropOk(terr, px, pz)) continue;
+                        // ⚠ AND THE ARM REACHES ACROSS THE ROAD, not along it (strawberry: "overhanging over
+                        // the road"). +Y is the mast arm's 9.16 m half; pointing it back along -flank takes it
+                        // from the corner out over this approach's carriageway. Pointing it along the approach
+                        // -- which is what it did -- runs it down the verge, parallel to the traffic, over
+                        // nothing.
+                        if (objs.Place("Traffic_Light_0", PosFor(terr, px, pz),
+                                       RotFor(ProcIsland.YawForDir(-flank.Item1, -flank.Item2))) != null)
                         { signals++; taken.Add((px, pz)); }
                         else miss++;
                     }
