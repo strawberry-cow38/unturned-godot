@@ -78,37 +78,88 @@ namespace UnturnedGodot
         public static void PaintGroundwork(Terrain terr)
         {
             if (terr == null) return;
-            const float TileR = 3.6f;    // a 4 m tile's corner is 2.83 m out; this covers it plus a border
-            const float BuildR = 8.0f;   // footprint unknown -> a skirt wide enough to read as a cleared plot
-            const float RouteR = 5.2f;   // the carved corridor is wider than the ribbon that will sit on it
-            int tiles = 0, builds = 0, routePts = 0;
+            // ⚠ THESE ARE THE GENERATOR'S OWN DIMENSIONS, NOT GUESSES. The first cut used 3.6 m under a road
+            // tile and 8 m under a building and strawberry called it immediately: "the patches are very small
+            // compared to what they are meant to be under". They were -- by about 5x. The road SURFACE is 16 m
+            // wide (ProcIsland.HalfCarriageway = 8), the monument lattice steps every 24 m, and buildings run
+            // up to 39 m across (Medic_1). A radius picked by eye against a mesh you have not measured is just
+            // a number that looked reasonable in a comment.
+            const float RoadHalf = 8f;     // = ProcIsland.HalfCarriageway; the carriageway is 16 m wide
+            const float Border = 4.5f;     // master's "+ some border", applied to every kind so they match
+            const float RouteHalf = 7f;    // the between-towns ribbon is narrower than a town street
+            int tiles = 0, builds = 0, sized = 0, routePts = 0;
 
             if (terr.IslandTiles != null)
                 foreach (var t in terr.IslandTiles)
                 {
                     var w = PosFor(terr, t.X, t.Z);
-                    terr.PaintSplat(w.X, w.Z, TileR, DirtLayer); tiles++;
+                    terr.PaintSplat(w.X, w.Z, RoadHalf + Border, DirtLayer); tiles++;
                 }
+
             if (terr.IslandBuildings != null)
                 foreach (var b in terr.IslandBuildings)
                 {
                     var w = PosFor(terr, b.X, b.Z);
-                    terr.PaintSplat(w.X, w.Z, BuildR, DirtLayer); builds++;
+                    var info = ProcIsland.PropInfo(b.Prop);
+                    if (info.HasValue)
+                    {
+                        // "fits the size and shape": a real footprint, Width across by Front+Back deep, turned
+                        // the way the building is turned -- not a circle around its origin.
+                        PaintFootprint(terr, w, b.YawDeg, info.Value.Width, info.Value.Front + info.Value.Back, Border);
+                        sized++;
+                    }
+                    else terr.PaintSplat(w.X, w.Z, 10f + Border, DirtLayer);   // prop not in the catalogue -> a skirt, and say so below
+                    builds++;
                 }
+
             // Routes are painted by STEPPING along the polyline rather than with PaintRiverBed: that one applies
-            // a river's own overspray blend, which is tuned for a bank and not for a roadside.
+            // a river's own overspray blend, tuned for a bank and not for a roadside.
             if (terr.IslandRoutes != null)
                 foreach (var route in terr.IslandRoutes)
                 {
                     if (route.Points == null) continue;
-                    for (int i = 0; i < route.Points.Count; i++)
+                    foreach (var p in route.Points)
                     {
-                        var p = route.Points[i];
                         var w = PosFor(terr, p.X, p.Y);
-                        terr.PaintSplat(w.X, w.Z, RouteR, DirtLayer); routePts++;
+                        terr.PaintSplat(w.X, w.Z, RouteHalf + Border, DirtLayer); routePts++;
                     }
                 }
-            Log.Print($"[island-paint] dirt under {tiles} road tile(s), {builds} building(s), {routePts} route point(s)");
+            Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + Border:0.#}m, "
+                      + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s)");
+        }
+
+        /// <summary>Stamp a rotated RECTANGLE of dirt under a building.
+        ///
+        /// ⚠ THE RECTANGLE'S AXES COME FROM RotFor -- the same basis that PLACED the building -- rather than
+        /// from an open-coded sin/cos. This file has already been caught once getting that convention
+        /// backwards (see ArmDir's note: check and code were wrong together and stayed green, and strawberry
+        /// found it by looking at a render). Reusing the placement basis means the patch cannot disagree with
+        /// the building about which way it faces, whatever the convention turns out to be.
+        ///
+        /// PaintSplat only draws circles, so the rectangle is stamped as an overlapping grid of them at a
+        /// spacing below the radius -- gaps between stamps would show as grass islands inside the plot.</summary>
+        static void PaintFootprint(Terrain terr, Vector3 centre, float yawDeg, float width, float depth, float border)
+        {
+            var basis = RotFor(yawDeg);
+            var ax = Flatten(basis * new Vector3(1f, 0f, 0f));   // the prop's local X, in world
+            var az = Flatten(basis * new Vector3(0f, 1f, 0f));   // ...and its local Y: these meshes stand up via ex=270, so local Y is the ground plane's other axis
+            float halfW = width * 0.5f + border, halfD = depth * 0.5f + border;
+            const float Brush = 5f;
+            float step = Brush * 0.7f;   // overlap, or the corners of the stamp grid leave grass behind
+            for (float u = -halfW; u <= halfW; u += step)
+                for (float v = -halfD; v <= halfD; v += step)
+                {
+                    var pt = centre + ax * u + az * v;
+                    terr.PaintSplat(pt.X, pt.Z, Brush, DirtLayer);
+                }
+        }
+
+        /// <summary>Drop Y and renormalise. A basis column that has been stood up by the ex=270 correction can
+        /// point out of the ground plane; painting is a 2D operation and wants the horizontal part.</summary>
+        static Vector3 Flatten(Vector3 v)
+        {
+            var f = new Vector3(v.X, 0f, v.Z);
+            return f.LengthSquared() < 1e-6f ? new Vector3(1f, 0f, 0f) : f.Normalized();
         }
 
         /// <summary>Lay REAL SPLINE ROADS along the routes between towns.
