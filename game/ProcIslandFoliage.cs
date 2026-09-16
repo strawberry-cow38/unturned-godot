@@ -132,6 +132,142 @@ namespace UnturnedGodot
             }
         }
 
+
+        // ---- harvestable resources: trees, bushes, mushrooms, ore ------------------------------------------
+        /// <summary>Per-type scatter spacing for ResourceField's contents. Trees first because they are the
+        /// shape of the island; the rest are dressing. ⚠ Prefix match, longest-first where it matters
+        /// ("Bush_Mauve" must not be read as a plain Bush).</summary>
+        /// ⚠ CALIBRATED AGAINST THE REAL MAP, NOT BY EYE. The first cut used 15-24 m spacings and produced
+        /// 18,173 resources -- against PEI's 1,694 across the same 26 types. Ten times retail density is not a
+        /// forest, it is a wall: the first render was hemmed in on both sides with the road barely visible
+        /// through it. The numbers below land in retail's order of magnitude. A count is the only honest way to
+        /// judge this; "looks foresty" would have shipped the wall.
+        static readonly (string Prefix, float Spacing, float Clearance)[] ResKinds =
+        {
+            ("Birch",            42f, 17f),
+            ("Maple",            45f, 17f),
+            ("Pine",             40f, 17f),
+            ("Bush",             62f, 12f),
+            ("Mushroom",        120f,  9f),
+            ("Metal",           190f, 12f),
+            ("Clay",            165f, 12f),
+        };
+
+        /// <summary>Bake trees, bushes, mushrooms and ore for this island into content/resources_&lt;mapKey&gt;/.
+        ///
+        /// ⚠ A DIFFERENT SYSTEM AND A DIFFERENT FILE FORMAT FROM THE FOLIAGE ABOVE, which is worth saying out
+        /// loud because they look alike. Foliage is decor in a MultiMesh; a resource is HARVESTABLE -- it gets a
+        /// trunk collider, hit points, a log drop and a regrow timer. And the .bin is not the same shape:
+        /// foliage stores a 12-float basis, a resource stores NINE floats (pos, euler, scale) which
+        /// ResourceField rebuilds as `Y(180-ey) * X(ex) * Z(-ez)`. Writing one in the other's layout does not
+        /// error -- it produces trees at plausible-looking wrong angles.
+        ///
+        /// ⚠ resources.txt IS COPIED VERBATIM. Its ROW ORDER is the wire index for resource identity ("the
+        /// deterministic index space: instances register in manifest x .bin order on every peer"), so
+        /// rewriting or re-sorting it for a generated map would desync which tree is which in multiplayer.
+        /// The island only adds .bin files beside it; it never touches the manifest.</summary>
+        public static string BakeResources(Terrain terr, int seed, string mapKey)
+        {
+            if (terr == null) return null;
+            string src = ProjectSettings.GlobalizePath("res://content/resources/");
+            if (!Directory.Exists(src)) { Log.Print("[island-res] no source resources -- skipping"); return null; }
+
+            string dirName = "resources_" + mapKey;
+            string dst = ProjectSettings.GlobalizePath($"res://content/{dirName}/");
+            if (Directory.Exists(dst) && Directory.GetFiles(dst, "*.bin").Length > 0)
+            {
+                Log.Print($"[island-res] reusing existing bake content/{dirName}/");
+                return dirName;
+            }
+            try
+            {
+                Directory.CreateDirectory(dst);
+                foreach (string f in Directory.GetFiles(src))
+                {
+                    string nm = Path.GetFileName(f);
+                    if (nm.EndsWith(".bin")) continue;   // ⚠ PEI's tree POSITIONS -- never copied
+                    File.Copy(f, Path.Combine(dst, nm), overwrite: true);   // includes resources.txt VERBATIM (wire index) + lods.txt
+                }
+            }
+            catch (System.Exception ex) { Log.Err($"[island-res] could not prepare {dirName}: {ex.Message}"); return null; }
+
+            string manifest = Path.Combine(src, "resources.txt");
+            if (!File.Exists(manifest)) { Log.Print("[island-res] no resources.txt in the source -- skipping"); return null; }
+
+            var mask = BuildBlockedMask(terr);
+            var bounds = terr.WorldBoundsXZ();
+            // Every resource competes for ground with every other, so one shared occupancy list stops a
+            // mushroom growing inside a pine. Kept per-bake, not per-type.
+            var taken = new List<Vector3>();
+            int total = 0, types = 0;
+
+            foreach (string line in File.ReadAllLines(manifest))
+            {
+                var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (sp.Length < 2) continue;
+                string name = sp[0];
+                string holiday = sp.Length >= 3 ? sp[2] : "NONE";
+                if (holiday != "NONE") continue;   // seasonal content stays gated; the island is not Christmas
+                var kind = System.Array.Find(ResKinds, k => name.StartsWith(k.Prefix));
+                if (kind.Prefix == null) continue;
+
+                var rng = new System.Random(seed * 6271 + name.GetHashCode());
+                var recs = new List<(Vector3 Pos, float Yaw, float Scale)>();
+                for (float x = bounds.MinX; x < bounds.MaxX; x += kind.Spacing)
+                    for (float z = bounds.MinZ; z < bounds.MaxZ; z += kind.Spacing)
+                    {
+                        float px = x + (float)(rng.NextDouble() * 2 - 1) * kind.Spacing * 0.45f;
+                        float pz = z + (float)(rng.NextDouble() * 2 - 1) * kind.Spacing * 0.45f;
+                        if (mask.Blocked(px, pz)) continue;
+                        float y = terr.SampleHeight(px, pz);
+                        if (Terrain.HasWater && y < Terrain.SeaLevelY + 1.5f) continue;   // nothing grows in the tide
+                        float h1 = terr.SampleHeight(px + 2f, pz), h2 = terr.SampleHeight(px - 2f, pz);
+                        float h3 = terr.SampleHeight(px, pz + 2f), h4 = terr.SampleHeight(px, pz - 2f);
+                        float lo = Mathf.Min(Mathf.Min(h1, h2), Mathf.Min(h3, h4));
+                        float hi = Mathf.Max(Mathf.Max(h1, h2), Mathf.Max(h3, h4));
+                        if (hi - lo > 3.0f) continue;   // a tree on a cliff face leans out of it
+                        bool clash = false;
+                        foreach (var t in taken)
+                            if (Near(px, t.X, pz, t.Z, kind.Clearance)) { clash = true; break; }
+                        if (clash) continue;
+                        var pos = new Vector3(px, y, pz);
+                        recs.Add((pos, (float)(rng.NextDouble() * 360.0), 0.9f + (float)rng.NextDouble() * 0.25f));
+                        taken.Add(pos);
+                    }
+
+                if (recs.Count == 0) continue;
+                WriteResourceBin(Path.Combine(dst, name + ".bin"), recs);
+                total += recs.Count; types++;
+            }
+
+            Log.Print($"[island-res] baked {total} resource(s) across {types} type(s) -> content/{dirName}/");
+            return types > 0 ? dirName : null;
+        }
+
+        static bool Near(float ax, float bx, float az, float bz, float r)
+        {
+            float dx = ax - bx, dz = az - bz;
+            return dx * dx + dz * dz < r * r;
+        }
+
+        /// <summary>ResourceField's .bin: int32 count, then per instance pos(3), euler(3), scale(3).
+        ///
+        /// ⚠ NINE floats, NOT the foliage bake's twelve, and the rotation is EULER rather than a basis. The
+        /// reader rebuilds `Y(180 - ey) * X(ex) * Z(-ez)` and negates pos.z, so an upright trunk with world yaw
+        /// t is ex=0, ez=0, ey=180-t. Getting this wrong yields trees standing at wrong angles, which reads as
+        /// a modelling problem rather than a format one.</summary>
+        static void WriteResourceBin(string path, List<(Vector3 Pos, float Yaw, float Scale)> recs)
+        {
+            using var bw = new BinaryWriter(File.Create(path));
+            bw.Write(recs.Count);
+            foreach (var (pos, yaw, s) in recs)
+            {
+                bw.Write(pos.X); bw.Write(pos.Y); bw.Write(-pos.Z);       // negate-Z position, as every placement here does
+                bw.Write(0f); bw.Write(180f - yaw); bw.Write(0f);          // upright: only yaw, expressed as the reader's ey
+                bw.Write(s); bw.Write(s); bw.Write(s);
+            }
+        }
+
         /// <summary>A coarse "something is already here" grid over roads and buildings.
         ///
         /// ⚠ A MASK, NOT A DISTANCE TEST. The obvious version checks every candidate against every road tile and

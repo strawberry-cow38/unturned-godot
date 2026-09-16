@@ -6336,6 +6336,19 @@ namespace UnturnedGodot
                     AddChild(ff);
                     ff.LoadGrass();
                 }
+                // TREES, BUSHES, MUSHROOMS, ORE. A separate system from the foliage above -- these are
+                // HARVESTABLE (trunk colliders, hit points, log drops, regrow), and ResourceField was never
+                // constructed on this path either. Holiday "NONE" so the island is not Christmas; the bake
+                // already skips seasonal rows, and this keeps the manifest-ordered index space consistent
+                // with what was written.
+                string resDir = ProcIslandFoliage.BakeResources(terr, genSeed.Value, $"island_{genSeed.Value}");
+                if (resDir != null)
+                {
+                    ResourceField.MapDir = resDir;
+                    var rsf = new ResourceField();
+                    AddChild(rsf);
+                    rsf.LoadResources("NONE");
+                }
             }
             var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;

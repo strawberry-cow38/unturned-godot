@@ -63,6 +63,7 @@ game/content/spawns/
 # Generated-island foliage bakes: written per seed by ProcIslandFoliage, same status as the editor's
 # heightmap and object saves above -- derived from the seed, reproducible, and not source.
 game/content/foliage_island_*/
+game/content/resources_island_*/
 
 # per-machine engine overrides written by the in-game graphics options (render thread toggle)
 game/override.cfg
