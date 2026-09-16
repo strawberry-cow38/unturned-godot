@@ -35,7 +35,15 @@ namespace UnturnedGodot.Net
         /// <summary>Bumped whenever a field is added, removed or reinterpreted. A file whose version this build
         /// does not understand is REFUSED, never partially read -- half-restoring a player is worse than a fresh
         /// start, because it looks like it worked.</summary>
-        public const int CurrentVersion = 1;
+        public const int CurrentVersion = 2;
+
+        /// <summary>Formats this build can still READ. v2 added PlayerSave.SteamId.
+        /// ⚠ The gate below used to be `!= CurrentVersion`, and the comment above it says to bump the version
+        /// whenever a field is added -- which together would have made adding one field delete every existing
+        /// world: v1 files refused, every player's inventory, position and skills gone, with the log calmly
+        /// reporting that it declined to read them. Both halves of that rule are worth keeping, so the answer
+        /// is a READ SET plus an explicit migration, not a silent non-bump.</summary>
+        static readonly int[] ReadableVersions = { 1, 2 };
 
         public int Version { get; set; } = CurrentVersion;
 
@@ -198,8 +206,19 @@ namespace UnturnedGodot.Net
 
         public sealed class PlayerSave
         {
-            /// <summary>The save key. Sanitised profile name; see the class comment on why not PlayerId.</summary>
+            /// <summary>The LEGACY save key, and still the fallback. Sanitised profile name; see the class
+            /// comment on why not PlayerId. A name is not an identity -- two people can type the same one, and
+            /// one person can change theirs and lose everything -- which is why SteamId supersedes it below.</summary>
             public string Name { get; set; } = "";
+
+            /// <summary>The real key when present: a SteamID64 the SERVER verified via a stmauth token.
+            /// Stable across a rename, unforgeable by the client, and unique.
+            /// ⚠ EMPTY ON EVERY EXISTING SAVE and on every player today, because the handshake does not carry
+            /// a token yet. That is why FindPlayer falls back to Name instead of requiring this: a lookup that
+            /// demanded a SteamId would silently orphan every player on the live world the moment it shipped,
+            /// and they would rejoin at spawn with nothing, which reads as "the save broke" rather than "the
+            /// key changed".</summary>
+            public string SteamId { get; set; } = "";
 
             // position + facing
             public float X { get; set; }
@@ -313,7 +332,7 @@ namespace UnturnedGodot.Net
                 string name = NameOf(host, pe.OwnerPlayerId);
                 if (string.IsNullOrEmpty(name)) continue;   // nameless peer: nothing stable to file it under
                 seen.Add(name);
-                save.Players.Add(CapturePlayer(host, pe, name));
+                save.Players.Add(CapturePlayer(host, pe, name, SteamIdOf(host, pe.OwnerPlayerId)));
             }
 
             // Anyone in the previous save who is not online right now rides along untouched.
@@ -479,11 +498,12 @@ namespace UnturnedGodot.Net
                 if (j != null && j.Id != 0) page.addItem(j.X, j.Y, j.Rot, ToItem(j));
         }
 
-        static PlayerSave CapturePlayer(NetWorldServer host, PlayerReplication.PlayerEntity pe, string name)
+        static PlayerSave CapturePlayer(NetWorldServer host, PlayerReplication.PlayerEntity pe, string name, string steamId = "")
         {
             var p = new PlayerSave
             {
                 Name = name,
+                SteamId = steamId ?? "",
                 X = pe.Pos.x, Y = pe.Pos.y, Z = pe.Pos.z,
                 YawDegrees = pe.YawDegrees,
                 Stance = pe.Stance,
@@ -579,9 +599,9 @@ namespace UnturnedGodot.Net
         /// defaults. Returns false when this save has nothing for them -- a first-time joiner on an existing
         /// server, which is not an error. Call BEFORE the join snapshot composes so the restored state is what
         /// the client is first told, rather than a correction applied a tick later.</summary>
-        public bool TryApplyPlayer(NetWorldServer host, ushort playerId, string name, long tick)
+        public bool TryApplyPlayer(NetWorldServer host, ushort playerId, string name, long tick, string steamId = "")
         {
-            var p = FindPlayer(name);
+            var p = FindPlayer(steamId, name);
             if (p == null) return false;
 
             // POSITION. ServerTeleport bumps TeleportSeq, which is what tells the client to hard-snap rather
@@ -681,11 +701,23 @@ namespace UnturnedGodot.Net
             return it;
         }
 
-        public PlayerSave FindPlayer(string name)
+        /// <summary>Find a player's block. A verified SteamId wins outright; the name is consulted only when
+        /// there is no SteamId to go on, which covers both a pre-token save and a peer who has not signed in.
+        /// ⚠ ORDER IS THE WHOLE POINT. Matching the name first would let anyone claim a signed-in player's
+        /// belongings by typing their name, which is precisely the hole the SteamId exists to close -- and it
+        /// would do so while every test that only checks "the right save comes back" still passed.</summary>
+        public PlayerSave FindPlayer(string steamId, string name)
         {
+            if (!string.IsNullOrEmpty(steamId))
+                foreach (var p in Players)
+                    if (p != null && string.Equals(p.SteamId, steamId, StringComparison.Ordinal)) return p;
+
             if (string.IsNullOrEmpty(name)) return null;
             foreach (var p in Players)
-                if (p != null && string.Equals(p.Name, name, StringComparison.Ordinal)) return p;
+                // A block that HAS a SteamId is claimed by that identity and is not available by name -- else
+                // the fallback becomes the impersonation route the ordering above just shut.
+                if (p != null && string.IsNullOrEmpty(p.SteamId) && string.Equals(p.Name, name, StringComparison.Ordinal))
+                    return p;
             return null;
         }
 
@@ -693,6 +725,11 @@ namespace UnturnedGodot.Net
 
         static string NameOf(NetWorldServer host, ushort playerId)
             => host.Profiles.TryGet(playerId, out var e) ? e.Name : null;
+
+        /// <summary>"" until the handshake carries a verified token -- never null, so a caller cannot
+        /// accidentally distinguish "no steamid" from "no profile" and branch on the difference.</summary>
+        static string SteamIdOf(NetWorldServer host, ushort playerId)
+            => host.Profiles.TryGet(playerId, out var e) ? (e.SteamId ?? "") : "";
 
         static bool AnyGridSourceOn(NetWorldServer host)
         {
@@ -908,11 +945,16 @@ namespace UnturnedGodot.Net
             try { parsed = JsonSerializer.Deserialize<WorldSave>(json, Json); }
             catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; return false; }
             if (parsed == null) { error = "parsed to null"; return false; }
-            if (parsed.Version != CurrentVersion)
+            if (System.Array.IndexOf(ReadableVersions, parsed.Version) < 0)
             {
-                error = $"save is format v{parsed.Version}, this build reads v{CurrentVersion}";
+                error = $"save is format v{parsed.Version}, this build reads v{string.Join("/", ReadableVersions)}";
                 return false;
             }
+            // MIGRATE, do not merely tolerate. A v1 file has no SteamId on anyone, which is exactly the state
+            // a v2 file describes for a player who has not signed in -- so the upgrade is a no-op on the data
+            // and a relabel on the header. Doing it here rather than at save time means one read-modify-write
+            // moves the file forward, and a v1 that is never saved again stays readable indefinitely.
+            if (parsed.Version < CurrentVersion) parsed.Version = CurrentVersion;
             if (!string.IsNullOrEmpty(expectMapId) && !string.IsNullOrEmpty(parsed.MapId)
                 && !string.Equals(parsed.MapId, expectMapId, StringComparison.OrdinalIgnoreCase))
             {

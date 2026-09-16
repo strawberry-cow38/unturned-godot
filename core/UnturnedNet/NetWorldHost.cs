@@ -513,7 +513,7 @@ namespace UnturnedGodot.Net
                 // Capture reads it back out, so keying on the raw handshake string would miss every name the
                 // sanitiser touched.
                 if (PendingSave != null && Profiles.TryGet(peer.PlayerId, out var prof))
-                    PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick);
+                    PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick, prof.SteamId);
                 _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>
