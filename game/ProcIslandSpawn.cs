@@ -64,22 +64,61 @@ namespace UnturnedGodot
             if (pts.Count < 5) return;
             var floor = new float[pts.Count];
             for (int i = 0; i < pts.Count; i++) floor[i] = pts[i].Y;   // what each joint must clear
-            for (int pass = 0; pass < 4; pass++)
+            // ⚠ THE ENDS' FLOOR IS THEIR OWN SEAT. They were pinned to the cap's height by the caller, and if
+            // the ground at the gate is fractionally above that (it is the same flat pad, but the lift is only
+            // 6 cm) the clamp below would not touch them anyway -- they are never smoothed. Recording the floor
+            // from the pinned value keeps the ease's clamp honest at the seam.
+            SmoothPass(4);
+            EaseEnd(0, +1);
+            EaseEnd(pts.Count - 1, -1);
+            SmoothPass(2);
+
+            void SmoothPass(int passes)
             {
-                var y = new float[pts.Count];
-                for (int i = 0; i < pts.Count; i++)
+                for (int pass = 0; pass < passes; pass++)
                 {
-                    if (i == 0 || i == pts.Count - 1) { y[i] = pts[i].Y; continue; }
-                    float sum = 0f; int n = 0;
-                    for (int k = -2; k <= 2; k++)
+                    var y = new float[pts.Count];
+                    for (int i = 0; i < pts.Count; i++)
                     {
-                        int j = i + k;
-                        if (j < 0 || j >= pts.Count) continue;
-                        sum += pts[j].Y; n++;
+                        if (i == 0 || i == pts.Count - 1) { y[i] = pts[i].Y; continue; }
+                        float sum = 0f; int n = 0;
+                        for (int k = -2; k <= 2; k++)
+                        {
+                            int j = i + k;
+                            if (j < 0 || j >= pts.Count) continue;
+                            sum += pts[j].Y; n++;
+                        }
+                        y[i] = Mathf.Max(sum / n, floor[i]);   // smooth, then stay above the ground
                     }
-                    y[i] = Mathf.Max(sum / n, floor[i]);   // smooth, then stay above the ground
+                    for (int i = 0; i < pts.Count; i++) pts[i] = new Vector3(pts[i].X, y[i], pts[i].Z);
                 }
-                for (int i = 0; i < pts.Count; i++) pts[i] = new Vector3(pts[i].X, y[i], pts[i].Z);
+            }
+
+            // EASE INTO THE CAP (strawberry 2026-09-16: "the splines really need to be eased into where they
+            // connect").
+            //
+            // ⚠ SMOOTHING CANNOT DO THIS, for the same reason Relax's horizontal Ease exists: the end joint is
+            // PINNED, so a windowed average has nothing to move it toward and every bit of the gradient change
+            // between the pinned cap height and the terrain-following interior lands on the first free joint.
+            // Smoothing harder makes that worse, not better -- a straighter interior meets the pin at a sharper
+            // angle. The kink is not too rough, it is in the wrong place.
+            //
+            // So force a CONSTANT GRADE over the first few joints: a straight line from the pinned end to where
+            // the profile already is at the end of the run. The turn is then spread over the whole ease by
+            // construction. Clamped up afterwards like everything else here, because a straight grade that
+            // passes under a hummock is a road with a hill through it.
+            void EaseEnd(int from, int step)
+            {
+                const int Ease = 5;   // ~40 m at the 8 m joint stride
+                int to = from + step * Ease;
+                if (to < 0 || to >= pts.Count) return;
+                float y0 = pts[from].Y, y1 = pts[to].Y;
+                for (int k = 1; k < Ease; k++)
+                {
+                    int i = from + step * k;
+                    float want = Mathf.Lerp(y0, y1, k / (float)Ease);
+                    pts[i] = new Vector3(pts[i].X, Mathf.Max(want, floor[i]), pts[i].Z);
+                }
             }
         }
 
@@ -166,6 +205,78 @@ namespace UnturnedGodot
         ///
         /// An EXPOSED END is an arm of a non-cap piece pointing at a lattice cell that has no tile in it. Caps
         /// are exempt: terminating a run is their whole job.</summary>
+        /// <summary>Measure, per route end, how far the spline actually lands from the cap it is supposed to
+        /// meet -- in PLAN and in HEIGHT separately (strawberry 2026-09-16: "some road splines arent connecting
+        /// to the prop road caps").
+        ///
+        /// ⚠ THE TWO NUMBERS ARE DIFFERENT FAULTS and reporting one distance would hide whichever was fine.
+        /// In plan the join was already exact: a route's first point IS its gate, which sits on the monument's
+        /// perimeter, which is the outer edge of the cap tile. The gap was vertical, and it came from the
+        /// endpoints being seated by JointPosFor -- the highest ground within 5 m -- while the cap itself is
+        /// seated on the flat pad. A single 3D distance would have averaged a correct 0 m with a wrong 2 m and
+        /// reported "about a metre", which is a description of neither.</summary>
+        static void ReportCapJoins(Terrain terr)
+        {
+            if (terr?.IslandRoutes == null || terr.IslandTiles == null) return;
+            float worstPlan = 0f, worstY = 0f; int ends = 0, far = 0;
+            float sumY = 0f;
+            foreach (var route in terr.IslandRoutes)
+            {
+                if (route.Points == null || route.Points.Count < 2) continue;
+                foreach (var end in new[] { route.Points[0], route.Points[^1] })
+                {
+                    // The cap's MOUTH, not its centre: the ramp is the piece's local +Y and the tile is 24 m
+                    // square, so the opening is half a tile out along that arm.
+                    float bestPlan = float.MaxValue, atY = 0f;
+                    var bestTile = default(ProcIsland.MonumentTile); bool haveTile = false;
+                    foreach (var t in terr.IslandTiles)
+                    {
+                        if (t.Piece != ProcIsland.RoadPiece.LineCap && t.Piece != ProcIsland.RoadPiece.TeeCap
+                            && t.Piece != ProcIsland.RoadPiece.QuadCap) continue;
+                        var arm = ArmDir(t.YawDeg, 0f, 1f);
+                        float mx = t.X + arm.x * (ProcIsland.TileSize * 0.5f);
+                        float mz = t.Z + arm.z * (ProcIsland.TileSize * 0.5f);
+                        float d = new Vector2(end.X - mx, end.Y - mz).Length();
+                        if (d < bestPlan) { bestPlan = d; atY = TilePosFor(terr, t.X, t.Z).Y; bestTile = t; haveTile = true; }
+                    }
+                    if (bestPlan == float.MaxValue) continue;
+                    ends++;
+                    float dy = Mathf.Abs(TilePosFor(terr, end.X, end.Y).Y - atY);
+                    sumY += dy;
+                    if (bestPlan > worstPlan) worstPlan = bestPlan;
+                    if (dy > worstY) worstY = dy;
+                    if (bestPlan > 2f || dy > 0.5f)
+                    {
+                        far++;
+                        // ⚠ NAME THE OFFENDER. "2 not joined" out of 56 is a number I would otherwise have to
+                        // guess the cause of, and the last four guesses about this generator were all wrong.
+                        if (far <= 4 && haveTile)
+                        {
+                            // ⚠ AND SAY WHICH HALF IS WRONG. A route end that is NOT at its own gate is a
+                            // routing fault; one that IS at its gate with no cap there is a monument fault.
+                            // Without the gate in the line the two are indistinguishable, and the first guess
+                            // at this (two gates sharing an exit cell) was wrong -- the fix changed nothing.
+                            float gd = float.MaxValue; var gp = Vector2.Zero; float gdx = 0f, gdz = 0f; int gpoi = -1;
+                            foreach (var c in terr.IslandConnectors)
+                            {
+                                float d2 = new Vector2(end.X - c.X, end.Y - c.Z).Length();
+                                if (d2 < gd) { gd = d2; gp = new Vector2(c.X, c.Z); gdx = c.DirX; gdz = c.DirZ; gpoi = c.Poi; }
+                            }
+                            var own = new System.Text.StringBuilder();
+                            foreach (var t2 in terr.IslandTiles) if (t2.Poi == gpoi) own.Append($" {t2.Piece}({t2.X:0},{t2.Z:0})y{t2.YawDeg:0}");
+                            var gates = new System.Text.StringBuilder();
+                            foreach (var c2 in terr.IslandConnectors) if (c2.Poi == gpoi) gates.Append($" ({c2.X:0},{c2.Z:0})d({c2.DirX:0.#},{c2.DirZ:0.#})");
+                            Log.Print($"[island-capjoin] end ({end.X:0},{end.Y:0}) -> nearest {bestTile.Piece} @ ({bestTile.X:0},{bestTile.Z:0}) yaw {bestTile.YawDeg:0}, plan {bestPlan:0.0} m dY {dy:0.00} m"
+                                      + $" | nearest gate poi#{gpoi} ({gp.X:0},{gp.Y:0}) dir ({gdx:0.#},{gdz:0.#}) at {gd:0.0} m"
+                                      + $"\n    poi#{gpoi} gates:{gates}\n    poi#{gpoi} tiles:{own}");
+                        }
+                    }
+                }
+            }
+            if (ends == 0) return;
+            Log.Print($"[island-capjoin] {ends} route end(s): worst plan gap {worstPlan:0.00} m, worst height gap {worstY:0.00} m, mean height gap {sumY / ends:0.00} m, {far} not joined");
+        }
+
         static void ReportPieces(Terrain terr)
         {
             if (terr?.IslandTiles == null) return;
@@ -318,10 +429,198 @@ namespace UnturnedGodot
 
         /// <summary>The boulder props that actually exist in content/objects. Listed rather than generated:
         /// the numbering has gaps.</summary>
-        static readonly string[] BoulderProps =
+        /// <summary>Roadside furniture along the routes between towns: crash barriers on the bends and a power
+        /// line down one side (strawberry 2026-09-16: "place fence road props along sharp-ish road spline
+        /// corners. place power lines along one side of the road splines, off to the side on the dirt beside
+        /// the actual spline").
+        ///
+        /// ⭐ SPACING, OFFSET AND FACING ARE MEASURED OFF RETAIL, not chosen. PEI places 131 Power_Line_0 and
+        /// 22 Fence_Road_0 in content/objects/placements.txt, and read back they say exactly how this kit is
+        /// meant to be used:
+        ///   * fences butt END TO END -- 20 of the 22 have a nearest neighbour at 16.0 m, and the mesh is
+        ///     16.25 m long, so a run is continuous rather than a line of separate panels;
+        ///   * poles stand 22-40 m apart, median 30;
+        ///   * BOTH props run along their own local +Y: comparing each placement's yaw against the bearing to
+        ///     its nearest neighbour, 126 of 131 poles and 22 of 22 fences are parallel to within a few
+        ///     degrees. That is what makes YawFor -- which is defined as "the yaw that points local +Y along
+        ///     this direction" -- the right and only rotation needed here.
+        /// A guess would have had a 50/50 chance of laying every fence across the road instead of along it, and
+        /// a symmetric prop gives nothing away in a screenshot.</summary>
+        static void ScatterRoadside(Terrain terr, EditorObjects objs, ref int missing)
         {
-            "Boulder_00", "Boulder_01", "Boulder_02", "Boulder_03", "Boulder_04", "Boulder_06",
-            "Boulder_08", "Boulder_09", "Boulder_10", "Boulder_11", "Boulder_12", "Boulder_13", "Boulder_22",
+            if (terr == null || objs == null || terr.IslandRoutes == null) return;
+
+            const float FenceSpan = 16f;     // retail's measured run spacing; the mesh is 16.25 m long
+            const float PoleSpan = 30f;      // retail's median pole-to-pole distance
+            // OFF THE TARMAC AND ON THE DIRT, which is a band with two edges. RoadField draws the ribbon
+            // 9.2 m to each side (RenderedRoadHalf) and PaintGroundwork paints route dirt out to 15 m
+            // (RouteHalf 9 + RouteBorder 6). Anything between those two numbers is beside the road, on worked
+            // ground, and inside the strip the foliage scatter already refuses -- so a pole does not end up
+            // standing in a bush it was placed on top of.
+            const float PoleOffset = 12f;
+            const float FenceOffset = 11f;   // tighter: a barrier belongs at the edge of the carriageway
+            // What counts as a corner worth a barrier. Radius of curvature, in metres, measured over the
+            // joint spacing: below this the bend is tight enough to want protecting.
+            const float CornerRadius = 90f;
+            const int CornerPad = 1;         // joints of barrier carried either side, so a run reads as a rail
+
+            int fences = 0, poles = 0, miss = 0, corners = 0;
+            float sharpest = float.MaxValue; var radii = new System.Collections.Generic.List<float>();
+            int ri = -1;
+
+            foreach (var route in terr.IslandRoutes)
+            {
+                ri++;
+                // ⚠ WALK THE JOINTS THE ROAD IS BUILT FROM, NOT THE RAW A* PATH. SpawnRoutes decimates
+                // route.Points by RouteJointStride and hands THOSE to RoadField, so the ribbon a player sees
+                // is the curve through every second point. Measuring curvature on the raw 4 m path measures
+                // the A* staircase instead: an 8-connected search turns in 45-degree steps, and a single
+                // diagonal jog across an 8 m chord reads as a 10 m-radius corner. First run said so -- 540
+                // "bends tighter than 90 m" on one island, sharpest 6 m, which is not a road, it is the
+                // sampling. Same stride, same curve, same answer as the thing being decorated.
+                var raw = route.Points;
+                if (raw == null || raw.Count < 6) continue;
+                var pts = new System.Collections.Generic.List<Vector2>();
+                for (int i = 0; i < raw.Count; i += RouteJointStride) pts.Add(raw[i]);
+                if (pts[^1] != raw[^1]) pts.Add(raw[^1]);
+                if (pts.Count < 6) continue;
+
+                // Tangent and left-normal in ProcIsland's frame at each point, plus arc length so both passes
+                // can step in METRES rather than in joints -- the A* path's spacing alternates 4 m and 5.66 m
+                // with every diagonal step, so counting joints would put poles 20% closer together on a
+                // diagonal stretch than on a straight one.
+                int m = pts.Count;
+                var tan = new Vector2[m];
+                var arc = new float[m];
+                for (int i = 0; i < m; i++)
+                {
+                    var a = pts[Mathf.Max(0, i - 1)];
+                    var b2 = pts[Mathf.Min(m - 1, i + 1)];
+                    var d = b2 - a;
+                    tan[i] = d.Length() > 1e-4f ? d.Normalized() : Vector2.Right;
+                    if (i > 0) arc[i] = arc[i - 1] + pts[i].DistanceTo(pts[i - 1]);
+                }
+
+                // ---- the power line: one side, the whole length ------------------------------------------
+                // WHICH side is fixed per route, not per point: a line that swaps sides halfway along is not a
+                // power line, it is a mistake. Alternating by route index keeps the island from having every
+                // pole on the same compass side of every road.
+                float side = (ri & 1) == 0 ? 1f : -1f;
+                float nextPole = PoleSpan * 0.5f;
+                for (int i = 1; i < m; i++)
+                {
+                    while (nextPole <= arc[i])
+                    {
+                        float t = (arc[i] - arc[i - 1]) > 1e-4f ? (nextPole - arc[i - 1]) / (arc[i] - arc[i - 1]) : 0f;
+                        var at = pts[i - 1].Lerp(pts[i], t);
+                        var tg = tan[i];
+                        var nrm = new Vector2(-tg.Y, tg.X) * side;
+                        nextPole += PoleSpan;
+                        float px = at.X + nrm.X * PoleOffset, pz = at.Y + nrm.Y * PoleOffset;
+                        if (!RoadsideOk(terr, px, pz)) continue;
+                        // ⚠ NO LIFT. Power_Line_0's mesh runs from -1.00 to 8.00 on its up axis -- a metre of
+                        // pole below the origin, which is how a pole is planted. Seating the origin ON the
+                        // ground buries that metre; lifting it clear would leave the pole standing on its tip.
+                        var pos = PosFor(terr, px, pz);
+                        if (objs.Place("Power_Line_0", pos, RotFor(ProcIsland.YawForDir(tg.X, tg.Y))) != null) poles++;
+                        else miss++;
+                    }
+                }
+
+                // ---- barriers on the bends ----------------------------------------------------------------
+                // Curvature from the turn between consecutive tangents over the chord between them: a heading
+                // change of theta radians across L metres is a radius of L/theta. Cheaper and steadier than
+                // fitting a circle to three points, which blows up on the straights where theta is ~0.
+                // ⚠ AND MEASURE IT OVER A BEND'S LENGTH, not between two joints. Even on the decimated path a
+                // one-joint window is dominated by whatever wobble the smoothing left behind; a real road
+                // corner is tens of metres long. W joints either side is ~32 m of arc, which is about the
+                // length of the bend a barrier is for.
+                const int W = 2;
+                var wantFence = new bool[m];
+                for (int i = W; i < m - W; i++)
+                {
+                    float chord = pts[i + W].DistanceTo(pts[i - W]);
+                    if (chord < 1e-3f) continue;
+                    float dot = Mathf.Clamp(tan[i - W].Dot(tan[i + W]), -1f, 1f);
+                    float turn = Mathf.Acos(dot);
+                    if (turn < 1e-4f) continue;
+                    float radius = chord / turn;
+                    radii.Add(radius);
+                    if (radius > CornerRadius) continue;
+                    if (radius < sharpest) sharpest = radius;
+                    corners++;
+                    for (int k = -CornerPad; k <= CornerPad; k++)
+                        if (i + k >= 0 && i + k < m) wantFence[i + k] = true;
+                }
+
+                // Lay the barrier in RUNS, stepping 16 m along the arc like retail does, on the OUTSIDE of the
+                // bend -- which is the side a vehicle leaves the road on, and the side a real crash barrier is
+                // on. The outside is away from the centre of curvature, i.e. opposite the direction the tangent
+                // is turning toward.
+                float nextFence = 0f;
+                for (int i = 1; i < m; i++)
+                {
+                    while (nextFence <= arc[i])
+                    {
+                        float segT = (arc[i] - arc[i - 1]) > 1e-4f ? (nextFence - arc[i - 1]) / (arc[i] - arc[i - 1]) : 0f;
+                        int home = segT < 0.5f ? i - 1 : i;
+                        nextFence += FenceSpan;
+                        if (!wantFence[home]) continue;
+                        var at = pts[i - 1].Lerp(pts[i], segT);
+                        var tg = tan[home];
+                        // Which way the road is turning here: the sign of the 2D cross product of the tangents
+                        // either side. Outside of the bend is the opposite normal.
+                        int lo = Mathf.Max(0, home - 2), hi = Mathf.Min(m - 1, home + 2);
+                        float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
+                        float outward = cross >= 0f ? -1f : 1f;
+                        var nrm = new Vector2(-tg.Y, tg.X) * outward;
+                        float px = at.X + nrm.X * FenceOffset, pz = at.Y + nrm.Y * FenceOffset;
+                        if (!RoadsideOk(terr, px, pz)) continue;
+                        // Fence_Road_0's mesh also runs a metre below its origin, for the same reason.
+                        var pos = PosFor(terr, px, pz);
+                        if (objs.Place("Fence_Road_0", pos, RotFor(ProcIsland.YawForDir(tg.X, tg.Y))) != null) fences++;
+                        else miss++;
+                    }
+                }
+            }
+
+            missing += miss;
+            radii.Sort();
+            string spread = radii.Count > 0 ? $", corner radii median {radii[radii.Count / 2]:0} m / sharpest {sharpest:0} m" : "";
+            Log.Print($"[island-roadside] {poles} power pole(s) at {PoleSpan:0} m, {fences} barrier panel(s) over {corners} bend(s) tighter than {CornerRadius:0} m{spread}"
+                      + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
+        }
+
+        /// <summary>Whether a roadside prop can stand at this spot: on dry land, off the town pads, and not on
+        /// a face it would be sticking out of sideways. ⚠ The town test carries a margin -- a pole a couple of
+        /// metres outside the pad boundary is still standing in the town's front garden.</summary>
+        static bool RoadsideOk(Terrain terr, float px, float pz)
+        {
+            if (ProcIsland.InsideAnyTownPad(px, pz, 6f)) return false;
+            var w = PosFor(terr, px, pz);
+            if (Terrain.HasWater && w.Y < Terrain.SeaLevelY + 0.5f) return false;
+            return terr.SlopeAt(px, pz) < SteepRise;
+        }
+
+        /// <summary>The rock kit WITH ITS MEASURED PLAN RADIUS, in mesh metres at scale 1.
+        ///
+        /// ⚠ THE SPREAD IS THE WHOLE PROBLEM, and it is why a bare name list was not enough. These props are
+        /// not variations on a boulder -- measured off the OBJs in content/objects they run from Boulder_08 at
+        /// 8.9 x 10.2 m to Boulder_04 at 31 x 48 m and 32 m TALL. A single uniform scale range applied across
+        /// that kit produces rocks anywhere from 3 m to 30 m across at random, which is exactly what
+        /// strawberry saw: "boulder placement seems very erratic and inconsistent". The scatter below therefore
+        /// picks the SIZE IT WANTS first and solves for the scale, so what varies is a decision instead of an
+        /// accident of which prop the roll landed on.
+        ///
+        /// ⚠ NAMED, NOT NUMBERED. Boulder_00..22 is not contiguous in the rip -- 05, 07 and 14-21 are absent --
+        /// so generating an index range asked for props that do not exist and 141 of 829 placements silently
+        /// failed. The miss counter is what caught it.</summary>
+        static readonly (string Name, float Radius)[] BoulderProps =
+        {
+            ("Boulder_00",  9.63f), ("Boulder_01", 16.90f), ("Boulder_02",  8.70f), ("Boulder_03", 15.00f),
+            ("Boulder_04", 24.00f), ("Boulder_06",  9.63f), ("Boulder_08",  5.09f), ("Boulder_09",  5.88f),
+            ("Boulder_10", 17.00f), ("Boulder_11",  9.63f), ("Boulder_12", 16.90f), ("Boulder_13",  8.70f),
+            ("Boulder_22", 15.57f),
         };
 
         /// <summary>Scatter BOULDERS down the steep faces (strawberry: "place boulder props along the steep
@@ -336,27 +635,106 @@ namespace UnturnedGodot
             if (terr == null || objs == null) return;
             var b = terr.WorldBoundsXZ();
             var rng = new System.Random(20260916);
-            const float Step = 17f, Apart = 13f;
-            var placed = new System.Collections.Generic.List<Vector3>();
-            int n = 0, miss = 0;
+
+            // ⚠ THE OLD SCAN COULD NOT COVER A FACE, and no amount of tuning its numbers would have.
+            // It stepped a 17 m lattice and took ONE jittered sample per cell: a cell that is half cliff and
+            // half meadow got a rock only if that single sample happened to land on the cliff half, so a face
+            // came out speckled with gaps that have nothing to do with the terrain -- strawberry: "very erratic
+            // and inconsistent. not covering the full cliff faces". Density also could not follow the ground,
+            // because one sample per 289 m^2 is one sample whether the cell is a 30-degree bank or a vertical
+            // wall.
+            //
+            // So: scan FINE, and let the rocks themselves decide the spacing. Every sample on steep ground is a
+            // candidate; the only thing that turns one down is another rock already occupying the space. That
+            // makes coverage a property of the face rather than of the lattice.
+            const float Step = 5f;
+
+            // WHAT SIZE OF ROCK, decided before which prop. The kit spans 5 m to 24 m of radius, so a shared
+            // scale range means the roll of a prop name IS the size roll -- the inconsistency complaint.
+            // Choosing a target radius and solving scale = target / propRadius makes every rock the size it was
+            // meant to be, out of whichever mesh got picked.
+            const float SmallR = 1.6f, BigR = 4.5f;
+            // ...with a few landmarks. A face of nothing but 2 m rocks is as uniform as a face of nothing but
+            // 20 m ones; the tail is what makes it read as a rockfall.
+            const float LandmarkR = 9f, LandmarkChance = 0.06f;
+
+            // Radius-aware occupancy, in a spatial hash. The old test was O(placed) against every rock on the
+            // island for every candidate, which a 5 m scan would have turned into minutes, and it compared
+            // against a FIXED 13 m whatever size the two rocks were -- so 5 m pebbles could not sit near each
+            // other and 30 m slabs sat inside each other.
+            const float Cell = 16f;
+            var occ = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<(float X, float Z, float R)>>();
+            bool Blocked(float px, float pz, float r)
+            {
+                int cx = Mathf.FloorToInt(px / Cell), cz = Mathf.FloorToInt(pz / Cell);
+                int reach = Mathf.CeilToInt((r + BigR * 2f) / Cell);
+                for (int i = cx - reach; i <= cx + reach; i++)
+                    for (int j = cz - reach; j <= cz + reach; j++)
+                    {
+                        if (!occ.TryGetValue((i, j), out var list)) continue;
+                        foreach (var q in list)
+                        {
+                            float dx = px - q.X, dz = pz - q.Z;
+                            // 0.8, not 1.0: rocks in a real fall lean on each other. Full separation reads as a
+                            // row of ornaments placed at arm's length.
+                            float min = (r + q.R) * 0.8f;
+                            if (dx * dx + dz * dz < min * min) return true;
+                        }
+                    }
+                return false;
+            }
+            void Occupy(float px, float pz, float r)
+            {
+                var key = (Mathf.FloorToInt(px / Cell), Mathf.FloorToInt(pz / Cell));
+                if (!occ.TryGetValue(key, out var list)) { list = new System.Collections.Generic.List<(float, float, float)>(); occ[key] = list; }
+                list.Add((px, pz, r));
+            }
+
+            // ⚠ AND NOT ON THE ROAD. The old 17 m scan was sparse enough that this never came up; scanning at
+            // 5 m made it reachable, and the first render had a rock sitting in the carriageway at a fork.
+            // Steepness alone does not exclude a road: the corridor is graded flat down the middle but its
+            // SHOULDERS are the steepest ground for hundreds of metres, which is exactly where the scan now
+            // looks hardest. A road surface is laid over the terrain, so nothing about the terrain can tell the
+            // scatter it is there -- the route list has to.
+            var corridor = RouteCorridorCells(terr);
+            int n = 0, miss = 0, steepSamples = 0, onRoad = 0;
             for (float x = b.MinX; x < b.MaxX; x += Step)
                 for (float z = b.MinZ; z < b.MaxZ; z += Step)
                 {
                     float px = x + (float)(rng.NextDouble() * 2 - 1) * Step * 0.45f;
                     float pz = z + (float)(rng.NextDouble() * 2 - 1) * Step * 0.45f;
-                    if (terr.SlopeAt(px, pz) < SteepRise) continue;
+                    float rise = terr.SlopeAt(px, pz);
+                    if (rise < SteepRise) continue;
                     float y = terr.SampleHeight(px, pz);
                     if (Terrain.HasWater && y < Terrain.SeaLevelY) continue;   // boulders on the face, not the seabed
-                    bool clash = false;
-                    foreach (var q in placed)
-                        if (Near(px, q.X, pz, q.Z, Apart)) { clash = true; break; }
-                    if (clash) continue;
-                    // A spread of the kit rather than one rock repeated down every hillside.
-                    // ⚠ NAMED, NOT NUMBERED. Boulder_00..22 is not contiguous in the rip -- 05, 07 and 14-21
-                    // are absent -- so generating an index range asked for props that do not exist and 141 of
-                    // 829 placements silently failed. The miss counter is what caught it; a scatter that just
-                    // skipped the nulls would have looked like a thinner hillside.
-                    string prop = BoulderProps[rng.Next(BoulderProps.Length)];
+                    // ⚠ FRAME. This scan walks WORLD coordinates (WorldBoundsXZ, SampleHeight), and both the
+                    // route list and the town pads are in ProcIsland's frame, which negates Z. Passing world
+                    // coordinates straight in matched NOTHING -- the first run said "0 refused as road or
+                    // town", which is what a filter looks like when it is asking about the mirror image of the
+                    // island. PosFor is the one-way map (px, -pz); this is its inverse, and it is the same
+                    // negation every crossover in this file has to do.
+                    if (corridor.Contains(CorridorKey(px, -pz)) || ProcIsland.InsideAnyTownPad(px, -pz, 4f)) { onRoad++; continue; }
+                    steepSamples++;
+
+                    // THE STEEPER THE FACE, THE BIGGER AND DENSER THE ROCK. A 30-degree bank gets the small end
+                    // of the range and a near-vertical wall the large end, which is both what a scree slope
+                    // looks like and what makes the rocks read as having come OFF the face rather than been
+                    // dropped on it. steep = 0 at the threshold, 1 at roughly twice it.
+                    float steep = Mathf.Clamp((rise - SteepRise) / SteepRise, 0f, 1f);
+                    float want = Mathf.Lerp(SmallR, BigR, steep * (float)rng.NextDouble() + (1f - steep) * (float)rng.NextDouble() * 0.5f);
+                    if (rng.NextDouble() < LandmarkChance * (0.3f + steep)) want = LandmarkR * (0.7f + (float)rng.NextDouble() * 0.6f);
+                    if (Blocked(px, pz, want)) continue;
+
+                    // Pick a prop whose natural size is nearest what was asked for, out of a few candidates, so
+                    // the scale factor stays near 1 and the mesh is not stretched into something it is not.
+                    var pick = BoulderProps[rng.Next(BoulderProps.Length)];
+                    for (int t = 0; t < 3; t++)
+                    {
+                        var alt = BoulderProps[rng.Next(BoulderProps.Length)];
+                        if (Mathf.Abs(alt.Radius - want) < Mathf.Abs(pick.Radius - want)) pick = alt;
+                    }
+                    float scale = want / pick.Radius;
+
                     // ⚠ SIT ON THE SLOPE, NOT ON A FLAT WORLD (strawberry: "scale and rotate the props to
                     // actually fit the slopes"). RotFor gives the stand-up + yaw every prop here uses, which
                     // leaves the rock perfectly upright -- on a 30-degree face that reads as a boulder balanced
@@ -370,16 +748,46 @@ namespace UnturnedGodot
                     var basis = axis.LengthSquared() < 1e-8f
                         ? stand
                         : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
-                    // Vary the size, and sink each rock slightly so it beds into the face instead of perching
-                    // on it -- a boulder resting exactly on the surface reads as placed, not fallen.
-                    float scale = 0.55f + (float)rng.NextDouble() * 0.7f;
-                    var pos = new Vector3(px, y - 0.35f * scale, pz);
-                    if (objs.Place(prop, pos, basis.Scaled(Vector3.One * scale)) != null) { placed.Add(pos); n++; }
+                    // Sink PROPORTIONALLY. A flat 0.35 m bedded a 3 m rock nicely and left a 30 m one sitting on
+                    // the hillside like a marble on a table; a third of the radius beds both.
+                    var pos = new Vector3(px, y - want * 0.33f, pz);
+                    if (objs.Place(pick.Name, pos, basis.Scaled(Vector3.One * scale)) != null) { Occupy(px, pz, want); n++; }
                     else miss++;
                 }
             missing += miss;
             Log.Print($"[island-rocks] {n} boulder(s) on ground steeper than {Mathf.RadToDeg(Mathf.Atan(SteepRise)):0.#} deg"
+                      + $" ({steepSamples} steep sample(s) scanned at {Step:0.#} m, {onRoad} refused as road or town)"
                       + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
+        }
+
+        /// <summary>Coarse cells that any route passes through, inflated by the width of the road that is drawn
+        /// on it. A set membership test instead of a distance search: a route is thousands of points and the
+        /// boulder scan asks hundreds of thousands of times.
+        /// ⚠ The cell is the same size as the reach, so a point in a cell can still be up to a cell-diagonal
+        /// from the road -- deliberately generous. Refusing a rock that would have been fine costs nothing on a
+        /// face with hundreds of candidates; letting one stand in the road costs a screenshot.</summary>
+        const float CorridorCell = 12f;
+        static (int, int) CorridorKey(float x, float z) => (Mathf.FloorToInt(x / CorridorCell), Mathf.FloorToInt(z / CorridorCell));
+
+        static System.Collections.Generic.HashSet<(int, int)> RouteCorridorCells(Terrain terr)
+        {
+            var set = new System.Collections.Generic.HashSet<(int, int)>();
+            if (terr?.IslandRoutes == null) return set;
+            // Rendered half-width plus the paint's shoulder: the dirt band IS the road's footprint as far as
+            // anything standing beside it is concerned.
+            int reach = Mathf.CeilToInt((ProcIsland.RenderedRoadHalf + 8f) / CorridorCell);
+            foreach (var route in terr.IslandRoutes)
+            {
+                if (route.Points == null) continue;
+                foreach (var pt in route.Points)
+                {
+                    var k = CorridorKey(pt.X, pt.Y);
+                    for (int i = -reach; i <= reach; i++)
+                        for (int j = -reach; j <= reach; j++)
+                            set.Add((k.Item1 + i, k.Item2 + j));
+                }
+            }
+            return set;
         }
 
         /// <summary>Paint DIRT under everything the generator built -- road tiles, buildings and the routes
@@ -542,6 +950,20 @@ namespace UnturnedGodot
                 var lastW = JointPosFor(terr, last.X, last.Y);
                 if (pts.Count == 0 || pts[^1].DistanceTo(lastW) > 0.01f) pts.Add(lastW);
                 if (pts.Count < 2) { skipped++; continue; }
+                // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM (strawberry 2026-09-16: "some
+                // road splines arent connecting to the prop road caps").
+                //
+                // A route's first and last points ARE its gate -- the connector sits on the monument's
+                // perimeter, which is the outer edge of the cap tile, so in PLAN the ribbon already starts
+                // exactly where the ramp ends. The disconnect was vertical and it was self-inflicted:
+                // JointPosFor seats a joint on the HIGHEST ground within 5 m, which is right everywhere along
+                // the route and wrong at its ends, because 5 m from the pad edge reaches off the flat pad onto
+                // country that is usually higher. The cap prop is seated by TilePosFor -- pad height plus the
+                // lift, with no hunting -- so the ribbon started above the piece it was supposed to meet.
+                // Seating the ends the same way TilePosFor seats the cap makes them agree by construction
+                // rather than by the two happening to sample the same number.
+                pts[0] = TilePosFor(terr, route.Points[0].X, route.Points[0].Y);
+                pts[^1] = TilePosFor(terr, last.X, last.Y);
 
                 float len = 0f;
                 for (int i = 1; i < pts.Count; i++) len += pts[i].DistanceTo(pts[i - 1]);
@@ -551,6 +973,7 @@ namespace UnturnedGodot
                 if (rf.AddRoadFromPolyline(pts, material) >= 0) built++; else skipped++;
             }
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
+            ReportCapJoins(terr);
             return built;
         }
 
@@ -684,6 +1107,7 @@ namespace UnturnedGodot
                 if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
             }
             ScatterBoulders(terr, objs, ref missing);
+            ScatterRoadside(terr, objs, ref missing);
             ReportPieces(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);

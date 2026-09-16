@@ -806,13 +806,61 @@ namespace UnturnedGodot
         /// <summary>⚠ Must agree with FlattenTownsExactly's pad, or the carve cuts into ground the town just
         /// levelled. Both read the same TownPads list, built once from the tiles, rather than each deriving a
         /// footprint from Poi.HalfSize and drifting apart the moment one of them changes.</summary>
-        static System.Collections.Generic.List<(float X, float Z, float Half)> TownPads = new();
+        /// <summary>⚠ Y IS PART OF THE PAD, not a lookup the carve does for itself. The pad is levelled to an
+        /// exact height and the route outside it is carved to its own profile; whoever blends the two has to
+        /// know both numbers, and re-sampling the grid for the town's height would read whatever the carve had
+        /// already written there.</summary>
+        static System.Collections.Generic.List<(float X, float Z, float Half, float Y)> TownPads = new();
 
         static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)
         {
             foreach (var pad in TownPads)
                 if (Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) <= pad.Half) return true;
             return false;
+        }
+
+        /// <summary>The same test, for the crossover that places props along the routes. ⚠ Reads the SAME pad
+        /// list rather than re-deriving a footprint -- a second opinion about where a town ends would put
+        /// roadside furniture inside one the moment either copy changed. `margin` pushes the boundary out, so a
+        /// pole sitting a few metres off the pad edge still counts as in the town.</summary>
+        public static bool InsideAnyTownPad(float wx, float wz, float margin = 0f)
+        {
+            foreach (var pad in TownPads)
+                if (Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) <= pad.Half + margin) return true;
+            return false;
+        }
+
+        /// <summary>How far outside a town's pad the ground is graded from the pad's exact height onto the
+        /// route's own profile (strawberry 2026-09-16: "theres still sharp dropoffs going in and out of
+        /// towns").
+        ///
+        /// ⭐ THE STEP WAS IN THE GROUND, NOT IN THE ROAD. Carve and SmoothCorridor both skip any cell
+        /// InsideTown -- the town owns its ground, which is what stopped the two passes undoing each other --
+        /// so the first cell OUTSIDE the pad was carved to the route profile and the last cell inside it was
+        /// pad-flat, with nothing in between. Wherever the town sat above or below the country around it that
+        /// is a cliff exactly one grid cell wide, and the spline riding over it inherits the whole drop in one
+        /// segment. Easing the SPLINE would have hidden it and left the ground edge there for the player to
+        /// walk off.
+        ///
+        /// 40 m is five grid cells and a little over four spline joints at the 8 m stride, so the drop is spread
+        /// across enough segments to read as a gradient rather than a step.</summary>
+        const float TownRampBand = 40f;
+
+        /// <summary>Blend a carved height toward the nearby town pad's level. Returns `want` untouched away
+        /// from every pad, the pad's own height at its edge, and a smoothstep between.
+        /// ⚠ NEAREST pad only, by edge distance. Summing or averaging the influence of two towns that happen to
+        /// sit within a band of each other would grade the ground to a level neither of them is at.</summary>
+        static float TownRamped(float wx, float wz, float want)
+        {
+            float bestGap = float.MaxValue, padY = 0f;
+            foreach (var pad in TownPads)
+            {
+                float gap = Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) - pad.Half;
+                if (gap < bestGap) { bestGap = gap; padY = pad.Y; }
+            }
+            if (bestGap >= TownRampBand || bestGap == float.MaxValue) return want;
+            if (bestGap <= 0f) return padY;
+            return Mathf.Lerp(padY, want, Mathf.SmoothStep(0f, TownRampBand, bestGap));
         }
 
         static void Carve(float[,] grid, int gw, int gh, Route r, Params p, System.Collections.Generic.List<Poi> pois)
@@ -859,7 +907,11 @@ namespace UnturnedGodot
                         if (d > shoulder) continue;
                         if (InsideTown(x * Unit, y * Unit, pois)) continue;   // the town owns its own ground
                         float w = d <= half ? 1f : 1f - Mathf.SmoothStep(half, shoulder, d);
-                        float want = ToGrid(sm[i]);
+                        // GRADE ONTO THE TOWN rather than butting against it. Outside the pad this is the
+                        // route's own profile; within TownRampBand of one it slides toward the pad's exact
+                        // level, reaching it at the boundary -- so the cell just outside the town and the cell
+                        // just inside it are at the same height instead of a step apart.
+                        float want = ToGrid(TownRamped(x * Unit, y * Unit, sm[i]));
                         // MAX, not assign: consecutive path points overlap, and a plain lerp lets a later point
                         // undo an earlier one's cut. Taking the strongest pull toward the profile keeps the
                         // corridor continuous instead of scalloped.
@@ -927,7 +979,7 @@ namespace UnturnedGodot
                 }
                 else half = TileSize * 0.5f + HalfCarriageway;   // no tiles survived: flatten only what a single prop needs
 
-                TownPads.Add((cxW, czW, half));
+                TownPads.Add((cxW, czW, half, poi.GroundY));
                 PadWas += poi.HalfSize + TileSize * 0.5f + HalfCarriageway;   // what the old rule would have flattened
                 PadNow += half; PadCount++;
                 if (half < PadSmallest) PadSmallest = half;
@@ -1025,6 +1077,11 @@ namespace UnturnedGodot
         static readonly (int dx, int dz)[] Card = { (0, -1), (1, 0), (0, 1), (-1, 0) };
 
         static float YawFor(int dx, int dz) => Mathf.RadToDeg(Mathf.Atan2(-dx, -dz));
+
+        /// <summary>The same yaw for a direction that is not a lattice step: the rotation that points a prop's
+        /// LOCAL +Y along (dx, dz) in this frame. Every piece of the road kit is authored that way and so are
+        /// Fence_Road_0 and Power_Line_0, which is why this one function orients all of them.</summary>
+        public static float YawForDir(float dx, float dz) => Mathf.RadToDeg(Mathf.Atan2(-dx, -dz));
 
         /// <summary>Lay a monument's streets on the 24 m lattice and return the placed props.
         ///
@@ -1216,6 +1273,15 @@ namespace UnturnedGodot
                     if (d.dx == inward.dx && d.dz == inward.dz) continue;   // keep the street INTO the town
                     var lc = (cell.Item1 + d.dx, cell.Item2 + d.dz);
                     if (!skel.Contains(lc)) continue;
+                    // ⚠⚠ NEVER TRIM ANOTHER GATE'S EXIT CELL. This loop deletes a lateral neighbour so THIS
+                    // exit can be an exact LineCap -- and the neighbour is sometimes the cell another gate's
+                    // road is supposed to arrive at. Deleting it removes that gate's cap entirely, and the
+                    // spline then ends 24 m short of the nearest piece with nothing in between.
+                    // strawberry: "some road splines arent connecting to the prop road caps". Measured on seed
+                    // 12345, poi#10: gate (2056,776) had its exit cell (1,2) trimmed away by the +X gate at
+                    // (2,2) tidying its own laterals. An exit is not a lateral; it is the reason the monument
+                    // has a road at all.
+                    if (exits.ContainsKey(lc)) continue;
                     skel.Remove(lc);
                     streets.Remove(d);
                     GrowTrimmed++;
@@ -1387,29 +1453,52 @@ namespace UnturnedGodot
         };
 
         const float HalfCarriageway = 8f;   // the road surface is 16 m wide
-        const float Verge = 4f;             // grass between the kerb and the front wall
-        /// <summary>How far past the street centreline a block reaches. The block cell spans 12..36 m out; the
-        /// facing street's opposite kerb is at 40, since streets sit on every SECOND lattice line.</summary>
-        const float BlockReach = 38f;
+
+        /// <summary>⚠ THE ROAD PROP IS 24 m WIDE, NOT 16 (strawberry 2026-09-16: "ensure proper spacing for
+        /// buildings from the road props"). The carriageway -- the tarmac the material draws -- is 16 m, but the
+        /// PIECE is a 24 m square: Road_Line_0's mesh measures exactly -12..12 on both horizontal axes, kerb and
+        /// verge geometry included. Setbacks were measured from the carriageway, so a front wall landed at
+        /// 8 + 4 = 12 m, which is EXACTLY the prop's own edge -- every building in every town was flush against
+        /// the road piece, and the ones whose measured Front was a little optimistic were inside it. Measuring
+        /// from the thing that is actually there is the fix; the old number was right about a road that is not
+        /// the one being placed.</summary>
+        const float PropHalf = TileSize * 0.5f;
+
+        /// <summary>Clear ground between a road PROP's edge and any building wall. Applies at the back as well
+        /// as the front, because a block with streets on both sides has a road piece at each end of it.</summary>
+        const float BuildClear = 2.5f;
+
+        /// <summary>How far past the street centreline the block cell itself reaches: the far edge of the
+        /// 24 m cell behind the street's own tile. Beyond it is the next street's tile, at 36..60.</summary>
+        const float BlockFar = TileSize * 1.5f;
 
         /// <summary>Metres from the street's CENTRELINE to this prop's ORIGIN, so that its front wall lands a
-        /// verge back from the kerb whatever its own depth is. The old flat 22 m was this number computed once,
-        /// for a 20 m-deep building, and then applied to all of them.</summary>
-        static float SetbackFor(in BuildingProp b) => HalfCarriageway + Verge + b.Front;
+        /// clearance back from the ROAD PIECE whatever its own depth is. The old flat 22 m was this number
+        /// computed once, for a 20 m-deep building, and then applied to all of them.</summary>
+        static float SetbackFor(in BuildingProp b) => FrontWallFromCentreline + b.Front;
 
-        /// <summary>Whether a prop fits the block it would be put on: narrow enough not to spill into its
-        /// neighbours or the cross street, and short enough front-to-back to stay off the far street. Derived
-        /// from TileSize rather than hardcoded, so a bigger lattice re-admits the props it currently rules out
+        /// <summary>Whether a prop fits a block with a street on ONE side: narrow enough not to spill into its
+        /// neighbours, and short enough to stay inside its own block cell.
+        /// ⚠ Derived from TileSize, not hardcoded, so a bigger lattice re-admits the props it rules out
         /// (House_03, Medic_1 and the rest) with no new table.</summary>
-        static bool Fits(in BuildingProp b) => b.Width <= TileSize - 1f && SetbackFor(b) + b.Back <= BlockReach;
+        static bool Fits(in BuildingProp b) =>
+            b.Width <= TileSize - 2f && SetbackFor(b) + b.Back <= BlockFar;
 
-        static BuildingProp[] Fitting(BuildingProp[] all)
+        /// <summary>...and whether it fits a block with a street on BOTH sides, where the far end has to clear
+        /// a second road piece. A 24 m block between two 24 m road tiles is genuinely tight -- most of the
+        /// catalogue is 17-25 m deep -- so this set is small on purpose. An empty block is a yard; a building
+        /// standing in the far carriageway is the bug being fixed.</summary>
+        static bool FitsThrough(in BuildingProp b) =>
+            Fits(b) && SetbackFor(b) + b.Back <= BlockFar - BuildClear;
+
+        static BuildingProp[] Fitting(BuildingProp[] all, bool through)
         {
             var keep = new System.Collections.Generic.List<BuildingProp>();
-            foreach (var b in all) if (Fits(b)) keep.Add(b);
+            foreach (var b in all) if (through ? FitsThrough(b) : Fits(b)) keep.Add(b);
             return keep.ToArray();
         }
-        static readonly BuildingProp[] FitHouses = Fitting(Houses), FitStores = Fitting(Stores), FitServices = Fitting(Services);
+        static readonly BuildingProp[] FitHouses = Fitting(Houses, false), FitStores = Fitting(Stores, false), FitServices = Fitting(Services, false);
+        static readonly BuildingProp[] ThruHouses = Fitting(Houses, true), ThruStores = Fitting(Stores, true), ThruServices = Fitting(Services, true);
 
         /// <summary>The measured footprint of a placed building, by name. Exposed so a check can ask where a
         /// prop's WALL ends up rather than where its origin does -- the origin was never the thing standing in
@@ -1421,8 +1510,8 @@ namespace UnturnedGodot
             return null;
         }
 
-        /// <summary>Where a building's front wall should land: past the kerb by a verge, on every prop.</summary>
-        public static float FrontWallFromCentreline => HalfCarriageway + Verge;
+        /// <summary>Where a building's front wall should land: clear of the ROAD PIECE, on every prop.</summary>
+        public static float FrontWallFromCentreline => PropHalf + BuildClear;
 
         /// <summary>Fill a monument's blocks with buildings fronting the streets.
         ///
@@ -1461,10 +1550,21 @@ namespace UnturnedGodot
                         // Front (-Y) toward the street means +Y points AWAY from it, i.e. along d.
                         float yaw = YawFor(d.dx, d.dz);
 
+                        // ⚠ WHICH TABLE DEPENDS ON THE BLOCK, not just on the roll. A block cell with a street
+                        // behind it as well as in front has a 24 m road piece at BOTH ends, so only the shallow
+                        // props clear them both; a block on the outside of the grid has open ground behind and
+                        // can take the deeper ones. Filtering once, globally, to whichever case is stricter
+                        // would have thrown most of the catalogue away on every block -- including the two
+                        // thirds of them that have the room.
+                        bool through = street.Contains((i + d.dx, j + d.dz));
                         // Deterministic mix: mostly houses, with stores and services salted through. Keyed on
                         // the cell and the seed so a town is the same town every time it is generated.
                         float r = Hash01(i * 71 + poiIndex * 13, j * 37, p.Seed + 4021);
-                        var table = r < 0.60f ? FitHouses : r < 0.82f ? FitStores : FitServices;
+                        var table = through
+                            ? (r < 0.60f ? ThruHouses : r < 0.82f ? ThruStores : ThruServices)
+                            : (r < 0.60f ? FitHouses : r < 0.82f ? FitStores : FitServices);
+                        // An empty block is a yard. Falling back to a table that does NOT fit would put the
+                        // wall back in the road, which is the whole thing being fixed.
                         if (table.Length == 0) break;
                         var b = table[(int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f)];
                         // Setback is per PROP, measured out from the street cell it fronts.
@@ -1531,6 +1631,10 @@ namespace UnturnedGodot
 
                 var cur = new int[idxs.Count];
                 var best = (int[])want.Clone(); int bestCost = int.MaxValue;
+                // ⚠ HOW HARD TO TRY. Level 0 is every rule; 1 drops the adjacency rule; 2 keeps only the one
+                // rule that MUST hold. See the fallback note below -- this exists because the old code had no
+                // level 2 and fell back to `want`.
+                int level = 0;
                 void Recurse(int a)
                 {
                     if (a == idxs.Count)
@@ -1543,11 +1647,19 @@ namespace UnturnedGodot
                             {
                                 if (x == y) continue;
                                 var cy = CellsFor(y, cur[y]);
+                                // ⭐ TWO GATES MAY NEVER SHARE AN EXIT CELL, at any level. BuildMonument keys
+                                // its exits by cell in a Dictionary, so a collision does not fail -- the second
+                                // gate silently OVERWRITES the first, and the monument ends up with one cap
+                                // serving two roads. Measured on seed 12345: two route ends 24 m and 17 m from
+                                // the nearest cap, one of them meeting a LineCap side-on because the surviving
+                                // entry's ramp pointed the other gate's way.
                                 if ((cx.ei, cx.ej) == (cy.ei, cy.ej)) return;
+                                if (level >= 2) continue;
                                 if ((cx.ei, cx.ej) == (cy.ii, cy.ij)) return;
                                 // Adjacency between two gates' cells only matters when the monument is NOT
                                 // grid-filled. In a full grid every cell is already a street, so a neighbouring
                                 // exit is just another junction -- and QuadCap serves all four directions.
+                                if (level >= 1) continue;
                                 if (!FillsGrid(poi.Kind))
                                     foreach (var d in Card)
                                         if ((cx.ei + d.dx, cx.ej + d.dz) == (cy.ei, cy.ej) || (cx.ei + d.dx, cx.ej + d.dz) == (cy.ii, cy.ij)) return;
@@ -1562,7 +1674,16 @@ namespace UnturnedGodot
                     // grid neighbours plus a ramp opposite one of them, and no piece serves that set.
                     // A gate must land ON a street line, or its inner cell is a block and the access road runs
                     // into the back of one. Same alternating set the streets use.
-                    if (FillsGrid(poi.Kind) && n >= 3)
+                    // ⚠ AND THE RESTRICTED SET CAN BE UNSATISFIABLE. On n = 3 the street lines are {1} -- a
+                    // single line -- so two gates on the SAME face have exactly one cell to share between them
+                    // and no assignment can separate them. The search then found nothing, fell back to `want`,
+                    // and both gates keyed the same entry in BuildMonument's exit dictionary: one cap, two
+                    // roads, the second one's ramp facing the first one's way. Measured on seed 12345, poi#9:
+                    // a gate facing -X arriving at a LineCap whose ramp pointed +Z.
+                    // Widening at level >= 1 costs a gate whose inner cell is a block rather than a street,
+                    // which the growing pass below then fixes by adding one. That is a much smaller price than
+                    // a road that never reaches the town.
+                    if (FillsGrid(poi.Kind) && n >= 3 && level == 0)
                     {
                         for (int k = 1; k <= n - 2; k += 2) { cur[a] = k; Recurse(a + 1); }
                     }
@@ -1571,7 +1692,17 @@ namespace UnturnedGodot
                         for (int k = 0; k < n; k++) { cur[a] = k; Recurse(a + 1); }
                     }
                 }
-                Recurse(0);
+                // ⚠ THE FALLBACK WAS THE BUG. This used to be a single Recurse(0), and when no assignment
+                // satisfied every rule `best` stayed as `want` -- the unconstrained preferred lines, which is
+                // precisely the arrangement the rules exist to forbid, INCLUDING two gates on one cell. A
+                // search that gives up by returning the thing it was searching away from is worse than not
+                // searching: it looks like it ran.
+                //
+                // So relax in order of how much each rule costs when broken. Adjacency costs a QuadCap with a
+                // spare arm; sharing an inner cell costs a street that serves two gates; sharing the EXIT cell
+                // costs a road that does not reach the town at all. Give up the cheap ones first and only take
+                // `want` if even the last level is unsatisfiable (more gates than the face has lines).
+                for (level = 0; level <= 2 && bestCost == int.MaxValue; level++) Recurse(0);
                 for (int a = 0; a < idxs.Count; a++) snapped[idxs[a]] = best[a];
             }
 
