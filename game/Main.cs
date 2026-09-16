@@ -6321,6 +6321,22 @@ namespace UnturnedGodot
             // A generated island had no player spawns at all (the save line read "0 spawns" every time), so give
             // it its own. Seeded off the island's seed: same seed, same island, same start points.
             if (genPois != null && genSeed.HasValue) ProcIslandSpawn.PlacePlayerSpawns(terr, spawns, genSeed.Value);
+            // FOLIAGE. ⚠ BuildEditorNew is its own world build -- it does not go through WorldBuilder, which is
+            // the only place that ever constructed a FoliageField -- so a generated island had no foliage field
+            // at all, never mind no foliage data. Both halves are needed: bake the scatter, then build the field
+            // that reads it. Keyed by SEED, not by map name, so re-rolling the same island reuses its bake
+            // instead of leaving a directory behind per attempt.
+            if (genPois != null && genSeed.HasValue)
+            {
+                string folDir = ProcIslandFoliage.Bake(terr, genSeed.Value, $"island_{genSeed.Value}");
+                if (folDir != null)
+                {
+                    FoliageField.MapDir = folDir;
+                    var ff = new FoliageField();
+                    AddChild(ff);
+                    ff.LoadGrass();
+                }
+            }
             var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;

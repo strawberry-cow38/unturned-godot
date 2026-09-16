@@ -60,6 +60,9 @@ __pycache__/
 game/content/objects/editor_*.txt
 game/content/terrain/editor_*_heightmap.bin
 game/content/spawns/
+# Generated-island foliage bakes: written per seed by ProcIslandFoliage, same status as the editor's
+# heightmap and object saves above -- derived from the seed, reproducible, and not source.
+game/content/foliage_island_*/
 
 # per-machine engine overrides written by the in-game graphics options (render thread toggle)
 game/override.cfg
