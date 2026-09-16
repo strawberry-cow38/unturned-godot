@@ -9218,6 +9218,9 @@ namespace UnturnedGodot
                     // FAIL-FAST (C1): a client without the retail map cannot render the world the server is
                     // simulating -- say exactly what to fix; never silently fall back to the old demo arena.
                     Log.Err($"[CLIENT] map not found at {_mapRoot} -- set UG_UNTURNED_DIR to a local Unturned install (or install Unturned). NOT joining.");
+                    // The client build no longer finishes its own cover (the session does, once the shell lands) --
+                    // and on this path there IS no session, so finish it here or it sits under the error forever.
+                    res.Loading?.Finish(res.Timings ?? new System.Collections.Generic.Dictionary<string, double>());
                     var layer = new CanvasLayer { Layer = 200 };   // above the LoadingScreen (128) the aborted build left up
                     var bg = new ColorRect { Color = new Color(0.04f, 0.05f, 0.07f) };
                     bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -9243,6 +9246,7 @@ namespace UnturnedGodot
                                                       PlayerName = PlayerProfile.Name,   // the HANDSHAKE name (what others see until SetProfile lands, and if it never does) -- was the field default "player" for every real joiner
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
+                                                      Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }

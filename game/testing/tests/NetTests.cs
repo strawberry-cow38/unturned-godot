@@ -974,6 +974,11 @@ namespace UnturnedGodot.Testing
             T.Check("fail-fast: world NOT ready (no flat-ground fallback for a client)", !world.Ready);
             T.Check("no local player in a client world", world.Player == null);
             T.Check("no PlayerController registered (PlayerRegistry empty)", PlayerRegistry.Count == 0);
+            // THE HANDOFF CONTRACT. A client build must hand its loading cover BACK rather than dropping it:
+            // the world being built is not the player being in it, and finishing here is what left a grey gap
+            // between the progress bar and the game. Whoever receives it owns finishing it -- the session when
+            // there is one, Main.BuildClient's fail-fast branch when there is not.
+            T.Check("client build hands its loading cover to the caller (not finished by the builder)", world.Loading != null);
             yield return Ticks(1);   // let the sandbox tick once so teardown exercises the built nodes
         }
     }

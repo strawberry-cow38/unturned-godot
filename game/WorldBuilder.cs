@@ -61,6 +61,13 @@ namespace UnturnedGodot
         /// WHOLE (not tagged-only): the §3.7 alive-bitmap index space is manifest-ordered, and a late
         /// tagged append would misalign every index against the server's interleaved order.</summary>
         public System.Action<string> ApplyHoliday;
+        /// <summary>Client only: the build's loading cover, NOT finished by the builder. A client is not
+        /// "loaded" when its world is built -- it still has a handshake, a join snapshot and a shell spawn to
+        /// go, and dropping the cover at world-ready is what put a grey no-man's-land between the progress bar
+        /// and the game (strawberry, 2026-09-16: "the gray screen should never show"). The session owns it from
+        /// here and finishes it when the shell actually exists. Null in every other mode, which finishes its own.</summary>
+        public LoadingScreen Loading;
+        public System.Collections.Generic.Dictionary<string, double> Timings;   // paired with Loading; the breakdown Finish() prints
     }
 
     // The one real-world assembly path, extracted verbatim from Main.BuildObjectsTest/BuildPeiPlay so
@@ -441,6 +448,12 @@ namespace UnturnedGodot
             // before the next (blocking) chunk of work runs. (Dedicated: no loading UI -- there is nobody watching.)
             LoadingScreen loading = null;
             if (mode != WorldMode.Dedicated) { loading = new LoadingScreen(); root.AddChild(loading); loading.SetTotal(mode == WorldMode.Client ? 5 : 11); }   // Client: Terrain/Objects/Roads/Foliage/Trees
+            // Hand the cover over AT CREATION, not at the end, because this method has SIX return statements and
+            // the missing-map one at :516 fires before any of them. That path already left the cover up before
+            // this change -- Main.BuildClient's error screen is a Layer 200 explicitly documented as sitting
+            // "above the LoadingScreen the aborted build left up". Assigning here means every exit carries it and
+            // the receiver can finish it; assigning at the end meant only the happy path did.
+            if (mode == WorldMode.Client) result.Loading = loading;
             // Guarantee the overlay is actually PRESENTED before any blocking asset load. A single
             // process_frame resumes mid-frame (before the draw), so the first + heaviest phase (Terrain)
             // would otherwise block on the previous frame and the loading screen would never show. Wait
@@ -2357,7 +2370,10 @@ namespace UnturnedGodot
             }
             NearestFilter.Apply(root);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }   // record the final phase
-            loading?.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
+            // CLIENT: hand the cover to the session instead of dropping it -- the world being built is not the
+            // player being in it. Every other mode is done here and finishes as before.
+            if (mode == WorldMode.Client) result.Timings = timings;   // Loading was handed over at creation; only the breakdown is late
+            else loading?.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
             {
                 // Same numbers as the overlay, on stdout -- the overlay is unreadable in a headless/xvfb profiling run,
                 // and Dedicated builds no overlay at all, so this was the one mode whose load cost was invisible.
