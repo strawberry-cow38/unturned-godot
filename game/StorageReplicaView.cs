@@ -49,6 +49,13 @@ namespace UnturnedGodot
                                                 e.YawDegrees, kind.Display, kind.Label, renderMesh: true, serverOwned: true);
                     node.NetId = e.NetIdValue;             // the shell's F-open request addresses the server entity by this (B9)
                     node.ResetPhysicsInterpolation();      // don't smear from (0,0,0) to the placement (the WorldItem.Spawn lesson)
+                    // ⚠ COUNT, for the same reason ContainerNetSync counts: the question "did the replica
+                    // materialise?" and the question "is the client drawing a second copy?" have the same
+                    // answer shape from the outside -- one shelf on screen -- and only a number separates
+                    // them. Logged at powers-of-two-ish milestones so a 696-fixture map says so without
+                    // writing 696 lines.
+                    if (_nodes.Count + 1 == 1 || (_nodes.Count + 1) % 100 == 0)
+                        Log.Print($"[containers] replica materialised {_nodes.Count + 1} node(s)");
                     entry = new Entry { Node = node, DisplaySig = ulong.MaxValue, DoorsOpen = false, CookerOn = false };   // MaxValue forces the first ApplyDisplay
                     _nodes[e.NetIdValue] = entry;
                 }
