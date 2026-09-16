@@ -8344,7 +8344,7 @@ namespace UnturnedGodot
                 Log.Print($"[turret] slot {mtSlot}: {_driving.TurretFor(_seatIndex, _turretSlot)?.GunId ?? "?"}");
             }
             else if (Keybinds.IsDown(@event) && @event is not InputEventKey { Echo: true } && HotbarSlot(@event) is int hbSlot)
-                EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-9 = bound item. Bindable Hotbar1..Hotbar9 (default 1..9). Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
+                EquipHotbar(hbSlot);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary, 3-10 = bound item. Bindable Hotbar1..Hotbar10 (default 1..9 then 0). Binding (RMB item + 3-10) is handled in InventoryUI while the bag's open.
             else if (_driving != null && _driving.HasTurretHatch && _seatIndex == 1 && Keybinds.JustPressed(GameAction.VehicleDoor, @event))
                 _driving.GunnerHeadOut = !_driving.GunnerHeadOut;   // the tank gunner pops out of / drops back into the top hatch (master 2026-09-05: "press ctrl to toggle")
             else if (_driving != null && _driving.HasBiFoldDoor && Keybinds.JustPressed(GameAction.VehicleDoor, @event))   // ONLY a vehicle with the folding door claims Ctrl here -- Ctrl is also the siren tap / lightbar hold further down (master: "i cant open the lightbar radial menu anymore")

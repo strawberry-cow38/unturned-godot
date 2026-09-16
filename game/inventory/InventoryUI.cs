@@ -879,7 +879,7 @@ void fragment() {
             }
             else if (Keybinds.IsDown(e) && _selPanel != null && Keybinds.HotbarSlot(e) is int hbNum && hbNum >= 3)
             {
-                // RMB'd an item (its selection panel is open) + a hotbar 3-9 control -> BIND it to equip this item (master).
+                // RMB'd an item (its selection panel is open) + a hotbar 3-10 control -> BIND it to equip this item (master).
                 // Keybinds.HotbarSlot so assign + equip share ONE rebindable key space (slots 1/2 = primary/secondary, not bound here).
                 Player?.BindHotbar(hbNum, _selPage, _selX, _selY);
                 CloseSelection();

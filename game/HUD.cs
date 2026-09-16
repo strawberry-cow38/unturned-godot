@@ -538,7 +538,7 @@ namespace UnturnedGodot
                 var it = pg.getItem(0)?.item;
                 if (it != null) entries.Add((slot + 1, it.id, it.amount));
             }
-            for (int k = 3; k <= 9; k++)
+            for (int k = 3; k <= 10; k++)
             {
                 // TryResolveHotbar, not a raw dictionary read: a bind whose item has moved away is DROPPED there
                 // rather than drawn, so the row stops showing a key that would equip the wrong thing.
