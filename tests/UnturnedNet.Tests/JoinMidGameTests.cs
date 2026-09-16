@@ -94,6 +94,15 @@ namespace UnturnedNet.Tests
             Assert.That(imposter.Session.RejectReason, Is.EqualTo(NetRejectReason.ContentMismatch));
             Assert.That(joined, Is.False, "PeerConnected never fired for the rejected client");
             Assert.That(h.Server.Session.Peers.Count, Is.EqualTo(0), "no session lingers for a rejected join");
+
+            // ⚠ ONE CONTROL TYPE MUST HAVE ONE PAYLOAD SHAPE. v52 appended the server's protocol version to
+            // Reject, but only at SendRawReject -- the two IN-SESSION refusals (ContentMismatch here, Banned)
+            // kept writing the reason byte alone, so this came back 0 while the version-history entry said
+            // Reject carries the version. Three senders, two shapes, one name, and nothing red: the suite had
+            // no byte-level coverage of any control payload. Found by an opus review of the wire-shape golden.
+            // MUTATION: drop `w.WriteUInt8(_version)` from the ContentMismatch sender -> this reads 0 and fails.
+            Assert.That(imposter.Session.RejectServerVersion, Is.EqualTo(NetProtocol.Version),
+                "an in-session Reject must carry the server version too, not just the raw-refusal path");
             Assert.That(h.Server.Players.Count, Is.EqualTo(0), "no avatar was spawned");
 
             var legit = h.AddClient("samebuild");   // matching hash still joins fine afterwards

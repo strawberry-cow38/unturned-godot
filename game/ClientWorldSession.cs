@@ -56,6 +56,13 @@ namespace UnturnedGodot
         public DeployableReplicaView Deploys { get; private set; }   // Phase 6/8: replicated deployables/wires as real nodes (L1 tests reach the netId-stamped nodes through this)
         public VehicleReplicaView VehicleView { get; private set; }   // C6: the puppet registry -- ride mode chases these
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
+
+        /// <summary>The world build's loading cover, handed over still up (WorldBuildResult.Loading). Held across
+        /// the handshake + join snapshot and dropped the frame the shell exists, so connecting reads as one
+        /// continuous load instead of a progress bar followed by a grey screen with a status line on it.
+        /// Null when the caller did not supply one (tests, the bare --client demo), and every use is guarded.</summary>
+        public LoadingScreen Loading;
+        public System.Collections.Generic.Dictionary<string, double> LoadingTimings;
         public uint RidingVehicle => _ridingNetId;             // NetId of the vehicle the server seated us in (0 = on foot)
         uint _ridingNetId;                                     // latched by VehicleEntered(self), cleared by VehicleExited(self)
         // Part A (CLIENT_PREDICTION_PLAN §5.2 A1): the driver's CLIENT-LOCAL real Vehicle -- one physics
@@ -741,8 +748,17 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
 
         public override void _Process(double delta)
         {
+            // THE COVER STAYS UP UNTIL THERE IS A PLAYER. While it is up it carries the connect line, so the
+            // retry countdown and a reject reason are readable ON the loading screen rather than on the grey
+            // gap behind it. The moment the shell exists the cover drops and the ordinary status label takes
+            // over (it renders empty once Shell is non-null, as before).
+            if (Loading != null)
+            {
+                if (Shell == null) Loading.SetStatus(ConnectingStatusText());
+                else { Loading.Finish(LoadingTimings ?? new System.Collections.Generic.Dictionary<string, double>()); Loading = null; }
+            }
             if (_status != null)
-                _status.Text = Shell == null ? ConnectingStatusText() : "";
+                _status.Text = (Shell == null && Loading == null) ? ConnectingStatusText() : "";
             if (_desyncLabel != null) _desyncLabel.Text = _desyncAlert;
             if (_toast != null && _toastT > 0f) { _toastT -= (float)delta; if (_toastT <= 0f) _toast.Text = ""; }
             // DISCONNECTED overlay: latch once we've been Connected, then show the banner whenever the link

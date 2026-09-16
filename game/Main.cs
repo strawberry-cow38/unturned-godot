@@ -9236,6 +9236,9 @@ namespace UnturnedGodot
                     // FAIL-FAST (C1): a client without the retail map cannot render the world the server is
                     // simulating -- say exactly what to fix; never silently fall back to the old demo arena.
                     Log.Err($"[CLIENT] map not found at {_mapRoot} -- set UG_UNTURNED_DIR to a local Unturned install (or install Unturned). NOT joining.");
+                    // The client build no longer finishes its own cover (the session does, once the shell lands) --
+                    // and on this path there IS no session, so finish it here or it sits under the error forever.
+                    res.Loading?.Finish(res.Timings ?? new System.Collections.Generic.Dictionary<string, double>());
                     var layer = new CanvasLayer { Layer = 200 };   // above the LoadingScreen (128) the aborted build left up
                     var bg = new ColorRect { Color = new Color(0.04f, 0.05f, 0.07f) };
                     bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -9261,6 +9264,7 @@ namespace UnturnedGodot
                                                       PlayerName = PlayerProfile.Name,   // the HANDSHAKE name (what others see until SetProfile lands, and if it never does) -- was the field default "player" for every real joiner
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
+                                                      Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
@@ -10593,8 +10597,18 @@ namespace UnturnedGodot
             // leaves _shotPath null -- the process then renders happily forever with no capture pending and
             // nothing to report. Watching the command-line intent instead of the armed path is what makes
             // this visible at all.
-            if (_shotPath == null) return "capture never armed -- the scene builder bailed before requesting it "
-                                        + "(world/map data almost certainly missing)";
+            // ⚠ THIS LINE USED TO GUESS, IN A FUNCTION WHOSE OWN COMMENT FORBIDS GUESSING. It said the builder
+            // bailed "(world/map data almost certainly missing)", and cow tools hit it on 2026-09-16 with a
+            // world that had built 4001 objects: the BLOCKED-ON state was right, the cause was invented. The
+            // real reason there was that --connect= never armed a capture at all (fixed in 24049b2d) -- a
+            // cause this function had no way to know and asserted anyway.
+            // So: report the state we can SEE, and list candidates as candidates.
+            if (_shotPath == null) return "capture never armed -- nothing requested one. "
+                                        + $"Observed: worldBuild={_worldBuild}, worldReady={_worldReady}. "
+                                        + "CANDIDATES, not a diagnosis: a builder that bails early leaves it null "
+                                        + "(a missing map does that, and worldReady=false above would agree); or this "
+                                        + "entry path never arms a capture -- the showcase modes do not, and --connect= "
+                                        + "did not until 24049b2d. If worldReady=true the map is NOT your problem.";
             if (_worldBuild && !_worldReady) return "async world load (worldReady=false; map data missing or still loading)";
             if (_peiPlay) return $"peiplay frame budget (frame={_peiFrame})";
             if (_fireTest) return $"firetest (frame={_ftFrame}, ammo={_ftPlayer?.Ammo.ToString() ?? "no player"})";

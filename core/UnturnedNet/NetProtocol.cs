@@ -40,6 +40,33 @@ namespace UnturnedGodot.Net
         WrongPassword = 7,     // password-protected and the supplied one did not match
     }
 
+    /// <summary>
+    /// ⚠ THE DISCONNECT CONTROL WRITES ONE OF THESE ON THE WIRE AND THE RECEIVER NEVER READS IT.
+    /// Both senders populate the byte -- NetClientSession.cs:172 writes Requested, NetServerSession.cs:325
+    /// writes Kicked -- and both receivers discard the payload and substitute a constant from the
+    /// DIRECTION instead (NetServerSession.cs:257 records Requested, NetClientSession.cs:151 records
+    /// Kicked). Verified original rather than drift: in c0599766, the first commit of the session layer,
+    /// the Reject and Disconnect cases were written ADJACENT, Reject reading its byte and Disconnect
+    /// reading nothing. No reader was ever removed; one never existed.
+    ///
+    /// Harmless today only because direction fully determines meaning under these five values, so the
+    /// byte carries nothing the receiver does not already know. SO, THE PRECONDITION FOR ANYONE ADDING A
+    /// VALUE HERE: it will be written, transmitted, and thrown away. A ShuttingDown or BannedMidSession
+    /// added to this enum still arrives at the client as Kicked, because the client hardcodes Kicked.
+    ///
+    /// And the field HAS live consumers, which is what makes that worth a sentence rather than a shrug --
+    /// game/ClientWorldSession.cs:775 branches on it, plus assertions in SessionLifecycleTests,
+    /// JoinMidGameTests and FloodGuardTests. They read the locally-substituted constant, never the wire
+    /// byte, so a new reason does not fail loudly: it routes those consumers down the wrong branch while
+    /// every existing test stays green. Wiring the read is one line in each receiver's Disconnect case;
+    /// do it in the same commit that adds a value, not afterwards.
+    ///
+    /// The mirror of the gun-state scar in InventoryReplication's WriteJar, which is the same mistake from
+    /// the other end: there, a field rode the wire with nothing populating its SOURCE; here, a field is
+    /// populated with nothing wired to its SINK.
+    /// (Traced by a peer session's wire sweep, 2026-09-16, which also corrected its own first reading of
+    /// this as drift. I re-verified the read side and the consumer list.)
+    /// </summary>
     public enum NetDisconnectReason : byte
     {
         None = 0,
@@ -59,7 +86,7 @@ namespace UnturnedGodot.Net
     public static class NetProtocol
     {
         public const byte Magic = 0x75; // 'u'
-        public const byte Version = 52; // v52 (drop-at-the-orb): DropItemCommand(3) gained Point -- the client's look-orb, the end of its eye-ray. A PAYLOAD change, not a new id, which is the kind this constant exists to catch: the command table golden cannot see it (no id moved, nothing was renamed) and a v51 peer would read the three cell bytes, then run off the end of a shorter frame or read the next command's bytes as a position. ALSO UNDER 52 (folded on rebase, tinyclaw): NetRejectReason gains ServerStarting(5)/PingTooHigh(6)/WrongPassword(7), and Reject APPENDS the rejecting server's protocol version so a refused client can say "server is 45, you are 52" instead of "version mismatch". Appended, never inserted -- a server older than this sends only the reason byte and the client reads the version as absent, which is the case that matters since the older server is the one whose version we most want to name. Folded rather than given a 53: neither 51 nor 52 has ever shipped (the live server is v45), and an entry that names half of what is under its number is how the framing half of v50 went out unbumped. The server holds yaw and no pitch, and ServerTransactions is in core with no physics world to cast the eye-ray in, so the point has to ride the command; the server clamps it to the eye's reach. Previously v51 (quick-transfer): registers CommandQuickTransfer(63) -- hover-loot / Ctrl+RMB / Store / Take as ONE server-side operation. The client used to resolve a destination CELL locally and send an ordinary move, which is the one destination that CANNOT merge: an empty cell. So the server never got the chance to top up the stacks already in the destination, and the fill-each-to-cap-then-overflow rule existed only on the singleplayer branch (PlayerInventory.tryAddItem) -- the branch nobody plays, since --peidrive is a listen server. Both paths now call the same PlayerInventory.TryQuickTransfer. ROUTING, not framing: an unregistered id is DROPPED by CommandRegistry.TryDispatch and counted, so a v50 peer against a v51 server would simply have its hover-loot silently do nothing -- the same failure the v15 entry below describes, which is why this is bumped in the commit that adds the id rather than four commands later. Previously v50 (MERGE of the currency/stack-split line and v49 chat/moderation).
+        public const byte Version = 52; // v52 (drop-at-the-orb): DropItemCommand(3) gained Point -- the client's look-orb, the end of its eye-ray. A PAYLOAD change, not a new id, which is the kind this constant exists to catch: the command table golden cannot see it (no id moved, nothing was renamed) and a v51 peer would read the three cell bytes, then run off the end of a shorter frame or read the next command's bytes as a position. ALSO UNDER 52 (folded on rebase, tinyclaw): NetRejectReason gains ServerStarting(5)/PingTooHigh(6)/WrongPassword(7), and Reject APPENDS the rejecting server's protocol version so a refused client can say "server is 45, you are 52" instead of "version mismatch". Appended, never inserted -- a server older than this sends only the reason byte and the client reads the version as absent, which is the case that matters since the older server is the one whose version we most want to name. Folded rather than given a 53: at the time of folding neither 51 nor 52 had shipped, and an entry that names half of what is under its number is how the framing half of v50 went out unbumped. ⚠ THAT PARENTHETICAL USED TO READ "(the live server is v45)" AND WENT STALE THE DAY IT WAS WRITTEN: the live box was moved 45 -> 52 on 2026-09-15 and this line outlived the deploy, then rode a branch merge onto main where it was still telling people to expect v45 on 2026-09-16. MEASURED instead of remembered, 2026-09-16 14:04 UTC -- a UGSQ status query to the live server returned 41 bytes in 41 ms with StatusProtocol (byte 20) = 52. A v45 server would have answered 20 bytes with no v2 tail at all. So v52 HAS shipped, and the folding argument above stands on its own merits rather than on nobody being stranded. THE RULE THIS COST US TWICE: a deployed version belongs in a query, not in a comment -- read the byte off the wire before you reason from it, because a number in a comment cannot go out of date loudly. The server holds yaw and no pitch, and ServerTransactions is in core with no physics world to cast the eye-ray in, so the point has to ride the command; the server clamps it to the eye's reach. Previously v51 (quick-transfer): registers CommandQuickTransfer(63) -- hover-loot / Ctrl+RMB / Store / Take as ONE server-side operation. The client used to resolve a destination CELL locally and send an ordinary move, which is the one destination that CANNOT merge: an empty cell. So the server never got the chance to top up the stacks already in the destination, and the fill-each-to-cap-then-overflow rule existed only on the singleplayer branch (PlayerInventory.tryAddItem) -- the branch nobody plays, since --peidrive is a listen server. Both paths now call the same PlayerInventory.TryQuickTransfer. ROUTING, not framing: an unregistered id is DROPPED by CommandRegistry.TryDispatch and counted, so a v50 peer against a v51 server would simply have its hover-loot silently do nothing -- the same failure the v15 entry below describes, which is why this is bumped in the commit that adds the id rather than four commands later. Previously v50 (MERGE of the currency/stack-split line and v49 chat/moderation).
                                         //
                                         // ⚠ THIS IS A FRAMING BUMP FIRST AND AN ID BUMP SECOND, and the framing half
                                         // arrived on main WITHOUT A BUMP AT ALL -- main shipped it still reading 48.
