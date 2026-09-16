@@ -869,7 +869,25 @@ namespace UnturnedGodot
             if (dedicated) { BuildDedicated(); return; }        // headless dedicated server: real world + NetServerSession (MP_PLAN §4 Phase 3)
             if (server) { BuildServer(); return; }              // headless demo server (bare arena + a scripted bot)
             if (netobserve) { BuildNetObserver(); return; }     // headless net-observer -- MUST precede the client dispatch: --connect= also sets `client`, and that path world-builds WorldMode.Client (headless-unsafe)
-            if (client) { if (DisplayServer.GetName() != "headless") GetWindow().Mode = Window.ModeEnum.Maximized; BuildClient(); return; }   // fill the screen (same "tiny viewport" fix as --play below). Guard the window op for --headless (dummy DisplayServer, no window) -> a headless CLIENT runs the full netcode + world STATE with no rasterization (diagnostics / future scripted-client harness).
+            // fill the screen (same "tiny viewport" fix as --play below). Guard the window op for --headless (dummy
+            // DisplayServer, no window) -> a headless CLIENT runs the full netcode + world STATE with no
+            // rasterization (diagnostics / future scripted-client harness).
+            if (client)
+            {
+                // --shot=/UG_SHOTTIME on a JOIN. Every other harness arms this; the join path did not, so
+                // `--shot` sat until the watchdog tripped with "capture never armed" and you could not take a
+                // picture of a connect AT ALL. That is not a small gap: the connect sequence is the one path
+                // where "looks wrong" and "is down" are indistinguishable from outside, and the loading-cover
+                // fix (tinyclaw, 5f9f3077) reached main having never been looked at, because looking required
+                // this line. Arming it is what produced the frames that verified it.
+                // NB a capture cannot survive LeaveToMenu: it ReloadCurrentScene()s, which rebuilds Main and
+                // resets this field -- so a shot aimed after a failed join never fires, and that non-capture is
+                // itself the evidence the bail happened.
+                _shotPath = shot;
+                if (DisplayServer.GetName() != "headless") GetWindow().Mode = Window.ModeEnum.Maximized;
+                BuildClient();
+                return;
+            }
 
             if (netdemo)
             {
