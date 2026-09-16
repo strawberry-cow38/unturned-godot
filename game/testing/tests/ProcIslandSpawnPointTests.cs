@@ -18,7 +18,15 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
-            var terr = new Terrain();
+            // ⚠ CreateFlat, NOT `new Terrain()`. A bare Terrain has no _grid, and GenerateIsland opens with
+            // `if (_grid == null) return none;` -- so the generator declined instantly and this test failed on
+            // its first check having generated nothing. Both real callers build the grid first (Main's new-map
+            // path is CreateFlat(3,3); DevConsole requires an already-loaded Terrain.Active), so the fixture was
+            // the only thing that ever did it this way.
+            // ⭐ It failed HONESTLY rather than vacuously -- the first check asserts the island produced tiles,
+            // so a generator that never ran reported a red instead of skipping to green. That is the only
+            // reason this was a one-line fix rather than a hunt.
+            var terr = Terrain.CreateFlat(3, 3);
             World.AddChild(terr);
             yield return Ticks(2);
 
