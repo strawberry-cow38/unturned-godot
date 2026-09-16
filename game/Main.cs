@@ -6259,7 +6259,16 @@ namespace UnturnedGodot
         // Map). Same 3x3 CreateFlat either way, deliberately: the saved heightmap only reloads when its dims
         // match the terrain the open path builds, so a generated map that chose its own size would come back
         // flat the next time you opened it, with nothing about the save looking wrong.
-        void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false)
+        /// <summary>⚠ ASYNC NOW, and only because a loading screen that never yields is a loading screen nobody
+        /// sees (strawberry: "give the real loading screen for the proc map, same as the other maps but giving
+        /// detail about generation steps too"). WorldBuilder's retail path has done this all along -- its
+        /// Phase() records the previous phase's time, advances the bar, sets the label and then yields
+        /// ProcessFrame AND FramePostDraw so the overlay actually PAINTS before the next blocking chunk. A
+        /// straight-line build inside _Ready hands the renderer one frame at the end and the player stares at a
+        /// frozen menu instead, which is exactly what generating an island did.
+        /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
+        /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             _worldBuild = true;
@@ -6272,6 +6281,35 @@ namespace UnturnedGodot
             AddChild(terr);
             // BEFORE the camera is placed and before any prop is spawned: generation rewrites every height, and
             // both of those read the ground it produces.
+            // ---- the real loading screen, with the GENERATION steps named -------------------------------
+            // Only for a generated island: opening a blank or existing custom map is near-instant and a cover
+            // that flashes up for one frame is worse than none.
+            LoadingScreen loading = null;
+            var genTimings = new System.Collections.Generic.Dictionary<string, double>();
+            var genWatch = System.Diagnostics.Stopwatch.StartNew();
+            string genPhase = null;
+            if (genSeed.HasValue)
+            {
+                _worldBuild = true; _worldReady = false;
+                LoadingScreen.NextMode = "map";
+                loading = new LoadingScreen();
+                AddChild(loading);
+                loading.SetTotal(11);
+            }
+            async System.Threading.Tasks.Task Phase(string name)
+            {
+                if (loading == null) return;
+                if (genPhase != null) genTimings[genPhase] = genWatch.Elapsed.TotalMilliseconds;
+                genWatch.Restart(); genPhase = name;
+                loading.SetStatus(name);
+                loading.Advance();
+                // BOTH signals, like WorldBuilder: a lone ProcessFrame resumes BEFORE the draw, so the label
+                // for the phase about to run would not be on screen while it ran.
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            }
+
+            await Phase("Shaping the island");
             var genPois = genSeed.HasValue ? terr.GenerateIsland(genSeed.Value) : null;
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);
@@ -6325,6 +6363,7 @@ namespace UnturnedGodot
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;
             // The monuments the generator laid out are only lists until something instantiates them.
+            await Phase("Laying out towns and roads");
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             // Paint dirt under everything just built, BEFORE the foliage bake below reads the ground: the splat
             // is the single source of truth for "is this built on", and the scatter refuses anything but grass.
@@ -6334,20 +6373,24 @@ namespace UnturnedGodot
             // ⚠ The band reaches ABOVE the waterline (master: "a sand band above the water level, and anything
             // below it") -- a beach that stops exactly at sea level is a colour change at the waterline, not a
             // shore.
+            await Phase("Painting shoreline and cliffs");
             if (genPois != null) terr.PaintBelowHeight(Terrain.SeaLevelY + 4f, 5);   // layer 5 = Sand
             // STEEP GROUND IS NOT GRASS. After the sand (a steep shore face should read as rock, not beach) and
             // before the built-on dirt, which wins over both. Also stops foliage and trees generating on cliffs
             // for free, since the scatter only accepts grass.
             if (genPois != null) terr.PaintSteeperThan(ProcIslandSpawn.SteepRise, 0);   // layer 0 = Dirt
+            await Phase("Marking worked ground");
             if (genPois != null) ProcIslandSpawn.PaintGroundwork(terr);
             if (genPois != null) ProcIslandSpawn.ReportClipping(terr);   // UG_CLIPDBG=1: measure the clipping rather than guess at it
             // ...and an actual sea. BuildEditorNew has always set HasWater + SeaLevelY, so everything that
             // CONSUMES water (swimming, buoyancy, the underwater pass) believed in one; the surface itself is
             // built only by the retail loader, so a generated island had a coastline around nothing.
+            await Phase("Filling the sea");
             if (genPois != null) terr.BuildOceanPlane();
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             // A generated island had no player spawns at all (the save line read "0 spawns" every time), so give
             // it its own. Seeded off the island's seed: same seed, same island, same start points.
+            await Phase("Choosing spawn points");
             if (genPois != null && genSeed.HasValue) ProcIslandSpawn.PlacePlayerSpawns(terr, spawns, genSeed.Value);
             // FOLIAGE. ⚠ BuildEditorNew is its own world build -- it does not go through WorldBuilder, which is
             // the only place that ever constructed a FoliageField -- so a generated island had no foliage field
@@ -6356,6 +6399,7 @@ namespace UnturnedGodot
             // instead of leaving a directory behind per attempt.
             if (genPois != null && genSeed.HasValue)
             {
+                await Phase("Seeding grass and flowers");
                 string folDir = ProcIslandFoliage.Bake(terr, genSeed.Value, $"island_{genSeed.Value}");
                 if (folDir != null)
                 {
@@ -6369,6 +6413,7 @@ namespace UnturnedGodot
                 // constructed on this path either. Holiday "NONE" so the island is not Christmas; the bake
                 // already skips seasonal rows, and this keeps the manifest-ordered index space consistent
                 // with what was written.
+                await Phase("Growing trees and ore");
                 string resDir = ProcIslandFoliage.BakeResources(terr, genSeed.Value, $"island_{genSeed.Value}");
                 if (resDir != null)
                 {
@@ -6384,6 +6429,7 @@ namespace UnturnedGodot
             // this path ("[npceditor] item catalog was empty -- registered 1995 items"), so furniture placed
             // during ProcIslandSpawn.Spawn opened as an empty bin every time. Same constraint WorldBuilder
             // already documents for its own containers: spawn them post-build, when the asset DB is ready.
+            await Phase("Dressing the streets");
             if (genPois != null) ProcIslandSpawn.SpawnTownFurniture(terr, objs);
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
@@ -6395,6 +6441,7 @@ namespace UnturnedGodot
             // strips of bare grass where its roads should be. Lay real splines along them. ⚠ AFTER AddChild:
             // AddRoadFromPolyline builds a mesh node as it goes, and a RoadField outside the tree has nowhere
             // to put it.
+            await Phase("Surfacing the roads");
             if (genPois != null) ProcIslandSpawn.SpawnRoutes(terr, rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
@@ -6405,6 +6452,13 @@ namespace UnturnedGodot
             play.Setup(editor, null, cam);
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
+            if (loading != null)
+            {
+                if (genPhase != null) genTimings[genPhase] = genWatch.Elapsed.TotalMilliseconds;
+                loading.SetStatus("Ready");
+                loading.Advance();
+                loading.Finish(genTimings);   // drops the cover and logs the per-step timing, same as a retail load
+            }
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
             Log.Print(genSeed.HasValue

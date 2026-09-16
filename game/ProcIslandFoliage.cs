@@ -44,14 +44,22 @@ namespace UnturnedGodot
 
             string dirName = "foliage_" + mapKey;
             string dst = ProjectSettings.GlobalizePath($"res://content/{dirName}/");
-            // ⚠ ALREADY BAKED -> REUSE. The bake is keyed by seed and is deterministic, so re-opening the same
-            // island would otherwise re-scatter and re-write ~850k instances (30 MB) for a byte-identical
-            // result, every time. Delete the directory to force a fresh bake after changing the scatter rules.
-            if (Directory.Exists(dst) && Directory.GetFiles(dst, "*.bin").Length > 0)
-            {
-                Log.Print($"[island-foliage] reusing existing bake content/{dirName}/");
-                return dirName;
-            }
+            // ⚠⚠ THE REUSE CACHE IS GONE, AND IT WAS SHIPPING TREES ONTO ROADS.
+            //
+            // It keyed on the SEED and reused any existing bake, with a comment saying "delete the directory to
+            // force a fresh bake after changing the scatter rules". That is a correctness requirement expressed
+            // as a note to a human, and it held for exactly as long as nobody changed anything: the scatter
+            // refuses ground that is not Grass, so a bake encodes where the ROADS, TOWNS and PAINT were at the
+            // moment it ran. Every one of those moved repeatedly while the key did not, so re-opening seed
+            // 12345 replayed trees from an island that no longer existed -- standing in the middle of
+            // carriageway that had been routed somewhere else since. strawberry: "!!! trees on the road! is our
+            // foliage being done correctly?"
+            //
+            // A seed is not a version. The honest key would have to include every input the scatter reads,
+            // which is the whole generator -- so the cache is dropped instead. It bought 788 ms of a 14.6 s
+            // generation (5%) and cost a class of bug that looks exactly like a scatter fault.
+            if (Directory.Exists(dst))
+                foreach (var stale in Directory.GetFiles(dst, "*.bin")) { try { File.Delete(stale); } catch { } }
             try
             {
                 Directory.CreateDirectory(dst);
@@ -178,11 +186,10 @@ namespace UnturnedGodot
 
             string dirName = "resources_" + mapKey;
             string dst = ProjectSettings.GlobalizePath($"res://content/{dirName}/");
-            if (Directory.Exists(dst) && Directory.GetFiles(dst, "*.bin").Length > 0)
-            {
-                Log.Print($"[island-res] reusing existing bake content/{dirName}/");
-                return dirName;
-            }
+            // Same as the foliage above: keyed by seed, invalidated by everything else. A stale resource bake is
+            // the one that puts a 20 m pine in a carriageway.
+            if (Directory.Exists(dst))
+                foreach (var stale in Directory.GetFiles(dst, "*.bin")) { try { File.Delete(stale); } catch { } }
             try
             {
                 Directory.CreateDirectory(dst);
