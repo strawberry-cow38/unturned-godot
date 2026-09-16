@@ -6335,6 +6335,10 @@ namespace UnturnedGodot
             // below it") -- a beach that stops exactly at sea level is a colour change at the waterline, not a
             // shore.
             if (genPois != null) terr.PaintBelowHeight(Terrain.SeaLevelY + 4f, 5);   // layer 5 = Sand
+            // STEEP GROUND IS NOT GRASS. After the sand (a steep shore face should read as rock, not beach) and
+            // before the built-on dirt, which wins over both. Also stops foliage and trees generating on cliffs
+            // for free, since the scatter only accepts grass.
+            if (genPois != null) terr.PaintSteeperThan(ProcIslandSpawn.SteepRise, 0);   // layer 0 = Dirt
             if (genPois != null) ProcIslandSpawn.PaintGroundwork(terr);
             if (genPois != null) ProcIslandSpawn.ReportClipping(terr);   // UG_CLIPDBG=1: measure the clipping rather than guess at it
             // ...and an actual sea. BuildEditorNew has always set HasWater + SeaLevelY, so everything that

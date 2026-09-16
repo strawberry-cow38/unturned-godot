@@ -44,6 +44,45 @@ namespace UnturnedGodot
             return (v.X, -v.Z);   // world -> ProcIsland's frame, which negates Z
         }
 
+        /// <summary>Smooth a road's VERTICAL profile without letting it sink back into the ground.
+        ///
+        /// strawberry: "fix sharp vertical splines going into prop caps. should smoothly blend along its
+        /// length." Seating every joint on the highest ground it spans stops the ribbon clipping, but it makes
+        /// the height profile follow each local bump exactly -- so where a route leaves the town's flat pad and
+        /// meets carved ground, the road steps rather than grades, and the step lands right at the cap.
+        ///
+        /// ⚠ SMOOTHING ALONE WOULD PUT THE CLIPPING BACK. A plain average pulls joints DOWN into the hillside
+        /// they were lifted over, undoing the fix that took splines to zero exposed clipping. So each pass
+        /// smooths and then CLAMPS UP to the ground it must clear: the result converges on the smoothest
+        /// profile that still passes above everything, rather than trading one defect for the other.
+        ///
+        /// ⚠ ENDS ARE PINNED. The first and last joints meet a monument's cap piece, and moving one leaves the
+        /// road ending beside the gate instead of in it -- the same hazard CarveRoutes' own note describes about
+        /// snapping connectors after routing.</summary>
+        static void SmoothProfile(System.Collections.Generic.List<Vector3> pts)
+        {
+            if (pts.Count < 5) return;
+            var floor = new float[pts.Count];
+            for (int i = 0; i < pts.Count; i++) floor[i] = pts[i].Y;   // what each joint must clear
+            for (int pass = 0; pass < 4; pass++)
+            {
+                var y = new float[pts.Count];
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    if (i == 0 || i == pts.Count - 1) { y[i] = pts[i].Y; continue; }
+                    float sum = 0f; int n = 0;
+                    for (int k = -2; k <= 2; k++)
+                    {
+                        int j = i + k;
+                        if (j < 0 || j >= pts.Count) continue;
+                        sum += pts[j].Y; n++;
+                    }
+                    y[i] = Mathf.Max(sum / n, floor[i]);   // smooth, then stay above the ground
+                }
+                for (int i = 0; i < pts.Count; i++) pts[i] = new Vector3(pts[i].X, y[i], pts[i].Z);
+            }
+        }
+
         /// <summary>Where a spline JOINT sits: on the highest ground it spans, lifted clear.
         ///
         /// ⭐ Same principle that took the tiles to zero, applied to the other kind of road: ONLY TERRAIN ABOVE
@@ -272,6 +311,61 @@ namespace UnturnedGodot
         public const int GrassLayer = 2;
         public const int DirtLayer = 0;   // Terrain.DefaultLayerNames[0]
 
+        /// <summary>Steepness at or above which ground stops being grass. ⚠ SHARED with the splat paint, so a
+        /// boulder lands on exactly the ground that was painted -- two thresholds would put rocks on grass and
+        /// leave bare dirt with nothing on it, and both would look deliberate.</summary>
+        public const float SteepRise = 0.58f;   // ~30 degrees
+
+        /// <summary>The boulder props that actually exist in content/objects. Listed rather than generated:
+        /// the numbering has gaps.</summary>
+        static readonly string[] BoulderProps =
+        {
+            "Boulder_00", "Boulder_01", "Boulder_02", "Boulder_03", "Boulder_04", "Boulder_06",
+            "Boulder_08", "Boulder_09", "Boulder_10", "Boulder_11", "Boulder_12", "Boulder_13", "Boulder_22",
+        };
+
+        /// <summary>Scatter BOULDERS down the steep faces (strawberry: "place boulder props along the steep
+        /// face"). Object props, not harvestable resources -- Boulder_NN live in content/objects, so they go
+        /// through the editor's placer exactly like the road tiles and buildings.
+        ///
+        /// ⚠ The inverse rule to every other scatter here: everything else REFUSES steep ground, this one
+        /// requires it. Placed on the same SteepRise the splat uses, so rocks sit on the dirt that the steepness
+        /// created rather than near it.</summary>
+        static void ScatterBoulders(Terrain terr, EditorObjects objs, ref int missing)
+        {
+            if (terr == null || objs == null) return;
+            var b = terr.WorldBoundsXZ();
+            var rng = new System.Random(20260916);
+            const float Step = 17f, Apart = 13f;
+            var placed = new System.Collections.Generic.List<Vector3>();
+            int n = 0, miss = 0;
+            for (float x = b.MinX; x < b.MaxX; x += Step)
+                for (float z = b.MinZ; z < b.MaxZ; z += Step)
+                {
+                    float px = x + (float)(rng.NextDouble() * 2 - 1) * Step * 0.45f;
+                    float pz = z + (float)(rng.NextDouble() * 2 - 1) * Step * 0.45f;
+                    if (terr.SlopeAt(px, pz) < SteepRise) continue;
+                    float y = terr.SampleHeight(px, pz);
+                    if (Terrain.HasWater && y < Terrain.SeaLevelY) continue;   // boulders on the face, not the seabed
+                    bool clash = false;
+                    foreach (var q in placed)
+                        if (Near(px, q.X, pz, q.Z, Apart)) { clash = true; break; }
+                    if (clash) continue;
+                    // A spread of the kit rather than one rock repeated down every hillside.
+                    // ⚠ NAMED, NOT NUMBERED. Boulder_00..22 is not contiguous in the rip -- 05, 07 and 14-21
+                    // are absent -- so generating an index range asked for props that do not exist and 141 of
+                    // 829 placements silently failed. The miss counter is what caught it; a scatter that just
+                    // skipped the nulls would have looked like a thinner hillside.
+                    string prop = BoulderProps[rng.Next(BoulderProps.Length)];
+                    var pos = new Vector3(px, y, pz);
+                    if (objs.Place(prop, pos, RotFor((float)(rng.NextDouble() * 360.0))) != null) { placed.Add(pos); n++; }
+                    else miss++;
+                }
+            missing += miss;
+            Log.Print($"[island-rocks] {n} boulder(s) on ground steeper than {Mathf.RadToDeg(Mathf.Atan(SteepRise)):0.#} deg"
+                      + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
+        }
+
         /// <summary>Paint DIRT under everything the generator built -- road tiles, buildings and the routes
         /// between towns -- so the ground says where the map has been worked (strawberry 2026-09-16: "around
         /// props, road splines etc theres a patch of the dirt material that fits the size and shape of the
@@ -436,6 +530,7 @@ namespace UnturnedGodot
                 float len = 0f;
                 for (int i = 1; i < pts.Count; i++) len += pts[i].DistanceTo(pts[i - 1]);
                 if (len < MinLen) { skipped++; continue; }
+                SmoothProfile(pts);
 
                 if (rf.AddRoadFromPolyline(pts, material) >= 0) built++; else skipped++;
             }
@@ -572,6 +667,7 @@ namespace UnturnedGodot
             {
                 if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
             }
+            ScatterBoulders(terr, objs, ref missing);
             ReportPieces(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);

@@ -324,6 +324,46 @@ void fragment() {
             Log.Print($"[terrain] painted {painted} texel(s) at or below y={maxY:0.#} as layer {layer} ({(layer < DefaultLayerNames.Length ? DefaultLayerNames[layer] : "?")})");
         }
 
+        /// <summary>Repaint every texel steeper than `minRise` metres of fall per metre travelled.
+        ///
+        /// strawberry: "turn grass thats above a certain steepness into dirt". Grass standing out of a cliff
+        /// face is the same class of wrong as a tree doing it -- and because the scatter refuses anything that
+        /// is not grass, painting the steep ground also stops foliage and trees generating on it, with no
+        /// second rule. One pass, ONE texture upload, for the same reason PaintBelowHeight is.
+        ///
+        /// ⚠ Slope is measured across 2*UNIT, not between adjacent samples. A one-cell difference on a 4 m grid
+        /// is dominated by the heightmap's own quantisation and reports half the map as cliff.</summary>
+        public int PaintSteeperThan(float minRise, int layer)
+        {
+            if (_dom == null || _s0Img == null) return 0;
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            int painted = 0;
+            for (int gx = 0; gx < _dw; gx++)
+                for (int gy = 0; gy < _dh; gy++)
+                {
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+                    float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+                    if (Mathf.Sqrt(hx * hx + hz * hz) < minRise) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                    painted++;
+                }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            Log.Print($"[terrain] painted {painted} steep texel(s) (>{Mathf.RadToDeg(Mathf.Atan(minRise)):0.#} deg) as layer {layer}");
+            return painted;
+        }
+
+        /// <summary>Steepness at a world point, as metres of rise per metre travelled. Same 2*UNIT span the
+        /// paint uses, so "is this steep" answers identically for the splat and for anything placed on it.</summary>
+        public float SlopeAt(float wx, float wz)
+        {
+            float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+            float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+            return Mathf.Sqrt(hx * hx + hz * hz);
+        }
+
         /// <summary>Build the ocean surface for a map that did not come from the retail loader.
         ///
         /// ⚠ A generated island had a SEA LEVEL and no SEA. BuildEditorNew sets HasWater and SeaLevelY -- so
