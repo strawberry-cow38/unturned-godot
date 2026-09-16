@@ -688,6 +688,79 @@ void fragment() {
         ///
         /// EditFlatten cannot do it: its target is the brush centre's EXISTING height, which is the thing being
         /// corrected. One rebuild for the whole line, not one per brush -- a route is hundreds of points.</summary>
+        /// <summary>Conform to MANY polylines at once, resolving a cell claimed by more than one by taking the
+        /// LOWEST target.
+        ///
+        /// ⚠⚠ ROADS CROSS, AND ASSIGNING PER-ROUTE MEANS THE LAST ONE THROUGH A CELL WINS. Doing them one at a
+        /// time left the earlier road with ground raised into its tarmac wherever a later one passed at a
+        /// different height -- measured as a tight cluster of 1-6 m rises all at the same spot and all at the
+        /// ribbon's outer edge. Lowest-wins is the choice that cannot produce that: the worst it can do is leave
+        /// the higher road a little clear of the ground at the crossing, which is invisible, instead of putting
+        /// a hillside through a carriageway, which is not. Resolve every claim first, write once.</summary>
+        public void ConformToPolylines(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.List<Vector3>> lines,
+                                       float radius, float feather)
+        {
+            if (_grid == null || lines == null) return;
+            var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w)>();
+            foreach (var pts in lines) GatherConform(pts, radius, feather, claim);
+            if (claim.Count == 0) return;
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            foreach (var kv in claim)
+            {
+                int gx = kv.Key.Item1, gy = kv.Key.Item2;
+                float nv = kv.Value.w >= 0.999f ? kv.Value.target : Mathf.Lerp(_grid[gx, gy], kv.Value.target, kv.Value.w);
+                JournalH(gx, gy);
+                _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
+                if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+            }
+            _dirty = true;
+            RebuildChunksIn(minX, maxX, minY, maxY);
+        }
+
+        void GatherConform(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather,
+                           System.Collections.Generic.Dictionary<(int, int), (float target, float w)> claim)
+        {
+            if (pts == null || pts.Count < 2) return;
+            float outer = radius + feather;
+            int rg = Mathf.CeilToInt(outer / UNIT) + 1;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                Vector3 a = pts[i - 1], b = pts[i];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                float abLen2 = ab.LengthSquared();
+                if (abLen2 < 1e-6f) continue;
+                float cxa = (a.X - _bx) / UNIT, cya = (-a.Z - _bz) / UNIT;
+                float cxb = (b.X - _bx) / UNIT, cyb = (-b.Z - _bz) / UNIT;
+                int gx0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cxa, cxb)) - rg, 0, _gw - 1);
+                int gx1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cxa, cxb)) + rg, 0, _gw - 1);
+                int gy0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cya, cyb)) - rg, 0, _gh - 1);
+                int gy1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cya, cyb)) + rg, 0, _gh - 1);
+                for (int gx = gx0; gx <= gx1; gx++)
+                    for (int gy = gy0; gy <= gy1; gy++)
+                    {
+                        float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                        float t = Mathf.Clamp(((wx - a.X) * ab.X + (wz - a.Z) * ab.Y) / abLen2, 0f, 1f);
+                        float px = a.X + ab.X * t, pz = a.Z + ab.Y * t;
+                        float d = Mathf.Sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
+                        if (d > outer) continue;
+                        float target = (Mathf.Lerp(a.Y, b.Y, t) + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                        float w = d <= radius ? 1f : 1f - Mathf.SmoothStep(radius, outer, d);
+                        var key = (gx, gy);
+                        // ⚠ WEIGHT FIRST, THEN HEIGHT, and getting that order backwards costs real altitude.
+                        // The first cut preferred the LOWER target outright and then raised its weight to
+                        // whatever the competing claim had -- so a cell sitting under road B's tarmac, merely
+                        // clipped by road A's FEATHER fifteen metres away, was assigned A's height at full
+                        // strength. B's ground got dragged down to a road it does not touch, and the mean float
+                        // came out 0.87 m when the sink alone should have made it 0.25.
+                        // A full-weight claim is a road that is genuinely ON this cell; a partial one is a
+                        // shoulder. The road always outranks the shoulder, and two roads resolve to the lower.
+                        if (!claim.TryGetValue(key, out var cur)) claim[key] = (target, w);
+                        else if (w > cur.w || (w >= cur.w && target < cur.target)) claim[key] = (target, w);
+                    }
+            }
+        }
+
         public void ConformToPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather)
         {
             if (_grid == null || pts == null || pts.Count < 2) return;

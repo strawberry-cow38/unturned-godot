@@ -1358,6 +1358,7 @@ namespace UnturnedGodot
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
             float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0;
+            var clipBad = new System.Collections.Generic.List<(float X, float Z, float Rise, float Off, bool Town)>();
 
             // ⚠ TWO PASSES, AND THE SPLIT IS LOAD-BEARING. Every route conforms the ground to its own profile,
             // and routes CROSS -- so a route that measured and built itself immediately would be measuring
@@ -1417,11 +1418,21 @@ namespace UnturnedGodot
                 // road exactly leaves that approximation error poking through half the time (measured: 4648 of
                 // 14210 samples). Sinking the target by more than the error puts all of it under the tarmac,
                 // where it is invisible, at the cost of a float too small to see.
-                var sunk = new System.Collections.Generic.List<Vector3>(pts.Count);
-                foreach (var q in pts) sunk.Add(new Vector3(q.X, q.Y - 0.25f, q.Z));
-                terr.ConformToPolyline(sunk, ProcIsland.RenderedRoadHalf + 2f, ProcIsland.RenderedRoadHalf);
                 profiles.Add(pts);
             }
+
+            // ⭐ ONE CONFORM FOR THE WHOLE NETWORK. Sunk a quarter-metre below the ribbon because a 4 m
+            // heightmap approximates a sloping segment rather than reproducing it, and that error otherwise
+            // pokes through; lowest-wins inside ConformToPolylines is what stops one road's crossing raising
+            // ground into another's tarmac.
+            var sunk = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
+            foreach (var pr in profiles)
+            {
+                var one = new System.Collections.Generic.List<Vector3>(pr.Count);
+                foreach (var q in pr) one.Add(new Vector3(q.X, q.Y - 0.12f, q.Z));
+                sunk.Add(one);
+            }
+            terr.ConformToPolylines(sunk, ProcIsland.RenderedRoadHalf + 6f, ProcIsland.RenderedRoadHalf);
 
             foreach (var pts in profiles)
             {
@@ -1447,7 +1458,15 @@ namespace UnturnedGodot
                             float g = terr.SampleHeight(mid.X + perp.X * off, mid.Z + perp.Y * off);
                             float rise = g - mid.Y;
                             if (rise > clipWorst) clipWorst = rise;
-                            if (rise > 0.05f) clipOver++;
+                            if (rise > 0.20f)   // 0.20 m = a poke you can SEE; 5 cm is 4 m-grid noise and counting it hid the signal
+                            {
+                                clipOver++;
+                                // WHERE, not just how many. The last four guesses about this generator were
+                                // wrong; naming the offender is what closed each of them.
+                                if (rise > 0.5f && clipBad.Count < 8)
+                                    clipBad.Add((mid.X + perp.X * off, mid.Z + perp.Y * off, rise, off,
+                                                 ProcIsland.InsideAnyTownPad(mid.X + perp.X * off, -(mid.Z + perp.Y * off), 8f)));
+                            }
                             clipSum += rise; clipN++;
                         }
                     }
@@ -1459,6 +1478,8 @@ namespace UnturnedGodot
             if (clipN > 0)
                 Log.Print($"[island-roads] ribbon vs ground: worst rise {clipWorst:0.00} m, mean {clipSum / clipN:0.00} m, "
                           + $"{clipOver}/{clipN} sample(s) above the surface (measured on the profile actually built)");
+            foreach (var c in clipBad)
+                Log.Print($"[island-roads] clip at ({c.X:0},{c.Z:0}) rise {c.Rise:0.00} m, lateral offset {c.Off:0.0} m, inTown={c.Town}");
             ReportCapJoins(terr);
             return built;
         }
