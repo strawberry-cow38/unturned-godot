@@ -51,6 +51,66 @@ namespace UnturnedGodot
             return new Vector3(wx, terr != null ? terr.SampleHeight(wx, wz) : 0f, wz);
         }
 
+        /// <summary>The terrain LAYER a generated island treats as "nothing has been built here". CreateFlat
+        /// paints the whole map layer 2 (Grass), so that is what untouched ground is.</summary>
+        public const int GrassLayer = 2;
+        public const int DirtLayer = 0;   // Terrain.DefaultLayerNames[0]
+
+        /// <summary>Paint DIRT under everything the generator built -- road tiles, buildings and the routes
+        /// between towns -- so the ground says where the map has been worked (strawberry 2026-09-16: "around
+        /// props, road splines etc theres a patch of the dirt material that fits the size and shape of the
+        /// prop/spline + some border").
+        ///
+        /// ⚠ THIS RUNS BEFORE THE FOLIAGE BAKE, ON PURPOSE, and that ordering is the whole feature. The paint
+        /// is the single source of truth for "is this ground built on": the scatter then refuses anything that
+        /// is not Grass, so "no grass on dirt" falls out of reading the same map the player is looking at
+        /// rather than from a second exclusion rule that can drift away from it. Anything a human paints dirt
+        /// later is excluded by the same test, for free.
+        ///
+        /// ⚠ It does NOT need the RoadField. Painting the ground and laying the road ribbon are separate jobs
+        /// with different prerequisites -- the splines want a field that is already in the scene tree, which
+        /// only exists much later in the build, while the paint only needs the routes. Keeping them apart is
+        /// what lets the dirt exist before the foliage is scattered over it.
+        ///
+        /// Circles rather than true footprints: a road tile is a 4 m square and a circle a little larger than
+        /// it covers the square plus master's border, and building footprints are not known here (PlaceBuildings
+        /// records a prop name and a position, not an extent) so a radius is the honest approximation.</summary>
+        public static void PaintGroundwork(Terrain terr)
+        {
+            if (terr == null) return;
+            const float TileR = 3.6f;    // a 4 m tile's corner is 2.83 m out; this covers it plus a border
+            const float BuildR = 8.0f;   // footprint unknown -> a skirt wide enough to read as a cleared plot
+            const float RouteR = 5.2f;   // the carved corridor is wider than the ribbon that will sit on it
+            int tiles = 0, builds = 0, routePts = 0;
+
+            if (terr.IslandTiles != null)
+                foreach (var t in terr.IslandTiles)
+                {
+                    var w = PosFor(terr, t.X, t.Z);
+                    terr.PaintSplat(w.X, w.Z, TileR, DirtLayer); tiles++;
+                }
+            if (terr.IslandBuildings != null)
+                foreach (var b in terr.IslandBuildings)
+                {
+                    var w = PosFor(terr, b.X, b.Z);
+                    terr.PaintSplat(w.X, w.Z, BuildR, DirtLayer); builds++;
+                }
+            // Routes are painted by STEPPING along the polyline rather than with PaintRiverBed: that one applies
+            // a river's own overspray blend, which is tuned for a bank and not for a roadside.
+            if (terr.IslandRoutes != null)
+                foreach (var route in terr.IslandRoutes)
+                {
+                    if (route.Points == null) continue;
+                    for (int i = 0; i < route.Points.Count; i++)
+                    {
+                        var p = route.Points[i];
+                        var w = PosFor(terr, p.X, p.Y);
+                        terr.PaintSplat(w.X, w.Z, RouteR, DirtLayer); routePts++;
+                    }
+                }
+            Log.Print($"[island-paint] dirt under {tiles} road tile(s), {builds} building(s), {routePts} route point(s)");
+        }
+
         /// <summary>Lay REAL SPLINE ROADS along the routes between towns.
         ///
         /// ⚠ THE ROUTES ALREADY EXISTED -- they were just invisible. GenerateIsland calls CarveRoutes, which

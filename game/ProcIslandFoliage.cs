@@ -64,7 +64,6 @@ namespace UnturnedGodot
             }
             catch (System.Exception ex) { Log.Err($"[island-foliage] could not prepare {dirName}: {ex.Message}"); return null; }
 
-            var blocked = BuildBlockedMask(terr);
             var bounds = terr.WorldBoundsXZ();
             int total = 0, types = 0;
 
@@ -82,7 +81,12 @@ namespace UnturnedGodot
                     {
                         float px = x + (float)(rng.NextDouble() * 2 - 1) * kind.Jitter;
                         float pz = z + (float)(rng.NextDouble() * 2 - 1) * kind.Jitter;
-                        if (blocked.Blocked(px, pz)) continue;
+                        // ⚠ THE PAINT IS THE RULE (strawberry: "grass and flowers and bushes and trees dont
+                        // spawn on dirt. only on grass"). This replaced a rasterised road/building mask that
+                        // computed the same answer a second way -- two sources of truth that could drift, and
+                        // one of them invisible to the player. Reading the splat means the scatter refuses
+                        // exactly the ground that LOOKS built on, including anything a human paints later.
+                        if (terr.SampleDominantLayer(px, pz) != ProcIslandSpawn.GrassLayer) continue;
                         float y = terr.SampleHeight(px, pz);
                         if (Terrain.HasWater && y < Terrain.SeaLevelY + 0.6f) continue;   // no grass in the surf
                         // Slope: foliage standing straight up out of a cliff face reads as a bug. Sampled rather
@@ -194,7 +198,6 @@ namespace UnturnedGodot
             string manifest = Path.Combine(src, "resources.txt");
             if (!File.Exists(manifest)) { Log.Print("[island-res] no resources.txt in the source -- skipping"); return null; }
 
-            var mask = BuildBlockedMask(terr);
             var bounds = terr.WorldBoundsXZ();
             // Every resource competes for ground with every other, so one shared occupancy list stops a
             // mushroom growing inside a pine. Kept per-bake, not per-type.
@@ -218,7 +221,7 @@ namespace UnturnedGodot
                     {
                         float px = x + (float)(rng.NextDouble() * 2 - 1) * kind.Spacing * 0.45f;
                         float pz = z + (float)(rng.NextDouble() * 2 - 1) * kind.Spacing * 0.45f;
-                        if (mask.Blocked(px, pz)) continue;
+                        if (terr.SampleDominantLayer(px, pz) != ProcIslandSpawn.GrassLayer) continue;   // only on grass, same rule as the foliage
                         float y = terr.SampleHeight(px, pz);
                         if (Terrain.HasWater && y < Terrain.SeaLevelY + 1.5f) continue;   // nothing grows in the tide
                         float h1 = terr.SampleHeight(px + 2f, pz), h2 = terr.SampleHeight(px - 2f, pz);
@@ -265,62 +268,6 @@ namespace UnturnedGodot
                 bw.Write(pos.X); bw.Write(pos.Y); bw.Write(-pos.Z);       // negate-Z position, as every placement here does
                 bw.Write(0f); bw.Write(180f - yaw); bw.Write(0f);          // upright: only yaw, expressed as the reader's ey
                 bw.Write(s); bw.Write(s); bw.Write(s);
-            }
-        }
-
-        /// <summary>A coarse "something is already here" grid over roads and buildings.
-        ///
-        /// ⚠ A MASK, NOT A DISTANCE TEST. The obvious version checks every candidate against every road tile and
-        /// building: ~600k candidates x ~240 objects is 140M checks and turns island generation into a stall.
-        /// Rasterising once and looking up is O(1) per candidate.</summary>
-        static Mask BuildBlockedMask(Terrain terr)
-        {
-            var b = terr.WorldBoundsXZ();
-            var m = new Mask
-            {
-                Cell = 2f,
-                MinX = b.MinX,
-                MinZ = b.MinZ,
-                Nx = Mathf.Max(1, Mathf.CeilToInt((b.MaxX - b.MinX) / 2f)),
-                Nz = Mathf.Max(1, Mathf.CeilToInt((b.MaxZ - b.MinZ) / 2f)),
-            };
-            m.Bits = new bool[m.Nx * m.Nz];
-
-            if (terr.IslandTiles != null)
-                foreach (var t in terr.IslandTiles)
-                {
-                    var w = ProcIslandSpawn.PosFor(terr, t.X, t.Z);
-                    m.Stamp(w.X, w.Z, 5f);    // a road tile is 4 m; clear its verge too so grass does not grow through tarmac
-                }
-            if (terr.IslandBuildings != null)
-                foreach (var bd in terr.IslandBuildings)
-                {
-                    var w = ProcIslandSpawn.PosFor(terr, bd.X, bd.Z);
-                    m.Stamp(w.X, w.Z, 8f);    // footprints are unknown, so a radius; better a bald patch than grass inside a wall
-                }
-            return m;
-        }
-
-        struct Mask
-        {
-            public bool[] Bits;
-            public float Cell, MinX, MinZ;
-            public int Nx, Nz;
-
-            public void Stamp(float wx, float wz, float radius)
-            {
-                int r = Mathf.CeilToInt(radius / Cell);
-                int cx = (int)((wx - MinX) / Cell), cz = (int)((wz - MinZ) / Cell);
-                for (int ix = cx - r; ix <= cx + r; ix++)
-                    for (int iz = cz - r; iz <= cz + r; iz++)
-                        if (ix >= 0 && iz >= 0 && ix < Nx && iz < Nz) Bits[iz * Nx + ix] = true;
-            }
-
-            public bool Blocked(float wx, float wz)
-            {
-                int ix = (int)((wx - MinX) / Cell), iz = (int)((wz - MinZ) / Cell);
-                if (ix < 0 || iz < 0 || ix >= Nx || iz >= Nz) return true;   // off the mask is off the island
-                return Bits[iz * Nx + ix];
             }
         }
 
