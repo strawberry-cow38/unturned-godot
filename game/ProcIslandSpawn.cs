@@ -51,6 +51,54 @@ namespace UnturnedGodot
             return new Vector3(wx, terr != null ? terr.SampleHeight(wx, wz) : 0f, wz);
         }
 
+        /// <summary>Lay REAL SPLINE ROADS along the routes between towns.
+        ///
+        /// ⚠ THE ROUTES ALREADY EXISTED -- they were just invisible. GenerateIsland calls CarveRoutes, which
+        /// flattens a path through the heightmap between every pair of linked POIs, and then nothing ever put a
+        /// road surface on them. So a generated island had graded corridors running between its towns with bare
+        /// grass down the middle. strawberry: "there are no road splines between towns".
+        ///
+        /// ⚠ AND THIS IS WHY THEY DO NOT SINK. The in-town grid is ROAD TILES: flat quads placed at the sampled
+        /// centre height with yaw only (RotFor is `FromEuler(270, yaw, 0)` -- no terrain normal), so on any slope
+        /// the uphill edge buries and the downhill edge floats. A spline road is not a tile; RoadField builds a
+        /// ribbon that follows the joints, so it rides the ground it was carved into. Same reason one change
+        /// answers two of the reported items.
+        ///
+        /// DECIMATED, because a carved route has a point per 4 m grid step and a joint every 4 m makes a spline
+        /// that is all control and no curve -- Catmull-Rom through dense collinear points is just the polyline
+        /// back again, with a mesh segment per step. Endpoints are always kept: they are where the route meets
+        /// the town, and moving one leaves the road pointing at where the gate used to be.</summary>
+        public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)
+        {
+            if (terr == null || rf == null || terr.IslandRoutes == null) return 0;
+            const int Stride = 5;          // ~20 m between joints
+            const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
+            int built = 0, skipped = 0;
+
+            foreach (var route in terr.IslandRoutes)
+            {
+                if (route.Points == null || route.Points.Count < 2) { skipped++; continue; }
+                var pts = new System.Collections.Generic.List<Vector3>();
+                for (int i = 0; i < route.Points.Count; i += Stride)
+                {
+                    var p = route.Points[i];
+                    pts.Add(PosFor(terr, p.X, p.Y));   // route points are in ProcIsland's 2D frame; PosFor negates Z and drops it on the ground
+                }
+                var last = route.Points[^1];
+                var lastW = PosFor(terr, last.X, last.Y);
+                if (pts.Count == 0 || pts[^1].DistanceTo(lastW) > 0.01f) pts.Add(lastW);
+                if (pts.Count < 2) { skipped++; continue; }
+
+                float len = 0f;
+                for (int i = 1; i < pts.Count; i++) len += pts[i].DistanceTo(pts[i - 1]);
+                if (len < MinLen) { skipped++; continue; }
+
+                if (rf.AddRoadFromPolyline(pts, material) >= 0) built++; else skipped++;
+            }
+            Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
+            return built;
+        }
+
         /// <summary>Give a generated island its own player spawn points.
         ///
         /// A generated island had NONE -- `spawn` does not appear in ProcIsland at all -- and the editor's save

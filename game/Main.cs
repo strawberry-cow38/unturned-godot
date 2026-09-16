@@ -6356,6 +6356,12 @@ namespace UnturnedGodot
             var rf = new RoadField { Terr = terr };
             rf.LoadMaterialsOnly(_mapRoot + "/Environment");   // shared road materials so roads can be added on the blank map
             AddChild(rf);
+            // The generator already CARVED a corridor through the heightmap between every pair of linked towns
+            // (GenerateIsland -> CarveRoutes) and then nothing ever surfaced them, so the island had graded
+            // strips of bare grass where its roads should be. Lay real splines along them. ⚠ AFTER AddChild:
+            // AddRoadFromPolyline builds a mesh node as it goes, and a RoadField outside the tree has nowhere
+            // to put it.
+            if (genPois != null) ProcIslandSpawn.SpawnRoutes(terr, rf);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
