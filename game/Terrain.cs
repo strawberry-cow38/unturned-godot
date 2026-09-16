@@ -562,7 +562,7 @@ void fragment() {
             // ⚠ THE OTHER ORDER WAS TRIED AND MEASURED. Carving first and flattening after erased the corridor
             // where a route enters a town, and the splines' worst rise went 0.31 m -> 2.73 m. Layering these
             // two in either order has one undoing the other; giving each its own territory is what stops it.
-            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois);
+            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois, _islandTiles);
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             RebuildAll();

@@ -172,6 +172,10 @@ namespace UnturnedGodot
             int total = terr.IslandTiles.Count;
             foreach (var kv in counts) parts.Add($"{kv.Key} {kv.Value} ({(total > 0 ? kv.Value * 100 / total : 0)}%)");
             Log.Print($"[island-pieces] {string.Join(", ", parts)}");
+            if (ProcIsland.PadCount > 0)
+                Log.Print($"[island-pads] {ProcIsland.PadCount} town pad(s): mean half-size "
+                          + $"{ProcIsland.PadWas / ProcIsland.PadCount:0.#} -> {ProcIsland.PadNow / ProcIsland.PadCount:0.#} m, "
+                          + $"smallest now {ProcIsland.PadSmallest:0.#} m");
             Log.Print($"[island-pieces] exit-grow: added {ProcIsland.GrowAdded}, blocked by lattice edge {ProcIsland.GrowBlocked}, trimmed {ProcIsland.GrowTrimmed}, still short {ProcIsland.GrowShort}");
             Log.Print($"[island-pieces] {exposed} arm(s) of {checkedArms} open onto air"
                       + (blame.Count > 0 ? $" -- from {string.Join(", ", blame)}" : ""));

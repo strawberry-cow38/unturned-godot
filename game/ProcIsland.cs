@@ -564,6 +564,7 @@ namespace UnturnedGodot
         /// <summary>Diagnostics for the exit-growing pass: how many street cells it added, how many it could
         /// not add because the lattice ended, and how many exits still came up short of an exact cap fit.</summary>
         public static int GrowAdded, GrowBlocked, GrowShort, GrowTrimmed;
+        public static float PadWas, PadNow, PadSmallest = float.MaxValue; public static int PadCount;
 
         public const float RenderedRoadHalf = 9.2f;
         const float CarveMargin = 2.5f;   // levelled a little past the edge, so the blend starts off the tarmac
@@ -802,14 +803,15 @@ namespace UnturnedGodot
         /// height. Outside the footprint the route owns the ground; inside, the town does. Ordering the two
         /// passes and giving each its own territory is what stops them undoing each other, which layering them
         /// in either order never did.</summary>
+        /// <summary>⚠ Must agree with FlattenTownsExactly's pad, or the carve cuts into ground the town just
+        /// levelled. Both read the same TownPads list, built once from the tiles, rather than each deriving a
+        /// footprint from Poi.HalfSize and drifting apart the moment one of them changes.</summary>
+        static System.Collections.Generic.List<(float X, float Z, float Half)> TownPads = new();
+
         static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)
         {
-            if (pois == null) return false;
-            foreach (var poi in pois)
-            {
-                float inner = poi.HalfSize + TileSize * 0.5f + HalfCarriageway;
-                if (Mathf.Max(Mathf.Abs(wx - poi.X), Mathf.Abs(wz - poi.Z)) <= inner) return true;
-            }
+            foreach (var pad in TownPads)
+                if (Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) <= pad.Half) return true;
             return false;
         }
 
@@ -886,26 +888,59 @@ namespace UnturnedGodot
         /// ⭐ This is also what makes "all road props at the same vertical position" fall out for free rather
         /// than being enforced separately: on ground that is exactly level, sampling the terrain under each
         /// tile returns the same number for every tile in the town.</summary>
-        public static void FlattenTownsExactly(float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois)
+        public static void FlattenTownsExactly(float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois,
+                                               System.Collections.Generic.List<MonumentTile> tiles = null)
         {
             if (pois == null) return;
+            TownPads.Clear();   // rebuilt per generation; a stale pad would protect ground that no longer has a town on it
+            PadWas = PadNow = 0f; PadSmallest = float.MaxValue; PadCount = 0;
             const float Unit = 4f;
-            foreach (var poi in pois)
+            for (int pi = 0; pi < pois.Count; pi++)
             {
+                var poi = pois[pi];
                 float target = ToGrid(poi.GroundY);
-                // The footprint must contain the outermost road prop: BuildMonument's furthest tile CENTRE is at
-                // (n-1)*TileSize/2, so its far edge is half a tile beyond that, and the prop's own carriageway
-                // overhangs further still.
-                float inner = poi.HalfSize + TileSize * 0.5f + HalfCarriageway;
+
+                // ⚠ SIZED TO THE ROAD THAT IS ACTUALLY THERE, not to the nominal footprint (strawberry: "the
+                // small 'towns' which are just a couple road line cap pieces can have their flattened area
+                // reduced a lot. towns can have their flattened area reduced a bit").
+                //
+                // Poi.HalfSize is what the site was RESERVED at. What gets built on it is whatever survived
+                // routing, the dead-end prune and the exit fitting -- and on a small monument that can be two
+                // cap pieces sitting in the middle of a 48 m plateau. Measuring the tiles themselves shrinks a
+                // stub hamlet a lot and a full town a little, from one rule, with no size classes to keep in
+                // step with TilesFor().
+                float cxW = poi.X, czW = poi.Z, half;
+                float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+                if (tiles != null)
+                    foreach (var t in tiles)
+                    {
+                        if (t.Poi != pi) continue;
+                        if (t.X < minX) minX = t.X; if (t.X > maxX) maxX = t.X;
+                        if (t.Z < minZ) minZ = t.Z; if (t.Z > maxZ) maxZ = t.Z;
+                    }
+                if (minX <= maxX)
+                {
+                    cxW = (minX + maxX) * 0.5f; czW = (minZ + maxZ) * 0.5f;
+                    // Half the span of the tile CENTRES, plus half a tile to reach the prop's edge, plus the
+                    // carriageway overhang. No HalfSize term at all -- that is the reservation, not the town.
+                    half = Mathf.Max(maxX - minX, maxZ - minZ) * 0.5f + TileSize * 0.5f + HalfCarriageway;
+                }
+                else half = TileSize * 0.5f + HalfCarriageway;   // no tiles survived: flatten only what a single prop needs
+
+                TownPads.Add((cxW, czW, half));
+                PadWas += poi.HalfSize + TileSize * 0.5f + HalfCarriageway;   // what the old rule would have flattened
+                PadNow += half; PadCount++;
+                if (half < PadSmallest) PadSmallest = half;
+                float inner = half;
                 float outer = inner * 1.5f;
                 int rad = Mathf.CeilToInt(outer / Unit) + 1;
-                int cx = Mathf.RoundToInt(poi.X / Unit), cy = Mathf.RoundToInt(poi.Z / Unit);
+                int cx = Mathf.RoundToInt(cxW / Unit), cy = Mathf.RoundToInt(czW / Unit);
                 for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
                     for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
                     {
-                        // Chebyshev, because the pad is a SQUARE (see Poi.HalfSize) and a radial test would
-                        // leave its corners unflattened -- which is precisely where the corner tiles sit.
-                        float d = Mathf.Max(Mathf.Abs(x * Unit - poi.X), Mathf.Abs(y * Unit - poi.Z));
+                        // Chebyshev, because the pad is a SQUARE and a radial test would leave its corners
+                        // unflattened -- which is precisely where the corner tiles sit.
+                        float d = Mathf.Max(Mathf.Abs(x * Unit - cxW), Mathf.Abs(y * Unit - czW));
                         if (d > outer) continue;
                         if (d <= inner) grid[x, y] = target;                       // EXACT
                         else grid[x, y] = Mathf.Lerp(grid[x, y], target, 1f - Mathf.SmoothStep(inner, outer, d));
