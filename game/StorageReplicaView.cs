@@ -17,6 +17,20 @@ namespace UnturnedGodot
     public partial class StorageReplicaView : Node
     {
         public override void _Ready() { TickHub.AddPhysics(this, HubPhysics); SetPhysicsProcess(false); }   // PERF: hub-ticked (see TickHub.AddProcess)
+
+        // ⚠ AN EXACT TOTAL, ONCE, AFTER IT STOPS GROWING. The milestone log above cannot distinguish 600
+        // from 696 -- it prints the same "600 node(s)" either way -- and that is precisely the distinction
+        // that decides whether the client's decoration copy can be suppressed. Suppress while the replica
+        // is short (interest culling, a dropped fixture) and those containers do not merely double, they
+        // VANISH: the original bug back, and indistinguishable from it. Fixtures arrive over several
+        // frames, so "done" is "3s since the last one" rather than any single event.
+        ulong _settleAt;
+        void ReportSettled()
+        {
+            if (_settleAt == 0 || Time.GetTicksMsec() < _settleAt) return;
+            _settleAt = 0;
+            Log.Print($"[containers] replica settled at EXACTLY {_nodes.Count} node(s) -- compare with the server's published count");
+        }
         public NetWorldClient Client;
 
         struct Entry { public StoreShelf Node; public ulong DisplaySig; public bool DoorsOpen; public bool CookerOn; }
@@ -33,6 +47,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
         public void HubPhysics(double delta)
         {
+            ReportSettled();   // before the early-outs: the total is still worth printing once the stream stops
             if (Client == null) return;
             var parent = GetParent();
             if (parent == null) return;
@@ -56,6 +71,7 @@ namespace UnturnedGodot
                     // writing 696 lines.
                     if (_nodes.Count + 1 == 1 || (_nodes.Count + 1) % 100 == 0)
                         Log.Print($"[containers] replica materialised {_nodes.Count + 1} node(s)");
+                    _settleAt = Time.GetTicksMsec() + 3000;   // exact total once it stops growing -- see below
                     entry = new Entry { Node = node, DisplaySig = ulong.MaxValue, DoorsOpen = false, CookerOn = false };   // MaxValue forces the first ApplyDisplay
                     _nodes[e.NetIdValue] = entry;
                 }

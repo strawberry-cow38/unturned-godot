@@ -1767,11 +1767,22 @@ namespace UnturnedGodot
             // does: ContainerNetSync registers a replication FIXTURE, which is a record, not a node. Skip there
             // and the server silently loses that prop's collision -- players walk through fridges and bullets
             // pass through bookcases. So Dedicated records the container AND keeps the prop.
-            int converted = 0;
+            int converted = 0, alsoReplicated = 0;
             bool TryContainer(string[] q)
             {
-                if (mode != WorldMode.Playable && mode != WorldMode.Dedicated) return false;
                 if (!ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
+                if (mode != WorldMode.Playable && mode != WorldMode.Dedicated)
+                {
+                    // A CLIENT does not record containers -- the server publishes them and
+                    // StorageReplicaView materialises a StoreShelf per fixture. But it still falls through
+                    // to PlaceObject below, so this same object also exists as a decoration mesh. Counting
+                    // it turns "the client probably draws these twice" from an inference about code into a
+                    // number: cow tools could confirm the server published 696 and the replica built ~696,
+                    // but had no way to count two meshes at one spot, and read the ABSENCE of a log line as
+                    // the only evidence. Absence is weaker than a count, so here is the count.
+                    if (mode == WorldMode.Client) alsoReplicated++;
+                    return false;
+                }
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
                 // ⚠ THE SAME UPRIGHT, WRITTEN ON A DIFFERENT AXIS (strawberry 2026-09-15: "some trash cans are
@@ -1890,6 +1901,7 @@ namespace UnturnedGodot
             result.Destructibles = destField;
             if (destN > 0) Log.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
             if (converted > 0) Log.Print($"[containers] flagged {converted} map props for post-build container spawn");
+            if (alsoReplicated > 0) Log.Print($"[containers] {alsoReplicated} decoration prop(s) here are ALSO server-replicated containers -- each is drawn TWICE unless one side is suppressed");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             Log.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
