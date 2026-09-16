@@ -149,14 +149,82 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void the_two_gun_bits_are_distinguishable_in_the_fixture()
+        public void every_same_typed_neighbour_in_the_fixture_is_distinct()
         {
-            // The guard on the guard. If a future edit makes these equal "for tidiness", the full-jar golden
-            // silently stops being able to see a swap, and nothing else would tell us.
-            var j = FullJar();
-            Assert.That(j.item.gunChambered, Is.Not.EqualTo(j.item.gunAttachSeeded),
-                "FullJar's two gun bools must stay OPPOSITE -- equal values make a swapped pair invisible, "
-                + "which is the exact hole this golden exists to close.");
+            // THE GUARD ON THE GUARD, widened. This started as a check on the two gun bools -- the pair that
+            // got named in chat -- and cow tools pointed out the obvious thing about testing the cluster
+            // somebody hands you: the FOUR adjacent int32 attachment ids are the bigger swap risk and the
+            // easier one to get wrong, because attachment ids are exactly the field a fixture author fills
+            // with a placeholder. Equal values inside ANY of these clusters emit identical bytes under a
+            // permutation, and the golden above silently stops being able to see it.
+            //
+            // "sight and grip swapped" is not hypothetical here: the per-slot block those four ids live in
+            // exists because attachments went missing over this very schema once already.
+            var it = FullJar().item;
+            var clusters = new (string name, object[] vals)[]
+            {
+                ("x/y/rot (3 adjacent uint8)",            new object[] { FullJar().x, FullJar().y, FullJar().rot }),
+                ("id/amount (2 uint16)",                  new object[] { it.id, it.amount }),
+                ("gunMagId/gunAttach (2 int32)",          new object[] { it.gunMagId, it.gunAttach }),
+                ("the four attachment ids (4 int32)",     new object[] { it.gunSightId, it.gunBarrelId, it.gunGripId, it.gunTacticalId }),
+                ("gunChambered/gunAttachSeeded (2 bits)", new object[] { it.gunChambered, it.gunAttachSeeded }),
+                ("fluidType/fluidQuality (2 uint8)",      new object[] { it.fluidType, it.fluidQuality }),
+                ("cooked/cookStyle (2 uint8)",            new object[] { it.cooked, it.cookStyle }),
+            };
+            foreach (var (name, vals) in clusters)
+            {
+                var seen = new System.Collections.Generic.HashSet<string>();
+                foreach (var v in vals)
+                    Assert.That(seen.Add(System.Convert.ToString(v)), Is.True,
+                        $"FullJar repeats a value inside {name}. Same-typed neighbours MUST hold distinct "
+                        + "values: a permutation of equal values changes no byte, so the golden above would "
+                        + "stay green through exactly the reordering it exists to catch.");
+            }
+        }
+
+        [Test]
+        public void the_magazine_lock_byte_carries_the_round_and_not_a_constant()
+        {
+            // magLoadedRound does NOT go on the wire as itself -- WriteJar emits
+            // Assets.MagRoundToId(round), and that returns 0 for null AND for any round the item registry
+            // does not know. So a fixture that leaves the field unset (as FullJar does, deliberately: see
+            // the determinism note below) pins a byte that is structurally always 0, and a mutation writing
+            // a literal 0 there would not move the golden at all. cow tools called this one from the schema
+            // alone, before it was run, and it was right.
+            //
+            // ⚠ WHY THE VALUE IS NOT IN FullJar. MagRoundTable() is an ORDINAL-SORTED index over the whole
+            // item registry, so a registered round's id depends on what else is registered -- which in a
+            // single-process L0 suite means on TEST ORDER. Baking one into the captured hex would make the
+            // golden order-dependent, which is the precise bug family this repo spent today chasing
+            // (vehicle.trailers, tank.differential_steer, inv.hold_transfer). So the field is pinned
+            // DIFFERENTIALLY here instead: only that the byte MOVES, never which value it lands on.
+            //
+            // ⚠ AND A PRODUCT NOTE, found writing this: Assets.add does NOT invalidate _magRounds; only
+            // Assets.clear does (ItemAsset.cs:235 vs :303). A cartridge registered after the first lookup
+            // is therefore invisible to this encoder and every magazine holding it locks as "no round".
+            // Boot loads assets before any gameplay so it is latent, not live -- a late add or a mod reload
+            // is what would fire it. Not fixed here; this test pins the encoding, not the cache.
+            var snapshot = new System.Collections.Generic.List<ItemAsset>(Assets.all());
+            try
+            {
+                Assets.clear();   // also drops the _magRounds cache, which `add` alone would not
+                Assets.add(new ItemAsset { id = 60001, itemName = "Fixture Cartridge", size_x = 1, size_y = 1, magRound = "fixture-round" });
+                Assert.That(Assets.MagRoundToId("fixture-round"), Is.Not.Zero,
+                    "the fixture's round did not register -- this test cannot tell a live field from a constant without it");
+
+                var locked = FullJar(); locked.item.magLoadedRound = "fixture-round";
+                Assert.That(Hex(locked), Is.Not.EqualTo(Hex(FullJar())),
+                    "setting magLoadedRound changed no byte. WriteJar is emitting a constant where the "
+                    + "cartridge lock should be, so a part-loaded magazine crosses the wire unlocked and "
+                    + "will accept a mixed refill on the next drag -- the exact regression the field was added for.");
+            }
+            finally
+            {
+                // Restore the registry rather than leaving this fixture's one item behind: a suite-wide
+                // static edited by one test is the leak class, not a cleanup nicety.
+                Assets.clear();
+                foreach (var a in snapshot) Assets.add(a);
+            }
         }
 
         // Captured 2026-09-16 at NetProtocol.Version 52 from the fixtures above.
