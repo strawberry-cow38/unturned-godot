@@ -225,7 +225,7 @@ namespace UnturnedGodot.Net
                         {
                             if (NetLog.Enabled) NetLog.Info($"reject {peer.Connection.GetAddressString(true)}: content hash mismatch");
                             for (int i = 0; i < 3; i++)   // best-effort blast, like the other Reject paths
-                                peer.Session.SendControl(NetControlType.Reject, w => w.WriteUInt8((byte)NetRejectReason.ContentMismatch));
+                                peer.Session.SendControl(NetControlType.Reject, w => { w.WriteUInt8((byte)NetRejectReason.ContentMismatch); w.WriteUInt8(_version); });
                             RemovePeer(peer, NetDisconnectReason.Rejected);
                             return;
                         }
@@ -241,7 +241,7 @@ namespace UnturnedGodot.Net
                             {
                                 if (NetLog.Enabled) NetLog.Info($"reject {peer.Connection.GetAddressString(true)} '{name}': banned ({banReason})");
                                 for (int i = 0; i < 3; i++)   // best-effort blast, like the other Reject paths
-                                    peer.Session.SendControl(NetControlType.Reject, w => w.WriteUInt8((byte)NetRejectReason.Banned));
+                                    peer.Session.SendControl(NetControlType.Reject, w => { w.WriteUInt8((byte)NetRejectReason.Banned); w.WriteUInt8(_version); });
                                 RemovePeer(peer, NetDisconnectReason.Rejected);
                                 return;
                             }
@@ -274,6 +274,13 @@ namespace UnturnedGodot.Net
             });
         }
 
+        // ⚠ ONE CONTROL TYPE, ONE PAYLOAD SHAPE. Reject is sent from THREE places -- here, and the two
+        // in-session refusals above (ContentMismatch, Banned) -- and when v52 appended the server's protocol
+        // version it landed on this one only. So RejectServerVersion came back 0 for those two reasons while
+        // the version-history entry said Reject carries it, full stop. Harmless in effect (the two affected
+        // reasons never needed to name a version, and NetRejectText degrades to the version-less wording), but
+        // it is the exact drift a payload golden exists to catch and nothing was red: three senders, two
+        // shapes, one name. All three now write reason + version.
         // One-off Reject to an endpoint we refuse to build a session for. seq 1 / no acks: the rejected
         // client only ever parses the control payload out of this.
         void SendRawReject(ITransportConnection conn, NetRejectReason reason)
