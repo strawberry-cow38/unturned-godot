@@ -302,11 +302,19 @@ namespace UnturnedGodot
         /// smooth without the user placing a single handle. Joints are MIRROR mode (0) so the two tangents
         /// stay opposite and the curve is C1 -- which is what makes a drawn rail look drawn rather than
         /// hand-jointed. Returns the new road index, or -1 if there are too few points to be a road.</summary>
-        public int AddRoadFromPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, int material = 0, bool loop = false)
+        /// <summary><paramref name="ignoreTerrain"/> marks every joint as owning its own height.
+        ///
+        /// ⚠ WITHOUT IT THE POLYLINE'S Y IS THROWN AWAY. SampleAt does `p.Y = Terr.SampleHeight(p.X, p.Z)`
+        /// unless the joint says otherwise, so a caller that has computed a smoothed road PROFILE hands it over
+        /// and watches the ribbon trace the raw heightmap instead -- which is the same "follow the track, not
+        /// the bumpy heightmap" the train already passes snapTerrain:false for. The generated island's routes
+        /// spend a whole pass (ProcIslandSpawn.SmoothProfile) deriving a grade that clears the ground, and
+        /// every metre of it was inert until this existed.</summary>
+        public int AddRoadFromPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, int material = 0, bool loop = false, bool ignoreTerrain = false)
         {
             if (pts == null || pts.Count < 2) return -1;
             var r = new RoadData { Material = Mathf.Clamp(material, 0, Mathf.Max(0, _mats.Count - 1)), IsLoop = loop, GuidBytes = System.Array.Empty<byte>() };
-            for (int i = 0; i < pts.Count; i++) r.Joints.Add(new Joint { Vertex = pts[i], Mode = 0 });
+            for (int i = 0; i < pts.Count; i++) r.Joints.Add(new Joint { Vertex = pts[i], Mode = 0, IgnoreTerrain = ignoreTerrain });
             RetangentRoad(r);
             _roads.Add(r);
             int idx = _roads.Count - 1;

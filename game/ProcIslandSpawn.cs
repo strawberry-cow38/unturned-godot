@@ -134,13 +134,56 @@ namespace UnturnedGodot
         /// the clipping was measured.</summary>
         public static Vector3 JointPosFor(Terrain terr, float px, float pz)
         {
-            const float R = 5f;   // joints are ~8 m apart; this reaches past the midpoint from both sides
+            // ⚠ THE REACH IS DERIVED FROM THE JOINT SPACING, NOT A CONSTANT. It was a flat 5 m with the comment
+            // "joints are ~8 m apart; this reaches past the midpoint from both sides" -- true then, and silently
+            // false the moment the stride went to 24 m for the curve handles: the midpoint of a segment is 12 m
+            // away and nothing was looking at it. Terrain rising above the ribbon went 6/5760 samples to
+            // 349/9325 on that change alone, which is the measurement catching a constant that had quietly
+            // stopped describing the road.
+            // ⚠ 0.55 OF THE SPACING, NOT 0.75. The chord's midpoint is half a spacing away, so half is the
+            // geometric minimum and a little over it is the overlap that stops two joints meeting exactly at
+            // the sample they share. 0.75 reaches half again past anything the chord spans, and every extra
+            // metre of MAX-search is a metre of hillside that lifts the road for no reason -- measured, it cost
+            // 0.6 m of mean float for nothing.
+            float R = RouteJointStride * 4f * 0.55f;
             var c = PosFor(terr, px, pz);
             float top = c.Y;
-            for (int dx = -1; dx <= 1; dx++)
-                for (int dz = -1; dz <= 1; dz++)
+            for (int ring = 1; ring <= 2; ring++)
+                for (int k = 0; k < 8; k++)
                 {
-                    float h = PosFor(terr, px + dx * R, pz + dz * R).Y;
+                    float a = k * Mathf.Pi / 4f, r = R * ring / 2f;
+                    float h = PosFor(terr, px + Mathf.Cos(a) * r, pz + Mathf.Sin(a) * r).Y;
+                    if (h > top) top = h;
+                }
+            return new Vector3(c.X, top + RoadPropLift, c.Z);
+        }
+
+        /// <summary>The same seat, but searching ALONG the road instead of in a disc around it.
+        ///
+        /// ⚠⚠ A DISC ON A HILLSIDE GRABS THE BANK, NOT THE ROAD. Widening the reach to match the 24 m joint
+        /// spacing took terrain-above-the-ribbon to zero and simultaneously lifted the whole road a mean 2.10 m
+        /// into the air -- a causeway on stilts, and exactly the kind of "fixed one number, broke the other" the
+        /// clamp in SmoothProfile exists to avoid. The reason is that an 18 m disc reaches past the levelled
+        /// corridor (LevelCorridors flattens 13.2 m either side) and onto the hill beside it, so on any traverse
+        /// the joint was being seated on the uphill BANK.
+        ///
+        /// What a chord actually spans is the route, so that is what to look along: +/-R forward and back, with
+        /// only a metre or two of lateral to catch a crown in the carriageway. Everything further out is
+        /// scenery the road is cut through, not ground it has to clear.</summary>
+        public static Vector3 JointPosAlong(Terrain terr, float px, float pz, Vector2 dir)
+        {
+            float R = RouteJointStride * 4f * 0.55f;
+            var c = PosFor(terr, px, pz);
+            float top = c.Y;
+            if (dir.Length() < 1e-4f) return JointPosFor(terr, px, pz);
+            dir = dir.Normalized();
+            var side = new Vector2(-dir.Y, dir.X);
+            for (int i = -4; i <= 4; i++)
+                for (int j = -1; j <= 1; j++)
+                {
+                    float along = i * (R / 4f), lat = j * 2.5f;
+                    float h = PosFor(terr, px + dir.X * along + side.X * lat,
+                                           pz + dir.Y * along + side.Y * lat).Y;
                     if (h > top) top = h;
                 }
             return new Vector3(c.X, top + RoadPropLift, c.Z);
@@ -194,7 +237,23 @@ namespace UnturnedGodot
         /// does not have, and report a number about a road nobody builds. It did exactly that once: the road
         /// moved to 8 m joints while the probe still sampled 20 m ones, and the "worse" reading was the
         /// instrument, not the road.</summary>
-        public const int RouteJointStride = 2;   // ~8 m between joints
+        /// <summary>⚠ A NODE EVERY 8 m IS A POLYLINE WEARING A SPLINE'S NAME (strawberry 2026-09-16: "every
+        /// road spline node should have a curve subnode which has a counter curve subnode").
+        ///
+        /// That structure already exists -- RoadField.Joint carries Tan0/Tan1 and RetangentRoad fills them
+        /// Catmull-Rom in MIRROR mode, so each node does have a handle and its opposite. The problem was the
+        /// SPACING: the Catmull-Rom handle is a sixth of the span between a node's neighbours, so at an 8 m
+        /// stride every handle was about 2.7 m long. A bezier with handles that short is visually its own
+        /// control polygon -- the curve cannot bow away from the straight line between nodes, which is why a
+        /// road made of them reads as segments-and-corners no matter what the underlying path does.
+        ///
+        /// 24 m gives handles around 8 m and a segment that can actually carry a curve. It matches the town
+        /// lattice too, so a street and the road leaving it are described at the same resolution.
+        /// ⚠ SHARED with the clipping probe, which measures the gap BETWEEN joints -- if the probe used its own
+        /// copy it would measure chords the road does not have, and report a number about a road nobody builds.
+        /// It did exactly that once: the road moved to 8 m joints while the probe still sampled 20 m ones, and
+        /// the "worse" reading was the instrument, not the road.</summary>
+        public const int RouteJointStride = 6;   // ~24 m between joints
 
         /// <summary>What the road kit actually laid, and how much of it opens onto nothing.
         ///
@@ -396,8 +455,16 @@ namespace UnturnedGodot
                     if (route.Points == null || route.Points.Count < Stride + 1) continue;
                     for (int i = 0; i + Stride < route.Points.Count; i += Stride)
                     {
-                        var a = JointPosFor(terr, route.Points[i].X, route.Points[i].Y);   // where the ribbon IS, lift included
-                        var b = JointPosFor(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y);
+                        // ⚠⚠ THE SAME SEATING FUNCTION THE ROAD USES. This read JointPosFor while SpawnRoutes
+                        // had moved to JointPosAlong, so the probe reported the old disc-seated road and came
+                        // back with an IDENTICAL -2.10 m mean across a change that rewrote the seating -- two
+                        // decimal places of agreement is not a result, it is a tell. Same lesson as the 20 m
+                        // vs 8 m stride: an instrument that keeps its own copy of the thing it measures ends
+                        // up describing a road nobody builds.
+                        int pa = System.Math.Max(0, i - Stride), pb = System.Math.Min(route.Points.Count - 1, i + Stride);
+                        var a = JointPosAlong(terr, route.Points[i].X, route.Points[i].Y, route.Points[pb] - route.Points[pa]);
+                        int qa = System.Math.Max(0, i), qb = System.Math.Min(route.Points.Count - 1, i + 2 * Stride);
+                        var b = JointPosAlong(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y, route.Points[qb] - route.Points[qa]);
                         // ⚠ ACROSS THE RIBBON, NOT JUST ALONG IT. This used to sample the CENTRELINE only, and
                         // the ribbon is 18.4 m wide -- so on a hillside traverse the uphill EDGE can be metres
                         // into the hill while the middle is perfectly clear, and the probe reported 0/1137
@@ -1214,10 +1281,12 @@ namespace UnturnedGodot
                 for (int i = 0; i < route.Points.Count; i += Stride)
                 {
                     var p = route.Points[i];
-                    pts.Add(JointPosFor(terr, p.X, p.Y));
+                    int a = Mathf.Max(0, i - Stride), b = Mathf.Min(route.Points.Count - 1, i + Stride);
+                    pts.Add(JointPosAlong(terr, p.X, p.Y, route.Points[b] - route.Points[a]));
                 }
                 var last = route.Points[^1];
-                var lastW = JointPosFor(terr, last.X, last.Y);
+                var lastDir = route.Points[^1] - route.Points[System.Math.Max(0, route.Points.Count - 1 - Stride)];
+                var lastW = JointPosAlong(terr, last.X, last.Y, lastDir);
                 if (pts.Count == 0 || pts[^1].DistanceTo(lastW) > 0.01f) pts.Add(lastW);
                 if (pts.Count < 2) { skipped++; continue; }
                 // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM (strawberry 2026-09-16: "some
@@ -1240,7 +1309,12 @@ namespace UnturnedGodot
                 if (len < MinLen) { skipped++; continue; }
                 SmoothProfile(pts);
 
-                if (rf.AddRoadFromPolyline(pts, material) >= 0) built++; else skipped++;
+                // ⚠ ignoreTerrain: THE PROFILE ABOVE IS THE ROAD'S HEIGHT, and without this flag the mesh
+                // throws it away and re-samples the heightmap per vertex. SmoothProfile's whole smooth-then-
+                // clamp-up design -- the thing that took spline clipping to zero on paper -- was being computed
+                // and discarded; the ribbon was tracing every bump the ground had. This is what makes a road
+                // grade across a dip instead of dipping with it.
+                if (rf.AddRoadFromPolyline(pts, material, loop: false, ignoreTerrain: true) >= 0) built++; else skipped++;
             }
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
             ReportCapJoins(terr);
