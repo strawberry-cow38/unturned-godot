@@ -28,7 +28,7 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 14;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
+    const int LauncherVersion = 15;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
     // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
     // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
@@ -465,7 +465,16 @@ public class MainWindow : Window
             Environment.SetEnvironmentVariable("UG_USERNAME", username.Length > 0 ? username : null);
             Environment.SetEnvironmentVariable("UG_PROFILE_PNG", File.Exists(ProfilePngConfig) ? ProfilePngConfig : null);
             string steamId = LoadSteamId();
-            Environment.SetEnvironmentVariable("UG_STEAMID", steamId.Length > 0 ? steamId : null);   // identity, for when the wire learns to carry it; the game ignores it today
+            Environment.SetEnvironmentVariable("UG_STEAMID", steamId.Length > 0 ? steamId : null);   // display only -- an unsigned claim, and the game must never treat it as identity
+            // The CREDENTIAL, and the key that makes it one. The token is what the server verifies; the
+            // private key is what proves this machine is the one the token was issued to.
+            // ⚠ THE KEY IS PASSED AS A PATH, NOT A VALUE. An env var is readable by every child process
+            // and shows up in a crash dump; a path is a place to look that still needs the file's own
+            // permissions. The token is fine inline -- it is public by design and useless without the key.
+            string token = AuthClient.LoadToken(_baseDir);
+            Environment.SetEnvironmentVariable("UG_AUTH_TOKEN", token.Length > 0 ? token : null);
+            Environment.SetEnvironmentVariable("UG_AUTH_KEY", token.Length > 0 ? AuthClient.KeyPath(_baseDir) : null);
+            if (token.Length == 0) Log("(not signed in -- singleplayer and local multiplayer only)");
             Log(username.Length > 0 ? $"Profile: {username}{(File.Exists(ProfilePngConfig) ? " (+picture)" : "")}"
                                     : "(no name set -- joining as " + ProfileRules.FallbackName + ")");
 
@@ -725,7 +734,10 @@ public class MainWindow : Window
 
     void SignOutOfSteam()
     {
-        foreach (var f in new[] { SteamIdConfig, UsernameConfig, ProfilePngConfig })
+        // The token goes with the identity it belongs to. Leaving a signed credential behind after a
+        // sign-out is the one thing a sign-out must not do.
+        foreach (var f in new[] { SteamIdConfig, UsernameConfig, ProfilePngConfig,
+                                  AuthClient.TokenPath(_baseDir), AuthClient.KeyPath(_baseDir) })
             try { if (File.Exists(f)) File.Delete(f); } catch { }
         Log("Signed out -- name, picture and SteamID cleared. You'll join as " + ProfileRules.FallbackName + ".");
         RefreshProfileStatus();
@@ -738,15 +750,19 @@ public class MainWindow : Window
         _steamButton.IsEnabled = false;
         try
         {
-            var res = await SteamSignIn.SignInAsync(Log);
-            if (res.SteamId64 == null)
+            // Through stmauth, not to Steam directly. The old flow verified a SteamID against Steam
+            // correctly and it still convinced nobody but this launcher -- a server receiving "I am 7656..."
+            // from a client cannot check it, because the claim and the machine making it are the same
+            // machine. What comes back now is SIGNED, and bound to a key only this box holds.
+            var res = await AuthClient.SignInAsync(_baseDir, Log);
+            if (res.Token == null)
             {
                 Log(res.Cancelled ? "(Steam sign-in cancelled: " + res.Error + ")" : "!! Steam sign-in failed: " + res.Error);
                 return;
             }
-            File.WriteAllText(SteamIdConfig, res.SteamId64);
-            Log("Signed in as SteamID " + res.SteamId64);
-            await PullSteamProfileAsync(res.SteamId64);
+            if (!string.IsNullOrEmpty(res.SteamId64)) File.WriteAllText(SteamIdConfig, res.SteamId64);
+            Log("Signed in as SteamID " + (res.SteamId64 ?? "(unreadable)") + " -- token stored");
+            if (!string.IsNullOrEmpty(res.SteamId64)) await PullSteamProfileAsync(res.SteamId64);
         }
         catch (Exception ex) { Log("!! Steam sign-in failed: " + ex.Message); }
         finally { _steamButton.IsEnabled = true; RefreshProfileStatus(); }
