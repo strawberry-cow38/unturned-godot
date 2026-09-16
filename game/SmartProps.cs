@@ -196,6 +196,20 @@ namespace UnturnedGodot
                 var lampLocal = a.Lens?.Mesh != null ? a.Lens.Mesh.GetAabb().GetCenter() : new Vector3(0f, 2.35f, 6.48f);
                 a.Street = StreetLight.Make(lampLocal, Mathf.Max(4f, (basis * lampLocal).Y), a.Lens);
                 a.Street.TopLevel = false;   // local to the prop root: follows the gizmo
+                // ⚠⚠ CANCEL THE PROP'S STAND-UP OR THE CONE POINTS SIDEWAYS (strawberry: "the light cone for
+                // street lights is pointing sideways instead of straight down").
+                //
+                // An editor root carries the FULL placement basis, stand-up included: Basis(Y,180-yaw) *
+                // Basis(X,270). A spot that shines down its own -Y therefore shines down the root's rotated -Y,
+                // and a 270 about X maps (0,-1,0) to (0,0,1) -- dead sideways, every time, by exactly 90
+                // degrees. The world loader never hits this because it puts a prop's nodes in WORLD space under
+                // a root at the origin, so there is no stand-up to inherit; this is an editor-path-only fault
+                // and it was invisible until the island generator lit 129 of them at once.
+                //
+                // Inverting the stand-up on the child leaves root.Basis * child.Basis = pure yaw, so down is
+                // down and the lamp still turns with the pole. Same correction the container attach makes, for
+                // the same reason.
+                a.Street.Basis = new Basis(Vector3.Right, Mathf.DegToRad(270f)).Inverse();
                 root.AddChild(a.Street);
             }
 

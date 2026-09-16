@@ -675,6 +675,65 @@ void fragment() {
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
         }
 
+        /// <summary>Conform the ground to a POLYLINE's own heights: inside `radius` of the line the terrain is
+        /// assigned the line's height at that point, feathering out to untouched over `feather` beyond it.
+        ///
+        /// ⚠ THIS IS THE ANSWER TO A SEE-SAW, not a new feature. A road spline that owns its Y is a smooth curve
+        /// over ground that is not, and any smooth curve which never dips below that ground must, on average,
+        /// sit above it -- by roughly the amplitude of the undulation. So "stop the road clipping" and "stop the
+        /// road floating" could not both be satisfied by moving the ROAD: seating on the maximum floated it a
+        /// mean 1.12 m, seating on the average clipped 2416 samples, and clamping the average up to a maximum
+        /// floor floated it 2.45 m. The ground is the other half of the pair and the only one that was never
+        /// being moved.
+        ///
+        /// EditFlatten cannot do it: its target is the brush centre's EXISTING height, which is the thing being
+        /// corrected. One rebuild for the whole line, not one per brush -- a route is hundreds of points.</summary>
+        public void ConformToPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather)
+        {
+            if (_grid == null || pts == null || pts.Count < 2) return;
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            float outer = radius + feather;
+            int rg = Mathf.CeilToInt(outer / UNIT) + 1;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                Vector3 a = pts[i - 1], b = pts[i];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                float abLen2 = ab.LengthSquared();
+                if (abLen2 < 1e-6f) continue;
+                float cxa = (a.X - _bx) / UNIT, cya = (-a.Z - _bz) / UNIT;
+                float cxb = (b.X - _bx) / UNIT, cyb = (-b.Z - _bz) / UNIT;
+                int gx0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cxa, cxb)) - rg, 0, _gw - 1);
+                int gx1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cxa, cxb)) + rg, 0, _gw - 1);
+                int gy0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cya, cyb)) - rg, 0, _gh - 1);
+                int gy1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cya, cyb)) + rg, 0, _gh - 1);
+                for (int gx = gx0; gx <= gx1; gx++)
+                    for (int gy = gy0; gy <= gy1; gy++)
+                    {
+                        float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                        // Closest point on THIS segment, so the band follows the line rather than ballooning at
+                        // the joints the way a per-point disc does.
+                        float t = Mathf.Clamp(((wx - a.X) * ab.X + (wz - a.Z) * ab.Y) / abLen2, 0f, 1f);
+                        float px = a.X + ab.X * t, pz = a.Z + ab.Y * t;
+                        float d = Mathf.Sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
+                        if (d > outer) continue;
+                        float wantWorld = Mathf.Lerp(a.Y, b.Y, t);
+                        float target = (wantWorld + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                        float w = d <= radius ? 1f : 1f - Mathf.SmoothStep(radius, outer, d);
+                        // MAX of the pulls, not a sequence of lerps: consecutive segments overlap, and lerping
+                        // twice toward the same target lands somewhere between it and the old ground.
+                        float nv = Mathf.Lerp(_grid[gx, gy], target, w);
+                        if (w >= 0.999f) nv = target;
+                        JournalH(gx, gy);
+                        _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
+                        if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                        if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+                    }
+            }
+            if (minX > maxX) return;
+            _dirty = true;
+            RebuildChunksIn(minX, maxX, minY, maxY);
+        }
+
         public void EditFlatten(float worldX, float worldZ, float radiusWorld, float strength)   // pull heights toward the brush centre's height (Devkit FLATTEN)
         {
             if (_grid == null) return;

@@ -59,11 +59,18 @@ namespace UnturnedGodot
         /// ⚠ ENDS ARE PINNED. The first and last joints meet a monument's cap piece, and moving one leaves the
         /// road ending beside the gate instead of in it -- the same hazard CarveRoutes' own note describes about
         /// snapping connectors after routing.</summary>
-        static void SmoothProfile(System.Collections.Generic.List<Vector3> pts)
+        static void SmoothProfile(System.Collections.Generic.List<Vector3> pts, float[] floorIn = null)
         {
             if (pts.Count < 5) return;
-            var floor = new float[pts.Count];
-            for (int i = 0; i < pts.Count; i++) floor[i] = pts[i].Y;   // what each joint must clear
+            // ⚠⚠ THE SEAT AND THE FLOOR ARE DIFFERENT QUESTIONS, and conflating them is what made float and
+            // clipping a see-saw for three rounds. "Where does the road sit" wants to hug the ground; "what must
+            // it clear" wants the highest thing the chord spans. Deriving the floor FROM the seat, as this did,
+            // means seating on the maximum (road floats a mean 1.12 m -- strawberry: "floating. a LOT") or
+            // seating on the average and having nothing left to clamp against (2416 of 9275 samples clipping,
+            // worst 2.52 m). Neither number could come down without the other going up, because one array was
+            // being asked to be both.
+            var floor = floorIn ?? new float[pts.Count];
+            if (floorIn == null) for (int i = 0; i < pts.Count; i++) floor[i] = pts[i].Y;
             // ⚠ THE ENDS' FLOOR IS THEIR OWN SEAT. They were pinned to the cap's height by the caller, and if
             // the ground at the gate is fractionally above that (it is the same flat pad, but the lift is only
             // 6 cm) the clamp below would not touch them anyway -- they are never smoothed. Recording the floor
@@ -158,6 +165,29 @@ namespace UnturnedGodot
             return new Vector3(c.X, top + RoadPropLift, c.Z);
         }
 
+        /// <summary>What a joint has to CLEAR: the highest ground the chords either side of it span. This is the
+        /// old max-along-the-route rule, kept for the one job it was ever right for -- SmoothProfile's clamp --
+        /// and taken back off the seating, which it was never right for.
+        /// ⚠ Reach is 0.55 of the joint spacing: the chord midpoint is half a spacing away, so half is the
+        /// geometric minimum and the rest is the overlap that stops two joints meeting at one shared sample.</summary>
+        public static float JointClearanceFor(Terrain terr, float px, float pz, Vector2 dir)
+        {
+            float R = RouteJointStride * 4f * 0.55f;
+            float top = PosFor(terr, px, pz).Y;
+            if (dir.Length() < 1e-4f) return top + RoadPropLift;
+            dir = dir.Normalized();
+            var side = new Vector2(-dir.Y, dir.X);
+            for (int i = -4; i <= 4; i++)
+                for (int j = -1; j <= 1; j++)
+                {
+                    float along = i * (R / 4f), lat = j * 2.5f;
+                    float h = PosFor(terr, px + dir.X * along + side.X * lat,
+                                           pz + dir.Y * along + side.Y * lat).Y;
+                    if (h > top) top = h;
+                }
+            return top + RoadPropLift;
+        }
+
         /// <summary>The same seat, but searching ALONG the road instead of in a disc around it.
         ///
         /// ⚠⚠ A DISC ON A HILLSIDE GRABS THE BANK, NOT THE ROAD. Widening the reach to match the 24 m joint
@@ -172,21 +202,33 @@ namespace UnturnedGodot
         /// scenery the road is cut through, not ground it has to clear.</summary>
         public static Vector3 JointPosAlong(Terrain terr, float px, float pz, Vector2 dir)
         {
-            float R = RouteJointStride * 4f * 0.55f;
             var c = PosFor(terr, px, pz);
-            float top = c.Y;
-            if (dir.Length() < 1e-4f) return JointPosFor(terr, px, pz);
+            if (dir.Length() < 1e-4f) return new Vector3(c.X, c.Y + RoadPropLift, c.Z);
             dir = dir.Normalized();
             var side = new Vector2(-dir.Y, dir.X);
-            for (int i = -4; i <= 4; i++)
+            // ⚠⚠ A GENTLE AVERAGE, NOT A MAX (strawberry: "road splines are floating. a LOT").
+            //
+            // The max-over-the-chord rule was written when the ground under a route was whatever the carve left
+            // -- lumpy -- and seating a joint on the highest thing it spanned was the only way to keep the
+            // ribbon out of it. LevelCorridors changed that: the ground under the road IS the smoothed profile
+            // now, flat across 13.2 m either side, so there is nothing left for a max to protect against and
+            // every metre it adds is pure altitude. Measured, it was lifting the road a mean 1.12 m -- and that
+            // number was in my own report, flagged and shipped anyway, which is the actual mistake here.
+            //
+            // Averaging a short run along the road instead keeps the grade smooth across the 4 m heightmap
+            // quantisation without ever seating above it. The clamp in SmoothProfile still holds the ribbon
+            // over anything that does rise, so the protection the max used to give is not lost, it has simply
+            // moved to the pass that can apply it selectively.
+            float sum = 0f; int n = 0;
+            for (int i = -2; i <= 2; i++)
                 for (int j = -1; j <= 1; j++)
                 {
-                    float along = i * (R / 4f), lat = j * 2.5f;
-                    float h = PosFor(terr, px + dir.X * along + side.X * lat,
-                                           pz + dir.Y * along + side.Y * lat).Y;
-                    if (h > top) top = h;
+                    float along = i * 4f, lat = j * 3f;
+                    sum += PosFor(terr, px + dir.X * along + side.X * lat,
+                                        pz + dir.Y * along + side.Y * lat).Y;
+                    n++;
                 }
-            return new Vector3(c.X, top + RoadPropLift, c.Z);
+            return new Vector3(c.X, sum / n + RoadPropLift, c.Z);
         }
 
         /// <summary>How far a road prop sits ABOVE the ground it is laid on.
@@ -491,8 +533,13 @@ namespace UnturnedGodot
                 }
 
             Log.Print($"[clipdbg] TILES worst RISE above the quad {worstTile:0.00} m, mean {(nTile > 0 ? sumTile / nTile : 0):0.00} m over {nTile} tile(s)");
-            Log.Print($"[clipdbg] SPLINES worst rise above the chord {worstGap:0.00} m, mean {(nGap > 0 ? sumGap / nGap : 0):0.00} m, "
-                      + $"{over}/{nGap} sample(s) above the surface");
+            // ⚠ RETIRED, NOT DELETED, and deliberately labelled as the pre-clamp number. This measures the raw
+            // SEAT -- it never runs SmoothProfile -- so it answers "how bumpy is the ground the joints were
+            // seated on", which is a real question and NOT the one it used to be read as. The road's actual
+            // clearance is reported by SpawnRoutes now, from the profile it hands over. Two numbers with
+            // different names beat one number that quietly means whichever you assumed.
+            Log.Print($"[clipdbg] SEATED joints (pre-clamp, NOT the built road) worst rise {worstGap:0.00} m, mean {(nGap > 0 ? sumGap / nGap : 0):0.00} m, "
+                      + $"{over}/{nGap} sample(s)");
         }
 
         /// <summary>The terrain LAYER a generated island treats as "nothing has been built here". CreateFlat
@@ -551,6 +598,19 @@ namespace UnturnedGodot
             // ring from 8 m to 12 m off the tile centreline. 10 m is the middle of it: clear of the tarmac,
             // inside the prop, and well short of the 14.5 m where a building's front wall now starts.
             const float Verge = 10f;
+            /// ⚠ THE VERGE IS MEASURED ALONG A DIRECTION, AND A SQUARE IS NOT A CIRCLE (strawberry: "the
+            /// rotation of street lights on road prop turns is correct, but the position is not adjusted").
+            /// The carriageway is a 16 m SQUARE inside the 24 m piece, so its edge is 8 m away along an axis and
+            /// 8*sqrt(2) = 11.3 m away along a diagonal. A flat 10 m offset therefore lands on the verge of a
+            /// Line and INSIDE the tarmac of a Turn, whose free side is the diagonal by construction -- the
+            /// rotation was right and the pole was standing in the bend. Dividing by the larger component is
+            /// the Chebyshev distance to the square's edge, which turns 10 m into 14.1 m on a diagonal and
+            /// leaves every axis-aligned case exactly as it was.
+            static float VergeAlong((float x, float z) d)
+            {
+                float m = Mathf.Max(Mathf.Abs(d.x), Mathf.Abs(d.z));
+                return m < 0.05f ? Verge : Verge / m;
+            }
             var rng = new System.Random(20260917);
             int lights = 0, signals = 0, hydrants = 0, bins = 0, miss = 0;
             var taken = new System.Collections.Generic.List<(float X, float Z)>();
@@ -635,8 +695,8 @@ namespace UnturnedGodot
                         // road. Step back along this approach as well and the pole lands on the corner between
                         // the two, which is the only spot on a junction tile that is not carriageway.
                         var flank = (-app.z, app.x);
-                        float px = t.X + app.x * Verge + flank.Item1 * Verge;
-                        float pz = t.Z + app.z * Verge + flank.Item2 * Verge;
+                        float px = t.X + app.x * VergeAlong(app) + flank.Item1 * VergeAlong((flank.Item1, flank.Item2));
+                        float pz = t.Z + app.z * VergeAlong(app) + flank.Item2 * VergeAlong((flank.Item1, flank.Item2));
                         if (!Free(px, pz, 6f) || !TownPropOk(terr, px, pz)) continue;
                         // ⚠ AND THE ARM REACHES ACROSS THE ROAD, not along it (strawberry: "overhanging over
                         // the road"). +Y is the mast arm's 9.16 m half; pointing it back along -flank takes it
@@ -669,7 +729,7 @@ namespace UnturnedGodot
                 {
                     if (side != (0f, 0f))
                     {
-                        float px = t.X + side.x * Verge, pz = t.Z + side.z * Verge;
+                        float px = t.X + side.x * VergeAlong(side), pz = t.Z + side.z * VergeAlong(side);
                         if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
                         {
                             // +Y toward the street: the lamp arm reaches over the carriageway, not the verge.
@@ -684,7 +744,7 @@ namespace UnturnedGodot
                 if (idx % 3 == 1 && side != (0f, 0f))
                 {
                     var along = wArms[0];
-                    float px = t.X + side.x * Verge + along.x * 6f, pz = t.Z + side.z * Verge + along.z * 6f;
+                    float px = t.X + side.x * VergeAlong(side) + along.x * 6f, pz = t.Z + side.z * VergeAlong(side) + along.z * 6f;
                     if (Free(px, pz, 3f) && TownPropOk(terr, px, pz))
                     {
                         if (objs.Place("Fire_Hydrant_0", PosFor(terr, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
@@ -701,8 +761,8 @@ namespace UnturnedGodot
                     for (int k = 0; k < group; k++)
                     {
                         float step = (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
-                        float px = t.X + side.x * Verge + along.x * step;
-                        float pz = t.Z + side.z * Verge + along.z * step;
+                        float px = t.X + side.x * VergeAlong(side) + along.x * step;
+                        float pz = t.Z + side.z * VergeAlong(side) + along.z * step;
                         if (!Free(px, pz, 1.2f) || !TownPropOk(terr, px, pz)) continue;
                         // Dumpster_3/4 is the wheelie bin the container table already labels "Trash Can";
                         // Garbage_0/1 are the tied-off bags that stand next to one.
@@ -954,9 +1014,16 @@ namespace UnturnedGodot
         /// ⚠ The inverse rule to every other scatter here: everything else REFUSES steep ground, this one
         /// requires it. Placed on the same SteepRise the splat uses, so rocks sit on the dirt that the steepness
         /// created rather than near it.</summary>
+        /// <summary>Where every boulder ended up, in WORLD coordinates, with the radius it was scaled to.
+        /// ⚠ Collected rather than recomputed: the scatter's accept/reject depends on an rng stream and an
+        /// occupancy map, so a second pass asking "where would rocks be" would answer a different question than
+        /// "where are they". Cleared per generation, or a re-roll paints dirt where the last island's rocks were.</summary>
+        static readonly System.Collections.Generic.List<(float X, float Z, float R)> BoulderMarks = new();
+
         static void ScatterBoulders(Terrain terr, EditorObjects objs, ref int missing)
         {
             if (terr == null || objs == null) return;
+            BoulderMarks.Clear();
             var b = terr.WorldBoundsXZ();
             var rng = new System.Random(20260916);
 
@@ -1082,13 +1149,22 @@ namespace UnturnedGodot
                     // sits that far above the surface, less the bury. A flat sink could not do this across a
                     // kit whose origins sit anywhere from -2.5 m to -7.9 m inside the mesh -- it left the tall
                     // rocks perched and swallowed the flat ones.
-                    // ⚠ 45%, not 20% (strawberry: "they can also be embedded into the cliff instead of sitting
-                    // on top"). Near half the rock underground is what reads as a boulder the hillside grew
-                    // around; a fifth reads as one someone put there. It also hides the seam where a round mesh
-                    // meets a faceted heightmap, which is most of why a shallow rock looks stuck on.
+                    // ⚠ 62%, twice asked for (strawberry: "they can also be embedded into the cliff instead of
+                    // sitting on top", then "sink boulders into cliff faces more"). Most of the rock
+                    // underground is what reads as a boulder the hillside grew around; a fifth reads as one
+                    // someone put there. It also hides the seam where a round mesh meets a faceted heightmap,
+                    // which is most of why a shallow rock looks stuck on.
                     float sc = scale;
-                    var pos = new Vector3(px, y - pick.Bottom * sc - pick.Height * sc * 0.45f, pz);
-                    if (objs.Place(pick.Name, pos, basis.Scaled(Vector3.One * scale)) != null) { Occupy(px, pz, want); n++; }
+                    var pos = new Vector3(px, y - pick.Bottom * sc - pick.Height * sc * 0.62f, pz);
+                    if (objs.Place(pick.Name, pos, basis.Scaled(Vector3.One * scale)) != null)
+                    {
+                        Occupy(px, pz, want); n++;
+                        // ⚠ RECORDED IN WORLD COORDINATES, which is the frame this scan runs in and the frame
+                        // PaintSplat takes. The one crossover that gets this wrong is silent -- see the
+                        // corridor filter above, which reported "0 refused" for a whole run because it tested
+                        // world coordinates against a ProcIsland-frame set.
+                        BoulderMarks.Add((px, pz, want));
+                    }
                     else miss++;
                 }
             missing += miss;
@@ -1165,7 +1241,7 @@ namespace UnturnedGodot
             const float RouteBorder = 6f;    // between-towns shoulder: wider, it runs through open country
             const float BuildBorder = 2f;    // a building's plot hugs the walls
             const float RouteHalf = 9f;      // the ribbon itself, widened with the shoulder
-            int tiles = 0, builds = 0, sized = 0, routePts = 0;
+            int tiles = 0, builds = 0, sized = 0, routePts = 0, rocks = 0;
 
             // ⚠ SQUARES, NOT CIRCLES, and this was a real bug: a road tile is a 24 m SQUARE, so its corner is
             // 12*sqrt(2) = 16.97 m from centre while the circle I was painting reached 12.5 m. That left 4.47 m
@@ -1208,8 +1284,20 @@ namespace UnturnedGodot
                         terr.PaintSplat(w.X, w.Z, RouteHalf + RouteBorder, DirtLayer); routePts++;
                     }
                 }
+            // ---- and a skirt of dirt around every boulder --------------------------------------------------
+            // strawberry: "then do a pass of adding dirt terrain paint around the boulders".
+            //
+            // ⚠ MOST OF THEM ARE ALREADY ON DIRT and this is still not redundant. PaintSteeperThan turns ground
+            // past SteepRise to dirt, and the rocks only sit on ground past SteepRise -- but a boulder is a
+            // 3-8 m object seated on a POINT sample, so its skirt spills onto whatever the neighbouring cells
+            // are, and the cells just off a cliff top or foot are grass. That rim of green under a rock's edge
+            // is what makes it read as dropped rather than weathered out, and it is also where the foliage
+            // scatter would otherwise put a bush growing through the stone.
+            // 1.35x the rock's own radius: enough to cover the skirt without painting a crater around it.
+            foreach (var b in BoulderMarks) { terr.PaintSplat(b.X, b.Z, b.R * 1.35f, DirtLayer); rocks++; }
+
             Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
-                      + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s)");
+                      + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s), {rocks} boulder skirt(s)");
         }
 
         /// <summary>Stamp a rotated RECTANGLE of dirt under a building.
@@ -1266,57 +1354,111 @@ namespace UnturnedGodot
         public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)
         {
             if (terr == null || rf == null || terr.IslandRoutes == null) return 0;
-            // ⚠ 20 m of stride cost 0.84 m of clearance. Measured between joints on seed 12345: terrain rose
-            // above the chord on 481 of 1792 samples, worst 0.84 m -- the ribbon is a smooth curve and the
-            // ground is not, so decimating for smoothness quietly traded away the gap underneath it. 8 m still
-            // beats a joint every 4 m (which is all control and no curve) without under-sampling the ground.
             const int Stride = RouteJointStride;
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
+            float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0;
+
+            // ⚠ TWO PASSES, AND THE SPLIT IS LOAD-BEARING. Every route conforms the ground to its own profile,
+            // and routes CROSS -- so a route that measured and built itself immediately would be measuring
+            // ground a later route was still going to move, and the last road laid would be the only one whose
+            // reported clearance was true. Conform everything first, then measure and build against the ground
+            // as it finally is.
+            var profiles = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
 
             foreach (var route in terr.IslandRoutes)
             {
                 if (route.Points == null || route.Points.Count < 2) { skipped++; continue; }
+
+                // ⚠⚠ THE STUB MUST SURVIVE THE STRIDE. A route's first StubPoints are a STRAIGHT perpendicular
+                // run out of the gate -- that is why they exist and why Relax pins them -- but a plain
+                // `i += Stride` walk samples index 0 and then index 6, stepping clean over the stub's far end.
+                // The Catmull-Rom tangent at the first joint points at the SECOND joint, so the road left the
+                // cap aimed at wherever the first free (Hermite-eased) point happened to be instead of
+                // square-on: a kink at every town exit, introduced by the same commit that fixed the curves.
+                int n0 = route.Points.Count;
+                var idxs = new System.Collections.Generic.List<int> { 0 };
+                int stub = Mathf.Min(ProcIsland.StubPoints - 1, n0 - 1);
+                if (stub > 0) idxs.Add(stub);
+                for (int i = stub + Stride; i < n0 - ProcIsland.StubPoints; i += Stride) idxs.Add(i);
+                int tailStub = n0 - ProcIsland.StubPoints;
+                if (tailStub > idxs[^1]) idxs.Add(tailStub);
+                if (n0 - 1 > idxs[^1]) idxs.Add(n0 - 1);
+
                 var pts = new System.Collections.Generic.List<Vector3>();
-                for (int i = 0; i < route.Points.Count; i += Stride)
+                var floor = new float[idxs.Count];
+                for (int k = 0; k < idxs.Count; k++)
                 {
+                    int i = idxs[k];
                     var p = route.Points[i];
-                    int a = Mathf.Max(0, i - Stride), b = Mathf.Min(route.Points.Count - 1, i + Stride);
-                    pts.Add(JointPosAlong(terr, p.X, p.Y, route.Points[b] - route.Points[a]));
+                    int a = Mathf.Max(0, i - Stride), b = Mathf.Min(n0 - 1, i + Stride);
+                    var dirv = route.Points[b] - route.Points[a];
+                    pts.Add(JointPosAlong(terr, p.X, p.Y, dirv));            // where it SITS: hugging the corridor
+                    floor[k] = JointClearanceFor(terr, p.X, p.Y, dirv);      // what it must CLEAR: the chord's high point
                 }
-                var last = route.Points[^1];
-                var lastDir = route.Points[^1] - route.Points[System.Math.Max(0, route.Points.Count - 1 - Stride)];
-                var lastW = JointPosAlong(terr, last.X, last.Y, lastDir);
-                if (pts.Count == 0 || pts[^1].DistanceTo(lastW) > 0.01f) pts.Add(lastW);
                 if (pts.Count < 2) { skipped++; continue; }
-                // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM (strawberry 2026-09-16: "some
-                // road splines arent connecting to the prop road caps").
-                //
-                // A route's first and last points ARE its gate -- the connector sits on the monument's
-                // perimeter, which is the outer edge of the cap tile, so in PLAN the ribbon already starts
-                // exactly where the ramp ends. The disconnect was vertical and it was self-inflicted:
-                // JointPosFor seats a joint on the HIGHEST ground within 5 m, which is right everywhere along
-                // the route and wrong at its ends, because 5 m from the pad edge reaches off the flat pad onto
-                // country that is usually higher. The cap prop is seated by TilePosFor -- pad height plus the
-                // lift, with no hunting -- so the ribbon started above the piece it was supposed to meet.
-                // Seating the ends the same way TilePosFor seats the cap makes them agree by construction
-                // rather than by the two happening to sample the same number.
-                pts[0] = TilePosFor(terr, route.Points[0].X, route.Points[0].Y);
-                pts[^1] = TilePosFor(terr, last.X, last.Y);
 
                 float len = 0f;
                 for (int i = 1; i < pts.Count; i++) len += pts[i].DistanceTo(pts[i - 1]);
                 if (len < MinLen) { skipped++; continue; }
-                SmoothProfile(pts);
+                SmoothProfile(pts, floor);
 
-                // ⚠ ignoreTerrain: THE PROFILE ABOVE IS THE ROAD'S HEIGHT, and without this flag the mesh
-                // throws it away and re-samples the heightmap per vertex. SmoothProfile's whole smooth-then-
-                // clamp-up design -- the thing that took spline clipping to zero on paper -- was being computed
-                // and discarded; the ribbon was tracing every bump the ground had. This is what makes a road
-                // grade across a dip instead of dipping with it.
+                // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM. A route's first and last points
+                // ARE its gate, and the cap prop is seated by TilePosFor -- pad height plus the lift, with no
+                // hunting -- so seating the ends the same way makes them agree by construction.
+                var last = route.Points[^1];
+                pts[0] = TilePosFor(terr, route.Points[0].X, route.Points[0].Y);
+                pts[^1] = TilePosFor(terr, last.X, last.Y);
+
+                // ⭐ CONFORM THE GROUND TO THE ROAD (strawberry: "road splines are floating. a LOT"). The road
+                // owns its Y so it can hold a grade; the ground under it has no such need, so it is the half
+                // that moves. ⚠ A QUARTER-METRE BELOW, deliberately: the heightmap is a 4 m grid and a sloping
+                // ribbon between two conformed vertices is approximated, not reproduced, so conforming to the
+                // road exactly leaves that approximation error poking through half the time (measured: 4648 of
+                // 14210 samples). Sinking the target by more than the error puts all of it under the tarmac,
+                // where it is invisible, at the cost of a float too small to see.
+                var sunk = new System.Collections.Generic.List<Vector3>(pts.Count);
+                foreach (var q in pts) sunk.Add(new Vector3(q.X, q.Y - 0.25f, q.Z));
+                terr.ConformToPolyline(sunk, ProcIsland.RenderedRoadHalf + 2f, ProcIsland.RenderedRoadHalf);
+                profiles.Add(pts);
+            }
+
+            foreach (var pts in profiles)
+            {
+                // ⚠⚠ MEASURED FROM THE PROFILE THAT IS HANDED TO THE ROAD, because every attempt to measure it
+                // from somewhere else described a different road. ReportClipping sampled the raw seat and never
+                // ran SmoothProfile's clamp; before that it called the old seating function and returned an
+                // identical -2.10 m across a rewrite; before that it sampled 20 m chords while the road used
+                // 8 m. Three times the instrument kept its own copy of the thing it measured. The only
+                // construction that cannot drift is the one where the code that BUILDS the road reports on it.
+                for (int i = 1; i < pts.Count; i++)
+                {
+                    var a3 = pts[i - 1]; var b3 = pts[i];
+                    var fwd = new Vector2(b3.X - a3.X, b3.Z - a3.Z);
+                    if (fwd.Length() < 1e-4f) continue;
+                    var perp = new Vector2(-fwd.Y, fwd.X).Normalized();
+                    for (int k = 1; k < 8; k++)
+                    {
+                        float f = k / 8f;
+                        var mid = a3.Lerp(b3, f);
+                        for (int e = -2; e <= 2; e++)
+                        {
+                            float off = e * (ProcIsland.RenderedRoadHalf * 0.5f);
+                            float g = terr.SampleHeight(mid.X + perp.X * off, mid.Z + perp.Y * off);
+                            float rise = g - mid.Y;
+                            if (rise > clipWorst) clipWorst = rise;
+                            if (rise > 0.05f) clipOver++;
+                            clipSum += rise; clipN++;
+                        }
+                    }
+                }
                 if (rf.AddRoadFromPolyline(pts, material, loop: false, ignoreTerrain: true) >= 0) built++; else skipped++;
             }
+
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
+            if (clipN > 0)
+                Log.Print($"[island-roads] ribbon vs ground: worst rise {clipWorst:0.00} m, mean {clipSum / clipN:0.00} m, "
+                          + $"{clipOver}/{clipN} sample(s) above the surface (measured on the profile actually built)");
             ReportCapJoins(terr);
             return built;
         }

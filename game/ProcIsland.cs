@@ -771,6 +771,12 @@ namespace UnturnedGodot
                       + $"; {PairFanMetres:0} m is a town's own gate fan; {PairSquareMetres:0} m meets at a proper angle (junctions, allowed)");
         }
 
+        /// <summary>How many points at each end of a route are the straight perpendicular STUB out of the gate.
+        /// ⚠ PUBLIC because the joint picker has to land ON the far end of it: sampling a route at a stride that
+        /// steps over the stub throws the perpendicular departure away, and the road then leaves the cap at
+        /// whatever angle the first sampled point happens to sit at.</summary>
+        public const int StubPoints = 6;
+
         /// <summary>Round off the corners. An 8-connected A* can only turn in 45-degree increments and
         /// staircases along any bearing that is not one of its eight -- so the raw path is a run of hard bends,
         /// the worst being the 90 the stub makes when it hands over to the search (strawberry: "avoid hard 90
@@ -779,7 +785,7 @@ namespace UnturnedGodot
         /// quietly undo the previous commit.</summary>
         static System.Collections.Generic.List<Vector2> Relax(System.Collections.Generic.List<Vector2> pts)
         {
-            const int Pin = 6;        // held exactly at each end -- the stub is StubCells+1 = 6 points
+            const int Pin = StubPoints;   // held exactly at each end -- the stub is StubCells+1 points
             // ⚠ WIDER AND MORE PASSES (strawberry 2026-09-16: "do some more road bend smoothing. a lotta sharp
             // or unnatural corners around"). An 8-connected A* turns in 45-degree steps and staircases along
             // every other bearing, so what comes out of the search is a run of hard corners with the right
@@ -921,8 +927,14 @@ namespace UnturnedGodot
         /// cells (+40 on a route that costs several hundred) while 100 m of parallel running pays for
         /// twenty-five (+200) and loses to almost any detour.</summary>
         static readonly bool NoRoadPenalty = System.Environment.GetEnvironmentVariable("UG_NOROADPENALTY") == "1";
-        const float UsedInner = 8f, UsedOuter = 2.5f;
-        const float UsedInnerR = 14f, UsedOuterR = 30f;
+        const float UsedInner = 8f, UsedOuter = 4f;
+        // ⚠ THE HALO HAS TO COVER WHERE THE ROUTE ENDS UP, NOT WHERE A* PUT IT. The stamp is taken from the
+        // relaxed points, but the NEXT route is relaxed and Hermite-eased AFTER its own A* has already dodged
+        // this one -- so the search avoids the corridor and the smoothing then walks part of the path back
+        // toward it. Measured across the two commits that strengthened the curves, shallow pairing in open
+        // country crept 0 -> 8 -> 33 m with nothing else changed. Widening the outer ring past the distance the
+        // ease can move a point is what makes the avoidance survive the smoothing.
+        const float UsedInnerR = 14f, UsedOuterR = 46f;
 
         static void StampUsed(float[,] used, int gw, int gh, System.Collections.Generic.List<Vector2> pts)
         {
@@ -957,7 +969,7 @@ namespace UnturnedGodot
             // to itself a route leaves the gate diagonally whenever that is a metre cheaper. Both ends therefore
             // get a straight STUB along the edge normal, and A* only routes between the stub ends -- so the road
             // meets the monument square-on and the terrain-following starts once it is clear of the wall.
-            const int StubCells = 5;   // 20 m: long enough to read as perpendicular, short enough not to fight the terrain
+            const int StubCells = StubPoints - 1;   // 20 m: long enough to read as perpendicular, short enough not to fight the terrain
             // THE STUB IS BUILT IN GRID CELLS, not float world metres, and this is not tidiness. It used to walk
             // out from the gate's exact float position while A* snapped to cell centres -- so the stub's last
             // point and A*'s first differed by up to a metre BACKWARDS along the stub, and that one-metre
