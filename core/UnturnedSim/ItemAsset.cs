@@ -232,7 +232,17 @@ namespace SDG.Unturned
         static readonly Dictionary<string, ItemAsset> _byGuid = new();   // item GUID -> asset (blueprint ingredient resolution)
         static readonly System.Random _lootRng = new();   // world-loot condition roll (freshness of spawned food) -- source uses UnityEngine.Random
 
-        public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
+        // ⚠ add() INVALIDATES _magRounds TOO, for the reason clear() already gives below: the cartridge table is
+        // DERIVED from the item table, and this is the other way the item table moves. Found by tinyclaw
+        // (2026-09-16) -- clear() nulled it and add() did not, so a cartridge registered after the first lookup
+        // was invisible to the encoder and every magazine holding it locked as "no round".
+        //
+        // And it is worse than one missing cartridge, because MagRoundToId is an ORDINAL over a SORTED set
+        // (IndexOf + 1). A late add that sorts EARLY shifts every id after it by one, so two peers that happened
+        // to build the table at different moments would disagree about what every magazine holds -- a desync,
+        // not a blank. Nulling here is free: MagRoundTable() is lazy, so a startup that adds a thousand items
+        // rebuilds once, on first use, after the last add.
+        public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; _magRounds = null; } }
         // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
         public static Item makeLoot(ushort id)
         {
