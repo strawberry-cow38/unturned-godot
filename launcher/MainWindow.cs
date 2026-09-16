@@ -28,7 +28,7 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 12;   // v12: Profile row -- username.txt + profile.png (squished to 128x128 on pick) -> UG_USERNAME / UG_PROFILE_PNG for the game
+    const int LauncherVersion = 13;   // v13: identity via Steam OpenID -- the typed name + picture picker are GONE; name/avatar/SteamID come from a verified sign-in -> UG_USERNAME / UG_PROFILE_PNG / UG_STEAMID
     // v11: Report key row (paste once) -> bugreport_key.txt -> UG_BUGREPORT_KEY for the game
     // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
@@ -49,7 +49,7 @@ public class MainWindow : Window
     readonly TextBlock _latestLabel = new() { TextWrapping = TextWrapping.Wrap };
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
-    readonly TextBox _nameBox = new() { Width = 200, Watermark = "your name in game", FontSize = 13, MaxLength = 64 };
+    readonly Button _steamButton = new() { Content = "Sign in through Steam", MinWidth = 170 };
     readonly TextBlock _nameStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly Avalonia.Controls.Image _pfpPreview = new() { Width = 40, Height = 40, VerticalAlignment = VerticalAlignment.Center };
     readonly TextBox _keyBox = new() { Width = 260, Watermark = "paste key, then Save", FontSize = 13 };
@@ -147,11 +147,15 @@ public class MainWindow : Window
 
         // ---- profile: the name and picture other players see --------------------------------------
         // Same one-small-file-per-setting shape as Branch, the Unturned folder and the report key above.
+        // IDENTITY COMES FROM STEAM NOW, not from a box you type in (strawberry 2026-09-16: "just the steam
+        // auth. one button on the launcher, opens in browser, sign in, get ID. remove the name set and the pfp
+        // set from our launcher and get them via steam."). The typed name and the picture picker are gone:
+        // a self-asserted name is not an identity, and the thing that actually needed fixing is that bans key
+        // on ip+name, both of which a player can change at will.
         _nameStatus.Foreground = new SolidColorBrush(Color.Parse("#7a828c"));
-        var saveName = new Button { Content = "Save", MinWidth = 70 };
-        saveName.Click += (_, _) => SaveUsername(_nameBox.Text ?? "");
-        var pickPfp = new Button { Content = "Picture...", MinWidth = 90 };
-        pickPfp.Click += async (_, _) => await PickProfilePictureAsync();
+        _steamButton.Click += async (_, _) => await SignInWithSteamAsync();
+        var signOut = new Button { Content = "Sign out", MinWidth = 80 };
+        signOut.Click += (_, _) => SignOutOfSteam();
         var profileRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8,
@@ -159,14 +163,12 @@ public class MainWindow : Window
             Children =
             {
                 new TextBlock { Text = "Profile:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
-                _nameBox,
-                saveName,
-                pickPfp,
+                _steamButton,
+                signOut,
                 _pfpPreview,
                 _nameStatus,
             },
         };
-        _nameBox.Text = LoadUsername();
         RefreshProfileStatus();
 
         var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
@@ -427,6 +429,8 @@ public class MainWindow : Window
             string username = LoadUsername();
             Environment.SetEnvironmentVariable("UG_USERNAME", username.Length > 0 ? username : null);
             Environment.SetEnvironmentVariable("UG_PROFILE_PNG", File.Exists(ProfilePngConfig) ? ProfilePngConfig : null);
+            string steamId = LoadSteamId();
+            Environment.SetEnvironmentVariable("UG_STEAMID", steamId.Length > 0 ? steamId : null);   // identity, for when the wire learns to carry it; the game ignores it today
             Log(username.Length > 0 ? $"Profile: {username}{(File.Exists(ProfilePngConfig) ? " (+picture)" : "")}"
                                     : "(no name set -- joining as " + ProfileRules.FallbackName + ")");
 
@@ -629,6 +633,89 @@ public class MainWindow : Window
     // UG_UNTURNED_DIR and UG_BUGREPORT_KEY take. The game reads them and nothing else, so a build launched
     // without the launcher still runs; it just has no name, and ProfileRules supplies the fallback.
 
+    string SteamIdConfig => Path.Combine(_baseDir, "steamid.txt");
+    string LoadSteamId()
+    {
+        try { return File.Exists(SteamIdConfig) ? File.ReadAllText(SteamIdConfig).Trim() : ""; }
+        catch { return ""; }
+    }
+
+    void SignOutOfSteam()
+    {
+        foreach (var f in new[] { SteamIdConfig, UsernameConfig, ProfilePngConfig })
+            try { if (File.Exists(f)) File.Delete(f); } catch { }
+        Log("Signed out -- name, picture and SteamID cleared. You'll join as " + ProfileRules.FallbackName + ".");
+        RefreshProfileStatus();
+    }
+
+    /// <summary>One button: OpenID in the browser, a VERIFIED SteamID back, then name + avatar from the
+    /// key-free public profile document. Nothing is registered with Steam and no API key exists to leak.</summary>
+    async Task SignInWithSteamAsync()
+    {
+        _steamButton.IsEnabled = false;
+        try
+        {
+            var res = await SteamSignIn.SignInAsync(Log);
+            if (res.SteamId64 == null)
+            {
+                Log(res.Cancelled ? "(Steam sign-in cancelled: " + res.Error + ")" : "!! Steam sign-in failed: " + res.Error);
+                return;
+            }
+            File.WriteAllText(SteamIdConfig, res.SteamId64);
+            Log("Signed in as SteamID " + res.SteamId64);
+            await PullSteamProfileAsync(res.SteamId64);
+        }
+        catch (Exception ex) { Log("!! Steam sign-in failed: " + ex.Message); }
+        finally { _steamButton.IsEnabled = true; RefreshProfileStatus(); }
+    }
+
+    /// <summary>steamcommunity.com/profiles/&lt;id&gt;/?xml=1 -- public, no key, no App ID. Gives the persona
+    /// name and a full-size avatar URL. A private profile still returns the name and avatar (those are public
+    /// even when the inventory and details are not), so this does not depend on privacy settings the way an
+    /// inventory read does.</summary>
+    async Task PullSteamProfileAsync(string steamId)
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            string xml = await http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/?xml=1");
+
+            string persona = Between(xml, "<steamID><![CDATA[", "]]></steamID>");
+            if (!string.IsNullOrWhiteSpace(persona)) SaveUsername(persona);
+            else Log("(Steam returned no persona name -- keeping whatever was set)");
+
+            string avatarUrl = Between(xml, "<avatarFull><![CDATA[", "]]></avatarFull>");
+            if (string.IsNullOrWhiteSpace(avatarUrl)) { Log("(no avatar on that profile)"); return; }
+
+            byte[] raw = await http.GetByteArrayAsync(avatarUrl);
+            // Same pipeline the file picker used: squish to exactly 128x128, then check our own output with
+            // the validator the SERVER runs, so a picture that would be refused in game is refused here.
+            using (var ms = new MemoryStream(raw))
+            using (var src = new Avalonia.Media.Imaging.Bitmap(ms))
+            using (var scaled = src.CreateScaledBitmap(new Avalonia.PixelSize(128, 128),
+                                                       Avalonia.Media.Imaging.BitmapInterpolationMode.HighQuality))
+            using (var outFile = File.Create(ProfilePngConfig))
+                scaled.Save(outFile);
+
+            var verdict = ProfileRules.CheckAvatarPng(File.ReadAllBytes(ProfilePngConfig));
+            if (verdict != ProfileRules.AvatarVerdict.Ok)
+            {
+                Log($"!! the Steam avatar came out unusable ({ProfileRules.Explain(verdict)}) -- not saved");
+                try { File.Delete(ProfilePngConfig); } catch { }
+            }
+            else Log($"Avatar pulled from Steam ({new FileInfo(ProfilePngConfig).Length / 1024f:0.0} KB)");
+        }
+        catch (Exception ex) { Log("(couldn't read the Steam profile: " + ex.Message + ")"); }
+    }
+
+    static string Between(string s, string a, string b)
+    {
+        int i = s.IndexOf(a, StringComparison.Ordinal); if (i < 0) return null;
+        i += a.Length;
+        int j = s.IndexOf(b, i, StringComparison.Ordinal); if (j < 0) return null;
+        return s.Substring(i, j - i);
+    }
+
     string UsernameConfig => Path.Combine(_baseDir, "username.txt");
     string ProfilePngConfig => Path.Combine(_baseDir, "profile.png");
 
@@ -648,7 +735,6 @@ public class MainWindow : Window
         try
         {
             File.WriteAllText(UsernameConfig, clean);
-            _nameBox.Text = clean;
             Log(changed ? $"Name saved as \"{clean}\" (adjusted -- brackets, invisible characters and control codes are not allowed in a name)"
                         : $"Name saved as \"{clean}\"");
         }
@@ -703,9 +789,11 @@ public class MainWindow : Window
     {
         string name = LoadUsername();
         bool hasPfp = File.Exists(ProfilePngConfig);
-        _nameStatus.Text = name.Length == 0
-            ? "no name set -- you'll join as " + ProfileRules.FallbackName
-            : (hasPfp ? "" : "no picture set");
+        string sid = LoadSteamId();
+        _steamButton.Content = sid.Length > 0 ? "Re-sync from Steam" : "Sign in through Steam";
+        _nameStatus.Text = sid.Length == 0
+            ? "not signed in -- you'll join as " + ProfileRules.FallbackName
+            : $"{name}  ·  {sid}" + (hasPfp ? "" : "  (no picture)");
         try
         {
             _pfpPreview.Source = hasPfp ? new Avalonia.Media.Imaging.Bitmap(ProfilePngConfig) : null;
