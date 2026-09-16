@@ -187,9 +187,32 @@ namespace UnturnedGodot
         }
 
         /// <summary>Discord listens on discord-ipc-0..9 -- several can exist at once (stable beside PTB beside
-        /// Canary), and the first one that accepts is the one to talk to.</summary>
+        /// Canary), and the first one that accepts is the one to talk to.
+        ///
+        /// UG_DISCORD_PIPE names a DIFFERENT endpoint, which is how this gets demonstrated without Discord.
+        /// ⚠ It exists because the alternative is standing a fake listener on discord-ipc-0 itself, and on
+        /// Windows a second named-pipe INSTANCE of an existing name is legal -- so a test rig would silently
+        /// intercept the presence of whatever else the machine is playing. A test must not be able to do
+        /// that to the box it runs on.</summary>
         static Stream Connect()
         {
+            string overridePipe = Environment.GetEnvironmentVariable("UG_DISCORD_PIPE");
+            if (!string.IsNullOrEmpty(overridePipe))
+            {
+                try
+                {
+                    if (OperatingSystem.IsWindows())
+                    {
+                        var op = new NamedPipeClientStream(".", overridePipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+                        op.Connect(500);
+                        return op;
+                    }
+                    var os = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    os.Connect(new UnixDomainSocketEndPoint(overridePipe));
+                    return new NetworkStream(os, ownsSocket: true);
+                }
+                catch { return null; }   // an override that does not answer must NOT fall through to the real Discord
+            }
             for (int i = 0; i < 10; i++)
             {
                 try

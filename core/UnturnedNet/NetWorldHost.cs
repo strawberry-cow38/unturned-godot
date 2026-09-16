@@ -116,10 +116,11 @@ namespace UnturnedGodot.Net
                               ulong contentHash = 0,
                               string activeHoliday = "",
                               string serverName = "",
-                              int maxPlayers = 0)
+                              int maxPlayers = 0,
+                              string gamemode = "")
         {
             Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash,
-                                           activeHoliday: activeHoliday, serverName: serverName, maxPlayers: maxPlayers);
+                                           activeHoliday: activeHoliday, serverName: serverName, maxPlayers: maxPlayers, gamemode: gamemode);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
@@ -1026,6 +1027,8 @@ namespace UnturnedGodot.Net
         public string ServerName => Session.ServerName;
         /// <summary>wire v53: the server's advertised seat count; 0 = not advertised.</summary>
         public int ServerMaxPlayers => Session.ServerMaxPlayers;
+        /// <summary>wire v53: the server's gamemode; empty = not advertised.</summary>
+        public string ServerGamemode => Session.ServerGamemode;
 
         public void Connect() => Session.Connect();
 

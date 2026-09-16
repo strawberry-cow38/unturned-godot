@@ -35,6 +35,8 @@ namespace UnturnedGodot.Net
         public string ServerName { get; private set; } = "";
         /// <summary>wire v53: the server's advertised seat count. 0 = not advertised.</summary>
         public int ServerMaxPlayers { get; private set; }
+        /// <summary>wire v53: "Survival" / "Arena". Empty if not advertised.</summary>
+        public string ServerGamemode { get; private set; } = "";
         /// <summary>P3 holiday parity (wire v6): the server world's activeHoliday, from the Accept. The
         /// joining client builds the SERVER's holiday-gated props/colliders with this instead of its own
         /// wall clock's -- a client across a holiday boundary otherwise silently builds a different
@@ -137,6 +139,7 @@ namespace UnturnedGodot.Net
                     // rather than failing the join, which is what lets a raw test rig hand-build an Accept.
                     ServerName = reader.ReadString(out string svName) ? svName : "";
                     ServerMaxPlayers = reader.ReadUInt16(out ushort svMax) ? svMax : 0;
+                    ServerGamemode = reader.ReadString(out string svMode) ? svMode : "";
                     State = NetSessionState.Connected;
                     _session.KeepAliveEnabled = true;
                     break;

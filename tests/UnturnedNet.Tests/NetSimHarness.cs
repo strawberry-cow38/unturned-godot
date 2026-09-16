@@ -33,7 +33,8 @@ namespace UnturnedNet.Tests
                              int maxPeers = 32,
                              string activeHoliday = "",
                              string serverName = "",
-                             int maxPlayers = 0)
+                             int maxPlayers = 0,
+                             string gamemode = "")
         {
             Net = new MemNetwork(seed);
             if (clientToServer != null) Net.ClientToServer = clientToServer;
@@ -45,7 +46,8 @@ namespace UnturnedNet.Tests
                 maxPeers,
                 activeHoliday: activeHoliday,
                 serverName: serverName,
-                maxPlayers: maxPlayers);
+                maxPlayers: maxPlayers,
+                gamemode: gamemode);
         }
 
         public NetClientSession AddClient(string name = "player", byte version = NetProtocol.Version)

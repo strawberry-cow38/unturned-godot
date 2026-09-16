@@ -27,10 +27,11 @@ namespace UnturnedNet.Tests
         [Test]
         public void Accept_CarriesServerNameAndCap()
         {
-            var h = new NetSimHarness(1234, serverName: "VoX Official — PEI", maxPlayers: 24, activeHoliday: "halloween");
+            var h = new NetSimHarness(1234, serverName: "VoX Official — PEI", maxPlayers: 24, activeHoliday: "halloween", gamemode: "Arena");
             var c = Join(h);
             Assert.That(c.ServerName, Is.EqualTo("VoX Official — PEI"), "the server's name did not survive the Accept");
             Assert.That(c.ServerMaxPlayers, Is.EqualTo(24), "the seat cap did not survive the Accept");
+            Assert.That(c.ServerGamemode, Is.EqualTo("Arena"), "the gamemode did not survive the Accept");
             // ⚠ The append must not have disturbed what came before it.
             Assert.That(c.ServerHoliday, Is.EqualTo("halloween"),
                         "the v6 holiday string was corrupted by appending the v53 fields after it");

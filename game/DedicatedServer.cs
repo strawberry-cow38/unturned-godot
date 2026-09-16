@@ -144,7 +144,8 @@ namespace UnturnedGodot
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
                 activeHoliday: ActiveHoliday,    // P3: joiners build THIS world's holiday props/colliders, not their own clock's
                 serverName: ServerName,          // wire v53: so a joined client knows where it is (UG_NAME)
-                maxPlayers: MaxPlayers);         // ...and how many seats, without querying the status block
+                maxPlayers: MaxPlayers,          // ...how many seats, without querying the status block
+                gamemode: Arena ? "Arena" : "Survival");   // the SAME expression the status block advertises, not a second opinion
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             // Hand the server the sea so it can own oxygen (it validates positions already; it just could not
             // see water). Read once here rather than per tick -- SeaLevelY does not move during a session.

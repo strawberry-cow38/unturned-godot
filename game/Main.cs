@@ -9297,7 +9297,8 @@ namespace UnturnedGodot
                         if (c == null) return;
                         string name = !string.IsNullOrEmpty(c.ServerName) ? c.ServerName : fallbackName;
                         int max = c.ServerMaxPlayers > 0 ? c.ServerMaxPlayers : rowMax;
-                        DiscordPresence.SetMultiplayer(name, svMap, c.Players.Count, max, svMode);
+                        string mode = !string.IsNullOrEmpty(c.ServerGamemode) ? c.ServerGamemode : svMode;
+                        DiscordPresence.SetMultiplayer(name, svMap, c.Players.Count, max, mode);
                     } });
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
