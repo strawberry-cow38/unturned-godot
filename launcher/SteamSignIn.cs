@@ -25,6 +25,25 @@ using System.Threading.Tasks;
 ///
 /// The listener binds 127.0.0.1 only (never 0.0.0.0, which would put it on the LAN), on an
 /// OS-assigned free port, for one request, with a timeout.
+///
+/// ✅ THE ACCEPT PATH IS VERIFIED AGAINST LIVE STEAM (2026-09-16), which it had not been when this
+/// merged. The worry was specific and worth naming: forged assertions were provably refused, but a
+/// verifier that refuses EVERYTHING passes that same test, so "rejects a forgery" was no evidence
+/// that a real sign-in is ever accepted. Two observations closed it.
+///   1. RESPONSE SHAPE, read off the wire rather than assumed: check_authentication answers
+///      "ns:http://specs.openid.net/auth/2.0\nis_valid:false\n" — line-based key:value, bare \n, no
+///      CR. That is exactly what the Split('\n') + exact-line match below reads, so the accept branch
+///      can actually fire. A JSON or single-line body would have made it dead code that still compiled.
+///   2. A REAL SIGNED ASSERTION returned is_valid:true, first attempt, through this exact recipe
+///      (every openid.* posted back, mode replaced wholesale). Replaying the SAME assertion then
+///      returned is_valid:false — Steam spends the nonce. That replay is the control that makes the
+///      true worth anything: a rubber-stamp would have said true twice.
+/// Driven from a throwaway page (claw.bitvox.me/steamcheck/) because the flow needs a real human and
+/// a browser, which no test here can supply.
+///
+/// ⚠ WHAT THAT DOES NOT COVER, so nobody promotes it: it proves the RECIPE and Steam's behaviour, not
+/// the C# around them. The HttpListener bind, the browser handoff and the claimed_id parse below are
+/// still unexercised end to end — lower doubt, not zero, and a desktop run is what settles them.
 /// </summary>
 public static class SteamSignIn
 {
