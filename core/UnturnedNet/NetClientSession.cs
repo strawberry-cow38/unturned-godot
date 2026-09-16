@@ -30,6 +30,11 @@ namespace UnturnedGodot.Net
         public byte RejectServerVersion { get; private set; }
         public ushort PlayerId { get; private set; }
         public uint ServerTickAtAccept { get; private set; }
+        /// <summary>wire v53: what the server calls itself, from the Accept. Empty if the server predates v53
+        /// or was started without UG_NAME -- callers show the address instead, never a made-up name.</summary>
+        public string ServerName { get; private set; } = "";
+        /// <summary>wire v53: the server's advertised seat count. 0 = not advertised.</summary>
+        public int ServerMaxPlayers { get; private set; }
         /// <summary>P3 holiday parity (wire v6): the server world's activeHoliday, from the Accept. The
         /// joining client builds the SERVER's holiday-gated props/colliders with this instead of its own
         /// wall clock's -- a client across a holiday boundary otherwise silently builds a different
@@ -128,6 +133,10 @@ namespace UnturnedGodot.Net
                     PlayerId = playerId;
                     ServerTickAtAccept = serverTick;
                     ServerHoliday = reader.ReadString(out string holiday) ? holiday : "";   // wire v6 (same-version peers always carry it; lenient for raw test rigs)
+                    // wire v53: appended, so the same leniency applies -- a shorter Accept leaves these empty
+                    // rather than failing the join, which is what lets a raw test rig hand-build an Accept.
+                    ServerName = reader.ReadString(out string svName) ? svName : "";
+                    ServerMaxPlayers = reader.ReadUInt16(out ushort svMax) ? svMax : 0;
                     State = NetSessionState.Connected;
                     _session.KeepAliveEnabled = true;
                     break;

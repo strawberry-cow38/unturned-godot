@@ -31,7 +31,9 @@ namespace UnturnedNet.Tests
                              FaultyLinkConfig serverToClient = null,
                              byte serverVersion = NetProtocol.Version,
                              int maxPeers = 32,
-                             string activeHoliday = "")
+                             string activeHoliday = "",
+                             string serverName = "",
+                             int maxPlayers = 0)
         {
             Net = new MemNetwork(seed);
             if (clientToServer != null) Net.ClientToServer = clientToServer;
@@ -41,7 +43,9 @@ namespace UnturnedNet.Tests
                 (conn, reason, isError) => Failures.Add(new Failure { Connection = conn, Reason = reason, IsError = isError }),
                 serverVersion,
                 maxPeers,
-                activeHoliday: activeHoliday);
+                activeHoliday: activeHoliday,
+                serverName: serverName,
+                maxPlayers: maxPlayers);
         }
 
         public NetClientSession AddClient(string name = "player", byte version = NetProtocol.Version)

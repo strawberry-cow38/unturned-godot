@@ -114,10 +114,12 @@ namespace UnturnedGodot.Net
                               ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                               int maxPeers = 32,
                               ulong contentHash = 0,
-                              string activeHoliday = "")
+                              string activeHoliday = "",
+                              string serverName = "",
+                              int maxPlayers = 0)
         {
             Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash,
-                                           activeHoliday: activeHoliday);
+                                           activeHoliday: activeHoliday, serverName: serverName, maxPlayers: maxPlayers);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
@@ -1019,6 +1021,11 @@ namespace UnturnedGodot.Net
         /// <summary>P3 (wire v6): the server world's activeHoliday from the Accept -- what the joining
         /// client must build its holiday-gated props/colliders with. "" until Connected.</summary>
         public string ServerHoliday => Session.ServerHoliday;
+        /// <summary>wire v53: the server's own name, off the Accept. Empty when the server predates v53 or was
+        /// started without UG_NAME -- show the address rather than inventing one.</summary>
+        public string ServerName => Session.ServerName;
+        /// <summary>wire v53: the server's advertised seat count; 0 = not advertised.</summary>
+        public int ServerMaxPlayers => Session.ServerMaxPlayers;
 
         public void Connect() => Session.Connect();
 

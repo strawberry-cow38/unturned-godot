@@ -9275,21 +9275,30 @@ namespace UnturnedGodot
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday };              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     AddChild(mpSession);
-                    // Discord: whose server, which map, how full, what mode.
-                    // ⚠ POPULATION IS COUNTED, NOT ASSERTED. The browser row's player count is a status-query
-                    // snapshot from before you joined and goes stale the moment anyone else does; the puppets
-                    // the client is actually rendering are the live number. +1 because self never puppets.
-                    // Name/cap/gamemode come from the row because NOTHING on the wire carries them -- and when
-                    // the join did not come from the browser there is no name, so the address is the honest
-                    // thing to show rather than a hardcoded "Unturned Godot Server".
+                    // Discord: whose server, which map, how full, what mode -- off the WIRE (v53), not off the
+                    // browser row that started the join.
+                    // ⚠ The name and cap now ride the Accept, so a --connect= join has them too and neither
+                    // depends on a UI object still being in memory. The browser row is only a FALLBACK, for a
+                    // pre-v53 server that sends neither; with no row and no wire value the ADDRESS is shown,
+                    // because inventing a name is worse than admitting there isn't one.
+                    // ⚠ Population is Players.Count, the replicated registry -- NOT RemotePlayers.PuppetCount,
+                    // which counts Godot puppet NODES. That is a rendering artifact: it tracks the registry
+                    // today only because player replication happens not to be interest-culled, and would go
+                    // quietly wrong the day anyone adds distance culling. Count includes self (RemotePlayers
+                    // skips it explicitly: "self is the shell, never a puppet"), so there is no +1 here.
                     var row = PendingJoinServer;
-                    string svName = row?.Name ?? MainMenu.AddressText(_connectHost, _connectPort != 0 ? _connectPort : PortEnv());
+                    string fallbackName = row?.Name ?? MainMenu.AddressText(_connectHost, _connectPort != 0 ? _connectPort : PortEnv());
                     string svMap = row?.Map ?? MapUI.MapFolder;
                     string svMode = row?.Gamemode ?? "";
-                    int svMax = row?.Max ?? 0;
+                    int rowMax = row?.Max ?? 0;
                     AddChild(new DiscordPresenceTicker { Push = () =>
-                        DiscordPresence.SetMultiplayer(svName, svMap,
-                            mpSession.Remotes != null ? mpSession.Remotes.PuppetCount + 1 : 0, svMax, svMode) });
+                    {
+                        var c = mpSession.Client;
+                        if (c == null) return;
+                        string name = !string.IsNullOrEmpty(c.ServerName) ? c.ServerName : fallbackName;
+                        int max = c.ServerMaxPlayers > 0 ? c.ServerMaxPlayers : rowMax;
+                        DiscordPresence.SetMultiplayer(name, svMap, c.Players.Count, max, svMode);
+                    } });
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules

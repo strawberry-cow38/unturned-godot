@@ -34,6 +34,14 @@ namespace UnturnedGodot
         // ---- what the server browser shows about this server WITHOUT joining it (strawberry 2026-09-15).
         // Operator-set; every one is clamped by the transport on the way out and again by the client on the
         // way in, because this is our text arriving on somebody else's screen.
+        // UG_MAXPLAYERS. ⚠ This is the ADVERTISED seat count, not the connection cap -- NetServerSession's
+        // maxPeers is what actually refuses a peer. They were already two different numbers (maxPeers 32, the
+        // status block's hardcoded 24); this at least makes the advertised one a single value that the browser
+        // and the Accept both read, instead of two independent 24s that could drift apart silently.
+        public int MaxPlayers = 24;
+        public string ServerName = "";  // UG_NAME: what this server calls itself. Rides the Accept (wire v53) so a
+                                        // joined client can say where it is; before this the name lived ONLY in the
+                                        // client's hardcoded browser list and a --connect= join had none at all.
         public string Motd = "";        // UG_MOTD
         public bool Pvp = true;         // UG_PVE=1 flips it
         public int MaxPing;             // UG_MAXPING, ms; 0 = no limit. Advertised; the client gates on its own measured ping.
@@ -97,6 +105,8 @@ namespace UnturnedGodot
             NetLog.Sink = s => Log.Print(s);
             NetLog.ErrorSink = s => Log.Err(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
+            if (System.Environment.GetEnvironmentVariable("UG_NAME") is string nameEnv && nameEnv.Length > 0) ServerName = nameEnv;
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_MAXPLAYERS"), out int maxEnv) && maxEnv > 0) MaxPlayers = maxEnv;
             if (System.Environment.GetEnvironmentVariable("UG_MOTD") is string motdEnv && motdEnv.Length > 0) Motd = motdEnv;
             if (System.Environment.GetEnvironmentVariable("UG_PVE") == "1") Pvp = false;
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_MAXPING"), out int mpEnv) && mpEnv > 0) MaxPing = mpEnv;
@@ -111,6 +121,7 @@ namespace UnturnedGodot
                 _statusTransport.StatusMotd = Motd ?? "";
                 _statusTransport.StatusMap = string.IsNullOrEmpty(MapRoot) ? "" : System.IO.Path.GetFileName(MapRoot.TrimEnd('/'));
                 _statusTransport.StatusGamemode = Arena ? "Arena" : "Survival";
+                _statusTransport.StatusMaxPlayers = MaxPlayers;   // was left at its hardcoded 24 default; now the same number the Accept carries
                 _statusTransport.StatusPvp = Pvp;
                 _statusTransport.StatusMaxPing = MaxPing;
                 // Read ONCE at startup, not per request: a status responder that touches the disk is a
@@ -131,7 +142,9 @@ namespace UnturnedGodot
             Server = new NetWorldServer(srvTransport,
                 (conn, reason, isError) => Log.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
-                activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
+                activeHoliday: ActiveHoliday,    // P3: joiners build THIS world's holiday props/colliders, not their own clock's
+                serverName: ServerName,          // wire v53: so a joined client knows where it is (UG_NAME)
+                maxPlayers: MaxPlayers);         // ...and how many seats, without querying the status block
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             // Hand the server the sea so it can own oxygen (it validates positions already; it just could not
             // see water). Read once here rather than per tick -- SeaLevelY does not move during a session.
