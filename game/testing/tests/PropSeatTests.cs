@@ -107,8 +107,15 @@ namespace UnturnedGodot.Testing
                     Mathf.Abs(hips - seat.Anchor.Origin.Y) < 0.01f);
             // ...which is a DIFFERENT claim from "the player is at the cushion". Assert the origin is genuinely
             // below it, or a version that skipped the offset entirely would pass the check above by accident.
-            T.Check($"...so the origin is a hip-height BELOW it ({p.GlobalPosition.Y:0.000})",
-                    seat.Anchor.Origin.Y - p.GlobalPosition.Y > 0.5f);
+            //
+            // ⚠ DERIVED FROM HipSeated, not a literal. This read `> 0.5f`, which was true while the offset was
+            // the REST hip height (0.735) and false the moment it became the measured SEATED one (0.422) -- so
+            // correct behaviour tripped a guard by construction, and the 0.313 m sink I had just removed from the
+            // game was still sitting in this threshold. Half the offset keeps the guard's actual job (a skipped
+            // offset leaves a gap of ~0 and still fails) without pinning it to a number that goes stale the next
+            // time the constant is re-measured.
+            T.Check($"...so the origin is a hip-height BELOW it ({p.GlobalPosition.Y:0.000}, gap must exceed {PropSeat.HipSeated * 0.5f:0.000})",
+                    seat.Anchor.Origin.Y - p.GlobalPosition.Y > PropSeat.HipSeated * 0.5f);
             T.Check($"...facing the way the seat faces",
                     Mathf.Abs(Mathf.AngleDifference(p.Rotation.Y, seat.Anchor.Basis.GetEuler().Y)) < 0.02f);
             T.Check("...the collider is off while seated (or the capsule fights the couch)", !ColliderOn(p));
