@@ -6379,6 +6379,12 @@ namespace UnturnedGodot
                 }
             }
             var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
+            // ⚠ AFTER EditorNpcs, AND THAT IS THE POINT. The town's bins are real containers and a container
+            // rolls its loot the moment it enters the tree; EditorNpcs is what registers the item catalogue on
+            // this path ("[npceditor] item catalog was empty -- registered 1995 items"), so furniture placed
+            // during ProcIslandSpawn.Spawn opened as an empty bin every time. Same constraint WorldBuilder
+            // already documents for its own containers: spawn them post-build, when the asset DB is ready.
+            if (genPois != null) ProcIslandSpawn.SpawnTownFurniture(terr, objs);
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
             var rf = new RoadField { Terr = terr };

@@ -294,7 +294,12 @@ namespace UnturnedGodot
                 var body = new StaticBody3D { CollisionLayer = PickLayer | WorldLayerFor(mesh, mat), CollisionMask = 0 };
                 body.AddChild(new CollisionShape3D { Shape = shp });
                 SmartProps.TagBody(body, smart);   // look-ray/bullet -> device, so F works on it in playtest
-                root.AddChild(body);
+                // ⚠ A CONTAINER IS FOUND BY ANCESTRY, NOT BY A TAG. Every other device above is reachable
+                // because TagBody puts it in a meta on this body; PlayerController.ShelfOf instead walks up to
+                // four parents looking for the StoreShelf node. So a container prop's body hangs off the shelf
+                // rather than off the root -- selection and saving are unaffected (_pickToObj still maps the
+                // body's RID to the root, and the root still carries obj_name/guid), and F now opens it.
+                (smart?.Container is not null ? (Node)smart.Container : root).AddChild(body);
                 _world.AddChild(root);
                 _pickToObj[body.GetRid()] = root;
             }

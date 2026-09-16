@@ -462,6 +462,20 @@ namespace UnturnedGodot
         /// own placement path attaches devices through SmartProps, which covers lights, hydrants and doors and
         /// has no container case. Adding one means editing shared container code that tinyclaw is live in, so
         /// it is flagged rather than done.</summary>
+        /// <summary>⚠ CALLED SEPARATELY FROM Spawn, AND LATER. The bins here are real containers, and a
+        /// container ROLLS ITS LOOT IN _Ready -- which fires the moment the prop enters the tree. During the
+        /// island build the item catalogue has not been registered yet (the log order says so plainly:
+        /// "[npceditor] item catalog was empty -- registered 1995 items" prints AFTER every [island] line), so
+        /// every bin placed inside Spawn came up "-&gt; 0 items". WorldBuilder has the same constraint and solves
+        /// it the same way -- its note reads "the caller spawns the real container post-build (asset DB ready)".
+        /// Nothing about the PLACEMENT needed to move; only the moment it happens.</summary>
+        public static void SpawnTownFurniture(Terrain terr, EditorObjects objs)
+        {
+            int missing = 0;
+            ScatterTownFurniture(terr, objs, ref missing);
+            if (missing > 0) Log.Print($"[island-street] {missing} prop name(s) not in the catalogue");
+        }
+
         static void ScatterTownFurniture(Terrain terr, EditorObjects objs, ref int missing)
         {
             if (terr?.IslandTiles == null || objs == null) return;
@@ -1296,7 +1310,6 @@ namespace UnturnedGodot
             }
             ScatterBoulders(terr, objs, ref missing);
             ScatterRoadside(terr, objs, ref missing);
-            ScatterTownFurniture(terr, objs, ref missing);
             ReportPieces(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);

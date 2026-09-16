@@ -310,6 +310,28 @@ namespace UnturnedGodot
             //   Dumpster_0/1/2 -- the big skips; she asked for the small ones.
         };
 
+        /// <summary>The container config for a prop BY MESH NAME, for callers that hold a name rather than a
+        /// placement GUID -- the editor's placer, and the island generator that puts bins on a town verge.
+        ///
+        /// ⚠ DERIVED FROM ContainerShelf, never a second list. That table is the one place that knows which prop
+        /// is a container, and a parallel copy keyed the other way is how the editor and the world loader would
+        /// come to disagree about what a dumpster is. Built once and cached; the table is static readonly.</summary>
+        static System.Collections.Generic.Dictionary<string, (int table, bool display, string label)> _containerByMesh;
+
+        public static bool ContainerForMesh(string mesh, out int table, out bool display, out string label)
+        {
+            table = 0; display = false; label = null;
+            if (string.IsNullOrEmpty(mesh)) return false;
+            if (_containerByMesh == null)
+            {
+                _containerByMesh = new System.Collections.Generic.Dictionary<string, (int, bool, string)>();
+                foreach (var kv in ContainerShelf) _containerByMesh[kv.Value.mesh] = (kv.Value.table, kv.Value.display, kv.Value.label);
+            }
+            if (!_containerByMesh.TryGetValue(mesh, out var cfg)) return false;
+            (table, display, label) = cfg;
+            return true;
+        }
+
         // MP (A1): the DISTINCT container kinds (mesh/display/label), sorted deterministically, so ContainerSchema can
         // assign each a stable KindId that the server + client agree on WITHOUT re-running the world build (the client
         // never spawns the SP StoreShelf nodes -- it materializes fixtures from the replica by KindId).

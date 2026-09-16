@@ -49,7 +49,13 @@ namespace UnturnedGodot
             parent.AddChild(t);
             t.BuildInput();                // intact: the base carries a wire-able INPUT
             t.AddToGroup("deployables");   // PowerNet gathers this group by IPowerDevice
-            if (t.GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
+            // ⚠ ASK WHETHER IT IS IN THE TREE FIRST. GetTree() on a detached node does not merely return null,
+            // it logs `Parameter "data.tree" is null` from native get_tree() -- and the EDITOR placement path
+            // attaches devices BEFORE the prop root is added to the world, so every street light and signal
+            // placed that way printed one. Invisible while someone was hand-placing a lamp at a time; the
+            // island generator putting 174 of them down turned it into 191 lines of stderr per generation.
+            // Behaviour is unchanged: GetTree() was already returning null here, so this branch never ran.
+            if (t.IsInsideTree() && t.GetTree() is SceneTree tr && tr.GetNodesInGroup("powermgr").Count == 0)
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             PowerNet.MarkDirty();
             return t;
