@@ -6306,7 +6306,16 @@ namespace UnturnedGodot
                 // the suite are least able to settle, since they recompute the layout with the placing formula.
                 if (System.Environment.GetEnvironmentVariable("UG_GENTOP") == "1")
                 {
-                    camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, 230f, 0f);
+                    // UG_GENTOPALT=<m>: how high the straight-down camera sits. 230 frames ONE town, which is
+                    // the right default for judging streets -- and useless for anything about the ISLAND, like
+                    // whether the coast has a beach on it or the sea got drawn at all. A harness that can only
+                    // photograph one scale answers only questions at that scale.
+                    float topAlt = 230f;
+                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENTOPALT"),
+                                       System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out float ta) && ta > 0f)
+                        topAlt = ta;
+                    camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, topAlt, 0f);
                     camTop = true;
                 }
             }
@@ -6319,8 +6328,19 @@ namespace UnturnedGodot
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
             // Paint dirt under everything just built, BEFORE the foliage bake below reads the ground: the splat
             // is the single source of truth for "is this built on", and the scatter refuses anything but grass.
+            // SAND FIRST, then the built-on dirt over it: the shore is what the ground IS, the dirt is what has
+            // been done to it. Painted before the foliage bake, like the dirt, so the scatter's "grass only"
+            // rule keeps grass and trees off the beach for free rather than needing a second rule about water.
+            // ⚠ The band reaches ABOVE the waterline (master: "a sand band above the water level, and anything
+            // below it") -- a beach that stops exactly at sea level is a colour change at the waterline, not a
+            // shore.
+            if (genPois != null) terr.PaintBelowHeight(Terrain.SeaLevelY + 4f, 5);   // layer 5 = Sand
             if (genPois != null) ProcIslandSpawn.PaintGroundwork(terr);
             if (genPois != null) ProcIslandSpawn.ReportClipping(terr);   // UG_CLIPDBG=1: measure the clipping rather than guess at it
+            // ...and an actual sea. BuildEditorNew has always set HasWater + SeaLevelY, so everything that
+            // CONSUMES water (swimming, buoyancy, the underwater pass) believed in one; the surface itself is
+            // built only by the retail loader, so a generated island had a coastline around nothing.
+            if (genPois != null) terr.BuildOceanPlane();
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             // A generated island had no player spawns at all (the save line read "0 spawns" every time), so give
             // it its own. Seeded off the island's seed: same seed, same island, same start points.

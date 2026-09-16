@@ -294,6 +294,59 @@ void fragment() {
             UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
+        /// <summary>Paint a layer across every texel whose ground sits at or below `maxY`. One pass, ONE
+        /// texture upload.
+        ///
+        /// ⚠ NOT a loop over PaintSplat. That re-uploads the whole splat image on every call (see its trailing
+        /// UpdateSplat), which is fine for a few hundred stamps and absurd for a map-wide sweep -- this touches
+        /// every texel, so per-point painting would mean one full texture upload per texel.
+        ///
+        /// Used for the shore band: sand from the seabed up to a little above the waterline (strawberry: "add a
+        /// sand band above the water level, and anything below it"). Height is sampled from the real grid, so
+        /// the band follows the coast rather than being a ring drawn at a radius.</summary>
+        public void PaintBelowHeight(float maxY, int layer)
+        {
+            if (_dom == null || _s0Img == null) return;
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            int painted = 0;
+            for (int gx = 0; gx < _dw; gx++)
+                for (int gy = 0; gy < _dh; gy++)
+                {
+                    // Texel -> world, the inverse of SampleDominantLayer's mapping (note the negated Z).
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    if (SampleHeight(wx, wz) > maxY) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                    painted++;
+                }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            Log.Print($"[terrain] painted {painted} texel(s) at or below y={maxY:0.#} as layer {layer} ({(layer < DefaultLayerNames.Length ? DefaultLayerNames[layer] : "?")})");
+        }
+
+        /// <summary>Build the ocean surface for a map that did not come from the retail loader.
+        ///
+        /// ⚠ A generated island had a SEA LEVEL and no SEA. BuildEditorNew sets HasWater and SeaLevelY -- so
+        /// swimming, buoyancy and the underwater pass all believed in water -- while the plane itself is built
+        /// only inside the retail terrain load. The coast was shaped for a sea that was never drawn.
+        /// Reuses BuildOceanMesh, which masks the plane to WET cells, so an island gets ocean around it rather
+        /// than a sheet under the whole map.</summary>
+        public void BuildOceanPlane()
+        {
+            if (!HasWater || _grid == null) return;
+            var b = WorldBoundsXZ();
+            float wsx = (b.MaxX - b.MinX) + 400f, wsz = (b.MaxZ - b.MinZ) + 400f;   // overhang past the coast, as the retail path does
+            int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsz / 4f), 64, 600);
+            float wcx = (b.MinX + b.MaxX) * 0.5f, wcz = (b.MinZ + b.MaxZ) * 0.5f;
+            var mesh = BuildOceanMesh(this, wsx, wsz, subX, subZ, wcx, wcz, SeaLevelY);
+            if (mesh == null) { Log.Print("[terrain] no wet cells -- no ocean plane built"); return; }
+            var water = new MeshInstance3D { Mesh = mesh, Position = new Vector3(wcx, SeaLevelY, wcz) };
+            water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
+            water.Layers = WaterReflection.WaterLayer;   // keep the ocean out of its own mirror pass
+            AddChild(water);
+            Log.Print($"[terrain] ocean plane built at y={SeaLevelY:0.#} ({wsx:0}x{wsz:0} m)");
+        }
+
         // --- live heightmap sculpt (map editor Terrain tab) ---
         // Raise/lower _grid samples inside a world-radius brush (radial falloff), then rebuild the mesh + collider.
         public void EditHeight(float worldX, float worldZ, float radiusWorld, float deltaWorldY)
