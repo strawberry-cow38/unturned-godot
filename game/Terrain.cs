@@ -364,6 +364,15 @@ void fragment() {
             return Mathf.Sqrt(hx * hx + hz * hz);
         }
 
+        /// <summary>Surface normal at a world point, from the same 2*UNIT gradient SlopeAt uses -- so a prop
+        /// tilted onto it is tilted onto exactly the steepness that decided it belonged there.</summary>
+        public Vector3 NormalAt(float wx, float wz)
+        {
+            float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+            float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+            return new Vector3(-hx, 1f, -hz).Normalized();
+        }
+
         /// <summary>Build the ocean surface for a map that did not come from the retail loader.
         ///
         /// ⚠ A generated island had a SEA LEVEL and no SEA. BuildEditorNew sets HasWater and SeaLevelY -- so

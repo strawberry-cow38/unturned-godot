@@ -357,8 +357,24 @@ namespace UnturnedGodot
                     // 829 placements silently failed. The miss counter is what caught it; a scatter that just
                     // skipped the nulls would have looked like a thinner hillside.
                     string prop = BoulderProps[rng.Next(BoulderProps.Length)];
-                    var pos = new Vector3(px, y, pz);
-                    if (objs.Place(prop, pos, RotFor((float)(rng.NextDouble() * 360.0))) != null) { placed.Add(pos); n++; }
+                    // ⚠ SIT ON THE SLOPE, NOT ON A FLAT WORLD (strawberry: "scale and rotate the props to
+                    // actually fit the slopes"). RotFor gives the stand-up + yaw every prop here uses, which
+                    // leaves the rock perfectly upright -- on a 30-degree face that reads as a boulder balanced
+                    // on a hillside rather than resting in it, and the steeper the face the more obviously
+                    // wrong it looks. Tilting world-up onto the terrain normal settles it into the ground.
+                    // Composed tilt * stand, not the other way: the yaw must happen in the prop's own frame
+                    // before the whole thing is laid over, or turning a rock also changes which way it leans.
+                    var normal = terr.NormalAt(px, pz);
+                    var axis = Vector3.Up.Cross(normal);
+                    var stand = RotFor((float)(rng.NextDouble() * 360.0));
+                    var basis = axis.LengthSquared() < 1e-8f
+                        ? stand
+                        : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
+                    // Vary the size, and sink each rock slightly so it beds into the face instead of perching
+                    // on it -- a boulder resting exactly on the surface reads as placed, not fallen.
+                    float scale = 0.55f + (float)rng.NextDouble() * 0.7f;
+                    var pos = new Vector3(px, y - 0.35f * scale, pz);
+                    if (objs.Place(prop, pos, basis.Scaled(Vector3.One * scale)) != null) { placed.Add(pos); n++; }
                     else miss++;
                 }
             missing += miss;
