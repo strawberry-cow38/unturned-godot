@@ -130,9 +130,11 @@ namespace UnturnedGodot.Testing
             }
             else { _passed++; GD.Print($"[TEST] {_cur.Name,-42} | PASS | {secs:0.00}s ({_ctx.Checks.Count} checks)"); }
 
+            string name = _cur?.Name ?? "?";
             _sandbox?.QueueFree();
             _sandbox = null; _cur = null; _co = null;
             ResetGlobals();
+            StaticLeakDetector.AfterReset(name);   // UG_LEAKSCAN=1: anything that moved SURVIVED the reset
             _cooldown = 2;   // 2 ticks so QueueFree flushes + the "deployables"/"wires"/"powermgr" groups empty before the next test
         }
 
@@ -153,6 +155,7 @@ namespace UnturnedGodot.Testing
         void Summarize()
         {
             double secs = (Time.GetTicksMsec() - _t0) / 1000.0;
+            StaticLeakDetector.Report();
             GD.Print($"[L1] passed={_passed} failed={_failed} duration={secs:0.0}s");
             GetTree().Quit(_failed == 0 ? 0 : 1);
         }
