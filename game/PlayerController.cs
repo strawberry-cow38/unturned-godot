@@ -7324,6 +7324,70 @@ namespace UnturnedGodot
             return GlobalPosition;
         }
 
+        /// <summary>⚠ SafeSpot IS NOT A COLLISION CHECK. It refuses the world ORIGIN and nothing else, and
+        /// ClampExitSpot only rays DOWNWARD -- it lifts you out of a hill, and knows nothing about the wall
+        /// beside you. So getting out of a chair put you wherever the seat's facing pointed, and if that was a
+        /// wall you were inside it (strawberry 2026-09-16: "we should also find a safe space for exiting a chair,
+        /// so we dont get stuck inside collision/teleporting through wall. vehicles should have checks like this
+        /// too for exit"). PropSeat.ExitSpot's own doc says the caller "still runs this through SafeSpot" as
+        /// though that made the spot clear; it never did.
+        ///
+        /// This is the missing half: does the player's OWN capsule actually fit there. Same probe HeadroomFor
+        /// uses, including its foot leniency -- skip the bottom quarter-metre so the floor you are standing on is
+        /// not counted as the thing blocking you, which would refuse every spot on earth.</summary>
+        bool CapsuleFits(Vector3 at, Godot.Collections.Array<Rid> exclude)
+        {
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return true;   // no physics world to consult -> never block the exit on it
+            const float foot = 0.25f;
+            float h = Mathf.Max(0.1f, (_capsule?.Height ?? 1.8f) - foot), r = _capsule?.Radius ?? 0.30f;
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = new CapsuleShape3D { Height = h, Radius = r },
+                Transform = new Transform3D(Basis.Identity, at + Vector3.Up * (foot + h / 2f)),
+                CollisionMask = CollisionMask,
+                Exclude = exclude,
+            };
+            return space.IntersectShape(q, 1).Count == 0;
+        }
+
+        // Where to look when the intended spot is blocked: the WANTED bearing first, then alternating to either
+        // side of it, then directly behind. Ordered so a chair against a wall steps you sideways rather than
+        // spinning you round for no reason -- the intended direction is still the best answer when it is free.
+        static readonly float[] ExitSweepDeg = { 0f, 40f, -40f, 80f, -80f, 120f, -120f, 160f, -160f, 180f };
+        static readonly float[] ExitRingsOut = { 0f, 0.55f, 1.15f };
+
+        /// <summary>A spot near `want` that the player actually FITS in, fanning out around `anchor` (the seat or
+        /// the vehicle) when the intended one is blocked. Every candidate is ground-clamped, so a clear bearing
+        /// over a slope still puts you on the floor rather than in it.
+        ///
+        /// Falls back to where the player is STANDING NOW, not to `want`. If nothing within a couple of metres is
+        /// clear you are in a cupboard, and the inside of the car you were sitting in is a place you can drive
+        /// out of -- the inside of a wall is not. Says so in the log, because a silent teleport is what made the
+        /// last one of these take three goes to find.</summary>
+        Vector3 ClearExitSpot(Vector3 want, Vector3 anchor, string why)
+        {
+            // Only SELF is excluded, deliberately -- NOT the vehicle or chair you are leaving. A spot that overlaps
+            // the car is a spot you climb out into the car, so letting the car block it is the behaviour we want:
+            // the fan simply steps further out until it is genuinely beside the thing.
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var first = ClampExitSpot(want);
+            if (CapsuleFits(first, exclude)) return first;
+
+            float baseR = new Vector2(want.X - anchor.X, want.Z - anchor.Z).Length();
+            if (baseR < 0.5f) baseR = 1.2f;                       // degenerate: want ~= anchor, pick a real radius
+            float wantAng = Mathf.Atan2(want.Z - anchor.Z, want.X - anchor.X);
+            foreach (float outw in ExitRingsOut)
+                foreach (float deg in ExitSweepDeg)
+                {
+                    float ang = wantAng + Mathf.DegToRad(deg), rad = baseR + outw;
+                    var cand = ClampExitSpot(new Vector3(anchor.X + Mathf.Cos(ang) * rad, want.Y, anchor.Z + Mathf.Sin(ang) * rad));
+                    if (CapsuleFits(cand, exclude)) return cand;
+                }
+            Log.Print($"[place] no clear exit within {baseR + ExitRingsOut[^1]:0.0} m for {why} -- staying at {GlobalPosition}");
+            return GlobalPosition;
+        }
+
         Vector3 ClampExitSpot(Vector3 spot)
         {
             var space = GetWorld3D()?.DirectSpaceState;
@@ -7399,7 +7463,7 @@ namespace UnturnedGodot
         /// a hip-height below the cushion (the pelvis lands on it); lying down the body pivots instead, so the
         /// feet -- and the origin -- stay on the mattress.</summary>
         static Vector3 SeatStandPosition(PropSeat seat)
-            => seat.Recline ? seat.Anchor.Origin : seat.Anchor.Origin - Vector3.Up * PropSeat.HipRest;
+            => seat.Recline ? seat.Anchor.Origin : seat.Anchor.Origin - Vector3.Up * PropSeat.HipSeated;
 
         public void SitDown(PropSeat seat)
         {
@@ -7468,7 +7532,7 @@ namespace UnturnedGodot
             if (seat != null && IsInstanceValid(seat))
             {
                 if (seat.Occupant == this) seat.Occupant = null;
-                GlobalPosition = SafeSpot(seat.ExitSpot(), "seat exit");
+                GlobalPosition = SafeSpot(ClearExitSpot(seat.ExitSpot(), seat.Anchor.Origin, "seat exit"), "seat exit");
             }
             _move.Stance = EPlayerStance.STAND;   // the next PhysicsTick's StepStanceOnce re-decides and resizes the capsule from here
             Velocity = Vector3.Zero;
@@ -7502,7 +7566,7 @@ namespace UnturnedGodot
             // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
             // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
             // thing you can do to yourself on purpose now.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "death eject"); }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "death eject"), "death eject"); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -10950,7 +11014,7 @@ namespace UnturnedGodot
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = SafeSpot(ClampExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f), "vehicle exit");
+            if (v != null) GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "vehicle exit"), "vehicle exit");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;

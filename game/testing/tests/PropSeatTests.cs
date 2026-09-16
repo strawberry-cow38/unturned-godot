@@ -95,13 +95,14 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check("the player starts on foot with a live collider", !p.IsSeatedOnProp && ColliderOn(p));
 
-            // ---- SIT. The hips must land ON the cushion: origin = cushion - HipRest.
+            // ---- SIT. The hips must land ON the cushion: origin = cushion - HipSeated. Not HipRest: Idle_Sit
+            // keys the hip bones down to y 0.4220 from a rest of 0.7350, so using the rest height sank you 0.313 m.
             var seat = made[0];
             p.SitDown(seat);
             yield return Ticks(2);
             T.Check("the player is seated", p.IsSeatedOnProp && p.DebugSitting == seat);
             T.Check("...the seat knows who is in it", !seat.Free);
-            float hips = p.GlobalPosition.Y + PropSeat.HipRest;
+            float hips = p.GlobalPosition.Y + PropSeat.HipSeated;   // the SEATED hip height (measured off Idle_Sit), not the rest one
             T.Check($"...hips land on the cushion (hips {hips:0.000} vs seat {seat.Anchor.Origin.Y:0.000})",
                     Mathf.Abs(hips - seat.Anchor.Origin.Y) < 0.01f);
             // ...which is a DIFFERENT claim from "the player is at the cushion". Assert the origin is genuinely

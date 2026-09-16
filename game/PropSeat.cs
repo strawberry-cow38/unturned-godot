@@ -155,6 +155,25 @@ namespace UnturnedGodot
         /// the camera and there is no second number to keep in step with the first.</summary>
         public const float HipRest = 0.735f;
 
+        /// <summary>...AND THE PREMISE ABOVE IS WRONG, WHICH IS WHY YOU SAT TOO LOW. "Idle_Sit moves no bone's
+        /// POSITION -- only rotations" is checkable, and it is false: the clip has 17 tracks and every one of them
+        /// carries position data. MEASURED out of rig.json rather than reasoned about (strawberry 2026-09-16:
+        /// "when sitting in a chair, we sit too low, measure to fix"):
+        ///
+        ///   Spine / Left_Hip / Right_Hip REST  y = 0.7350
+        ///   Spine / Left_Hip / Right_Hip in Idle_Sit  y = 0.4220   (both keyframes, all three bones)
+        ///
+        /// The tracks are absolute-local, not deltas -- Skull's track position reproduces its rest exactly, which
+        /// is what pins the convention. So sitting drops the pelvis 0.3130 m relative to the body root, and
+        /// placing the origin one REST hip-height below the cushion buried the hips 0.313 m INSIDE it.
+        ///
+        /// The camera comes along for free, as the original note intended: the eye rides 1.6 above the origin, the
+        /// origin rises by the same 0.313, and the seated eye lands where a sitting person's actually is.
+        ///
+        /// HipRest is left alone and still means what it says -- Vehicle.cs bakes per-seat offsets derived from it
+        /// and those were tuned against renders, so they are already right and must not shift underneath.</summary>
+        public const float HipSeated = 0.422f;
+
         /// <summary>The Y the prop is standing on -- its placement origin, recorded at spawn so ExitSpot puts
         /// you on the floor rather than at cushion height.</summary>
         public float GroundY;

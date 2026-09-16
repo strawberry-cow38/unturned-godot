@@ -3228,7 +3228,12 @@ void fragment() {
         /// dead space down the other: the extent depends on the per-denomination art margins above, so it is
         /// not knowable before the pieces exist. Measure, then scale -- that also means the fan is automatically
         /// as big as the cell allows at whatever arc it is given, which is the "use the real estate" half.</summary>
-        static void BuildMoneyFan(Control tile, int dollars, float w, float h)
+        /// <summary>internal, not private: the HOTBAR draws the same fan. A money stack has to read as its VALUE
+        /// everywhere it appears (strawberry 2026-09-16 "make sure the money's stack reflects its value
+        /// everywhere. on the hotbar it isnt"), and two implementations of "what does $188 look like" would
+        /// drift the first time either is tuned -- this one already carries the fan angles, the same-denomination
+        /// collapse and the upright-icon bake.</summary>
+        internal static void BuildMoneyFan(Control tile, int dollars, float w, float h)
         {
             var all = SDG.Unturned.Currency.Breakdown(dollars);
             bool dbg = System.Environment.GetEnvironmentVariable("UG_FANDBG") == "1";

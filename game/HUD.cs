@@ -22,7 +22,7 @@ namespace UnturnedGodot
         // second, on the main gameplay path, all of it thrown away by the very gate meant to prevent the work.
         // A gate that allocates to decide whether to skip the work is not saving anything. Review 2026-08-16.
         ulong _hotbarSig = ulong.MaxValue;   // MaxValue = "not built yet", distinct from the empty row's hash
-        readonly System.Collections.Generic.List<(int Key, ushort Id)> _hbEntries = new();
+        readonly System.Collections.Generic.List<(int Key, ushort Id, ushort Amount)> _hbEntries = new();
 
         // Palette.cs: COLOR_R (health), COLOR_O (food), COLOR_B (water), COLOR_Y (stamina), COLOR_G (virus), WHITE (oxygen -- master 2026-09-07 overrode the palette's cyan).
         static readonly Color CR = new Color(0.7490196f, 0.12156863f, 0.12156863f);
@@ -39,7 +39,9 @@ namespace UnturnedGodot
         static readonly Color CCold = new Color(0.42f, 0.80f, 0.98f);
         static readonly Color CHot  = new Color(0.98f, 0.38f, 0.10f);
 
-        const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
+        // strawberry 2026-09-16 "make the vitals ui slightly larger": ~20% on the row metrics. RowH feeds
+        // VitalsTopGap below, so the panel grows in height with the rows rather than cropping them.
+        const float IconSz = 24f, IconX = 6f, BarX = 36f, BarH = 12f, RowH = 36f, TopPad = 6f;
 
         // ---- the vitals box, as a rectangle other screens can read -------------------------------------
         // strawberry 2026-09-08: "design all those menus except the map to be built around the vitals panel
@@ -52,7 +54,7 @@ namespace UnturnedGodot
         // Derived from the same constants the box itself is built from, so the two cannot drift apart.
         public const int VitalRows = 7;                                   // health, food, water, stamina, infection, oxygen, temperature
         public const float VitalsLeft = 24f;                              // lifeBox OffsetLeft
-        public const float VitalsRightAnchor = 0.2f;                      // ...and its AnchorRight: the box is 20% of the screen wide
+        public const float VitalsRightAnchor = 0.23f;                     // ...and its AnchorRight: the box is 23% of the screen wide (0.2 -> 0.23, strawberry 2026-09-16 "slightly larger"). ⚠ THE HOTBAR IS ANCHORED TO THIS -- it fills the gap between this panel and the ammo readout, so widening the vitals narrows the hotbar rather than overlapping it.
         // The two gaps move TOGETHER: the 18f here is the box's height over its content, and the 24f below is
         // the space under the box. Trimming only the bottom one would grow the box downward and leave the bars
         // exactly where they were, which is the obvious wrong version of "reduce the padding".
@@ -73,8 +75,29 @@ namespace UnturnedGodot
             return Mathf.Min(bottom, v.Position.Y - gap);
         }
 
-        readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
-        readonly System.Collections.Generic.List<(ColorRect fill, Color cold, Color hot, System.Func<float> val)> _bipolar = new();   // temperature: grows from the CENTRE, so it cannot share the one-anchor update the others use
+        /// <summary>A vitals bar and the value it follows, PLUS the value currently drawn. strawberry
+        /// 2026-09-16: "the vitals are updating kinda slowly or weirdly, surging instead of smoothly lowering.
+        /// should tween the bar's visual fill." They were not slow -- they were INSTANT: the fill anchor was
+        /// assigned straight from the source every frame, so a value that moves in steps (a food tick, a hit)
+        /// was reported honestly as a step. The bar needs its own state to ease from, which a value tuple in a
+        /// List cannot hold -- foreach hands back a copy.</summary>
+        sealed class VitalBar { public ColorRect Fill; public System.Func<float> Val; public float Shown = -1f; }
+        readonly System.Collections.Generic.List<VitalBar> _vitals = new();
+        sealed class BipolarBar { public ColorRect Fill; public Color Cold, Hot; public System.Func<float> Val; public float Shown = 2f; }
+        // HOTBAR (strawberry 2026-09-16 "make the hotbar icons much bigger. we only need to fit 1-10, fit it
+        // neatly between the vitals panel and the ammo panel"). The cell is SIZED TO THE GAP rather than fixed:
+        // ten cells at a hardcoded 112 px need 1192 px of gap and there is only ~640 at 1280 wide, so a constant
+        // would fit the monitor it was chosen on and overflow every smaller one.
+        public const float AmmoPanelW = 360f;    // the ammo readout's own width (its OffsetLeft, negated)
+        const float HotbarGap = 16f;             // clearance either side, so it is "between" rather than touching
+        const int HotbarSep = 8;                 // between cells
+        const int HotbarSlots = 10;              // keys 1..10 -- the most the row ever has to show
+        const float HotbarCellMin = 44f, HotbarCellMax = 112f;
+        const float HotbarBottomGap = 18f;
+
+        const float VitalTweenRate = 6f;      // 1/s exponential approach -- ~0.17 s to close most of a gap
+        const float VitalSnapEps = 0.002f;    // ...and land exactly, so a bar actually reaches full/empty
+        readonly System.Collections.Generic.List<BipolarBar> _bipolar = new();   // temperature: grows from the CENTRE, so it cannot share the one-anchor update the others use
         readonly System.Collections.Generic.List<(Control ic, Control bg, System.Func<bool> show)> _vitalRows = new();   // situational vitals (virus): whole row hidden unless its condition holds
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
@@ -231,10 +254,16 @@ namespace UnturnedGodot
             // Every entry is conditional on ACTUALLY holding something -- an empty hotbar draws nothing at all
             // rather than a row of empty boxes, because a row of nine empty boxes is what a UI looks like when
             // it is broken, and this one is empty by design on a fresh spawn now the starter kit is gone.
+            // BETWEEN THE TWO PANELS, not centred on the screen (strawberry 2026-09-16: "fit it neatly between the
+            // vitals panel and the ammo panel"). Anchored to VitalsRightAnchor on the left and to the ammo
+            // readout's own width on the right, so it is defined by the things it must not overlap rather than by
+            // a pair of offsets that happen to clear them at one resolution. Widening the vitals narrows the
+            // hotbar; it cannot start overlapping them.
             _hotbar = new HBoxContainer();
-            _hotbar.AddThemeConstantOverride("separation", 6);
-            _hotbar.AnchorLeft = 0.5f; _hotbar.AnchorRight = 0.5f; _hotbar.AnchorTop = 1; _hotbar.AnchorBottom = 1;
-            _hotbar.OffsetLeft = -260; _hotbar.OffsetRight = 260; _hotbar.OffsetTop = -86; _hotbar.OffsetBottom = -18;
+            _hotbar.AddThemeConstantOverride("separation", HotbarSep);
+            _hotbar.AnchorLeft = VitalsRightAnchor; _hotbar.AnchorRight = 1f; _hotbar.AnchorTop = 1; _hotbar.AnchorBottom = 1;
+            _hotbar.OffsetLeft = HotbarGap; _hotbar.OffsetRight = -(AmmoPanelW + HotbarGap);
+            _hotbar.OffsetTop = -(HotbarBottomGap + HotbarCellMax); _hotbar.OffsetBottom = -HotbarBottomGap;
             _hotbar.Alignment = BoxContainer.AlignmentMode.Center;
             _hotbar.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_hotbar);
@@ -390,7 +419,7 @@ namespace UnturnedGodot
             fill.OffsetLeft = 0; fill.OffsetRight = 0; fill.OffsetTop = 0; fill.OffsetBottom = 0;
             fill.MouseFilter = Control.MouseFilterEnum.Ignore;
             bg.AddChild(fill);
-            _vitals.Add((fill, val));
+            _vitals.Add(new VitalBar { Fill = fill, Val = val });
             if (show != null) _vitalRows.Add((ic, bg, show));   // situational: whole row hidden unless `show` is true
         }
 
@@ -431,7 +460,7 @@ namespace UnturnedGodot
             fill.OffsetLeft = 0; fill.OffsetRight = 0; fill.OffsetTop = 0; fill.OffsetBottom = 0;
             fill.MouseFilter = Control.MouseFilterEnum.Ignore;
             bg.AddChild(fill);
-            _bipolar.Add((fill, cold, hot, val));
+            _bipolar.Add(new BipolarBar { Fill = fill, Cold = cold, Hot = hot, Val = val });
         }
 
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
@@ -490,7 +519,7 @@ namespace UnturnedGodot
                 var pg = inv.items[slot];
                 if (pg == null || pg.getItemCount() == 0) continue;
                 var it = pg.getItem(0)?.item;
-                if (it != null) entries.Add((slot + 1, it.id));
+                if (it != null) entries.Add((slot + 1, it.id, it.amount));
             }
             for (int k = 3; k <= 9; k++)
             {
@@ -500,37 +529,62 @@ namespace UnturnedGodot
                 byte idx = pg?.getIndex(loc.x, loc.y) ?? byte.MaxValue;
                 if (idx == byte.MaxValue) continue;   // the bind points at a cell that is now empty -> draw nothing
                 var it = pg.getItem(idx)?.item;
-                if (it != null) entries.Add((k, it.id));
+                if (it != null) entries.Add((k, it.id, it.amount));
             }
 
             // FNV-1a over the (key, id) pairs -- order-sensitive, allocation-free, and 64 bits is far more than
             // this row's state can collide in.
+            // ⚠ THE AMOUNT IS IN THE HASH, and it has to be. A money stack draws as its VALUE, so $40 and $300 are
+            // different pictures of the same item id -- with (key, id) alone the row drew the first one and never
+            // redrew, and the fan would have been right once and then quietly wrong for the rest of the session.
+            // Cheap for everything else: a non-money stack's count changing is a redraw nobody notices.
             ulong sig = 1469598103934665603UL;
-            foreach (var (key, id) in entries)
+            foreach (var (key, id, amount) in entries)
             {
                 sig = (sig ^ (uint)key) * 1099511628211UL;
                 sig = (sig ^ id) * 1099511628211UL;
+                sig = (sig ^ amount) * 1099511628211UL;
             }
             if (sig == _hotbarSig) return;
             _hotbarSig = sig;
             ClearHotbarCells();
 
-            foreach (var (key, id) in entries)
+            // Size the cells to the gap we actually have, once, before building any of them.
+            float vpx = GetViewport()?.GetVisibleRect().Size.X ?? 1920f;
+            float avail = vpx * (1f - VitalsRightAnchor) - AmmoPanelW - 2f * HotbarGap;
+            float cellSz = Mathf.Clamp((avail - (HotbarSlots - 1) * HotbarSep) / HotbarSlots, HotbarCellMin, HotbarCellMax);
+            _hotbar.OffsetTop = -(HotbarBottomGap + cellSz);   // the row is as tall as its cells
+
+            foreach (var (key, id, amount) in entries)
             {
-                var cell = new PanelContainer { CustomMinimumSize = new Vector2(58, 58) };
+                var cell = new PanelContainer { CustomMinimumSize = new Vector2(cellSz, cellSz) };
                 var sb = new StyleBoxFlat { BgColor = UITheme.Chip, BorderColor = new Color(1f, 1f, 1f, 0.25f) };
                 sb.SetBorderWidthAll(1); sb.SetCornerRadiusAll(3);
                 cell.AddThemeStyleboxOverride("panel", sb);
                 cell.MouseFilter = Control.MouseFilterEnum.Ignore;
 
-                var icon = new TextureRect
+                // MONEY DRAWS AS ITS VALUE HERE TOO. The same BuildMoneyFan the inventory tile uses, so $188 is the
+                // same seven-note picture in both places rather than a generic coin sprite on one of them.
+                // ⚠ Into a plain Control, not straight into the PanelContainer: the fan positions its notes
+                // ABSOLUTELY, and a PanelContainer lays its children out to fill the panel, which would stack
+                // every note on top of the others in the middle of the cell.
+                if (SDG.Unturned.Currency.IsCurrency(id))
                 {
-                    Texture = InventoryUI.IconFor(id),
-                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                    MouseFilter = Control.MouseFilterEnum.Ignore,
-                };
-                cell.AddChild(icon);
+                    var fanHost = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+                    cell.AddChild(fanHost);
+                    InventoryUI.BuildMoneyFan(fanHost, amount, cellSz, cellSz);
+                }
+                else
+                {
+                    var icon = new TextureRect
+                    {
+                        Texture = InventoryUI.IconFor(id),
+                        ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                        StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                        MouseFilter = Control.MouseFilterEnum.Ignore,
+                    };
+                    cell.AddChild(icon);
+                }
 
                 // The number, so the row tells you which key rather than making you count boxes -- the entries
                 // are sparse (bind 3 and 7 and nothing else) so position does not imply the key.
@@ -567,15 +621,29 @@ namespace UnturnedGodot
                 if (_alertLeft <= 0f) _alert.Text = "";
             }
 
-            foreach (var (fill, val) in _vitals)
-                fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state
-            foreach (var (fill, cold, hot, val) in _bipolar)
+            // TWEENED, not assigned. The source values move in steps -- a food tick, a hit, a sip -- and the bar
+            // used to take each step whole, which is the "surging" master saw. Exponential approach at
+            // VitalTweenRate, snapping inside VitalSnapEps so a bar genuinely reaches empty instead of
+            // asymptotically approaching it, and seeded on the FIRST update (Shown < 0) so nothing animates up
+            // from zero when the HUD is built.
+            float ta = 1f - Mathf.Exp(-VitalTweenRate * (float)delta);
+            foreach (var b in _vitals)
             {
-                float v = Mathf.Clamp(val(), -1f, 1f);
+                float t = Mathf.Clamp(b.Val(), 0f, 1f);
+                b.Shown = b.Shown < 0f || Mathf.Abs(t - b.Shown) < VitalSnapEps ? t : Mathf.Lerp(b.Shown, t, ta);
+                b.Fill.AnchorRight = b.Shown;   // foreground.SizeScale_X = state
+            }
+            foreach (var b in _bipolar)
+            {
+                float t = Mathf.Clamp(b.Val(), -1f, 1f);
+                // Seeded from 2f rather than -1: this one is SIGNED, so -1 is a legitimate value (freezing) and
+                // could never mean "not yet shown". Any |x| > 1 is out of range and unambiguous.
+                b.Shown = b.Shown > 1f || Mathf.Abs(t - b.Shown) < VitalSnapEps ? t : Mathf.Lerp(b.Shown, t, ta);
+                float v = b.Shown;
                 // Half-width per side: the fill spans from the centre out, so a full -1 or +1 reaches one edge.
-                fill.AnchorLeft  = 0.5f + Mathf.Min(v, 0f) * 0.5f;
-                fill.AnchorRight = 0.5f + Mathf.Max(v, 0f) * 0.5f;
-                fill.Color = v < 0f ? cold : hot;
+                b.Fill.AnchorLeft  = 0.5f + Mathf.Min(v, 0f) * 0.5f;
+                b.Fill.AnchorRight = 0.5f + Mathf.Max(v, 0f) * 0.5f;
+                b.Fill.Color = v < 0f ? b.Cold : b.Hot;
             }
             foreach (var (ic, bg, show) in _vitalRows) { bool s = show(); ic.Visible = s; bg.Visible = s; }   // situational vitals (virus) shown only on condition
             foreach (var (box, on) in _status)
