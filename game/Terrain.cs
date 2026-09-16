@@ -504,6 +504,10 @@ void fragment() {
             for (int i = 0; i < pois.Count; i++) _islandBuildings.AddRange(ProcIsland.PlaceBuildings(i, pois[i], _islandTiles, pars));
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
+            // AFTER the routes: a route carves through a monument near its gates, so levelling the tiles first
+            // would just have them re-cut. Town road props are flat 24 m quads and nothing had ever flattened
+            // the ground under one -- measured at 6.44 m of spread across a single tile's footprint.
+            ProcIsland.FlattenUnderTiles(_grid, _gw, _gh, _islandTiles);
             RebuildAll();
             return pois;
         }

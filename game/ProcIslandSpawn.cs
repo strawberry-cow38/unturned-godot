@@ -44,11 +44,108 @@ namespace UnturnedGodot
             return (v.X, -v.Z);   // world -> ProcIsland's frame, which negates Z
         }
 
+        /// <summary>Where a road TILE sits: the HIGHEST ground under its own 24 m footprint, not the height at
+        /// its centre.
+        ///
+        /// ⚠ A road tile is a flat quad, and only terrain ABOVE it clips through it -- terrain below leaves a
+        /// gap nobody can see. Seating it on the centre sample means every high corner of its footprint pokes
+        /// through the surface; seating it on the maximum means nothing can. Measured on seed 12345, the
+        /// ground rose above a centre-seated quad by up to 2.88 m.
+        /// This is the fix that CANNOT fight anything else: it moves the PROP, not the terrain, so it cannot
+        /// re-bury a carved route the way raising ground under the tiles did (see FlattenUnderTiles' note).
+        /// The cost is a tile floating a little over a hollow, which is the invisible half of the trade.</summary>
+        public static Vector3 TilePosFor(Terrain terr, float px, float pz)
+        {
+            const float Half = 12f;   // ProcIsland.TileSize * 0.5
+            var c = PosFor(terr, px, pz);
+            float top = c.Y;
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    float h = PosFor(terr, px + dx * Half, pz + dz * Half).Y;
+                    if (h > top) top = h;
+                }
+            return new Vector3(c.X, top, c.Z);
+        }
+
         /// <summary>The world position of a ProcIsland (x, z) pair, dropped onto the terrain.</summary>
         public static Vector3 PosFor(Terrain terr, float px, float pz)
         {
             float wx = px, wz = -pz;
             return new Vector3(wx, terr != null ? terr.SampleHeight(wx, wz) : 0f, wz);
+        }
+
+        /// <summary>Points of a carved route per spline joint. ⚠ SHARED with the clipping probe below, which
+        /// measures the gap BETWEEN joints -- if the probe used its own copy it would measure chords the road
+        /// does not have, and report a number about a road nobody builds. It did exactly that once: the road
+        /// moved to 8 m joints while the probe still sampled 20 m ones, and the "worse" reading was the
+        /// instrument, not the road.</summary>
+        public const int RouteJointStride = 2;   // ~8 m between joints
+
+        /// <summary>UG_CLIPDBG=1: measure what is actually clipping, instead of guessing at it again.
+        ///
+        /// Two different failures wear the same symptom. A road TILE is a flat 24 m quad dropped at its centre
+        /// height, so any height variation across its footprint buries one corner and floats another. A road
+        /// SPLINE is a ribbon through joints 20 m apart, so terrain can rise through it BETWEEN joints while
+        /// every joint itself sits perfectly on the ground. Reporting the worst and the mean of each says which
+        /// one is worth fixing, and a fix aimed at the wrong one would look reasonable and change nothing.</summary>
+        public static void ReportClipping(Terrain terr)
+        {
+            if (terr == null || System.Environment.GetEnvironmentVariable("UG_CLIPDBG") != "1") return;
+
+            // ---- tiles: spread across the quad the prop actually covers -------------------------------------
+            const float TileHalf = 12f;   // ProcIsland.TileSize * 0.5
+            float worstTile = 0f, sumTile = 0f; int nTile = 0;
+            if (terr.IslandTiles != null)
+                foreach (var t in terr.IslandTiles)
+                {
+                    // ⚠ RISE ABOVE THE QUAD, not spread across it. The first version of this measured hi-lo,
+                    // which counts a HOLLOW under the tile as badly as a hump through it -- and a hollow is
+                    // invisible, the quad simply floats over a gap. Reporting spread made a lower-only fix look
+                    // like a regression (6.31 m "worse") while the thing that actually clips had improved. The
+                    // tile is placed at its CENTRE height, so what clips is how far the ground rises above that.
+                    var c = TilePosFor(terr, t.X, t.Z);   // measure against where the tile IS, not where it used to be
+                    float rise = 0f;
+                    for (int dx = -1; dx <= 1; dx++)
+                        for (int dz = -1; dz <= 1; dz++)
+                        {
+                            float h = PosFor(terr, t.X + dx * TileHalf, t.Z + dz * TileHalf).Y;
+                            if (h - c.Y > rise) rise = h - c.Y;
+                        }
+                    if (rise > worstTile) worstTile = rise;
+                    sumTile += rise; nTile++;
+                }
+
+            // ---- splines: how far terrain rises above the straight line BETWEEN joints ---------------------
+            // The joints are on the ground by construction; the question is only what happens in the gap, which
+            // is exactly what decimating to 20 m traded away.
+            const int Stride = RouteJointStride;
+            float worstGap = 0f, sumGap = 0f; int nGap = 0, over = 0;
+            if (terr.IslandRoutes != null)
+                foreach (var route in terr.IslandRoutes)
+                {
+                    if (route.Points == null || route.Points.Count < Stride + 1) continue;
+                    for (int i = 0; i + Stride < route.Points.Count; i += Stride)
+                    {
+                        var a = PosFor(terr, route.Points[i].X, route.Points[i].Y);
+                        var b = PosFor(terr, route.Points[i + Stride].X, route.Points[i + Stride].Y);
+                        for (int k = 1; k < Stride; k++)
+                        {
+                            float f = k / (float)Stride;
+                            var mid = route.Points[i + k];
+                            float ground = PosFor(terr, mid.X, mid.Y).Y;
+                            float ribbon = Mathf.Lerp(a.Y, b.Y, f);
+                            float rise = ground - ribbon;      // + = terrain ABOVE the road surface
+                            if (rise > worstGap) worstGap = rise;
+                            if (rise > 0.05f) over++;
+                            sumGap += rise; nGap++;
+                        }
+                    }
+                }
+
+            Log.Print($"[clipdbg] TILES worst RISE above the quad {worstTile:0.00} m, mean {(nTile > 0 ? sumTile / nTile : 0):0.00} m over {nTile} tile(s)");
+            Log.Print($"[clipdbg] SPLINES worst rise above the chord {worstGap:0.00} m, mean {(nGap > 0 ? sumGap / nGap : 0):0.00} m, "
+                      + $"{over}/{nGap} sample(s) above the surface");
         }
 
         /// <summary>The terrain LAYER a generated island treats as "nothing has been built here". CreateFlat
@@ -188,7 +285,11 @@ namespace UnturnedGodot
         public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)
         {
             if (terr == null || rf == null || terr.IslandRoutes == null) return 0;
-            const int Stride = 5;          // ~20 m between joints
+            // ⚠ 20 m of stride cost 0.84 m of clearance. Measured between joints on seed 12345: terrain rose
+            // above the chord on 481 of 1792 samples, worst 0.84 m -- the ribbon is a smooth curve and the
+            // ground is not, so decimating for smoothness quietly traded away the gap underneath it. 8 m still
+            // beats a joint every 4 m (which is all control and no curve) without under-sampling the ground.
+            const int Stride = RouteJointStride;
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
 
@@ -339,7 +440,7 @@ namespace UnturnedGodot
             {
                 string prop = ProcIsland.PropFor(t.Piece);
                 if (prop == null) { missing++; continue; }
-                if (objs.Place(prop, PosFor(terr, t.X, t.Z), RotFor(t.YawDeg)) != null) roads++; else missing++;
+                if (objs.Place(prop, TilePosFor(terr, t.X, t.Z), RotFor(t.YawDeg)) != null) roads++; else missing++;
             }
             foreach (var b in terr.IslandBuildings)
             {

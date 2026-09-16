@@ -844,6 +844,56 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Flatten the ground under each town road TILE to that tile's own height.
+        ///
+        /// ⚠ MEASURED, NOT GUESSED, and the measurement reversed the ranking. A road tile is a flat 24 m quad
+        /// dropped at its CENTRE height, and nothing had ever levelled the ground beneath one -- only routes
+        /// were carved. Sampling the nine points of each tile's footprint on seed 12345: worst spread 6.44 m,
+        /// mean 1.08 m across 126 tiles. Six metres of terrain through a flat quad. The splines' worst rise
+        /// between joints was 0.84 m over the same island, so tiles were the problem by roughly eight to one
+        /// and the obvious suspect (spline joint spacing) was the smaller half.
+        ///
+        /// Runs AFTER CarveRoutes, because a route carves through the monument near its gates and would
+        /// otherwise re-cut the tiles it had just levelled.
+        ///
+        /// ⚠ Each tile is levelled to ITS OWN centre, not to one town-wide height: the pad is flat so
+        /// neighbours agree anyway, and keeping it per-tile means this still does the right thing on a monument
+        /// whose pad is ever allowed to slope, rather than silently stamping a plateau.</summary>
+        public static void FlattenUnderTiles(float[,] grid, int gw, int gh, System.Collections.Generic.List<MonumentTile> tiles)
+        {
+            if (tiles == null) return;
+            const float Unit = 4f;
+            const float Half = TileSize * 0.5f;            // the quad's own reach, 12 m
+            const float Inner = Half + HalfCarriageway;    // ...plus the carriageway overhang the prop draws
+            const float Outer = Inner * 1.45f;             // graded skirt, or every tile stamps a visible step
+            int rad = Mathf.CeilToInt(Outer / Unit) + 1;
+            foreach (var t in tiles)
+            {
+                int cx = Mathf.RoundToInt(t.X / Unit), cy = Mathf.RoundToInt(t.Z / Unit);
+                float target = grid[Mathf.Clamp(cx, 0, gw - 1), Mathf.Clamp(cy, 0, gh - 1)];
+                for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                    for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                    {
+                        // Chebyshev: the tile is a SQUARE, and a radial falloff would leave its corners proud.
+                        float d = Mathf.Max(Mathf.Abs(x * Unit - t.X), Mathf.Abs(y * Unit - t.Z));
+                        if (d > Outer) continue;
+                        float w = d <= Inner ? 1f : 1f - Mathf.SmoothStep(Inner, Outer, d);
+                        // ⚠ LOWER ONLY. Two reasons, and the second one is a bug I caused and measured.
+                        // 1. ONLY TERRAIN ABOVE A SURFACE CLIPS THROUGH IT. Ground below the quad leaves an
+                        //    invisible gap; ground above it pokes through. So cutting high spots is the entire
+                        //    job and filling hollows buys nothing you can see.
+                        // 2. This pass runs after CarveRoutes, and a plain Lerp RAISED the carved corridor back
+                        //    up where a route passes a monument's gate -- re-burying the road the carve had just
+                        //    cleared. Measured: the splines' worst rise went 0.84 m -> 2.99 m when this landed,
+                        //    while their clipping SAMPLE COUNT fell. Fewer, worse spikes is the signature of one
+                        //    pass undoing another, not of a scatter getting rougher.
+                        // Same hazard the Carve loop already calls out ("a later point undoes an earlier one's
+                        //    cut"), reached from the other direction.
+                        grid[x, y] = Mathf.Min(grid[x, y], Mathf.Lerp(grid[x, y], target, w));
+                    }
+            }
+        }
+
         /// <summary>Box-blur the ground along one route's corridor, weighted so the centre is smoothed hardest
         /// and the effect fades out at the shoulder -- blurring to a hard edge would just move the discontinuity
         /// outwards. Two light passes rather than one heavy one: a single wide kernel flattens the corridor into
