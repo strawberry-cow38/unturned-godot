@@ -191,6 +191,23 @@ namespace UnturnedGodot
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
         string _gunTxt;   // current gun's mesh name (gv.Gun) -- gates gun-specific attachment tuning (the red-dot ADS aim is eaglefire-tuned for now)
+
+        // The spinning assembly, when the equipped gun has one. Null for every other gun, which is what makes
+        // HasSpinBarrel the test for "is this a minigun" without naming the fury anywhere in the shell.
+        MeshInstance3D _spinBarrel;
+        float _spinAngle;                 // radians, accumulated -- kept here so the spin survives a re-aim
+        public bool HasSpinBarrel => _spinBarrel != null && IsInstanceValid(_spinBarrel);
+
+        /// <summary>Turn the barrel. `turns` is revolutions per second, so 0 parks it and the caller owns the
+        /// spin-up curve -- the viewmodel just draws whatever rate it is handed. About local Z, which is the bore:
+        /// the assembly was identified BY being symmetric about X and Y, so its own axis is the spin axis and
+        /// there is no offset to measure.</summary>
+        public void DriveSpinBarrel(float turns, double delta)
+        {
+            if (!HasSpinBarrel) return;
+            _spinAngle = Mathf.Wrap(_spinAngle + turns * Mathf.Tau * (float)delta, 0f, Mathf.Tau);
+            _spinBarrel.Rotation = new Vector3(0f, 0f, _spinAngle);
+        }
         public bool IntegralSight => _gunTxt != null && _gunTxt.Contains("augewehr");   // aug: built-in 4x scope is part of the gun -- no detachable/replaceable Sight slot (master)
         Vector3 _defaultSightPos = new(0f, 0.1312f, -0.118f);   // the gun's sight mount (SightPos = hook + iron Model_0); iron/scope/red-dot all mount here
         Vector3 _defaultAimHook = new(0f, -0.4688f, -0.2098f);   // the gun's ADS aim (gv.AimHook) -- the eye point iron/scope/red-dot all aim down
@@ -754,6 +771,27 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+
+                    // A SPINNING BARREL, BY CONVENTION (strawberry 2026-09-16: the minigun). If a gun ships a
+                    // `<name>_barrel.txt` beside its `_gun.txt`, that file is a separately-drawn assembly that
+                    // rotates about the bore. No table column and no parser change: the mesh naming already carries
+                    // this (nykorev_sight.txt is the same idea), so a second gun that gets one is a file, not a
+                    // schema edit.
+                    //
+                    // Where it came from: Unturned models a gun as ONE mesh, and the fury's `Barrel` child is an
+                    // attachment HOOK with no geometry -- so this was cut out of the body as a disconnected
+                    // COMPONENT (tools/split_gun_islands.py, which documents the identification). It shares the
+                    // body's material because it was the same mesh ten minutes ago: same albedo, same UVs, same
+                    // filter -- rebuilding a second material here would be a second thing to keep in step.
+                    _spinBarrel = null; _spinAngle = 0f;
+                    string barrelTxt = gv.Gun?.Replace("_gun.txt", "_barrel.txt");
+                    if (barrelTxt != null && ContentProvider.ParseObj($"res://content/{barrelTxt}") is { } spinMesh)
+                    {
+                        var smi = new MeshInstance3D { Mesh = spinMesh, MaterialOverride = mat };
+                        att.AddChild(smi);
+                        _spinBarrel = smi;
+                        Log.Print($"[vm] {barrelTxt} is a spinning assembly ({spinMesh.GetAabb().Size})");
+                    }
                     // THE HELD MODEL IS NOT ONE PIECE. Retail's equipable.prefab carries Model_0..n plus Bone_0..n,
                     // each its own mesh, and the item's Use clip animates them -- that is how a chip bag opens and
                     // how a canned meal's spoon moves. `mi` above is the old single-mesh rip of the WORLD model; if

@@ -2119,6 +2119,7 @@ namespace UnturnedGodot
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
             UpdateChainsaw(delta, lmb);
             UpdateOptic();
+            UpdateSpinBarrel(delta);
             UpdateTankOptics();   // the tank's periscope / gunsight overlays + their zoom (first person, seated)
             UpdateNightVision();  // the worn goggles' screen pass (N)
             UpdateTacticalLaser();   // the gun-rail laser's beam + dot (N)
@@ -3391,6 +3392,32 @@ namespace UnturnedGodot
         public bool HoldingOptic => _heldOptic != null;
         public float OpticZoom => _bino?.Zoom ?? 1f;
         public bool OpticRaised => _bino != null && _bino.Raised;
+        // THE MINIGUN (strawberry 2026-09-16: "wire it to spin up with rmb (no ads on the minigun.) and fire when
+        // spun up on lmb"). A deliberate deviation from retail, which ships Aim_Start/Aim_Stop for this gun and no
+        // spin at all -- there is no clip to port, so the behaviour is ours.
+        //
+        // Keyed off the VIEWMODEL having a spinning assembly rather than off an item id: the gun that has one is
+        // the gun whose mesh shipped a `_barrel.txt`, so a second minigun is an asset and not a special case in
+        // the shell. Nothing here names the fury.
+        const float SpinUpSeconds = 0.9f;     // RMB held -> fully spun
+        const float SpinDownSeconds = 1.4f;   // ...and the wind-down is slower, so a tap does not rearm instantly
+        const float SpinMaxTurns = 11f;       // revolutions/second at full spin
+        float _spin;                          // 0 = parked .. 1 = up to speed. The FIRE GATE reads this.
+
+        /// <summary>True once the barrel is up to speed, or when the gun has no barrel to spin -- so every other
+        /// gun in the game answers "yes, fire" and the gate below costs them nothing.</summary>
+        public bool SpunUp => _viewmodel?.HasSpinBarrel != true || _spin >= 1f;
+
+        void UpdateSpinBarrel(double dt)
+        {
+            if (_viewmodel?.HasSpinBarrel != true) { _spin = 0f; return; }
+            bool want = !_dead && _driving == null && !UiInputBlocked && !AltLooking
+                        && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim);
+            _spin = Mathf.Clamp(_spin + (want ? (float)dt / SpinUpSeconds : -(float)dt / SpinDownSeconds), 0f, 1f);
+            // Rate scales with the spin-up, so it visibly winds up and coasts down instead of snapping to speed.
+            _viewmodel.DriveSpinBarrel(_spin * SpinMaxTurns, dt);
+        }
+
         /// <summary>Per tick: RMB HELD presents the binoculars to the eyes (master 2026-09-05); release lowers them to the two-hand carry.</summary>
         void UpdateOptic()
         {
@@ -8313,6 +8340,11 @@ namespace UnturnedGodot
                 else if (HoldingThrowable) { if (Keybinds.IsDown(@event)) ThrowHeld(strong: false); }   // RMB with a throwable = the WEAK toss (source startSecondary -> ESwingMode.WEAK); LMB is the hard throw
                 else if (HoldingLight) { if (Keybinds.IsDown(@event)) ToggleHeldLight(); }   // RMB with the torch in hand toggles it (strawberry 2026-09-04 "change the flashlight to be toggled on/off with rmb instead of b"). Ahead of the strong-swing branch on purpose: the flashlight IS a melee item, so without this it would keep swinging instead.
                 else if (_melee != null) { if (Keybinds.IsDown(@event) && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
+                // A MINIGUN DOES NOT AIM DOWN SIGHTS. RMB spins the barrels instead, and the spin itself is driven
+                // per tick by UpdateSpinBarrel off the HELD key -- this arm exists only to swallow the event so it
+                // cannot fall through and raise the sights as well. Ahead of the general gun arm for the same
+                // reason the torch branch sits ahead of melee.
+                else if (_viewmodel?.HasSpinBarrel == true) { }
                 else _viewmodel?.SetAiming(Keybinds.IsDown(@event) && !AltLooking);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights); not while ALT-looking (master)
             }
             else if (Keybinds.Matches(GameAction.Reload, @event) && @event is not InputEventKey { Echo: true })
@@ -8838,6 +8870,10 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (AltLooking) return false;   // looking around with ALT: no shooting (auto-fire poll path too)
+            // SPUN UP OR NOTHING. A minigun with cold barrels does not fire -- and this is the single gate every
+            // path reaches (LMB press, held-auto poll, burst), which is why it is here rather than at the three
+            // call sites. SpunUp is true for every gun without a spinning assembly, so nothing else changes.
+            if (!SpunUp) return false;
             // A GUNNER fires the MOUNT, not what they are carrying. Checked before every held-weapon gate below,
             // because those gates are about a rifle in your hands -- reload state, chambering, swimming, the
             // viewmodel's equip animation -- and none of them describe a belt-fed gun bolted to an airframe.
@@ -10211,7 +10247,8 @@ namespace UnturnedGodot
                         _magSwapAutoRack = false;
                         _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
                     }
-                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming)
+                    else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming
+                             && _viewmodel?.HasSpinBarrel != true)   // ...but a minigun has no sights to resume INTO -- RMB is its spin-up
                         _viewmodel?.SetAiming(true);   // resume ADS if RMB is still held when the anim finishes
                 }
             }
