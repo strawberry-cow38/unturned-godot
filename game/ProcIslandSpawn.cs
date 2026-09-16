@@ -137,36 +137,64 @@ namespace UnturnedGodot
             // NOT a multiple of TileSize, so every town sits on its own sub-lattice and a shared integer grid
             // puts neighbouring tiles in non-adjacent cells. That probe reports phantom exposed arms, which is
             // an instrument failure wearing the shape of the bug it is looking for.
-            // Arms per piece, in lattice steps, before the tile's own yaw is applied.
+            // ⚠ PER-ARM, FROM THE REAL CONNECTOR DATA -- not a count of neighbours. Counting arms against
+            // neighbours cannot see an arm pointing the WRONG WAY: a cell with two neighbours and two arms
+            // scores clean even when neither arm faces one. strawberry described the actual failure per-arm
+            // ("2 sides go into other road props, one goes into a spline (cap end) and the other is exposed to
+            // air"), so the probe reads content/objects/road_connectors.txt -- the same file the kit is built
+            // from -- rotates each connector through the REAL placement basis (ArmDir, not an open-coded
+            // matrix) and asks whether a tile sits one step along it.
+            // A CAP's ramp is its mesh +Y and is the one opening it is allowed.
+            var arms = LoadRoadConnectors();
+            var byPiece = new System.Collections.Generic.Dictionary<ProcIsland.RoadPiece, int>();
             int exposed = 0, checkedArms = 0;
             foreach (var t in terr.IslandTiles)
             {
-                int armCount = t.Piece switch
+                string prop = ProcIsland.PropFor(t.Piece);
+                if (prop == null || !arms.TryGetValue(prop, out var list)) continue;
+                bool isCap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
+                foreach (var (mx, my) in list)
                 {
-                    ProcIsland.RoadPiece.Quad => 4,
-                    ProcIsland.RoadPiece.Tee => 3,
-                    ProcIsland.RoadPiece.Line or ProcIsland.RoadPiece.Turn => 2,
-                    _ => 0,   // caps terminate on purpose
-                };
-                if (armCount == 0) continue;
-                int here = 0;
-                foreach (var o in terr.IslandTiles)
-                {
-                    float dx = o.X - t.X, dz = o.Z - t.Z;
-                    // one tile step away, cardinally: 24 m along one axis and ~0 on the other
-                    bool xStep = Mathf.Abs(Mathf.Abs(dx) - 24f) < 2f && Mathf.Abs(dz) < 2f;
-                    bool zStep = Mathf.Abs(Mathf.Abs(dz) - 24f) < 2f && Mathf.Abs(dx) < 2f;
-                    if (xStep || zStep) here++;
+                    if (isCap && my > 0.5f && Mathf.Abs(mx) < 0.5f) continue;   // the ramp: a cap's one legitimate opening
+                    var (ax, az) = ArmDir(t.YawDeg, mx, my);
+                    float nx = t.X + ax * 24f, nz = t.Z + az * 24f;
+                    bool found = false;
+                    foreach (var o in terr.IslandTiles)
+                        if (Mathf.Abs(o.X - nx) < 3f && Mathf.Abs(o.Z - nz) < 3f) { found = true; break; }
+                    checkedArms++;
+                    if (!found) { exposed++; byPiece.TryGetValue(t.Piece, out int e); byPiece[t.Piece] = e + 1; }
                 }
-                // A piece with more arms than it has neighbours is opening at least that many onto air.
-                if (armCount > here) exposed += armCount - here;
-                checkedArms += armCount;
             }
+            var blame = new System.Collections.Generic.List<string>();
+            foreach (var kv in byPiece) blame.Add($"{kv.Key} {kv.Value}");
+
             var parts = new System.Collections.Generic.List<string>();
             int total = terr.IslandTiles.Count;
             foreach (var kv in counts) parts.Add($"{kv.Key} {kv.Value} ({(total > 0 ? kv.Value * 100 / total : 0)}%)");
             Log.Print($"[island-pieces] {string.Join(", ", parts)}");
-            Log.Print($"[island-pieces] {exposed} arm(s) of {checkedArms} open onto air (caps excluded)");
+            Log.Print($"[island-pieces] exit-grow: added {ProcIsland.GrowAdded}, blocked by lattice edge {ProcIsland.GrowBlocked}, trimmed {ProcIsland.GrowTrimmed}, still short {ProcIsland.GrowShort}");
+            Log.Print($"[island-pieces] {exposed} arm(s) of {checkedArms} open onto air"
+                      + (blame.Count > 0 ? $" -- from {string.Join(", ", blame)}" : ""));
+        }
+
+        /// <summary>Per-prop connector arms (mesh-local outward direction) from the file the kit is built
+        /// from, so the probe cannot disagree with the art about where a road opens.</summary>
+        static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(float mx, float my)>> LoadRoadConnectors()
+        {
+            var map = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(float, float)>>();
+            string path = ProjectSettings.GlobalizePath("res://content/objects/road_connectors.txt");
+            if (!System.IO.File.Exists(path)) { Log.Print("[island-pieces] no road_connectors.txt -- arm check skipped"); return map; }
+            foreach (string line in System.IO.File.ReadAllLines(path))
+            {
+                if (line.StartsWith("#")) continue;
+                var f = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (f.Length < 7) continue;
+                if (!float.TryParse(f[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float dx)) continue;
+                if (!float.TryParse(f[5], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float dy)) continue;
+                if (!map.TryGetValue(f[0], out var l)) { l = new System.Collections.Generic.List<(float, float)>(); map[f[0]] = l; }
+                l.Add((dx, dy));
+            }
+            return map;
         }
 
         /// <summary>UG_CLIPDBG=1: measure what is actually clipping, instead of guessing at it again.

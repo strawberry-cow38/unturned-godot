@@ -561,6 +561,10 @@ namespace UnturnedGodot
         /// 9.2 m the ground was only partly levelled and the road was laid straight over it -- which is the
         /// terrain that pokes up through the surface (strawberry: "reduce the amount of clipping of terrain
         /// through the roads"). A carve narrower than its own road cannot help clipping however smooth it is.</summary>
+        /// <summary>Diagnostics for the exit-growing pass: how many street cells it added, how many it could
+        /// not add because the lattice ended, and how many exits still came up short of an exact cap fit.</summary>
+        public static int GrowAdded, GrowBlocked, GrowShort, GrowTrimmed;
+
         public const float RenderedRoadHalf = 9.2f;
         const float CarveMargin = 2.5f;   // levelled a little past the edge, so the blend starts off the tarmac
 
@@ -1103,6 +1107,99 @@ namespace UnturnedGodot
                     foreach (var d in Card) if (skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz))) deg++;
                     if (deg <= 1) { skel.Remove(cell); trimmed = true; }
                 }
+            }
+
+            // NO STREET ARM MAY OPEN ONTO AIR (strawberry: "roads cannot have exposed non-cap ends exposed to
+            // 'air' (not connected to a road)").
+            //
+            // ⚠ A CAP IS ALLOWED EXACTLY ONE OPENING -- its ramp -- and the kit only fits an exit cell exactly
+            // at three shapes: ramp + 1 street OPPOSITE (LineCap), ramp + 2 streets forming a BAR across it
+            // (TeeCap), or ramp + 3 streets (QuadCap). Any other count falls through to QuadCap, whose spare
+            // arm is then laid as carriageway into empty ground. strawberry, describing precisely that: "the
+            // props themselves are quad caps, 2 sides go into other road props, one goes into a spline (cap
+            // end) and the other is exposed to 'air'."
+            //
+            // The old comment here called a spare connector "invisible". It is not -- it is a road surface
+            // ending in midair, and it was the shape of 24-29 arms per island.
+            //
+            // FIXED BY GROWING THE STREET, NOT BY PICKING A NARROWER PIECE. Choosing TeeCap for a shape it
+            // cannot express would open a street onto solid kerb, which the note above rightly calls the worse
+            // failure. Adding the missing neighbour turns the spare arm into a real road, and that new cell has
+            // one neighbour so it terminates in a LineCap -- whose ramp facing outward is a cap end, which is
+            // allowed.
+            foreach (var kv in new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<(int, int), (int dx, int dz)>>(exits))
+            {
+                var cell = kv.Key; var ramp = kv.Value;
+                var streets = new System.Collections.Generic.List<(int dx, int dz)>();
+                foreach (var d in Card)
+                    if (!(d.dx == ramp.dx && d.dz == ramp.dz) && skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz)))
+                        streets.Add(d);
+
+                bool exact = streets.Count == 3
+                          || (streets.Count == 1 && streets[0].dx == -ramp.dx && streets[0].dz == -ramp.dz)
+                          || (streets.Count == 2
+                              && streets[0].dx == -streets[1].dx && streets[0].dz == -streets[1].dz
+                              && streets[0].dx * ramp.dx + streets[0].dz * ramp.dz == 0);
+                if (exact) continue;
+
+                // Grow toward 3 streets, which QuadCap fits exactly. Inward first: it is always on the lattice
+                // (a gate is never a corner), where a lateral may not be.
+                foreach (var d in Card)
+                {
+                    if (streets.Count >= 3) break;
+                    if (d.dx == ramp.dx && d.dz == ramp.dz) continue;
+                    var nc = (cell.Item1 + d.dx, cell.Item2 + d.dz);
+                    if (nc.Item1 < 0 || nc.Item2 < 0 || nc.Item1 >= n || nc.Item2 >= n) { GrowBlocked++; continue; }
+                    if (skel.Contains(nc)) continue;
+                    skel.Add(nc);
+                    streets.Add(d);
+                    GrowAdded++;
+                }
+                if (streets.Count >= 3) continue;
+
+                // ⚠ CANNOT GROW -> SHRINK. Measured: 22 exits per island come up short because the third
+                // street cell would fall OUTSIDE the lattice, which happens on the small monuments (n=2, where
+                // every cell is a corner). On those a QuadCap can never be satisfied, so leaving it is choosing
+                // a piece with an arm that opens onto air by construction.
+                // So trim laterals until the shape IS exact: ramp + the inward street alone is a LineCap, which
+                // has no spare arm. A lateral removed here is not disconnected -- it keeps whatever other
+                // neighbours it had, and if that leaves it a dead end it terminates in its own LineCap, whose
+                // outward ramp is a legitimate cap end.
+                var inward = (dx: -ramp.dx, dz: -ramp.dz);
+                // ⚠ AN EXIT WITH NO STREET AT ALL still gets a LineCap, whose single street arm then points
+                // inward at nothing -- a gate opening onto its own empty lattice cell. The inward neighbour is
+                // always on the lattice for an edge cell, so there is no reason to leave it unconnected.
+                if (streets.Count == 0)
+                {
+                    var ic = (cell.Item1 + inward.dx, cell.Item2 + inward.dz);
+                    if (ic.Item1 >= 0 && ic.Item2 >= 0 && ic.Item1 < n && ic.Item2 < n)
+                    { skel.Add(ic); streets.Add(inward); GrowAdded++; }
+                }
+                foreach (var d in new System.Collections.Generic.List<(int dx, int dz)>(streets))
+                {
+                    if (streets.Count <= 1) break;
+                    if (d.dx == inward.dx && d.dz == inward.dz) continue;   // keep the street INTO the town
+                    var lc = (cell.Item1 + d.dx, cell.Item2 + d.dz);
+                    if (!skel.Contains(lc)) continue;
+                    skel.Remove(lc);
+                    streets.Remove(d);
+                    GrowTrimmed++;
+                }
+                if (streets.Count > 1 || (streets.Count == 1 && !(streets[0].dx == inward.dx && streets[0].dz == inward.dz)))
+                    GrowShort++;
+            }
+
+            // ⚠ DROP ANYTHING LEFT COMPLETELY ISOLATED. The nb==0 branch below falls through to Quad -- four
+            // carriageway arms on a cell with no neighbours at all, which is four arms into air and the worst
+            // single offender left after the exit work. Degree ZERO only, deliberately: the earlier stub prune
+            // removes degree <= 1, and re-running that here would delete the one-neighbour stubs the exit
+            // growing just added, undoing the fix it is meant to finish.
+            foreach (var cell in new System.Collections.Generic.List<(int, int)>(skel))
+            {
+                if (exits.ContainsKey(cell)) continue;
+                int deg0 = 0;
+                foreach (var d in Card) if (skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz))) deg0++;
+                if (deg0 == 0) { skel.Remove(cell); GrowTrimmed++; }
             }
 
             foreach (var cell in skel)
