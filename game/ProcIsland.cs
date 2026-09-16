@@ -38,6 +38,8 @@ namespace UnturnedGodot
             public int Towns, Bases, Sites;   // POIs of each kind PER ~0.45 km2 of land -- see PlacePois
             public float SmoothStrength;      // 0..1 of a box blur applied after flattening
 
+            public float LakeThreshold, LakeDepth;
+
             public static Params Default(int seed) => new()
             {
                 Seed = seed,
@@ -55,6 +57,12 @@ namespace UnturnedGodot
                 WarpScale = 210f,
                 Towns = 1, Bases = 1, Sites = 2,
                 SmoothStrength = 0.55f,
+                // How much of the inland relief field becomes water. fBm sits near 0.5, so 0.62 takes roughly
+                // the top sixth of it -- a couple of ponds and the odd proper lake per island rather than a
+                // flooded interior. Depth is measured DOWN from the waterline, so it is also how deep you can
+                // swim in one.
+                LakeThreshold = 0.62f,
+                LakeDepth = 7f,
             };
         }
 
@@ -107,6 +115,7 @@ namespace UnturnedGodot
             // only looking at the rendered heightmap showed a dinner plate. Metres also make "the same seed at
             // a bigger size" mean a LARGER island rather than a stretched one.
             const float Unit = 4f;   // Terrain.UNIT: world metres per grid cell
+            int lakeCells = 0, lakeInland = 0;
             float cx = (gw - 1) * 0.5f, cy = (gh - 1) * 0.5f;
             float maxR = Mathf.Min(cx, cy);   // MIN, not the diagonal: on a non-square map the short axis decides
                                               // whether the coast closes; a diagonal radius runs the island off
@@ -162,9 +171,54 @@ namespace UnturnedGodot
                         ? p.SeaLevel - 1.5f + (p.PeakHeight - (p.SeaLevel - 1.5f)) * inland * (0.07f + 0.93f * relief01)
                         : Mathf.Lerp(p.SeabedDepth, p.SeaLevel - 1.5f, land / 0.06f);
 
+                    // ---- INLAND PONDS AND LAKES (strawberry 2026-09-16: "allow inland ponds/lakes to spawn")
+                    //
+                    // ⭐ NOTHING HAS TO DRAW THEM. BuildOceanMesh emits a quad wherever a corner samples below
+                    // SeaLevelY -- it is not a ring around the island, it is a waterline over the whole map --
+                    // so a basin cut below sea level IS a lake the moment the terrain says so. Everything else
+                    // follows for the same reason: PlacePois builds its candidate list from cells ABOVE sea
+                    // level so nothing gets sited in one, Route2D prices water at +400 so roads go round, and
+                    // the sand band at SeaLevelY+4 gives each one a shore without a second rule.
+                    //
+                    // ⚠ THE NOTE ABOVE SAYS ADDING NOISE TO THE MASK "punches lakes through the middle" -- and
+                    // it was right, which is why this is NOT done that way. Doing it in the mask would also
+                    // break the island into pieces off the coast, because the mask is what decides where land
+                    // IS. A lake is a hole in the HEIGHT, cut after the outline is settled, so the coastline is
+                    // untouched.
+                    //
+                    // Only well inland (`inland` is saturated a little past the shore), so a lake never opens
+                    // onto the sea and becomes a bay. Squared basin profile: a flat-bottomed pan with a rim
+                    // that climbs, rather than a cone.
+                    float lakeN = Fbm(mx / (p.ShapeMetres * 0.42f), my / (p.ShapeMetres * 0.42f), p.Seed + 8821);
+                    if (inland > 0.985f) lakeInland++;
+                    if (inland > 0.985f && lakeN > p.LakeThreshold)
+                    {
+                        // ⚠ SATURATE, DO NOT TAPER. The first cut used `basin = depth01^2` over the whole range
+                        // above the threshold, which sounds like a nice dish and is in practice a rule that
+                        // almost never reaches water: inland ground sits about 3.5 m above the waterline, so a
+                        // cell had to reach basin > 0.33, i.e. fBm above 0.84, which it hardly ever is. 19600
+                        // cells were "cut" and next to none of them flooded -- the change was real, gentle, and
+                        // invisible. Saturating over a narrow band gives a flat-bottomed pan with a defined
+                        // shore, which is both what a lake looks like and what actually goes under.
+                        float basin = Mathf.SmoothStep(p.LakeThreshold, p.LakeThreshold + 0.10f, lakeN);
+                        // Blend DOWN to a bed below the waterline. Lerp rather than subtract so the rim meets
+                        // the surrounding land exactly at basin = 0 and there is no lip around the shore.
+                        float bed = p.SeaLevel - p.LakeDepth;
+                        world = Mathf.Lerp(world, bed, basin);
+                    }
+                    // ⚠ THE METRIC IS "DID IT FLOOD", not "did the rule touch it". Counting cells the rule ran
+                    // on reported 19600 lakes on an island with none you could see.
+                    if (inland > 0.985f && world < p.SeaLevel) lakeCells++;
+
                     grid[x, y] = ToGrid(world);
                 }
             }
+            // ⚠ COUNTED, because "I did not see a lake" and "no lake was cut" are different failures and the
+            // fix for each is in a different place. Inland cells is the population the threshold selects FROM;
+            // if that is small the gate is too strict, and if it is large but the lake count is zero the
+            // threshold is.
+            Log.Print($"[island-water] {lakeCells} inland cell(s) BELOW the waterline of {lakeInland} inland cell(s) "
+                      + $"(threshold {p.LakeThreshold:0.00}, depth {p.LakeDepth:0.#} m)");
         }
 
         // ---------------------------------------------------------------- POIs
