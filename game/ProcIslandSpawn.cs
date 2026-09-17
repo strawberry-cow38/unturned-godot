@@ -2622,6 +2622,8 @@ namespace UnturnedGodot
                 // exactly that and is also only three data points. This prints the whole distribution.
                 var foldOn = new System.Collections.Generic.List<int>();
                 var jointR = new System.Collections.Generic.List<float>();
+                var foldSeg = new System.Collections.Generic.List<float>();
+                var foldTurn = new System.Collections.Generic.List<float>();
                 int fitBlame = 0, pathBlame = 0;
                 for (int ci = 0; ci < curves.Count; ci++)
                 {
@@ -2673,6 +2675,13 @@ namespace UnturnedGodot
                                     float jr = jt > 1e-4f ? (g1.Length() + g2.Length()) * 0.5f / jt : 9999f;
                                     jointR.Add(jr);
                                     if (jr > 40f) fitBlame++; else pathBlame++;
+                                    // ⚠ A RADIUS ALONE DOES NOT SAY WHICH FIX. radius = seg/turn, so a 10 m
+                                    // radius is a 137 degree hairpin between two 24 m joints OR a 57 degree
+                                    // bend between two 10 m ones -- a catastrophic path versus a short-segment
+                                    // artifact, and they want opposite repairs. The joint-spacing invariant
+                                    // pins the shortest segment at >=10 m, so print both and stop guessing.
+                                    foldSeg.Add((g1.Length() + g2.Length()) * 0.5f);
+                                    foldTurn.Add(Mathf.RadToDeg(jt));
                                 }
                             }
                         }
@@ -2694,6 +2703,11 @@ namespace UnturnedGodot
                     Log.Print($"[island-curve] at those folds the JOINTS turn at a median {jointR[jointR.Count / 2]:0} m radius "
                               + $"(min {jointR[0]:0}, max {jointR[^1]:0}) -- {fitBlame} fold(s) sit where the joints turn "
                               + $"gently (>40 m) so the CURVE FIT made the hairpin, {pathBlame} where the path hairpins too");
+                    var segsSorted = new System.Collections.Generic.List<float>(foldSeg); segsSorted.Sort();
+                    var turnSorted = new System.Collections.Generic.List<float>(foldTurn); turnSorted.Sort();
+                    Log.Print($"[island-curve] those joints are {segsSorted[0]:0}-{segsSorted[^1]:0} m apart "
+                              + $"(median {segsSorted[segsSorted.Count / 2]:0} m) and turn "
+                              + $"{turnSorted[0]:0}-{turnSorted[^1]:0} deg (median {turnSorted[turnSorted.Count / 2]:0} deg)");
                 }
             }
 
