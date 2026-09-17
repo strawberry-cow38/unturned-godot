@@ -2182,7 +2182,8 @@ namespace UnturnedGodot
             // simply hung the render. Segments are short and local, so a 40 m grid makes this near-linear.
             int hits = 0; var hitAt = Vector2.Zero;
             var marks = new System.Collections.Generic.List<Vector2>();
-            int hitSelf = 0, hitFence = 0, hitPair = 0;
+            int hitSelf = 0, hitFence = 0, hitPair = 0, selfReal = 0;
+            float selfWorstR = float.MaxValue;
             var seenX = new System.Collections.Generic.HashSet<(int, int, int, int)>();
             const float HCell = 40f;
             var grid = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<int>>();
@@ -2224,7 +2225,34 @@ namespace UnturnedGodot
                             // ⚠ WHICH KIND. A road's own inner edge folding over itself on a tight bend is a
                             // completely different defect from two roads overlapping, and "47 crossings" cannot
                             // tell them apart -- which is why three fixes aimed at road-vs-road moved it by one.
-                            if (segs[x1].Road == segs[y1].Road && segs[x1].Road >= 0) hitSelf++;
+                            if (segs[x1].Road == segs[y1].Road && segs[x1].Road >= 0)
+                            {
+                                hitSelf++;
+                                // ⚠ IS IT REAL? A road's own edges can only cross where the turn radius is
+                                // tighter than the half-width (9.2 m) -- below that the inner offset inverts.
+                                // The corner report says the sharpest bend on these islands is 24-47 m, so if
+                                // these hits are at radii well above 9.2 they are an artifact of how far apart
+                                // two segments of one road have to be before I compare them, not a fold. Worth
+                                // knowing BEFORE anyone tries to fix them.
+                                int idx = Mathf.Min(x1, y1);
+                                if (segs[idx].Road >= 0 && segs[idx].Road < DebugCurves.Count)
+                                {
+                                    var cc = DebugCurves[segs[idx].Road];
+                                    float best = float.MaxValue;
+                                    for (int q = 2; q < cc.Count - 1; q++)
+                                    {
+                                        if (new Vector2(cc[q].X - mid3.X, cc[q].Z - mid3.Y).Length() > 40f) continue;
+                                        var u1 = new Vector2(cc[q].X - cc[q - 1].X, cc[q].Z - cc[q - 1].Z);
+                                        var u2 = new Vector2(cc[q + 1].X - cc[q].X, cc[q + 1].Z - cc[q].Z);
+                                        if (u1.Length() < 1e-3f || u2.Length() < 1e-3f) continue;
+                                        float tn = Mathf.Abs(Mathf.Acos(Mathf.Clamp(u1.Normalized().Dot(u2.Normalized()), -1f, 1f)));
+                                        float rr = tn > 1e-4f ? u1.Length() / tn : 9999f;
+                                        if (rr < best) best = rr;
+                                    }
+                                    if (best < selfWorstR) selfWorstR = best;
+                                    if (best < 9.2f) selfReal++;
+                                }
+                            }
                             else if (segs[x1].Road == -2 || segs[y1].Road == -2) hitFence++;
                             else hitPair++;
                         }
@@ -2244,7 +2272,8 @@ namespace UnturnedGodot
             terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
             Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn; "
                       + $"{hits} place(s) where two DRAWN lines cross ({hitSelf} one road folding over ITSELF, "
-                      + $"{hitPair} between two roads, {hitFence} a fence over a road)"
+                      + $"{hitPair} between two roads, {hitFence} a fence over a road; of the self ones {selfReal} are at a "
+                      + $"radius under the 9.2 m half-width i.e. a REAL fold, tightest {(selfWorstR == float.MaxValue ? 0f : selfWorstR):0.0} m)"
                       + (hits > 0 ? $", last at ({hitAt.X:0},{hitAt.Y:0})" : ""));
         }
 
