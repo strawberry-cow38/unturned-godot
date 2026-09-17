@@ -426,10 +426,40 @@ namespace UnturnedGodot
                 float jf = all > 0 ? junction / (float)all : 0f;
                 if (jf > worstJunction) worstJunction = jf;
             }
+            // ⚠ AND PROVE THE ONE-PER-TOWN RULE HOLDS, rather than trusting the branch that implements it. A
+            // duplicate is exactly the kind of thing that survives a refactor silently: the fallback path only
+            // runs when a name is already taken, so the day the set stops being cleared per town nothing errors,
+            // the towns just quietly get two banks again.
+            // ⚠ bizMax IS WHAT STOPS "0 duplicates" BEING VACUOUS. With businesses rare, a town that only ever
+            // gets ONE cannot produce a duplicate whether the rule exists or not -- the number would read clean
+            // on a build with the rule deleted. The highest count in any single town says whether the rule was
+            // ever actually asked a question: 4 businesses in one town with 0 duplicates is 4 distinct picks out
+            // of a 5-prop table, which it cannot have reached by luck.
+            int dupTowns = 0, bizTotal = 0, bizMax = 0; bool dupHere = false;
+            if (terr.IslandBuildings != null)
+            {
+                var bizByPoi = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.Dictionary<string, int>>();
+                foreach (var b in terr.IslandBuildings)
+                {
+                    if (!ProcIsland.IsBusinessProp(b.Prop)) continue;
+                    bizTotal++;
+                    if (!bizByPoi.TryGetValue(b.Poi, out var m)) { m = new System.Collections.Generic.Dictionary<string, int>(); bizByPoi[b.Poi] = m; }
+                    m.TryGetValue(b.Prop, out int c3); m[b.Prop] = c3 + 1;
+                }
+                foreach (var kv in bizByPoi)
+                {
+                    int inThis = 0;
+                    foreach (var e in kv.Value) { inThis += e.Value; if (e.Value > 1) dupHere = true; }
+                    if (dupHere) { dupTowns++; dupHere = false; }
+                    if (inThis > bizMax) bizMax = inThis;
+                }
+            }
+
             var sb = new System.Text.StringBuilder("[island-towns]");
             foreach (ProcIsland.TownSize sz in System.Enum.GetValues(typeof(ProcIsland.TownSize)))
                 sb.Append($" {sz}={(tally.TryGetValue(sz, out int c2) ? c2 : 0)}");
             sb.Append($" | worst junction share {worstJunction * 100f:0}%, most adjacent junctions in one town {worstAdj}");
+            sb.Append($" | {bizTotal} business building(s), most in one town {bizMax}, {dupTowns} town(s) with a duplicate");
             Log.Print(sb.ToString());
         }
 

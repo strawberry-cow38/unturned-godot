@@ -2018,22 +2018,39 @@ namespace UnturnedGodot
         /// ⚠ `through` picks the shallow-fitting variant of whichever table wins -- a block with a street behind
         /// it as well as in front has a 24 m road piece at BOTH ends. Choosing the table first and the depth
         /// second keeps the size rule and the fit rule from having to know about each other.</summary>
+        /// <summary>Is this prop one of the business buildings? ⚠ Derived from the Businesses table rather than
+        /// listed again -- a second copy of "which props are shops" is how adding a new one silently escapes the
+        /// one-per-town rule.</summary>
+        public static bool IsBusinessProp(string name) => IsBusiness(name);
+
+        static bool IsBusiness(string name)
+        {
+            foreach (var b in Businesses) if (b.Name == name) return true;
+            return false;
+        }
+
         static BuildingProp[] TableFor(TownSize size, float r, bool through)
         {
             switch (size)
             {
+                // ⚠ BUSINESS SHARE CUT ACROSS ALL THREE (strawberry: "lower the chance of businesses
+                // everywhere"). City 24 -> 12, Medium 30 -> 14, Small 8 -> 4. The one-per-town rule alone would
+                // not have done it: it caps how many DISTINCT shops a town has, and with the old weights a big
+                // town simply hit the cap and then filled the rest of its business rolls with fallback houses --
+                // the same buildings, arrived at by a longer route, with the cap doing the work the weights
+                // should have been doing.
                 case TownSize.City:
-                    return r < 0.30f ? (through ? ThruApt : FitApt)
-                         : r < 0.58f ? (through ? ThruOffice : FitOffice)
-                         : r < 0.82f ? (through ? ThruBiz : FitBiz)
-                         : r < 0.92f ? (through ? ThruCivic : FitCivic)
+                    return r < 0.34f ? (through ? ThruApt : FitApt)
+                         : r < 0.66f ? (through ? ThruOffice : FitOffice)
+                         : r < 0.78f ? (through ? ThruBiz : FitBiz)
+                         : r < 0.88f ? (through ? ThruCivic : FitCivic)
                          : (through ? ThruHouses : FitHouses);          // houses a lot less common
                 case TownSize.Medium:
-                    return r < 0.55f ? (through ? ThruHouses : FitHouses)
-                         : r < 0.85f ? (through ? ThruBiz : FitBiz)     // businesses still less common
+                    return r < 0.70f ? (through ? ThruHouses : FitHouses)
+                         : r < 0.84f ? (through ? ThruBiz : FitBiz)     // businesses still less common
                          : (through ? ThruCivic : FitCivic);
                 default:                                                 // Small (Monument builds nothing)
-                    return r < 0.92f ? (through ? ThruHouses : FitHouses)
+                    return r < 0.96f ? (through ? ThruHouses : FitHouses)
                          : (through ? ThruBiz : FitBiz);                 // rarely one business
             }
         }
@@ -2078,6 +2095,9 @@ namespace UnturnedGodot
             // example is about the result ("the monuments with just 2 road line caps are just 'monument'").
             var size = SizeOf(street.Count);
             if (size == TownSize.Monument) return outp;   // two caps and a road is not a settlement
+            // Business props already standing in THIS town. Per-monument, not per-island: two towns each having
+            // a petrol station is a map; one town having two is a bug.
+            var usedBiz = new System.Collections.Generic.HashSet<string>();
 
             int slot = 0;
             for (int i = 0; i < n; i++)
@@ -2109,6 +2129,35 @@ namespace UnturnedGodot
                         // wall back in the road, which is the whole thing being fixed.
                         if (table.Length == 0) break;
                         var b = table[(int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f)];
+
+                        // ⚠ ONE OF EACH BUSINESS PER TOWN (strawberry 2026-09-17: "limit 1 of each business type
+                        // per town"). A town with two banks and three petrol stations reads as a tiling error
+                        // rather than a place -- the props are distinct buildings with signage, not
+                        // interchangeable filler, which is exactly why the duplicates are obvious.
+                        //
+                        // ⚠ AND THE FALLBACK IS A HOUSE, NOT AN EMPTY BLOCK. Skipping the block would punch a
+                        // hole in the street the moment a town got big enough to want a fifth business, so a
+                        // taken business degrades to the thing there is always more of. Walk the table from the
+                        // rolled index so the substitute is still seeded rather than always the first entry.
+                        if (IsBusiness(b.Name))
+                        {
+                            if (!usedBiz.Add(b.Name))
+                            {
+                                bool found = false;
+                                int start = (int)(Hash01(i, j * 91 + slot, p.Seed + 907) * (table.Length - 1) + 0.5f);
+                                for (int k = 1; k < table.Length && !found; k++)
+                                {
+                                    var alt = table[(start + k) % table.Length];
+                                    if (usedBiz.Add(alt.Name)) { b = alt; found = true; }
+                                }
+                                if (!found)
+                                {
+                                    var houses = through ? ThruHouses : FitHouses;
+                                    if (houses.Length == 0) break;
+                                    b = houses[(int)(Hash01(i * 7, j * 13 + slot, p.Seed + 911) * (houses.Length - 1) + 0.5f)];
+                                }
+                            }
+                        }
                         // Setback is per PROP, measured out from the street cell it fronts.
                         float set = SetbackFor(b);
                         outp.Add(new MonumentBuilding(poiIndex, b.Name, scx + d.dx * set, scz + d.dz * set, yaw));
