@@ -2615,6 +2615,12 @@ namespace UnturnedGodot
             {
                 float tightest = float.MaxValue; int tightRoute = -1; Vector2 tightAt = Vector2.Zero;
                 int folds = 0, tight20 = 0, samples = 0;
+                // WHICH routes fold, in carve order. Routes are carved one at a time and each stamps `used[]`
+                // for the next, so the last ones route through whatever corridor is left -- if folding is a
+                // symptom of that squeeze rather than of the curve fitting, these indices cluster at the END.
+                // Three seeds put the TIGHTEST fold on route 24/27, 24/27 and 26/28, which is suggestive of
+                // exactly that and is also only three data points. This prints the whole distribution.
+                var foldOn = new System.Collections.Generic.List<int>();
                 for (int ci = 0; ci < curves.Count; ci++)
                 {
                     var c = curves[ci];
@@ -2634,7 +2640,7 @@ namespace UnturnedGodot
                         // gets this right a different way -- it takes the tangents at i-W and i+W, which span
                         // the same arc as its chord does -- and the fence pass uses this same mean-segment form.
                         float radius = (a.Length() + b2.Length()) * 0.5f / turn;
-                        if (radius < ProcIsland.RenderedRoadHalf) folds++;
+                        if (radius < ProcIsland.RenderedRoadHalf) { folds++; foldOn.Add(curveRoute[ci]); }
                         if (radius < 20f) tight20++;
                         if (radius < tightest) { tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z); }
                     }
@@ -2642,9 +2648,11 @@ namespace UnturnedGodot
                 string worst = tightRoute >= 0
                     ? $", tightest {tightest:0.0} m on route {tightRoute} at ({tightAt.X:0},{tightAt.Y:0})"
                     : "";
+                foldOn.Sort();
+                string onRoutes = foldOn.Count > 0 ? $" -- on route(s) {string.Join(",", foldOn)} of {curves.Count}" : "";
                 Log.Print($"[island-curve] {folds} of {samples} centreline sample(s) turn tighter than the "
                           + $"{ProcIsland.RenderedRoadHalf:0.0} m half-width (the ribbon inverts there); "
-                          + $"{tight20} tighter than 20 m{worst}");
+                          + $"{tight20} tighter than 20 m{worst}{onRoutes}");
             }
 
             // ---- DROP ANY JUNCTION ROAD WHOSE BUILT RIBBON CROSSES ANOTHER ROAD --------------------------
