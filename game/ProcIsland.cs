@@ -1462,6 +1462,31 @@ namespace UnturnedGodot
         /// twenty-five (+200) and loses to almost any detour.</summary>
         static readonly bool NoRoadPenalty = System.Environment.GetEnvironmentVariable("UG_NOROADPENALTY") == "1";
         const float UsedInner = 8f, UsedOuter = 4f;
+        /// <summary>What it costs to route straight over another road's TARMAC, as opposed to alongside it.
+        ///
+        /// ⚠⚠ THE OLD PENALTY WAS TUNED AGAINST THE WRONG THING. Its own note says "a perpendicular crossing
+        /// pays for about five cells (+40 on a route that costs several hundred) while 100 m of parallel
+        /// running pays twenty-five" -- i.e. crossing was deliberately CHEAP and hugging was expensive. That is
+        /// the right shape for "do not share a valley" and the wrong one for "never cross", which is what
+        /// master has been reporting all day: measured 1.1 m between a Road and a construction-site Trail on
+        /// seed 771177, with the two carriageways merged and the lane markings running through each other.
+        ///
+        /// So the core is now priced like water (400) over the ribbon's actual width, while the halo keeps its
+        /// gentle 8/4 for the parallel case. A crossing costs a detour; brushing past still only costs a nudge.</summary>
+        const float UsedCore = 400f;
+        /// ⚠ The radius has to exceed what Relax's ease can MOVE a point after the A* has dodged -- the same
+        /// reason UsedOuterR is 46 and not 14. A core only as wide as the tarmac means the search avoids the
+        /// road and the smoothing walks back over it. UG_CORER sweeps it.
+        static readonly float UsedCoreR = float.TryParse(System.Environment.GetEnvironmentVariable("UG_CORER"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float _cr) ? _cr : 40f;
+        // ⚠ 40 IS A TRADE, NOT A FIX, and the sweep says so. Crossings between two roads, by core radius:
+        //     11 m   29 / 22 / 42   (424242 / 771177 / 12345)
+        //     25 m   30 / -- / --
+        //     40 m   19 / 21 / 37
+        // Better on average and WORSE on 12345, which is what a knob looks like when it is not addressing the
+        // cause. The cause is that the A* dodges and then Relax's Hermite ease walks the path back across --
+        // no stamp radius can fix that, because the thing that moves the road runs afterwards. The real answer
+        // is to validate the FINAL geometry and re-route what still crosses.
         // ⚠ THE HALO HAS TO COVER WHERE THE ROUTE ENDS UP, NOT WHERE A* PUT IT. The stamp is taken from the
         // relaxed points, but the NEXT route is relaxed and Hermite-eased AFTER its own A* has already dodged
         // this one -- so the search avoids the corridor and the smoothing then walks part of the path back
@@ -1497,7 +1522,7 @@ namespace UnturnedGodot
                         // the endpoints are known -- the same shape as the town-pad wall. A road pays nothing
                         // to reach its own town and pays full price to cross somebody else's approach.
                         if (InsideAnyTownPad(x * Unit, y * Unit, 0f)) continue;   // the pad proper is still the town's
-                        float v = d <= UsedInnerR ? UsedInner : UsedOuter;
+                        float v = d <= UsedCoreR ? UsedCore : d <= UsedInnerR ? UsedInner : UsedOuter;
                         if (v > used[x, y]) used[x, y] = v;   // MAX, not sum: two crossings do not make a wall
                     }
             }

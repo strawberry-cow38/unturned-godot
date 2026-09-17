@@ -2948,18 +2948,26 @@ namespace UnturnedGodot
             // which is impossible if the closest centrelines really are 38.9 m apart. So the defect has been
             // living inside the exclusions the whole time. Every exclusion I added to make a number
             // "actionable" was hiding the thing master kept pointing at.
-            float rawNear = float.MaxValue; var rawAt = Vector2.Zero; int rawShared = 0;
+            float rawNear = float.MaxValue; var rawAt = Vector2.Zero; int rawShared = 0; string rawWho = "";
             for (int i = 0; i < curves.Count; i++)
                 for (int j = i + 1; j < curves.Count; j++)
                     for (int a = 0; a < curves[i].Count; a += 2)
                         for (int b = 0; b < curves[j].Count; b += 2)
                         {
                             float d = new Vector2(curves[i][a].X - curves[j][b].X, curves[i][a].Z - curves[j][b].Z).Length();
-                            if (d < rawNear) { rawNear = d; rawAt = new Vector2(curves[i][a].X, curves[i][a].Z); }
+                            if (d < rawNear)
+                            {
+                                rawNear = d; rawAt = new Vector2(curves[i][a].X, curves[i][a].Z);
+                                // ⚠ WHICH TWO, and how far along each. Whether the offenders are two roads
+                                // leaving the SAME town or two unrelated ones decides the whole fix: the first
+                                // is a gate-placement problem, the second is a routing one. I have designed
+                                // against the wrong one of a pair enough times today to check first.
+                                rawWho = $"{curveKind[i]}#{i}@{(a * 100) / Mathf.Max(1, curves[i].Count)}% + {curveKind[j]}#{j}@{(b * 100) / Mathf.Max(1, curves[j].Count)}%";
+                            }
                             if (d < ProcIsland.RenderedRoadHalf * 2f) rawShared++;
                         }
             Log.Print($"[island-overlap] NO EXCLUSIONS: closest two ribbons {(rawNear == float.MaxValue ? 0f : rawNear):0.0} m apart, "
-                      + $"{rawShared} sample pair(s) within a tarmac width" + (rawShared > 0 ? $", nearest at ({rawAt.X:0},{rawAt.Y:0})" : ""));
+                      + $"{rawShared} sample pair(s) within a tarmac width" + (rawShared > 0 ? $", nearest at ({rawAt.X:0},{rawAt.Y:0}) between {rawWho}" : ""));
             Log.Print($"[island-overlap] closest two ribbons run in open country: {(nearest == float.MaxValue ? 0f : nearest):0.0} m "
                       + $"(tarmac touches under {ProcIsland.RenderedRoadHalf * 2f:0.#} m); {tarmacShared} sample pair(s) sharing tarmac"
                       + (tarmacShared > 0 ? $", nearest at ({nearAt.X:0},{nearAt.Y:0}) between {nearKinds}" : ""));
