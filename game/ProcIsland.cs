@@ -1739,7 +1739,7 @@ namespace UnturnedGodot
                 return false;
             }
 
-            int attempts = 0, noSite = 0, tooClose = 0;
+            int attempts = 0, noSite = 0, tooClose = 0, trailOnRoad = 0;
             // ⚠ Hash01 KEYED ON (route, try), not a running RNG. Every other choice in this file is drawn the
             // same way, and for the reason that matters here: a stateful generator makes each roll depend on
             // how many rolls came before it, so adding one road at the far end of the island would re-roll
@@ -1807,6 +1807,26 @@ namespace UnturnedGodot
                               + bestSite * (-2f * t3 + 3f * t2) + m1 * (t3 - t2);
                         pts.Add(q);
                     }
+                    // ⚠⚠ CHECK THE PATH, NOT JUST THE SITE (strawberry: "and you didnt test for trails?").
+                    // NearExisting above vets the CAMP -- where the trail ends -- and nothing vetted the route
+                    // it takes to get there. So a spur could leave its road square-on, bend through the fan,
+                    // and come straight back down alongside the road it started from: measured 0.6 m apart and
+                    // 31 samples sharing tarmac on seed 424242, a dirt track laid on top of a carriageway.
+                    // ⚠ The first 30 m is exempt because the trail BEGINS on a road; that is what a spur is.
+                    float walked = 0f; bool onRoad = false;
+                    float clearNeed = RenderedRoadHalf + TrailHalf + 4f;
+                    for (int k = 1; k < pts.Count && !onRoad; k++)
+                    {
+                        walked += pts[k].DistanceTo(pts[k - 1]);
+                        if (walked < 30f) continue;
+                        foreach (var r2 in routes)
+                        {
+                            for (int q = 0; q < r2.Points.Count; q += 2)
+                                if ((r2.Points[q] - pts[k]).Length() < clearNeed) { onRoad = true; break; }
+                            if (onRoad) break;
+                        }
+                    }
+                    if (onRoad) { trailOnRoad++; continue; }
                     trails.Add(new Route(LinkKind.Trail, pts));
                     float yaw = Mathf.Atan2(-(bestSite.X - pts[^2].X), -(bestSite.Y - pts[^2].Y));
                     camps.Add(new Camp(bestSite.X, bestSite.Y, yaw,
@@ -1869,7 +1889,7 @@ namespace UnturnedGodot
                     }
             }
             Log.Print($"[island-trails] {trails.Count} trail spur(s) and camp(s) from {attempts} attempt(s) "
-                      + $"({noSite} no flat site, {tooClose} too close to something)");
+                      + $"({noSite} no flat site, {tooClose} too close to something, {trailOnRoad} whose path ran along a road)");
             return (trails, camps);
         }
 

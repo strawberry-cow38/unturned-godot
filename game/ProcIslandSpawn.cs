@@ -2039,9 +2039,11 @@ namespace UnturnedGodot
             // as it finally is.
             var profiles = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
             var profileKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
+            var profileRoute = new System.Collections.Generic.List<int>();   // index back into IslandRoutes, so a dropped road can be removed THERE too
 
-            foreach (var route in terr.IslandRoutes)
+            for (int routeIdx = 0; routeIdx < terr.IslandRoutes.Count; routeIdx++)
             {
+                var route = terr.IslandRoutes[routeIdx];
                 if (route.Points == null || route.Points.Count < 2) { skipped++; continue; }
 
                 // ⚠⚠ THE STUB MUST SURVIVE THE STRIDE. A route's first StubPoints are a STRAIGHT perpendicular
@@ -2165,6 +2167,7 @@ namespace UnturnedGodot
                 // where it is invisible, at the cost of a float too small to see.
                 profiles.Add(pts);
                 profileKind.Add(route.Kind);
+                profileRoute.Add(routeIdx);
             }
 
             // ⭐⭐ BUILD FIRST, THEN CONFORM TO THE CURVE THAT WAS BUILT.
@@ -2189,10 +2192,11 @@ namespace UnturnedGodot
             // an innocent road, one line further down.
             var builtIdx = new System.Collections.Generic.List<int>();
             var builtKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
+            var builtRoute = new System.Collections.Generic.List<int>();
             for (int k = 0; k < profiles.Count; k++)
             {
                 int id = rf.AddRoadFromPolyline(profiles[k], material, loop: false, ignoreTerrain: true);
-                if (id >= 0) { builtIdx.Add(id); builtKind.Add(profileKind[k]); built++; } else skipped++;
+                if (id >= 0) { builtIdx.Add(id); builtKind.Add(profileKind[k]); builtRoute.Add(profileRoute[k]); built++; } else skipped++;
             }
 
             // The centreline the player actually drives on, sampled every 5 m the way the surface is.
@@ -2208,12 +2212,14 @@ namespace UnturnedGodot
             var curves = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
             var curveKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
             var keptIdx = new System.Collections.Generic.List<int>();
+            var curveRoute = new System.Collections.Generic.List<int>();
             for (int k = 0; k < builtIdx.Count; k++)
             {
                 var c = rf.SampleCentreline(builtIdx[k]);
                 if (c.Count < 2) { Log.Print($"[island-roads] road {builtIdx[k]} sampled to {c.Count} point(s) -- not measurable"); continue; }
                 curves.Add(c);
                 curveKind.Add(builtKind[k]);
+                curveRoute.Add(builtRoute[k]);
                 keptIdx.Add(builtIdx[k]);
             }
             builtIdx = keptIdx;
@@ -2277,15 +2283,32 @@ namespace UnturnedGodot
                 }
             }
             dropCurve.Sort();
+            // ⚠⚠ A DROPPED ROAD HAS TO TAKE ITS WHOLE FOOTPRINT WITH IT (strawberry: "you did it by just
+            // killing the road spline entirely? leaving the dirt it painted and the props and vehicle spawns
+            // along it?"). Yes, I did, and that is a scar: PaintGroundwork has already painted a dirt corridor
+            // along this route, and SpawnRoadside runs LATER and walks IslandRoutes, so it would line a road
+            // that no longer exists with power poles and crash barriers. Removing only the RoadField entry
+            // deletes the tarmac and leaves everything that was there because of it.
+            //
+            // So the route leaves IslandRoutes as well -- which is what every later pass reads -- and its dirt
+            // is painted back to grass. The foliage bake runs after this and reads the splat, so the corridor
+            // grows over rather than staying a bare stripe.
+            var dropRoutes = new System.Collections.Generic.List<int>();
             for (int k = dropCurve.Count - 1; k >= 0; k--)
             {
                 int ci = dropCurve[k];
                 rf.RemoveRoad(builtIdx[ci]);
-                curves.RemoveAt(ci); curveKind.RemoveAt(ci); builtIdx.RemoveAt(ci);
+                dropRoutes.Add(curveRoute[ci]);
+                foreach (var q in curves[ci])
+                    terr.PaintSplat(q.X, q.Z, ProcIsland.RenderedRoadHalf + 6f, GrassLayer);
+                curves.RemoveAt(ci); curveKind.RemoveAt(ci); builtIdx.RemoveAt(ci); curveRoute.RemoveAt(ci);
                 built--;
             }
+            dropRoutes.Sort();
+            for (int k = dropRoutes.Count - 1; k >= 0; k--)
+                if (dropRoutes[k] >= 0 && dropRoutes[k] < terr.IslandRoutes.Count) terr.IslandRoutes.RemoveAt(dropRoutes[k]);
             if (dropCurve.Count > 0)
-                Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed or overlapped another road");
+                Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed or overlapped another road -- tarmac, route entry and dirt corridor all removed");
 
             // Sunk a quarter-metre below the ribbon because a 4 m heightmap approximates a sloping segment
             // rather than reproducing it, and that error otherwise pokes through; lowest-wins inside
@@ -2502,6 +2525,36 @@ namespace UnturnedGodot
                             if (d < ProcIsland.RenderedRoadHalf * 2f) tarmacShared++;
                         }
                     }
+            // ---- and the TRAILS, which nothing here has ever looked at --------------------------------------
+            // strawberry: "and you didnt test for trails?" -- correct, I did not. Every check above runs over
+            // `curves`, which is IslandRoutes; the trail spurs live in IslandTrails and were invisible to all
+            // of them. A trail is 9.2 m wide against a road's 18.4, so their tarmac touches within 13.8 m.
+            // ⚠ A trail STARTS on a road by design (that is what a spur is), so its first 30 m is exempt --
+            // the same allowance the junction roads get, for the same reason.
+            float trailNear = float.MaxValue; int trailShared = 0; var trailAt = Vector2.Zero;
+            if (terr.IslandTrails != null)
+                foreach (var t in terr.IslandTrails)
+                {
+                    if (t.Points == null || t.Points.Count < 2) continue;
+                    float run = 0f;
+                    for (int a = 1; a < t.Points.Count; a++)
+                    {
+                        run += t.Points[a].DistanceTo(t.Points[a - 1]);
+                        if (run < 30f) continue;
+                        var pw = PosFor(terr, t.Points[a].X, t.Points[a].Y);
+                        foreach (var c in curves)
+                            foreach (var q in c)
+                            {
+                                float d = new Vector2(pw.X - q.X, pw.Z - q.Z).Length();
+                                if (d < trailNear) { trailNear = d; trailAt = new Vector2(pw.X, pw.Z); }
+                                if (d < ProcIsland.RenderedRoadHalf + ProcIsland.TrailHalf) trailShared++;
+                            }
+                    }
+                }
+            Log.Print($"[island-overlap] closest a trail runs to a road: {(trailNear == float.MaxValue ? 0f : trailNear):0.0} m "
+                      + $"(tarmac touches under {ProcIsland.RenderedRoadHalf + ProcIsland.TrailHalf:0.#} m); {trailShared} sample pair(s) sharing tarmac"
+                      + (trailShared > 0 ? $", nearest at ({trailAt.X:0},{trailAt.Y:0})" : ""));
+
             Log.Print($"[island-overlap] closest two ribbons run in open country: {(nearest == float.MaxValue ? 0f : nearest):0.0} m "
                       + $"(tarmac touches under {ProcIsland.RenderedRoadHalf * 2f:0.#} m); {tarmacShared} sample pair(s) sharing tarmac"
                       + (tarmacShared > 0 ? $", nearest at ({nearAt.X:0},{nearAt.Y:0}) between {nearKinds}" : ""));

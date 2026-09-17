@@ -391,6 +391,9 @@ namespace UnturnedGodot
         // -- including the map's own retail props, since IngestLoadedObjects put them in _placed too.
         public const string OmitMeta = "bake_omit";
         public bool AnySelected => _selection.Count > 0;
+        /// <summary>How many props this map has placed. For the world fingerprint that compares a generated
+        /// island against the same island reopened -- terrain hashes alone cannot see a missing prop.</summary>
+        public int PlacedCount => _placed.Count;
         public bool SelectedOmitFromBake => Primary != null && Primary.HasMeta(OmitMeta) && (bool)Primary.GetMeta(OmitMeta);
 
         /// <summary>Set the flag on the WHOLE selection, not just the gizmo's primary. Marking a treeline or a

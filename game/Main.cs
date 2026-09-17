@@ -6603,6 +6603,22 @@ namespace UnturnedGodot
             // im in menu when im in a map"). SetEditor was called on that one branch and nowhere else, so every
             // map opened FROM THE MENU -- generated or custom -- left the presence on whatever the menu last
             // pushed, which is "In the main menu". The state has to follow the world, not the command line.
+            // ⚠ A WORLD FINGERPRINT THAT COVERS WHAT THE GROUND ONE DOES NOT (strawberry: "when opening the
+            // proc map in the editor its NOT the map that i was on?"). GroundFingerprint hashes heights and
+            // splat, and on that measure generate and reopen have agreed byte for byte all day -- which says
+            // nothing at all about the ROADS or the PROPS, and those are most of what a map looks like. This
+            // hashes the road joints and the placed objects too, so "the same map" is a claim about the map.
+            {
+                ulong h = 1469598103934665603UL;
+                void Mix(float v) { h ^= (ulong)(uint)System.BitConverter.SingleToInt32Bits(v); h *= 1099511628211UL; }
+                var rfNow = rf;
+                int roadN = rfNow?.RoadCount ?? 0;
+                for (int r = 0; r < roadN; r++)
+                    foreach (var q in rfNow.SampleCentreline(r)) { Mix(q.X); Mix(q.Y); Mix(q.Z); }
+                int propN = editor.Objects?.PlacedCount ?? 0;
+                var g = terr.GroundFingerprint();
+                Log.Print($"[world-fingerprint] roads {roadN} props {propN} roadhash {h:x16} heights {g.H:x16} splat {g.S:x16}");
+            }
             DiscordPresence.SetEditor(mapName);
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
