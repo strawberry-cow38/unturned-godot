@@ -881,6 +881,27 @@ namespace UnturnedGodot
         /// <summary>Where along the spline the road is sampled: src updateSamples' arc-length step every 5 world
         /// units, carried continuously across joints, plus a final sample. Shared with the LANE paths -- sampling
         /// them anywhere else would let a lane cut a corner the road surface does not.</summary>
+        /// <summary>The centreline of a BUILT road, sampled the same way its surface is.
+        ///
+        /// ⚠ THIS IS NOT THE POLYLINE THAT WAS HANDED TO AddRoadFromPolyline. The joints are control points of a
+        /// Catmull-Rom, so between them the ribbon BOWS away from the straight chord -- by metres on a bend.
+        /// Anything reasoning about where the road physically is (does it cross another one? is the ground under
+        /// it conformed?) has to ask the curve, not the input. Measuring the input is how a generator reports
+        /// zero crossings while the player is looking at one.</summary>
+        public System.Collections.Generic.List<Vector3> SampleCentreline(int road)
+        {
+            var outp = new System.Collections.Generic.List<Vector3>();
+            if (road < 0 || road >= _roads.Count) return outp;
+            var r = _roads[road];
+            if (r.Joints.Count < 2) return outp;
+            foreach (var (idx, t) in SampleWalk(r))
+            {
+                RoadFrame(r, idx, t, out Vector3 pos, out _, out _, out _, out _);
+                outp.Add(pos);
+            }
+            return outp;
+        }
+
         List<(int idx, float t)> SampleWalk(RoadData r)
         {
             int jc = r.Joints.Count;

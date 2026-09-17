@@ -1992,6 +1992,8 @@ namespace UnturnedGodot
             int built = 0, skipped = 0;
             float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0;
             float segWorstRatio = 0f, segWorstLen = 0f, segWorstNb = 0f, segShortest = float.MaxValue;
+            float floatWorst = 0f; int floatOver = 0, floatTown = 0, floatN = 0; var floatAt = Vector2.Zero;
+            float centreWorst = 0f; int centreOver = 0, centreN = 0;
             var clipBad = new System.Collections.Generic.List<(float X, float Z, float Rise, float Off, bool Town)>();
 
             // ⚠ TWO PASSES, AND THE SPLIT IS LOAD-BEARING. Every route conforms the ground to its own profile,
@@ -2127,36 +2129,84 @@ namespace UnturnedGodot
                 profiles.Add(pts);
             }
 
-            // ⭐ ONE CONFORM FOR THE WHOLE NETWORK. Sunk a quarter-metre below the ribbon because a 4 m
-            // heightmap approximates a sloping segment rather than reproducing it, and that error otherwise
-            // pokes through; lowest-wins inside ConformToPolylines is what stops one road's crossing raising
-            // ground into another's tarmac.
-            var sunk = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
-            foreach (var pr in profiles)
-            {
-                var one = new System.Collections.Generic.List<Vector3>(pr.Count);
-                foreach (var q in pr) one.Add(new Vector3(q.X, q.Y - 0.12f, q.Z));
-                sunk.Add(one);
-            }
-            terr.ConformToPolylines(sunk, ProcIsland.RenderedRoadHalf + 6f, ProcIsland.RenderedRoadHalf);
-
+            // ⭐⭐ BUILD FIRST, THEN CONFORM TO THE CURVE THAT WAS BUILT.
+            //
+            // This used to conform to `profiles` -- the JOINT LIST -- and then hand the same list to
+            // AddRoadFromPolyline. But the joints are CONTROL POINTS of a Catmull-Rom: between them the ribbon
+            // bows away from the straight chord, by metres on a bend. So the ground was levelled along the
+            // chords and the road was drawn along the curve, and everywhere the two differed the road floated
+            // over ground nobody had touched. strawberry, after the previous round of this: "roads are still
+            // floating/not following terrain".
+            //
+            // ⚠ THE COMMENT BELOW THIS ONE ALREADY WARNED ABOUT EXACTLY THIS and still got it wrong -- it says
+            // the only construction that cannot drift is the one where the code that BUILDS the road reports on
+            // it, and then measured the profile HANDED to the builder rather than the geometry that came out.
+            // Fourth time this session an instrument described a road nobody drives on.
+            //
+            // Building before conforming is safe because these roads are ignoreTerrain: the ribbon's Y comes
+            // from its joints and its own interpolation, so moving the ground afterwards cannot move the road.
+            var builtIdx = new System.Collections.Generic.List<int>();
             foreach (var pts in profiles)
             {
-                // ⚠⚠ MEASURED FROM THE PROFILE THAT IS HANDED TO THE ROAD, because every attempt to measure it
-                // from somewhere else described a different road. ReportClipping sampled the raw seat and never
-                // ran SmoothProfile's clamp; before that it called the old seating function and returned an
-                // identical -2.10 m across a rewrite; before that it sampled 20 m chords while the road used
-                // 8 m. Three times the instrument kept its own copy of the thing it measured. The only
-                // construction that cannot drift is the one where the code that BUILDS the road reports on it.
-                for (int i = 1; i < pts.Count; i++)
+                int id = rf.AddRoadFromPolyline(pts, material, loop: false, ignoreTerrain: true);
+                if (id >= 0) { builtIdx.Add(id); built++; } else skipped++;
+            }
+
+            // The centreline the player actually drives on, sampled every 5 m the way the surface is.
+            var curves = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
+            foreach (int id in builtIdx)
+            {
+                var c = rf.SampleCentreline(id);
+                if (c.Count >= 2) curves.Add(c);
+            }
+
+            // Sunk a quarter-metre below the ribbon because a 4 m heightmap approximates a sloping segment
+            // rather than reproducing it, and that error otherwise pokes through; lowest-wins inside
+            // ConformToPolylines is what stops one road's crossing raising ground into another's tarmac.
+            var sunk = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
+            foreach (var c in curves)
+            {
+                var one = new System.Collections.Generic.List<Vector3>(c.Count);
+                foreach (var q in c) one.Add(new Vector3(q.X, q.Y - 0.12f, q.Z));
+                sunk.Add(one);
+            }
+            // ⚠ THE SAME SAMPLES BEFORE AND AFTER. "The road floats" is consistent with two opposite causes --
+            // the conform never touching these cells, or touching them and something else putting the road
+            // back up -- and only a before/after pair can tell them apart. Cheap: one pass over the curves.
+            float preFloat = 0f; int preOver = 0, preN = 0;
+            foreach (var c in curves)
+                foreach (var q in c)
                 {
-                    var a3 = pts[i - 1]; var b3 = pts[i];
+                    if (ProcIsland.InsideAnyTownPad(q.X, -q.Z, 0f)) continue;
+                    float gap = q.Y - terr.SampleHeight(q.X, q.Z);
+                    if (gap > preFloat) preFloat = gap;
+                    if (gap > 0.6f) preOver++;
+                    preN++;
+                }
+            terr.ConformToPolylines(sunk, ProcIsland.RenderedRoadHalf + 6f, ProcIsland.RenderedRoadHalf);
+            float postFloat = 0f; int postOver = 0;
+            foreach (var c in curves)
+                foreach (var q in c)
+                {
+                    if (ProcIsland.InsideAnyTownPad(q.X, -q.Z, 0f)) continue;
+                    float gap = q.Y - terr.SampleHeight(q.X, q.Z);
+                    if (gap > postFloat) postFloat = gap;
+                    if (gap > 0.6f) postOver++;
+                }
+            Log.Print($"[island-roads] conform on the centreline: float over 0.6 m {preOver} -> {postOver} of {preN}, "
+                      + $"worst {preFloat:0.00} -> {postFloat:0.00} m");
+
+            // ---- and measure the SAME curve against the ground it now sits on -------------------------------
+            foreach (var c in curves)
+                for (int i = 1; i < c.Count; i++)
+                {
+                    var a3 = c[i - 1]; var b3 = c[i];
                     var fwd = new Vector2(b3.X - a3.X, b3.Z - a3.Z);
                     if (fwd.Length() < 1e-4f) continue;
                     var perp = new Vector2(-fwd.Y, fwd.X).Normalized();
-                    for (int k = 1; k < 8; k++)
+                    for (int k = 0; k < 4; k++)
                     {
-                        float f = k / 8f;
+                        float f = k / 4f;
                         var mid = a3.Lerp(b3, f);
                         for (int e = -2; e <= 2; e++)
                         {
@@ -2164,11 +2214,37 @@ namespace UnturnedGodot
                             float g = terr.SampleHeight(mid.X + perp.X * off, mid.Z + perp.Y * off);
                             float rise = g - mid.Y;
                             if (rise > clipWorst) clipWorst = rise;
-                            if (rise > 0.20f)   // 0.20 m = a poke you can SEE; 5 cm is 4 m-grid noise and counting it hid the signal
+                            // ⚠ BOTH SIGNS NOW. `rise` positive is ground ABOVE the tarmac (a bald patch);
+                            // negative is the road hanging in the air, which is the half master keeps reporting
+                            // and the half this probe never counted at all.
+                            // ⚠ ONLY WHERE THE CONFORM OWNS THE GROUND. Inside a town pad it deliberately does
+                            // not touch anything -- the town levels its own ground exactly and the road props
+                            // stand on it -- so counting those samples measures a rule working as intended and
+                            // buries the real signal. Split out rather than dropped, so "float" cannot quietly
+                            // become "float, ignoring the half I did not want to look at".
+                            float gap = mid.Y - g;
+                            if (ProcIsland.InsideAnyTownPad(mid.X + perp.X * off, -(mid.Z + perp.Y * off), 0f))
+                            { if (gap > 0.6f) floatTown++; }
+                            else
+                            {
+                                if (gap > floatWorst) { floatWorst = gap; floatAt = new Vector2(mid.X, mid.Z); }
+                                if (gap > 0.6f) floatOver++;
+                                floatN++;
+                                // ⚠ THE CENTRELINE SEPARATELY. A gap at the road's EDGE on a cross-slope is a
+                                // different fault from a gap under the middle of it: the first says the
+                                // corridor is too narrow or the feather too soft, the second says the conform
+                                // did not happen at all. One combined number cannot tell them apart, and which
+                                // one this is decides where the fix goes.
+                                if (e == 0)
+                                {
+                                    centreN++;
+                                    if (gap > centreWorst) centreWorst = gap;
+                                    if (gap > 0.6f) centreOver++;
+                                }
+                            }
+                            if (rise > 0.20f)   // 0.20 m = a poke you can SEE; 5 cm is 4 m-grid noise
                             {
                                 clipOver++;
-                                // WHERE, not just how many. The last four guesses about this generator were
-                                // wrong; naming the offender is what closed each of them.
                                 if (rise > 0.5f && clipBad.Count < 8)
                                     clipBad.Add((mid.X + perp.X * off, mid.Z + perp.Y * off, rise, off,
                                                  ProcIsland.InsideAnyTownPad(mid.X + perp.X * off, -(mid.Z + perp.Y * off), 8f)));
@@ -2177,8 +2253,33 @@ namespace UnturnedGodot
                         }
                     }
                 }
-                if (rf.AddRoadFromPolyline(pts, material, loop: false, ignoreTerrain: true) >= 0) built++; else skipped++;
-            }
+
+            // ---- do the built ribbons cross? ----------------------------------------------------------------
+            // ⚠ ON THE CURVES, not on the A* polylines. The generator-side check reports 0 crossings on every
+            // seed and master is still looking at one, which is what a check on the wrong geometry looks like.
+            int ribbonCross = 0;
+            for (int i = 0; i < curves.Count; i++)
+                for (int j = i + 1; j < curves.Count; j++)
+                    for (int a = 1; a < curves[i].Count; a++)
+                        for (int b = 1; b < curves[j].Count; b++)
+                        {
+                            var p0 = curves[i][a - 1]; var p1 = curves[i][a];
+                            var q0 = curves[j][b - 1]; var q1 = curves[j][b];
+                            float D(Vector3 u, Vector3 v, Vector3 w) => (v.X - u.X) * (w.Z - u.Z) - (v.Z - u.Z) * (w.X - u.X);
+                            float d1 = D(p0, p1, q0), d2 = D(p0, p1, q1), d3 = D(q0, q1, p0), d4 = D(q0, q1, p1);
+                            if (((d1 > 0f) != (d2 > 0f)) && ((d3 > 0f) != (d4 > 0f)))
+                            {
+                                var at = (p0 + p1) * 0.5f;
+                                // Near a town two roads converge on their gates by design.
+                                if (!ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f)) ribbonCross++;
+                                a = curves[i].Count; break;   // one report per pair
+                            }
+                        }
+            Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town; "
+                      + $"worst float {floatWorst:0.00} m ({floatOver} of {floatN} sample(s) over 0.6 m in open country, "
+                      + $"{floatTown} more on a town pad the conform does not own); "
+                      + $"ON THE CENTRELINE worst {centreWorst:0.00} m, {centreOver} of {centreN} over 0.6 m"
+                      + (floatWorst > 0.6f ? $" at ({floatAt.X:0},{floatAt.Y:0})" : ""));
 
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
             Log.Print($"[island-roads] joint spacing: shortest segment {segShortest:0.00} m, worst neighbour ratio "
