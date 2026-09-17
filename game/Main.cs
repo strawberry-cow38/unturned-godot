@@ -465,7 +465,7 @@ namespace UnturnedGodot
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
             if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
             if (zsound) { BuildZombieSound(); return; }           // zombie AI rewrite phase 4 verify
-            if (zface) { BuildZombieFace(); return; }             // facing diagnostic
+            if (zface) { BuildZombieFace(); if (shot != null) _shotPath = shot; return; }   // facing diagnostic (+ --shot: it is also the only single-zombie view, so it is how the BODY gets looked at)
             if (zpath) { BuildZombiePath(); return; }            // pathfinding-around-obstacles demo
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
@@ -3339,7 +3339,7 @@ namespace UnturnedGodot
         // --zface: FACING DIAGNOSTIC. ONE zombie, DesiredVel forced to world +X, viewed TOP-DOWN so the world axes are
         // unambiguous (RED ball = +X = the movement target, BLUE ball = +Z). Whichever ball the model's arms/face point
         // at tells us the exact rig yaw offset -- ends the "which sign" guessing on ZombieBody's facing. Arms at RED = OK.
-        bool _zfMode; ZombieBody _zfz; double _zfT;
+        bool _zfMode; ZombieBody _zfz; double _zfT; int _zfFrame; Camera3D _zfCam; bool _zfFace;
         void BuildZombieFace()
         {
             GetWindow().Size = new Vector2I(1280, 720);
@@ -3360,7 +3360,15 @@ namespace UnturnedGodot
 
             _zfz = new ZombieBody(); AddChild(_zfz); _zfz.Position = Vector3.Zero;
             var cam = new Camera3D { Current = true, Fov = 46f, Far = 500f };
-            AddChild(cam); cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up);   // wide SIDE view: zombie travels +X (screen-right) across frame; a planted foot should hold its WORLD spot, not skate back
+            AddChild(cam);
+            // UG_ZCAM=close pulls in for a BODY shot -- clothes, skin tint, face. The wide default is the FACING
+            // diagnostic's own framing (it has to show the axis markers), and at that distance the zombie is ~40 px
+            // tall, which is why nobody ever noticed what it was wearing.
+            var _zcam = System.Environment.GetEnvironmentVariable("UG_ZCAM");
+            if (_zcam == "close" || _zcam == "face")
+            { _zfCam = cam; _zfFace = _zcam == "face"; }   // framed per-frame against the zombie's ACTUAL position -- see _Process
+            else
+            { cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up); }
             _zfMode = true;
             Log.Print("[zface] one zombie, DesiredVel = world +X (toward RED). top-down: RED=+X(right) BLUE=+Z(down). arms should point at RED if facing is correct.");
         }
@@ -9341,7 +9349,49 @@ namespace UnturnedGodot
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
             if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; Log.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
-            if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { Log.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
+            if (_zfMode)
+            {
+                _zfT += delta;
+                // The REAL speed, not a copy of it. This read 1.3f -- the old ZombieSpeed -- so the one view of a
+                // walking zombie was showing a gait nothing in the game actually walks at.
+                if (_zfz != null) _zfz.DesiredVel = new Vector2(ZombieChunkField.ZombieSpeed, 0f);
+                // TRACK the subject. A fixed close camera has to guess where the zombie will be at the capture
+                // frame, which is a function of its speed -- so the first version of this framed empty grass the
+                // moment the speed changed, which is the very thing the shot exists to check.
+                if (_zfCam != null && _zfz != null)
+                {
+                    var zp = _zfz.GlobalPosition;
+                    if (_zfFace)
+                    {
+                        // HEAD ON. The rig's forward is -Z and yaw turns it to the travel direction (+X here), so
+                        // the face looks down +X and the camera has to stand in front of it. This is the only way to
+                        // answer "is the face ON the face" -- from the side a decal 4 mm proud of a flat head and one
+                        // hanging 4 cm off it are the same handful of pixels.
+                        _zfCam.Position = zp + new Vector3(1.55f, 1.74f, 0f);
+                        _zfCam.LookAt(zp + new Vector3(0f, 1.72f, 0f), Vector3.Up);
+                    }
+                    else
+                    {
+                        _zfCam.Position = zp + new Vector3(0.6f, 1.15f, 3.4f);
+                        _zfCam.LookAt(zp + new Vector3(0f, 0.95f, 0f), Vector3.Up);
+                    }
+                }
+                // Capture HERE. This branch owns the frame and returns, so the general --shot handler below is
+                // unreachable in this mode: arming _shotPath was necessary and not sufficient, and the symptom was
+                // a render that exited 0 having written nothing. Settle past ShotSettleFrames AND far enough into
+                // the cycle for the walk to be mid-stride rather than caught on the rest pose.
+                if (_shotPath != null && ++_zfFrame >= ShotSettleFrames + 24)
+                {
+                    var zi = GetViewport().GetTexture()?.GetImage();
+                    if (zi == null) { Log.Err("[SHOT] null image -- needs --rendering-driver vulkan, NOT --headless"); GetTree().Quit(1); return; }
+                    zi.SavePng(_shotPath);
+                    Log.Print($"[SHOT] saved {_shotPath} ({zi.GetWidth()}x{zi.GetHeight()})");
+                    GetTree().Quit();
+                    return;
+                }
+                if (_zfT >= 5.0) { Log.Print("[zface] done"); GetTree().Quit(); }
+                return;
+            }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
             if (_zpMode) { _zpT += delta; _zpTarget = new Vector3(11f, 0f, Mathf.Sin((float)_zpT * 0.4f) * 7f); if (_zpMarker != null) _zpMarker.Position = _zpTarget + Vector3.Up * 0.9f; if (_zpf != null) _zpf.DebugAnchor = _zpTarget; if (_zpT >= _zpNextEmit) { _zpNextEmit += 2.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 25.0 && !_zpReported) { _zpReported = true; ZpathReport(); } if (_zpT >= 26.0) { Log.Print("[zpath] done"); GetTree().Quit(); } return; }   // MOVING target (a real player moves) -> the field keeps rebuilding so no stable corner-trap can hold
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts

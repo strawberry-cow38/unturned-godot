@@ -63,6 +63,11 @@ SCENES = {
                {"UG_ANIMALFOOT": "0"}, False, 180,
                "calibrated wildlife stage (ANIMAL=horse,cow,deer UG_ANIMALCAM=side|rear|top|threequarter UG_ANIMALCLIP=Idle UG_ANIMALTIME=0)"),
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
+    # The only single-zombie view there is. --zface was built as a FACING diagnostic and could not be
+    # captured at all (its branch returns before the general --shot wiring), so the zombie body -- clothes,
+    # skin, face -- had no way of being looked at. That is why it went unnoticed that they wore a baked
+    # atlas and skated their feet at 5x.
+    "zombie":   (["--zface", "--shot={OUT}"], {"UG_ZCAM": os.environ.get("ZCAM", "close")}, False, 180, "one zombie close up -- the BODY: clothes, skin tint, face"),
     "fluid":    (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "gallery"}, False, 180, "11 placed fluid devices at LOD0 + retail barrel/generator/propane references"),
     "fluiddevice": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"),
                      "UG_FLUIDANGLE": os.environ.get("ANGLE", "35"), "UG_FLUIDELEV": os.environ.get("ELEV", "28")},

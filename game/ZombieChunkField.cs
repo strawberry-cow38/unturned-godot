@@ -37,7 +37,11 @@ namespace UnturnedGodot
 
         // ---- phase 2: the flow field + drift ----
         const float FieldRadius = 160f;    // the flow field covers ±this around the anchor (comfortably past WARM)
-        const float ZombieSpeed = 1.3f;    // m/s shamble -- tuned DOWN to the Move_N clip's natural stride so the 1x anim doesn't foot-slide (master: don't speed up the anim, slow the zombie). HOT+WARM; COLD takes ONE coarse step every ColdStep seconds
+        // PLAYER WALK SPEED (strawberry 2026-09-17: "change the zombie walk speed to be the same as our
+        // player walk speed"). Was 1.3, which was tuned DOWN to stop the feet skating -- the wrong end of that
+        // trade, and it made a horde something you could stroll away from. The skate is fixed at the ANIMATION
+        // end now (ZombieBody slows the clip to the ground), so the speed no longer has to be what gives way.
+        public const float ZombieSpeed = SDG.Unturned.PlayerMovementDef.SPEED_STAND;   // 4.5 m/s -- public so the --zface diagnostic drives at the REAL speed instead of its own copy of it (master: don't speed up the anim, slow the zombie). HOT+WARM; COLD takes ONE coarse step every ColdStep seconds
         const float ColdStep = 2f;
         const float StopDist = 1.5f;       // pile at the player rather than oscillate through them
         readonly ZombieFlowField _field = new();

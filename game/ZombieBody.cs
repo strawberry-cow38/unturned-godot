@@ -29,12 +29,52 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0f, 0.9f, 0f);
             AddChild(shape);
 
-            int atlas = (int)(GetInstanceId() % 6u);   // vary the outfit so a horde isn't a uniform
-            _rig = RiggedCharacter.Build("res://content/rig.json", Colors.White, false, $"res://content/zombie_atlas_{atlas}.png", "res://content/face_19.png");
+            // MEASURED off rig.json, not tuned. Move_0..3 and the player's Move_Walk have the SAME foot stride
+            // (0.321 m); they differ only in CADENCE -- 0.6333 s per cycle against Move_Walk's 0.9667 s. Move_Walk
+            // is known-good under the player at SPEED_STAND (4.5 m/s) at 1x, and because the strides are identical
+            // the ratio is pure cadence, so Move_N's own ground speed is 4.5 * (0.9667/0.6333) = 6.87 m/s.
+            //
+            // That is the whole "zombies look like they're sprinting on the spot" bug: the body was driven at
+            // 1.3 m/s under a clip whose feet want 6.87, so they skated by more than 5x. At the new 4.5 m/s the
+            // rate lands at 0.65x -- the clip genuinely SLOWS, which is what was asked for.
+            const float ClipNaturalSpeed = 6.87f;
+
+            // Sickly grey-green. The old fallback capsule's (0.40,0.60,0.35) read as bright moss once it was a whole
+            // body rather than a debug pill, and clothing sits ON this, so it is desaturated to keep garment colour legible.
+            var ZombieSkin = new Color(0.44f, 0.52f, 0.40f);
+
+            // PLAYER CLOTHES, NOT A BAKED ATLAS (strawberry 2026-09-17: "change the clothes they can spawn with
+            // to be any of the clothes we can wear as a player"). The six zombie_atlas_N.png were the whole look --
+            // skin, clothes and grime in one texture -- and that is WHY zombies could not wear anything: passing an
+            // albedoTexPath at all selects the plain-albedo material, and the clothes shader that SetShirt/SetPants
+            // paint is the albedoTexPath == null path. So the atlas was not merely a different outfit, it was the
+            // branch with no wardrobe on it. Building with null moves zombies onto the same body the player uses,
+            // and the same 209 shirts / 121 pants become available by construction rather than by a copied list.
+            //
+            // ⚠ The SKIN TINT is a judgement call, flagged as one: the atlas used to carry the dead colouring, and
+            // with it gone the tint is the only thing saying "not a person". This is the fallback capsule's own
+            // zombie green pulled toward grey so clothing colours still read on top of it.
+            int variant = (int)(GetInstanceId() % 6u);   // clip variant -- keeps the horde from moving in lockstep
+            var pick = new System.Random((int)(GetInstanceId() & 0x7fffffff));
+            var shirts = ClothingContent.IdsForSlot("shirt");
+            var pantsIds = ClothingContent.IdsForSlot("pants");
+            // ⚠ FACE 19, FIXED, NOT ROLLED. It is the zombie face -- dead little eyes and a dark open mouth --
+            // and the other 32 are PLAYER faces: rolling across them put a broad toothy grin on a corpse
+            // (strawberry 2026-09-17: "wrong face"). The path goes through FacePath rather than the literal
+            // "res://content/face_19.png" this used to carry, which pointed OUTSIDE content/faces/ at a leftover
+            // duplicate -- delete that stray and the whole face quad silently stops being built.
+            _rig = RiggedCharacter.Build("res://content/rig.json", ZombieSkin, false, null, RiggedCharacter.FacePath(19));
             if (_rig != null)
             {
                 _rig.UsePhysicsAnimRate();   // pose the skeleton at 50 Hz, not the render rate (the old POI CPU spike)
-                _rig.WalkClip = "Move_" + (atlas % 4); _rig.IdleClip = "Idle_" + (atlas % 4); _rig.RunClip = _rig.WalkClip;
+                _rig.LocomotionNaturalSpeed = ClipNaturalSpeed;   // scale the clip to the ground instead of skating
+                _rig.WalkClip = "Move_" + (variant % 4); _rig.IdleClip = "Idle_" + (variant % 4); _rig.RunClip = _rig.WalkClip;
+                // Dress it. A missing manifest leaves both lists empty and the body simply renders bare rather than
+                // throwing -- the same "blank cell reads as transparent" contract LoadTextures already has.
+                if (shirts.Count > 0)
+                { var t = ClothingContent.LoadTextures(shirts[pick.Next(shirts.Count)]); _rig.SetShirt(t.Albedo, t.Emission, t.Metallic); }
+                if (pantsIds.Count > 0)
+                { var t = ClothingContent.LoadTextures(pantsIds[pick.Next(pantsIds.Count)]); _rig.SetPants(t.Albedo, t.Emission, t.Metallic); }
                 AddChild(_rig);
                 _rig.Play(_rig.WalkClip);
             }
