@@ -2002,6 +2002,7 @@ namespace UnturnedGodot
             // reported clearance was true. Conform everything first, then measure and build against the ground
             // as it finally is.
             var profiles = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
+            var profileKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
 
             foreach (var route in terr.IslandRoutes)
             {
@@ -2127,6 +2128,7 @@ namespace UnturnedGodot
                 // 14210 samples). Sinking the target by more than the error puts all of it under the tarmac,
                 // where it is invisible, at the cost of a float too small to see.
                 profiles.Add(pts);
+                profileKind.Add(route.Kind);
             }
 
             // ⭐⭐ BUILD FIRST, THEN CONFORM TO THE CURVE THAT WAS BUILT.
@@ -2154,11 +2156,60 @@ namespace UnturnedGodot
 
             // The centreline the player actually drives on, sampled every 5 m the way the surface is.
             var curves = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
-            foreach (int id in builtIdx)
+            var curveKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
+            for (int k = 0; k < builtIdx.Count; k++)
             {
-                var c = rf.SampleCentreline(id);
-                if (c.Count >= 2) curves.Add(c);
+                var c = rf.SampleCentreline(builtIdx[k]);
+                if (c.Count < 2) continue;
+                curves.Add(c);
+                curveKind.Add(k < profileKind.Count ? profileKind[k] : ProcIsland.LinkKind.Road);
             }
+
+            // ---- DROP ANY JUNCTION ROAD WHOSE BUILT RIBBON CROSSES ANOTHER ROAD --------------------------
+            // Measured across four seeds: ZERO road-on-road crossings, and every crossing on the island
+            // involves a junction road. CarveJunctions already refuses a candidate that comes within 26 m of a
+            // third road -- but it tests the A* POLYLINE, and the ribbon is a Catmull-Rom that bows off it. So
+            // the refusal was looking at the wrong geometry, exactly like everything else today.
+            //
+            // A junction road is an optional convenience: the network is complete without it. So rather than
+            // widen a margin and hope, the ones that actually cross are removed, which makes the count zero by
+            // construction instead of by tuning. ⚠ Descending, because RemoveRoad shifts every later index.
+            static bool Crosses(System.Collections.Generic.List<Vector3> A, System.Collections.Generic.List<Vector3> B)
+            {
+                for (int a = 1; a < A.Count; a++)
+                    for (int b = 1; b < B.Count; b++)
+                    {
+                        Vector3 p0 = A[a - 1], p1 = A[a], q0 = B[b - 1], q1 = B[b];
+                        float D(Vector3 u, Vector3 v, Vector3 w) => (v.X - u.X) * (w.Z - u.Z) - (v.Z - u.Z) * (w.X - u.X);
+                        float d1 = D(p0, p1, q0), d2 = D(p0, p1, q1), d3 = D(q0, q1, p0), d4 = D(q0, q1, p1);
+                        if (((d1 > 0f) != (d2 > 0f)) && ((d3 > 0f) != (d4 > 0f))
+                            && !ProcIsland.InsideAnyTownPad((p0.X + p1.X) * 0.5f, -(p0.Z + p1.Z) * 0.5f, 90f))
+                            return true;
+                    }
+                return false;
+            }
+            var dropCurve = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < curves.Count; i++)
+            {
+                if (curveKind[i] == ProcIsland.LinkKind.Road) continue;   // a town road is not optional
+                for (int j = 0; j < curves.Count; j++)
+                {
+                    if (i == j || dropCurve.Contains(j)) continue;
+                    if (!Crosses(curves[i], curves[j])) continue;
+                    dropCurve.Add(i);
+                    break;
+                }
+            }
+            dropCurve.Sort();
+            for (int k = dropCurve.Count - 1; k >= 0; k--)
+            {
+                int ci = dropCurve[k];
+                rf.RemoveRoad(builtIdx[ci]);
+                curves.RemoveAt(ci); curveKind.RemoveAt(ci); builtIdx.RemoveAt(ci);
+                built--;
+            }
+            if (dropCurve.Count > 0)
+                Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed another road");
 
             // Sunk a quarter-metre below the ribbon because a 4 m heightmap approximates a sloping segment
             // rather than reproducing it, and that error otherwise pokes through; lowest-wins inside
@@ -2257,7 +2308,7 @@ namespace UnturnedGodot
             // ---- do the built ribbons cross? ----------------------------------------------------------------
             // ⚠ ON THE CURVES, not on the A* polylines. The generator-side check reports 0 crossings on every
             // seed and master is still looking at one, which is what a check on the wrong geometry looks like.
-            int ribbonCross = 0;
+            int ribbonCross = 0, crossRoad = 0, crossJunc = 0;
             for (int i = 0; i < curves.Count; i++)
                 for (int j = i + 1; j < curves.Count; j++)
                     for (int a = 1; a < curves[i].Count; a++)
@@ -2271,11 +2322,20 @@ namespace UnturnedGodot
                             {
                                 var at = (p0 + p1) * 0.5f;
                                 // Near a town two roads converge on their gates by design.
-                                if (!ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f)) ribbonCross++;
+                                if (!ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f))
+                                {
+                                    ribbonCross++;
+                                    // ⚠ NAME THE KINDS. A junction road is an optional convenience that can
+                                    // simply be dropped; two town roads crossing is a routing failure that
+                                    // cannot. One count cannot tell me which fix to reach for.
+                                    if (curveKind[i] != ProcIsland.LinkKind.Road || curveKind[j] != ProcIsland.LinkKind.Road) crossJunc++;
+                                    else crossRoad++;
+                                }
                                 a = curves[i].Count; break;   // one report per pair
                             }
                         }
-            Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town; "
+            Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town "
+                      + $"({crossRoad} road-on-road, {crossJunc} involving a junction road); "
                       + $"worst float {floatWorst:0.00} m ({floatOver} of {floatN} sample(s) over 0.6 m in open country, "
                       + $"{floatTown} more on a town pad the conform does not own); "
                       + $"ON THE CENTRELINE worst {centreWorst:0.00} m, {centreOver} of {centreN} over 0.6 m"
