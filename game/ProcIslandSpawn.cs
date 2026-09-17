@@ -2186,6 +2186,15 @@ namespace UnturnedGodot
 
         public static readonly System.Collections.Generic.List<System.Collections.Generic.List<Vector3>> DebugCurves = new();
 
+        /// <summary>Kind and route index for each DebugCurves entry, kept in lockstep. Without these the
+        /// crossing counter can only say "two lines crossed" -- and a Junction road BEGINS on its parent's edge
+        /// line by construction (CarveJunctions puts its first point at A.P + na*RenderedRoadHalf), so its own
+        /// edge lines start on the parent's 5 m-sampled, cm-wiggling edge and generically produce one crossing
+        /// per T-end that is correct by design. Counting those as defects is the mirror image of excluding real
+        /// ones: same failure, opposite sign.</summary>
+        public static readonly System.Collections.Generic.List<ProcIsland.LinkKind> DebugKinds = new();
+        public static readonly System.Collections.Generic.List<int> DebugRoutes = new();
+
         /// <summary>UG_SPLINEDRAW: draw what the roads and fences ACTUALLY are, over everything.
         ///
         /// strawberry: "show a red and green line along the outer edge of road spline as well as the white
@@ -2260,6 +2269,20 @@ namespace UnturnedGodot
             int hits = 0; var hitAt = Vector2.Zero;
             var marks = new System.Collections.Generic.List<Vector2>();
             int hitSelf = 0, hitFence = 0, hitPair = 0, selfReal = 0;
+            // ⚠⚠ CLASSIFY hitPair OR IT CANNOT JUDGE A FIX. Three of its four populations are by-design or
+            // are a different defect, and I have been quoting the total at master all evening:
+            //   hitT    a Junction road's T-end. It STARTS on its parent's edge line (CarveJunctions puts the
+            //           first point at A.P + na*RenderedRoadHalf), so its edge lines begin on the parent's
+            //           5 m-sampled edge and cross it at cm scale. Up to MaxJunctions*2 = 8 an island, all
+            //           correct: that is what a T junction IS.
+            //   hitFan  roads converging on a town. Two roads leaving neighbouring gates on one face are 24 m
+            //           apart and parallel by design.
+            //   hitTrail a dirt inter-POI road involved -- a real but separate defect (sites are placed before
+            //           routing, so a site's stub can start inside a road's core).
+            //   hitOpen  two roads crossing in open country. THIS is the number master is looking at.
+            int hitT = 0, hitFan = 0, hitTrail = 0, hitOpen = 0;
+            var openAt = new System.Collections.Generic.List<Vector2>();
+            var fanAt = new System.Collections.Generic.List<Vector2>();
             float selfWorstR = float.MaxValue;
             var seenX = new System.Collections.Generic.HashSet<(int, int, int, int)>();
             const float HCell = 40f;
@@ -2331,7 +2354,35 @@ namespace UnturnedGodot
                                 }
                             }
                             else if (segs[x1].Road == -2 || segs[y1].Road == -2) hitFence++;
-                            else hitPair++;
+                            else
+                            {
+                                hitPair++;
+                                int ra = segs[x1].Road, rb = segs[y1].Road;
+                                bool classified = false;
+                                // 1. a Junction's T-end, within 25 m of where that junction road begins or ends
+                                for (int q = 0; q < 2 && !classified; q++)
+                                {
+                                    int rr = q == 0 ? ra : rb;
+                                    if (rr < 0 || rr >= DebugKinds.Count) continue;
+                                    if (DebugKinds[rr] != ProcIsland.LinkKind.Junction) continue;
+                                    var cc2 = DebugCurves[rr];
+                                    if (cc2.Count < 2) continue;
+                                    float d0 = new Vector2(cc2[0].X - mid3.X, cc2[0].Z - mid3.Y).Length();
+                                    float d1 = new Vector2(cc2[^1].X - mid3.X, cc2[^1].Z - mid3.Y).Length();
+                                    if (Mathf.Min(d0, d1) <= 25f) { hitT++; classified = true; }
+                                }
+                                // 2. a town's own gate fan. ⚠ Proxy: within 150 m of ANY pad, not "the two
+                                // links share a POI" -- Route does not carry its endpoints here. Named so the
+                                // looseness is visible rather than assumed away.
+                                if (!classified && ProcIsland.InsideAnyTownPad(mid3.X, -mid3.Y, 150f))
+                                { hitFan++; fanAt.Add(mid3); classified = true; }
+                                // 3. a dirt inter-POI road: a real but separate defect
+                                if (!classified
+                                    && ((ra >= 0 && ra < DebugKinds.Count && DebugKinds[ra] == ProcIsland.LinkKind.Trail)
+                                     || (rb >= 0 && rb < DebugKinds.Count && DebugKinds[rb] == ProcIsland.LinkKind.Trail)))
+                                { hitTrail++; classified = true; }
+                                if (!classified) { hitOpen++; openAt.Add(mid3); }
+                            }
                         }
                     }
             // ⚠ Drawn AFTER the sweep, never during it -- Seg() appends to `segs`, so marking inside the loop
@@ -2349,7 +2400,12 @@ namespace UnturnedGodot
             terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
             Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn; "
                       + $"{hits} place(s) where two DRAWN lines cross ({hitSelf} one road folding over ITSELF, "
-                      + $"{hitPair} between two roads, {hitFence} a fence over a road; of the self ones {selfReal} are at a "
+                      + $"{hitPair} between two roads [{hitT} a junction's T-end (by design), {hitFan} inside a "
+                      + $"town's gate fan"
+                      + (fanAt.Count > 0 ? " at " + string.Join(" ", fanAt.ConvertAll(v => $"({v.X:0},{v.Y:0})")) : "")
+                      + $", {hitTrail} involving a dirt road, {hitOpen} IN OPEN COUNTRY"
+                      + (openAt.Count > 0 ? " at " + string.Join(" ", openAt.ConvertAll(v => $"({v.X:0},{v.Y:0})")) : "")
+                      + $"], {hitFence} a fence over a road; of the self ones {selfReal} are at a "
                       + $"radius under the 9.2 m half-width i.e. a REAL fold, tightest {(selfWorstR == float.MaxValue ? 0f : selfWorstR):0.0} m)"
                       + (hits > 0 ? $", last at ({hitAt.X:0},{hitAt.Y:0})" : ""));
         }
@@ -2802,6 +2858,35 @@ namespace UnturnedGodot
                     ? $", tightest {tightest:0.0} m on route {tightRoute} at ({tightAt.X:0},{tightAt.Y:0})"
                       + $" [sample {tightWhere} of {tightOf}, over a {tightSpan:0.00} m span]"
                     : "";
+                // ---- FALSIFIER FOR THE CURVATURE MODEL -------------------------------------------------
+                // fable derived, for an ISOLATED corner of turn phi at joints spaced s on a uniform
+                // Catmull-Rom:   R_built = s * cos^2(phi/2) / (4 * sin(phi/2))
+                // At s = 24 m that puts the 9.2 m fold threshold at exactly phi = 59 deg, and 26 deg at 25 m.
+                // If the model is right, THE COUNT OF JOINTS TURNING MORE THAN 59 DEGREES MUST EQUAL THE FOLD
+                // COUNT (+/-1). If it does not, the model is wrong and so is any fix built on it -- which is
+                // the whole reason to print it before building the fix rather than after.
+                int joints59 = 0, joints26 = 0, jointsSeen = 0;
+                for (int ci = 0; ci < curves.Count; ci++)
+                {
+                    int jc2 = rf.JointCount(builtIdx[ci]);
+                    for (int j = 1; j < jc2 - 1; j++)
+                    {
+                        var jm = rf.JointPos(builtIdx[ci], j - 1);
+                        var j0 = rf.JointPos(builtIdx[ci], j);
+                        var jp3 = rf.JointPos(builtIdx[ci], j + 1);
+                        var g1 = new Vector2(j0.X - jm.X, j0.Z - jm.Z);
+                        var g2 = new Vector2(jp3.X - j0.X, jp3.Z - j0.Z);
+                        if (g1.Length() < 1e-3f || g2.Length() < 1e-3f) continue;
+                        jointsSeen++;
+                        float phi = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(g1.Normalized().Dot(g2.Normalized()), -1f, 1f)));
+                        if (phi > 59f) joints59++;
+                        if (phi > 26f) joints26++;
+                    }
+                }
+                Log.Print($"[island-curve] MODEL CHECK: {joints59} joint(s) of {jointsSeen} turn more than 59 deg "
+                          + $"(predicts a fold), {joints26} more than 26 deg (predicts under 25 m). "
+                          + $"Folds actually measured: {folds}. Model holds iff these match.");
+
                 foldOn.Sort();
                 var kindTally = new System.Collections.Generic.Dictionary<ProcIsland.LinkKind, int>();
                 foreach (var k2 in foldKind) kindTally[k2] = kindTally.TryGetValue(k2, out int c2) ? c2 + 1 : 1;
@@ -3247,8 +3332,10 @@ namespace UnturnedGodot
 
             // The built centrelines are kept for the debug overlay, which cannot run here: the FENCES are
             // placed by SpawnRoadside, which runs after this, and master asked to see both on one picture.
-            DebugCurves.Clear();
+            DebugCurves.Clear(); DebugKinds.Clear(); DebugRoutes.Clear();
             foreach (var c in curves) DebugCurves.Add(c);
+            foreach (var k in curveKind) DebugKinds.Add(k);
+            foreach (var r in curveRoute) DebugRoutes.Add(r);
 
             // ---- and does the ribbon arrive SQUARE-ON to its cap? --------------------------------------------
             // The join gap has measured 0.00 m all session, and that is a claim about a POINT. A ribbon 18.4 m
