@@ -6452,6 +6452,10 @@ namespace UnturnedGodot
             var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
             editor.AddChild(play);
             play.Setup(editor, null, cam);
+            // Hand play mode the world's lighting so it can light the viewmodel and switch the day/night
+            // visuals on -- the editor builds the cycle with VisualsEnabled off, which is right for editing and
+            // wrong for playing.
+            play.SetWorldLighting(sun, env, dayNight);
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)

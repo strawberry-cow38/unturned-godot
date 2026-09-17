@@ -22,6 +22,12 @@ namespace UnturnedGodot
         Editor _editor;
         EditorBuildings _buildings;
         Camera3D _flyCam;
+        /// <summary>The generated world's lighting, handed in by the builder so play mode can light the
+        /// viewmodel and switch the day/night visuals on. Null on a plain custom map, which is why every use is
+        /// guarded rather than assumed.</summary>
+        DirectionalLight3D _sun; Godot.Environment _env; DayNightCycle _dayNight;
+        public void SetWorldLighting(DirectionalLight3D sun, Godot.Environment env, DayNightCycle dn)
+        { _sun = sun; _env = env; _dayNight = dn; }
 
         CanvasLayer _ui;
         Button _playBtn;
@@ -84,6 +90,45 @@ namespace UnturnedGodot
             _editor.AddChild(_player);
             _player.GlobalPosition = ComputeSpawn();   // _Ready makes its FP camera Current + captures the mouse
 
+            // ⭐ A REAL GAME, NOT A CAMERA WITH A GUN (strawberry 2026-09-17: "wire the play mode to be an actual
+            // game instance, instead of a faux one with a dummy eaglefire. full functionality" -> "then yes. do
+            // the real shift into a real play mode").
+            //
+            // ⚠ AND IT IS ATTACHED TO THIS WORLD RATHER THAN REBUILDING ONE. The obvious reading of "a real
+            // instance" is to send a generated island through WorldBuilder.BuildFullWorld like PEI -- but that
+            // loads a RETAIL map root out of the Steam install, and a custom map's world already exists here,
+            // built by BuildEditorNew from the editor's own save format. Writing retail .dat files into someone's
+            // game install to read them straight back would be a second world-builder that can disagree with
+            // this one, which is the failure this codebase keeps documenting. The world is right; what was
+            // missing was the GAME on top of it.
+            //
+            // AttachPlayerShell is the same block the real path calls at WorldBuilder:2202 -- console, bug
+            // reporter, crop manager, map, HUD, hitmarkers, pause, profiler, attachments, in that order -- so
+            // the playtest gets the identical shell rather than a hand-picked subset that drifts.
+            WorldBuilder.AttachPlayerShell(_editor, _player, withCropManager: true);
+            _player.Spawn = _player.GlobalPosition;
+
+            // Death re-rolls one of the island's OWN spawn points (ProcIslandSpawn.PlacePlayerSpawns put them
+            // there). Without this the player respawns at the single launch position forever, which on a
+            // generated map is wherever the editor camera happened to be parked.
+            var pool = _editor.Spawns?.PlayerSpawnPoints();
+            if (pool != null && pool.Count > 0)
+            {
+                _player.RespawnPoints = pool;
+                // ...and START at one of them rather than under the camera, when there are any. The
+                // under-the-camera drop is right for testing a building you are editing and wrong for playing
+                // the island, which is what this mode now is.
+                var rng = new RandomNumberGenerator(); rng.Randomize();
+                var pick = pool[rng.RandiRange(0, pool.Count - 1)];
+                _player.GlobalPosition = pick.Pos;
+                _player.Spawn = pick.Pos;
+            }
+
+            // The world's own sun and sky, so the viewmodel is lit by the time of day instead of ignoring it --
+            // the same LinkWorldLighting call the real path makes, and for the same reason it was added there.
+            if (_sun != null && _env != null) _player.LinkWorldLighting(_sun, _env);
+            if (_dayNight != null) _dayNight.VisualsEnabled = true;   // the editor builds it with visuals OFF
+
             // Handles, selection outlines and the gizmo are EDITOR furniture; they were still drawn over
             // the game because EnterPlay only hid the UI layer, which does not own them. strawberry:
             // "kill all handles, selection boxes etc when going into play mode".
@@ -103,8 +148,16 @@ namespace UnturnedGodot
             if (!_playing) return;
             _playing = false;
 
+            // ⚠ THE SHELL GOES WITH THE PLAYER. AttachPlayerShell adds ~9 nodes to the EDITOR, not to the
+            // player, so leaving them behind means a second playtest stacks a second HUD, a second pause menu
+            // and a second dev console over the first -- and the editor keeps a game HUD drawn over it after
+            // Escape. Freeing by type is deliberate: the shell's membership is WorldBuilder's to define, and a
+            // list of names copied here would fall out of step the first time it gains a node.
+            foreach (var c in _editor.GetChildren())
+                if (c is DevConsole or BugReporter or CropManager or MapUI or HUD) c.QueueFree();
             if (GodotObject.IsInstanceValid(_player)) _player.QueueFree();
             _player = null;
+            if (_dayNight != null) _dayNight.VisualsEnabled = false;
             Input.MouseMode = Input.MouseModeEnum.Visible;
 
             if (_flyCam != null) { _flyCam.SetProcess(true); _flyCam.SetProcessUnhandledInput(true); _flyCam.Current = true; }
