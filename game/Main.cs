@@ -6096,15 +6096,7 @@ namespace UnturnedGodot
             // THE LENS (2026-09-06). Mounted on the real world-build path rather than beside the player, because
             // it is a property of the camera rather than of who is looking through it -- and because it must
             // exist for the settings row to have something to drive. Off by default; GraphicsOptions decides.
-            if (ChromaticAberration.Current == null)
-            {
-                AddChild(new ChromaticAberration());
-                // UG_CHROMATIC=<intensity> forces it on for render verification -- this is a purely visual
-                // change, so it has to be lookable-at without clicking through a settings menu.
-                if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
-                { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
-                GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
-            }
+            MountChromaticAberration();
             // CONTAMINATED-GROUND GRAIN (strawberry 2026-09-11). Mounted here for the same reason the lens is:
             // it is a property of the view, not of the player, and it has to exist before anyone walks into a
             // zone. Costs nothing while clear -- the rect stays hidden until exposure is non-zero.
@@ -9271,6 +9263,22 @@ namespace UnturnedGodot
         // server-adopted spawn, predicted + reconciled -- its camera IS the view (no overhead cam). Bare
         // --client keeps the C1 demo shape: overhead cam + ClientNode's capsule renderer (used by the
         // --server 2-process demo; no player shell).
+        /// The camera lens, mounted by singleplayer AND by a joined client. It lived inline on the playable
+        /// path only, so on a server ChromaticAberration.Current stayed null forever and the graphics-panel
+        /// toggle drove nothing at all -- GraphicsOptions.ApplyChromatic ends in `Current?.Apply()`, and a
+        /// null-conditional on a thing that is always null is a setting that silently does nothing. Same
+        /// two-paths-one-wired shape as the map music and the container decoration.
+        void MountChromaticAberration()
+        {
+            if (ChromaticAberration.Current != null) return;
+            AddChild(new ChromaticAberration());
+            // UG_CHROMATIC=<intensity> forces it on for render verification -- this is a purely visual
+            // change, so it has to be lookable-at without clicking through a settings menu.
+            if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
+            { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
+            GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
+        }
+
         /// The map's music KEY, or null for a map that should play nothing. Pure and static so the rule can be
         /// asserted without booting a world: Washington's shipped "loop" is the 2016 trailer track, never meant
         /// to play in-game (strawberry 2026-09-04 "kill the music on washington"), so it gets no music at all
@@ -9335,7 +9343,8 @@ namespace UnturnedGodot
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
-                    PlayMapMusic();   // a joined player gets the map loop too -- see PlayMapMusic
+                    PlayMapMusic();             // a joined player gets the map loop too -- see PlayMapMusic
+                    MountChromaticAberration();   // ...and a lens for the graphics toggle to drive -- see MountChromaticAberration
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
