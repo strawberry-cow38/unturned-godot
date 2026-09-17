@@ -28,6 +28,15 @@ namespace UnturnedGodot
         public const int Budget = 64;            // max SIMULATED (HOT+WARM) zombies per player (retail pocket maxZombies)
         const float SpawnChance = 0.25f;         // NORMAL survival (retail Provider Zombies.Spawn_Chance)
         const int ChunkMaxLive = 24;             // per-chunk materialized cap (keeps one dense chunk from eating the whole budget)
+        // HARD CEILING ON VISIBLE BODIES (strawberry 2026-09-17: "zombies infinitely spawn. add a zombie cap").
+        // Budget already bounds how many zombies are SIMULATED, but nothing bounded how many got a ZombieBody:
+        // Move() gave one to every zombie inside HotBodyDist, so a dense corner simply built as many rigs as it
+        // had zombies. That is the cost that actually shows up on screen -- a rig, a skeleton and a MoveAndSlide
+        // each -- and it now stops at a number instead of at whatever the map happens to contain.
+        public const int MaxHotBodies = 48;
+        // How long a killed zombie's slot stays empty before the chunk may refill it. Without this, clearing an
+        // area empties it PERMANENTLY, which is its own bug; with it, kills mean something for a while.
+        public const double RespawnSeconds = 300.0;
 
         // Tier thresholds: distance (m, XZ) from a chunk's CENTRE to the nearest player. ENTER a hotter tier at the
         // inner radius, LEAVE it only past the outer -- the gap is the hysteresis band.
@@ -85,10 +94,16 @@ namespace UnturnedGodot
             public readonly List<Vector3> SpawnPts = new(); // Animals.dat points that fell in this chunk
             public readonly List<byte> SpawnTables = new();  // each point's zombie TABLE index, parallel to SpawnPts
             public int Cap;                                 // how many zombies this chunk holds when awake
+            // ⚠ KILLS HAVE TO OUTLIVE Live. A chunk drops its Live list when it FREEZES and rebuilds a full Cap
+            // when you come back, so before this the only record that anything died went away with the list --
+            // clear a town, walk far enough for the chunk to freeze, return, and the whole population is back.
+            // That is the "infinitely spawn": not a spawner running away, but kills that never persisted.
+            public int Killed;                              // slots emptied by death, not yet eligible to refill
+            public double RefillAt;                         // clock at which one killed slot may come back
             public Tier Tier = Tier.Frozen;
             public List<Zombie> Live;                       // null while FROZEN; materialized (Cap zombies) once COLD+
             public uint Seed;                               // deterministic per-chunk spawn-point pick
-            public int Population => Live?.Count ?? Cap;     // FROZEN reports its POTENTIAL, so map totals stay honest
+            public int Population => Live?.Count ?? Mathf.Max(0, Cap - Killed);   // FROZEN reports its POTENTIAL, minus what died there
         }
 
         readonly Dictionary<(int, int), Chunk> _chunks = new();
@@ -206,7 +221,11 @@ namespace UnturnedGodot
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5; float ox = ((s % 1000u) / 1000f - 0.5f) * spread;
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5; float oz = ((s % 1000u) / 1000f - 0.5f) * spread;
                 var p = new Vector3(at.X + ox, at.Y, at.Z + oz);
-                c.Live.Add(new Zombie { Home = p, Pos = p });
+                // Record the POINT too, not just the live zombie. Materialize refuses a chunk with no spawn points,
+                // so without this a seeded chunk that froze came back permanently EMPTY -- the debug path quietly
+                // behaving unlike the real one, which is exactly where a harness stops proving anything.
+                c.SpawnPts.Add(p); c.SpawnTables.Add(255);
+                c.Live.Add(new Zombie { Home = p, Pos = p, Table = 255, Outfit = s | 1u });
             }
         }
 
@@ -249,6 +268,10 @@ namespace UnturnedGodot
             // 4) wake (materialize the zombie list) COLD+; sleep (drop it, keep the count) when FROZEN
             foreach (var c in _chunks.Values)
             {
+                // One killed slot becomes eligible again every RespawnSeconds, so a cleared area stays cleared for
+                // a while and then refills -- rather than refilling the instant you look away, or never.
+                if (c.Killed > 0 && c.RefillAt > 0 && _clock >= c.RefillAt)
+                { c.Killed--; c.RefillAt = c.Killed > 0 ? _clock + RespawnSeconds : 0; }
                 if (c.Tier >= Tier.Cold && c.Live == null) Materialize(c);
                 else if (c.Tier == Tier.Frozen && c.Live != null) c.Live = null;   // back to pure data
                 TierChunks[(int)c.Tier]++;
@@ -256,6 +279,7 @@ namespace UnturnedGodot
             }
         }
 
+        int _hotBodies;                    // bodies alive RIGHT NOW, recounted every Move (see the note there)
         readonly List<Vector3> _anchors = new();
         readonly List<Chunk> _active = new();
 
@@ -291,10 +315,11 @@ namespace UnturnedGodot
         // stand there (Home == Pos); a later phase gives them the flow field. No node, no mesh, no physics yet.
         void Materialize(Chunk c)
         {
-            c.Live = new List<Zombie>(c.Cap);
+            int want = Mathf.Max(0, c.Cap - c.Killed);   // the dead do not come back with the thaw
+            c.Live = new List<Zombie>(want);
             if (c.SpawnPts.Count == 0) return;
             uint s = c.Seed | 1u;
-            for (int i = 0; i < c.Cap; i++)
+            for (int i = 0; i < want; i++)
             {
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5;             // xorshift32 -- deterministic pick
                 int pi = (int)(s % (uint)c.SpawnPts.Count);
@@ -380,6 +405,16 @@ namespace UnturnedGodot
             if (coldStep) _coldAcc = 0;
 
             _hotList.Clear();
+            // ⚠ RECOUNTED, never accumulated. A body is dropped on demote AND on death AND by QueueFree, so an
+            // increment/decrement pair has three places to get out of step -- and a counter that drifts upward
+            // silently stops every future spawn, which looks exactly like the bug this cap was added to fix.
+            // Counting what actually exists is O(live zombies), a few hundred at worst, and cannot drift.
+            _hotBodies = 0;
+            foreach (var cc in _chunks.Values)
+            {
+                if (cc.Live == null) continue;
+                foreach (var zz in cc.Live) if (zz.Body != null) _hotBodies++;
+            }
             // pass 1: body promote/demote + death cleanup; drift the data-only (WARM/COLD) ones TOWARD THE SOUND; gather HOT
             foreach (var c in _chunks.Values)
             {
@@ -388,9 +423,15 @@ namespace UnturnedGodot
                 for (int i = c.Live.Count - 1; i >= 0; i--)
                 {
                     var z = c.Live[i];
-                    if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead)) { z.Body = null; c.Live.RemoveAt(i); continue; }   // killed -> gone
+                    if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead))
+                    {   // killed -> gone, and REMEMBERED, so the chunk does not hand the slot back on the next thaw
+                        z.Body = null; c.Live.RemoveAt(i);
+                        if (c.Killed < c.Cap) { c.Killed++; if (c.RefillAt <= 0) c.RefillAt = _clock + RespawnSeconds; }
+                        continue;
+                    }
                     float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
-                    if (z.Body == null && d < HotBodyDist) { z.Body = new ZombieBody(z.Table, z.Outfit); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; }
+                    if (z.Body == null && d < HotBodyDist && _hotBodies < MaxHotBodies)
+                    { z.Body = new ZombieBody(z.Table, z.Outfit); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; _hotBodies++; }
                     else if (z.Body != null && d > HotBodyDrop) { z.Body.QueueFree(); z.Body = null; }
 
                     if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2

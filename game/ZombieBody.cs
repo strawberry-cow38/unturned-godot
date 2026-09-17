@@ -45,9 +45,13 @@ namespace UnturnedGodot
             // rate lands at 0.65x -- the clip genuinely SLOWS, which is what was asked for.
             const float ClipNaturalSpeed = 6.87f;
 
-            // Sickly grey-green. The old fallback capsule's (0.40,0.60,0.35) read as bright moss once it was a whole
-            // body rather than a debug pill, and clothing sits ON this, so it is desaturated to keep garment colour legible.
-            var ZombieSkin = new Color(0.44f, 0.52f, 0.40f);
+            // MEASURED OFF THE ATLAS THIS REPLACED, not picked by eye. zombie_atlas_0.png paints the head and limbs
+            // in rgb(150,158,128) across 31.9% of its area -- that IS the zombie's skin, and it is the colour these
+            // bodies had before they moved onto the clothes shader. My first guess here was rgb(112,133,102), 22%
+            // darker by luminance (126 vs 154), which is what "the lighting on zombies is very dark" was
+            // (strawberry 2026-09-17). The material is not the difference -- both paths are metallic 0, roughness 1
+            // -- the ALBEDO was, because the old path multiplied white through a texture and this one is a flat tint.
+            var ZombieSkin = new Color(0.588f, 0.620f, 0.502f);
 
             // PLAYER CLOTHES, NOT A BAKED ATLAS (strawberry 2026-09-17: "change the clothes they can spawn with
             // to be any of the clothes we can wear as a player"). The six zombie_atlas_N.png were the whole look --
