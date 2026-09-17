@@ -1203,6 +1203,7 @@ namespace UnturnedGodot
             var fenceTilts = new System.Collections.Generic.List<float>();
             float fenceTiltMax = 0f;
             RoadsideOnRoad = 0;   // a static, so it has to be cleared per island or the second one reports the first's
+            FenceMarks.Clear();
             if (terr == null || objs == null || terr.IslandRoutes == null) return;
 
             const float FenceSpan = 16f;     // retail's measured run spacing; the mesh is 16.25 m long
@@ -1321,15 +1322,36 @@ namespace UnturnedGodot
                 //
                 // Building the offset polyline FIRST and then walking THAT by arc length fixes both at once:
                 // spacing is measured where the panels are, and the heading comes from the curve they follow.
+                // ⚠⚠ ONE SIDE PER RUN, NOT PER POINT -- and this is why barriers ended up ON the carriageway.
+                // `outward` comes from the sign of the turn, and that sign FLIPS at an inflection. Recomputed
+                // per point, the offset edge jumps from +11 m to -11 m in a single step: a 22 m discontinuity
+                // straight across the road, and any panel seated near it is laid on the tarmac. Measured
+                // before this: 120 fence samples inside the carriageway on seed 424242, worst 5.2 m in.
+                //
+                // A barrier run only exists on a bend tighter than 90 m, so it HAS one outside. Taking the sign
+                // at the middle of each contiguous run and holding it for the whole run is what makes the
+                // offset curve continuous, which is the thing the panels are walked along.
+                var fenceSide = new float[m];
+                for (int i = 0; i < m; i++)
+                {
+                    int lo = Mathf.Max(0, i - 2), hi = Mathf.Min(m - 1, i + 2);
+                    float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
+                    fenceSide[i] = cross >= 0f ? -1f : 1f;
+                }
+                for (int i = 0; i < m; i++)
+                {
+                    if (!wantFence[i]) continue;
+                    int j0 = i;
+                    while (i + 1 < m && wantFence[i + 1]) i++;
+                    float held = fenceSide[(j0 + i) / 2];
+                    for (int k = j0; k <= i; k++) fenceSide[k] = held;
+                }
                 var edge = new System.Collections.Generic.List<Vector2>(m);
                 var edgeOk = new System.Collections.Generic.List<bool>(m);
                 for (int i = 0; i < m; i++)
                 {
                     var tg = tan[i];
-                    int lo = Mathf.Max(0, i - 2), hi = Mathf.Min(m - 1, i + 2);
-                    float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
-                    float outward = cross >= 0f ? -1f : 1f;
-                    var nrm = new Vector2(-tg.Y, tg.X) * outward;
+                    var nrm = new Vector2(-tg.Y, tg.X) * fenceSide[i];
                     edge.Add(pts[i] + nrm * FenceOffset);
                     edgeOk.Add(wantFence[i]);
                 }
@@ -1349,14 +1371,24 @@ namespace UnturnedGodot
                         if (!edgeOk[home]) continue;
                         var at = edge[i - 1].Lerp(edge[i], segT);
                         // Heading from the EDGE curve either side of the panel, not from the centreline.
-                        var eDir = edge[Mathf.Min(m - 1, home + 1)] - edge[Mathf.Max(0, home - 1)];
+                        // ⚠ HEADING FROM THE CENTRELINE TANGENT, SPACING FROM THE OFFSET CURVE. Differencing
+                        // the offset curve for the heading sounds right and is not: that curve KINKS wherever
+                        // the held outward side meets a straight, and a two-step difference across a kink
+                        // points nowhere near the road. Measured: panels averaging 10.6 deg off their road's
+                        // tangent with a worst of 48.9 -- which is "the fences dont cleanly match the outside
+                        // angle, and get shoved into the road", reported all session with no number on it.
+                        // The offset curve is parallel to the centreline by construction, so the centreline's
+                        // tangent IS the run's heading, and it is smooth.
+                        var eDir = tan[home];
                         if (eDir.Length() < 1e-4f) continue;
                         eDir = eDir.Normalized();
                         // Which side of the road this edge is on decides which way the rail must face, and it
                         // is the same outward sign the offset was built with.
-                        int lo2 = Mathf.Max(0, home - 2), hi2 = Mathf.Min(m - 1, home + 2);
-                        float cross2 = tan[lo2].X * tan[hi2].Y - tan[lo2].Y * tan[hi2].X;
-                        float outward2 = cross2 >= 0f ? -1f : 1f;
+                        // ⚠ THE SAME HELD SIGN the offset curve was built with. Re-deriving it here was a
+                        // second copy of the decision, and it could disagree with the edge the panel is
+                        // standing on -- which turns the rail to face the wrong way at exactly the inflection
+                        // points where the edge itself used to jump.
+                        float outward2 = fenceSide[home];
                         float px = at.X, pz = at.Y;
                         if (!RoadsideOk(terr, px, pz, ri)) continue;
                         // ⚠ THE RAIL FACE HAS TO FACE THE ROAD. Measured off the mesh: in the rail height band
@@ -1380,7 +1412,29 @@ namespace UnturnedGodot
                         float tiltDeg = Mathf.RadToDeg(Vector3.Up.AngleTo(fN));
                         fenceTilts.Add(tiltDeg);
                         if (tiltDeg > fenceTiltMax) fenceTiltMax = tiltDeg;
-                        if (objs.Place("Fence_Road_0", pos, fBasis) != null) fences++;
+                        if (objs.Place("Fence_Road_0", pos, fBasis) != null)
+                        {
+                            fences++;
+                            // ⚠ THE LINE, RECORDED WHERE IT IS PLACED (strawberry: "show the entire length of
+                            // the fence road prop as a line too, and see where the fences are overlapping onto
+                            // the roads"). Fence_Road_0 measures 16.25 m along its local +Y, and YawForDir aims
+                            // local +Y along the direction passed to it -- so the run is the seated position
+                            // plus or minus half that along the SAME vector the placement used. Derived here
+                            // rather than re-deriving it from the yaw later, which is how a probe ends up
+                            // measuring a fence nobody placed.
+                            // ⚠⚠ FROM THE BASIS THE PROP IS PLACED WITH, not from the direction that went into
+                            // computing it. The first version rebuilt the run direction out of eDir and the
+                            // outward sign -- a second copy of the placement decision -- and it disagreed with
+                            // the prop: the debug lines lay diagonally ACROSS the carriageway while the fences
+                            // themselves stood correctly on the verge. That produced a metric reporting 120
+                            // panels in the road, and then two "fixes" aimed at fences that were never there.
+                            // The mesh is 16.25 m along its local +Y, so the run is fBasis' Y axis, and there
+                            // is exactly one expression for it.
+                            var wdir = new Vector2(fBasis.Y.X, fBasis.Y.Z);
+                            if (wdir.Length() < 1e-4f) wdir = new Vector2(1f, 0f);
+                            wdir = wdir.Normalized();
+                            FenceMarks.Add((pos.X, pos.Z, wdir.X, wdir.Y, 8.12f));
+                        }
                         else miss++;
                     }
                 }
@@ -1415,6 +1469,11 @@ namespace UnturnedGodot
         /// routes" would have missed every one of them -- and a trail leaves its parent road square-on, which
         /// is exactly the geometry that puts a pole in the middle of it.</summary>
         static int RoadsideOnRoad;   // refusals for standing on another road, so the rule is not silent
+
+        /// <summary>Every barrier panel as a world-space line: centre, unit direction, half-length. Drawn by
+        /// UG_SPLINEDRAW and measured against the carriageway, because "the fences get shoved into the road"
+        /// has been an open report all session with no number attached to it.</summary>
+        public static readonly System.Collections.Generic.List<(float X, float Z, float DX, float DZ, float Half)> FenceMarks = new();
         static bool RoadsideOk(Terrain terr, float px, float pz, int ownRoute = -1)
         {
             if (ProcIsland.InsideAnyTownPad(px, pz, 6f)) return false;
@@ -1989,6 +2048,115 @@ namespace UnturnedGodot
             return placed;
         }
 
+        public static readonly System.Collections.Generic.List<System.Collections.Generic.List<Vector3>> DebugCurves = new();
+
+        /// <summary>UG_SPLINEDRAW: draw what the roads and fences ACTUALLY are, over everything.
+        ///
+        /// strawberry: "show a red and green line along the outer edge of road spline as well as the white
+        /// spline line on a topdown map. show the entire length of the fence road prop as a line too, and see
+        /// where the fences are overlapping onto the roads."
+        ///
+        /// ⭐ This exists because four separate counters of mine read zero today while a photograph showed the
+        /// thing they were counting. A centreline cannot show a ribbon lapping a kerb -- the centreline is the
+        /// one part of a road guaranteed never to -- so the EDGES are what has to be drawn.
+        ///   white = centreline   green = left edge   red = right edge   cyan = a barrier panel
+        /// =1 draws it; =2 colours each road separately instead (for "is that two roads, or one forking").</summary>
+        public static void DrawDebug(Terrain terr)
+        {
+            string mode = System.Environment.GetEnvironmentVariable("UG_SPLINEDRAW");
+            if (terr == null || (mode != "1" && mode != "2") || DebugCurves.Count == 0) return;
+            bool perRoad = mode == "2";
+            var im = new ImmediateMesh();
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                NoDepthTest = true,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                VertexColorUseAsAlbedo = true,
+            };
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines, mat);
+            void Seg(Vector3 a, Vector3 b, Color c)
+            {
+                im.SurfaceSetColor(c); im.SurfaceAddVertex(new Vector3(a.X, a.Y + 4f, a.Z));
+                im.SurfaceSetColor(c); im.SurfaceAddVertex(new Vector3(b.X, b.Y + 4f, b.Z));
+            }
+            for (int ci = 0; ci < DebugCurves.Count; ci++)
+            {
+                var c = DebugCurves[ci];
+                var mid = perRoad ? Color.FromHsv((ci * 0.37f) % 1f, 0.9f, 1f) : new Color(1f, 1f, 1f);
+                for (int i = 1; i < c.Count; i++)
+                {
+                    var f = new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z);
+                    if (f.Length() < 1e-4f) continue;
+                    var per = new Vector2(-f.Y, f.X).Normalized() * ProcIsland.RenderedRoadHalf;
+                    Seg(c[i - 1], c[i], mid);
+                    Seg(new Vector3(c[i - 1].X + per.X, c[i - 1].Y, c[i - 1].Z + per.Y),
+                        new Vector3(c[i].X + per.X, c[i].Y, c[i].Z + per.Y), new Color(0.1f, 1f, 0.2f));
+                    Seg(new Vector3(c[i - 1].X - per.X, c[i - 1].Y, c[i - 1].Z - per.Y),
+                        new Vector3(c[i].X - per.X, c[i].Y, c[i].Z - per.Y), new Color(1f, 0.15f, 0.1f));
+                }
+            }
+            foreach (var f in FenceMarks)
+            {
+                float y = terr.SampleHeight(f.X, f.Z);
+                Seg(new Vector3(f.X - f.DX * f.Half, y, f.Z - f.DZ * f.Half),
+                    new Vector3(f.X + f.DX * f.Half, y, f.Z + f.DZ * f.Half), new Color(0.2f, 0.9f, 1f));
+            }
+            im.SurfaceEnd();
+            terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
+            Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn");
+        }
+
+        /// <summary>How far each barrier panel reaches ONTO the carriageway it guards. A fence is a 16.25 m bar
+        /// and the ribbon is 18.4 m wide, so a panel seated a metre too far in puts a third of its length in the
+        /// road -- the "fences get shoved into the road" report, which has never had a number against it.</summary>
+        public static void ReportFenceOverlap(Terrain terr)
+        {
+            if (terr == null || DebugCurves.Count == 0) return;
+            int over = 0; float worst = 0f; var at = Vector2.Zero;
+            foreach (var f in FenceMarks)
+                for (int k = -2; k <= 2; k++)
+                {
+                    float t = k / 2f;
+                    float px = f.X + f.DX * f.Half * t, pz = f.Z + f.DZ * f.Half * t;
+                    foreach (var c in DebugCurves)
+                        foreach (var q in c)
+                        {
+                            float d = new Vector2(px - q.X, pz - q.Z).Length();
+                            if (d >= ProcIsland.RenderedRoadHalf) continue;
+                            float into = ProcIsland.RenderedRoadHalf - d;
+                            if (into > worst) { worst = into; at = new Vector2(px, pz); }
+                            over++;
+                            break;
+                        }
+                }
+            // ⚠ IS THE LINE EVEN ALONG THE ROAD? A barrier run is parallel to the carriageway it guards, so
+            // the angle between a panel's line and the nearest road tangent has to be near ZERO. If it comes
+            // out near 90 the debug line is using the wrong mesh axis and every number above it is about a
+            // fence nobody placed -- which is worth one cheap check before believing any of them.
+            float angSum = 0f; int angN = 0; float angWorst = 0f;
+            foreach (var f in FenceMarks)
+            {
+                float bestD = float.MaxValue; Vector2 tg = Vector2.Zero;
+                foreach (var c in DebugCurves)
+                    for (int i = 1; i < c.Count; i++)
+                    {
+                        float d = new Vector2(f.X - c[i].X, f.Z - c[i].Z).LengthSquared();
+                        if (d >= bestD) continue;
+                        bestD = d; tg = new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z);
+                    }
+                if (tg.Length() < 1e-4f) continue;
+                tg = tg.Normalized();
+                float a = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(Mathf.Abs(tg.Dot(new Vector2(f.DX, f.DZ))), 0f, 1f)));
+                angSum += a; angN++;
+                if (a > angWorst) angWorst = a;
+            }
+            Log.Print($"[island-fence] panel vs road tangent: mean {(angN > 0 ? angSum / angN : 0f):0.0}°, worst {angWorst:0.0}° "
+                      + "(a barrier runs ALONG its road, so this must be near 0)");
+            Log.Print($"[island-fence] {over} fence sample(s) inside the carriageway of {FenceMarks.Count} panel(s), "
+                      + $"worst {worst:0.0} m in" + (over > 0 ? $" at ({at.X:0},{at.Y:0})" : ""));
+        }
+
         /// <summary>Stand the radar towers and the benches.
         ///
         /// ⭐ Radar_1, not Radar_0: measured, Radar_1 is 7.8 x 6.8 x 28.2 m and Radar_0 is a 7.9 m base. PEI
@@ -2559,47 +2727,10 @@ namespace UnturnedGodot
                       + $"(tarmac touches under {ProcIsland.RenderedRoadHalf * 2f:0.#} m); {tarmacShared} sample pair(s) sharing tarmac"
                       + (tarmacShared > 0 ? $", nearest at ({nearAt.X:0},{nearAt.Y:0}) between {nearKinds}" : ""));
 
-            // ---- UG_SPLINEDRAW=1: the centrelines, in white, over everything ---------------------------------
-            // strawberry: "show me a top down view of a map. with white lines along the road splines." Which is
-            // the right instrument to ask for -- every number I have reported about overlaps has been computed
-            // from one geometry or another, and a picture of where the splines ACTUALLY run settles which of
-            // them is describing the island. NoDepthTest so trees and terrain cannot hide a line, and drawn off
-            // the BUILT curve (rf.SampleCentreline) for the same reason everything else moved onto it today.
-            if (System.Environment.GetEnvironmentVariable("UG_SPLINEDRAW") is "1" or "2" && curves.Count > 0)
-            {
-                var im = new ImmediateMesh();
-                var mat = new StandardMaterial3D
-                {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                    AlbedoColor = new Color(1f, 1f, 1f),
-                    NoDepthTest = true,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
-                // ⚠ UG_SPLINEDRAW=2 COLOURS EACH ROAD DIFFERENTLY. White lines answer "where do the splines
-                // run"; they cannot answer "are these two bands one road or two", which is the question a
-                // render of an apparent crossing actually poses -- and which I could not settle by staring at
-                // a monochrome overlay for three renders. Vertex colours, so one draw still does it.
-                bool perRoad = System.Environment.GetEnvironmentVariable("UG_SPLINEDRAW") == "2";
-                mat.VertexColorUseAsAlbedo = perRoad;
-                im.SurfaceBegin(Mesh.PrimitiveType.Lines, mat);
-                for (int ci = 0; ci < curves.Count; ci++)
-                {
-                    var c = curves[ci];
-                    var col = perRoad
-                        ? Color.FromHsv((ci * 0.37f) % 1f, 0.9f, 1f)
-                        : new Color(1f, 1f, 1f);
-                    for (int i = 1; i < c.Count; i++)
-                    {
-                        im.SurfaceSetColor(col);
-                        im.SurfaceAddVertex(new Vector3(c[i - 1].X, c[i - 1].Y + 4f, c[i - 1].Z));
-                        im.SurfaceSetColor(col);
-                        im.SurfaceAddVertex(new Vector3(c[i].X, c[i].Y + 4f, c[i].Z));
-                    }
-                }
-                im.SurfaceEnd();
-                terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
-                Log.Print($"[island-splinedraw] {curves.Count} centreline(s) drawn in white");
-            }
+            // The built centrelines are kept for the debug overlay, which cannot run here: the FENCES are
+            // placed by SpawnRoadside, which runs after this, and master asked to see both on one picture.
+            DebugCurves.Clear();
+            foreach (var c in curves) DebugCurves.Add(c);
 
             // ---- and does the ribbon arrive SQUARE-ON to its cap? --------------------------------------------
             // The join gap has measured 0.00 m all session, and that is a claim about a POINT. A ribbon 18.4 m

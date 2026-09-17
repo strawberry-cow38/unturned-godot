@@ -6540,6 +6540,9 @@ namespace UnturnedGodot
             // conform has just finished moving.
             if (genPois != null) { ProcIslandSpawn.SpawnTrails(terr, rf); ProcIslandSpawn.SpawnCamps(terr, objs); }
             if (genPois != null) ProcIslandSpawn.SpawnLandmarks(terr, objs);
+            // AFTER the roadside props, because the overlay draws the FENCES as well as the road edges and
+            // SpawnRoadside is what places them.
+            if (genPois != null) { ProcIslandSpawn.ReportFenceOverlap(terr); ProcIslandSpawn.DrawDebug(terr); }
             if (genPois != null && genSeed.HasValue)
             {
                 await Phase("Seeding grass and flowers");
