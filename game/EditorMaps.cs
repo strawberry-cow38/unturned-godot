@@ -122,6 +122,12 @@ namespace UnturnedGodot
                         try { System.IO.File.Delete(path); n++; } catch { }
                 foreach (var path in System.IO.Directory.GetFiles(d, $"editor_{map}.txt"))
                     try { System.IO.File.Delete(path); n++; } catch { }
+                // ...and the heightmap's SIDECARS, which are the one family Tails cannot name: holes, rivers
+                // and the splat hang off the heightmap's full filename ("..._heightmap.bin.splat"), so the
+                // exact-match tail above walks straight past them and a deleted map left its paint and its
+                // dug holes on disk to be inherited by the next map that happened to reuse the name.
+                foreach (var path in System.IO.Directory.GetFiles(d, $"editor_{map}_heightmap.bin.*"))
+                    try { System.IO.File.Delete(path); n++; } catch { }
             }
             try { if (System.IO.File.Exists(ProcPath(map))) { System.IO.File.Delete(ProcPath(map)); n++; } } catch { }
             Log.Print($"[editor-maps] deleted '{map}' ({n} file(s))");

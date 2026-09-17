@@ -21,6 +21,39 @@ namespace UnturnedGodot
     {
         public const int Res = 1024;
 
+        /// <summary>Point the map screen at an island's ALREADY-BAKED art, without redrawing it.
+        ///
+        /// ⚠ RE-BAKING ON RELOAD WOULD DRAW A WORSE MAP, and quietly. Bake() overlays the route polylines and
+        /// the town tiles, and both of those live in memory on the Terrain -- they are generator output, not
+        /// saved grid data -- so a reopened map has empty lists and would bake a picture of the island with
+        /// every road and town missing from it. The PNG and the node file written at creation are the correct
+        /// artefacts; this just re-points MapUI and MapNodes at them.
+        ///
+        /// The FRAME is recomputed rather than stored: it is a pure function of the terrain's bounds, which
+        /// come back with the heightmap, so deriving it here cannot drift from what Bake used.</summary>
+        public static bool Rebind(Terrain terr, int seed)
+        {
+            if (terr == null) return false;
+            string name = $"island_{seed}_map.png";
+            if (!System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)))
+            {
+                Log.Print($"[island-map] no baked art for seed {seed} -- the map screen keeps what it had");
+                return false;
+            }
+            var b = terr.WorldBoundsXZ();
+            MapUI.IslandImage = name;
+            MapUI.IslandSize = Mathf.Max(b.MaxX - b.MinX, b.MaxZ - b.MinZ);
+            MapUI.MapCentre = new Vector2((b.MinX + b.MaxX) * 0.5f, (b.MinZ + b.MaxZ) * 0.5f);
+            string nodes = $"nodes_island_{seed}.tsv";
+            if (System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + nodes)))
+            {
+                MapNodes.MapNodeFile = nodes;
+                MapNodes.Reload();   // or the reopened island is labelled with PEI's town names
+            }
+            Log.Print($"[island-map] rebound to content/{name} ({MapUI.IslandSize:0} m across)");
+            return true;
+        }
+
         public static string Bake(Terrain terr, int seed)
         {
             if (terr == null) return null;

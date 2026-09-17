@@ -428,6 +428,68 @@ void fragment() {
         /// (Landscape/Holes/ per tile).</summary>
         static string HolesPathFor(string heightmapPath) => heightmapPath + ".holes";
         static string RiversPathFor(string heightmapPath) => heightmapPath + ".rivers";
+        static string SplatPathFor(string heightmapPath) => heightmapPath + ".splat";
+
+        /// <summary>Persist the PAINT. ⚠ Nothing saved this until 2026-09-17, and the omission is invisible on
+        /// a hand-built map (you painted it, you can paint it again) and catastrophic on a generated one, where
+        /// EVERY square metre of dirt, sand and rock is painted by the generator and by nothing else.
+        /// strawberry: "when going to the editor from a proc map. its not the same map" -- the heightmap came
+        /// back exactly, so the island had the right SHAPE with the roads, beaches, cliff faces and town pads
+        /// all reverted to grass.
+        ///
+        /// Stores the DOMINANT layer per texel, which is the whole of what the editor's painting can express:
+        /// PaintSplat and its bulk siblings are winner-take-all (one channel at 1.0, the rest 0), so _dom is
+        /// not a lossy summary of an editor map -- it IS the map. A RETAIL tile's blended weights would not
+        /// survive this, and do not have to: retail maps load their splat from their own tiles and never take
+        /// this path.
+        ///
+        /// RLE because a splat is overwhelmingly long runs of one layer -- a 768x768 island is 590 KB raw and
+        /// about 12 KB run-encoded, and the editor writes this on every save.</summary>
+        public void SaveSplat(string path)
+        {
+            if (_dom == null) return;
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write(_dw); w.Write(_dh);
+            byte run = _dom[0, 0]; int len = 0;
+            for (int x = 0; x < _dw; x++)
+                for (int y = 0; y < _dh; y++)
+                {
+                    byte v = _dom[x, y];
+                    if (v == run && len < ushort.MaxValue) { len++; continue; }
+                    w.Write(run); w.Write((ushort)len);
+                    run = v; len = 1;
+                }
+            w.Write(run); w.Write((ushort)len);
+        }
+
+        /// <summary>Read a saved splat back and re-derive both live weight textures from it. Returns false if
+        /// there is no sidecar or its dimensions disagree, leaving whatever paint is already there.</summary>
+        public bool LoadSplat(string path)
+        {
+            if (_dom == null || _s0Img == null || _s1Img == null || !System.IO.File.Exists(path)) return false;
+            using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+            if (r.ReadInt32() != _dw || r.ReadInt32() != _dh) return false;
+            var s = r.BaseStream;
+            int x = 0, y = 0;
+            while (s.Position < s.Length && x < _dw)
+            {
+                byte v = r.ReadByte(); int len = r.ReadUInt16();
+                for (int i = 0; i < len && x < _dw; i++)
+                {
+                    _dom[x, y] = v;
+                    // ⚠ Both images every texel, not just the one that owns this layer: a texel changing from
+                    // layer 5 (splat1) to layer 2 (splat0) has to have its OLD channel cleared, and writing
+                    // only the new image leaves it lit in both -- two materials at full weight, which the
+                    // winner-take-all shader resolves to whichever it reaches first.
+                    _s0Img.SetPixel(x, y, new Color(v == 0 ? 1 : 0, v == 1 ? 1 : 0, v == 2 ? 1 : 0, v == 3 ? 1 : 0));
+                    _s1Img.SetPixel(x, y, new Color(v == 4 ? 1 : 0, v == 5 ? 1 : 0, v == 6 ? 1 : 0, v == 7 ? 1 : 0));
+                    if (++y >= _dh) { y = 0; x++; }
+                }
+            }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            return true;
+        }
 
         /// <summary>Persist the carved river segments.
         ///
@@ -581,6 +643,28 @@ void fragment() {
         /// crossover runs long after GenerateIsland returned, and "deterministic" means every one of those
         /// later choices keys off the SAME number rather than off whatever the caller still happens to hold.</summary>
         public int IslandSeed => _islandSeed;
+        /// <summary>Re-declare which island this terrain IS, for a map loaded from disk rather than
+        /// generated. Everything downstream that keys off the seed (building materials, town names)
+        /// otherwise reads 0 on a reopened island and answers for a different world than the one saved.</summary>
+        public void SetIslandSeed(int seed) => _islandSeed = seed;
+
+        /// <summary>A cheap hash of the ground a scatter would read: every height and every splat texel.
+        /// Exists so "the generate and reload paths built the same island" is a MEASUREMENT rather than two
+        /// instance counts that happen to look close -- 609701 against 609757 is a 0.009% difference and could
+        /// equally be a rounding tolerance or a corner of the map with no paint on it.</summary>
+        public (ulong H, ulong S) GroundFingerprint()
+        {
+            ulong h = 1469598103934665603UL, sp = 1469598103934665603UL;
+            if (_grid != null)
+                for (int x = 0; x < _gw; x++)
+                    for (int y = 0; y < _gh; y++)
+                    { h ^= (ulong)(uint)System.BitConverter.SingleToInt32Bits(_grid[x, y]); h *= 1099511628211UL; }
+            if (_dom != null)
+                for (int x = 0; x < _dw; x++)
+                    for (int y = 0; y < _dh; y++)
+                    { sp ^= _dom[x, y]; sp *= 1099511628211UL; }
+            return (h, sp);
+        }
         int _islandSeed;
         System.Collections.Generic.List<ProcIsland.Link> _islandLinks = new();
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
@@ -634,6 +718,7 @@ void fragment() {
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) w.Write(_grid[x, y]);
             SaveHoles(HolesPathFor(path));
             SaveRivers(RiversPathFor(path));
+            SaveSplat(SplatPathFor(path));
         }
 
         public bool LoadHeightmap(string path)   // apply a saved sculpt over the freshly-built retail terrain (dims must match)
@@ -649,6 +734,7 @@ void fragment() {
             LoadHoles(HolesPathFor(path));
             RebuildAll();
             LoadRivers(RiversPathFor(path));   // AFTER RebuildAll: the beds read SampleHeight for their banks
+            LoadSplat(SplatPathFor(path));   // the paint, which the mesh does not carry -- see SaveSplat
             return true;
         }
 

@@ -36,9 +36,30 @@ namespace UnturnedGodot
 
         /// <summary>Bake foliage for this island into content/foliage_&lt;mapKey&gt;/ and return the MapDir name to
         /// point FoliageField at. Returns null when there is nothing to copy from.</summary>
+        /// <summary>A string hash that is the SAME IN EVERY PROCESS.
+        ///
+        /// ⚠ string.GetHashCode() IS NOT. .NET Core salts it per-process (hash-flood defence), so
+        /// `new Random(seed * 7919 + name.GetHashCode())` re-seeded every scatter differently on every launch
+        /// -- the same island, opened twice, grew a different forest. It looked deterministic because the
+        /// SEED was in the expression, and because nothing compared two runs: the counts (609701, 609874,
+        /// 609904 on one seed) are close enough to read as the same number if you only ever see one.
+        /// The heightmap and splat fingerprints were byte-identical across all three, which is what isolated
+        /// it to the scatter rather than the generator.</summary>
+        static int StableHash(string s)
+        {
+            unchecked
+            {
+                uint h = 2166136261u;
+                for (int i = 0; i < s.Length; i++) { h ^= s[i]; h *= 16777619u; }
+                return (int)h;
+            }
+        }
+
         public static string Bake(Terrain terr, int seed, string mapKey)
         {
             if (terr == null) return null;
+            var fp = terr.GroundFingerprint();
+            Log.Print($"[island-foliage] ground fingerprint heights={fp.H:x16} splat={fp.S:x16}");
             string src = ProjectSettings.GlobalizePath(SourceDir);
             if (!Directory.Exists(src)) { Log.Print($"[island-foliage] no source bake at {SourceDir} -- skipping"); return null; }
 
@@ -82,7 +103,7 @@ namespace UnturnedGodot
                 if (kind.Prefix == null) continue;
 
                 // A per-type seed, so adding a type does not reshuffle the ones already placed.
-                var rng = new System.Random(seed * 7919 + nm.GetHashCode());
+                var rng = new System.Random(seed * 7919 + StableHash(nm));
                 var xforms = new List<(Vector3 Pos, float Yaw, float Scale)>();
                 for (float x = bounds.MinX; x < bounds.MaxX; x += kind.Spacing)
                     for (float z = bounds.MinZ; z < bounds.MaxZ; z += kind.Spacing)
@@ -181,6 +202,8 @@ namespace UnturnedGodot
         public static string BakeResources(Terrain terr, int seed, string mapKey)
         {
             if (terr == null) return null;
+            var fp = terr.GroundFingerprint();
+            Log.Print($"[island-res] ground fingerprint heights={fp.H:x16} splat={fp.S:x16}");
             string src = ProjectSettings.GlobalizePath("res://content/resources/");
             if (!Directory.Exists(src)) { Log.Print("[island-res] no source resources -- skipping"); return null; }
 
@@ -221,7 +244,7 @@ namespace UnturnedGodot
                 var kind = System.Array.Find(ResKinds, k => name.StartsWith(k.Prefix));
                 if (kind.Prefix == null) continue;
 
-                var rng = new System.Random(seed * 6271 + name.GetHashCode());
+                var rng = new System.Random(seed * 6271 + StableHash(name));
                 var recs = new List<(Vector3 Pos, float Yaw, float Scale)>();
                 for (float x = bounds.MinX; x < bounds.MaxX; x += kind.Spacing)
                     for (float z = bounds.MinZ; z < bounds.MaxZ; z += kind.Spacing)
