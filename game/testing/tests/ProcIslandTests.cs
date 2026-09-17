@@ -449,13 +449,30 @@ namespace UnturnedGodot.Testing
                     if (along > 0.5f && perp < 1f && along < best) best = along;
                 }
                 if (best == float.MaxValue) { unfronted++; continue; }
-                float gap = best - info.Value.Front;   // front wall -> street centreline
+                // ⚠⚠ THE STREET-FACING WALL IS `Back`, NOT `Front`, AND HAS BEEN SINCE THE YAW FLIP. Placement
+                // uses SetbackForFlipped = FrontWallFromCentreline + b.Back, which puts the origin so the face
+                // b.Back away from it lands on the kerb line -- PlaceBuildings' own comment says so: "that was
+                // the correct face while the building faced -Y and is the BACK of it once turned". This check
+                // kept subtracting Front, so it measured the wall at the far side and read
+                // FrontWallFromCentreline + (Back - Front) instead of FrontWallFromCentreline.
+                //
+                // That is the whole of the 16.5 m against an expected 14.5: a uniform 2 m, because every prop
+                // the fixture placed shares a 2 m Back-Front. It could never be seen while the fixture produced
+                // no buildings at all -- an assertion with an empty population is not a passing assertion, it
+                // is an absent one.
+                float gap = best - info.Value.Back;   // street-facing wall -> street centreline
                 minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap);
             }
+            // ⚠ AND EVERY ONE OF THESE MUST REFUSE TO PASS ON AN EMPTY POPULATION. All three read clean with
+            // zero buildings -- "0 facing nothing" and "none standing in the carriageway" are TRUE of no
+            // buildings -- which is how a real 2 m error in the verge sat unseen behind a fixture that placed
+            // none. The host was never hiding anything (TestHost prints every failed check, not just the
+            // first); the checks were passing vacuously, which looks identical from the outside and is worse.
+            T.Check($"there are buildings to measure at all ({builds.Count})", builds.Count > 0);
             T.Check($"every building actually fronts a street on its facing axis ({unfronted} facing nothing, {unknownProp} unmeasured)",
-                unfronted == 0 && unknownProp == 0);
-            T.Check($"...with its FRONT WALL a verge clear of the kerb ({minGap:0.##}..{maxGap:0.##} m from the centreline, carriageway edge is 8 m)",
-                minGap > 8.5f && Mathf.Abs(maxGap - minGap) < 0.5f
+                builds.Count > 0 && unfronted == 0 && unknownProp == 0);
+            T.Check($"...with its street-facing wall a verge clear of the kerb ({minGap:0.##}..{maxGap:0.##} m from the centreline, carriageway edge is 8 m)",
+                minGap < float.MaxValue && minGap > 8.5f && Mathf.Abs(maxGap - minGap) < 0.5f
                     && Mathf.Abs(minGap - ProcIsland.FrontWallFromCentreline) < 0.5f);
             GD.Print($"[island] building front walls {minGap:0.##}..{maxGap:0.##} m from their street centreline");
 
@@ -464,7 +481,7 @@ namespace UnturnedGodot.Testing
             foreach (var bld in builds)
                 foreach (var t in tiles)
                     if (t.Poi == bld.Poi && Mathf.Abs(t.X - bld.X) < 8f && Mathf.Abs(t.Z - bld.Z) < 8f) clearOfRoad = false;
-            T.Check("...and none standing in the carriageway", clearOfRoad);
+            T.Check($"...and none standing in the carriageway ({builds.Count} measured)", builds.Count > 0 && clearOfRoad);
             foreach (var bld in builds) GD.Print($"[island]   {bld}");
 
             // ---- ROADS. Routed over the terrain, then carved into it.
