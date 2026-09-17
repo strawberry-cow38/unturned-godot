@@ -54,7 +54,13 @@ namespace UnturnedGodot
         public PlayerNetSync PlayerSync { get; private set; }
         // (ZombieSync/ZombieNetSync removed with the zombie system -- it published the world's zombie brains
         // into Server.Zombies/ZombieReplication, core/ types that are NOT deleted and still exist unused.)
-        public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes AnimalAgent brains (no-op until AnimalField's streamer is PlayerRegistry-generalized for dedicated)
+        // A5: publishes AnimalAgent brains. This used to say "no-op until AnimalField's streamer is
+        // PlayerRegistry-generalized for dedicated" -- that generalization LANDED (WorldBuilder's Dedicated
+        // branch builds a Player-less AnimalField that streams on every registered player), and the note
+        // outlived it, which left the file claiming dedicated wildlife was unimplemented while the live
+        // server was spawning it. MEASURED, not assumed: claw.bitvox.me's boot log prints
+        // "[animals] 60 Fauna spawn points loaded, 1 tables" on every start.
+        public AnimalNetSync AnimalSync { get; private set; }
         public PlayerAppearanceNetSync AppearanceSync { get; private set; }   // B10: publishes each player's worn clothing + stance into the combat block
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
@@ -303,7 +309,7 @@ namespace UnturnedGodot
             }
             // (zombie brains -> ZombieReplication publish step removed with the zombie system; see the
             // ZombieSync field note above.)
-            AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
+            AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains -- live on dedicated, see the field note above
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             AppearanceSync = new PlayerAppearanceNetSync(Server);   // B10: publish each connected player's worn clothing + stance into the combat block
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AppearanceSync.Tick(), "net.appearance.publish"));
