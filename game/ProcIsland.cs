@@ -1539,6 +1539,13 @@ namespace UnturnedGodot
         /// cells (+40 on a route that costs several hundred) while 100 m of parallel running pays for
         /// twenty-five (+200) and loses to almost any detour.</summary>
         static readonly bool NoRoadPenalty = System.Environment.GetEnvironmentVariable("UG_NOROADPENALTY") == "1";
+        /// <summary>⚠ `UsedInner` IS DEAD CODE. The band test reads
+        /// `d <= UsedCoreR ? UsedCore : d <= UsedInnerR ? UsedInner : UsedOuter`, and UsedCoreR defaults to 40
+        /// while UsedInnerR is 14 -- so any cell inside 14 m already matched the first arm and the second can
+        /// never be reached. The only halo that actually exists is UsedOuter=4 over the 6 m ring between 40 and
+        /// UsedOuterR=46. Left in place and named rather than deleted, because the "gentle 8/4 halo" it
+        /// describes is quoted in several comments that would otherwise keep describing a thing that is not
+        /// running. Raising UsedCoreR above 14 is what killed it.</summary>
         const float UsedInner = 8f, UsedOuter = 4f;
         /// <summary>What it costs to route straight over another road's TARMAC, as opposed to alongside it.
         ///
@@ -1551,7 +1558,26 @@ namespace UnturnedGodot
         ///
         /// So the core is now priced like water (400) over the ribbon's actual width, while the halo keeps its
         /// gentle 8/4 for the parallel case. A crossing costs a detour; brushing past still only costs a nudge.</summary>
-        const float UsedCore = 400f;
+        /// <summary>What a route pays PER CELL to sit on ground another route already owns.
+        ///
+        /// ⚠⚠ THIS PRICE HAS NEVER BEEN SWEPT. `UG_CORER` sweeps the core's WIDTH and was mistaken for a test
+        /// of the price -- it is not; the two knobs are different and only one existed. So `UG_CORE`, and the
+        /// arithmetic it exists to settle: at 400 over a 40 m band, crossing one road costs about 8000, while a
+        /// trail's base step on flat ground is 1 per 4 m cell. 8000 cells is THIRTY-TWO KILOMETRES of detour.
+        /// The island is about 3 km across. So the wall is not mispriced, it is UNCONDITIONAL -- no detour that
+        /// fits on the map can ever lose to a crossing, which is exactly the 8.5x wanderer.
+        ///
+        /// ⚠ AND I TOLD MASTER I COULD NOT TOUCH THIS BECAUSE "THE WALL IS WHY OPEN COUNTRY IS 0/0/0". That was
+        /// unmeasured, and the one measurement that exists says the opposite: 12b903e41, the commit that
+        /// INTRODUCED 400, records 19/21/37 road-road crossings WITH it in place, and says in its own words
+        /// "40 IS A TRADE AND NOT A FIX". Zero came later, from the 3x dedup and the gate-face floor.
+        ///
+        /// Swept at 400 / 100 / 25 / 8 across three seeds. 25 is the answer: it removes the wanderer and takes
+        /// folds to zero WITHOUT costing a single open-country crossing. 100 is not enough -- 771177 still
+        /// wanders at 6.0x -- and 8 measures identically to 25, so 25 is the looser of the two values that
+        /// work, kept for the parallel-running case the 8/4 halo was meant to cover.</summary>
+        static readonly float UsedCore = float.TryParse(System.Environment.GetEnvironmentVariable("UG_CORE"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float uc) ? uc : 25f;
         /// ⚠ The radius has to exceed what Relax's ease can MOVE a point after the A* has dodged -- the same
         /// reason UsedOuterR is 46 and not 14. A core only as wide as the tarmac means the search avoids the
         /// road and the smoothing walks back over it. UG_CORER sweeps it.
