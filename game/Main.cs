@@ -1087,7 +1087,7 @@ namespace UnturnedGodot
                     menu.OnPlayMap = name => { menu.QueueFree(); BuildEditorNew(name, autoPlay: true); };
                     // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
                     // The name carries the seed so two generated maps do not overwrite each other's save.
-                    menu.OnGenerateMap = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true); };
+                    menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
                     AddChild(menu);
                 });
                 return;
@@ -6268,7 +6268,7 @@ namespace UnturnedGodot
         /// frozen menu instead, which is exactly what generating an island did.
         /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
         /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
-        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false)
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
             _worldBuild = true;
@@ -6310,7 +6310,9 @@ namespace UnturnedGodot
             }
 
             await Phase("Shaping the island");
-            var genPois = genSeed.HasValue ? terr.GenerateIsland(genSeed.Value) : null;
+            var genPois = genSeed.HasValue
+                ? terr.GenerateIsland(genSeed.Value, genLakes || System.Environment.GetEnvironmentVariable("UG_GENLAKES") == "1")
+                : null;
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);
             var env = new Godot.Environment

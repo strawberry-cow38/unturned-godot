@@ -41,7 +41,11 @@ namespace UnturnedGodot
         int _genSeed = (int)(GD.Randi() & 0x7FFFFFFF);
         Control _genRow;
         LineEdit _genSeedEdit;
-        public System.Action<int> OnGenerateMap;
+        /// <summary>(seed, lakes). ⚠ The options travel WITH the press rather than being read off a field by
+        /// the receiver: Main has no reference to this panel, and a second copy of "what was ticked" is how a
+        /// toggle ends up applying to the previous island.</summary>
+        public System.Action<int, bool> OnGenerateMap;
+        CheckBox _genLakes;
         const string GenerateMapName = "Generate Island";
         const string GenerateMapDesc = "A procedurally generated island: coastline, hills, and a network of towns, military bases and construction sites joined by roads, trails and rail. The same seed always builds the same island.";
         // the Steam Maps/<folder> name for the selected map -- Main reads this to point the world at the right map.
@@ -327,6 +331,12 @@ namespace UnturnedGodot
                 if (_genSeedEdit != null) _genSeedEdit.Text = _genSeed.ToString();
             };
             row.AddChild(roll);
+            // ⚠ IN THE SAME ROW AS THE SEED, so it lives and dies with _genRow's visibility. A generator option
+            // parked anywhere else stays on screen while a retail map is selected, which is a control that does
+            // nothing -- the exact reason the seed field is hidden there and not just disabled.
+            _genLakes = new CheckBox { Text = "Lakes", ButtonPressed = false, TooltipText = "Cut inland ponds into low ground" };
+            _genLakes.AddThemeFontSizeOverride("font_size", 14);
+            row.AddChild(_genLakes);
             _genRow = row;
             return row;
         }
@@ -493,7 +503,7 @@ namespace UnturnedGodot
                     if (_descLabel != null) _descLabel.Text = "Seed must be a whole number.";
                     return;
                 }
-                OnGenerateMap?.Invoke(_genSeed);
+                OnGenerateMap?.Invoke(_genSeed, _genLakes != null && _genLakes.ButtonPressed);
                 return;
             }
             if (!_selectedPlayable)

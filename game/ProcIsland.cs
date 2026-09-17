@@ -38,7 +38,11 @@ namespace UnturnedGodot
             public int Towns, Bases, Sites;   // POIs of each kind PER ~0.45 km2 of land -- see PlacePois
             public float SmoothStrength;      // 0..1 of a box blur applied after flattening
 
-            public float LakeThreshold, LakeDepth;
+            /// <summary>OFF BY DEFAULT (strawberry 2026-09-17: "have it as an off-by-default toggle when
+            /// generating the world"). Lakes are a taste thing, not a correctness thing, and an island without
+            /// them is the one most people expect.</summary>
+            public bool Lakes;
+            public float LakeThreshold, LakeDepth, LakeMaxRise;
 
             public static Params Default(int seed) => new()
             {
@@ -61,8 +65,31 @@ namespace UnturnedGodot
                 // the top sixth of it -- a couple of ponds and the odd proper lake per island rather than a
                 // flooded interior. Depth is measured DOWN from the waterline, so it is also how deep you can
                 // swim in one.
-                LakeThreshold = 0.62f,
-                LakeDepth = 7f,
+                Lakes = false,
+                // ⚠ RARER AND SMALLER (strawberry: "reduce the size and number of lakes by a lot"). fBm sits
+                // near 0.5, so 0.76 takes a sliver off the top of the field instead of the top sixth -- a pond
+                // or two per island rather than seven lakes.
+                LakeThreshold = 0.56f,
+                LakeDepth = 4f,
+                // ⭐ AND ONLY WHERE THE GROUND IS ALREADY LOW (strawberry: "should carve already low terrain
+                // instead of forming cliffs"). THIS is the rule that stops the cliffs, and it is a different
+                // rule from making them rarer. A basin blends the existing height down to a bed, so cutting one
+                // into a hillside leaves the rim standing as a wall exactly as tall as the ground was -- the
+                // depth control cannot help, because the wall is made of the terrain that was already there.
+                // Refusing ground more than this far above the waterline means the rim can never be taller
+                // than that, whatever the noise says.
+                // ⚠ 12 m, AND THE NUMBER CAME OFF A HISTOGRAM. Two guesses failed first: 5 m admitted ZERO of
+                // 147457 inland cells. Measuring the distribution instead of reasoning about the height formula
+                // showed why -- inland ground on this relief curve runs 5 to 60 m above the waterline with a
+                // median around 27, and the 5-10 m band holds 77 cells. Under 15 m is 4118 of them, about 3% of
+                // the island, which is the "already low terrain" that actually exists.
+                //
+                // ⚠⚠ AND THERE IS A HARD CEILING HERE, not a tuning preference. There is ONE waterline for the
+                // whole map, so an inland lake can only exist BELOW it -- which means a basin on ground 27 m up
+                // has to cut 27 m down, and its rim is a 27 m wall made of the terrain that was already there.
+                // No depth setting can soften that. Refusing high ground is the only thing that can, which is
+                // exactly what master asked for: "should carve already low terrain instead of forming cliffs".
+                LakeMaxRise = 12f,
             };
         }
 
@@ -115,7 +142,8 @@ namespace UnturnedGodot
             // only looking at the rendered heightmap showed a dinner plate. Metres also make "the same seed at
             // a bigger size" mean a LARGER island rather than a stretched one.
             const float Unit = 4f;   // Terrain.UNIT: world metres per grid cell
-            int lakeCells = 0, lakeInland = 0;
+            int lakeCells = 0, lakeInland = 0, lakeLow = 0, lakeNoisy = 0;
+            var lakeHist = new int[12];
             float cx = (gw - 1) * 0.5f, cy = (gh - 1) * 0.5f;
             float maxR = Mathf.Min(cx, cy);   // MIN, not the diagonal: on a non-square map the short axis decides
                                               // whether the coast closes; a diagonal radius runs the island off
@@ -190,8 +218,27 @@ namespace UnturnedGodot
                     // onto the sea and becomes a bay. Squared basin profile: a flat-bottomed pan with a rim
                     // that climbs, rather than a cone.
                     float lakeN = Fbm(mx / (p.ShapeMetres * 0.42f), my / (p.ShapeMetres * 0.42f), p.Seed + 8821);
-                    if (inland > 0.985f) lakeInland++;
-                    if (inland > 0.985f && lakeN > p.LakeThreshold)
+                    if (inland > 0.985f)
+                    {
+                        lakeInland++;
+                        // ⚠ THE TWO GATES COUNTED SEPARATELY. Tightening both at once took the lake count to
+                        // ZERO and the single "did it flood" number could not say which one did it -- low
+                        // ground is rare on this relief curve (world < sea+5 needs relief01 under 0.008) and a
+                        // 0.76 noise cut is rare too, so their intersection was empty. A pair of conditions
+                        // needs a pair of counters or tuning it is guesswork.
+                        if (world < p.SeaLevel + p.LakeMaxRise) lakeLow++;
+                        if (lakeN > p.LakeThreshold) lakeNoisy++;
+                        // ⚠ THE DISTRIBUTION, not just the pass count. "0 of 147457 cells are low enough" says
+                        // the gate is wrong but not what to set it to, and the previous two numbers were both
+                        // picked by reasoning about the height formula rather than by looking at what it
+                        // produces. A histogram of rise-above-the-waterline answers it directly.
+                        int band = Mathf.Clamp(Mathf.FloorToInt((world - p.SeaLevel) / 5f), 0, lakeHist.Length - 1);
+                        lakeHist[band]++;
+                    }
+                    // ⚠ `world` here is the land BEFORE any basin is cut, which is what the low-ground test has
+                    // to read: once a cell is carved it is low by definition, and testing after would admit
+                    // every cell the first pass touched.
+                    if (p.Lakes && inland > 0.985f && lakeN > p.LakeThreshold && world < p.SeaLevel + p.LakeMaxRise)
                     {
                         // ⚠ SATURATE, DO NOT TAPER. The first cut used `basin = depth01^2` over the whole range
                         // above the threshold, which sounds like a nice dish and is in practice a rule that
@@ -200,7 +247,9 @@ namespace UnturnedGodot
                         // cells were "cut" and next to none of them flooded -- the change was real, gentle, and
                         // invisible. Saturating over a narrow band gives a flat-bottomed pan with a defined
                         // shore, which is both what a lake looks like and what actually goes under.
-                        float basin = Mathf.SmoothStep(p.LakeThreshold, p.LakeThreshold + 0.10f, lakeN);
+                        // Wider band than the first cut: the transition's WIDTH in metres is what decides how
+                        // steep the shore is, and a narrow band on a smooth noise field is a short, steep rim.
+                        float basin = Mathf.SmoothStep(p.LakeThreshold, p.LakeThreshold + 0.16f, lakeN);
                         // Blend DOWN to a bed below the waterline. Lerp rather than subtract so the rim meets
                         // the surrounding land exactly at basin = 0 and there is no lip around the shore.
                         float bed = p.SeaLevel - p.LakeDepth;
@@ -217,8 +266,12 @@ namespace UnturnedGodot
             // fix for each is in a different place. Inland cells is the population the threshold selects FROM;
             // if that is small the gate is too strict, and if it is large but the lake count is zero the
             // threshold is.
-            Log.Print($"[island-water] {lakeCells} inland cell(s) BELOW the waterline of {lakeInland} inland cell(s) "
-                      + $"(threshold {p.LakeThreshold:0.00}, depth {p.LakeDepth:0.#} m)");
+            Log.Print($"[island-water] lakes={(p.Lakes ? "on" : "off")}: {lakeCells} cell(s) below the waterline"
+                      + $" | inland {lakeInland}, of which low-enough {lakeLow} and noisy-enough {lakeNoisy}"
+                      + $" (threshold {p.LakeThreshold:0.00}, max rise {p.LakeMaxRise:0.#} m, depth {p.LakeDepth:0.#} m)");
+            var hs = new System.Text.StringBuilder("[island-water] inland height above waterline:");
+            for (int b = 0; b < lakeHist.Length; b++) if (lakeHist[b] > 0) hs.Append($" {b * 5}-{b * 5 + 5}m={lakeHist[b]}");
+            Log.Print(hs.ToString());
         }
 
         // ---------------------------------------------------------------- POIs

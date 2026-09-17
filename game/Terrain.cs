@@ -586,11 +586,12 @@ void fragment() {
         public System.Collections.Generic.List<ProcIsland.MonumentBuilding> IslandBuildings => _islandBuildings;
         readonly System.Collections.Generic.List<ProcIsland.MonumentBuilding> _islandBuildings = new();
 
-        public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
+        public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed, bool lakes = false)
         {
             var none = new System.Collections.Generic.List<ProcIsland.Poi>();
             if (_grid == null) return none;
             var pars = ProcIsland.Params.Default(seed);
+            pars.Lakes = lakes;   // off unless the generator UI asked for them
             ProcIsland.Fill(_grid, _gw, _gh, pars);
             // POIs are placed AFTER the terrain exists and BEFORE the mesh is built: they read the heights to
             // choose somewhere buildable, then rewrite them to flatten their pads. Returned rather than stored
