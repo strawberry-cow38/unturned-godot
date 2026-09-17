@@ -2183,6 +2183,7 @@ namespace UnturnedGodot
             int hits = 0; var hitAt = Vector2.Zero;
             var marks = new System.Collections.Generic.List<Vector2>();
             int hitSelf = 0, hitFence = 0, hitPair = 0;
+            var seenX = new System.Collections.Generic.HashSet<(int, int, int, int)>();
             const float HCell = 40f;
             var grid = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<int>>();
             for (int k = 0; k < segs.Count; k++)
@@ -2209,8 +2210,16 @@ namespace UnturnedGodot
                             float Dt(Vector2 u, Vector2 v, Vector2 w) => (v.X - u.X) * (w.Y - u.Y) - (v.Y - u.Y) * (w.X - u.X);
                             float e1 = Dt(a0, a1, b0), e2 = Dt(a0, a1, b1), e3 = Dt(b0, b1, a0), e4 = Dt(b0, b1, a1);
                             if (((e1 > 0f) == (e2 > 0f)) || ((e3 > 0f) == (e4 > 0f))) continue;
+                            // ⚠⚠ DEDUPLICATE. Each road contributes THREE drawn lines (centre + two edges), so a
+                            // single physical crossing produces up to NINE segment-pair hits, and the raw
+                            // total is inflated 3-9x. I reported "34 crossings" to master off this number when
+                            // the island may have had four. Collapsed by road pair and a 30 m cell, so one
+                            // crossing counts once.
+                            var mid3 = (a0 + a1) * 0.5f;
+                            int ka = Mathf.Min(segs[x1].Road, segs[y1].Road), kb = Mathf.Max(segs[x1].Road, segs[y1].Road);
+                            if (!seenX.Add((ka, kb, Mathf.FloorToInt(mid3.X / 30f), Mathf.FloorToInt(mid3.Y / 30f)))) continue;
                             hits++;
-                            hitAt = (a0 + a1) * 0.5f;
+                            hitAt = mid3;
                             marks.Add(hitAt);
                             // ⚠ WHICH KIND. A road's own inner edge folding over itself on a tight bend is a
                             // completely different defect from two roads overlapping, and "47 crossings" cannot

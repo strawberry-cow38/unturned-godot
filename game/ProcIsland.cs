@@ -1071,6 +1071,28 @@ namespace UnturnedGodot
                 // measurement is describing the island rather than the fix.
                 if (!NoRoadPenalty) StampUsed(used, gw, gh, pts);
             }
+            // ⚠⚠ A RE-ROUTE PASS WAS BUILT HERE AND REMOVED, AND THE CONTROL IS WHY.
+            //
+            // The idea was master's and it is the right shape: the penalty field cannot prevent crossings on
+            // its own, because the A* dodges and then Relax's ease walks the path back across -- the thing
+            // that moves the road runs after the thing that avoids it. So: check the relaxed polylines, and
+            // re-route an offender against a HARD block (3000/cell) over the other road's corridor.
+            //
+            // It worked mechanically -- 3 routes re-routed, 0 stubborn on one seed -- and achieved nothing.
+            // Measured with UG_NOREROUTE as the control, crossings between two roads, off vs on:
+            //
+            //     424242    6 -> 9      (worse)
+            //     771177   10 -> 8      (better)
+            //     12345    14 -> 14     (no change)
+            //
+            // 30 against 31 across three islands. Moving a route away from one road puts it near another, so
+            // the total does not fall -- it moves around. That is a different problem from the one I set out
+            // to solve, and a greedy pairwise repair cannot see it: it needs the whole network scored at once,
+            // which is master's original "try multiple COMBOS" rather than "fix the pair you found".
+            //
+            // Removed rather than left switched off, because dead code that looks like a fix is worse than no
+            // fix. The measurement it was written against stays -- see [island-splinedraw]'s crossing count.
+
             foreach (var r in routes) Carve(grid, gw, gh, r, p, pois);
             // ⚠ AFTER every carve, not inside one. Routes cross and run alongside each other, and a smoothing
             // pass folded into Carve would be re-cut by the next route through the same cells -- the same
