@@ -1750,6 +1750,63 @@ namespace UnturnedGodot
             }
         }
 
+
+        /// <summary>The cost of stepping from one cell to a neighbour: distance, the slope term, water, the
+        /// road-avoidance core and halo, and the town-pad wall -- with this route's own two gates exempted from
+        /// the last two.
+        ///
+        /// ⚠⚠ EXTRACTED SO THE SMOOTHER CAN ASK THE SAME QUESTION THE SEARCH DID. Measured 2026-09-17: Relax
+        /// is a purely 2D pass that never reads the heightmap, and it takes the worst per-step gradient from
+        /// 79/91/98% to 187/224/327% on the same three paths -- it cuts exactly the corner the search spent
+        /// real cost contouring around. That is two stages with DIFFERENT cost functions fighting, and no
+        /// amount of tuning either side ends it; pricing climbs harder in the search made the count worse at
+        /// every value. The fix is one cost function, asked by both, so a shortcut over a hill or across
+        /// another road's core fails the same test that stopped the search taking it.
+        ///
+        /// ⚠ VERBATIM. The expression is byte-for-byte what the inner loop ran, in the same order -- floating
+        /// point is not associative, so a tidier rewrite would silently move every route on every island and
+        /// the "no behaviour change" claim would be false. The three reference seeds are compared before and
+        /// after to prove it did not.</summary>
+        public static float StepCost(float ch, float nh, int ox, int oy, int nx, int ny, float slopeCost,
+                                     Params p, float[,] used, bool[,] padCell, Connector from, Connector to)
+        {
+            const float Unit = 4f;
+float step = (ox != 0 && oy != 0) ? 1.4142f : 1f;
+            float climb = Mathf.Abs(nh - ch) / Unit;              // gradient of THIS step
+            float cost = step * (1f + slopeCost * climb);
+            if (nh <= p.SeaLevel) cost += 400f;
+            if (used != null && used[nx, ny] > 0f)
+            {
+                // ⚠ FREE NEAR THIS ROUTE'S OWN GATES. Without this the stamp around a town prices
+                // every later link out of the gate it is trying to reach -- which is exactly what
+                // the old blanket exclusion was protecting against, kept, but scoped to the route
+                // that actually needs it instead of to everybody.
+                float gfx = nx * Unit - from.X, gfz = ny * Unit - from.Z;
+                float gtx = nx * Unit - to.X, gtz = ny * Unit - to.Z;
+                // ⚠ 40 m, NOT 110. At 110 every road approaching a town was inside its OWN
+                // exemption for the whole approach, so none of them paid to cross each other
+                // there -- and a self-annotating render put 48 crossings of drawn lines on one
+                // island, every marker sitting on a town's approach. The exemption only has to
+                // cover the last stretch into the gate, which is one road width and the stub.
+                if (gfx * gfx + gfz * gfz > 40f * 40f && gtx * gtx + gtz * gtz > 40f * 40f)
+                    cost += used[nx, ny] * step;
+            }
+            // ⚠ A TOWN IS NOT GROUND YOU DRIVE OVER. Priced like water rather than forbidden, so
+            // a route that has no other way through still finds one instead of failing outright --
+            // and exempted near this route's OWN two gates, which sit on their pads' perimeters
+            // and whose first and last cells are therefore legitimately on the boundary.
+            if (padCell != null && padCell[nx, ny])
+            {
+                float dfx = nx * Unit - from.X, dfz = ny * Unit - from.Z;
+                float dtx = nx * Unit - to.X, dtz = ny * Unit - to.Z;
+                // ⚠ The exemption has to clear the MARGIN, not the pad: at 40 m it sat inside
+                // the masked band and every route paid the wall to reach its own gate.
+                if (dfx * dfx + dfz * dfz > 90f * 90f && dtx * dtx + dtz * dtz > 90f * 90f)
+                    cost += 400f;
+            }
+            return cost;
+        }
+
         static System.Collections.Generic.List<Vector2> Route2D(
             float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p, float[,] used = null,
             bool[,] padCell = null)
@@ -1819,39 +1876,7 @@ namespace UnturnedGodot
                         // Water is not impassable-by-rule but is priced out of reach, so a route only crosses it
                         // if there is genuinely no land path -- which on one island there never is. A hard ban
                         // would make A* fail outright on a gate that sits a cell into the shallows.
-                        float step = (ox != 0 && oy != 0) ? 1.4142f : 1f;
-                        float climb = Mathf.Abs(nh - ch) / Unit;              // gradient of THIS step
-                        float cost = step * (1f + slopeCost * climb);
-                        if (nh <= p.SeaLevel) cost += 400f;
-                        if (used != null && used[nx, ny] > 0f)
-                        {
-                            // ⚠ FREE NEAR THIS ROUTE'S OWN GATES. Without this the stamp around a town prices
-                            // every later link out of the gate it is trying to reach -- which is exactly what
-                            // the old blanket exclusion was protecting against, kept, but scoped to the route
-                            // that actually needs it instead of to everybody.
-                            float gfx = nx * Unit - from.X, gfz = ny * Unit - from.Z;
-                            float gtx = nx * Unit - to.X, gtz = ny * Unit - to.Z;
-                            // ⚠ 40 m, NOT 110. At 110 every road approaching a town was inside its OWN
-                            // exemption for the whole approach, so none of them paid to cross each other
-                            // there -- and a self-annotating render put 48 crossings of drawn lines on one
-                            // island, every marker sitting on a town's approach. The exemption only has to
-                            // cover the last stretch into the gate, which is one road width and the stub.
-                            if (gfx * gfx + gfz * gfz > 40f * 40f && gtx * gtx + gtz * gtz > 40f * 40f)
-                                cost += used[nx, ny] * step;
-                        }
-                        // ⚠ A TOWN IS NOT GROUND YOU DRIVE OVER. Priced like water rather than forbidden, so
-                        // a route that has no other way through still finds one instead of failing outright --
-                        // and exempted near this route's OWN two gates, which sit on their pads' perimeters
-                        // and whose first and last cells are therefore legitimately on the boundary.
-                        if (padCell != null && padCell[nx, ny])
-                        {
-                            float dfx = nx * Unit - from.X, dfz = ny * Unit - from.Z;
-                            float dtx = nx * Unit - to.X, dtz = ny * Unit - to.Z;
-                            // ⚠ The exemption has to clear the MARGIN, not the pad: at 40 m it sat inside
-                            // the masked band and every route paid the wall to reach its own gate.
-                            if (dfx * dfx + dfz * dfz > 90f * 90f && dtx * dtx + dtz * dtz > 90f * 90f)
-                                cost += 400f;
-                        }
+                        float cost = StepCost(ch, nh, ox, oy, nx, ny, slopeCost, p, used, padCell, from, to);
                         float cand = best[cur] + cost;
                         if (cand < best[ni]) { best[ni] = cand; prev[ni] = cur; open.Enqueue(ni, cand + H(nx, ny)); }
                     }
