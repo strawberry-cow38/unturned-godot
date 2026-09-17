@@ -1166,6 +1166,7 @@ namespace UnturnedGodot
         {
             var fenceTilts = new System.Collections.Generic.List<float>();
             float fenceTiltMax = 0f;
+            RoadsideOnRoad = 0;   // a static, so it has to be cleared per island or the second one reports the first's
             if (terr == null || objs == null || terr.IslandRoutes == null) return;
 
             const float FenceSpan = 16f;     // retail's measured run spacing; the mesh is 16.25 m long
@@ -1235,7 +1236,7 @@ namespace UnturnedGodot
                         var nrm = new Vector2(-tg.Y, tg.X) * side;
                         nextPole += PoleSpan;
                         float px = at.X + nrm.X * PoleOffset, pz = at.Y + nrm.Y * PoleOffset;
-                        if (!RoadsideOk(terr, px, pz)) continue;
+                        if (!RoadsideOk(terr, px, pz, ri)) continue;
                         // ⚠ NO LIFT. Power_Line_0's mesh runs from -1.00 to 8.00 on its up axis -- a metre of
                         // pole below the origin, which is how a pole is planted. Seating the origin ON the
                         // ground buries that metre; lifting it clear would leave the pole standing on its tip.
@@ -1321,7 +1322,7 @@ namespace UnturnedGodot
                         float cross2 = tan[lo2].X * tan[hi2].Y - tan[lo2].Y * tan[hi2].X;
                         float outward2 = cross2 >= 0f ? -1f : 1f;
                         float px = at.X, pz = at.Y;
-                        if (!RoadsideOk(terr, px, pz)) continue;
+                        if (!RoadsideOk(terr, px, pz, ri)) continue;
                         // ⚠ THE RAIL FACE HAS TO FACE THE ROAD. Measured off the mesh: in the rail height band
                         // Fence_Road_0 has 158 vertices at local x > 0 spanning z 0.50..1.28 -- the beam --
                         // against 30 at x < 0 on a single plane at z 1.25, the back edge. So the guardrail is
@@ -1356,6 +1357,7 @@ namespace UnturnedGodot
             Log.Print($"[island-roadside] fence tilt off vertical: max {fenceTiltMax:0.0}°, median "
                       + $"{(fenceTilts.Count > 0 ? fenceTilts[fenceTilts.Count / 2] : 0f):0.0}°, "
                       + $"{fenceTilts.FindAll(t => t > 3f).Count}/{fenceTilts.Count} panel(s) past 3°");
+            Log.Print($"[island-roadside] {RoadsideOnRoad} prop(s) refused for standing on another road or trail");
             Log.Print($"[island-roadside] {poles} power pole(s) at {PoleSpan:0} m, {fences} barrier panel(s) over {corners} bend(s) tighter than {CornerRadius:0} m{spread}"
                       + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
         }
@@ -1363,12 +1365,54 @@ namespace UnturnedGodot
         /// <summary>Whether a roadside prop can stand at this spot: on dry land, off the town pads, and not on
         /// a face it would be sticking out of sideways. ⚠ The town test carries a margin -- a pole a couple of
         /// metres outside the pad boundary is still standing in the town's front garden.</summary>
-        static bool RoadsideOk(Terrain terr, float px, float pz)
+        /// <summary>May a roadside prop stand here? `ownRoute` is the index in IslandRoutes of the road this
+        /// prop belongs to -- everything else's carriageway is off limits.
+        ///
+        /// ⚠ NOTHING CHECKED THE OTHER ROADS UNTIL 2026-09-17 (strawberry: "prevent props blocking roads when
+        /// the roads attach perpendicular"). Poles and barriers are laid at a fixed spacing along their own
+        /// road and seated by slope and water alone, with no idea that a second road crosses at that metre --
+        /// so wherever two roads met, the first one's furniture stood in the second one's carriageway. It was
+        /// always possible and the junction roads made it routine, because a junction's whole job is to arrive
+        /// perpendicular at a point on a road that already has poles every 30 m along it.
+        ///
+        /// ⚠ AND THE TRAILS COUNT TOO. They live in IslandTrails rather than IslandRoutes, so a scan of "the
+        /// routes" would have missed every one of them -- and a trail leaves its parent road square-on, which
+        /// is exactly the geometry that puts a pole in the middle of it.</summary>
+        static int RoadsideOnRoad;   // refusals for standing on another road, so the rule is not silent
+        static bool RoadsideOk(Terrain terr, float px, float pz, int ownRoute = -1)
         {
             if (ProcIsland.InsideAnyTownPad(px, pz, 6f)) return false;
             var w = PosFor(terr, px, pz);
             if (Terrain.HasWater && w.Y < Terrain.SeaLevelY + 0.5f) return false;
-            return terr.SlopeAt(px, pz) < SteepRise;
+            if (terr.SlopeAt(px, pz) >= SteepRise) return false;
+
+            // Clear of the ribbon plus a margin. Sampling every other point is safe: the route's points are
+            // 4-5.7 m apart, so an 8-11 m stride cannot step over a 11.2 m exclusion.
+            const float RoadClear = ProcIsland.RenderedRoadHalf + 2f;
+            if (terr.IslandRoutes != null)
+                for (int r = 0; r < terr.IslandRoutes.Count; r++)
+                {
+                    if (r == ownRoute) continue;
+                    var pl = terr.IslandRoutes[r].Points;
+                    if (pl == null) continue;
+                    for (int i = 0; i < pl.Count; i += 2)
+                    {
+                        float dx = pl[i].X - px, dz = pl[i].Y - pz;
+                        if (dx * dx + dz * dz < RoadClear * RoadClear) { RoadsideOnRoad++; return false; }
+                    }
+                }
+            float trailClear = ProcIsland.TrailHalf + 2f;
+            if (terr.IslandTrails != null)
+                foreach (var t in terr.IslandTrails)
+                {
+                    if (t.Points == null) continue;
+                    for (int i = 0; i < t.Points.Count; i += 2)
+                    {
+                        float dx = t.Points[i].X - px, dz = t.Points[i].Y - pz;
+                        if (dx * dx + dz * dz < trailClear * trailClear) { RoadsideOnRoad++; return false; }
+                    }
+                }
+            return true;
         }
 
         /// <summary>The rock kit WITH ITS MEASURED PLAN RADIUS, in mesh metres at scale 1.
@@ -1585,6 +1629,22 @@ namespace UnturnedGodot
             // Rendered half-width plus the paint's shoulder: the dirt band IS the road's footprint as far as
             // anything standing beside it is concerned.
             int reach = Mathf.CeilToInt((ProcIsland.RenderedRoadHalf + 8f) / CorridorCell);
+            // ⚠ THE TRAILS ARE IN HERE TOO. They are a separate list from the routes, so a scan of
+            // IslandRoutes alone left every trail spur unprotected -- and a 8 m boulder in a 9.2 m track is
+            // more obviously wrong than one beside a road. Narrower reach, because a trail is narrower.
+            int trailReach = Mathf.CeilToInt((ProcIsland.TrailHalf + 5f) / CorridorCell);
+            if (terr.IslandTrails != null)
+                foreach (var t in terr.IslandTrails)
+                {
+                    if (t.Points == null) continue;
+                    foreach (var pt in t.Points)
+                    {
+                        var k = CorridorKey(pt.X, pt.Y);
+                        for (int i = -trailReach; i <= trailReach; i++)
+                            for (int j = -trailReach; j <= trailReach; j++)
+                                set.Add((k.Item1 + i, k.Item2 + j));
+                    }
+                }
             foreach (var route in terr.IslandRoutes)
             {
                 if (route.Points == null) continue;
