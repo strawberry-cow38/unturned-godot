@@ -1584,7 +1584,12 @@ namespace UnturnedGodot
                             // that actually needs it instead of to everybody.
                             float gfx = nx * Unit - from.X, gfz = ny * Unit - from.Z;
                             float gtx = nx * Unit - to.X, gtz = ny * Unit - to.Z;
-                            if (gfx * gfx + gfz * gfz > 110f * 110f && gtx * gtx + gtz * gtz > 110f * 110f)
+                            // ⚠ 40 m, NOT 110. At 110 every road approaching a town was inside its OWN
+                            // exemption for the whole approach, so none of them paid to cross each other
+                            // there -- and a self-annotating render put 48 crossings of drawn lines on one
+                            // island, every marker sitting on a town's approach. The exemption only has to
+                            // cover the last stretch into the gate, which is one road width and the stub.
+                            if (gfx * gfx + gfz * gfz > 40f * 40f && gtx * gtx + gtz * gtz > 40f * 40f)
                                 cost += used[nx, ny] * step;
                         }
                         // ⚠ A TOWN IS NOT GROUND YOU DRIVE OVER. Priced like water rather than forbidden, so

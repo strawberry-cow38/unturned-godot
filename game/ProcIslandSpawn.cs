@@ -2134,14 +2134,18 @@ namespace UnturnedGodot
                 VertexColorUseAsAlbedo = true,
             };
             im.SurfaceBegin(Mesh.PrimitiveType.Lines, mat);
+            var segs = new System.Collections.Generic.List<(Vector2 A, Vector2 B, int Road)>();
+            int segRoad = -1;
             void Seg(Vector3 a, Vector3 b, Color c)
             {
                 im.SurfaceSetColor(c); im.SurfaceAddVertex(new Vector3(a.X, a.Y + 4f, a.Z));
                 im.SurfaceSetColor(c); im.SurfaceAddVertex(new Vector3(b.X, b.Y + 4f, b.Z));
+                segs.Add((new Vector2(a.X, a.Z), new Vector2(b.X, b.Z), segRoad));
             }
             for (int ci = 0; ci < DebugCurves.Count; ci++)
             {
                 var c = DebugCurves[ci];
+                segRoad = ci;
                 var mid = perRoad ? Color.FromHsv((ci * 0.37f) % 1f, 0.9f, 1f) : new Color(1f, 1f, 1f);
                 for (int i = 1; i < c.Count; i++)
                 {
@@ -2160,6 +2164,7 @@ namespace UnturnedGodot
                         new Vector3(c[i].X - per.X, c[i].Y, c[i].Z - per.Y), new Color(1f, 0.15f, 0.1f));
                 }
             }
+            segRoad = -2;   // fences are their own group, so a fence crossing a road always counts
             if (!perRoad)
                 foreach (var f in FenceMarks)
                 {
@@ -2167,9 +2172,71 @@ namespace UnturnedGodot
                     Seg(new Vector3(f.X - f.DX * f.Half, y, f.Z - f.DZ * f.Half),
                         new Vector3(f.X + f.DX * f.Half, y, f.Z + f.DZ * f.Half), new Color(0.2f, 0.9f, 1f));
                 }
+            // ⭐ MARK WHERE THE DRAWN LINES ACTUALLY CROSS. Master keeps pointing at crossings in these
+            // renders while every counter reads zero, and the counters test CENTRELINES -- so if what crosses
+            // is an EDGE, or a fence, nothing I measure would ever see it. This tests the very segments being
+            // drawn, so the picture and the number cannot disagree: a magenta X is drawn at every hit and the
+            // same hits are printed. If the render shows a crossing with no marker on it, the marker is wrong;
+            // if it shows a marker, that is a real intersection of two lines I drew.
+            // ⚠ BUCKETED. The naive all-pairs sweep over ~9000 drawn segments is 40M lambda-heavy tests and it
+            // simply hung the render. Segments are short and local, so a 40 m grid makes this near-linear.
+            int hits = 0; var hitAt = Vector2.Zero;
+            var marks = new System.Collections.Generic.List<Vector2>();
+            int hitSelf = 0, hitFence = 0, hitPair = 0;
+            const float HCell = 40f;
+            var grid = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<int>>();
+            for (int k = 0; k < segs.Count; k++)
+            {
+                var mid2 = (segs[k].A + segs[k].B) * 0.5f;
+                var key = (Mathf.FloorToInt(mid2.X / HCell), Mathf.FloorToInt(mid2.Y / HCell));
+                if (!grid.TryGetValue(key, out var l)) { l = new System.Collections.Generic.List<int>(); grid[key] = l; }
+                l.Add(k);
+            }
+            var pairsDone = new System.Collections.Generic.HashSet<(int, int)>();
+            foreach (var cell in grid)
+                for (int ox = -1; ox <= 1; ox++)
+                    for (int oy = -1; oy <= 1; oy++)
+                    {
+                        if (!grid.TryGetValue((cell.Key.Item1 + ox, cell.Key.Item2 + oy), out var other2)) continue;
+                        foreach (int x1 in cell.Value)
+                        foreach (int y1 in other2)
+                        {
+                            if (x1 >= y1) continue;
+                            if (!pairsDone.Add((x1, y1))) continue;
+                            if (segs[x1].Road == segs[y1].Road && Mathf.Abs(x1 - y1) < 6) continue;   // neighbours on one road
+                            var (a0, a1) = (segs[x1].A, segs[x1].B);
+                            var (b0, b1) = (segs[y1].A, segs[y1].B);
+                            float Dt(Vector2 u, Vector2 v, Vector2 w) => (v.X - u.X) * (w.Y - u.Y) - (v.Y - u.Y) * (w.X - u.X);
+                            float e1 = Dt(a0, a1, b0), e2 = Dt(a0, a1, b1), e3 = Dt(b0, b1, a0), e4 = Dt(b0, b1, a1);
+                            if (((e1 > 0f) == (e2 > 0f)) || ((e3 > 0f) == (e4 > 0f))) continue;
+                            hits++;
+                            hitAt = (a0 + a1) * 0.5f;
+                            marks.Add(hitAt);
+                            // ⚠ WHICH KIND. A road's own inner edge folding over itself on a tight bend is a
+                            // completely different defect from two roads overlapping, and "47 crossings" cannot
+                            // tell them apart -- which is why three fixes aimed at road-vs-road moved it by one.
+                            if (segs[x1].Road == segs[y1].Road && segs[x1].Road >= 0) hitSelf++;
+                            else if (segs[x1].Road == -2 || segs[y1].Road == -2) hitFence++;
+                            else hitPair++;
+                        }
+                    }
+            // ⚠ Drawn AFTER the sweep, never during it -- Seg() appends to `segs`, so marking inside the loop
+            // adds segments to the list being iterated and the markers start intersecting each other.
+            foreach (var mk in marks)
+            {
+                float hy = terr.SampleHeight(mk.X, mk.Y) + 6f;
+                var mag = new Color(1f, 0f, 1f);
+                im.SurfaceSetColor(mag); im.SurfaceAddVertex(new Vector3(mk.X - 14f, hy, mk.Y - 14f));
+                im.SurfaceSetColor(mag); im.SurfaceAddVertex(new Vector3(mk.X + 14f, hy, mk.Y + 14f));
+                im.SurfaceSetColor(mag); im.SurfaceAddVertex(new Vector3(mk.X - 14f, hy, mk.Y + 14f));
+                im.SurfaceSetColor(mag); im.SurfaceAddVertex(new Vector3(mk.X + 14f, hy, mk.Y - 14f));
+            }
             im.SurfaceEnd();
             terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
-            Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn");
+            Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn; "
+                      + $"{hits} place(s) where two DRAWN lines cross ({hitSelf} one road folding over ITSELF, "
+                      + $"{hitPair} between two roads, {hitFence} a fence over a road)"
+                      + (hits > 0 ? $", last at ({hitAt.X:0},{hitAt.Y:0})" : ""));
         }
 
         /// <summary>How far each barrier panel reaches ONTO the carriageway it guards. A fence is a 16.25 m bar
@@ -2875,6 +2942,24 @@ namespace UnturnedGodot
                       + $"(tarmac touches under {ProcIsland.RenderedRoadHalf + ProcIsland.TrailHalf:0.#} m); {trailShared} sample pair(s) sharing tarmac"
                       + (trailShared > 0 ? $", nearest at ({trailAt.X:0},{trailAt.Y:0})" : ""));
 
+            // ⚠⚠ AND THE SAME THING WITH NO EXCLUSIONS AT ALL. The number above refuses to look near a town or
+            // at a junction road's own ends, on the grounds that roads converge there by design -- and a
+            // self-annotating render then found 30-34 places per island where two roads' drawn EDGES cross,
+            // which is impossible if the closest centrelines really are 38.9 m apart. So the defect has been
+            // living inside the exclusions the whole time. Every exclusion I added to make a number
+            // "actionable" was hiding the thing master kept pointing at.
+            float rawNear = float.MaxValue; var rawAt = Vector2.Zero; int rawShared = 0;
+            for (int i = 0; i < curves.Count; i++)
+                for (int j = i + 1; j < curves.Count; j++)
+                    for (int a = 0; a < curves[i].Count; a += 2)
+                        for (int b = 0; b < curves[j].Count; b += 2)
+                        {
+                            float d = new Vector2(curves[i][a].X - curves[j][b].X, curves[i][a].Z - curves[j][b].Z).Length();
+                            if (d < rawNear) { rawNear = d; rawAt = new Vector2(curves[i][a].X, curves[i][a].Z); }
+                            if (d < ProcIsland.RenderedRoadHalf * 2f) rawShared++;
+                        }
+            Log.Print($"[island-overlap] NO EXCLUSIONS: closest two ribbons {(rawNear == float.MaxValue ? 0f : rawNear):0.0} m apart, "
+                      + $"{rawShared} sample pair(s) within a tarmac width" + (rawShared > 0 ? $", nearest at ({rawAt.X:0},{rawAt.Y:0})" : ""));
             Log.Print($"[island-overlap] closest two ribbons run in open country: {(nearest == float.MaxValue ? 0f : nearest):0.0} m "
                       + $"(tarmac touches under {ProcIsland.RenderedRoadHalf * 2f:0.#} m); {tarmacShared} sample pair(s) sharing tarmac"
                       + (tarmacShared > 0 ? $", nearest at ({nearAt.X:0},{nearAt.Y:0}) between {nearKinds}" : ""));
