@@ -288,8 +288,13 @@ namespace UnturnedGodot
             /// instead of circles and be much smaller"), which also suits what goes on them: a street grid, a
             /// compound fence and a site hoarding are all rectangular, and a round pad would have to be
             /// re-squared by every stage that builds on it.</summary>
-            public readonly PoiKind Kind; public readonly float X, Z, HalfSize, GroundY;
-            public Poi(PoiKind k, float x, float z, float half, float y) { Kind = k; X = x; Z = z; HalfSize = half; GroundY = y; }
+            /// <summary>⚠ THE LATTICE SIZE IS PER-MONUMENT, NOT PER-KIND (strawberry 2026-09-17: "cities can be
+            /// bigger than what we currently generate"). It used to be TilesFor(Kind) -- one number for every
+            /// town on every island -- which is the same shape of sameness StreetPlanFor was written to end, one
+            /// level up: not just the street pattern repeating, but the town's SIZE.</summary>
+            public readonly PoiKind Kind; public readonly float X, Z, HalfSize, GroundY; public readonly int Tiles;
+            public Poi(PoiKind k, float x, float z, float half, float y, int tiles = 0)
+            { Kind = k; X = x; Z = z; HalfSize = half; GroundY = y; Tiles = tiles > 0 ? tiles : TilesFor(k); }
             public override string ToString() => $"{Kind} @ ({X:0},{Z:0}) {HalfSize * 2f:0}m sq y{GroundY:0.#}";
         }
 
@@ -298,6 +303,35 @@ namespace UnturnedGodot
         // tile edge lands 5 m inside the footprint and every gate sits on nothing. 5, 3 and 2 tiles across.
         public const float TileSize = 24f;
         public static int TilesFor(PoiKind k) => k switch { PoiKind.Town => 5, PoiKind.MilitaryBase => 3, _ => 2 };
+
+        /// <summary>How many tiles across THIS monument is. Towns roll a size; everything else keeps its kind's.
+        ///
+        /// ⚠ ODD ONLY. The street lines are interior and non-adjacent, and a monument whose gates must land on
+        /// one needs the same parity on both axes -- an even lattice has no centre line and its corner cells are
+        /// all boundary, which is the exact shape the kit cannot express (see FillsGrid's note about 2x2).
+        /// 3 is a hamlet, 5 the old default, 7 and 9 the cities master asked to be able to exceed the old size.</summary>
+        public static int TilesForPoi(int poiIndex, PoiKind kind, int seed)
+        {
+            if (kind != PoiKind.Town) return TilesFor(kind);
+            float r = Hash01(poiIndex * 313 + 7, 23, seed + 51001);
+            return r < 0.28f ? 3 : r < 0.66f ? 5 : r < 0.90f ? 7 : 9;
+        }
+
+        /// <summary>What a town IS, by how much road actually got built on it (strawberry: "each town needs
+        /// flags depending on the number of road pieces in the town to determine its 'size'").
+        ///
+        /// ⚠ COUNTED FROM THE TILES THAT SURVIVED, not from the size it was reserved at. A monument's lattice is
+        /// what it was given; its piece count is what the routing, the dead-end prune and the exit fitting left
+        /// behind -- and master's own example is about the result ("the monuments with just 2 road line caps are
+        /// just 'monument'"), not the intent. A 9-tile city site whose grid mostly failed is a hamlet, and
+        /// should be built like one.</summary>
+        public enum TownSize { Monument, Small, Medium, City }
+
+        public static TownSize SizeOf(int tileCount) =>
+            tileCount <= 3 ? TownSize.Monument
+          : tileCount <= 9 ? TownSize.Small
+          : tileCount <= 19 ? TownSize.Medium
+          : TownSize.City;
 
         /// <summary>Does this monument get a full street grid, or just an access road?
         ///
@@ -354,7 +388,11 @@ namespace UnturnedGodot
             int attempt = 0;
             foreach (var kind in want)
             {
-                float half = HalfSizeFor(kind);
+                // ⚠ RESERVE THE SIZE THIS ONE WILL ACTUALLY BE. The roll has to happen BEFORE the search, not
+                // after it: a 9-tile city reserved at the old 5-tile half-extent is sited on a patch that cannot
+                // hold it, and every later stage reads Poi.HalfSize as the truth about how much room there is.
+                int tiles = TilesForPoi(placed.Count, kind, p.Seed);
+                float half = tiles * TileSize * 0.5f;
                 bool got = false;
                 int rWet = 0, rCliff = 0, rClash = 0;
                 // BEST-CANDIDATE, not first-fit. Taking the first valid spot clusters everything into whichever
@@ -431,7 +469,7 @@ namespace UnturnedGodot
                     }
                     if (score > bestScore) { bestScore = score; bx = wx; bz = wz; by = HeightAt(grid, gw, gh, cxg, cyg); got = true; }
                 }
-                if (got) placed.Add(new Poi(kind, bx, bz, half, by));
+                if (got) placed.Add(new Poi(kind, bx, bz, half, by, tiles));
                 if (!got) report.Append($"{kind} FAILED (wet/edge {rWet}, cliff {rCliff}, too close {rClash}); ");
             }
             LastRejectReport = report.Length == 0 ? "all placed" : report.ToString();
@@ -1497,18 +1535,27 @@ namespace UnturnedGodot
         {
             if (n < 3) return (System.Array.Empty<int>(), System.Array.Empty<int>());
             if (n == 3) return (new[] { 1 }, new[] { 1 });   // one interior line; there is no other plan
-            // n >= 5: the interior lines are 1..n-2, and a street may not be adjacent to another or the block
-            // between them disappears. These are the legal sets for n = 5.
-            var sets = new[] { new[] { 1, 3 }, new[] { 1, 3 }, new[] { 2 }, new[] { 1 }, new[] { 3 } };
-            int ai = (int)(Hash01(poiIndex * 131 + 17, 5, seed + 60013) * (sets.Length - 1) + 0.5f);
-            int aj = (int)(Hash01(poiIndex * 197 + 41, 9, seed + 60017) * (sets.Length - 1) + 0.5f);
-            return (sets[Mathf.Clamp(ai, 0, sets.Length - 1)], sets[Mathf.Clamp(aj, 0, sets.Length - 1)]);
+            // ⚠ GENERATED, NOT TABULATED, because the lattice is no longer always 5 across. The interior lines
+            // are 1..n-2 and a street may never be adjacent to another (the block between them would vanish), so
+            // a plan is any arithmetic run with a stride of at least 2. Stride 2 gives single-tile blocks, the
+            // dense old grid; stride 3 gives two-tile blocks, which is what a bigger city wants -- otherwise a
+            // 9-tile city is just a 5-tile town with more streets rather than bigger blocks.
+            int[] Lines(int salt)
+            {
+                int stride = Hash01(poiIndex * 61 + salt, 3, seed + 60031) < 0.45f ? 3 : 2;
+                int start = 1 + (int)(Hash01(poiIndex * 89 + salt, 11, seed + 60037) * (stride - 0.01f));
+                var outp = new System.Collections.Generic.List<int>();
+                for (int k = start; k <= n - 2; k += stride) outp.Add(k);
+                if (outp.Count == 0) outp.Add(1 + (n - 3) / 2);   // never empty: a town with no streets is not a town
+                return outp.ToArray();
+            }
+            return (Lines(17), Lines(41));
         }
 
         public static System.Collections.Generic.List<MonumentTile> BuildMonument(
             int poiIndex, Poi poi, System.Collections.Generic.List<Connector> cons, int seed = 0)
         {
-            int n = TilesFor(poi.Kind);
+            int n = poi.Tiles;
             var tiles = new System.Collections.Generic.List<MonumentTile>();
             // lattice cell (i,j) centre, i/j in 0..n-1
             Vector2 CellPos(int i, int j) => new(
@@ -1554,7 +1601,16 @@ namespace UnturnedGodot
             // exit cells entirely. On this lattice one of the two always does unless the inner cell is itself an
             // exit, which only happens if two gates sit back to back on a 2-wide monument.
             // Route between the INNER cells, hub-and-spoke off the first one, rather than out from the centre.
+            // ⚠⚠ THE SPOKES ARE FOR MONUMENTS WITHOUT A GRID (strawberry 2026-09-17: "prevent weird layouts. try
+            // to avoid adjascent quads or tees, excessive use of quads and tees and turns").
+            //
+            // On a grid-filled town every gate is snapped ONTO a street line and the grid already joins
+            // everything to everything -- so hub-and-spoke L-paths between the inner cells add cells that are
+            // not on any street, and every one of those is a corner or a junction that nothing asked for. That
+            // is where the excess Turns and Tees came from, and why two of them could end up side by side. A
+            // compound (base/site) has no grid, so there the spokes ARE the layout and stay.
             var hub = inners.Count > 0 ? inners[0] : (i: mid, j: mid);
+            if (!FillsGrid(poi.Kind))
             foreach (var inner in inners)
             {
                 var pathA = new System.Collections.Generic.List<(int, int)>();
@@ -1851,6 +1907,43 @@ namespace UnturnedGodot
             new("Office_2", 18.2f, 9.0f, 9.1f),
             new("Office_3", 21.7f, 8.0f, 8.1f),
         };
+        /// <summary>⚠ SPLIT ALONG MASTER'S VOCABULARY, not the old three-way one. The brief is in terms of
+        /// houses / businesses / offices / apartments ("smalls can only have houses, and rarely one business...
+        /// cities can have apartments and offices, businesses"), and the old Stores table mixed shops with
+        /// office blocks while Services mixed civic buildings with apartments -- so neither could be gated the
+        /// way the brief describes. These are views over the SAME measured props, regrouped.</summary>
+        static readonly BuildingProp[] Businesses =
+        {
+            new("Diner_0", 25.0f, 9.5f, 11.1f),
+            new("Diner_1", 14.0f, 9.0f, 9.1f),
+            new("Diner_2", 21.7f, 9.1f, 9.1f),
+            new("Gas_0", 12.2f, 10.1f, 10.1f),
+            new("Bank_0", 22.2f, 11.0f, 11.1f),
+        };
+        static readonly BuildingProp[] Offices =
+        {
+            new("Office_0", 28.2f, 9.0f, 9.1f),
+            new("Office_1", 25.7f, 12.5f, 12.6f),
+            new("Office_2", 18.2f, 9.0f, 9.1f),
+            new("Office_3", 21.7f, 8.0f, 8.1f),
+        };
+        static readonly BuildingProp[] Apartments =
+        {
+            new("Apartment_0", 21.2f, 10.0f, 10.1f),
+            new("Apartment_1", 20.2f, 11.0f, 11.1f),
+            new("Apartment_2", 18.2f, 11.8f, 11.8f),
+            new("Apartment_3", 16.7f, 8.0f, 8.1f),
+        };
+        static readonly BuildingProp[] Civic =
+        {
+            new("Police_0", 16.2f, 8.0f, 8.1f),
+            new("Police_1", 24.7f, 18.1f, 18.1f),
+            new("Medic_0", 20.2f, 10.0f, 10.1f),
+            new("Medic_1", 39.0f, 10.0f, 10.1f),
+            new("Medic_2", 20.7f, 11.0f, 11.1f),
+            new("Fire_0", 16.2f, 12.3f, 12.2f),
+        };
+
         static readonly BuildingProp[] Services =
         {
             new("Police_0", 16.2f, 8.0f, 8.1f),
@@ -1912,6 +2005,38 @@ namespace UnturnedGodot
         }
         static readonly BuildingProp[] FitHouses = Fitting(Houses, false), FitStores = Fitting(Stores, false), FitServices = Fitting(Services, false);
         static readonly BuildingProp[] ThruHouses = Fitting(Houses, true), ThruStores = Fitting(Stores, true), ThruServices = Fitting(Services, true);
+        static readonly BuildingProp[] FitBiz = Fitting(Businesses, false), ThruBiz = Fitting(Businesses, true);
+        static readonly BuildingProp[] FitOffice = Fitting(Offices, false), ThruOffice = Fitting(Offices, true);
+        static readonly BuildingProp[] FitApt = Fitting(Apartments, false), ThruApt = Fitting(Apartments, true);
+        static readonly BuildingProp[] FitCivic = Fitting(Civic, false), ThruCivic = Fitting(Civic, true);
+
+        /// <summary>What may stand on a block, by what the town IS (strawberry 2026-09-17: "these gate the types
+        /// of buildings that can spawn there. smalls can only have houses, and rarely one business. mediums can
+        /// have both businesses and houses, businesses still less common. cities can have apartments and
+        /// offices, businesses. houses are a lot less common").
+        ///
+        /// ⚠ `through` picks the shallow-fitting variant of whichever table wins -- a block with a street behind
+        /// it as well as in front has a 24 m road piece at BOTH ends. Choosing the table first and the depth
+        /// second keeps the size rule and the fit rule from having to know about each other.</summary>
+        static BuildingProp[] TableFor(TownSize size, float r, bool through)
+        {
+            switch (size)
+            {
+                case TownSize.City:
+                    return r < 0.30f ? (through ? ThruApt : FitApt)
+                         : r < 0.58f ? (through ? ThruOffice : FitOffice)
+                         : r < 0.82f ? (through ? ThruBiz : FitBiz)
+                         : r < 0.92f ? (through ? ThruCivic : FitCivic)
+                         : (through ? ThruHouses : FitHouses);          // houses a lot less common
+                case TownSize.Medium:
+                    return r < 0.55f ? (through ? ThruHouses : FitHouses)
+                         : r < 0.85f ? (through ? ThruBiz : FitBiz)     // businesses still less common
+                         : (through ? ThruCivic : FitCivic);
+                default:                                                 // Small (Monument builds nothing)
+                    return r < 0.92f ? (through ? ThruHouses : FitHouses)
+                         : (through ? ThruBiz : FitBiz);                 // rarely one business
+            }
+        }
 
         /// <summary>The measured footprint of a placed building, by name. Exposed so a check can ask where a
         /// prop's WALL ends up rather than where its origin does -- the origin was never the thing standing in
@@ -1937,7 +2062,7 @@ namespace UnturnedGodot
         {
             var outp = new System.Collections.Generic.List<MonumentBuilding>();
             if (!FillsGrid(poi.Kind)) return outp;   // a construction site is a compound, not a street of shops
-            int n = TilesFor(poi.Kind);
+            int n = poi.Tiles;
 
             var street = new System.Collections.Generic.HashSet<(int, int)>();
             foreach (var t in tiles)
@@ -1947,6 +2072,12 @@ namespace UnturnedGodot
                 int j = Mathf.RoundToInt((t.Z - poi.Z) / TileSize + (n - 1) * 0.5f);
                 street.Add((i, j));
             }
+
+            // ⚠ THE CLASS COMES FROM THE TILES THAT EXIST, counted here rather than from poi.Tiles: the lattice
+            // is what the site was given, the street set is what survived routing and pruning, and master's own
+            // example is about the result ("the monuments with just 2 road line caps are just 'monument'").
+            var size = SizeOf(street.Count);
+            if (size == TownSize.Monument) return outp;   // two caps and a road is not a settlement
 
             int slot = 0;
             for (int i = 0; i < n; i++)
@@ -1970,12 +2101,10 @@ namespace UnturnedGodot
                         // would have thrown most of the catalogue away on every block -- including the two
                         // thirds of them that have the room.
                         bool through = street.Contains((i + d.dx, j + d.dz));
-                        // Deterministic mix: mostly houses, with stores and services salted through. Keyed on
-                        // the cell and the seed so a town is the same town every time it is generated.
+                        // Deterministic mix, gated by what the town IS. Keyed on the cell and the seed so a town
+                        // is the same town every time it is generated.
                         float r = Hash01(i * 71 + poiIndex * 13, j * 37, p.Seed + 4021);
-                        var table = through
-                            ? (r < 0.60f ? ThruHouses : r < 0.82f ? ThruStores : ThruServices)
-                            : (r < 0.60f ? FitHouses : r < 0.82f ? FitStores : FitServices);
+                        var table = TableFor(size, r, through);
                         // An empty block is a yard. Falling back to a table that does NOT fit would put the
                         // wall back in the road, which is the whole thing being fixed.
                         if (table.Length == 0) break;
@@ -2012,7 +2141,7 @@ namespace UnturnedGodot
             foreach (var kv in byPoi)
             {
                 var poi = pois[kv.Key];
-                int n = TilesFor(poi.Kind);
+                int n = poi.Tiles;
                 var idxs = kv.Value;
 
                 // EXHAUSTIVE, not greedy. A gate's lattice line has to avoid every OTHER gate's exit cell and
@@ -2130,7 +2259,7 @@ namespace UnturnedGodot
             {
                 var c = cons[i];
                 var poi = pois[c.Poi];
-                int n = TilesFor(poi.Kind);
+                int n = poi.Tiles;
                 float rel = (snapped[i] - (n - 1) * 0.5f) * TileSize;
                 float x = c.X, z = c.Z;
                 if (Mathf.Abs(c.DirX) > 0.5f) z = poi.Z + rel; else x = poi.X + rel;

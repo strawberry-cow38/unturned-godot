@@ -387,6 +387,52 @@ namespace UnturnedGodot
             Log.Print($"[island-capjoin] {ends} route end(s): worst plan gap {worstPlan:0.00} m, worst height gap {worstY:0.00} m, mean height gap {sumY / ends:0.00} m, {far} not joined");
         }
 
+        /// <summary>What each monument turned out to be, and how much of it is junction. ⚠ Reported because
+        /// "avoid excessive use of quads and tees and turns" is a claim about a RATIO, and a ratio nobody prints
+        /// is one nobody can tell you has drifted -- the piece mix line already existed island-wide, which
+        /// averages a good town and a bad one into a number that looks fine.</summary>
+        static void ReportTowns(Terrain terr)
+        {
+            if (terr?.IslandTiles == null) return;
+            var counts = new System.Collections.Generic.Dictionary<int, (int all, int junction, int adj)>();
+            var byPoi = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<ProcIsland.MonumentTile>>();
+            foreach (var t in terr.IslandTiles)
+            {
+                if (!byPoi.TryGetValue(t.Poi, out var l)) { l = new System.Collections.Generic.List<ProcIsland.MonumentTile>(); byPoi[t.Poi] = l; }
+                l.Add(t);
+            }
+            var tally = new System.Collections.Generic.Dictionary<ProcIsland.TownSize, int>();
+            int worstAdj = 0; float worstJunction = 0f;
+            foreach (var kv in byPoi)
+            {
+                int all = kv.Value.Count, junction = 0, adj = 0;
+                foreach (var t in kv.Value)
+                {
+                    bool tj = t.Piece is ProcIsland.RoadPiece.Quad or ProcIsland.RoadPiece.Tee;
+                    if (tj) junction++;
+                    if (!tj) continue;
+                    // ADJACENT junctions, which is the specific shape master called out. 24 m apart on the
+                    // lattice = sharing an edge.
+                    foreach (var u in kv.Value)
+                    {
+                        if (u.X == t.X && u.Z == t.Z) continue;
+                        if (!(u.Piece is ProcIsland.RoadPiece.Quad or ProcIsland.RoadPiece.Tee)) continue;
+                        if (Mathf.Abs(Mathf.Abs(u.X - t.X) + Mathf.Abs(u.Z - t.Z) - ProcIsland.TileSize) < 0.5f) { adj++; break; }
+                    }
+                }
+                var sz = ProcIsland.SizeOf(all);
+                tally.TryGetValue(sz, out int c); tally[sz] = c + 1;
+                if (adj > worstAdj) worstAdj = adj;
+                float jf = all > 0 ? junction / (float)all : 0f;
+                if (jf > worstJunction) worstJunction = jf;
+            }
+            var sb = new System.Text.StringBuilder("[island-towns]");
+            foreach (ProcIsland.TownSize sz in System.Enum.GetValues(typeof(ProcIsland.TownSize)))
+                sb.Append($" {sz}={(tally.TryGetValue(sz, out int c2) ? c2 : 0)}");
+            sb.Append($" | worst junction share {worstJunction * 100f:0}%, most adjacent junctions in one town {worstAdj}");
+            Log.Print(sb.ToString());
+        }
+
         static void ReportPieces(Terrain terr)
         {
             if (terr?.IslandTiles == null) return;
@@ -1653,6 +1699,7 @@ namespace UnturnedGodot
             ScatterBoulders(terr, objs, ref missing);
             ScatterRoadside(terr, objs, ref missing);
             ReportPieces(terr);
+            ReportTowns(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));
             return (roads, buildings, missing);
         }
