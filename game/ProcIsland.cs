@@ -949,6 +949,9 @@ namespace UnturnedGodot
         /// the fix can be A/B'd against itself on one seed instead of being believed.</summary>
         static readonly bool NoGateFloor = System.Environment.GetEnvironmentVariable("UG_NOGATEFLOOR") == "1";
 
+        static float GradeRawWorst, GradeRelWorst; static int GradeRawOver, GradeRelOver;
+
+
         /// <summary>Where a ray from `from`'s centre toward `to`'s centre leaves `from`'s square.</summary>
         static Connector Gate(System.Collections.Generic.List<Poi> pois, int from, int to, int link, LinkKind kind)
         {
@@ -1117,7 +1120,37 @@ namespace UnturnedGodot
                     else { b = c; gb = true; }
                 }
                 if (!ga || !gb) continue;
-                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p, used, padCell));
+                // ⚠ WHERE DOES A MID-ROUTE GRADIENT COME FROM -- THE SEARCH, OR THE SMOOTHER? A* prices climbing
+                // and could in principle be tuned; Relax is a purely 2D operation that never looks at the
+                // terrain at all, so every point it moves lands on whatever height happens to be underneath.
+                // If the raw path is inside the cap and the relaxed one is not, the smoother is draping the
+                // road over ground the search deliberately avoided, and no amount of pricing in the search can
+                // reach it -- the thing that runs last wins, which has been the shape of every defect tonight.
+                var rawPath = Route2D(grid, gw, gh, a, b, links[li].Kind, p, used, padCell);
+                var pts = Relax(rawPath);
+                {
+                    float RawWorst(System.Collections.Generic.List<Vector2> path)
+                    {
+                        float w = 0f;
+                        for (int q = 1; q < path.Count; q++)
+                        {
+                            int ax2 = Mathf.Clamp(Mathf.RoundToInt(path[q - 1].X / 4f), 0, gw - 1);
+                            int ay2 = Mathf.Clamp(Mathf.RoundToInt(path[q - 1].Y / 4f), 0, gh - 1);
+                            int bx2 = Mathf.Clamp(Mathf.RoundToInt(path[q].X / 4f), 0, gw - 1);
+                            int by2 = Mathf.Clamp(Mathf.RoundToInt(path[q].Y / 4f), 0, gh - 1);
+                            float run2 = path[q - 1].DistanceTo(path[q]);
+                            if (run2 < 1f) continue;
+                            float g2 = Mathf.Abs(ToWorld(grid[bx2, by2]) - ToWorld(grid[ax2, ay2])) / run2;
+                            if (g2 > w) w = g2;
+                        }
+                        return w;
+                    }
+                    float rawG = RawWorst(rawPath), relG = RawWorst(pts);
+                    if (rawG > GradeRawWorst) GradeRawWorst = rawG;
+                    if (relG > GradeRelWorst) GradeRelWorst = relG;
+                    if (rawG > 0.35f) GradeRawOver++;
+                    if (relG > 0.35f) GradeRelOver++;
+                }
                 if (pts.Count < 2) continue;
                 routes.Add(new Route(links[li].Kind, pts));
                 // ⚠ UG_NOROADPENALTY=1 SKIPS THE STAMP. The penalty and the probe that scores it were written
@@ -1247,6 +1280,9 @@ namespace UnturnedGodot
                           + $"sharpest turn {worstTurn:0.#} deg on a {turnOn} at pt {turnAt}/{turnOf} "
                           + $"[between a {turnV1:0.00} m and a {turnV2:0.00} m segment] (suite asserts < 50 deg) "
                           + $"-- {gw}x{gh} grid; the suite fixture is 257x257");
+                Log.Print($"[island-quality] BEFORE vs AFTER Relax (segments >= 1 m): worst gradient "
+                          + $"{GradeRawWorst * 100f:0.#}% -> {GradeRelWorst * 100f:0.#}%, routes over 35% "
+                          + $"{GradeRawOver} -> {GradeRelOver} of {routes.Count}");
                 Log.Print($"[island-quality] over-threshold on segments >= 1 m, by position: turns over 50 deg "
                           + $"-- {turnHead} at the HEAD seam, {turnTail} at the TAIL seam, {turnMid} mid-route; "
                           + $"gradients over 35% -- {gradeHead} head, {gradeTail} tail, {gradeMid} mid "
