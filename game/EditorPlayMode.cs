@@ -37,7 +37,15 @@ namespace UnturnedGodot
         public void SetIsland(int? seed, string mapRootForTables)
         { _islandSeed = seed; _mapRootForTables = mapRootForTables; }
 
-        static bool ZombiesOff => System.Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1";
+        /// <summary>⚠ ASK THE ONE PLACE THAT KNOWS (strawberry 2026-09-17: "have proc maps respect the no
+        /// zombie option"). I wrote a private env-var check here, which is a SECOND COPY of a decision that
+        /// already had a home -- and it was the wrong copy: WorldBuilder.ZombiesDisabled also honours
+        /// ZombiesOverride, which is what the MENU toggle sets, and the old dedicated env name. So the menu
+        /// switch worked on PEI and did nothing on a generated island, which is the worst kind of setting: one
+        /// that visibly exists and silently doesn't apply.
+        /// The note on ZombiesOverride says it outright -- "the menu is the toggle a PLAYER has, an env var is
+        /// not one" -- and I had reimplemented only the half a player cannot reach.</summary>
+        static bool ZombiesOff => WorldBuilder.ZombiesDisabled;
 
         CanvasLayer _ui;
         Button _playBtn;

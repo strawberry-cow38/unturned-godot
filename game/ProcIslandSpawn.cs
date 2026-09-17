@@ -1021,6 +1021,23 @@ namespace UnturnedGodot
         ///     this direction" -- the right and only rotation needed here.
         /// A guess would have had a 50/50 chance of laying every fence across the road instead of along it, and
         /// a symmetric prop gives nothing away in a screenshot.</summary>
+        /// <summary>⚠ CALLED AFTER SpawnRoutes, AND THAT ORDERING IS THE WHOLE POINT (strawberry 2026-09-17:
+        /// "its around road splines that the collision sucks. and its affecting the road prop placement along
+        /// em").
+        ///
+        /// Poles and barriers are seated on the ground with PosFor -- and SpawnRoutes' ConformToPolylines MOVES
+        /// that ground, by up to several metres, along exactly the splines these props line. Running inside
+        /// Spawn() meant every one of them was placed against the terrain as it was BEFORE the roads were
+        /// conformed, so they came out floating or half-buried in a band that follows the road. Same class of
+        /// mistake as the town furniture, which had to move behind the item catalogue for its own reason: a
+        /// placement is only as correct as the world at the moment it happens.</summary>
+        public static void SpawnRoadside(Terrain terr, EditorObjects objs)
+        {
+            int missing = 0;
+            ScatterRoadside(terr, objs, ref missing);
+            if (missing > 0) Log.Print($"[island-roadside] {missing} prop name(s) not in the catalogue");
+        }
+
         static void ScatterRoadside(Terrain terr, EditorObjects objs, ref int missing)
         {
             if (terr == null || objs == null || terr.IslandRoutes == null) return;
@@ -1840,7 +1857,6 @@ namespace UnturnedGodot
                 if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
             }
             ScatterBoulders(terr, objs, ref missing);
-            ScatterRoadside(terr, objs, ref missing);
             ReportPieces(terr);
             ReportTowns(terr);
             Log.Print($"[island] spawned {roads} road props + {buildings} buildings" + (missing > 0 ? $" ({missing} MISSING from the object catalogue)" : ""));

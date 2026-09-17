@@ -6445,6 +6445,12 @@ namespace UnturnedGodot
             // to put it.
             await Phase("Surfacing the roads");
             if (genPois != null) ProcIslandSpawn.SpawnRoutes(terr, rf);
+            // ⚠ AFTER the roads, not with the other props. SpawnRoutes conforms the terrain to each road's
+            // profile, so anything standing beside a spline has to be seated once that ground has stopped
+            // moving -- placed earlier, poles and barriers end up floating or buried in a band along every road.
+            if (genPois != null) ProcIslandSpawn.SpawnRoadside(terr, objs);
+            // The island's own M-map, drawn from the heightmap/splat/routes now that all three are final.
+            if (genPois != null && genSeed.HasValue) ProcIslandMap.Bake(terr, genSeed.Value);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)

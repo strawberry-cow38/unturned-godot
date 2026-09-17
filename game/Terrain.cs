@@ -23,7 +23,7 @@ namespace UnturnedGodot
 
         // The 8 shared terrain material layers, colored as a stand-in until real splatmap texture blending. Inferred from
         // the PEI splatmap layout (layer 5 = ocean/water dominant, 2 = grass/ground, 3 = the road network, 0/7 = forest).
-        static Color LayerColor(byte l) => l switch
+        public static Color LayerColor(byte l) => l switch
         {
             // source-accurate: avg colour of each layer's REAL albedo (extracted from core.masterbundle via UnityPy).
             // Layer->material mapping read from PEI Level.hierarchy (see reference_unturned_world memory).
@@ -716,7 +716,14 @@ void fragment() {
                 if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
             }
             _dirty = true;
-            RebuildChunksIn(minX, maxX, minY, maxY);
+            // ⚠⚠ withCollider: TRUE, and the default is FALSE (strawberry 2026-09-17: "i dont think the terrain
+            // collision matches the visual mesh"). RebuildChunksIn normally rebuilds the MESH and queues the
+            // chunk in _dirtyChunks for a later collider pass -- which is right for an interactive brush, where
+            // a collider rebuild per mouse-move would stutter, and wrong for a one-shot generation edit that
+            // nobody is going to flush afterwards. This pass moves the ground under every road on the island, so
+            // leaving the collider behind meant you walked on the terrain as it was BEFORE the roads were
+            // conformed: the visual is the road, the collision is the hillside it replaced.
+            RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
         }
 
         void GatherConform(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather,
@@ -805,7 +812,7 @@ void fragment() {
             }
             if (minX > maxX) return;
             _dirty = true;
-            RebuildChunksIn(minX, maxX, minY, maxY);
+            RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);   // generation edit, not a brush -- see the note above
         }
 
         public void EditFlatten(float worldX, float worldZ, float radiusWorld, float strength)   // pull heights toward the brush centre's height (Devkit FLATTEN)
