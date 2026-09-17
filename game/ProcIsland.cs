@@ -963,6 +963,7 @@ namespace UnturnedGodot
         /// fixes: a lateral that is ANOTHER GATE's exit cell (which this pass refuses to delete, correctly --
         /// deleting it strands that gate's road) against an exit whose street simply does not run inward.</summary>
         public static int GrowShortAdjacentGate, GrowShortNoInward;
+        static bool CapBreak = System.Environment.GetEnvironmentVariable("UG_CAPBREAK") == "1";
         static readonly bool GrowDbg = System.Environment.GetEnvironmentVariable("UG_EXITDBG") == "1";
         /// <summary>How many block faces were refused because the street they would front is a dead end.
         /// ⚠ Counted because "buildings no longer front exposed ends" is otherwise unfalsifiable from a render:
@@ -2935,6 +2936,13 @@ namespace UnturnedGodot
                 else if (nb.Count == 1) { piece = RoadPiece.LineCap; yaw = YawFor(-nb[0].dx, -nb[0].dz); }
                 else { piece = RoadPiece.Quad; yaw = 0f; }
 
+                // ⚠ UG_CAPBREAK=1 TURNS ONE CAP AROUND, so the invariant that says "no cap's ramp points at
+                // another piece" can be shown to go RED. tinyclaw asked the right question about the relaxed
+                // assertion: reading 0 on three seeds is equally consistent with the rule holding and with the
+                // rule being asleep, and after a day of counters that agreed with me by measuring the wrong
+                // thing, "it passes" is not evidence. A cap's ramp points AWAY from its one street, so flipping
+                // its yaw 180 aims it straight at that street -- the exact shape the check exists to catch.
+                if (CapBreak && piece == RoadPiece.LineCap) { yaw += 180f; CapBreak = false; }
                 tiles.Add(new MonumentTile(poiIndex, piece, pos.X, pos.Y, yaw));
             }
             return tiles;
