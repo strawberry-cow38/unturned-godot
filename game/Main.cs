@@ -3358,7 +3358,13 @@ namespace UnturnedGodot
             Ball(new Vector3(-7f, 0.7f, 0f), new Color(0.35f, 0f, 0f));    // -X = dark red
             Ball(new Vector3(0f, 0.7f, -7f), new Color(0f, 0f, 0.35f));    // -Z = dark blue
 
-            _zfz = new ZombieBody(); AddChild(_zfz); _zfz.Position = Vector3.Zero;
+            // UG_ZTABLE=<n> dresses the probe from PEI's zombie table n (0 Police, 2 Military, 9 Chef...), so the
+            // wardrobe that Zombies.dat describes can actually be LOOKED at rather than only parsed. Needs the map
+            // root for the file itself; without it the tables are empty and the zombie falls back to the wardrobe.
+            byte _ztbl = 255;
+            { var e = System.Environment.GetEnvironmentVariable("UG_ZTABLE");
+              if (!string.IsNullOrEmpty(e) && byte.TryParse(e, out var tb)) { _ztbl = tb; ZombieTables.Load(_mapRoot); } }
+            _zfz = new ZombieBody(_ztbl, 12345u); AddChild(_zfz); _zfz.Position = Vector3.Zero;
             var cam = new Camera3D { Current = true, Fov = 46f, Far = 500f };
             AddChild(cam);
             // UG_ZCAM=close pulls in for a BODY shot -- clothes, skin tint, face. The wide default is the FACING

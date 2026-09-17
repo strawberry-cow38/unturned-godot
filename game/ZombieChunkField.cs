@@ -73,13 +73,17 @@ namespace UnturnedGodot
         // A zombie. Home = spawn point; Pos = current position. Body != null once it's HOT (within ~45 m of a player):
         // the visible/collidable/killable node, which then owns its transform (Pos syncs from it). A class (not a struct)
         // so it can hold the Body ref and be mutated in place. FROZEN chunks allocate none of these -- they stay a count.
-        public class Zombie { public Vector3 Home; public Vector3 Pos; public Vector2 Vel; public ZombieBody Body; }
+        // Table is the spawn point's own table index (Police/Farm/...); Outfit is a per-zombie seed, held HERE
+        // rather than on the body because the body is destroyed on demote and rebuilt on re-promote -- rolling the
+        // clothes in the constructor would change what a zombie is wearing every time you walked away and back.
+        public class Zombie { public Vector3 Home; public Vector3 Pos; public Vector2 Vel; public ZombieBody Body; public byte Table = 255; public uint Outfit = 1; }
 
         public class Chunk
         {
             public int Cx, Cz;
             public Vector3 Center;                          // world centre (Y = 0; XZ is what tiers test)
             public readonly List<Vector3> SpawnPts = new(); // Animals.dat points that fell in this chunk
+            public readonly List<byte> SpawnTables = new();  // each point's zombie TABLE index, parallel to SpawnPts
             public int Cap;                                 // how many zombies this chunk holds when awake
             public Tier Tier = Tier.Frozen;
             public List<Zombie> Live;                       // null while FROZEN; materialized (Cap zombies) once COLD+
@@ -100,6 +104,7 @@ namespace UnturnedGodot
 
         public void LoadFromPei(string peiRoot)
         {
+            ZombieTables.Load(peiRoot);   // the wardrobe that goes with these points
             string path = System.IO.Path.Combine(peiRoot, "Spawns", "Animals.dat");
             if (!System.IO.File.Exists(path)) { Log.Print("[zchunk] no Animals.dat -- no zombie spawns"); return; }
             var b = System.IO.File.ReadAllBytes(path); int o = 0;
@@ -112,7 +117,9 @@ namespace UnturnedGodot
                     ushort count = System.BitConverter.ToUInt16(b, o); o += 2;
                     for (int i = 0; i < count; i++)
                     {
-                        o++;                                                 // byte type (PEI = one NORMAL zombie table)
+                        byte table = b[o++];   // the point's ZOMBIE TABLE index -- Police, Farm, Civilian...
+                        // ⚠ This was skipped as "PEI = one NORMAL zombie table". PEI's 1456 points carry 18
+                        // DISTINCT values here, so that comment cost us the entire per-region wardrobe.
                         float px = System.BitConverter.ToSingle(b, o); o += 4;
                         o += 4;                                              // skip point.y -- zombies stand on our terrain
                         float pz = System.BitConverter.ToSingle(b, o); o += 4;
@@ -132,6 +139,7 @@ namespace UnturnedGodot
                         }
                         float gy = Terr != null ? Terr.SampleHeight(gx, gz) : 0f;
                         c.SpawnPts.Add(new Vector3(gx, gy, gz));
+                        c.SpawnTables.Add(table);
                         kept++;
                     }
                 }
@@ -289,8 +297,11 @@ namespace UnturnedGodot
             for (int i = 0; i < c.Cap; i++)
             {
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5;             // xorshift32 -- deterministic pick
-                var p = c.SpawnPts[(int)(s % (uint)c.SpawnPts.Count)];
-                c.Live.Add(new Zombie { Home = p, Pos = p });
+                int pi = (int)(s % (uint)c.SpawnPts.Count);
+                var p = c.SpawnPts[pi];
+                byte tbl = pi < c.SpawnTables.Count ? c.SpawnTables[pi] : (byte)255;
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+                c.Live.Add(new Zombie { Home = p, Pos = p, Table = tbl, Outfit = s | 1u });
             }
         }
 
@@ -379,7 +390,7 @@ namespace UnturnedGodot
                     var z = c.Live[i];
                     if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead)) { z.Body = null; c.Live.RemoveAt(i); continue; }   // killed -> gone
                     float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
-                    if (z.Body == null && d < HotBodyDist) { z.Body = new ZombieBody(); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; }
+                    if (z.Body == null && d < HotBodyDist) { z.Body = new ZombieBody(z.Table, z.Outfit); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; }
                     else if (z.Body != null && d > HotBodyDrop) { z.Body.QueueFree(); z.Body = null; }
 
                     if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2

@@ -233,8 +233,18 @@ namespace UnturnedGodot
         // Load a gear item's worn MESH (.obj) as a runtime ArrayMesh, reusing ContentProvider.ParseObj -- the exact
         // runtime .obj loader the guns/vehicles/attachments use (Viewmodel gun mesh, Vehicle body). Blank cell or
         // missing file -> null (the slot then attaches nothing). Only gear slots (hat/vest/mask/glasses/backpack) carry a mesh.
+        static readonly Dictionary<string, ArrayMesh> _meshByPath = new();
+
+        /// <summary>⚠ CACHED for the same reason LoadTex is, and more urgently: this re-PARSES an .obj on every
+        /// call. Hats and vests are attached per zombie at spawn now, and a horde repeats a handful of garments.</summary>
         public static ArrayMesh LoadMesh(string rel)
-            => string.IsNullOrEmpty(rel) ? null : ContentProvider.ParseObj("res://content/" + rel);
+        {
+            if (string.IsNullOrEmpty(rel)) return null;
+            if (_meshByPath.TryGetValue(rel, out var hit)) return hit;
+            var made = ContentProvider.ParseObj("res://content/" + rel);
+            _meshByPath[rel] = made;
+            return made;
+        }
 
         public static ArrayMesh LoadMesh(int id) { var e = Get(id); return e == null ? null : LoadMesh(e.Mesh); }
 

@@ -15,6 +15,12 @@ namespace UnturnedGodot
         public bool Dead { get; private set; }
         RiggedCharacter _rig; MeshInstance3D _cap; float _yaw;
         Vector3 _windowPos; float _windowT, _escapeT; bool _posInit;   // unstuck: slide a straggler along a wall it's pinned on
+        readonly byte _table; readonly uint _outfit;   // spawn point's wardrobe table + this zombie's own outfit seed
+
+        public ZombieBody() : this(255, 1u) { }                       // no table: --zface and the debug spawner
+        public ZombieBody(byte table, uint outfit) { _table = table; _outfit = outfit == 0u ? 1u : outfit; }
+
+        static uint Next(ref uint r) { r ^= r << 13; r ^= r >> 17; r ^= r << 5; return r; }
 
         public override void _Ready()
         {
@@ -54,10 +60,28 @@ namespace UnturnedGodot
             // ⚠ The SKIN TINT is a judgement call, flagged as one: the atlas used to carry the dead colouring, and
             // with it gone the tint is the only thing saying "not a person". This is the fallback capsule's own
             // zombie green pulled toward grey so clothing colours still read on top of it.
-            int variant = (int)(GetInstanceId() % 6u);   // clip variant -- keeps the horde from moving in lockstep
-            var pick = new System.Random((int)(GetInstanceId() & 0x7fffffff));
-            var shirts = ClothingContent.IdsForSlot("shirt");
-            var pantsIds = ClothingContent.IdsForSlot("pants");
+            // ⚠ Everything cosmetic is rolled off _outfit, NOT off GetInstanceId(). The body is freed when a zombie
+            // demotes past the HOT radius and rebuilt when it comes back, so an identity-based roll re-dressed it
+            // every time you turned around. The seed lives on the field's Zombie record and outlives the node.
+            uint rand = _outfit;
+            int variant = (int)(Next(ref rand) % 6u);   // clip variant -- keeps a horde from moving in lockstep
+
+            // PEI'S OWN TABLE FIRST. The spawn point says which one (Police, Farm, Chef...), and that is the whole
+            // point of reading Zombies.dat: a police zombie outside the station in police kit, because the map says
+            // so. A map with no table -- every generated island -- falls back to the full wardrobe, which is the
+            // only place a random outfit is the honest answer rather than a placeholder.
+            var wardrobe = ZombieTables.Get(_table);
+            int shirtId = ZombieTables.Roll(wardrobe, ZombieTables.SlotShirt, ref rand);
+            int pantsId = ZombieTables.Roll(wardrobe, ZombieTables.SlotPants, ref rand);
+            int hatId   = ZombieTables.Roll(wardrobe, ZombieTables.SlotHat,   ref rand);
+            int gearId  = ZombieTables.Roll(wardrobe, ZombieTables.SlotGear,  ref rand);
+            if (wardrobe == null)
+            {
+                var shirts = ClothingContent.IdsForSlot("shirt");
+                var pantsAll = ClothingContent.IdsForSlot("pants");
+                if (shirts.Count > 0) shirtId = shirts[(int)(Next(ref rand) % (uint)shirts.Count)];
+                if (pantsAll.Count > 0) pantsId = pantsAll[(int)(Next(ref rand) % (uint)pantsAll.Count)];
+            }
             // ⚠ FACE 19, FIXED, NOT ROLLED. It is the zombie face -- dead little eyes and a dark open mouth --
             // and the other 32 are PLAYER faces: rolling across them put a broad toothy grin on a corpse
             // (strawberry 2026-09-17: "wrong face"). The path goes through FacePath rather than the literal
@@ -69,12 +93,13 @@ namespace UnturnedGodot
                 _rig.UsePhysicsAnimRate();   // pose the skeleton at 50 Hz, not the render rate (the old POI CPU spike)
                 _rig.LocomotionNaturalSpeed = ClipNaturalSpeed;   // scale the clip to the ground instead of skating
                 _rig.WalkClip = "Move_" + (variant % 4); _rig.IdleClip = "Idle_" + (variant % 4); _rig.RunClip = _rig.WalkClip;
-                // Dress it. A missing manifest leaves both lists empty and the body simply renders bare rather than
-                // throwing -- the same "blank cell reads as transparent" contract LoadTextures already has.
-                if (shirts.Count > 0)
-                { var t = ClothingContent.LoadTextures(shirts[pick.Next(shirts.Count)]); _rig.SetShirt(t.Albedo, t.Emission, t.Metallic); }
-                if (pantsIds.Count > 0)
-                { var t = ClothingContent.LoadTextures(pantsIds[pick.Next(pantsIds.Count)]); _rig.SetPants(t.Albedo, t.Emission, t.Metallic); }
+                // Dress it. Every id may legitimately be -1 (the table leaves that slot bare, or a chance did not
+                // land), and a missing texture reads as transparent rather than throwing -- the contract
+                // LoadTextures already has. So a bare slot is a rendered outcome, not an error path.
+                if (shirtId >= 0) { var t = ClothingContent.LoadTextures(shirtId); _rig.SetShirt(t.Albedo, t.Emission, t.Metallic); }
+                if (pantsId >= 0) { var t = ClothingContent.LoadTextures(pantsId); _rig.SetPants(t.Albedo, t.Emission, t.Metallic); }
+                if (hatId >= 0) AttachGear(hatId);
+                if (gearId >= 0) AttachGear(gearId);
                 AddChild(_rig);
                 _rig.Play(_rig.WalkClip);
             }
@@ -136,6 +161,26 @@ namespace UnturnedGodot
             // idle when stopped, shamble when moving -- at the clip's OWN 1x pace. Master: DON'T speed up the anim; instead
             // ZombieSpeed (ZombieChunkField) is tuned DOWN to the shamble clip's natural stride so the feet don't skate.
             if (_rig != null) _rig.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length());
+        }
+
+        // ⚠ Dispatch on the ITEM's own slot, not on which table slot it came out of. PEI's 4th slot is "gear" and
+        // holds BOTH vests and masks (Police carries a vest, Militia bandanas), so keying the attach point off the
+        // slot index would hang a bandana on a chest. The manifest knows what each id actually is.
+        void AttachGear(int id)
+        {
+            var e = ClothingContent.Get(id);
+            if (e == null) return;
+            var mesh = ClothingContent.LoadMesh(id);
+            var tex = ClothingContent.LoadTextures(id).Albedo;
+            if (mesh == null) return;                       // flat-colour entries with no mesh have nothing to hang
+            switch (e.Slot)
+            {
+                case "hat":      _rig.AttachHat(mesh, tex, e.Offset); break;
+                case "mask":     _rig.AttachMask(mesh, tex, e.Offset); break;
+                case "vest":     _rig.AttachVest(mesh, tex, e.Offset); break;
+                case "backpack": _rig.AttachBackpack(mesh, tex, e.Offset); break;
+                case "glasses":  _rig.AttachGlasses(mesh, tex, e.Offset); break;
+            }
         }
 
         // PHASE 3b wires the gun/melee hit into this. Present now so ZombieChunkField can retire a dead body cleanly.
