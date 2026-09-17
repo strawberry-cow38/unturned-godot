@@ -711,6 +711,33 @@ void fragment() {
             var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w)>();
             foreach (var pts in lines) GatherConform(pts, radius, feather, claim);
             if (claim.Count == 0) return;
+            // ⚠ SMOOTH THE CLAIMS BEFORE WRITING THEM (strawberry 2026-09-17: "the ground below road splines
+            // isnt smooth at all. its really jagged. needs a real smoothing pass before placing the actual
+            // roads on top").
+            //
+            // Each cell takes the height of the closest point on ONE segment, and neighbouring cells can be
+            // closest to DIFFERENT segments -- so wherever two segments meet at an angle the two sides of the
+            // join disagree by whatever the profile does across that joint, and the result is a ridge one cell
+            // wide running across the road. Averaging each claimed cell with its claimed neighbours removes it
+            // without touching anything outside the band; three passes because one leaves the sharpest joints
+            // visible and the corridor is only a few cells wide, so this converges fast.
+            for (int pass = 0; pass < 3; pass++)
+            {
+                var snap = new System.Collections.Generic.Dictionary<(int, int), float>(claim.Count);
+                foreach (var kv in claim) snap[kv.Key] = kv.Value.target;
+                foreach (var key in new System.Collections.Generic.List<(int, int)>(claim.Keys))
+                {
+                    float sum = snap[key]; int cnt = 1;
+                    for (int ox = -1; ox <= 1; ox++)
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            if (ox == 0 && oy == 0) continue;
+                            if (snap.TryGetValue((key.Item1 + ox, key.Item2 + oy), out float nv)) { sum += nv; cnt++; }
+                        }
+                    var cur = claim[key];
+                    claim[key] = (sum / cnt, cur.w);
+                }
+            }
             int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
             foreach (var kv in claim)
             {
@@ -758,7 +785,27 @@ void fragment() {
                         float px = a.X + ab.X * t, pz = a.Z + ab.Y * t;
                         float d = Mathf.Sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
                         if (d > outer) continue;
-                        float target = (Mathf.Lerp(a.Y, b.Y, t) + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                        // ⚠⚠ THE TOWN PAD IS OFF LIMITS, and leaving it out of this test is why roads "hump
+                        // down into the towns" and why a road prop sits at a different height from the spline
+                        // meeting it. LevelCorridors, which this replaced, skipped InsideTown for exactly this
+                        // reason: the pad is levelled EXACTLY and every road prop on it is seated from that one
+                        // number, so a conform cutting a channel back through it re-introduces the height
+                        // disagreement that flattening the town was for. The spline's ends are already pinned
+                        // to pad height, so there is nothing in there for the conform to fix.
+                        // ⚠⚠ -wz, NOT wz. TownPads are in ProcIsland's frame and this loop is in WORLD space,
+                        // where Z is the negative of it -- so passing wz straight in excluded the MIRROR IMAGE
+                        // of every town and protected open sea while the conform kept cutting through the pads
+                        // exactly as before. Fourth time this frame has caught me today (the boulder corridor
+                        // filter, the boulder scan, the zombie sweep). PosFor is the one-way map; this is its
+                        // inverse, and the two only ever differ by this sign.
+                        if (ProcIsland.InsideAnyTownPad(wx, -wz)) continue;   // the pad proper: it is levelled exactly and its props read that one number
+                        // ⚠ AND GRADE INTO IT rather than stopping at its edge. Excluding the pad alone leaves
+                        // the conformed ground at the road's profile on one side of the boundary and the pad's
+                        // exact level on the other, which is a step one cell wide at every town entrance -- the
+                        // same defect TownRamped was written for when Carve had this job, and the same one that
+                        // reads as the road "humping down into the town".
+                        float wantWorld = ProcIsland.TownRampedAt(wx, -wz, Mathf.Lerp(a.Y, b.Y, t));
+                        float target = (wantWorld + TILE_HEIGHT / 2f) / TILE_HEIGHT;
                         float w = d <= radius ? 1f : 1f - Mathf.SmoothStep(radius, outer, d);
                         var key = (gx, gy);
                         // ⚠ WEIGHT FIRST, THEN HEIGHT, and getting that order backwards costs real altitude.

@@ -461,6 +461,7 @@ namespace UnturnedGodot
             sb.Append($" | worst junction share {worstJunction * 100f:0}%, most adjacent junctions in one town {worstAdj}");
             sb.Append($" | {bizTotal} business building(s), most in one town {bizMax}, {dupTowns} town(s) with a duplicate");
             sb.Append($" | {ProcIsland.CapFrontagesRefused} block face(s) refused for fronting a dead-end road");
+            sb.Append($" | {ProcIsland.LinksTrimmed} link(s) trimmed by the connection cap, busiest place has {ProcIsland.MaxPoiDegree}");
             Log.Print(sb.ToString());
         }
 
@@ -1753,8 +1754,14 @@ namespace UnturnedGodot
                     var p = route.Points[i];
                     int a = Mathf.Max(0, i - Stride), b = Mathf.Min(n0 - 1, i + Stride);
                     var dirv = route.Points[b] - route.Points[a];
-                    pts.Add(JointPosAlong(terr, p.X, p.Y, dirv));            // where it SITS: hugging the corridor
-                    floor[k] = JointClearanceFor(terr, p.X, p.Y, dirv);      // what it must CLEAR: the chord's high point
+                    // ⚠ INSIDE A TOWN, THE ROAD IS ON THE PAD -- it is levelled exactly and every road prop on
+                    // it reads that one number, so the ribbon crossing it has to read the same one rather than
+                    // an average that mixes pad height with the country outside.
+                    bool onPad = ProcIsland.InsideAnyTownPad(p.X, p.Y);
+                    pts.Add(onPad ? TilePosFor(terr, p.X, p.Y)
+                                  : JointPosAlong(terr, p.X, p.Y, dirv));    // where it SITS: hugging the corridor
+                    floor[k] = onPad ? TilePosFor(terr, p.X, p.Y).Y
+                                     : JointClearanceFor(terr, p.X, p.Y, dirv);   // what it must CLEAR
                 }
                 if (pts.Count < 2) { skipped++; continue; }
 

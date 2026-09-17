@@ -636,6 +636,63 @@ namespace UnturnedGodot
                 }
             }
 
+            // ⚠⚠ A CAP PER CONNECTION, SO CONNECTIONS ARE THE REAL LIMIT (strawberry 2026-09-17: "towns should
+            // only have 1-3 connections. only cities can have 1-4. im still seeing towns with 5 quad caps all
+            // touching").
+            //
+            // Nothing above ever counted how many links one place ends up with: the spanning tree adds what it
+            // needs, the loop edge adds one more, and every construction site hangs a spur off its nearest
+            // neighbour -- so a well-placed town in the middle of a cluster collects five or six. Each of those
+            // is a GATE, each gate is a cap, and on a 5-tile lattice five caps have nowhere to be but adjacent.
+            // The "5 quad caps all touching" is that arithmetic, not a placement bug.
+            //
+            // Trimmed LAST and by LENGTH, so what goes is the longest redundant edge. ⚠ And only edges whose
+            // removal leaves both ends still reachable -- dropping a bridge is how an island ends up with a
+            // town no road goes to, which is a worse defect than a busy junction.
+            {
+                int Cap(int p) => pois[p].Kind != PoiKind.Town ? 3
+                                : SizeOf(pois[p].Tiles * pois[p].Tiles) == TownSize.City ? 4 : 3;
+                var deg = new int[n];
+                foreach (var l in links) { deg[l.A]++; deg[l.B]++; }
+                var order = new System.Collections.Generic.List<int>();
+                for (int i = 0; i < links.Count; i++) order.Add(i);
+                order.Sort((x, y) => links[y].Length.CompareTo(links[x].Length));   // longest first
+                var drop = new System.Collections.Generic.HashSet<int>();
+                foreach (int li in order)
+                {
+                    var l = links[li];
+                    if (deg[l.A] <= Cap(l.A) && deg[l.B] <= Cap(l.B)) continue;
+                    // Would removing it strand anybody? Walk what is left.
+                    var adj = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<int>>();
+                    for (int k = 0; k < links.Count; k++)
+                    {
+                        if (k == li || drop.Contains(k)) continue;
+                        if (!adj.TryGetValue(links[k].A, out var la)) { la = new System.Collections.Generic.List<int>(); adj[links[k].A] = la; }
+                        if (!adj.TryGetValue(links[k].B, out var lb)) { lb = new System.Collections.Generic.List<int>(); adj[links[k].B] = lb; }
+                        la.Add(links[k].B); lb.Add(links[k].A);
+                    }
+                    var seen = new System.Collections.Generic.HashSet<int> { l.A };
+                    var stack = new System.Collections.Generic.Stack<int>(); stack.Push(l.A);
+                    while (stack.Count > 0)
+                    {
+                        int cur = stack.Pop();
+                        if (!adj.TryGetValue(cur, out var nbs)) continue;
+                        foreach (int nb in nbs) if (seen.Add(nb)) stack.Push(nb);
+                    }
+                    if (!seen.Contains(l.B)) continue;   // it is a bridge: keep it whatever the degree says
+                    drop.Add(li); deg[l.A]--; deg[l.B]--;
+                }
+                if (drop.Count > 0)
+                {
+                    var kept = new System.Collections.Generic.List<Link>(links.Count - drop.Count);
+                    for (int i = 0; i < links.Count; i++) if (!drop.Contains(i)) kept.Add(links[i]);
+                    LinksTrimmed = drop.Count;
+                    links = kept;
+                }
+                int worst = 0; foreach (int d in deg) if (d > worst) worst = d;
+                MaxPoiDegree = worst;
+            }
+
             // --- tier 2: every construction site gets ONE trail, to its nearest spine member. A spur, not part
             // of the network -- nothing should route THROUGH a building site to get somewhere else.
             foreach (int t in temporary)
@@ -713,6 +770,10 @@ namespace UnturnedGodot
         /// ⚠ Counted because "buildings no longer front exposed ends" is otherwise unfalsifiable from a render:
         /// zero of them is what success looks like AND what a rule that never fires looks like.</summary>
         public static int CapFrontagesRefused;
+        /// <summary>How many links the connection cap removed, and the worst degree left standing. ⚠ Both,
+        /// because "trimmed 4" alone cannot say whether the cap was reached -- a bridge that could not be cut
+        /// leaves a town over its limit and that has to be visible rather than assumed away.</summary>
+        public static int LinksTrimmed, MaxPoiDegree;
         public static float PadWas, PadNow, PadSmallest = float.MaxValue; public static int PadCount;
 
         public const float RenderedRoadHalf = 9.2f;
@@ -1263,6 +1324,10 @@ namespace UnturnedGodot
         /// from every pad, the pad's own height at its edge, and a smoothstep between.
         /// ⚠ NEAREST pad only, by edge distance. Summing or averaging the influence of two towns that happen to
         /// sit within a band of each other would grade the ground to a level neither of them is at.</summary>
+        /// <summary>Public face of the same grade, for the conform pass -- which works in WORLD coordinates and
+        /// must convert, since TownPads are in this frame.</summary>
+        public static float TownRampedAt(float px, float pz, float want) => TownRamped(px, pz, want);
+
         static float TownRamped(float wx, float wz, float want)
         {
             float bestGap = float.MaxValue, padY = 0f;
