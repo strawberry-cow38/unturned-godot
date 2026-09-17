@@ -2183,23 +2183,40 @@ namespace UnturnedGodot
             //
             // Building before conforming is safe because these roads are ignoreTerrain: the ribbon's Y comes
             // from its joints and its own interpolation, so moving the ground afterwards cannot move the road.
+            // ⚠ THE KIND IS PAIRED HERE, not looked up by index later. A road that fails to build advances the
+            // profile list without advancing builtIdx, so `profileKind[k]` for the k'th BUILT road is the wrong
+            // route's kind the moment one is skipped -- the same off-by-a-skip that made the drop pass delete
+            // an innocent road, one line further down.
             var builtIdx = new System.Collections.Generic.List<int>();
-            foreach (var pts in profiles)
+            var builtKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
+            for (int k = 0; k < profiles.Count; k++)
             {
-                int id = rf.AddRoadFromPolyline(pts, material, loop: false, ignoreTerrain: true);
-                if (id >= 0) { builtIdx.Add(id); built++; } else skipped++;
+                int id = rf.AddRoadFromPolyline(profiles[k], material, loop: false, ignoreTerrain: true);
+                if (id >= 0) { builtIdx.Add(id); builtKind.Add(profileKind[k]); built++; } else skipped++;
             }
 
             // The centreline the player actually drives on, sampled every 5 m the way the surface is.
+            // ⚠⚠ THE THREE LISTS MUST STAY IN LOCKSTEP, and they did not. `curves` skipped any road whose
+            // centreline sampled to fewer than two points while `builtIdx` kept its entry -- so every index
+            // after the skip referred to a DIFFERENT road. The drop pass then called RemoveRoad(builtIdx[ci])
+            // and deleted an innocent road, leaving the offending one built, absent from `curves`, and
+            // therefore invisible to the crossing check, the proximity check and the conform alike.
+            //
+            // That is why a top-down render showed two full asphalt roads crossing in an X at (1835,-2107) on
+            // seed 424242 while every counter here read zero: one of the two was not in the list being counted.
+            // Rebuilt in lockstep -- a road that cannot be sampled is dropped from ALL THREE.
             var curves = new System.Collections.Generic.List<System.Collections.Generic.List<Vector3>>();
             var curveKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
+            var keptIdx = new System.Collections.Generic.List<int>();
             for (int k = 0; k < builtIdx.Count; k++)
             {
                 var c = rf.SampleCentreline(builtIdx[k]);
-                if (c.Count < 2) continue;
+                if (c.Count < 2) { Log.Print($"[island-roads] road {builtIdx[k]} sampled to {c.Count} point(s) -- not measurable"); continue; }
                 curves.Add(c);
-                curveKind.Add(k < profileKind.Count ? profileKind[k] : ProcIsland.LinkKind.Road);
+                curveKind.Add(builtKind[k]);
+                keptIdx.Add(builtIdx[k]);
             }
+            builtIdx = keptIdx;
 
             // ---- DROP ANY JUNCTION ROAD WHOSE BUILT RIBBON CROSSES ANOTHER ROAD --------------------------
             // Measured across four seeds: ZERO road-on-road crossings, and every crossing on the island
@@ -2224,6 +2241,29 @@ namespace UnturnedGodot
                     }
                 return false;
             }
+            // ⚠ AND PROXIMITY, NOT ONLY INTERSECTION -- which is the whole reason "0 crossings" survived next
+            // to a photograph of two roads merged into one. Two ribbons are 18.4 m wide, so they OVERLAP as
+            // soon as their centrelines are within 18.4 m; they never have to cross. Worse, when they are that
+            // close the segments are near-collinear and the orientation test that Crosses() uses is exactly
+            // where it degenerates. Measured on seed 424242: 0.6 m between a Road and a Junction at
+            // (1835,-2107), 13 sample pairs sharing tarmac, and Crosses() saw none of it.
+            // ⚠ The first and last 25 m are exempt: a junction road ENDS on another road, so its ends are
+            // within 18.4 m of one by construction. That is the feature, not the fault.
+            static bool RunsAlongside(System.Collections.Generic.List<Vector3> J, System.Collections.Generic.List<Vector3> O)
+            {
+                const float Skip = 25f;
+                float run = 0f;
+                for (int a = 1; a < J.Count; a++)
+                {
+                    run += J[a].DistanceTo(J[a - 1]);
+                    float fromEnd = 0f;
+                    for (int k = a; k < J.Count; k++) fromEnd += J[k].DistanceTo(J[k - 1]);
+                    if (run < Skip || fromEnd < Skip) continue;
+                    foreach (var q in O)
+                        if (new Vector2(J[a].X - q.X, J[a].Z - q.Z).Length() < ProcIsland.RenderedRoadHalf * 2f) return true;
+                }
+                return false;
+            }
             var dropCurve = new System.Collections.Generic.List<int>();
             for (int i = 0; i < curves.Count; i++)
             {
@@ -2231,7 +2271,7 @@ namespace UnturnedGodot
                 for (int j = 0; j < curves.Count; j++)
                 {
                     if (i == j || dropCurve.Contains(j)) continue;
-                    if (!Crosses(curves[i], curves[j])) continue;
+                    if (!Crosses(curves[i], curves[j]) && !RunsAlongside(curves[i], curves[j])) continue;
                     dropCurve.Add(i);
                     break;
                 }
@@ -2245,7 +2285,7 @@ namespace UnturnedGodot
                 built--;
             }
             if (dropCurve.Count > 0)
-                Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed another road");
+                Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed or overlapped another road");
 
             // Sunk a quarter-metre below the ribbon because a 4 m heightmap approximates a sloping segment
             // rather than reproducing it, and that error otherwise pokes through; lowest-wins inside
@@ -2344,11 +2384,16 @@ namespace UnturnedGodot
             // ---- do the built ribbons cross? ----------------------------------------------------------------
             // ⚠ ON THE CURVES, not on the A* polylines. The generator-side check reports 0 crossings on every
             // seed and master is still looking at one, which is what a check on the wrong geometry looks like.
-            int ribbonCross = 0, crossRoad = 0, crossJunc = 0;
+            int ribbonCross = 0, crossRoad = 0, crossJunc = 0, crossNearTown = 0;
+            var crossAt = Vector2.Zero;
+            // ⚠ j STARTS AT i, NOT i+1 -- a road crossing ITSELF is the one case every check here has been
+            // blind to, and it is the only hypothesis left after a top-down render showed two full asphalt
+            // roads crossing in an X at (1835,-2107) on seed 424242 while this reported zero.
+            int selfCross = 0;
             for (int i = 0; i < curves.Count; i++)
-                for (int j = i + 1; j < curves.Count; j++)
+                for (int j = i; j < curves.Count; j++)
                     for (int a = 1; a < curves[i].Count; a++)
-                        for (int b = 1; b < curves[j].Count; b++)
+                        for (int b = (i == j ? a + 3 : 1); b < curves[j].Count; b++)
                         {
                             var p0 = curves[i][a - 1]; var p1 = curves[i][a];
                             var q0 = curves[j][b - 1]; var q1 = curves[j][b];
@@ -2357,8 +2402,16 @@ namespace UnturnedGodot
                             if (((d1 > 0f) != (d2 > 0f)) && ((d3 > 0f) != (d4 > 0f)))
                             {
                                 var at = (p0 + p1) * 0.5f;
-                                // Near a town two roads converge on their gates by design.
-                                if (!ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f))
+                                crossAt = new Vector2(at.X, at.Z);
+                                // ⚠ COUNT THE TOWN-ADJACENT ONES, DO NOT DISCARD THEM. This exclusion made the
+                                // whole check report 0 for seed 424242 while a photograph of two roads crossing
+                                // in an X at (1835,-2107) sat in the channel. "Roads converge on a gate by
+                                // design" is true of the last few metres of a stub; it is not a licence to stop
+                                // looking within 90 m of every pad, which on this island is most of the
+                                // inhabited part of it.
+                                if (i == j) { selfCross++; }
+                                else if (ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f)) crossNearTown++;
+                                else
                                 {
                                     ribbonCross++;
                                     // ⚠ NAME THE KINDS. A junction road is an optional convenience that can
@@ -2370,8 +2423,180 @@ namespace UnturnedGodot
                                 a = curves[i].Count; break;   // one report per pair
                             }
                         }
+            // ---- does a ribbon drive OVER a road prop? ------------------------------------------------------
+            // strawberry's second photo: the spline's tarmac running across a town's road tiles, kerbs and
+            // crossings. That is an overlap, but not the spline-on-spline kind I have been counting -- and no
+            // existing number could see it. A spline is supposed to STOP at its cap's mouth, which is the tile's
+            // edge, so any sample INSIDE a tile's 24 m footprint is a road laid over a road prop.
+            // ⚠ Measured in the tile's own frame, because a tile is a rotated square: an axis-aligned box test
+            // would miss a ribbon crossing a tile turned 45 degrees and flag one beside a tile turned 0.
+            int overTile = 0, overTileSamples = 0;
+            var overAt = Vector2.Zero;
+            // ⚠ THE RIBBON'S EDGES, NOT ITS CENTRELINE -- and the centreline version of this read 0 on every
+            // seed while master was looking at a photograph of the overlap. A spline ending exactly on a cap's
+            // mouth still carries 9.2 m of tarmac either side of that point, so what laps over the tile is the
+            // EDGE, and the centreline is the one part of the ribbon guaranteed never to.
+            if (terr.IslandTiles != null)
+                foreach (var c in curves)
+                    for (int qi = 0; qi < c.Count; qi++)
+                    {
+                        var fwd = qi > 0 ? new Vector2(c[qi].X - c[qi - 1].X, c[qi].Z - c[qi - 1].Z)
+                                         : new Vector2(c[1].X - c[0].X, c[1].Z - c[0].Z);
+                        if (fwd.Length() < 1e-4f) continue;
+                        var per = new Vector2(-fwd.Y, fwd.X).Normalized() * ProcIsland.RenderedRoadHalf;
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            var q = new Vector3(c[qi].X + per.X * side, c[qi].Y, c[qi].Z + per.Y * side);
+                        foreach (var t in terr.IslandTiles)
+                        {
+                            var w = PosFor(terr, t.X, t.Z);
+                            float dx = q.X - w.X, dz = q.Z - w.Z;
+                            if (dx * dx + dz * dz > (ProcIsland.TileSize * 0.75f) * (ProcIsland.TileSize * 0.75f)) continue;
+                            float ry = Mathf.DegToRad(t.YawDeg);
+                            float lx = dx * Mathf.Cos(ry) - dz * Mathf.Sin(ry);
+                            float lz = dx * Mathf.Sin(ry) + dz * Mathf.Cos(ry);
+                            // Half a tile, less a metre: a spline ENDING on the mouth sits exactly on the edge
+                            // and must not count as driving over it.
+                            const float Half = ProcIsland.TileSize * 0.5f - 1f;
+                            if (Mathf.Abs(lx) < Half && Mathf.Abs(lz) < Half)
+                            { overTileSamples++; if (overTile == 0) overAt = new Vector2(q.X, q.Z); overTile++; break; }
+                        }
+                        }
+                    }
+            // ---- how close do two ribbons actually run? -------------------------------------------------------
+            // ⚠ THE PAIR REPORT IN ProcIsland MEASURES THE A* POLYLINE and has said "0 m in open country" all
+            // session while master keeps reporting overlaps. Two ribbons 18.4 m wide overlap the moment their
+            // CENTRELINES come within 18.4 m -- they never have to intersect, which is why the crossing count
+            // can be honestly zero and the roads still merge into one wide band. Measured on the built curves,
+            // away from towns (roads converge on a gate by design).
+            float nearest = float.MaxValue; int tarmacShared = 0; var nearAt = Vector2.Zero; string nearKinds = "";
+            // ⚠ EXEMPT A JUNCTION ROAD'S OWN ENDS, exactly as the drop rule does. A junction road STOPS on
+            // another road, so its last stretch is within 18.4 m of one by construction -- that is the feature.
+            // Without this the metric reports the feature as the fault and disagrees with the rule that acts on
+            // it, which is how seeds 424242 and 55555 still read 0.6 m and 0.3 m after the overlapping
+            // junctions had already been dropped. A measurement and the rule it judges have to allow the same
+            // things or one of them is lying.
+            bool NearOwnEnd(int ci, int idx)
+            {
+                if (curveKind[ci] == ProcIsland.LinkKind.Road) return false;
+                var c = curves[ci];
+                float run = 0f;
+                for (int k = 1; k <= idx && k < c.Count; k++) run += c[k].DistanceTo(c[k - 1]);
+                float tail = 0f;
+                for (int k = idx + 1; k < c.Count; k++) tail += c[k].DistanceTo(c[k - 1]);
+                return run < 25f || tail < 25f;
+            }
+            for (int i = 0; i < curves.Count; i++)
+                for (int j = i + 1; j < curves.Count; j++)
+                    for (int a = 0; a < curves[i].Count; a += 2)
+                    {
+                        var pa = curves[i][a];
+                        if (ProcIsland.InsideAnyTownPad(pa.X, -pa.Z, 90f)) continue;
+                        if (NearOwnEnd(i, a)) continue;
+                        for (int b = 0; b < curves[j].Count; b += 2)
+                        {
+                            if (NearOwnEnd(j, b)) continue;
+                            var pb = curves[j][b];
+                            float d = new Vector2(pa.X - pb.X, pa.Z - pb.Z).Length();
+                            if (d < nearest) { nearest = d; nearAt = new Vector2(pa.X, pa.Z); nearKinds = $"{curveKind[i]}+{curveKind[j]}"; }
+                            if (d < ProcIsland.RenderedRoadHalf * 2f) tarmacShared++;
+                        }
+                    }
+            Log.Print($"[island-overlap] closest two ribbons run in open country: {(nearest == float.MaxValue ? 0f : nearest):0.0} m "
+                      + $"(tarmac touches under {ProcIsland.RenderedRoadHalf * 2f:0.#} m); {tarmacShared} sample pair(s) sharing tarmac"
+                      + (tarmacShared > 0 ? $", nearest at ({nearAt.X:0},{nearAt.Y:0}) between {nearKinds}" : ""));
+
+            // ---- UG_SPLINEDRAW=1: the centrelines, in white, over everything ---------------------------------
+            // strawberry: "show me a top down view of a map. with white lines along the road splines." Which is
+            // the right instrument to ask for -- every number I have reported about overlaps has been computed
+            // from one geometry or another, and a picture of where the splines ACTUALLY run settles which of
+            // them is describing the island. NoDepthTest so trees and terrain cannot hide a line, and drawn off
+            // the BUILT curve (rf.SampleCentreline) for the same reason everything else moved onto it today.
+            if (System.Environment.GetEnvironmentVariable("UG_SPLINEDRAW") is "1" or "2" && curves.Count > 0)
+            {
+                var im = new ImmediateMesh();
+                var mat = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    AlbedoColor = new Color(1f, 1f, 1f),
+                    NoDepthTest = true,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                // ⚠ UG_SPLINEDRAW=2 COLOURS EACH ROAD DIFFERENTLY. White lines answer "where do the splines
+                // run"; they cannot answer "are these two bands one road or two", which is the question a
+                // render of an apparent crossing actually poses -- and which I could not settle by staring at
+                // a monochrome overlay for three renders. Vertex colours, so one draw still does it.
+                bool perRoad = System.Environment.GetEnvironmentVariable("UG_SPLINEDRAW") == "2";
+                mat.VertexColorUseAsAlbedo = perRoad;
+                im.SurfaceBegin(Mesh.PrimitiveType.Lines, mat);
+                for (int ci = 0; ci < curves.Count; ci++)
+                {
+                    var c = curves[ci];
+                    var col = perRoad
+                        ? Color.FromHsv((ci * 0.37f) % 1f, 0.9f, 1f)
+                        : new Color(1f, 1f, 1f);
+                    for (int i = 1; i < c.Count; i++)
+                    {
+                        im.SurfaceSetColor(col);
+                        im.SurfaceAddVertex(new Vector3(c[i - 1].X, c[i - 1].Y + 4f, c[i - 1].Z));
+                        im.SurfaceSetColor(col);
+                        im.SurfaceAddVertex(new Vector3(c[i].X, c[i].Y + 4f, c[i].Z));
+                    }
+                }
+                im.SurfaceEnd();
+                terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
+                Log.Print($"[island-splinedraw] {curves.Count} centreline(s) drawn in white");
+            }
+
+            // ---- and does the ribbon arrive SQUARE-ON to its cap? --------------------------------------------
+            // The join gap has measured 0.00 m all session, and that is a claim about a POINT. A ribbon 18.4 m
+            // wide meeting a 24 m tile has 2.8 m of slack either side -- but only if it arrives along the cap's
+            // axis. Off-axis, the ribbon's corner laps onto the tile's pavement, which is what the photograph
+            // shows and what no number here has ever looked at.
+            float worstYaw = 0f; int yawOver = 0, yawN = 0; var yawAt = Vector2.Zero;
+            if (terr.IslandTiles != null)
+                foreach (var c in curves)
+                    for (int e = 0; e < 2; e++)
+                    {
+                        var end = e == 0 ? c[0] : c[^1];
+                        var dir = e == 0 ? new Vector2(c[1].X - c[0].X, c[1].Z - c[0].Z)
+                                         : new Vector2(c[^1].X - c[^2].X, c[^1].Z - c[^2].Z);
+                        if (dir.Length() < 1e-4f) continue;
+                        dir = dir.Normalized();
+                        // Nearest cap, and its ramp axis -- the direction the prop expects a road to leave along.
+                        float bestD = float.MaxValue; float rampYaw = 0f; bool got = false;
+                        foreach (var t in terr.IslandTiles)
+                        {
+                            if (t.Piece is not (ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap)) continue;
+                            var w = PosFor(terr, t.X, t.Z);
+                            float dd = new Vector2(end.X - w.X, end.Z - w.Z).LengthSquared();
+                            if (dd < bestD) { bestD = dd; rampYaw = t.YawDeg; got = true; }
+                        }
+                        if (!got || bestD > (ProcIsland.TileSize * ProcIsland.TileSize)) continue;
+                        // The ramp is the piece's mesh +Y: (-sin, -cos) after yaw, in ProcIsland's frame, so
+                        // negate Z to compare against a world-space tangent.
+                        float ry = Mathf.DegToRad(rampYaw);
+                        var ramp = new Vector2(-Mathf.Sin(ry), Mathf.Cos(ry)).Normalized();
+                        float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(Mathf.Abs(dir.Dot(ramp)), 0f, 1f)));
+                        ang = Mathf.Min(ang, 180f - ang);
+                        yawN++;
+                        if (ang > worstYaw) { worstYaw = ang; yawAt = new Vector2(end.X, end.Z); }
+                        if (ang > 8f) yawOver++;
+                    }
+            Log.Print($"[island-overlap] arrival angle off the cap axis: worst {worstYaw:0.0}°, {yawOver} of {yawN} ends over 8°"
+                      + (worstYaw > 8f ? $", worst at ({yawAt.X:0},{yawAt.Y:0})" : ""));
+
+            Log.Print($"[island-overlap] {overTileSamples} ribbon sample(s) inside a road prop's footprint"
+                      + (overTileSamples > 0 ? $", first at ({overAt.X:0},{overAt.Y:0})" : ""));
+
+            // ⚠ IS ANYTHING BUILT THAT I AM NOT COUNTING? Every geometric check here runs over `curves`, so a
+            // road RoadField holds that never reached that list is invisible to all of them -- which is exactly
+            // what a render showing a crossing beside a counter reading zero looks like.
+            Log.Print($"[island-roads] RoadField holds {rf.RoadCount} road(s); {curves.Count} tracked here");
+
             Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town "
-                      + $"({crossRoad} road-on-road, {crossJunc} involving a junction road); "
+                      + $"({crossRoad} road-on-road, {crossJunc} involving a junction road), plus {crossNearTown} within 90 m of a town, {selfCross} where a road crosses ITSELF"
+                      + ((ribbonCross + crossNearTown) > 0 ? $" [last at ({crossAt.X:0},{crossAt.Y:0})]" : "") + "; "
                       + $"worst float {floatWorst:0.00} m ({floatOver} of {floatN} sample(s) over 0.6 m in open country, "
                       + $"{floatTown} more on a town pad the conform does not own); "
                       + $"ON THE CENTRELINE worst {centreWorst:0.00} m, {centreOver} of {centreN} over 0.6 m"); 
